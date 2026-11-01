@@ -5,6 +5,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 /**
  * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ * 1.15 is additive: saved-session web app runs. Each lane appends its clause here; lane A: `codebook_status.savedSession` and the codes `SIGN_IN_REQUIRED`, `SIGN_IN_IN_PROGRESS`, `SIGN_IN_PROFILE_IN_USE` and `SIGN_IN_PROFILE_UNUSABLE`, and `BUSY` with reason `profile-in-use`; lane B: the version 3 fields `signInPaths` and `session`, the `SIGN_IN_REQUIRED` reasons, `SIGN_IN_ORIGIN_REFUSED`, and the run resource's `session`, `appState` and `savedSession`; lane C: the run resource's `confirmation` and `confirmationSetting`, `details.question` of `OPERATIONS_NOT_CONFIRMED`, and `BUSY` with reason `awaiting-confirmation` for the saved-session question; lane D: `withheld`, `imageWithheldReason` and `withheldImages`.
  * 1.14 adds configuration version 3 to the `repository-browser` profile (up to 8 ordered `operations` of kind `text`, `choose` or `click`, each stop declaring `afterOperation`), the `repository-operation` action (one `codebook_action` per operation, answering an acceptance receipt with `operationIndex` and `accepted`), the run resource's `operations` records (`state`, `ack`, `valueCheck`, `effect`), a secret `text` operation declared as `secret: "ask-learner"` (the learner types it in the editor), and the codes `OPERATIONS_NOT_CONFIRMED`, `OPTION_NOT_AVAILABLE`, `INPUT_NOT_ACCEPTED`, `CONTROL_KIND_NOT_SUPPORTED`, `SECRET_INPUT_FROM_CHAT`, `SECRET_INPUT_VISIBLE`, `NAVIGATION_BEFORE_LAST_OPERATION`, `NAVIGATION_NOT_SETTLED`, `OPERATION_AFTER_NOT_MET` and `RUN_FAILED_UNEXPECTEDLY`; `BUSY` gains `reason`, `expected`, `sent` and a retry rule. It also changes two behaviours of version 1 and 2 runs: a prepared secret text reads `[masked]` (an unresolved one `[pending]`) in the run resource, the saved study and the configuration hash, and a failed `repository-browser` run answers `isError: true` with the run state, as node-server and chrome-extension runs do.
  * 1.13 is additive: a chrome-extension run is saved as an Extension replay. `codebook_explain_node_history` accepts a chrome-extension history's material (steps citing a captured stop with its sourceHash and context, a pause or the result), the run resource gains `chromeExtension.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing`, `materialRevision` and `captureMissing`, `nextActions` offers `save-node-learning`, and a save while the history records is refused with `HISTORY_STILL_RECORDING`.
  * 1.12 is additive: Next Pages Router pages on the `next-dev-webpack` adapter (the `next-dev-webpack` readiness gains `routerKind`, `preparation` and `notes`, the repository-browser profile names its `nextRouters`, the resource of a Next run in a workspace with a Pages folder names its `nextRoute` (not a Next run in a workspace without one), the `NEXT_*` refusal codes and `SOURCE_CHANGED` for a Pages module replaced during the run, and `codebook://help/repository-browser` gains `startHere`, the Next quick start, the Pages support table and the Next refusal anchors). It also changes the click of every `repository-browser` run, App Router and Vite runs included: a click target whose centre lies outside the viewport is first scrolled to the middle of the viewport, where 1.11 read it as obscured (`click-target-obscured`); App Router and Vite runs are otherwise unchanged.
@@ -13,7 +14,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.9 is additive: a node-server run is saved as a Server replay. `codebook_explain_node_history` accepts a server history's material (steps citing the request, a stop, output, the response or the request failure), the server run resource gains `nodeServer.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing` and `captureMissing`, `nextActions` offers `save-node-learning`, and `codebook://help/node-server` has a save section.
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
-export const API_VERSION = '1.14'
+export const API_VERSION = '1.15'
 export const EXTENSION_VERSION = '0.2.71'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
@@ -1538,6 +1539,82 @@ export const REPOSITORY_CONFIG_VERSION = 1
 export const CROSS_RUNTIME_CONFIG_VERSION = 2
 /** The configuration version that declares ordered operations (`text`, `choose`, `click`) instead of prepared inputs and one action. */
 export const OPERATIONS_CONFIG_VERSION = 3
+/** The most `signInPaths` a version 3 configuration declares: the app's own sign-in routes, compared with `location.pathname`. */
+export const SIGN_IN_PATH_LIMIT = 4
+/**
+ * Why a saved-session run answers `SIGN_IN_REQUIRED`, in the order the help lists them.
+ * `no-saved-session`: none is set up, or the run declared `session: "fresh"`; `setup-not-finished`: the last setup was closed without Done; `redirected-to-sign-in`: the run used the saved session and the app still asked for sign-in; `session-cookie-only`: the app keeps its sign-in only while the browser stays open, so a saved session cannot keep it.
+ */
+export const SIGN_IN_REQUIRED_REASONS = [
+  'no-saved-session',
+  'setup-not-finished',
+  'redirected-to-sign-in',
+  'session-cookie-only',
+] as const
+/** The reason a saved-session run answers `SIGN_IN_REQUIRED` with, as {@link SIGN_IN_REQUIRED_REASONS} lists it. @example const reason: SignInRequiredReason = 'no-saved-session' */
+export type SignInRequiredReason = (typeof SIGN_IN_REQUIRED_REASONS)[number]
+/** The folder of the editor's global storage that holds one saved-session browser folder per repository. */
+export const SIGN_IN_PROFILES_DIRECTORY = 'sign-in-profiles'
+/** The file of a saved-session folder that records its setup (`confirmed`, `setupAt`, `signInPaths`, `chromeMajor`, `repositoryRoot`, `appCookies`); it sits at Chrome's user-data-dir top level. */
+export const SIGN_IN_RECORD_FILE = 'signin.json'
+/** The file of a saved-session folder that names its one holder (a setup, a run or a removal). */
+export const SIGN_IN_LOCK_FILE = 'signin.lock'
+/** The version of {@link SIGN_IN_RECORD_FILE}; a record with a higher number is `newer-record`. */
+export const SIGN_IN_RECORD_VERSION = 1
+/** The most bytes of {@link SIGN_IN_RECORD_FILE} the store reads. */
+export const SIGN_IN_RECORD_LIMIT_BYTES = 4_096
+/** The `--disk-cache-size` of a saved-session Chrome (50 MiB), so the folder keeps cookies and storage but little cache. */
+export const SIGN_IN_PROFILE_DISK_CACHE_BYTES = 52_428_800
+/** How long a setup may stay open before it closes without Done (10 minutes). */
+export const SIGN_IN_SETUP_TIMEOUT_MS = 600_000
+/** When an open setup warns that it closes soon (minute 8, two minutes before {@link SIGN_IN_SETUP_TIMEOUT_MS}). */
+export const SIGN_IN_SETUP_WARNING_MS = 480_000
+/** How long the setup browser may take to start and answer its first CDP command. */
+export const SIGN_IN_BROWSER_START_BOUND_MS = 20_000
+/** How long the setup browser may take to exit after a graceful close before its process group is stopped. */
+export const SIGN_IN_BROWSER_CLOSE_BOUND_MS = 15_000
+/** How long Stop run and remove waits for the run's cleanup to release the saved session. */
+export const SIGN_IN_STOP_RUN_BOUND_MS = 30_000
+/** The sign-in routes a setup offers first when the repository has such a route, in this order. */
+export const SIGN_IN_PATH_CANDIDATES = [
+  '/login',
+  '/signin',
+  '/sign-in',
+  '/auth/signin',
+] as const
+/** The most source files the sign-in path discovery of a Vite repository reads. */
+export const SIGN_IN_PATH_SCAN_FILE_LIMIT = 1_000
+/** The most bytes of one source file the sign-in path discovery reads. */
+export const SIGN_IN_PATH_SCAN_FILE_BYTES = 262_144
+/** The entries Chrome leaves at a profile's top level on macOS and Linux and that a crashed Chrome leaves stale. */
+export const CHROME_SINGLETON_ENTRIES = [
+  'SingletonLock',
+  'SingletonCookie',
+  'SingletonSocket',
+] as const
+/** The entry Chrome leaves at a profile's top level on Windows. */
+export const CHROME_WINDOWS_LOCK_FILE = 'lockfile'
+/** The priority of the saved-session status bar item. */
+export const SAVED_SESSION_STATUS_PRIORITY = -1
+/** The command that sets up a saved session for the workspace repository; the one definition every lane uses. */
+export const SET_UP_SAVED_SESSION_COMMAND = 'codebook.setUpSavedSession'
+/** The command that removes the saved session of a repository. */
+export const REMOVE_SAVED_SESSION_COMMAND = 'codebook.removeSavedSession'
+/** The internal command behind the saved-session status item's quick pick. */
+export const SAVED_SESSION_ACTIONS_COMMAND = 'codebook.savedSession.actions'
+/** The globalState key that maps a repository hash to the sign-in paths of its last version 3 run. */
+export const SAVED_SESSION_LAST_PATHS_KEY =
+  'codebook.savedSession.lastSignInPaths'
+/** The command that asks the confirmation of a saved-session run's operations again; hidden from the palette, takes a run id. */
+export const REVIEW_SAVED_SESSION_OPERATIONS_COMMAND =
+  'codebook.reviewSavedSessionOperations'
+/** The user setting (under `codebook.`) that turns the saved-session operations confirmation off; only a user value counts. */
+export const CONFIRM_SAVED_SESSION_OPERATIONS_SETTING =
+  'confirmSavedSessionOperations'
+/** The most characters of one operation title or value the saved-session confirmation shows. */
+export const SAVED_SESSION_CONFIRMATION_VALUE_LIMIT_CHARS = 80
+/** How long the read of the page's controls for the saved-session confirmation may take. */
+export const OPERATION_CONFIRMATION_READ_TIMEOUT_MS = 2_000
 export const CONFIGURED_STUDY_VERSION = 3
 export const CROSS_RUNTIME_STUDY_VERSION = 4
 /** The format of a repository-browser study made with the `vite-dev` adapter; an older Codebook lists it as saved by a newer one. */

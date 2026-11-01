@@ -31,6 +31,10 @@ import type {
 } from './runtime'
 import type { BrowserViewportFactory } from './runtimeSupport/browserViewport'
 import type { HostConfiguration } from './runtimeSupport/hostBrowser'
+import type {
+  SavedSessionStorePort,
+  SignInRequiredReason,
+} from './runtimeSupport/savedSessionTypes'
 import { assertSupportedChromeVersion } from './runtimeSupport/utils/assertSupportedChromeVersion'
 import { managedProfileRoot } from './runtimeSupport/utils/managedProfileRoot'
 import { createStateChangingRequestAsker } from './utils/askToSendStateChangingRequest'
@@ -161,6 +165,10 @@ export async function createEnvironment(
   context: Pick<vscode.ExtensionContext, 'extensionPath'> & {
     /** Where a node-server run keeps its process record for the next activation's orphan check; without it the record lives only in memory. */
     workspaceState?: NodeServerOrphanStore
+    /** The saved-session store; absent in tests and in editors that never set one up. */
+    savedSessions?: SavedSessionStorePort
+    /** Shows the notice that a run needs a saved session, with a button for Set Up Saved Session…. */
+    showSignInRequired?: (reason: SignInRequiredReason) => void
   },
   presentation?: StudyPresentation,
 ): Promise<StudyEnvironment & { dispose(): void }> {

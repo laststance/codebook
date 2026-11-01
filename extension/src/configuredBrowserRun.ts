@@ -112,6 +112,10 @@ import {
   type HostConfiguration,
 } from './runtimeSupport/hostBrowser'
 import { PauseGate, type PauseIdentity } from './runtimeSupport/pauseGate'
+import type {
+  SavedSessionRunPort,
+  SignInRequiredReason,
+} from './runtimeSupport/savedSessionTypes'
 import { SecretFrameGate } from './runtimeSupport/secretFrameGate'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { isStopCausedByCodebook } from './runtimeSupport/utils/isStopCausedByCodebook'
@@ -377,6 +381,10 @@ interface ConfiguredBrowserOptions {
   createViewport?: BrowserViewportFactory
   revealSource(snapshot: ConfiguredRuntimeSnapshot): Promise<void>
   control?: RuntimeControl
+  /** The saved-session store bound to this repository; absent runs never touch a saved session. */
+  savedSession?: SavedSessionRunPort
+  /** Called once per run refused with `SIGN_IN_REQUIRED`, so the editor shows its notice. */
+  onSignInRequired?(notice: { reason: SignInRequiredReason }): void
 }
 /** One script a runtime parsed for a declared stop's module: the sealed one, or the same module loaded for another webpack layer ({@link PreparedStop.instances}), each with the map that places its own generated code. */
 type StopModule = {

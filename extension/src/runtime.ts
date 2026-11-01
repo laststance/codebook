@@ -33,10 +33,18 @@ import type {
   REPOSITORY_BROWSER_PROFILE,
   REPOSITORY_OPERATION_ACTION,
 } from './constants'
+import type { DevelopmentServerAdapterName } from './developmentServerAdapter'
 import type { ErrorCode, StudyError } from './errors'
 import type { NodeServerConfiguration } from './nodeServerConfigSchemas'
 import type { NodeServerHistorySink } from './nodeServerHistorySink'
 import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
+import type {
+  OperationConfirmationFact,
+  OperationsConfirmationNotice,
+  OperationsConfirmationSetting,
+  OperationsConfirmationState,
+  SavedSessionOperationsQuestion,
+} from './operationsConfirmationTypes'
 import type { NodeTestSourceStop } from './ownedNodeTestRun'
 import type { ReplayDebugSnapshot } from './replayDebugSchemas'
 import type { Evidence, RecordedEvent } from './runtimeSupport/evidence'
@@ -45,6 +53,11 @@ import type {
   ProfileLeft,
 } from './runtimeSupport/hostBrowser'
 import type { PauseIdentity, PauseGate } from './runtimeSupport/pauseGate'
+import type {
+  SavedSessionServer,
+  SavedSessionStatus,
+  SignInRequiredReason,
+} from './runtimeSupport/savedSessionTypes'
 import type { StateChangingRequestQuestion } from './utils/askToSendStateChangingRequest'
 import type {
   RetryVitestListingRelease,
@@ -391,6 +404,8 @@ export type OperationFailure = {
   sideEffects: 'none' | 'unknown'
   /** `<runId>#<operationIndex>`: the id of the structured Output > Codebook line that records the failure. */
   logId: string
+  /** Set only for `SIGN_IN_REQUIRED`: why the page asked for sign-in. */
+  reason?: SignInRequiredReason
 }
 export type RuntimeDefinition = ConfiguredDefinition
 export type RuntimeControl = Readonly<{
@@ -477,6 +492,16 @@ export type ConfiguredRuntimeView = {
   operations?: OperationRecord[]
   /** The first failure of an operation of a version 3 run; absent otherwise. */
   operationFailure?: OperationFailure
+  /** Which profile a version 3 run used: the learner's saved session or a fresh one; absent for versions 1 and 2 and until the run planned it. */
+  session?: 'saved' | 'fresh'
+  /** `kept` for a run that started with the saved session: the app data the profile already had stays (`initialStorage` is written over it). */
+  appState?: 'kept'
+  /** The saved-session status the run read at admission; the run resource serves it as `savedSession`. */
+  savedSession?: SavedSessionStatus
+  /** The saved-session confirmation of a version 3 run; the service fills it, not the runtime. */
+  confirmation?: OperationsConfirmationState
+  /** `off` when the learner turned the confirmation off in user settings; the service fills it. */
+  confirmationSetting?: OperationsConfirmationSetting
   nextAction:
     | typeof REPOSITORY_BROWSER_ACTION
     | typeof REPOSITORY_OPERATION_ACTION
@@ -502,6 +527,13 @@ export interface StudyRuntime {
   readonly learnerSecrets?: ReadonlySet<string>
   prepare(): Promise<void>
   view(): RuntimeView
+  /**
+   * Reads, from the page and without any input event, what the saved-session confirmation needs to word each operation: whether its control is a secret one and the visible label of a chosen option.
+   * Called by the service when it builds the confirmation question; absent for runtimes that never ask it.
+   */
+  readOperationConfirmationFacts?(): Promise<
+    readonly OperationConfirmationFact[]
+  >
   /**
    * Reserves the next declared input synchronously; its protocol acknowledgement never blocks state or continuation.
    * @param options - `learnerSecret`: the value the learner typed for a `secret: "ask-learner"` operation, which the run types into the page and keeps only in memory.
@@ -641,4 +673,49 @@ export interface StudyEnvironment {
     question: { runId: string; repository: string; title: string },
     signal: AbortSignal,
   ): Promise<string | undefined>
+  /**
+   * Reads what a saved-session setup needs: the Node, Chrome and adapter readiness of the workspace, or what is missing. Refuses while a run of this window still uses the repository.
+   * Called by the Set Up Saved Session command.
+   */
+  savedSessionSetupInputs?(): Promise<
+    | {
+        ready: true
+        node: string
+        chrome: { binary: string; version: string }
+        adapters: RepositoryAdapterReadiness
+      }
+    | { ready: false; missing: string[] }
+  >
+  /**
+   * Starts the development server for a setup and waits until the sign-in path answers; the caller closes it when the setup ends.
+   * @param adapter - The adapter the repository's app uses.
+   * @param signInPath - The path the setup browser opens first.
+   * @param signal - Ends the start when the setup is closed.
+   */
+  startSavedSessionServer?(
+    adapter: DevelopmentServerAdapterName,
+    signInPath: string,
+    signal: AbortSignal,
+  ): Promise<SavedSessionServer>
+  /**
+   * Asks the learner in a native modal to confirm the operations of a run that starts with the saved session.
+   * @param question - The run, the repository folder name, the entry path and one line per operation.
+   * @param signal - Ends the wait when the run stops or the wait runs out.
+   * @param onLateAnswer - Receives an answer that arrives after the wait ended.
+   * @returns `true` only for the primary button before the signal aborts.
+   */
+  confirmSavedSessionOperations?(
+    question: SavedSessionOperationsQuestion,
+    signal: AbortSignal,
+    onLateAnswer?: (confirmed: boolean) => void,
+  ): Promise<boolean>
+  /** Says whether the saved-session confirmation is on; only a user setting can turn it off, and absent counts as `true`. */
+  savedSessionConfirmationEnabled?(): boolean
+  /**
+   * Shows the notice after the confirmation was declined, timed out, answered late or confirmed again.
+   * @returns `'review-again'` when the learner chose Review again.
+   */
+  noticeOperationsConfirmation?(
+    notice: OperationsConfirmationNotice,
+  ): Promise<'review-again' | undefined>
 }

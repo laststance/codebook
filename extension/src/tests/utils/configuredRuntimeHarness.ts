@@ -375,6 +375,8 @@ export async function configuredRuntimeHarness(
   const entryChecks: string[] = []
   // The text of each initial input the run sent to the page, in order.
   const insertedTexts: string[] = []
+  // The method of every `Input.*` CDP request the run sent to the page, in order (no parameters, so no typed value is kept).
+  const inputRequests: string[] = []
   let screenshotCount = 0
   // Ends a held insert of an initial input when the page's transport closes.
   let rejectHeldInsert = (_error: Error): void => {}
@@ -773,6 +775,7 @@ export async function configuredRuntimeHarness(
       },
       timeout?: number,
     ) {
+      if (method.startsWith('Input.')) inputRequests.push(method)
       if (method === 'Runtime.evaluate')
         evaluatedExpressions.push(parameters?.expression ?? '')
       // After the input, the after conditions answer the failure a test chose, and every read of them is counted.
@@ -1525,6 +1528,8 @@ export async function configuredRuntimeHarness(
     entryChecks,
     /** The text of each initial input the run sent to the page (`Input.insertText`), in order. */
     insertedTexts,
+    /** The method of every `Input.*` request the run sent to the page (`Input.insertText`, `Input.dispatchMouseEvent`, …), in order; the saved-session lanes assert that a refusal or a facts read sends none. */
+    inputRequests,
     /** How many screenshots the run asked the stand-in page for. */
     screenshotRequests: () => screenshotCount,
     /** The answers the run asked the stand-in server to judge the App way (`app.confirmAppEntry`), in order. */

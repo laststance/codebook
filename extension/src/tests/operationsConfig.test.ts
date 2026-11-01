@@ -290,3 +290,77 @@ test('a version 3 configuration refuses a server participant under vite-dev', ()
     true,
   )
 })
+
+// protects=a flow behind sign-in declares its own sign-in routes and a fresh-profile opt-out; fails_when=signInPaths or session: "fresh" is dropped or refused on a version 3 configuration; no_claim=a run uses them (run tests)
+test('a version 3 configuration accepts one to four sign-in paths and session fresh', () => {
+  // Arrange, Act
+  const issues = issuesOf((configuration) => {
+    configuration.signInPaths = [
+      '/login',
+      '/en/login',
+      '/auth/signin',
+      '/sign-in',
+    ]
+    configuration.session = 'fresh'
+  })
+  // Assert
+  assert.deepEqual(issues, [])
+})
+
+// protects=signInPaths holds 1 to 4 same-origin paths without a query; fails_when=an empty list, a fifth path, a query or a protocol-relative path is accepted; no_claim=none beyond protects
+test('a version 3 configuration refuses an empty, a fifth, a query and a non-path sign-in path', () => {
+  // Arrange
+  const refused: Array<[string, unknown, string]> = [
+    ['empty list', [], 'signInPaths'],
+    ['five paths', ['/a', '/b', '/c', '/d', '/e'], 'signInPaths'],
+    ['query', ['/login?next=1'], 'signInPaths.0'],
+    ['other origin', ['//evil.test/login'], 'signInPaths.0'],
+  ]
+  for (const [name, value, path] of refused) {
+    // Act
+    const issues = issuesOf((configuration) => {
+      configuration.signInPaths = value
+    })
+    // Assert
+    assert.ok(
+      issues.some((issue) => issue.startsWith(`${path}: `)),
+      `${name}: ${issues.join(' | ')}`,
+    )
+  }
+})
+
+// protects=session accepts only "fresh"; fails_when=another value is accepted; no_claim=none beyond protects
+test('a version 3 configuration refuses a session other than fresh', () => {
+  // Arrange, Act
+  const issues = issuesOf((configuration) => {
+    configuration.session = 'saved'
+  })
+  // Assert
+  assert.equal(issues.length, 1)
+  assert.ok(issues[0]!.startsWith('session: '))
+})
+
+// protects=a repeated sign-in path (after one trailing slash is removed) is named at its second index; fails_when=/login and /login/ are both accepted; no_claim=none beyond protects
+test('a version 3 configuration refuses a sign-in path declared twice and names the second', () => {
+  // Arrange, Act
+  const issues = issuesOf((configuration) => {
+    configuration.signInPaths = ['/login', '/login/']
+  })
+  // Assert
+  assert.deepEqual(issues, [
+    'signInPaths.1: Sign-in paths must be distinct; "/login/" is declared twice.',
+  ])
+})
+
+// protects=the entry page cannot be a sign-in path, or every run would answer SIGN_IN_REQUIRED on its first load; fails_when=an entryPath equal to a sign-in path (with a query or trailing slash) is accepted; no_claim=none beyond protects
+test('a version 3 configuration refuses an entry path that is a listed sign-in path', () => {
+  // Arrange, Act
+  const issues = issuesOf((configuration) => {
+    configuration.entryPath = '/login/?next=%2Fdashboard'
+    configuration.signInPaths = ['/dashboard', '/login']
+  })
+  // Assert
+  assert.deepEqual(issues, [
+    'signInPaths.1: The entry path is a sign-in path: the run would always answer SIGN_IN_REQUIRED. Leave signInPaths out to explain the sign-in page itself.',
+  ])
+})

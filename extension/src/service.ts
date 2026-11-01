@@ -65,6 +65,7 @@ import {
   NODE_SERVER_HISTORY_START_BOUND_MS,
 } from './constants'
 import {
+  BUSY_AWAITING_CONFIRMATION_RECOVERY,
   ERROR_RECOVERY,
   NodeLearningRevisionChangedError,
   SavedStudyStorageFullError,
@@ -5268,7 +5269,7 @@ export class StudyService {
         'BUSY',
         'The learner is being asked for a secret. Do not retry this request; wait, then read the run.',
         `Read ${this.uri(record.id)} for the run's progress; nothing was sent.`,
-        'Wait for the learner to answer the editor question, then read the run resource; send the next operation with a new key only when it is ready. Nothing was sent.',
+        BUSY_AWAITING_CONFIRMATION_RECOVERY,
         undefined,
         {
           reason: 'awaiting-confirmation',

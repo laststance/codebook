@@ -174,7 +174,7 @@ export const ERROR_RECOVERY = {
   DIALOG_UNDECLARED:
     'Declare dialog: accept or dismiss on the named click, then start one new run: the click opened a JavaScript dialog. Recovery: fix, then one new run. Side effects: the click was sent and its effect is unknown or confirmed; typed inputs stay typed. See codebook://help/chrome-extension#DIALOG_UNDECLARED.',
   OPERATIONS_NOT_CONFIRMED:
-    'Audience: learner. The learner declined, dismissed or did not answer the editor question that asks for a secret, so nothing was sent and the run stays ready. Tell the learner what the question was for and ask whether to try again; send the next operation with a new key only after they agree. Recovery: ask the learner, then retry once. Nothing was sent. See codebook://help/repository-browser#OPERATIONS_NOT_CONFIRMED.',
+    "Audience: learner. The learner did not confirm an editor question, so nothing was sent and the run stays ready. details.question secret: the box for a secret was dismissed, left empty or not answered; ask whether to try again and send the operation once more after they agree. details.question saved-session-operations: the dialog listing the operations of a run with the saved session was cancelled, closed or not answered in time; every later operation is refused at once until the learner chooses Review again in the editor's notification or the saved-session status item; read the run resource at most every 10 s for at most 5 minutes and send the next operation only when confirmation reads confirmed. Never ask the learner to confirm in the chat. Recovery: ask the learner. Nothing was sent. See codebook://help/repository-browser#OPERATIONS_NOT_CONFIRMED.",
   OPTION_NOT_AVAILABLE:
     'Audience: chat. The select has no enabled option with the declared value, so nothing was sent. Read the page (the run resource and the app source) for the option values the select really offers, fix operations[n].value, then start one new run. Recovery: fix the configuration, then one new run. Side effects: none. See codebook://help/repository-browser#OPTION_NOT_AVAILABLE.',
   INPUT_NOT_ACCEPTED:
@@ -195,10 +195,34 @@ export const ERROR_RECOVERY = {
     "Audience: chat. An operation failed in a way Codebook did not expect; the error carries a log id that matches one line in Output > Codebook. Tell the learner the log id, read the run's operation record to see how far the flow got, and start a new run only if the learner asks. Recovery: ask the learner. Side effects: unknown. See codebook://help/repository-browser#RUN_FAILED_UNEXPECTEDLY.",
   SECRET_BECAME_VISIBLE:
     'Audience: chat. Tell the learner the control that received a secret stopped being a password control, so Codebook stopped recording and kept no frame of it. Start one new run only if the learner asks. Recovery: new run, at most one. Side effects: the secret was typed. See codebook://help/repository-browser#SECRET_BECAME_VISIBLE.',
+  SIGN_IN_REQUIRED:
+    'Audience: learner. The page asked for sign-in: it landed on one of signInPaths, so the run stopped before any further operation. Tell the learner why, using details.reason: no-saved-session (no saved session for this repository), setup-not-finished (the last setup was closed without Done), redirected-to-sign-in (the saved session may have expired) or session-cookie-only (the app keeps its sign-in only while the browser stays open, which a saved session cannot keep). Ask the learner to run Codebook: Set Up Saved Session… (the editor shows the button). Then read codebook_status at most every 10 s for at most 5 minutes, and start one new run only when savedSession.state is saved with a newer setupAt. Never type a password to get past sign-in, and never resume the refused run. Recovery: the learner sets up the saved session, then one new run. See codebook://help/repository-browser#SIGN_IN_REQUIRED.',
+  SIGN_IN_IN_PROGRESS:
+    'Audience: learner. A saved-session setup for this repository is open in this or another window, so nothing started. Ask the learner to finish it with Done or close it with Close setup, then start one new run. Recovery: wait for the learner, then one new run. Nothing was started. See codebook://help/repository-browser#SIGN_IN_IN_PROGRESS.',
+  SIGN_IN_PROFILE_IN_USE:
+    'Audience: learner. The saved session is in use by a run in another window, or by a Chrome process Codebook cannot prove it started, so it cannot be set up or removed now. Ask the learner to stop that run or quit that Chrome, then try again; Codebook never unlocks it by force. Recovery: the learner frees it, then retry once. Nothing was changed. See codebook://help/repository-browser#SIGN_IN_PROFILE_IN_USE.',
+  SIGN_IN_PROFILE_UNUSABLE:
+    'Audience: learner. Codebook cannot use the saved session, for the reason in details.reason: unreadable-record, newer-record (written by a newer Codebook), not-a-session-folder, or chrome-version (this Chrome is older than the one that set it up). Nothing was removed. Ask the learner to run Codebook: Remove Saved Session… and then Codebook: Set Up Saved Session…; for chrome-version, update Chrome or set codebook.chromeExecutable to that Chrome. Recovery: the learner fixes it, then one new run. See codebook://help/repository-browser#SIGN_IN_PROFILE_UNUSABLE.',
+  SIGN_IN_ORIGIN_REFUSED:
+    'Audience: chat. The saved session is used only on the loopback origin of the development server Codebook starts (http://localhost:<port>), and this run would open another origin, so nothing started. Run the app on the port the configuration declares and keep its entry on that origin, or declare session: "fresh" for a run that needs no sign-in. Never use session: "fresh" to get around a sign-in refusal. Recovery: fix the origin, then one new run. Nothing was started. See codebook://help/repository-browser#SIGN_IN_ORIGIN_REFUSED.',
   PLAYBACK_PROFILE_UNSUPPORTED:
     'codebook_playback controls browser recordings only. Do not start, continue or stop a run to open a test replay; ask the learner to open it.',
 } as const
 export type ErrorCode = keyof typeof ERROR_RECOVERY
+
+/**
+ * The recovery of a `BUSY` refusal with reason `profile-in-use`: another run of this repository holds the saved session, so the new run did not start and no second browser opened.
+ * Set as the {@link StudyError.recoveryOverride} by the saved-session store's admission of a run; `details.heldBy` is `run` or `removal`.
+ */
+export const BUSY_PROFILE_IN_USE_RECOVERY =
+  'Another run of this repository uses the saved session, so this run did not start and no second browser opened. Do not retry this request: wait until the other run ended (read its run resource), then start one new run.'
+
+/**
+ * The recovery of a `BUSY` refusal with reason `awaiting-confirmation`: another key arrived while the learner is asked in the editor (the secret box, the saved-session operations dialog or its Review again dialog).
+ * Set as the {@link StudyError.recoveryOverride} by {@link StudyService.sendOperation}; `details.question` names the question.
+ */
+export const BUSY_AWAITING_CONFIRMATION_RECOVERY =
+  'Wait for the learner to answer the editor question, then read the run resource; send the next operation with a new key only when it is ready. Nothing was sent.'
 
 /**
  * The recovery of a node-test run that Vitest itself ended before its first stop (its listing of the cited file failed or timed out, or the test exited before its declared stop), in place of the general `RUNTIME_FAILED` recovery, which is worded for a browser click.
