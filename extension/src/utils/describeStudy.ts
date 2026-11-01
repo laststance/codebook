@@ -3,6 +3,7 @@ import {
   CONFIGURED_CAPTURE_PHASES,
   REPOSITORY_BROWSER_ACTION,
   REPOSITORY_BROWSER_PROFILE,
+  REPOSITORY_OPERATION_ACTION,
 } from '../constants'
 import type { RetainedStudySelection } from '../retainedStudySchemas'
 import type { RuntimeAction } from '../runtime'
@@ -43,12 +44,15 @@ export function describeStudy(input: DescriptorInput): StudyDescriptor {
         `repository/${input.configuration.book.bookId}/${input.configuration.book.nodeId}`)
       : input.itemId
   const descriptor = 'descriptor' in input ? input.descriptor : undefined
+  // Versions 2 and 3 name the first stop's participant.
   const participant =
-    configuration?.version === 2 ? configuration.participant : 'browser'
+    configuration && configuration.version !== 1
+      ? configuration.participant
+      : 'browser'
   const capturePhase =
     participant === 'server' ? 'paused-server' : 'paused-browser'
   const capturePhases: StudyDescriptor['capturePhases'] =
-    configuration?.version === 2
+    configuration && configuration.version !== 1
       ? [
           'before',
           ...new Set(
@@ -78,10 +82,15 @@ export function describeStudy(input: DescriptorInput): StudyDescriptor {
       },
     ],
     actions: [
-      {
-        id: REPOSITORY_BROWSER_ACTION,
-        title: configuration?.action.title ?? 'Repository browser action',
-      },
+      configuration?.version === 3
+        ? { id: REPOSITORY_OPERATION_ACTION, title: 'Send the next operation' }
+        : {
+            id: REPOSITORY_BROWSER_ACTION,
+            title:
+              (configuration && 'action' in configuration
+                ? configuration.action.title
+                : undefined) ?? 'Repository browser action',
+          },
     ],
     capturePhases,
     requiredLinks: [],

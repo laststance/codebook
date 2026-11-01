@@ -416,6 +416,7 @@ test('expired preparation rejects before book reads and input configuration chan
     return result
   }
   const definition = await prepareRepositoryStudy(configuration, books, control)
+  assert.ok('action' in definition.configuration)
   assert.equal(definition.configuration.action.title, 'Change theme')
   assert.equal(definition.configuration.source.column, 1)
 })

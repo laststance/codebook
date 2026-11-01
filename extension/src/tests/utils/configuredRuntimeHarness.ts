@@ -209,6 +209,9 @@ export async function configuredRuntimeHarness(
     configurationHash: reference.configurationHash,
     descriptor: reference.descriptor,
   })
+  // The harness builds versions 1 and 2 only; a version 3 case builds its own definition.
+  if (!('action' in definition.configuration))
+    throw new Error('The harness runs the single-action configurations.')
   const afterExpression = configuredDomExpression(
     definition.configuration.action.after,
   )

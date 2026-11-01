@@ -336,10 +336,9 @@ test('duplicate configured starts reserve one immutable intent before article I/
   release()
   await service.record(first).preparation
   assert.equal(runtimes.length, 1)
-  assert.equal(
-    runtimes[0]?.definition.configuration.action.title,
-    'Change theme',
-  )
+  const startedConfiguration = runtimes[0]?.definition.configuration
+  assert.ok(startedConfiguration && 'action' in startedConfiguration)
+  assert.equal(startedConfiguration.action.title, 'Change theme')
   assert.equal(
     service.state(service.record(first)).deadlineAt,
     new Date(service.record(first).createdAt + 600000).toISOString(),

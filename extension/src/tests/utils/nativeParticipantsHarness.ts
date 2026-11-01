@@ -257,6 +257,8 @@ export async function nativeParticipantsHarness(
   // The failure a participant's channel answers the run's next read of its earlier pauses with, once.
   let earlierPauseReadFailure:
     { participant: Participant; message: string } | undefined
+  if (!('action' in definition.configuration))
+    throw new Error('The harness runs the single-action configurations.')
   const afterExpression = configuredDomExpression(
     definition.configuration.action.after,
   )

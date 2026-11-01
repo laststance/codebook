@@ -173,6 +173,26 @@ export const ERROR_RECOVERY = {
     "Start one new run: the debugger could not attach to the extension surface. Recovery: new run, at most one. The run's browser was closed and its profile removed. See codebook://help/chrome-extension#SURFACE_NOT_ATTACHED.",
   DIALOG_UNDECLARED:
     'Declare dialog: accept or dismiss on the named click, then start one new run: the click opened a JavaScript dialog. Recovery: fix, then one new run. Side effects: the click was sent and its effect is unknown or confirmed; typed inputs stay typed. See codebook://help/chrome-extension#DIALOG_UNDECLARED.',
+  OPERATIONS_NOT_CONFIRMED:
+    'Audience: learner. The learner declined, dismissed or did not answer the editor question that asks for a secret, so nothing was sent and the run stays ready. Tell the learner what the question was for and ask whether to try again; send the next operation with a new key only after they agree. Recovery: ask the learner, then retry once. Nothing was sent. See codebook://help/repository-browser#OPERATIONS_NOT_CONFIRMED.',
+  OPTION_NOT_AVAILABLE:
+    'Audience: chat. The select has no enabled option with the declared value, so nothing was sent. Read the page (the run resource and the app source) for the option values the select really offers, fix operations[n].value, then start one new run. Recovery: fix the configuration, then one new run. Side effects: none. See codebook://help/repository-browser#OPTION_NOT_AVAILABLE.',
+  INPUT_NOT_ACCEPTED:
+    "Audience: chat. The control is not the unique visible enabled control the operation names, or it refused the value by the app's own rules (min, max, step, pattern) after it was set. Fix operations[n].selector or the declared value, then start one new run. If the run says the operation was sent, never repeat it automatically: changes the app made are not undone, so ask the learner. Recovery: fix the configuration, then one new run. See codebook://help/repository-browser#INPUT_NOT_ACCEPTED.",
+  CONTROL_KIND_NOT_SUPPORTED:
+    'Audience: chat. A send cannot drive this kind of control (a multiple select, a date or range input, a checkbox or radio given text, contenteditable). Use a click operation where the control takes a click (a checkbox, a radio, a custom select), or declare another control; then start one new run. Recovery: fix the configuration, then one new run. Side effects: none. See codebook://help/repository-browser#CONTROL_KIND_NOT_SUPPORTED.',
+  SECRET_INPUT_FROM_CHAT:
+    'Audience: chat. The control reads as a secret (a password, a one-time code, a card number), and a secret never comes from the chat. Declare the operation as { kind: "text", secret: "ask-learner" } without text: the learner types it in the editor. Then start one new run. Recovery: fix the configuration, then one new run. Side effects: none. See codebook://help/repository-browser#SECRET_INPUT_FROM_CHAT.',
+  SECRET_INPUT_VISIBLE:
+    'Audience: chat. The operation would put a secret where the browser draws it in plain text in recorded frames: a chosen option of a secret select, or secret: "ask-learner" into a control that is not an input of type password. Declare the secret operation on an input of type password, or drive the form another way; then start one new run. Recovery: fix the configuration, then one new run. Side effects: none. See codebook://help/repository-browser#SECRET_INPUT_VISIBLE.',
+  NAVIGATION_BEFORE_LAST_OPERATION:
+    'Audience: chat. The page loaded a new document before the last operation was sent, so the next operation would act on another page. Split the flow into two runs at that navigation (the first ends with the operation that navigates), or declare operations that stay on one document. Never repeat the operation that navigated unless the learner asks. Recovery: fix the configuration, then one new run. Side effects: unknown. See codebook://help/repository-browser#NAVIGATION_BEFORE_LAST_OPERATION.',
+  NAVIGATION_NOT_SETTLED:
+    "Audience: chat. The page did not finish loading and stay still for 500 ms within 10 s, so the next operation was not sent. Warm a slow route with the run's before conditions or split the flow into two runs, then start one new run. Recovery: fix the configuration, then one new run. Side effects: none. See codebook://help/repository-browser#NAVIGATION_NOT_SETTLED.",
+  OPERATION_AFTER_NOT_MET:
+    "Audience: chat. Operation <n> was sent, but its result could not be confirmed. Changes the app made are not undone. Read the run's operation record and save the partial replay if useful. Do not run the flow again unless the learner asks. See codebook://help/repository-browser#OPERATION_AFTER_NOT_MET.",
+  RUN_FAILED_UNEXPECTEDLY:
+    "Audience: chat. An operation failed in a way Codebook did not expect; the error carries a log id that matches one line in Output > Codebook. Tell the learner the log id, read the run's operation record to see how far the flow got, and start a new run only if the learner asks. Recovery: ask the learner. Side effects: unknown. See codebook://help/repository-browser#RUN_FAILED_UNEXPECTEDLY.",
   PLAYBACK_PROFILE_UNSUPPORTED:
     'codebook_playback controls browser recordings only. Do not start, continue or stop a run to open a test replay; ask the learner to open it.',
 } as const
@@ -195,6 +215,8 @@ export class StudyError extends Error {
     readonly recoveryOverride?: string,
     /** The failure this error words, kept as `cause` for code that reads it. */
     cause?: unknown,
+    /** Structured fields an agent decides a retry by (the run, the operation, whether it was sent, the retry rule, the log id); shown beside the code as `details`. */
+    readonly details?: Readonly<Record<string, unknown>>,
   ) {
     super(message, cause === undefined ? undefined : { cause })
   }
@@ -206,6 +228,7 @@ export class StudyError extends Error {
       cause: this.causeDetail,
       recovery: this.recoveryOverride ?? ERROR_RECOVERY[this.code],
       docs: 'codebook://help/errors',
+      ...(this.details ? { details: this.details } : {}),
     }
   }
 }

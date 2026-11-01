@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 
 import type { ChromeExtensionConfiguration } from './chromeExtensionConfigSchemas'
 import type { ChromeExtensionHistoryRecorder } from './chromeExtensionHistoryRecorder'
@@ -44,8 +44,10 @@ import {
   NODE_TEST_MINIMUM_EXTENSION_VERSION,
   NODE_TEST_PROFILE,
   RECORDING_REASON_LIMIT_CHARS,
+  OPERATIONS_CONFIG_VERSION,
   REPOSITORY_BROWSER_ACTION,
   REPOSITORY_BROWSER_PROFILE,
+  REPOSITORY_OPERATION_ACTION,
   REPOSITORY_CONFIG_LIMIT_BYTES,
   REPOSITORY_INSPECTION_LIMIT,
   REPOSITORY_PAUSE_HOLD_TIMEOUT_MS,
@@ -63,6 +65,7 @@ import {
   NODE_SERVER_HISTORY_START_BOUND_MS,
 } from './constants'
 import {
+  ERROR_RECOVERY,
   NodeLearningRevisionChangedError,
   SavedStudyStorageFullError,
   StudyError,
@@ -108,6 +111,7 @@ import type {
   ChromeExtensionView,
   NodeServerRuntime,
   NodeTestRuntime,
+  OperationFailure,
   RuntimeSnapshot,
   RuntimeView,
   StudyEnvironment,
@@ -147,6 +151,7 @@ import {
   type NodeServerOutputLine,
 } from './utils/describeNodeServerOutputLine'
 import { describeNodeTestResult } from './utils/describeNodeTestResult'
+import { describeOperationFailureDetails } from './utils/describeOperationFailureDetails'
 import {
   explanationPlace,
   type ExplanationPlace,
@@ -403,9 +408,22 @@ interface StudyRecordState {
   releaseError?: unknown
   action?: {
     signature: string
-    receipt: { operationId: string; runUri: string; key: string }
+    /** `operationIndex` and `accepted` are the acceptance receipt of a version 3 operation (1-based index). */
+    receipt: {
+      operationId: string
+      runUri: string
+      key: string
+      operationIndex?: number
+      accepted?: true
+    }
   }
   actions: Map<string, NonNullable<StudyRecord['action']>>
+  /** The learner question a version 3 operation is waiting on (a `secret: "ask-learner"` operation): a repeat of its key joins it, any other key answers `BUSY`. */
+  operationAsk?: {
+    key: string
+    signature: string
+    result: Promise<NonNullable<StudyRecord['action']>['receipt']>
+  }
   explanations: Map<string, Explanation>
   explanationKeys: Map<
     string,
@@ -1037,6 +1055,7 @@ export class StudyService {
       capabilities: [
         'start',
         REPOSITORY_BROWSER_ACTION,
+        REPOSITORY_OPERATION_ACTION,
         NODE_SERVER_ACTION,
         EXTENSION_CLICK_ACTION,
         'pause-evidence',
@@ -1736,14 +1755,19 @@ export class StudyService {
     )
   }
 
-  /** Admits the next fixed action while replaying every original receipt across later steps and cleanup. @example service.action({...run, key:'operation', action:'repository-click'}) */
-  action(input: ActionInput) {
+  /**
+   * Admits the next fixed action while replaying every original receipt across later steps and cleanup.
+   * @param options - `learnerSecret`: the value the learner typed for an ask-learner operation, which {@link StudyService.sendOperation} asked for before this call.
+   * @example service.action({...run, key:'operation', action:'repository-click'})
+   */
+  action(input: ActionInput, options?: { learnerSecret?: string }) {
     this.assertMutable(input.instanceId)
     const record = this.record(input)
     const signature = JSON.stringify([input.key, input.action])
     const replayed = this.replayedAction(record, input.key, signature)
     if (replayed) return replayed
     this.presentationController?.assertPresentationIdle()
+    this.assertOperationActionable(record, input)
     if (
       !record.prepared ||
       record.stopping ||
@@ -1761,12 +1785,20 @@ export class StudyService {
     if (nextAction !== input.action)
       throw new StudyError(
         'BUSY',
-        `Expected ${nextAction ?? 'no further action'}, received ${input.action}.`,
+        `Expected ${nextAction ?? 'no further action'}, received ${input.action}. Do not retry this request; send the expected action.`,
         `Read ${this.uri(record.id)} for current nextActions; nothing was dispatched.`,
+        `Do not retry this request. ${nextAction ? `Send the expected action ${nextAction} with a new key.` : 'The run offers no further action.'} Nothing was sent.`,
+        undefined,
+        {
+          reason: 'action-mismatch',
+          expected: nextAction ?? null,
+          sent: 'not-sent',
+          runUri: this.uri(record.id),
+        },
       )
     let operation: ReturnType<StudyRuntime['action']>
     try {
-      operation = record.runtime.action(input.key, input.action)
+      operation = record.runtime.action(input.key, input.action, options)
     } catch (error) {
       throw new StudyError(
         String(error).includes('conflict:') ? 'BUSY' : 'RUNTIME_FAILED',
@@ -1778,6 +1810,13 @@ export class StudyService {
       operationId: operation.id,
       key: input.key,
       runUri: this.uri(record.id),
+      // A version 3 operation answers an acceptance receipt: the input is sent in the background, its progress is in the run resource.
+      ...(operation.operationIndex === undefined
+        ? {}
+        : {
+            operationIndex: operation.operationIndex,
+            accepted: true as const,
+          }),
     }
     record.action = { signature, receipt }
     record.actions.set(input.key, record.action)
@@ -3220,8 +3259,27 @@ export class StudyService {
    * this.runtimeFailureError('VITE_PAGE_RELOADED: The page reloaded …').code // => 'VITE_PAGE_RELOADED'
    * this.runtimeFailureError('NEXT_SETUP_DEADLINE(router-absent): Repository setup deadline (90 s) exceeded …').describe().recovery // => 'Tell the learner the page at entryPath is not a Next Pages page: …'
    */
-  private runtimeFailureError(runtimeFailure: string): StudyError {
+  private runtimeFailureError(
+    runtimeFailure: string,
+    operationFailure?: OperationFailure,
+    runUri?: string,
+  ): StudyError {
     const refusal = refusalFailureOf(runtimeFailure)
+    // An operation's refusal carries the fields that decide a retry (DX-5), and its static recovery names the operation (OPERATION_AFTER_NOT_MET).
+    if (refusal && operationFailure && operationFailure.code === refusal.code)
+      return new StudyError(
+        refusal.code,
+        refusal.message,
+        refusal.message,
+        refusal.code === 'OPERATION_AFTER_NOT_MET'
+          ? ERROR_RECOVERY.OPERATION_AFTER_NOT_MET.replace(
+              '<n>',
+              String(operationFailure.operationIndex),
+            )
+          : refusal.recoveryOverride,
+        undefined,
+        describeOperationFailureDetails(operationFailure, runUri),
+      )
     if (refusal)
       return new StudyError(
         refusal.code,
@@ -3521,7 +3579,10 @@ export class StudyService {
       nextActions,
       participants,
       operation: record.action?.receipt,
-      operations: [...record.actions.values()].map((action) => action.receipt),
+      // A version 3 run lists each declared operation's progress; the other runs list the receipts of their actions.
+      operations:
+        runtime?.operations ??
+        [...record.actions.values()].map((action) => action.receipt),
       observed: runtime?.observed,
       links: runtime?.links,
       nodeTest:
@@ -3630,7 +3691,11 @@ export class StudyService {
       error:
         record.error?.describe() ??
         (runtimeFailure
-          ? this.runtimeFailureError(runtimeFailure).describe()
+          ? this.runtimeFailureError(
+              runtimeFailure,
+              runtime?.operationFailure,
+              this.uri(record.id),
+            ).describe()
           : undefined),
       cleanupError: record.cleanupError?.describe(),
       cleaned: record.stopped,
@@ -4519,6 +4584,9 @@ export class StudyService {
             deadlineAt: record.deadlineAt,
             preparationDeadlineAt:
               record.createdAt + REPOSITORY_SETUP_TIMEOUT_MS,
+            // A version 3 run names its operations by the service's run id in its log lines and failure fields.
+            runId: record.id,
+            outputLog: (line) => this.outputLog?.(line),
           },
         )
         const acquired = record.runtime.view()
@@ -5047,9 +5115,186 @@ export class StudyService {
     const record = this.record(input)
     if (isChromeExtensionRecord(record))
       return this.clickExtension(record, input)
-    return isNodeServerRecord(record)
-      ? this.requestNodeServer(record, input)
+    if (isNodeServerRecord(record)) return this.requestNodeServer(record, input)
+    return input.action === REPOSITORY_OPERATION_ACTION
+      ? this.sendOperation(record, input)
       : this.action(input)
+  }
+
+  /**
+   * Admits the next declared operation of a version 3 run, first asking the learner for the secret of an ask-learner operation in the editor's password box (DX-3).
+   * The answer is passed to the run, which types it into the page and keeps it in memory only; it never reaches a receipt, a resource, the journal or a log.
+   * @param record - The run.
+   * @param input - The action as the tool received it.
+   * @returns The acceptance receipt `{ operationId, key, runUri, operationIndex, accepted }`; the original receipt for a repeat of the same key and action, also while the learner is being asked.
+   * @throws `IDEMPOTENCY_CONFLICT` for a key that names another action; `BUSY` with reason `awaiting-confirmation` for another key while the learner is asked; `PREREQUISITE_MISSING` when the editor has no input box; `OPERATIONS_NOT_CONFIRMED` when the learner dismissed the box, left it empty or did not answer within {@link StudyService.confirmationTimeoutMs} (the run stays `ready` and the key is not consumed); what {@link StudyService.action} throws.
+   * @example await this.sendOperation(record, { ...run, key: 'op-1', action: 'repository-operation' })
+   */
+  private async sendOperation(record: StudyRecord, input: ActionInput) {
+    const signature = JSON.stringify([input.key, input.action])
+    const replayed = this.replayedAction(record, input.key, signature)
+    if (replayed) return replayed
+    const asking = record.operationAsk
+    if (asking) {
+      // A repeat of the key being asked joins that question instead of asking twice.
+      if (asking.key === input.key && asking.signature === signature)
+        return asking.result
+      throw new StudyError(
+        'BUSY',
+        'The learner is being asked for a secret. Do not retry this request; wait, then read the run.',
+        `Read ${this.uri(record.id)} for the run's progress; nothing was sent.`,
+        'Wait for the learner to answer the editor question, then read the run resource; send the next operation with a new key only when it is ready. Nothing was sent.',
+        undefined,
+        {
+          reason: 'awaiting-confirmation',
+          sent: 'not-sent',
+          runUri: this.uri(record.id),
+        },
+      )
+    }
+    const next = this.nextAskLearnerOperation(record)
+    if (!next) return this.action(input)
+    this.presentationController?.assertPresentationIdle()
+    // The refusals that need no learner come first, so the learner is asked only for an operation the run would accept.
+    this.assertOperationActionable(record, input)
+    const ask = this.environment.askLearnerSecret
+    if (!ask)
+      throw new StudyError(
+        'PREREQUISITE_MISSING',
+        'This editor cannot ask the learner for a secret, so Codebook types none into the page here.',
+        undefined,
+        undefined,
+        undefined,
+        { sent: 'not-sent', runUri: this.uri(record.id) },
+      )
+    const result = (async () => {
+      const signal = AbortSignal.any([
+        AbortSignal.timeout(this.confirmationTimeoutMs),
+        record.cancellation.signal,
+      ])
+      const secret = await ask
+        .call(
+          this.environment,
+          {
+            runId: record.id,
+            repository: basename(this.environment.workspace),
+            title: next.title,
+          },
+          signal,
+        )
+        .catch(() => undefined)
+      // An empty answer types nothing into the control, so it counts as no answer.
+      if (secret === undefined || secret === '')
+        throw new StudyError(
+          'OPERATIONS_NOT_CONFIRMED',
+          `The learner did not provide the secret for operation ${next.index} (${next.title}), so nothing was sent. The run stays ready.`,
+          undefined,
+          undefined,
+          undefined,
+          {
+            operationIndex: next.index,
+            path: `operations[${next.index - 1}].secret`,
+            sent: 'not-sent',
+            sideEffects: 'none',
+            retry:
+              'Ask the learner whether to try again; the key was not used.',
+            runUri: this.uri(record.id),
+            logId: `${record.id}#${next.index}`,
+          },
+        )
+      return this.action(input, { learnerSecret: secret })
+    })()
+    record.operationAsk = { key: input.key, signature, result }
+    try {
+      return await result
+    } finally {
+      if (record.operationAsk?.result === result)
+        record.operationAsk = undefined
+    }
+  }
+
+  /**
+   * Finds the next operation of a version 3 run when it is an ask-learner `text` operation the run is ready to take.
+   * @param record - The run.
+   * @returns The operation's 1-based index and title; `undefined` for any other run, a run that is not `ready`, or an operation that declares its text.
+   * @example this.nextAskLearnerOperation(record) // => { index: 2, title: 'Password' }
+   */
+  private nextAskLearnerOperation(
+    record: StudyRecord,
+  ): { index: number; title: string } | undefined {
+    const configuration = record.definition?.configuration
+    const view = record.runtime?.view()
+    if (
+      configuration?.version !== OPERATIONS_CONFIG_VERSION ||
+      view?.status !== 'ready' ||
+      view.nextAction !== REPOSITORY_OPERATION_ACTION
+    )
+      return undefined
+    const index =
+      (view.operations ?? []).filter((entry) => entry.state !== 'not-run')
+        .length + 1
+    const operation = configuration.operations[index - 1]
+    return operation?.kind === 'text' && operation.secret
+      ? { index, title: operation.title }
+      : undefined
+  }
+
+  /**
+   * Refuses an operation the run cannot take now, with the code of the extension's clicks (`RUN_PAUSED`, `NO_MORE_ACTIONS`, `ACTION_IN_PROGRESS`), before the generic not-ready refusal; only for `repository-operation` sent to a version 3 run.
+   * @param record - The run.
+   * @param input - The action as the tool received it.
+   * @throws `RUN_PAUSED` while a stop is paused, `NO_MORE_ACTIONS` once every declared operation was taken, `ACTION_IN_PROGRESS` while an operation is being sent.
+   * @example this.assertOperationActionable(record, { ...run, key: 'op-2', action: 'repository-operation' })
+   */
+  private assertOperationActionable(
+    record: StudyRecord,
+    input: ActionInput,
+  ): void {
+    const view = record.runtime?.view()
+    if (
+      input.action !== REPOSITORY_OPERATION_ACTION ||
+      !view?.operations ||
+      !record.prepared ||
+      record.stopping ||
+      record.stopped ||
+      record.error ||
+      view.status === 'failed' ||
+      view.status === 'ready'
+    )
+      return
+    const taken = view.operations.filter((entry) => entry.state !== 'not-run')
+    const details = {
+      sent: 'not-sent',
+      sideEffects: 'none',
+      runUri: this.uri(record.id),
+    } as const
+    if (view.status === 'paused-browser' || view.status === 'paused-server')
+      throw new StudyError(
+        'RUN_PAUSED',
+        "A stop is paused. Continue it with the run resource's continueArguments, then send the next operation with a new key.",
+        undefined,
+        "Continue the paused stop with the run resource's continueArguments, then send the next operation with a new key. Nothing was sent.",
+        undefined,
+        { ...details, operationIndex: taken.length },
+      )
+    if (taken.length >= view.operations.length)
+      throw new StudyError(
+        'NO_MORE_ACTIONS',
+        'Every declared operation was sent. Read the run resource for the result.',
+        undefined,
+        'Read the run resource for the observed result: every declared operation was sent. Nothing was sent.',
+        undefined,
+        { ...details, operationIndex: taken.length },
+      )
+    if (view.status === 'acting' || view.status === 'resuming')
+      throw new StudyError(
+        'ACTION_IN_PROGRESS',
+        `Operation ${taken.length} is being sent. Read the run resource until it is ready, then send the next operation with a new key.`,
+        undefined,
+        'Wait for the operation in progress by reading the run resource, then send the next operation with a new key. Nothing was sent.',
+        undefined,
+        { ...details, operationIndex: taken.length },
+      )
   }
 
   /**
@@ -5637,6 +5882,25 @@ export class StudyService {
       failure: this.sanitizedError(error).describe(),
       state: this.state(record),
     }
+  }
+
+  /**
+   * Gives a tool call that failed on a repository-browser run that has already failed its error with the run's partial state beside it (DX-2); read by the protocol for `codebook_action`.
+   * Why: an action sent to a run that ended in a failure answers a plain refusal otherwise, and the agent loses where the run stood.
+   * @param error - What the call threw.
+   * @param input - The run named by the call.
+   * @returns The described error and the run's state when the run is a repository-browser run whose state is `failed`; `undefined` otherwise, which the caller answers as a plain error.
+   * @example service.failedBrowserRunState(error, run)?.state.state // => 'failed'
+   */
+  failedBrowserRunState(error: unknown, input: RunInput) {
+    if (!(error instanceof StudyError)) return undefined
+    const record = this.records.get(input.runId)
+    if (!record || record.profile !== REPOSITORY_BROWSER_PROFILE)
+      return undefined
+    const state = this.state(record)
+    return state.state === 'failed' && state.error
+      ? { failure: state.error, state }
+      : undefined
   }
 
   /**
