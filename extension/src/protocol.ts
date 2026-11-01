@@ -715,7 +715,7 @@ export function createProtocol(service: StudyService): McpServer {
     [
       'snapshot-image',
       'codebook://{instance}/runs/{run}/snapshots/{snapshot}/image',
-      "An observation's imageUri: the confirmed PNG of the application at that stop; unavailable is explicit.",
+      "An observation's imageUri: the confirmed PNG of the application at that stop; unavailable is explicit. An image withheld for a secret (withheldReason, imageWithheldReason) has none.",
     ],
     [
       'source',
@@ -725,7 +725,7 @@ export function createProtocol(service: StudyService): McpServer {
     [
       'image',
       'codebook://{instance}/runs/{run}/images/{phase}',
-      'Confirmed PNG for a phase returned by this profile/run. Each observation keeps its original phase; unavailable is explicit.',
+      'Confirmed PNG for a phase returned by this profile/run. Each observation keeps its original phase; unavailable is explicit. An image withheld for a secret (withheldReason, imageWithheldReason) has none.',
     ],
     [
       'explanation',

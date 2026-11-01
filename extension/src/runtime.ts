@@ -58,6 +58,7 @@ import type {
   SavedSessionStatus,
   SignInRequiredReason,
 } from './runtimeSupport/savedSessionTypes'
+import type { SecretFrameWithholdReason } from './runtimeSupport/secretFrameGate'
 import type { StateChangingRequestQuestion } from './utils/askToSendStateChangingRequest'
 import type {
   RetryVitestListingRelease,
@@ -456,13 +457,18 @@ export type ConfiguredRuntimeView = {
   captures: Record<
     string,
     {
-      status: 'pending' | 'captured' | 'failed'
+      status: 'pending' | 'captured' | 'failed' | 'withheld'
       file?: string
+      /** The failure; for `withheld` the sentence naming why the image was withheld. */
       error?: string
+      /** Set only for `withheld`: why the secret frame gate withheld the image. */
+      withheldReason?: SecretFrameWithholdReason
       renderer?: { epoch: string; id: number; hash: string }
     }
   >
   snapshotCaptures?: Record<string, ConfiguredRuntimeView['captures'][string]>
+  /** Images the secret frame gate withheld in this run, by reason; present only when one count is above 0. */
+  withheldImages?: { crossOriginFrame: number; secretNotVerified: number }
   failures: string[]
   events: RecordedEvent[]
   artifactDirectory: string

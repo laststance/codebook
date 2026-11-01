@@ -3392,7 +3392,7 @@ export class StudyWorkspace {
    * Says whether a paused participant's pause is not yet inspected and committed; asked by {@link lacksInspectedPause} for every paused participant.
    * @param participant - A participant whose phase is `paused`.
    * @param view - The run's view.
-   * @returns `true` when the participant has no snapshot, its snapshot is of another pause, or the snapshot's phase is not captured.
+   * @returns `true` when the participant has no snapshot, its snapshot is of another pause, or the snapshot's phase is neither captured nor withheld (a withheld image still counts as inspected).
    * @example paused.some((participant) => this.isPauseUninspected(participant, view))
    */
   private isPauseUninspected(
@@ -3403,7 +3403,10 @@ export class StudyWorkspace {
     return (
       !snapshot ||
       this.isSnapshotOfOtherPause(snapshot.pause, participant.pause) ||
-      view.captures[snapshot.capturePhase]?.status !== 'captured'
+      // A withheld image is inspected: the pause is real and its Application view shows the live page.
+      !['captured', 'withheld'].includes(
+        view.captures[snapshot.capturePhase]?.status ?? '',
+      )
     )
   }
 

@@ -21,6 +21,7 @@ async function pausedSecretRun(
     secret: SECRET,
     value: SECRET,
   },
+  withCrossOriginFrame = false,
 ) {
   let service: StudyService | undefined, books: RepositoryBookStore | undefined
   context.after(async () => {
@@ -29,6 +30,7 @@ async function pausedSecretRun(
   })
   const harness = await configuredRuntimeHarness(context, undefined, [], {
     capturedValue: captured.value,
+    consultSecretFrameGate: withCrossOriginFrame,
     operations: {
       operations: [
         {
@@ -94,6 +96,8 @@ async function pausedSecretRun(
   })
   const record = service.record(receipt)
   await record.preparation
+  // A frame from another origin is on screen when the secret is typed: the stop's image is withheld.
+  if (withCrossOriginFrame) harness.setCrossOriginFrameDrawn(true)
   service.action(
     { ...receipt, key: 'one', action: 'repository-operation' },
     { learnerSecret: captured.secret },
@@ -166,4 +170,38 @@ test('a secret the app parsed into a boolean is masked in the saved study', asyn
   const saved = JSON.stringify(archive)
   assert.match(saved, /"value:nextTheme":"\[masked\]"/)
   assert.equal(/"value:nextTheme":true/.test(saved), false)
+})
+
+// protects=saving a partial run with a withheld image succeeds and keeps the reason, and the chat sees why the image is missing; fails_when=save throws on the new status, stores a generic 'No confirmed image' reason, or the run resource hides withheldReason; no_claim=the gate itself (the controlled runtime reports the withheld image)
+test('a saved study keeps a withheld stop image as absent with its reason, and the run resource names the withheld image', async (context) => {
+  // Arrange
+  const { service, record, library } = await pausedSecretRun(
+    context,
+    undefined,
+    true,
+  )
+  const sentence =
+    'An image was withheld while a frame from another origin, whose content Codebook cannot read, was on screen after a secret was typed.'
+  // Act
+  const archive = await captureStudy(service, record, library.workspaceKey)
+  const state = service.state(record)
+  // Assert
+  assert.ok(archive)
+  const saved = archive.captures.find(
+    (capture) => capture.phase === 'paused-browser',
+  )
+  assert.equal(saved?.status, 'absent')
+  assert.equal(saved?.reason, sentence)
+  const projected = state.captures.find(
+    (capture) => capture.phase === 'paused-browser',
+  )
+  assert.equal(projected?.status, 'withheld')
+  assert.equal(projected?.withheldReason, 'cross-origin-frame')
+  assert.equal(projected?.uri, undefined)
+  assert.equal(state.observations[0]?.imageWithheldReason, 'cross-origin-frame')
+  assert.equal(state.observations[0]?.imageUri, undefined)
+  assert.deepEqual(JSON.parse(JSON.stringify(state.withheldImages)), {
+    crossOriginFrame: 1,
+    secretNotVerified: 0,
+  })
 })

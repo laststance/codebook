@@ -618,6 +618,11 @@ export async function readResource(
       (value) => `images/${value}` === suffix,
     )
     const capture = phase && record.runtime?.view().captures[phase]
+    if (capture && capture.status === 'withheld')
+      throw new StudyError(
+        'EVIDENCE_UNAVAILABLE',
+        capture.error ?? 'The image was withheld.',
+      )
     if (
       !phase ||
       !record.runtime ||
@@ -645,6 +650,11 @@ export async function readResource(
       service.uri(record.id, imageMatch[1]),
     )
     const capture = record.runtime?.view().snapshotCaptures?.[snapshot.id]
+    if (capture?.status === 'withheld')
+      throw new StudyError(
+        'EVIDENCE_UNAVAILABLE',
+        capture.error ?? 'The image was withheld.',
+      )
     if (
       !record.runtime ||
       capture?.status !== 'captured' ||

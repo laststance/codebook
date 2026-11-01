@@ -116,8 +116,12 @@ import type {
   SavedSessionRunPort,
   SignInRequiredReason,
 } from './runtimeSupport/savedSessionTypes'
-import { SecretFrameGate } from './runtimeSupport/secretFrameGate'
+import {
+  SecretFrameGate,
+  WITHHOLD_REASON_OF_VERDICT,
+} from './runtimeSupport/secretFrameGate'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
+import { describeWithheldImage } from './runtimeSupport/utils/describeWithheldImage'
 import { isStopCausedByCodebook } from './runtimeSupport/utils/isStopCausedByCodebook'
 import { settleCleanup } from './runtimeSupport/utils/settleCleanup'
 import { sha256 } from './runtimeSupport/utils/sha256'
@@ -8218,15 +8222,24 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       const bytes = Buffer.from(result.data, 'base64'),
         hash = sha256(bytes)
       // A stop screenshot keeps no pixel from a window the secret gate cannot call safe; it reaches the recorder in order with the stream frames.
-      if (
-        (await this.browser.recordCapture(
-          result.data,
-          phase,
-          requestedAtMs,
-        )) === 'drop'
+      const verdict = await this.browser.recordCapture(
+        result.data,
+        phase,
+        requestedAtMs,
       )
-        throw new Error('Image withheld: a secret control was not safe to draw')
+      // A gate failure already failed the run through onFailure, so current() throws before a withheld image is read.
       current()
+      if (verdict !== 'pass') {
+        // A withheld image keeps the stop (source, values, continuation) and leaves the recording a gap; the run goes on and ends partial.
+        const reason = WITHHOLD_REASON_OF_VERDICT[verdict]
+        this.captures[phase] = {
+          status: 'withheld',
+          withheldReason: reason,
+          error: describeWithheldImage(reason),
+        }
+        this.evidence.record('capture.withheld', { phase, pause, reason })
+        return
+      }
       // Receipt-time pixels went to the recording before disk/renderer waits; only the later exact-pause receipt confirms correspondence.
       this.evidence.record('capture.response-received', { phase, pause, hash })
       const file = pause ? `${phase}-${pause.generation}.png` : `${phase}.png`
@@ -8353,6 +8366,32 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         : javascript,
     }
   }
+  /**
+   * Says whether every image the run owes was captured: each phase's, and each committed stop's.
+   * An earlier stop's image counts too, so a withheld one is never hidden by a later captured stop of the same phase.
+   * @param phases - The capture phases the run's stops declare.
+   * @returns `complete` only when every phase capture and every snapshot capture is `captured`; `incomplete` otherwise.
+   * @example this.captureOutcomeOf(['before', 'paused-browser', 'after']) // => 'incomplete' after a withheld stop image
+   */
+  private captureOutcomeOf(phases: string[]): 'complete' | 'incomplete' {
+    const allCaptured =
+      phases.every((phase) => this.captures[phase]?.status === 'captured') &&
+      Object.values(this.snapshotCaptures).every(
+        (capture) => capture.status === 'captured',
+      )
+    return allCaptured ? 'complete' : 'incomplete'
+  }
+  /**
+   * The run resource's count of images the secret frame gate withheld, left out when none was.
+   * @returns `{ withheldImages }` or an empty object.
+   * @example this.withheldImagesView() // => { withheldImages: { crossOriginFrame: 2, secretNotVerified: 0 } }
+   */
+  private withheldImagesView(): Pick<ConfiguredRuntimeView, 'withheldImages'> {
+    const withheld = this.secretFrameGate.withheld
+    return withheld.crossOriginFrame + withheld.secretNotVerified > 0
+      ? { withheldImages: { ...withheld } }
+      : {}
+  }
   /** Exposes bounded descriptors and immutable references; service signatures never serialize full modules or maps. @example run.view().participants.browser.pause */
   view(): ConfiguredRuntimeView {
     const runtimeOutcome =
@@ -8368,11 +8407,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       ),
       'after',
     ]
-    const captureOutcome = phases.every(
-      (phase) => this.captures[phase]?.status === 'captured',
-    )
-      ? 'complete'
-      : 'incomplete'
+    const captureOutcome = this.captureOutcomeOf(phases)
     return {
       runId: this.id,
       profile: REPOSITORY_BROWSER_PROFILE,
@@ -8420,6 +8455,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       links: [],
       captures: this.captures,
       snapshotCaptures: { ...this.snapshotCaptures },
+      ...this.withheldImagesView(),
       failures: this.failures.map(this.maskRunText),
       events: this.evidence.events,
       artifactDirectory: this.evidence.directory,

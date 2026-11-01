@@ -3050,6 +3050,48 @@ test('a frame inside an unsafe interval is still declared a gap when the history
   assert.deepEqual(calls, ['gap', 'closed'])
 })
 
+// protects=the replay tells the learner why the interval is missing; fails_when=the frame is stored, or the gap reuses the unsafe-control sentence (it would tell the learner the password control showed the secret); no_claim=a real browser (fake page)
+test('a stream frame withheld for a frame from another origin becomes a recording gap that names that cause', async () => {
+  // Arrange
+  const stored: string[] = []
+  const gaps: string[] = []
+  const frameAtMs = Date.now()
+  const gate = new SecretFrameGate({
+    evaluate: async (expression) => {
+      if (expression === 'performance.timeOrigin') return 1
+      if (expression.startsWith('window['))
+        return {
+          now: Date.now(),
+          open: null,
+          unsafe: [],
+          crossOriginOpen: frameAtMs - 100,
+          crossOrigin: [],
+        }
+      return { ok: true, origin: 1 }
+    },
+  })
+  await gate.arm('#password', 'typed-secret')
+  const { harness, sendFrame } = await attachedStreamViewport({
+    elapsedMs: () => 10,
+    frame: () => stored.push('frame'),
+    gap: (gap) => gaps.push(gap.reason),
+    closed() {},
+  })
+  harness.viewport.setSecretFrameGate(gate)
+  // Act
+  sendFrame(frameAtMs / 1000)
+  await waitUntil(
+    () => gaps.length + stored.length > 0,
+    'the verdict of the frame',
+  )
+  harness.viewport.close()
+  // Assert
+  assert.deepEqual(stored, [])
+  assert.deepEqual(gaps, [
+    'An image was withheld while a frame from another origin, whose content Codebook cannot read, was on screen after a secret was typed.',
+  ])
+})
+
 // protects=a stop capture and the stream frames reach the recorder in the order they arrived, so the receipt clock never moves backwards; fails_when=a capture skips the frames waiting on the gate; no_claim=real screencast timing
 test('with a gate, a capture that arrives after a stream frame is recorded after it', async () => {
   // Arrange

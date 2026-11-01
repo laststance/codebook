@@ -162,6 +162,22 @@ test('the frames help says a secret shorter than 4 characters never reaches the 
   assert.equal(frames.includes('the run itself goes on'), false)
 })
 
+// protects=the chat learns the new behaviour and its reason code; fails_when=the help still lists cross-origin frames as unchecked, or omits withheld or cross-origin-frame; no_claim=the behaviour itself
+test('the frames help tells a chat that a frame from another origin withholds images without failing the run', async (context) => {
+  // Arrange
+  const help = await readHelp(context)
+  // Act
+  const frames = String(help.operationsSecrets.frames)
+  // Assert
+  assert.ok(frames.includes('cross-origin-frame'))
+  assert.ok(frames.includes('withheld'))
+  assert.ok(frames.includes('withheldImages'))
+  assert.equal(
+    frames.includes('closed shadow roots and cross-origin frames'),
+    false,
+  )
+})
+
 // protects=every code version 3 adds has an anchored row with the audience and recovery of the error itself; fails_when=a code lacks a row or an audience, or the help's recovery drifts from ERROR_RECOVERY; no_claim=the wording of a recovery
 test('the Error codes table has one anchored row per version 3 code with the audience and recovery of the error', async (context) => {
   // Arrange

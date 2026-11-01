@@ -22,6 +22,12 @@ import type {
 import type { RuntimeControl } from '../../runtime'
 import type { ViewportRecordingObserver } from '../../runtimeSupport/browserViewport'
 import type { ProfileLeft } from '../../runtimeSupport/hostBrowser'
+import {
+  WITHHOLD_REASON_OF_VERDICT,
+  type SecretFrameGate,
+  type SecretFrameVerdict,
+} from '../../runtimeSupport/secretFrameGate'
+import { describeWithheldImage } from '../../runtimeSupport/utils/describeWithheldImage'
 import { sha256 } from '../../runtimeSupport/utils/sha256'
 import { WaitTimeoutError } from '../../runtimeSupport/utils/waitTimeoutError'
 import { waitUntil } from '../../runtimeSupport/utils/waitUntil'
@@ -167,6 +173,8 @@ export async function configuredRuntimeHarness(
     holdInputInsert?: boolean
     /** Makes the stand-in browser's end of the recording history wait until {@link releaseRecordingHistoryEnd} is called, as a drain of queued image verdicts that takes its whole bound. */
     holdRecordingHistoryEnd?: boolean
+    /** Makes the stand-in browser's `recordCapture` ask the run's secret frame gate for its verdict, as the real browser does; a withheld image becomes a recording gap. Without it the stand-in keeps every image ('pass'). */
+    consultSecretFrameGate?: boolean
     /** Makes the stand-in server's readiness check (`ready` and `readyEntry`) reject with this message, as a server that exits before it listens does. */
     launchFailure?: string
     /** Makes the stand-in server's structured entry check (`readyEntry`) never answer until the run is cancelled, as a first compile that is still running does. */
@@ -441,6 +449,11 @@ export async function configuredRuntimeHarness(
   let hideViewportAtPause = false,
     viewportReady = true
   let secretVisibleSince: number | null = null
+  /** The stand-in page's record of a drawn frame from another origin: when it appeared (page clock) and the closed intervals. */
+  let crossOriginDrawnSince: number | null = null
+  const crossOriginClosed: [number, number][] = []
+  /** The run's secret frame gate, kept when {@link consultSecretFrameGate} is set. */
+  let consultedGate: SecretFrameGate | undefined
   let controlledContinuation = false,
     continuationEntered = (): void => {},
     acknowledgeContinuation = (): void => {},
@@ -875,6 +888,8 @@ export async function configuredRuntimeHarness(
                 now: Date.now(),
                 open: secretVisibleSince,
                 unsafe: [],
+                crossOriginOpen: crossOriginDrawnSince,
+                crossOrigin: [...crossOriginClosed],
                 ...(secretVisibleSince !== null && {
                   reason: 'control-not-password',
                 }),
@@ -1207,7 +1222,9 @@ export async function configuredRuntimeHarness(
             run.addSession(selected)
           }
           async attachViewport(): Promise<void> {}
-          setSecretFrameGate(): void {}
+          setSecretFrameGate(gate: SecretFrameGate): void {
+            if (options.consultSecretFrameGate) consultedGate = gate
+          }
           async reveal(): Promise<void> {
             viewportReady = true
           }
@@ -1215,14 +1232,30 @@ export async function configuredRuntimeHarness(
           async endRecordingHistory(): Promise<void> {
             if (options.holdRecordingHistoryEnd) await historyEndReleased
           }
-          recordCapture(data: string, phase: string): void {
+          async recordCapture(
+            data: string,
+            phase: string,
+            requestedAtMs: number,
+          ): Promise<SecretFrameVerdict> {
             const observer = recordingObserver()
-            observer?.frame({
-              data,
-              phase,
-              kind: 'phase',
-              elapsedMs: observer.elapsedMs(),
-            })
+            const verdict = consultedGate
+              ? await consultedGate.admitCapture(requestedAtMs, Date.now())
+              : 'pass'
+            if (verdict === 'pass')
+              observer?.frame({
+                data,
+                phase,
+                kind: 'phase',
+                elapsedMs: observer.elapsedMs(),
+              })
+            else
+              observer?.gap?.({
+                elapsedMs: observer.elapsedMs(),
+                reason: describeWithheldImage(
+                  WITHHOLD_REASON_OF_VERDICT[verdict],
+                ),
+              })
+            return verdict
           }
           async presentCapture(data: string, phase: string) {
             if (!viewportReady) throw new Error('Webview is not ready')
@@ -1508,6 +1541,19 @@ export async function configuredRuntimeHarness(
       )
     },
     /** Makes the stand-in page draw the secret control's text from now on, as a show-password toggle does; `false` restores the dots. */
+    /**
+     * Shows or hides a frame from another origin on the stand-in page, as the observer would report it.
+     * @returns The page time (ms since the epoch) it recorded.
+     */
+    setCrossOriginFrameDrawn(drawn: boolean): number {
+      const now = Date.now()
+      if (drawn) crossOriginDrawnSince ??= now
+      else if (crossOriginDrawnSince !== null) {
+        crossOriginClosed.push([crossOriginDrawnSince, now])
+        crossOriginDrawnSince = null
+      }
+      return now
+    },
     setSecretVisible(visible: boolean): void {
       secretVisibleSince = visible ? Date.now() : null
     },

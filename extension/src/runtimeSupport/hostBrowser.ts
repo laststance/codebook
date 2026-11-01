@@ -38,7 +38,7 @@ import {
   type Scenario,
 } from './constants'
 import { CursorCdpBridge } from './cursorCdpBridge'
-import type { SecretFrameGate } from './secretFrameGate'
+import type { SecretFrameGate, SecretFrameVerdict } from './secretFrameGate'
 import { awaitResponse } from './utils/awaitResponse'
 import { managedProfileRoot } from './utils/managedProfileRoot'
 import { profileProcesses } from './utils/profileProcesses'
@@ -603,14 +603,14 @@ export class HostBrowser {
   /**
    * Forwards actual phase response pixels to optional recording before reveal/storage can delay them, through the run's secret frame gate.
    * @param requestedAtMs - When the screenshot was requested.
-   * @returns `drop` when the gate withheld the image; `pass` otherwise.
-   * @example if ((await browser.recordCapture(data, 'before', startedAt)) === 'drop') throw new Error('withheld')
+   * @returns `pass`, or a withheld verdict (`drop`, `drop-cross-origin-frame`) when the gate withheld the image.
+   * @example if ((await browser.recordCapture(data, 'before', startedAt)) !== 'pass') markWithheld()
    */
   async recordCapture(
     data: string,
     phase: string,
     requestedAtMs: number,
-  ): Promise<'pass' | 'drop'> {
+  ): Promise<SecretFrameVerdict> {
     if (this.viewport)
       return this.viewport.recordCapture(data, phase, requestedAtMs)
     // Without a viewport there is no recorder; the gate still decides whether the image may be kept.

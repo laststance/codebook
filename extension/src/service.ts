@@ -3760,6 +3760,8 @@ export class StudyService {
             record.id,
             `snapshots/${encodeURIComponent(snapshot.id)}/inspection`,
           ),
+          imageWithheldReason:
+            runtime.snapshotCaptures?.[snapshot.id]?.withheldReason,
           imageUri:
             runtime.snapshotCaptures?.[snapshot.id]?.status === 'captured'
               ? this.uri(
@@ -3774,6 +3776,7 @@ export class StudyService {
         })) ?? [],
       runtimeOutcome,
       captureOutcome: runtime?.captureOutcome,
+      withheldImages: runtime?.withheldImages,
       finalOutcome,
       terminalReason,
       // A failure inside the runtime has no tool error of its own; its text becomes the cause an agent can quote.
@@ -3799,6 +3802,7 @@ export class StudyService {
         ([phase, capture]) => ({
           phase,
           status: capture.status,
+          withheldReason: capture.withheldReason,
           error: capture.error,
           uri:
             capture.status === 'captured'

@@ -2245,6 +2245,13 @@ export const SECRET_FRAME_MIN_VERIFICATION_INTERVAL_MS = 100
 /** How often the secret frame gate journals its counts of verifications, passes, drops and failures (ms); a summary is also written when the run ends. */
 export const SECRET_FRAME_SUMMARY_INTERVAL_MS = 5_000
 
+/** The elements that hold another document: the secret frame observer reads the document of a same-origin one and treats one whose document it cannot read (another origin) as unreadable content. */
+export const SECRET_FRAME_EMBEDDED_DOCUMENT_SELECTOR =
+  'iframe, frame, object, embed, fencedframe'
+
+/** How many cross-origin intervals of replaced documents the secret frame gate keeps, so a late image of an old document is still withheld. */
+export const SECRET_FRAME_RETIRED_INTERVALS_MAX = 100
+
 /** The `sourceURL` the run marks the secret frame gate's own page expressions with, so the script journal leaves them out. */
 export const SECRET_FRAME_SOURCE_URL = 'codebook-secret-frame-gate'
 
