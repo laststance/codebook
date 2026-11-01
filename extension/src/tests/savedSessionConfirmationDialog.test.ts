@@ -159,6 +159,26 @@ test('listed values hide secrets, show a choice by its label and say chosen when
   )
 })
 
+// Value: protects=ENG-8/DX-1 a secret select stays hidden even when the page also returned an option label, and a fact of another operation is ignored; fails_when=the label of a secret select reaches the dialog or a neighbouring fact leaks onto an operation; why_new=the listed-values test never pairs a secret with a label; seam=listSavedSessionOperations; no_claim=the page read
+test("a secret select shows (hidden) even with an option label, and another operation's fact never applies", () => {
+  // Arrange
+  const operations: RepositoryOperation[] = [
+    { kind: 'choose', title: 'Key', selector: '#api', value: 'k1' },
+    { kind: 'choose', title: 'Customer', selector: '#c', value: 'c1' },
+  ]
+  const facts = [
+    { index: 1, found: true, secret: true, optionLabel: 'Secret Label' },
+    { index: 7, found: true, secret: false, optionLabel: 'Elsewhere' },
+  ]
+  // Act
+  const lines = listSavedSessionOperations(operations, facts)
+  // Assert
+  assert.deepEqual(
+    lines.map((line) => line.value),
+    ['(hidden)', '(chosen when sent)'],
+  )
+})
+
 // protects=ENG-6 at the editor boundary: the primary answer confirms, Cancel does not, an abort answers false and reports the later answer without confirming, an aborted signal shows no modal, a failing modal rejects; fails_when=a late answer resolves the call true or a fault reads as Cancel; no_claim=the native dialog
 test('the asker confirms only on the primary button, answers false for Cancel and an abort, and reports a later answer without confirming', async () => {
   // Arrange

@@ -22,21 +22,44 @@ export function listSavedSessionOperations(
   return operations.map((operation, position) => {
     const index = position + 1
     const base = { index, kind: operation.kind, title: operation.title }
-    const fact = facts?.find((entry) => entry.index === index)
     if (operation.kind === 'click') return base
+    const fact = facts?.find((entry) => entry.index === index)
     if (operation.kind === 'text') {
-      // An ask-learner secret or a control read as secret never shows its text.
-      const isHidden = operation.secret !== undefined || fact?.secret === true
-      return {
-        ...base,
-        value: isHidden ? HIDDEN_OPERATION_VALUE : operation.text,
-      }
+      return { ...base, value: describeTextValue(operation, fact) }
     }
-    return {
-      ...base,
-      value: fact?.secret
-        ? HIDDEN_OPERATION_VALUE
-        : (fact?.optionLabel ?? CHOSEN_WHEN_SENT_VALUE),
-    }
+    return { ...base, value: describeChosenValue(fact) }
   })
+}
+
+/**
+ * Picks the text line value: the declared text, or `(hidden)` for an ask-learner secret or a control the page read as secret.
+ * Called by {@link listSavedSessionOperations} for each `text` operation.
+ * @param operation - The `text` operation.
+ * @param fact - What the page said about its control, if anything.
+ * @returns The display value of the line.
+ * @example
+ * describeTextValue({ kind: 'text', title: 'Amount', selector: '#a', text: '120' }, undefined) // => '120'
+ */
+function describeTextValue(
+  operation: Extract<RepositoryOperation, { kind: 'text' }>,
+  fact: OperationConfirmationFact | undefined,
+): string | undefined {
+  // An ask-learner secret or a control read as secret never shows its text.
+  const isHidden = operation.secret !== undefined || fact?.secret === true
+  return isHidden ? HIDDEN_OPERATION_VALUE : operation.text
+}
+
+/**
+ * Picks the choose line value: `(hidden)` for a secret select, else the enabled option's label, else `(chosen when sent)`.
+ * Called by {@link listSavedSessionOperations} for each `choose` operation.
+ * @param fact - What the page said about its select, if anything.
+ * @returns The display value of the line.
+ * @example
+ * describeChosenValue({ index: 1, found: true, secret: false, optionLabel: 'Alice' }) // => 'Alice'
+ */
+function describeChosenValue(
+  fact: OperationConfirmationFact | undefined,
+): string {
+  if (fact?.secret) return HIDDEN_OPERATION_VALUE
+  return fact?.optionLabel ?? CHOSEN_WHEN_SENT_VALUE
 }
