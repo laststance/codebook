@@ -913,7 +913,7 @@ async function sendWikiFileInParts(
 ): Promise<void> {
   await servedFile.file.close()
   await sendInParts(response, (position) =>
-    readPartOfWikiFile(path, servedFile, position),
+    readPartOfWikiFile(path, servedFile, position, () => response.destroyed),
   )
 }
 
@@ -923,15 +923,17 @@ async function sendWikiFileInParts(
  * @param path - The file's real path in the Wiki folder.
  * @param sentFile - The file's size and its identity when its answer began.
  * @param position - Where the part starts in the file.
- * @returns At most {@link WIKI_RESPONSE_PART_BYTES} bytes from the position on; `undefined` at the file's size at its `stat`, and where a file that shrank since then ends.
+ * @param answerClosed - Tells whether the part's answer has closed, as when its browser went while the part's file was being opened: such a part is not read.
+ * @returns At most {@link WIKI_RESPONSE_PART_BYTES} bytes from the position on; `undefined` at the file's size at its `stat`, where a file that shrank since then ends, and once the answer has closed.
  * @throws What the open, the status or the read throws, such as a missing file while a publish swaps the folder; an error when another file took the path since the answer began, whose bytes would not go on with this file's.
  * @example
- * await readPartOfWikiFile('/repo/.codebook/wiki/diagram.png', { sizeBytes: 300_000, identity }, 0) // => <Buffer of 65,536 bytes>
+ * await readPartOfWikiFile('/repo/.codebook/wiki/diagram.png', { sizeBytes: 300_000, identity }, 0, () => false) // => <Buffer of 65,536 bytes>
  */
 async function readPartOfWikiFile(
   path: string,
   sentFile: { sizeBytes: number; identity: ServedFileIdentity },
   position: number,
+  answerClosed: () => boolean,
 ): Promise<Buffer | undefined> {
   // The file is sent only as far as its size at its stat.
   if (position >= sentFile.sizeBytes) return undefined
@@ -946,6 +948,8 @@ async function readPartOfWikiFile(
       throw new Error(
         `Another file took the path of a Wiki file while it was sent: ${path}`,
       )
+    // The browser went while the file was opened: its answer gets no further part, so none is read for it.
+    if (answerClosed()) return undefined
     const part = Buffer.allocUnsafe(
       Math.min(WIKI_RESPONSE_PART_BYTES, sentFile.sizeBytes - position),
     )

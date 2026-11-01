@@ -3569,7 +3569,8 @@ test('a page that its browser reads slowly but steadily is received whole, thoug
  * @param fileName - The name of the watched file; every other file is opened as always.
  * @param constantOverrides - Constants the loaded reader reads instead of the shipped ones.
  * @param dependencies - Further modules the loaded reader requires instead of the real ones, such as a `node:http` that notes its answers.
- * @returns The loaded reader's {@link startDeepWikiReader}; how many of the watched files are open now; how many times the watched file was opened so far; and a promise that settles with `'opened'` once the watched file has been opened as many times as asked.
+ * @param heldOpen - The number of the watched file's open (1 for the first) that waits, once begun, until {@link releaseHeldOpen} lets it go on; none waits when omitted.
+ * @returns The loaded reader's {@link startDeepWikiReader}; how many of the watched files are open now; how many times the watched file was opened so far; how many opens of it began and how many reads of it began so far, each counted when the reader asks for it; a promise that settles with `'opened'` once the watched file has been opened as many times as asked; one that settles with `'begun'` once as many opens of it have begun; and the release of the held open.
  * @example
  * const watched = await loadReaderWatchingOpensOf('diagram.png', {})
  * watched.openFiles() // => 0 while the reader holds no such file open
@@ -3578,31 +3579,59 @@ async function loadReaderWatchingOpensOf(
   fileName: string,
   constantOverrides: Partial<Record<keyof typeof constants, unknown>>,
   dependencies: Record<string, unknown> = {},
+  heldOpen?: number,
 ): Promise<{
   startDeepWikiReader: typeof startDeepWikiReader
   openFiles: () => number
   openCount: () => number
+  opensBegun: () => number
+  readsBegun: () => number
   opened: (count: number) => Promise<'opened'>
+  openBegun: (count: number) => Promise<'begun'>
+  releaseHeldOpen: () => void
 }> {
   let openCount = 0
   let closeCount = 0
+  let opensBegun = 0
+  let readsBegun = 0
+  let releaseHeldOpen = (): void => undefined
+  const heldOpenMayGoOn = new Promise<void>((resolveGoOn) => {
+    releaseHeldOpen = resolveGoOn
+  })
   const openWaits: { count: number; noteOpened: (opened: 'opened') => void }[] =
+    []
+  const beginWaits: { count: number; noteBegun: (begun: 'begun') => void }[] =
     []
   const openerCountingOpens: typeof openWithoutFollowingModule = {
     openWithoutFollowing: async (
       ...parameters: Parameters<typeof openWithoutFollowing>
     ) => {
+      const isWatched = basename(parameters[0]) === fileName
+      // The watched file's open is counted when the reader asks for it, and the held one waits here.
+      if (isWatched) {
+        opensBegun += 1
+        for (const wait of beginWaits.filter(
+          ({ count }) => count <= opensBegun,
+        ))
+          wait.noteBegun('begun')
+        if (opensBegun === heldOpen) await heldOpenMayGoOn
+      }
       const file = await openWithoutFollowing(...parameters)
       // Only the watched file is counted: the manifest and the pages are opened as always.
-      if (basename(parameters[0]) !== fileName) return file
+      if (!isWatched) return file
       openCount += 1
       for (const wait of openWaits.filter(({ count }) => count <= openCount))
         wait.noteOpened('opened')
       const closeOfTheFile = file.close.bind(file)
+      const readOfTheFile = file.read.bind(file)
       return Object.assign(file, {
         close: async (): Promise<void> => {
           await closeOfTheFile()
           closeCount += 1
+        },
+        read: (...readParameters: Parameters<typeof readOfTheFile>) => {
+          readsBegun += 1
+          return readOfTheFile(...readParameters)
         },
       })
     },
@@ -3620,11 +3649,19 @@ async function loadReaderWatchingOpensOf(
     startDeepWikiReader: loaded.startDeepWikiReader,
     openFiles: () => openCount - closeCount,
     openCount: () => openCount,
+    opensBegun: () => opensBegun,
+    readsBegun: () => readsBegun,
     opened: (count) =>
       new Promise((resolveOpened) => {
         if (count <= openCount) resolveOpened('opened')
         else openWaits.push({ count, noteOpened: resolveOpened })
       }),
+    openBegun: (count) =>
+      new Promise((resolveBegun) => {
+        if (count <= opensBegun) resolveBegun('begun')
+        else beginWaits.push({ count, noteBegun: resolveBegun })
+      }),
+    releaseHeldOpen: (): void => releaseHeldOpen(),
   }
 }
 
@@ -3784,10 +3821,11 @@ test('an image of the Wiki whose browser goes before it has received the image h
   // The reader has sent parts of the image, and waits for the browser to take more.
   const partsSent = await within(watched.opened(2), 2_000)
 
-  // Act: the browser goes; then the reader's answer closes and its handler ends.
+  // Act: the browser goes; then the reader's answer closes and its handler ends. Opens and reads count where they begin: an open begun before the close may end after it.
   browser.connection.destroy()
   const imageAnswer = await within(server.answersClosed(1), 2_000)
-  const opensAtTheClose = watched.openCount()
+  const opensBegunAtTheClose = watched.opensBegun()
+  const readsBegunAtTheClose = watched.readsBegun()
   const imageHandler = await within(server.handlersEnded(1), 2_000)
 
   // Assert
@@ -3796,14 +3834,86 @@ test('an image of the Wiki whose browser goes before it has received the image h
       partsSent,
       imageAnswer,
       imageHandler,
-      opensAfterTheClose: watched.openCount() - opensAtTheClose,
+      opensBegunAfterTheClose: watched.opensBegun() - opensBegunAtTheClose,
+      readsBegunAfterTheClose: watched.readsBegun() - readsBegunAtTheClose,
       openImageFiles: watched.openFiles(),
     },
     {
       partsSent: 'opened',
       imageAnswer: 'closed',
       imageHandler: 'ended',
-      opensAfterTheClose: 0,
+      opensBegunAfterTheClose: 0,
+      readsBegunAfterTheClose: 0,
+      openImageFiles: 0,
+    },
+  )
+})
+
+// Value: protects=the editor's process and the publisher's swap of the Wiki folder against a browser that goes while the reader opens the file of an image of the Wiki for its next part: the reader must not read that part for the closed answer, and must close the file; fails_when=the reader reads the part whose open was under way when the answer closed, or leaves its file open; why_new=Cycle 0069's exact-HEAD gate saw the test above end an open after the close under the coverage run's load, and this holds that open on purpose; seam=the reader loaded with loadModule, an opener that holds the image's first part's open until the answer has closed and counts the image's opens, reads and closes, a node:http whose server notes each close of an answer and each end of the reader's handler, and a connection of the test's that does not read; no_claim=a real file system's open timing
+test('a part of a Wiki image whose file is still being opened when its browser goes is not read, and its file is closed', async (context) => {
+  // Arrange: an image of 16 MiB that the manifest names, an opener that holds the image's second open (its first part's, after the open for its look), and a connection that asks for the image and does not read it.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-held-part-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
+  await writeFile(
+    join(outputDirectory, 'diagram.png'),
+    Buffer.alloc(16_777_216, 'diagram '),
+  )
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [],
+      assets: ['diagram.png'],
+      includedSources: [],
+    }),
+  )
+  const server = httpNotingTheReadersRequests()
+  const watched = await loadReaderWatchingOpensOf(
+    'diagram.png',
+    {},
+    { 'node:http': server.http },
+    2,
+  )
+  context.after(() => watched.releaseHeldOpen())
+  const reader = await watched.startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+  const browser = askWithoutReading(new URL('diagram.png', reader.url).href, {
+    'Sec-Fetch-Dest': 'image',
+  })
+  context.after(() => browser.connection.destroy())
+  // The reader has looked at the image and is opening it for its first part.
+  const firstPartOpen = await within(watched.openBegun(2), 2_000)
+
+  // Act: the browser goes and the reader's answer closes; then the part's open ends.
+  browser.connection.destroy()
+  const imageAnswer = await within(server.answersClosed(1), 2_000)
+  watched.releaseHeldOpen()
+  const imageHandler = await within(server.handlersEnded(1), 2_000)
+
+  // Assert
+  assert.deepEqual(
+    {
+      firstPartOpen,
+      imageAnswer,
+      imageHandler,
+      imageOpens: watched.openCount(),
+      partsRead: watched.readsBegun(),
+      openImageFiles: watched.openFiles(),
+    },
+    {
+      firstPartOpen: 'begun',
+      imageAnswer: 'closed',
+      imageHandler: 'ended',
+      imageOpens: 2,
+      partsRead: 0,
       openImageFiles: 0,
     },
   )
