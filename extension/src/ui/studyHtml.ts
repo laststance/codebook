@@ -486,6 +486,18 @@ function studyClient(
       ? soughtOperation
       : undefined
   /**
+   * Forgets the sought operation once the page shows another replay than the one it was sought in; called by the Study message handler as each Study message becomes the page's current one.
+   * @param message - The Study message the page now shows.
+   * @example forgetSoughtOperationOfOtherReplay(message) // an operation sought in study A is forgotten when study B's message arrives
+   */
+  const forgetSoughtOperationOfOtherReplay = (
+    message: StudyViewMessage,
+  ): void => {
+    // A sought operation of another replay is dropped as soon as the page shows a different one.
+    if (soughtOperation?.studyId !== message.recording?.studyId)
+      soughtOperation = undefined
+  }
+  /**
    * The sought operation while the replay still presents its moment, read by {@link renderOperationCaption} and {@link operationStep}; a move made elsewhere (another pane's Learning summary) leaves this page's sought operation set but presents another moment, so it no longer counts.
    * A fractional moment is presented at whole milliseconds, so "still presents" means within 1 ms.
    * @param recording - The browser replay's state.
@@ -771,6 +783,35 @@ function studyClient(
     setDisabled('previous-operation', !operationStep('previous'))
     setDisabled('next-operation', !operationStep('next'))
   }
+  /**
+   * Takes the last browser replay's operation row away when a Study message opens no replay, so neither its marks nor its cached input stay for the width observer; called by the Study message handler after a browser recording's parts would be drawn.
+   * A browser replay draws the row with {@link renderOperationRow}, and a test replay hides it with its own transport.
+   * @param recording - The message's browser recording, `undefined` when none is open.
+   * @param replayFamily - The message's replay family, `undefined` outside a replay.
+   * @example clearOperationRowOutsideReplay(undefined, undefined) // hides the row and caption and forgets the marks
+   */
+  const clearOperationRowOutsideReplay = (
+    recording: StudyViewMessage['recording'],
+    replayFamily: StudyViewMessage['replayFamily'],
+  ): void => {
+    // A browser or test replay owns the row.
+    if (recording || replayFamily) return
+    element('operation-row').hidden = true
+    element('operation-caption').hidden = true
+    lastOperationRow = undefined
+    replace('operation-row', 'hidden', () => [])
+  }
+  /**
+   * The input the learning sequence is drawn from, so {@link replace} draws the sequence again when the summary or the operations its steps link to change; read by the Study message handler.
+   * @param learning - The replay's learning summary.
+   * @param recording - The browser replay's state, whose operation marks the summary steps link to.
+   * @returns The summary and the replay's operation marks, in that order.
+   * @example learningSequenceInput(learning, recording) // => [learning, recording.operations]
+   */
+  const learningSequenceInput = (
+    learning: NonNullable<StudyViewMessage['recording']>['learningSummary'],
+    recording: StudyViewMessage['recording'],
+  ): unknown[] => [learning, recording?.operations]
   const nodeHistoryPlayback = (
     action: 'play' | 'pause' | 'seek',
     positionMs?: number,
@@ -4090,9 +4131,7 @@ function studyClient(
     )
       poseTransaction = undefined
     current = message
-    // A sought operation of another replay is dropped as soon as the page shows a different one.
-    if (soughtOperation?.studyId !== message.recording?.studyId)
-      soughtOperation = undefined
+    forgetSoughtOperationOfOtherReplay(message)
     useReplayWords(message)
     // The summary composition lays out either replay family alike (Cycle 0051, DS-A); `recording` is read for a browser recording's own parts only.
     const { model, recording } = message,
@@ -4298,13 +4337,9 @@ function studyClient(
         browserCoverageLegend(marks),
       )
       renderOperationRow(recording, isTransportShown, selectedHistoryGap)
-    } else if (!replayFamily) {
-      // No browser replay is open: the operation row of the last one must not stay, nor its cached input.
-      element('operation-row').hidden = true
-      element('operation-caption').hidden = true
-      lastOperationRow = undefined
-      replace('operation-row', 'hidden', () => [])
     }
+    // Outside a replay, the last browser replay's operation row must not stay, nor its cached input.
+    clearOperationRowOutsideReplay(recording, replayFamily)
     const item = model.progressByItem.find(
       (value) => value.id === model.selection.itemId,
     )
@@ -4559,7 +4594,8 @@ function studyClient(
       element('learning-title').title = learning.content.title
       text('learning-question', `Question: ${learning.content.question}`)
       text('learning-summary', learning.content.summary)
-      replace('learning-sequence', [learning, recording?.operations], () =>
+      const sequenceInput = learningSequenceInput(learning, recording)
+      replace('learning-sequence', sequenceInput, () =>
         sequenceView(
           learning.content,
           `Sequence for ${learning.content.title}. Numbered interactions are described below.`,
