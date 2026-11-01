@@ -87,14 +87,21 @@ function installSecretFrameObserver(
 ):
   | { ok: true; origin: number }
   | { ok: false; reason: SecretFrameFailureReason } {
-  const first = selector === null ? [] : document.querySelectorAll(selector)
-  const found = first.length === 1 ? first[0] : undefined
-  if (
-    selector !== null &&
-    (!(found instanceof HTMLInputElement) || found.type !== 'password')
-  )
-    return { ok: false, reason: 'control-not-password' }
-  const node = selector === null ? undefined : (found as HTMLInputElement)
+  // The one element a selector matches now, or `undefined` when it matches none or several.
+  const onlyMatch = (query: string): Element | undefined => {
+    const matches = document.querySelectorAll(query)
+    return matches.length === 1 ? matches[0] : undefined
+  }
+  // The control to watch: `undefined` in a replacing document, which has none; `null` when the selector does not match exactly one password control now.
+  const findArmedControl = (): HTMLInputElement | null | undefined => {
+    if (selector === null) return undefined
+    const found = onlyMatch(selector)
+    return found instanceof HTMLInputElement && found.type === 'password'
+      ? found
+      : null
+  }
+  const node = findArmedControl()
+  if (node === null) return { ok: false, reason: 'control-not-password' }
   const state: {
     open: number | null
     unsafe: [number, number][]
@@ -113,6 +120,21 @@ function installSecretFrameObserver(
   const wrappedRealms = new WeakSet<object>()
   // Shared by every observer of a realm: a drawing method is wrapped once, and each observer joins the wrapper's listeners (a second arm or a re-arm wraps nothing again).
   const listenersKey = Symbol.for('codebook.secretFrameCanvasListeners')
+  // A canvas drawing method once wrapped: it carries the listeners of every observer of its realm.
+  type CanvasTextMethod = ((...args: unknown[]) => unknown) & {
+    [key: symbol]: Set<(text: unknown) => void>
+  }
+  // A value checked for copies is non-empty and at least `copyMinChars` long; a shorter one cannot be told from page text.
+  const watchable = (value: string | undefined): string | undefined =>
+    value !== undefined && value !== '' && value.length >= copyMinChars
+      ? value
+      : undefined
+  const typedValue = watchable(secretValue)
+  // Both the typed value and the last one the control held are checked for the rest of the run, whatever the control holds now.
+  const watchedValues = (): string[] =>
+    [typedValue, lastValue].filter(
+      (value): value is string => value !== undefined && value !== '',
+    )
   // Each root has exactly one mutation observer, the page's document included (a second one would run every full check twice).
   const observeRoot = (root: ParentNode): void => {
     if (observedRoots.has(root)) return
@@ -124,6 +146,21 @@ function installSecretFrameObserver(
       characterData: true,
     })
   }
+  // A same-origin frame's document; a cross-origin frame refuses access, so its text cannot be checked.
+  const frameDocument = (frame: Element): Document | null => {
+    try {
+      return (frame as HTMLIFrameElement).contentDocument
+    } catch {
+      return null
+    }
+  }
+  // The roots one element opens: its open shadow root, and the document of a same-origin frame.
+  const rootsInside = (element: Element): ParentNode[] => {
+    const inner: ParentNode[] = element.shadowRoot ? [element.shadowRoot] : []
+    const frame = element.tagName === 'IFRAME' ? frameDocument(element) : null
+    if (frame) inner.push(frame)
+    return inner
+  }
   const visibleRoots = (): ParentNode[] => {
     const roots: ParentNode[] = []
     const visit = (root: ParentNode): void => {
@@ -133,18 +170,8 @@ function installSecretFrameObserver(
         wrapCanvasRealm((root as Document).defaultView)
       // Mutations in a shadow root or a frame document are not seen by the observer on the page's document.
       observeRoot(root)
-      for (const element of Array.from(root.querySelectorAll('*'))) {
-        if (element.shadowRoot) visit(element.shadowRoot)
-        if (element.tagName === 'IFRAME') {
-          let inner: Document | null = null
-          try {
-            inner = (element as HTMLIFrameElement).contentDocument
-          } catch {
-            // A cross-origin frame refuses access; its text cannot be checked.
-          }
-          if (inner) visit(inner)
-        }
-      }
+      for (const element of Array.from(root.querySelectorAll('*')))
+        for (const inner of rootsInside(element)) visit(inner)
     }
     visit(document)
     return roots
@@ -161,28 +188,36 @@ function installSecretFrameObserver(
       0,
     )
   }
-  // Attributes are drawn by CSS `attr()` generated content and by `title` tooltips. Left out: the armed control's own `value` attribute and the `value` attribute of any password input (React syncs a controlled input's attribute, and a password input never draws it), and hidden inputs (never drawn).
+  // Attributes are drawn by CSS `attr()` generated content and by `title` tooltips. Left out: hidden inputs (never drawn), the armed control's own `value` attribute and the `value` attribute of any password input (React syncs a controlled input's attribute, and a password input never draws it).
+  const isHiddenInput = (element: Element): boolean =>
+    element.tagName === 'INPUT' &&
+    (element as HTMLInputElement).type === 'hidden'
+  const isUndrawnValueAttribute = (
+    element: Element,
+    attributeName: string,
+  ): boolean =>
+    attributeName === 'value' &&
+    element.tagName === 'INPUT' &&
+    (element === node || (element as HTMLInputElement).type === 'password')
+  const attributeOccurrencesInElement = (
+    element: Element,
+    value: string,
+  ): number => {
+    if (isHiddenInput(element)) return 0
+    let total = 0
+    for (const attribute of Array.from(element.attributes))
+      if (!isUndrawnValueAttribute(element, attribute.name))
+        total += countIn(attribute.value, value)
+    return total
+  }
   const attributeOccurrencesInRoot = (
     root: ParentNode,
     value: string,
-  ): number => {
-    let total = 0
-    for (const element of Array.from(root.querySelectorAll('*'))) {
-      const isInput = element.tagName === 'INPUT'
-      const inputType = isInput ? (element as HTMLInputElement).type : ''
-      if (inputType === 'hidden') continue
-      for (const attribute of Array.from(element.attributes)) {
-        if (
-          attribute.name === 'value' &&
-          isInput &&
-          (element === node || inputType === 'password')
-        )
-          continue
-        total += countIn(attribute.value, value)
-      }
-    }
-    return total
-  }
+  ): number =>
+    Array.from(root.querySelectorAll('*')).reduce(
+      (total, element) => total + attributeOccurrencesInElement(element, value),
+      0,
+    )
   const occurrencesOf = (value: string): number =>
     visibleRoots().reduce(
       (total, root) =>
@@ -191,16 +226,11 @@ function installSecretFrameObserver(
         attributeOccurrencesInRoot(root, value),
       0,
     )
-  // The value the learner will type is counted before anything is typed.
-  const typedValue =
-    secretValue !== undefined &&
-    secretValue !== '' &&
-    secretValue.length >= copyMinChars
-      ? secretValue
-      : undefined
-  // In a replacing document the value was never page text, so any occurrence is a copy.
-  if (typedValue !== undefined)
+  // The value the learner will type is counted before anything is typed; in a replacing document the value was never page text, so any occurrence is a copy.
+  const recordTypedBaseline = (): void => {
+    if (typedValue === undefined) return
     baselines.set(typedValue, selector === null ? 0 : occurrencesOf(typedValue))
+  }
   const copiedToText = (value: string): boolean => {
     const occurrences = occurrencesOf(value)
     const baseline = baselines.get(value)
@@ -214,78 +244,109 @@ function installSecretFrameObserver(
   const holdsValue = (held: string, value: string): boolean =>
     value.length >= copyMinChars ? held.includes(value) : held === value
   // A canvas call is the only moment its text is known: a call whose text holds a watched value marks the page unsafe for good.
-  function wrapCanvasRealm(realm: Window | null): void {
-    if (realm === null || wrappedRealms.has(realm)) return
-    wrappedRealms.add(realm)
-    try {
-      const constructors = realm as unknown as Record<
-        string,
-        { prototype: Record<string, unknown> } | undefined
-      >
-      for (const constructorName of [
-        'CanvasRenderingContext2D',
-        'OffscreenCanvasRenderingContext2D',
-      ]) {
-        const prototype = constructors[constructorName]?.prototype
-        if (prototype === undefined) continue
-        for (const method of ['fillText', 'strokeText']) {
-          const original = prototype[method] as
-            | (((...args: unknown[]) => unknown) & {
-                [key: symbol]: Set<(text: unknown) => void>
-              })
-            | undefined
-          if (typeof original !== 'function') continue
-          // Already wrapped by an earlier arm: only join its listeners.
-          const existing = original[listenersKey]
-          if (existing !== undefined) {
-            existing.add(noteCanvasText)
-            continue
-          }
-          const listeners = new Set([noteCanvasText])
-          const wrapper = function (this: unknown, ...args: unknown[]) {
-            for (const listener of listeners) listener(args[0])
-            return Reflect.apply(original, this, args)
-          } as typeof original
-          wrapper[listenersKey] = listeners
-          prototype[method] = wrapper
-        }
-      }
-    } catch {
-      // A realm that refuses the wrap (frozen prototype) is a stated limit of this gate.
-    }
-  }
-  function noteCanvasText(text: unknown): void {
+  const noteCanvasText = (text: unknown): void => {
     // The control may hold a value the observer has not read yet.
     armedControlReason()
     const drawn = String(text)
-    const watchedNow = [typedValue, lastValue].filter(
-      (value): value is string => value !== undefined && value !== '',
-    )
-    if (watchedNow.some((value) => holdsValue(drawn, value))) {
+    if (watchedValues().some((value) => holdsValue(drawn, value))) {
       drewValueOnCanvas = true
       check(false)
     }
   }
+  const wrapCanvasMethod = (
+    prototype: Record<string, unknown>,
+    method: string,
+  ): void => {
+    const original = prototype[method] as CanvasTextMethod | undefined
+    if (typeof original !== 'function') return
+    // Already wrapped by an earlier arm: only join its listeners.
+    const existing = original[listenersKey]
+    if (existing !== undefined) {
+      existing.add(noteCanvasText)
+      return
+    }
+    const listeners = new Set([noteCanvasText])
+    const wrapper = function (this: unknown, ...args: unknown[]) {
+      for (const listener of listeners) listener(args[0])
+      return Reflect.apply(original, this, args)
+    } as CanvasTextMethod
+    wrapper[listenersKey] = listeners
+    prototype[method] = wrapper
+  }
+  // A realm's prototype of one canvas context type, or `undefined` when the realm has no such type.
+  const canvasPrototype = (
+    realm: Window,
+    constructorName: string,
+  ): Record<string, unknown> | undefined =>
+    (
+      realm as unknown as Record<
+        string,
+        { prototype: Record<string, unknown> } | undefined
+      >
+    )[constructorName]?.prototype
+  const wrapCanvasContext = (
+    prototype: Record<string, unknown> | undefined,
+  ): void => {
+    if (prototype === undefined) return
+    for (const method of ['fillText', 'strokeText'])
+      wrapCanvasMethod(prototype, method)
+  }
+  const wrapCanvasPrototypes = (realm: Window): void => {
+    try {
+      for (const constructorName of [
+        'CanvasRenderingContext2D',
+        'OffscreenCanvasRenderingContext2D',
+      ])
+        wrapCanvasContext(canvasPrototype(realm, constructorName))
+    } catch {
+      // A realm that refuses the wrap (frozen prototype) is a stated limit of this gate.
+    }
+  }
+  const wrapCanvasRealm = (realm: Window | null): void => {
+    if (realm === null || wrappedRealms.has(realm)) return
+    wrappedRealms.add(realm)
+    wrapCanvasPrototypes(realm)
+  }
+  // A plain control draws its value as text: a textarea, or an input that is neither a password nor hidden.
+  const drawsValue = (element: Element): boolean =>
+    element.tagName === 'TEXTAREA' ||
+    (element.tagName === 'INPUT' &&
+      !['password', 'hidden'].includes((element as HTMLInputElement).type))
   const plainControlHolds = (value: string, roots: ParentNode[]): boolean =>
     roots.some((root) =>
       Array.from(root.querySelectorAll('input, textarea')).some(
         (element) =>
           element !== node &&
-          (element.tagName === 'TEXTAREA' ||
-            (element.tagName === 'INPUT' &&
-              !['password', 'hidden'].includes(
-                (element as HTMLInputElement).type,
-              ))) &&
+          drawsValue(element) &&
           holdsValue((element as HTMLInputElement).value, value),
       ),
     )
+  const rememberValue = (control: HTMLInputElement): void => {
+    if (control.value !== '') lastValue = control.value
+  }
   // The armed element itself, whatever the selector matches now: the selector only serves to notice a replacement.
   const armedControlReason = (): SecretFrameFailureReason | undefined => {
     if (node === undefined || !node.isConnected) return undefined
     // A show-password toggle changes the type; the selector may stop matching by then.
     if (node.type !== 'password') return 'control-not-password'
-    if (node.value !== '') lastValue = node.value
+    rememberValue(node)
     return undefined
+  }
+  const textCopyReason = (
+    watched: string[],
+  ): SecretFrameFailureReason | undefined =>
+    watched.some((value) => value.length >= copyMinChars && copiedToText(value))
+      ? 'value-copied-to-text'
+      : undefined
+  const watchedValueReason = (
+    watched: string[],
+    withText: boolean,
+  ): SecretFrameFailureReason | undefined => {
+    // The per-paint check reads the page's own controls only; a full check also reads shadow roots and frames.
+    const roots = withText ? visibleRoots() : [document]
+    if (watched.some((value) => plainControlHolds(value, roots)))
+      return 'control-replaced'
+    return withText ? textCopyReason(watched) : undefined
   }
   const unsafeReason = (
     withText: boolean,
@@ -293,42 +354,37 @@ function installSecretFrameObserver(
     const own = armedControlReason()
     if (own !== undefined) return own
     if (drewValueOnCanvas) return 'value-copied-to-text'
-    // Both the typed value and the last one the control held are checked for the rest of the run, whatever the control holds now.
-    const watched = [typedValue, lastValue].filter(
-      (value): value is string => value !== undefined && value !== '',
-    )
-    // The per-paint check reads the page's own controls only; a full check also reads shadow roots and frames.
-    const roots = withText ? visibleRoots() : [document]
-    for (const value of watched)
-      if (plainControlHolds(value, roots)) return 'control-replaced'
-    if (!withText) return undefined
-    for (const value of watched)
-      if (value.length >= copyMinChars && copiedToText(value))
-        return 'value-copied-to-text'
-    return undefined
+    return watchedValueReason(watchedValues(), withText)
+  }
+  // An unsafe time opens once; the first reason the page became unsafe is kept.
+  const openUnsafe = (reason: SecretFrameFailureReason, now: number): void => {
+    if (state.open !== null) return
+    state.open = now
+    state.reason ??= reason
+  }
+  const closeUnsafe = (now: number): void => {
+    if (state.open === null) return
+    state.unsafe.push([state.open, now])
+    state.open = null
   }
   // `full` reads the rendered text as well; a check that skips it can open an unsafe time but never ends one.
   const check = (full = true): void => {
     const reason = unsafeReason(full)
     const now = Date.now()
-    if (reason !== undefined && state.open === null) {
-      state.open = now
-      state.reason ??= reason
-    } else if (full && reason === undefined && state.open !== null) {
-      state.unsafe.push([state.open, now])
-      state.open = null
-    }
+    if (reason !== undefined) openUnsafe(reason, now)
+    else if (full) closeUnsafe(now)
   }
-  wrapCanvasRealm(window)
-  // Without a value known beforehand, the baseline is taken when the value first arrives with an input event.
-  node?.addEventListener('input', () => check())
-  // A mutation callback runs before the next paint, so any painted unsafe state is recorded.
-  observeRoot(document)
   // A value set by script raises no mutation: the controls are read before every paint as well.
   const watchPaints = (): void => {
     check(false)
     requestAnimationFrame(watchPaints)
   }
+  recordTypedBaseline()
+  wrapCanvasRealm(window)
+  // Without a value known beforehand, the baseline is taken when the value first arrives with an input event.
+  node?.addEventListener('input', () => check())
+  // A mutation callback runs before the next paint, so any painted unsafe state is recorded.
+  observeRoot(document)
   requestAnimationFrame(watchPaints)
   // A replacing document may already show the value: the unsafe time then starts now, not at the first query.
   if (selector === null) check()
