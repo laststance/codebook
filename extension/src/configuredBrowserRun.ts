@@ -58,6 +58,7 @@ import {
   REPOSITORY_STACK_FRAME_LIMIT,
   REPOSITORY_UNOWNED_PAGE_PAUSE_LIMIT_MS,
   SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION,
+  SECRET_FRAME_VALUE_COPY_MIN_CHARS,
 } from './constants'
 import type {
   DevelopmentBundle,
@@ -1023,9 +1024,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         inserting: (inFlight) => {
           this.inputInFlight = inFlight
         },
-        classified: (index, secret) => {
+        classified: async (index, secret, selector, passwordControl) => {
           // Fixed before the text is sent, so no later write holds a secret text.
           this.preparedStates[index] = secret ? 'secret' : 'plain'
+          // A secret text into a password input arms the frame gate before it is sent, as an ask-learner operation does; into any other control the browser draws it as typed, as in 0.2.70.0, so it is masked by state and value only.
+          if (secret && passwordControl)
+            await this.armPreparedSecretGate(selector, inputs[index]!.text)
+          else if (
+            secret &&
+            inputs[index]!.text.length >= SECRET_FRAME_VALUE_COPY_MIN_CHARS
+          )
+            this.learnerSecretValues.add(inputs[index]!.text)
         },
       },
     )
@@ -5285,6 +5294,34 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         }),
       )
     else this.fail(`SECRET_BECAME_VISIBLE: ${message}`)
+  }
+
+  /**
+   * Arms the secret frame gate on the control that is about to receive a version 1 or 2 prepared secret text, and refuses the text unsent when the gate failed at once.
+   * Called from the setup's classification hook of {@link prepareRepositoryInputs}; a value of at least {@link SECRET_FRAME_VALUE_COPY_MIN_CHARS} characters is armed with its value and joins the run's secret set (masked by value everywhere), a shorter one is armed by control only so the gate never enters its unverifiable state and masking by value cannot hide unrelated text.
+   * @param selector - The selector of the control that receives the text.
+   * @param text - The prepared text about to be typed. Never logged.
+   * @throws When the control is no safe password control or the page could not answer; nothing was sent.
+   * @example await this.armPreparedSecretGate('#password', 'correct horse')
+   */
+  private async armPreparedSecretGate(
+    selector: string,
+    text: string,
+  ): Promise<void> {
+    const watchesValue = text.length >= SECRET_FRAME_VALUE_COPY_MIN_CHARS
+    if (watchesValue) this.learnerSecretValues.add(text)
+    this.armingSecretGate = true
+    try {
+      await this.secretFrameGate.arm(selector, watchesValue ? text : undefined)
+    } finally {
+      this.armingSecretGate = false
+    }
+    this.alive()
+    const reason = this.secretFrameGate.failure
+    if (reason !== undefined)
+      throw new Error(
+        `SECRET_BECAME_VISIBLE: The prepared text was not sent: its control is not a safe password control (${reason}).`,
+      )
   }
 
   /**

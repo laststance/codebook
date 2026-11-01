@@ -109,9 +109,21 @@ function installSecretFrameObserver(
   const observedRoots = new WeakSet<object>()
   // Set once any canvas of any reachable realm was asked to draw a watched value: pixels already drawn cannot be read back, so the page stays unsafe for the rest of the run.
   let drewValueOnCanvas = false
-  // The realms (the page window and the same-origin frame windows) whose canvas drawing methods are already wrapped.
+  // The realms this observer already registered with, so a realm is visited once per observer.
   const wrappedRealms = new WeakSet<object>()
-  const mutationCallback = (): void => check()
+  // Shared by every observer of a realm: a drawing method is wrapped once, and each observer joins the wrapper's listeners (a second arm or a re-arm wraps nothing again).
+  const listenersKey = Symbol.for('codebook.secretFrameCanvasListeners')
+  // Each root has exactly one mutation observer, the page's document included (a second one would run every full check twice).
+  const observeRoot = (root: ParentNode): void => {
+    if (observedRoots.has(root)) return
+    observedRoots.add(root)
+    new MutationObserver(() => check()).observe(root, {
+      attributes: true,
+      childList: true,
+      subtree: true,
+      characterData: true,
+    })
+  }
   const visibleRoots = (): ParentNode[] => {
     const roots: ParentNode[] = []
     const visit = (root: ParentNode): void => {
@@ -120,15 +132,7 @@ function installSecretFrameObserver(
       if ((root as Node).nodeType === 9)
         wrapCanvasRealm((root as Document).defaultView)
       // Mutations in a shadow root or a frame document are not seen by the observer on the page's document.
-      if (!observedRoots.has(root)) {
-        observedRoots.add(root)
-        new MutationObserver(mutationCallback).observe(root, {
-          attributes: true,
-          childList: true,
-          subtree: true,
-          characterData: true,
-        })
-      }
+      observeRoot(root)
       for (const element of Array.from(root.querySelectorAll('*'))) {
         if (element.shadowRoot) visit(element.shadowRoot)
         if (element.tagName === 'IFRAME') {
@@ -225,12 +229,25 @@ function installSecretFrameObserver(
         const prototype = constructors[constructorName]?.prototype
         if (prototype === undefined) continue
         for (const method of ['fillText', 'strokeText']) {
-          const original = prototype[method]
+          const original = prototype[method] as
+            | (((...args: unknown[]) => unknown) & {
+                [key: symbol]: Set<(text: unknown) => void>
+              })
+            | undefined
           if (typeof original !== 'function') continue
-          prototype[method] = function (this: unknown, ...args: unknown[]) {
-            noteCanvasText(args[0])
-            return Reflect.apply(original, this, args)
+          // Already wrapped by an earlier arm: only join its listeners.
+          const existing = original[listenersKey]
+          if (existing !== undefined) {
+            existing.add(noteCanvasText)
+            continue
           }
+          const listeners = new Set([noteCanvasText])
+          const wrapper = function (this: unknown, ...args: unknown[]) {
+            for (const listener of listeners) listener(args[0])
+            return Reflect.apply(original, this, args)
+          } as typeof original
+          wrapper[listenersKey] = listeners
+          prototype[method] = wrapper
         }
       }
     } catch {
@@ -306,12 +323,7 @@ function installSecretFrameObserver(
   // Without a value known beforehand, the baseline is taken when the value first arrives with an input event.
   node?.addEventListener('input', () => check())
   // A mutation callback runs before the next paint, so any painted unsafe state is recorded.
-  new MutationObserver(() => check()).observe(document, {
-    attributes: true,
-    childList: true,
-    subtree: true,
-    characterData: true,
-  })
+  observeRoot(document)
   // A value set by script raises no mutation: the controls are read before every paint as well.
   const watchPaints = (): void => {
     check(false)
@@ -486,7 +498,7 @@ export class SecretFrameGate {
     toMs: number,
     kind: 'frame' | 'capture',
   ): Promise<'pass' | 'drop'> {
-    // A short secret was sent: Codebook cannot verify any later image, so it is an unrecorded gap; the run itself goes on.
+    // Fail-closed default for any caller that arms with a value shorter than the copy minimum: Codebook cannot verify any later image, so it is an unrecorded gap; the run itself goes on. The run's own callers never reach this: the ask-learner box refuses such a value and a prepared short value is armed by control only (no value).
     if (
       this.unverifiableSinceMs !== undefined &&
       toMs >= this.unverifiableSinceMs

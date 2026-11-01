@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { mock, test, type TestContext } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 
+import { SECRET_FRAME_OBSERVER_GLOBAL } from '../constants'
 import { Cdp } from '../runtimeSupport/cdp'
 import {
   SecretFrameGate,
@@ -909,6 +910,56 @@ test('a controlled password input whose value attribute holds the value keeps fr
   const verdict = await gate.admitFrame(Date.now() - 20)
   // Assert
   assert.deepEqual([verdict, failures], ['pass', []])
+})
+
+// protects=arming a second control wraps each canvas drawing method once and every armed observer still sees canvas text; fails_when=each arm wraps fillText again (wrappers pile up) or the first observer stops seeing canvas text; no_claim=WebGL and drawImage; real headless Chrome
+test('arming two controls wraps fillText once and the first control still catches its value on a canvas', async (context) => {
+  // Arrange
+  const armed = await armedWithSecret(context, 'first-canvas-secret')
+  if (!armed) return
+  const { page, gate, failures } = armed
+  await page.evaluate(
+    "(() => { const second = document.createElement('input'); second.id = 'pw2'; second.type = 'password'; document.getElementById('host').append(second) })()",
+  )
+  // Act
+  await gate.arm('#pw2', 'second-canvas-secret')
+  const listenerCount = await page.evaluate(
+    "CanvasRenderingContext2D.prototype.fillText[Symbol.for('codebook.secretFrameCanvasListeners')]?.size ?? 0",
+  )
+  await typeIntoControl(page, 'first-canvas-secret')
+  await page.evaluate(
+    "document.getElementById('board').getContext('2d').fillText('you typed first-canvas-secret', 10, 10)",
+  )
+  await settle(page)
+  const verdict = await gate.admitFrame(Date.now() - 20)
+  // Assert
+  assert.deepEqual(
+    [listenerCount, verdict, failures],
+    [2, 'drop', ['value-copied-to-text']],
+  )
+})
+
+// protects=one DOM mutation runs one full check, as one explicit query does; fails_when=the page document is observed twice and every mutation reads the page's rendered text twice; no_claim=mutations inside shadow roots and frames; real headless Chrome
+test('one DOM mutation runs one full check of the page', async (context) => {
+  // Arrange
+  const armed = await armedWithSecret(context, 'mutation-secret')
+  if (!armed) return
+  const { page } = armed
+  const globalName = `${SECRET_FRAME_OBSERVER_GLOBAL}1`
+  await page.evaluate(
+    "(() => { window.__fullChecks = 0; const original = Document.prototype.querySelectorAll; Document.prototype.querySelectorAll = function (selector) { if (selector === '*') window.__fullChecks += 1; return original.call(this, selector) } })()",
+  )
+  // Act
+  await page.evaluate(`window[${JSON.stringify(globalName)}].query()`)
+  const readsPerCheck = await page.evaluate('window.__fullChecks')
+  await page.evaluate(
+    "(() => { window.__fullChecks = 0; document.getElementById('note').textContent = 'changed' })()",
+  )
+  await settle(page)
+  const readsPerMutation = await page.evaluate('window.__fullChecks')
+  // Assert
+  assert.equal(typeof readsPerCheck, 'number')
+  assert.equal(readsPerMutation, readsPerCheck)
 })
 
 // protects=a hidden input holding the value keeps frames passing; fails_when=a hidden input's attributes count as a copy; no_claim=hidden inputs the page reveals another way

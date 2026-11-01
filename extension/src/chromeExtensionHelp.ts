@@ -588,6 +588,7 @@ export function chromeExtensionHelp() {
       `An observed read is at most ${EXTENSION_OBSERVE_READ_LIMIT_BYTES} bytes; a larger value reads unavailable.`,
       `At most ${EXTENSION_OUTPUT_EVENT_LIMIT} console lines are journaled per run.`,
       'One run is active at a time; a run that completed or failed is released at once.',
+      "A click's input into a control that reads as a secret (type password, or a name, id or autocomplete such as current-password or one-time-code) is masked where Codebook stores or serves it; the recorded frames show it as the browser draws it (dots in an input of type password, the text itself in any other control), and a chrome-extension run's frames are not gated against a page that reveals a password (a show-password toggle), so use a test value.",
       'A chrome-extension run records a durable history: stop the run with codebook_stop, read chromeExtension.historyUri, then save its explanation with codebook_explain_node_history; codebook_explain redirects there.',
     ],
     save: chromeExtensionSaveHelp(),

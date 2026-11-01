@@ -873,12 +873,24 @@ export async function configuredRuntimeHarness(
             },
           }
         const quoted = /\)\(("(?:[^"\\]|\\.)*"),/.exec(expression)?.[1]
+        const observedSelector = quoted ? JSON.parse(quoted) : ''
+        // A version 1 or 2 prepared control is described by `preparedControls`; an operation's by its own controls.
         const control =
-          operationsOption?.controls?.[quoted ? JSON.parse(quoted) : '']
+          operationsOption?.controls?.[observedSelector] ??
+          options.preparedControls?.[observedSelector]
+        // A prepared input whose control the test never described is no secret control the stand-in observer could dispute: it reads as a safe password control.
+        const undescribedPreparedInput =
+          control === undefined &&
+          options.initialInputs?.some(
+            (input) => input.selector === observedSelector,
+          ) === true
         return {
           result: {
             value:
-              (control?.observedType ?? control?.type) === 'password'
+              undescribedPreparedInput ||
+              ((control && 'observedType' in control
+                ? control.observedType
+                : undefined) ?? control?.type) === 'password'
                 ? { ok: true, origin: 1 }
                 : { ok: false, reason: 'control-not-password' },
           },

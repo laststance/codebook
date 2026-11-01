@@ -18,8 +18,13 @@ export type RepositoryInputProgress = {
   inserting(inFlight: boolean): void
   /** The last look at the resolved control, after it took the focus and before any text is sent; throwing here sends nothing. Receives the control's remote object id. */
   beforeInsert?(objectId: string): Promise<void> | void
-  /** Told, after the control is resolved and before its text is sent, whether the text is secret; `index` is the input's place in the declaration. */
-  classified?(index: number, secret: boolean): void
+  /** Told, after the control is resolved and before its text is sent, whether the text is secret and whether the page described the control as an input of type password (the browser draws its text as dots); `index` is the input's place in the declaration. Awaited, so a caller can arm a gate (or refuse by throwing) before anything is sent. */
+  classified?(
+    index: number,
+    secret: boolean,
+    selector: string,
+    passwordControl: boolean,
+  ): Promise<void> | void
   /** How long the page may take to answer the text insertion; a learning stop declared in the control's `input` handler holds the answer until it is continued. Omitted: the channel's default. */
   insertTimeoutMs?: number
 }
@@ -102,7 +107,12 @@ export async function writeTextInput(
     const control = await inspect('focus')
     assertCurrent()
     // A control the page did not describe is treated as secret: the text is masked wherever it is kept.
-    progress?.classified?.(index, control ? isSecretControl(control) : true)
+    await progress?.classified?.(
+      index,
+      control ? isSecretControl(control) : true,
+      input.selector,
+      control?.type?.toLowerCase() === 'password',
+    )
     await progress?.beforeInsert?.(objectId)
     assertCurrent()
     progress?.inserting(true)

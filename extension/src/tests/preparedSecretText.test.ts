@@ -229,3 +229,109 @@ test('a checkpoint taken before a prepared text is classified plain keeps the sa
     whilePreparing.configurationHash,
   )
 })
+
+/** A version 2 run with one prepared control, on the controlled runtime. */
+function preparedControlRun(
+  context: TestContext,
+  input: { text: string; type: string; name: string },
+) {
+  return configuredRuntimeHarness(context, undefined, [], {
+    capturedValue: input.text,
+    initialInputs: [{ selector: '#field', text: input.text }],
+    preparedControls: { '#field': { type: input.type, name: input.name } },
+  })
+}
+
+// protects=ENG-5: a version 2 prepared password arms the frame gate before it is typed, so a page that shows it afterwards (type toggled to text) drops later frames and fails the run with SECRET_BECAME_VISIBLE; fails_when=the gate stays unarmed for prepared text and the frames of a visible password are stored; no_claim=pixels and a real page: the harness stands in for the gate's observer
+test('a prepared password that the page shows after it is typed drops later frames and fails the run', async (context) => {
+  // Arrange
+  const { run, insertedTexts, setSecretVisible } = await preparedControlRun(
+    context,
+    { text: PASSWORD, type: 'password', name: 'password' },
+  )
+  // Act
+  await run.prepare()
+  const armedAfterPrepare = run.secretFrameGate.armed
+  setSecretVisible(true)
+  const frame = await run.secretFrameGate.admitFrame(Date.now() + 10)
+  await waitUntil(() => run.view().status === 'failed', 'the failed run')
+  // Assert
+  assert.deepEqual(insertedTexts, [PASSWORD])
+  assert.equal(armedAfterPrepare, true)
+  assert.equal(frame, 'drop')
+  assert.match(run.view().failures.join('\n'), /SECRET_BECAME_VISIBLE/)
+})
+
+// protects=ENG-5: a version 2 run whose prepared text is plain never arms the frame gate; fails_when=ordinary prepared text arms the gate and drops frames; no_claim=a real page
+test('a prepared plain text leaves the frame gate unarmed', async (context) => {
+  // Arrange
+  const { run, insertedTexts } = await preparedControlRun(context, {
+    text: EMAIL,
+    type: 'email',
+    name: 'email',
+  })
+  // Act
+  await run.prepare()
+  // Assert
+  assert.deepEqual(insertedTexts, [EMAIL])
+  assert.equal(run.secretFrameGate.armed, false)
+  assert.equal(await run.secretFrameGate.admitFrame(Date.now()), 'pass')
+})
+
+// protects=AC4: a version 2 secret text into a secret-named control the browser draws as typed (type text, name token) runs as in 0.2.70.0: the page receives it, it is masked by state, and the frame gate stays unarmed instead of failing the run; fails_when=the gate arms for a non-password control and the run fails with SECRET_BECAME_VISIBLE, or the text is not sent; no_claim=pixels: the browser draws this text as typed, which help and README state; the harness stands in for the page
+test('a prepared secret text into a plain secret-named control is sent and masked without arming the frame gate', async (context) => {
+  // Arrange
+  const { run, insertedTexts } = await preparedControlRun(context, {
+    text: 'token-value-1234',
+    type: 'text',
+    name: 'token',
+  })
+  // Act
+  await run.prepare()
+  // Assert
+  assert.deepEqual(insertedTexts, ['token-value-1234'])
+  assert.equal(run.secretFrameGate.armed, false)
+  assert.equal(run.view().failures.length, 0)
+  assert.equal(run.learnerSecrets.has('token-value-1234'), true)
+})
+
+// protects=ENG-5: a prepared password too short to tell from page text is armed by control only, so the run still gets its images; fails_when=the short value makes the gate unverifiable and every later image is dropped; no_claim=a real page
+test('a three-character prepared password keeps the run recording its images', async (context) => {
+  // Arrange
+  const { run, insertedTexts } = await preparedControlRun(context, {
+    text: 'abc',
+    type: 'password',
+    name: 'password',
+  })
+  // Act
+  await run.prepare()
+  const frame = await run.secretFrameGate.admitFrame(Date.now())
+  // Assert
+  assert.deepEqual(insertedTexts, ['abc'])
+  assert.equal(run.secretFrameGate.armed, true)
+  assert.equal(frame, 'pass')
+  assert.equal(run.view().status, 'ready')
+  assert.equal(Boolean(run.view().captures.before), true)
+})
+
+// protects=ENG-4: a prepared password's copy in an inspection preview reads [masked]; fails_when=the prepared value is missing from the run's secret set; no_claim=a real debugger: the harness's stop local variable holds the copy
+test('a prepared password copied into a variable reads [masked] in the run view', async (context) => {
+  // Arrange
+  const { run } = await preparedControlRun(context, {
+    text: PASSWORD,
+    type: 'password',
+    name: 'password',
+  })
+  await run.prepare()
+  // Act
+  run.action('one', 'repository-click')
+  const stop = await waitUntil(
+    () => run.view().participants.browser.snapshot,
+    'the first stop',
+  )
+  // Assert
+  assert.ok(stop)
+  assert.equal(run.learnerSecrets.has(PASSWORD), true)
+  assert.equal(JSON.stringify(run.view()).includes(PASSWORD), false)
+  assert.match(JSON.stringify(run.view()), /\[masked\]/)
+})
