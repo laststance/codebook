@@ -201,6 +201,10 @@
         "title": "Codebook: Save Learning Replay"
       },
       {
+        "command": "codebook.reviewSavedSessionOperations",
+        "title": "Codebook: Review Saved-Session Operations Again"
+      },
+      {
         "command": "codebook.showLearningSummary",
         "title": "Codebook: Show Learning Summary",
         "icon": "$(book)"
@@ -283,6 +287,12 @@
           "default": "",
           "scope": "machine",
           "description": "Chrome executable for the configured repository browser. When empty, Codebook uses /Applications/Google Chrome.app/Contents/MacOS/Google Chrome on macOS and the first google-chrome, google-chrome-stable, chromium or chromium-browser on PATH on Linux (including WSL)."
+        },
+        "codebook.confirmSavedSessionOperations": {
+          "type": "boolean",
+          "default": true,
+          "scope": "application",
+          "description": "Ask before a run that uses your saved session (Codebook: Set Up Saved Session…) sends its operations. Turn this off only for unattended use: the operations then act on the app as your signed-in account without a question. Only your user settings count; a workspace setting is ignored."
         },
         "codebook.savedStudyLimit": {
           "type": "integer",
@@ -380,6 +390,10 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "codebook.reviewSavedSessionOperations",
+          "when": "false"
+        },
         {
           "command": "codebook.moveLearningSummary",
           "when": "codebook.learningSummaryMovable"

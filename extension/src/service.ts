@@ -89,6 +89,11 @@ import { nodeTestLearningMaterialContentSchema } from './nodeTestHistorySchemas'
 import type { NodeTestLearningMaterialContent } from './nodeTestHistorySchemas'
 import type { NodeTestHistoryStore } from './nodeTestHistoryStore'
 import type { NodeTestHistoryWriter } from './nodeTestHistoryWriter'
+import type {
+  OperationsConfirmationSetting,
+  OperationsConfirmationState,
+  SavedSessionOperationsQuestion,
+} from './operationsConfirmationTypes'
 import type { NodeTestSourceStop } from './ownedNodeTestRun'
 import type { PlaybackController } from './playbackController'
 import type { PlaybackCommand } from './playbackSchemas'
@@ -182,6 +187,7 @@ import {
   type NodeLearningNeeds,
 } from './utils/listMissingNodeExplanations'
 import type { NodeLearningCapturePart } from './utils/listMissingNodeLearning'
+import { listSavedSessionOperations } from './utils/listSavedSessionOperations'
 import type { RetryVitestListingRelease } from './utils/listVitestTestFiles'
 import { maskLearnerSecretData } from './utils/maskLearnerSecretData'
 import { maskLearnerSecretJsonText } from './utils/maskLearnerSecretJsonText'
@@ -398,6 +404,17 @@ export type HistoryExclusion =
   | StudyRemovalExclusion
 /** The two exclusions that say a run's saved study was removed; each has its own sentence for the agent that reads the run, see {@link historyExclusionReason}. */
 export type StudyRemovalExclusion = 'removed-by-learner' | 'archive-removed'
+/** Where a version 3 run stands on the saved-session confirmation, plus the bookkeeping of the dialog and its notice. */
+type OperationsConfirmation = {
+  state: OperationsConfirmationState
+  setting?: OperationsConfirmationSetting
+  /** Identifies the dialog being asked now; a late answer of an older dialog never matches it (ENG-6). */
+  token?: string
+  /** True while a dialog (the first ask or a Review again) is open and awaited. */
+  isAsking: boolean
+  /** True while the "Operations not confirmed" notice is on screen, so a refused retry shows no second one. */
+  isNoticeShown: boolean
+}
 interface StudyRecordState {
   id: string
   signature: string
@@ -437,8 +454,12 @@ interface StudyRecordState {
   operationAsk?: {
     key: string
     signature: string
+    /** Which question the learner is asked: the secret's input box or the saved-session operations dialog. */
+    question: 'secret' | 'saved-session-operations'
     result: Promise<NonNullable<StudyRecord['action']>['receipt']>
   }
+  /** The saved-session confirmation of a version 3 run (X1), created the first time the run is observed with its session decided; a mid-run change of the learner's setting applies to the next run. */
+  operationsConfirmation?: OperationsConfirmation
   explanations: Map<string, Explanation>
   explanationKeys: Map<
     string,
@@ -1855,6 +1876,12 @@ export class StudyService {
     if (replayed) return replayed
     this.presentationController?.assertPresentationIdle()
     this.assertOperationActionable(record, input)
+    // X1: every direct caller (the Study page among them) is refused until the learner confirmed; sendOperation reaches here only after "confirmed".
+    if (
+      input.action === REPOSITORY_OPERATION_ACTION &&
+      this.needsOperationsConfirmation(record)
+    )
+      throw this.unconfirmedOperationsError(record, 'not-reviewed')
     if (
       !record.prepared ||
       record.stopping ||
@@ -3664,6 +3691,7 @@ export class StudyService {
       record.stopped ? 'stopped' : terminalReason ? 'failed' : runtime?.status,
       runtime?.operationFailure,
     )
+    const confirmation = this.operationsConfirmationOf(record)
     const material = {
       instanceId: this.instanceId,
       runId: record.id,
@@ -3697,6 +3725,14 @@ export class StudyService {
         runtime?.operations ??
         [...record.actions.values()].map((action) => action.receipt),
       ...(operationStatus ? { operationStatus } : {}),
+      ...(confirmation
+        ? {
+            confirmation: confirmation.state,
+            ...(confirmation.setting
+              ? { confirmationSetting: confirmation.setting }
+              : {}),
+          }
+        : {}),
       observed: runtime?.observed,
       links: runtime?.links,
       nodeTest:
@@ -5295,24 +5331,80 @@ export class StudyService {
       // A repeat of the key being asked joins that question instead of asking twice.
       if (asking.key === input.key && asking.signature === signature)
         return asking.result
-      throw new StudyError(
-        'BUSY',
-        'The learner is being asked for a secret. Do not retry this request; wait, then read the run.',
-        `Read ${this.uri(record.id)} for the run's progress; nothing was sent.`,
-        BUSY_AWAITING_CONFIRMATION_RECOVERY,
-        undefined,
-        {
-          reason: 'awaiting-confirmation',
-          sent: 'not-sent',
-          runUri: this.uri(record.id),
-        },
-      )
+      throw this.busyWhileAsking(record, asking.question)
     }
+    // A Review again dialog is open: it has no pending call to join, so every key waits.
+    if (this.operationsConfirmationOf(record)?.isAsking)
+      throw this.busyWhileAsking(record, 'saved-session-operations')
+    const needsConfirmation = this.needsOperationsConfirmation(record)
     const next = this.nextAskLearnerOperation(record)
-    if (!next) return this.action(input)
+    if (!needsConfirmation && !next) return this.action(input)
     this.presentationController?.assertPresentationIdle()
     // The refusals that need no learner come first, so the learner is asked only for an operation the run would accept.
     this.assertOperationActionable(record, input)
+    // After a decline nothing is asked again without Review again (DES-4, D10 d6).
+    if (this.operationsConfirmationOf(record)?.state === 'declined')
+      throw this.refuseUnreviewedOperations(record)
+    const result = this.askBeforeOperation(record, input, {
+      next,
+      needsConfirmation,
+    })
+    record.operationAsk = {
+      key: input.key,
+      signature,
+      question: needsConfirmation ? 'saved-session-operations' : 'secret',
+      result,
+    }
+    try {
+      return await result
+    } finally {
+      if (record.operationAsk?.result === result)
+        record.operationAsk = undefined
+    }
+  }
+
+  /**
+   * Asks the learner what an operation needs before it is sent: first the saved-session confirmation (once per run), then the ask-learner secret; called by {@link StudyService.sendOperation}.
+   * @param record - The run.
+   * @param input - The action as the tool received it.
+   * @param asks - Which questions apply: the next ask-learner operation, and whether the confirmation is due.
+   * @returns The acceptance receipt of {@link StudyService.action}.
+   * @throws `OPERATIONS_NOT_CONFIRMED` for a declined or unanswered question; `PREREQUISITE_MISSING` for an editor that cannot ask; what {@link StudyService.action} throws, which is the stopped-run refusal when the run began to stop during the dialog.
+   * @example await this.askBeforeOperation(record, input, { next: undefined, needsConfirmation: true })
+   */
+  private async askBeforeOperation(
+    record: StudyRecord,
+    input: ActionInput,
+    asks: {
+      next: { index: number; title: string } | undefined
+      needsConfirmation: boolean
+    },
+  ) {
+    if (asks.needsConfirmation) {
+      const outcome = await this.askOperationsConfirmation(record)
+      // A stopped run sends nothing: action() refuses it before any input.
+      if (outcome === 'stopped') return this.action(input)
+      if (outcome !== 'confirmed')
+        throw this.unconfirmedOperationsError(record, outcome)
+    }
+    if (!asks.next) return this.action(input)
+    return this.askLearnerSecretFor(record, input, asks.next)
+  }
+
+  /**
+   * Asks the learner for the secret of an ask-learner operation in the editor's masked input box, then admits the operation with it.
+   * @param record - The run.
+   * @param input - The action as the tool received it.
+   * @param next - The ask-learner operation.
+   * @returns The acceptance receipt of {@link StudyService.action}.
+   * @throws `PREREQUISITE_MISSING` when the editor has no box or it threw; `OPERATIONS_NOT_CONFIRMED` when the answer is missing or empty.
+   * @example await this.askLearnerSecretFor(record, input, { index: 2, title: 'Password' })
+   */
+  private async askLearnerSecretFor(
+    record: StudyRecord,
+    input: ActionInput,
+    next: { index: number; title: string },
+  ) {
     const ask = this.environment.askLearnerSecret
     if (!ask)
       throw new StudyError(
@@ -5323,54 +5415,420 @@ export class StudyService {
         undefined,
         { sent: 'not-sent', runUri: this.uri(record.id) },
       )
-    const result = (async () => {
-      const signal = AbortSignal.any([
-        AbortSignal.timeout(this.confirmationTimeoutMs),
-        record.cancellation.signal,
-      ])
-      const secret = await ask
-        .call(
-          this.environment,
-          {
-            runId: record.id,
-            repository: basename(this.environment.workspace),
-            title: next.title,
-          },
-          signal,
-        )
-        .catch((error: unknown) => {
-          // An abort or timeout is an unanswered ask; any other throw is a fault of the editor's input box.
-          if (signal.aborted) return undefined
-          throw this.inputBoxFault(record, next, error)
-        })
-      // An empty answer types nothing into the control, so it counts as no answer.
-      if (secret === undefined || secret === '')
-        throw new StudyError(
-          'OPERATIONS_NOT_CONFIRMED',
-          `The learner did not provide the secret for operation ${next.index} (${next.title}), so nothing was sent. The run stays ready.`,
-          undefined,
-          undefined,
-          undefined,
-          {
-            operationIndex: next.index,
-            path: `operations[${next.index - 1}].secret`,
-            sent: 'not-sent',
-            sideEffects: 'none',
-            retry:
-              'Ask the learner whether to try again; the key was not used.',
-            runUri: this.uri(record.id),
-            logId: `${record.id}#${next.index}`,
-          },
-        )
-      return this.action(input, { learnerSecret: secret })
-    })()
-    record.operationAsk = { key: input.key, signature, result }
-    try {
-      return await result
-    } finally {
-      if (record.operationAsk?.result === result)
-        record.operationAsk = undefined
+    const signal = AbortSignal.any([
+      AbortSignal.timeout(this.confirmationTimeoutMs),
+      record.cancellation.signal,
+    ])
+    const secret = await ask
+      .call(
+        this.environment,
+        {
+          runId: record.id,
+          repository: basename(this.environment.workspace),
+          title: next.title,
+        },
+        signal,
+      )
+      .catch((error: unknown) => {
+        // An abort or timeout is an unanswered ask; any other throw is a fault of the editor's input box.
+        if (signal.aborted) return undefined
+        throw this.editorQuestionFault(record, next, 'input box', error)
+      })
+    // An empty answer types nothing into the control, so it counts as no answer.
+    if (secret === undefined || secret === '')
+      throw new StudyError(
+        'OPERATIONS_NOT_CONFIRMED',
+        `The learner did not provide the secret for operation ${next.index} (${next.title}), so nothing was sent. The run stays ready.`,
+        undefined,
+        undefined,
+        undefined,
+        {
+          question: 'secret',
+          operationIndex: next.index,
+          path: `operations[${next.index - 1}].secret`,
+          sent: 'not-sent',
+          sideEffects: 'none',
+          retry: 'Ask the learner whether to try again; the key was not used.',
+          runUri: this.uri(record.id),
+          logId: `${record.id}#${next.index}`,
+        },
+      )
+    return this.action(input, { learnerSecret: secret })
+  }
+
+  /**
+   * Words the `BUSY` refusal for another key while the learner is asked in the editor.
+   * @param record - The run.
+   * @param question - Which dialog is open.
+   * @returns `BUSY` with reason `awaiting-confirmation` and `details.question`.
+   * @example throw this.busyWhileAsking(record, 'secret')
+   */
+  private busyWhileAsking(
+    record: StudyRecord,
+    question: 'secret' | 'saved-session-operations',
+  ): StudyError {
+    const subject =
+      question === 'secret'
+        ? 'a secret'
+        : 'to confirm the operations of this run'
+    return new StudyError(
+      'BUSY',
+      `The learner is being asked ${subject}. Do not retry this request; wait, then read the run.`,
+      `Read ${this.uri(record.id)} for the run's progress; nothing was sent.`,
+      BUSY_AWAITING_CONFIRMATION_RECOVERY,
+      undefined,
+      {
+        reason: 'awaiting-confirmation',
+        question,
+        sent: 'not-sent',
+        runUri: this.uri(record.id),
+      },
+    )
+  }
+
+  /**
+   * Reads, once per run, the saved-session confirmation of a version 3 run whose session is decided (X1): `not-needed` without the saved session or with the learner's setting off, else `awaiting-learner`.
+   * @param record - The run.
+   * @returns The record's confirmation; `undefined` for versions 1 and 2, other profiles, and until the run decided its session.
+   * @example this.operationsConfirmationOf(record)?.state // => 'awaiting-learner'
+   */
+  private operationsConfirmationOf(
+    record: StudyRecord,
+  ): OperationsConfirmation | undefined {
+    if (record.operationsConfirmation) return record.operationsConfirmation
+    const session = record.runtime?.view().session
+    if (
+      record.definition?.configuration?.version !== OPERATIONS_CONFIG_VERSION ||
+      !session
+    )
+      return undefined
+    const isOff =
+      session === 'saved' &&
+      this.environment.savedSessionConfirmationEnabled?.() === false
+    record.operationsConfirmation = {
+      state: session === 'saved' && !isOff ? 'awaiting-learner' : 'not-needed',
+      ...(isOff ? { setting: 'off' as const } : {}),
+      isAsking: false,
+      isNoticeShown: false,
     }
+    return record.operationsConfirmation
+  }
+
+  /**
+   * Says whether the next operation must wait for the learner's confirmation: the run is ready for operation 1, nothing was sent, and the confirmation is `awaiting-learner` or `declined`.
+   * @param record - The run.
+   * @example this.needsOperationsConfirmation(record) // => true before operation 1 of a saved-session run
+   */
+  private needsOperationsConfirmation(record: StudyRecord): boolean {
+    const confirmation = this.operationsConfirmationOf(record)
+    const view = record.runtime?.view()
+    return (
+      (confirmation?.state === 'awaiting-learner' ||
+        confirmation?.state === 'declined') &&
+      !record.stopping &&
+      !record.stopped &&
+      !record.error &&
+      view?.status === 'ready' &&
+      view.nextAction === REPOSITORY_OPERATION_ACTION &&
+      (view.operations ?? []).every((entry) => entry.state === 'not-run')
+    )
+  }
+
+  /**
+   * Shows the saved-session operations dialog once and records the learner's answer.
+   * The wait ends at the earlier of {@link StudyService.confirmationTimeoutMs}, the run's deadline and the run's cancellation; the editor cannot close a native modal, so a later answer to it is ignored (ENG-6).
+   * @param record - The run.
+   * @returns `confirmed` for the primary button; `declined` for Cancel or a dismissal; `timed-out` when nobody answered in time; `stopped` when the run began to stop.
+   * @throws `PREREQUISITE_MISSING` when the editor cannot show the dialog or it threw.
+   * @example await this.askOperationsConfirmation(record) // => 'confirmed'
+   */
+  private async askOperationsConfirmation(
+    record: StudyRecord,
+  ): Promise<'confirmed' | 'declined' | 'timed-out' | 'stopped'> {
+    const confirmation = this.operationsConfirmationOf(record)!
+    const ask = this.environment.confirmSavedSessionOperations
+    if (!ask)
+      throw new StudyError(
+        'PREREQUISITE_MISSING',
+        'This editor cannot show the dialog that confirms the operations of a run with your saved session, so nothing was sent.',
+        undefined,
+        undefined,
+        undefined,
+        {
+          question: 'saved-session-operations',
+          operationIndex: 1,
+          sent: 'not-sent',
+          sideEffects: 'none',
+          runUri: this.uri(record.id),
+        },
+      )
+    const token = randomUUID()
+    confirmation.token = token
+    confirmation.isAsking = true
+    const timeout = AbortSignal.timeout(
+      Math.max(
+        0,
+        Math.min(this.confirmationTimeoutMs, record.deadlineAt - this.now()),
+      ),
+    )
+    const signal = AbortSignal.any([timeout, record.cancellation.signal])
+    try {
+      const question = await this.savedSessionOperationsQuestion(record)
+      this.writeOutputLine({
+        level: 'info',
+        text: `Run ${record.id}: saved-session confirmation of ${question.operations.length} operations shown.`,
+      })
+      const isConfirmed = await ask.call(
+        this.environment,
+        question,
+        signal,
+        (confirmed) => this.onLateOperationsAnswer(record, token, confirmed),
+      )
+      return this.recordOperationsAnswer(record, confirmation, {
+        isConfirmed,
+        isTimedOut: timeout.aborted,
+      })
+    } catch (error) {
+      if (error instanceof StudyError) throw error
+      throw this.editorQuestionFault(
+        record,
+        undefined,
+        'confirmation dialog',
+        error,
+      )
+    } finally {
+      confirmation.isAsking = false
+    }
+  }
+
+  /**
+   * Turns the dialog's answer into the confirmation state, the Output line and, for a refusal, the Review again notice.
+   * @param record - The run.
+   * @param confirmation - The run's confirmation.
+   * @param answer - Whether the primary button was chosen in time, and whether the wait ran out.
+   * @returns The outcome {@link StudyService.askOperationsConfirmation} returns.
+   * @example this.recordOperationsAnswer(record, confirmation, { isConfirmed: false, isTimedOut: true }) // => 'timed-out'
+   */
+  private recordOperationsAnswer(
+    record: StudyRecord,
+    confirmation: OperationsConfirmation,
+    answer: { isConfirmed: boolean; isTimedOut: boolean },
+  ): 'confirmed' | 'declined' | 'timed-out' | 'stopped' {
+    if (record.stopping || record.stopped) return 'stopped'
+    if (answer.isConfirmed) {
+      confirmation.state = 'confirmed'
+      this.writeOutputLine({
+        level: 'info',
+        text: `Run ${record.id}: saved-session confirmation confirmed.`,
+      })
+      return 'confirmed'
+    }
+    confirmation.state = 'declined'
+    this.writeOutputLine({
+      level: 'info',
+      text: `Run ${record.id}: saved-session confirmation ${answer.isTimedOut ? 'not answered in time' : 'declined'}.`,
+    })
+    this.offerOperationsReview(
+      record,
+      answer.isTimedOut ? 'timed-out' : 'declined',
+    )
+    return answer.isTimedOut ? 'timed-out' : 'declined'
+  }
+
+  /**
+   * Builds the question the dialog shows: the repository, the entry page and one line per operation with every secret hidden.
+   * The page facts come from one read without input; a failed read only turns choices into "(chosen when sent)".
+   * @param record - The run.
+   * @example await this.savedSessionOperationsQuestion(record) // => { runId, repository: 'shop', entryPath: '/cart', operations: [...] }
+   */
+  private async savedSessionOperationsQuestion(
+    record: StudyRecord,
+  ): Promise<SavedSessionOperationsQuestion> {
+    const configuration = record.definition?.configuration
+    if (configuration?.version !== OPERATIONS_CONFIG_VERSION)
+      throw new StudyError('RUNTIME_FAILED', 'The run declares no operations.')
+    const facts = await record.runtime
+      ?.readOperationConfirmationFacts?.()
+      .catch(() => undefined)
+    return {
+      runId: record.id,
+      repository: basename(this.environment.workspace),
+      entryPath: configuration.entryPath ?? '/',
+      operations: listSavedSessionOperations(configuration.operations, facts),
+    }
+  }
+
+  /**
+   * Handles an answer that reached Codebook after it stopped waiting: it never approves; a "Run" answer only offers Review again (ENG-6).
+   * @param record - The run.
+   * @param token - The dialog the answer belongs to.
+   * @param confirmed - Whether the learner chose the primary button.
+   * @example this.onLateOperationsAnswer(record, token, true)
+   */
+  private onLateOperationsAnswer(
+    record: StudyRecord,
+    token: string,
+    confirmed: boolean,
+  ): void {
+    const confirmation = record.operationsConfirmation
+    this.writeOutputLine({
+      level: 'info',
+      text: `Run ${record.id}: saved-session confirmation answer after the wait ignored.`,
+    })
+    if (
+      confirmed &&
+      confirmation?.state === 'declined' &&
+      !record.stopping &&
+      !record.stopped &&
+      !(confirmation.isAsking && confirmation.token === token)
+    )
+      this.offerOperationsReview(record, 'expired-answer')
+  }
+
+  /**
+   * Shows the "Operations not confirmed" notice once at a time; the learner's Review again starts a new dialog.
+   * @param record - The run.
+   * @param kind - Why the operations are not confirmed.
+   * @example this.offerOperationsReview(record, 'declined')
+   */
+  private offerOperationsReview(
+    record: StudyRecord,
+    kind: 'declined' | 'timed-out' | 'expired-answer',
+  ): void {
+    const confirmation = record.operationsConfirmation
+    const notice = this.environment.noticeOperationsConfirmation
+    if (!confirmation || !notice || confirmation.isNoticeShown) return
+    confirmation.isNoticeShown = true
+    void notice
+      .call(this.environment, {
+        runId: record.id,
+        repository: basename(this.environment.workspace),
+        kind,
+      })
+      .then(
+        (choice) => {
+          if (choice === 'review-again')
+            void this.reviewSavedSessionOperations(record.id)
+        },
+        () => undefined,
+      )
+      .finally(() => {
+        confirmation.isNoticeShown = false
+      })
+  }
+
+  /**
+   * Refuses an operation of a run whose confirmation was declined, offering Review again if its notice is gone; no dialog opens.
+   * @param record - The run.
+   * @returns `OPERATIONS_NOT_CONFIRMED`, thrown by the caller.
+   * @example throw this.refuseUnreviewedOperations(record)
+   */
+  private refuseUnreviewedOperations(record: StudyRecord): StudyError {
+    this.offerOperationsReview(record, 'declined')
+    return this.unconfirmedOperationsError(record, 'not-reviewed')
+  }
+
+  /**
+   * Asks the confirmation again after a decline, a timeout or a late answer; the `codebook.reviewSavedSessionOperations` command and the notice's Review again button call it (DES-4).
+   * A new dialog gets a new token, and only its own answer approves.
+   * @param runId - The run; without it the run that waits for a review.
+   * @returns `confirmed`, `declined`, or `not-waiting` when no run is declined, or a dialog is already open.
+   * @example await service.reviewSavedSessionOperations(run.runId) // => 'confirmed'
+   */
+  async reviewSavedSessionOperations(
+    runId?: string,
+  ): Promise<'confirmed' | 'declined' | 'not-waiting'> {
+    const record = this.recordsAwaitingReview().find(
+      (entry) => runId === undefined || entry.id === runId,
+    )
+    const confirmation = record?.operationsConfirmation
+    if (
+      !record ||
+      confirmation?.state !== 'declined' ||
+      confirmation.isAsking ||
+      record.operationAsk
+    )
+      return 'not-waiting'
+    try {
+      const outcome = await this.askOperationsConfirmation(record)
+      if (outcome !== 'confirmed') return 'declined'
+    } catch {
+      // The failure was written to Output; the run stays declined.
+      return 'declined'
+    }
+    this.environment.noticeOperationsConfirmation?.({
+      runId: record.id,
+      repository: basename(this.environment.workspace),
+      kind: 'confirmed',
+    })
+    return 'confirmed'
+  }
+
+  /**
+   * Lists the runs whose operations the learner has not confirmed and could review again.
+   * @example this.recordsAwaitingReview().map((record) => record.id)
+   */
+  private recordsAwaitingReview(): StudyRecord[] {
+    return [...this.records.values()].filter(
+      (record) =>
+        record.operationsConfirmation?.state === 'declined' &&
+        this.needsOperationsConfirmation(record),
+    )
+  }
+
+  /**
+   * Tells which run waits for the learner to review its operations again; the saved-session status item reads it (DES-4).
+   * @returns The run id and repository folder name, or `undefined` when no run waits.
+   * @example service.awaitingOperationsReview() // => { runId: 'r1', repository: 'shop' }
+   */
+  awaitingOperationsReview():
+    { runId: string; repository: string } | undefined {
+    const record = this.recordsAwaitingReview()[0]
+    return record
+      ? {
+          runId: record.id,
+          repository: basename(this.environment.workspace),
+        }
+      : undefined
+  }
+
+  /**
+   * Words the refusal for an operation the learner has not confirmed; nothing was sent, the run stays ready and the key is unused.
+   * @param record - The run.
+   * @param why - `declined` or `timed-out` for the dialog just closed; `not-reviewed` for a later call before Review again.
+   * @returns `OPERATIONS_NOT_CONFIRMED` for `details.question` `saved-session-operations`.
+   * @example throw this.unconfirmedOperationsError(record, 'declined')
+   */
+  private unconfirmedOperationsError(
+    record: StudyRecord,
+    why: 'declined' | 'timed-out' | 'not-reviewed',
+  ): StudyError {
+    const reason = {
+      declined: 'The learner declined the dialog that lists the operations',
+      'timed-out':
+        'The learner did not answer the dialog that lists the operations in time',
+      'not-reviewed':
+        'The learner has not confirmed the operations of this run',
+    }[why]
+    return new StudyError(
+      'OPERATIONS_NOT_CONFIRMED',
+      `${reason}, so nothing was sent. The run stays ready; it asks again only after the learner chooses Review again in the editor.`,
+      undefined,
+      undefined,
+      undefined,
+      {
+        question: 'saved-session-operations',
+        confirmation: record.operationsConfirmation?.state ?? 'declined',
+        operationIndex: 1,
+        path: 'operations',
+        sent: 'not-sent',
+        sideEffects: 'none',
+        retry:
+          'Do not resend until the run resource reads confirmation: confirmed (read it at most every 10 s for at most 5 minutes); then send the next operation with the same or a new key.',
+        runUri: this.uri(record.id),
+        logId: `${record.id}#1`,
+      },
+    )
   }
 
   /**
@@ -5793,23 +6251,28 @@ export class StudyService {
   }
 
   /**
-   * Words the refusal for an editor input box that threw, instead of reading the fault as a declined ask; called by {@link StudyService.sendOperation} when the learner-secret asker rejects.
-   * The cause is masked and written once to Output › Codebook; the box never returned a typed value, so none can appear.
+   * Words the refusal for an editor question (the secret's input box or the saved-session confirmation dialog) that threw, instead of reading the fault as a declined ask; called by {@link StudyService.askLearnerSecretFor} and {@link StudyService.askOperationsConfirmation}.
+   * The cause is masked and written once to Output › Codebook; the question never returned a typed value, so none can appear.
    * @param record - The run that asked.
-   * @param next - The ask-learner operation.
+   * @param next - The ask-learner operation; `undefined` for the confirmation dialog, which belongs to operation 1.
+   * @param surface - Which editor surface failed.
    * @param error - What the asker threw.
    * @returns `PREREQUISITE_MISSING` with the masked cause; the key stays unused.
-   * @example this.inputBoxFault(record, next, new Error('box failed')) // => StudyError PREREQUISITE_MISSING
+   * @example this.editorQuestionFault(record, next, 'input box', new Error('box failed')) // => StudyError PREREQUISITE_MISSING
    */
-  private inputBoxFault(
+  private editorQuestionFault(
     record: StudyRecord,
-    next: { index: number; title: string },
+    next: { index: number; title: string } | undefined,
+    surface: 'input box' | 'confirmation dialog',
     error: unknown,
   ): StudyError {
     const cause = this.maskLearnerSecretsInText(
       error instanceof Error ? error.message : String(error),
     )
-    const message = `The editor's input box failed for operation ${next.index} (${next.title}), so nothing was sent: ${cause}`
+    const where = next
+      ? `operation ${next.index} (${next.title})`
+      : 'the operations of this run'
+    const message = `The editor's ${surface} failed for ${where}, so nothing was sent: ${cause}`
     this.writeOutputLine({
       level: 'error',
       text: `Run ${record.id}: ${message}`,
@@ -5821,7 +6284,8 @@ export class StudyService {
       undefined,
       undefined,
       {
-        operationIndex: next.index,
+        ...(next ? {} : { question: 'saved-session-operations' }),
+        operationIndex: next?.index ?? 1,
         sent: 'not-sent',
         sideEffects: 'none',
         runUri: this.uri(record.id),

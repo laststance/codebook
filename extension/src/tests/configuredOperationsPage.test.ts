@@ -3,6 +3,7 @@ import { test } from 'node:test'
 
 import {
   applyNativeValue,
+  describeConfirmationControls,
   describeOperationControl,
 } from '../configuredOperations'
 
@@ -88,6 +89,7 @@ class FakeOption {
   constructor(
     readonly value: string,
     readonly isDisabled = false,
+    readonly label = value,
   ) {}
   matches(selector: string): boolean {
     assert.equal(selector, ':disabled')
@@ -799,4 +801,75 @@ test('choose sets nothing on a page whose select prototype has no native value s
   assert.deepEqual(result, { applied: false, reason: 'setter-missing' })
   assert.equal(customer.value, '')
   assert.deepEqual(customer.dispatched, [])
+})
+
+// protects=ENG-8: the confirmation's in-page read names the enabled option by its label, skips a disabled option and a multiple select, finds exactly one control, reads attributes only, and answers nothing at another origin; fails_when=a disabled label or a value is read, two matches count as found, or another origin answers; no_claim=real Chrome (the real-Chrome test covers it)
+test('the confirmation read names an enabled option by its label and reads nothing at another origin', () => {
+  // Arrange
+  const customer = new FakeHTMLSelectElement(
+    { id: 'customer', name: 'customer' },
+    [new FakeOption('c1', false, 'Alice'), new FakeOption('c2', true, 'Bob')],
+  )
+  const multiple = new FakeHTMLSelectElement({ id: 'multi' }, [
+    new FakeOption('a', false, 'A'),
+  ])
+  multiple.multiple = true
+  const first = new FakeHTMLInputElement({ id: 'one', type: 'password' })
+  const second = new FakeHTMLInputElement({ id: 'two' })
+  const page = {
+    origin: OWNED_ORIGIN,
+    matchesBySelector: {
+      '#customer': [customer],
+      '#multi': [multiple],
+      '.pair': [first, second],
+    },
+  }
+  const input = {
+    origins: [OWNED_ORIGIN],
+    controls: [
+      { selector: '#customer', value: 'c1' },
+      { selector: '#customer', value: 'c2' },
+      { selector: '#multi', value: 'a' },
+      { selector: '.pair' },
+      { selector: '#absent' },
+      null,
+    ],
+  }
+  // Act
+  const described = inFakePage(page, () => describeConfirmationControls(input))
+  const elsewhere = inFakePage(
+    { ...page, origin: 'https://other.example' },
+    () => describeConfirmationControls(input),
+  )
+  // Assert
+  assert.deepEqual(described, [
+    {
+      found: true,
+      type: '',
+      name: 'customer',
+      id: 'customer',
+      autocomplete: '',
+      optionLabel: 'Alice',
+    },
+    {
+      found: true,
+      type: '',
+      name: 'customer',
+      id: 'customer',
+      autocomplete: '',
+      optionLabel: undefined,
+    },
+    {
+      found: true,
+      type: '',
+      name: '',
+      id: 'multi',
+      autocomplete: '',
+      optionLabel: undefined,
+    },
+    { found: false },
+    { found: false },
+    null,
+  ])
+  assert.deepEqual(elsewhere, [null, null, null, null, null, null])
 })

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
+import type { OperationConfirmationFact } from '../../operationsConfirmationTypes'
 import type {
   OperationFailure,
   OperationRecord,
@@ -19,6 +20,12 @@ export class ControlledOperationsRuntime extends ControlledConfiguredRuntime {
   readonly learnerSecrets: (string | undefined)[] = []
   /** The first failure of an operation, which a test sets when it fails the run. */
   failure?: OperationFailure
+  /** The profile the run reports; a test sets `'saved'` as the stand-in for the saved-session decision of lane B. */
+  session?: 'saved' | 'fresh'
+  /** What the page read returns for the saved-session confirmation. */
+  confirmationFacts?: OperationConfirmationFact[]
+  /** Makes the page read of the confirmation fail. */
+  confirmationFactsFailure?: Error
   /** Whether the action commits the operation's stop at once, as a stop inside the input's handler does. */
   pausesOnAction = false
 
@@ -74,6 +81,15 @@ export class ControlledOperationsRuntime extends ControlledConfiguredRuntime {
     return { ...this.operation, operationIndex: record.index }
   }
 
+  /** Answers the confirmation's page read from the facts a test set, or rejects with its failure. */
+  readOperationConfirmationFacts(): Promise<
+    readonly OperationConfirmationFact[]
+  > {
+    return this.confirmationFactsFailure
+      ? Promise.reject(this.confirmationFactsFailure)
+      : Promise.resolve(this.confirmationFacts ?? [])
+  }
+
   /** Finishes an operation the way the run does once its input and stops are done: `done`, acknowledged, and the run `ready` for the next. */
   finish(index: number): void {
     const record = this.records[index - 1]!
@@ -88,6 +104,7 @@ export class ControlledOperationsRuntime extends ControlledConfiguredRuntime {
     return {
       ...super.view(),
       operations: this.records.map((record) => ({ ...record })),
+      ...(this.session ? { session: this.session } : {}),
       ...(this.failure ? { operationFailure: this.failure } : {}),
       nextAction:
         this.status === 'ready' &&

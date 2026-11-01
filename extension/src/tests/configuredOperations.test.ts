@@ -5,6 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import {
   OperationRefusal,
   prepareOperation,
+  readOperationConfirmationFacts,
   waitForSettledPage,
   type OperationPort,
   type OperationSendHooks,
@@ -784,4 +785,58 @@ test('a page that moves the focus away right after the focus step receives no te
   assert.equal(refusal.sent, 'not-sent')
   assert.equal(await read(page, 'document.getElementById("stealer").value'), '')
   assert.equal(await read(page, 'document.getElementById("landing").value'), '')
+})
+
+// protects=ENG-8 page facts for the saved-session confirmation: an enabled option is named by its label, a disabled option, a secret select, a password control and a missing control are not, and the read sends no input event; fails_when=a value or disabled label is read, a secret select's label leaves the page, or the read sends an Input request; no_claim=the dialog's wording; real headless Chrome
+test('the confirmation read names an enabled option by its label, hides secrets, finds no absent field and sends no input', async (context) => {
+  // Arrange
+  const page = await openRealChromePage(context, FIXTURE)
+  if (!page) return
+  const methods: string[] = []
+  const recordingPort: OperationPort = {
+    ...portOf(page),
+    pageCdp: async () =>
+      new Proxy(page.cdp, {
+        get(target, property) {
+          if (property !== 'request') return Reflect.get(target, property)
+          return (method: string, ...rest: unknown[]) => {
+            methods.push(method)
+            return (target.request as (...args: unknown[]) => unknown)(
+              method,
+              ...rest,
+            )
+          }
+        },
+      }),
+  }
+  const operations: RepositoryOperation[] = [
+    { kind: 'choose', title: 'Customer', selector: '#customer', value: 'c1' },
+    { kind: 'choose', title: 'Disabled', selector: '#customer', value: 'c2' },
+    { kind: 'choose', title: 'Key', selector: '#api-select', value: 'k1' },
+    {
+      kind: 'text',
+      title: 'Password',
+      selector: '#password',
+      secret: 'ask-learner',
+    },
+    { kind: 'text', title: 'Memo', selector: '#memo', text: 'hello' },
+    { kind: 'text', title: 'Absent', selector: '#absent', text: 'x' },
+    { kind: 'click', title: 'Go', selector: '#go' },
+  ]
+  // Act
+  const facts = await readOperationConfirmationFacts(recordingPort, operations)
+  // Assert
+  assert.deepEqual(facts, [
+    { index: 1, found: true, secret: false, optionLabel: 'Alice' },
+    { index: 2, found: true, secret: false },
+    { index: 3, found: true, secret: true },
+    { index: 4, found: true, secret: true },
+    { index: 5, found: true, secret: false },
+    { index: 6, found: false, secret: false },
+    { index: 7, found: true, secret: false },
+  ])
+  assert.equal(
+    methods.some((method) => method.startsWith('Input.')),
+    false,
+  )
 })

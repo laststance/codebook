@@ -13,7 +13,9 @@ import { ConfiguredBrowserRun } from './configuredBrowserRun'
 import type { ConfiguredDescriptor } from './configuredStudySchemas'
 import {
   CHROME_LINUX_EXECUTABLE_NAMES,
+  CONFIRM_SAVED_SESSION_OPERATIONS_SETTING,
   PREREQUISITE_TIMEOUT_MS,
+  REVIEW_AGAIN_LABEL,
   WSL_REMOTE_NAME,
 } from './constants'
 import { StudyError } from './errors'
@@ -51,6 +53,8 @@ import { createChromeExecutableLookup } from './utils/createChromeExecutableLook
 import { createLearnerSecretAsker } from './utils/createLearnerSecretAsker'
 import { createMemoryOrphanStore } from './utils/createMemoryOrphanStore'
 import { createNodeServerRunUtilities } from './utils/createNodeServerRunUtilities'
+import { createSavedSessionOperationsAsker } from './utils/createSavedSessionOperationsAsker'
+import { describeOperationsConfirmationNotice } from './utils/describeOperationsConfirmationNotice'
 import { listVitestForRootClaim } from './utils/listVitestForRootClaim'
 import { nodeServerMachineGaps } from './utils/nodeServerMachineGaps'
 import type { NodeServerOrphanStore } from './utils/nodeServerOrphanRecords'
@@ -67,6 +71,7 @@ import {
 import { sanitizeCause } from './utils/sanitizeCause'
 import type { CauseRoots } from './utils/sanitizeCause'
 import { searchRepositoryVitest } from './utils/searchRepositoryVitest'
+import { showPlainNotice } from './utils/showPlainNotice'
 
 export interface StudyPresentation {
   createViewport: BrowserViewportFactory
@@ -345,6 +350,15 @@ export async function createEnvironment(
   }
   // One asker for the window's life, so a retry joins a modal still on screen.
   const askToSendStateChangingRequest = createStateChangingRequestAsker(
+    (message, detail, ...items) =>
+      vscode.window.showWarningMessage(
+        message,
+        { modal: true, detail },
+        ...items,
+      ),
+  )
+  // Each ask of the saved-session operations question is its own native modal (ENG-6).
+  const confirmSavedSessionOperations = createSavedSessionOperationsAsker(
     (message, detail, ...items) =>
       vscode.window.showWarningMessage(
         message,
@@ -716,6 +730,27 @@ export async function createEnvironment(
     },
     confirmStateChangingRequest: askToSendStateChangingRequest,
     askLearnerSecret,
+    confirmSavedSessionOperations,
+    savedSessionConfirmationEnabled(): boolean {
+      // Only the learner's user setting counts: a workspace or folder value (a file the chat's repository can carry) is ignored.
+      return (
+        vscode.workspace
+          .getConfiguration('codebook')
+          .inspect<boolean>(CONFIRM_SAVED_SESSION_OPERATIONS_SETTING)
+          ?.globalValue !== false
+      )
+    },
+    async noticeOperationsConfirmation(notice) {
+      const { severity, message, actions } =
+        describeOperationsConfirmationNotice(notice)
+      const choice = await showPlainNotice(
+        vscode.window,
+        severity,
+        message,
+        ...actions,
+      )
+      return choice === REVIEW_AGAIN_LABEL ? 'review-again' : undefined
+    },
     dispose(): void {
       tracker.dispose()
       termination.dispose()

@@ -72,6 +72,7 @@ import {
   REPLAY_VIEWPORT_RECEIPT_LIMIT,
   REPOSITORY_SOURCE_SCHEME,
   REPOSITORY_BROWSER_PROFILE,
+  REPOSITORY_OPERATION_ACTION,
   REPOSITORY_MIN_EDITOR_GROUP_COUNT,
   REPOSITORY_READER_DEBOUNCE_MS,
   REPOSITORY_SOURCE_LIMIT_BYTES,
@@ -9057,11 +9058,15 @@ export class StudyWorkspace {
             )
             if (!nextAction)
               throw new Error('No application action is currently available.')
-            service.action({
+            const request = {
               ...identity,
               key: randomUUID(),
               action: nextAction.id,
-            })
+            }
+            // A version 3 operation goes through the same questions as the chat's request: the saved-session confirmation and the masked box of an ask-learner secret (X1).
+            if (request.action === REPOSITORY_OPERATION_ACTION)
+              await service.performAction(request)
+            else service.action(request)
           }
           if (action === 'continue') {
             if (
@@ -12013,6 +12018,30 @@ export class StudyWorkspace {
         'The recorded session changed. Use the current Save learning replay control.',
       )
     return owner.save(record)
+  }
+
+  /**
+   * Tells which run waits for the learner to review its operations again; the review command and the saved-session status item read it.
+   * @returns The run id and repository folder name, or `undefined` when no run waits.
+   * @example workspace.awaitingOperationsReview() // => { runId: 'r1', repository: 'shop' }
+   */
+  awaitingOperationsReview():
+    { runId: string; repository: string } | undefined {
+    return this.service?.awaitingOperationsReview()
+  }
+
+  /**
+   * Asks the confirmation of a saved-session run's operations again; the `codebook.reviewSavedSessionOperations` command calls it (DES-4).
+   * @param runId - The run; without it the run that waits for a review.
+   * @returns `confirmed`, `declined`, or `not-waiting` when there is no service or no run waits.
+   * @example await workspace.reviewSavedSessionOperations(runId) // => 'confirmed'
+   */
+  async reviewSavedSessionOperations(
+    runId?: string,
+  ): Promise<'confirmed' | 'declined' | 'not-waiting'> {
+    return (
+      (await this.service?.reviewSavedSessionOperations(runId)) ?? 'not-waiting'
+    )
   }
 
   /** Finishes the explicitly selected capture and verifies matching durable learning; called by the status-bar command. @example await workspace.saveLearningReplay(studyId) */

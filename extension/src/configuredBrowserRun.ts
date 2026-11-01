@@ -11,6 +11,7 @@ import { z } from 'zod'
 import {
   OperationRefusal,
   prepareOperation,
+  readOperationConfirmationFacts,
   waitForSettledPage,
   type OperationPort,
   type PreparedOperation,
@@ -74,6 +75,7 @@ import {
   nextSetupDeadlineVariantOf,
   type NextRouterState,
 } from './nextRefusals'
+import type { OperationConfirmationFact } from './operationsConfirmationTypes'
 import {
   OwnedBreakpointMovedError,
   OwnedBreakpointRemovedError,
@@ -8391,6 +8393,27 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     return withheld.crossOriginFrame + withheld.secretNotVerified > 0
       ? { withheldImages: { ...withheld } }
       : {}
+  }
+  /**
+   * Reads, without any input event, what the saved-session confirmation needs to word each operation of a ready version 3 run.
+   * Called by the service when it builds the confirmation question; touches no run state, evidence or deadline.
+   * @returns One fact per operation; empty for a run without operations, one that is cleaning, or one that is not `ready`.
+   * @throws When the page read fails; the service shows the dialog without facts.
+   * @example await run.readOperationConfirmationFacts() // => [{ index: 1, found: true, secret: false, optionLabel: 'Alice' }]
+   */
+  readOperationConfirmationFacts(): Promise<
+    readonly OperationConfirmationFact[]
+  > {
+    if (
+      !this.operationsConfiguration ||
+      this.cleaning ||
+      this.status !== 'ready'
+    )
+      return Promise.resolve([])
+    return readOperationConfirmationFacts(
+      this.operationPort(),
+      this.operationsConfiguration.operations,
+    )
   }
   /** Exposes bounded descriptors and immutable references; service signatures never serialize full modules or maps. @example run.view().participants.browser.pause */
   view(): ConfiguredRuntimeView {

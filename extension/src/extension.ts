@@ -59,6 +59,7 @@ import {
   WIKI_UPDATE_WATCH_TIMEOUT_MS,
   WIKI_UPDATE_WINDOW_CLOSING_ABORT_REASON,
   OPEN_LEARNING_REPLAY_COMMAND,
+  REVIEW_SAVED_SESSION_OPERATIONS_COMMAND,
   SAVE_LEARNING_REPLAY_COMMAND,
   NODE_SERVER_SHUTDOWN_GRACE_MS,
 } from './constants'
@@ -3123,6 +3124,22 @@ export function activate(
     registerCommand(SHOW_WIKI_OUTPUT_COMMAND, () => {
       diagnostics.show()
     }),
+    // Asks the operations of a saved-session run again after a decline; reached from the notice's Review again and the saved-session status item.
+    registerCommand(
+      REVIEW_SAVED_SESSION_OPERATIONS_COMMAND,
+      async (runId?: string) => {
+        // Without a run id (a keyboard shortcut or a task) the command reviews the run that waits.
+        const target = runId ?? workspace().awaitingOperationsReview()?.runId
+        if (
+          (await workspace().reviewSavedSessionOperations(target)) ===
+          'not-waiting'
+        )
+          void showNotice(
+            'information',
+            'No Codebook run is waiting for you to confirm its operations.',
+          )
+      },
+    ),
     registerCommand(SAVE_LEARNING_REPLAY_COMMAND, async (studyId?: string) => {
       try {
         await workspace().saveLearningReplay(studyId)

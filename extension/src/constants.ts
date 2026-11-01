@@ -786,6 +786,8 @@ export const PLAYBACK_PREFERENCE_FILE = 'playback.v1.json'
 export const PLAYBACK_PREFERENCE_LIMIT_BYTES = 65_536
 /** Converts milliseconds to the seconds that playback labels, seek steps and run failure texts name. */
 export const MILLISECONDS_PER_SECOND = 1_000
+/** Converts seconds to the minutes the help names for the saved-session confirmation wait. */
+export const SECONDS_PER_MINUTE = 60
 export const PLAYBACK_PAGE_STEP_MS = 10_000
 export const REPLAY_VIEWPORT_RECEIPT_LIMIT = 12
 export const REPOSITORY_GIT_TIMEOUT_MS = 5_000
@@ -1619,6 +1621,12 @@ export const CONFIRM_SAVED_SESSION_OPERATIONS_SETTING =
 export const SAVED_SESSION_CONFIRMATION_VALUE_LIMIT_CHARS = 80
 /** How long the read of the page's controls for the saved-session confirmation may take. */
 export const OPERATION_CONFIRMATION_READ_TIMEOUT_MS = 2_000
+/** What the saved-session confirmation shows in place of the text a secret control receives. */
+export const HIDDEN_OPERATION_VALUE = '(hidden)'
+/** What the saved-session confirmation shows for a `choose` operation whose option is not on the page yet (ENG-8). */
+export const CHOSEN_WHEN_SENT_VALUE = '(chosen when sent)'
+/** The label of the Review again button on the "Operations not confirmed" notice. */
+export const REVIEW_AGAIN_LABEL = 'Review again'
 export const CONFIGURED_STUDY_VERSION = 3
 export const CROSS_RUNTIME_STUDY_VERSION = 4
 /** The format of a repository-browser study made with the `vite-dev` adapter; an older Codebook lists it as saved by a newer one. */

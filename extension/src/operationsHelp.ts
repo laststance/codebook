@@ -5,6 +5,8 @@ import {
   OPERATION_SETTLE_QUIET_MS,
   REPOSITORY_OPERATION_ACTION,
   REPOSITORY_OPERATION_LIMIT,
+  REPOSITORY_PAUSE_HOLD_TIMEOUT_MS,
+  SECONDS_PER_MINUTE,
   SECRET_FRAME_VALUE_COPY_MIN_CHARS,
 } from './constants'
 import { ERROR_RECOVERY, type ErrorCode } from './errors'
@@ -118,6 +120,12 @@ const OPERATIONS_QUICK_START_COPY_FROM = {
     'codebook_status (copy it into every later tool call; recopy it after a restart)',
 } as const
 
+/** How long the saved-session confirmation waits for the learner, in whole minutes, as the help words it. */
+const CONFIRMATION_WAIT_MINUTES =
+  REPOSITORY_PAUSE_HOLD_TIMEOUT_MS /
+  MILLISECONDS_PER_SECOND /
+  SECONDS_PER_MINUTE
+
 /** The settle bound in whole seconds, as the help words it. */
 const SETTLE_BOUND_SECONDS = OPERATION_SETTLE_BOUND_MS / MILLISECONDS_PER_SECOND
 
@@ -214,6 +222,22 @@ export function operationsHelp() {
         'A send cannot drive a multiple select, a date, range, checkbox or radio input given text, or a contenteditable element: it answers CONTROL_KIND_NOT_SUPPORTED. Use a click operation where the control takes a click (a checkbox, a radio, a custom select).',
       failedFlow:
         'After a failure that may have changed data (operationFailure reads sent "sent" or sideEffects "unknown"), tell the learner which operations the run resource shows as done, offer to save the partial replay, and do not run the flow again unless the learner asks: changes the app made are not undone.',
+      savedSessionConfirmation: {
+        anchor: 'codebook://help/repository-browser#saved-session-confirmation',
+        when: `A version 3 run that starts with the learner's saved session (the run resource reads session saved) asks the learner once, before operation 1. The first ${REPOSITORY_OPERATION_ACTION} call opens an editor dialog listing the page, that the run changes the app's real data and keeps the data the app already had, and each operation: a secret as (hidden), a choice by its visible label, or (chosen when sent) when the option is not on the page yet. The call waits for the answer for at most ${CONFIRMATION_WAIT_MINUTES} minutes.`,
+        values:
+          "The run resource reads confirmation: awaiting-learner until the learner answers (the first repository-operation shows the dialog); confirmed after Run <N> operations; declined after Cancel, a closed dialog or no answer in time; not-needed for a run without the saved session, or with the learner's setting off (then confirmationSetting reads off).",
+        declined:
+          "After a decline the call answers OPERATIONS_NOT_CONFIRMED with isError true. Nothing was sent, the run stays ready and the key stays unused. Every later repository-operation answers OPERATIONS_NOT_CONFIRMED at once, with no dialog, until the learner chooses Review again in the editor's Operations not confirmed notification or the saved-session status item. Relay it and never ask the learner to confirm in the chat. Read the run resource at most every 10 s for at most 5 minutes, and send the next operation (same or new key) only when confirmation reads confirmed.",
+        whileAsking:
+          'Another key while the dialog is open answers BUSY with reason awaiting-confirmation; the same key joins the dialog. Codebook cannot close a dialog it stopped waiting for (no answer in time, or codebook_stop); an answer to that dialog is ignored and sends nothing. If your call ends before the learner answers (a client timeout), recover by reading the run resource or by sending the same key again, never a new one.',
+        fresh:
+          'A run without the saved session shows no dialog: it acts on the app\'s local or seeded data without the learner\'s account, as a single click and an extension run do. A version 3 configuration with session: "fresh" runs without the saved session even when one exists.',
+        setting:
+          'The learner may turn the dialog off for unattended use with codebook.confirmSavedSessionOperations in their user settings; a workspace setting is ignored. Never change it yourself.',
+        noEditor:
+          'An editor that cannot show the dialog answers PREREQUISITE_MISSING and sends nothing.',
+      },
     },
     operationsSecrets: {
       anchor: 'codebook://help/repository-browser#secrets-and-masking',
