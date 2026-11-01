@@ -393,9 +393,12 @@ test('a frame captured after the last verification of a replaced document is dro
   const gate = new SecretFrameGate({
     evaluate: async (expression) => {
       if (expression === 'performance.timeOrigin') return replaced ? 2 : 1
+      // The observers of the first document are gone; the one installed after the replacement answers.
       if (expression.includes('query()'))
-        return replaced ? null : { now: Date.now(), open: null, unsafe: [] }
-      return { ok: true, origin: 1 }
+        return replaced && !expression.includes('Gate2')
+          ? null
+          : { now: Date.now(), open: null, unsafe: [] }
+      return { ok: true, origin: replaced ? 2 : 1 }
     },
   })
   await gate.arm('#password', 'typed-secret')
@@ -542,6 +545,78 @@ test('a plain control inside a same-origin iframe holding the secret drops frame
     `(() => { const frame = document.createElement('iframe'); document.getElementById('host').append(frame); const input = frame.contentDocument.createElement('input'); input.type = 'text'; frame.contentDocument.body.append(input); input.value = 'typed-secret' })()`,
   )
   await settle(page)
+  const verdict = await gate.admitFrame(Date.now() - 20)
+  // Assert
+  assert.deepEqual([verdict, failures], ['drop', ['control-replaced']])
+})
+
+// protects=a full navigation to a page that renders the typed value fails the run and holds its images; fails_when=the gate stops checking after the document is replaced and a server-rendered echo passes; no_claim=a cross-origin page and a navigation the browser blocks: the second document is loaded through the protocol, not a form post
+test('a new document that renders the typed value drops frames and fails the run', async (context) => {
+  // Arrange
+  const page = await launchRealHeadlessPage(context)
+  if (!page) return
+  await page.load(PAGE)
+  const failures: SecretFrameFailureReason[] = []
+  const gate = new SecretFrameGate({
+    evaluate: (expression) => page.evaluate(expression),
+    onFailure: (reason) => void failures.push(reason),
+  })
+  await gate.arm('#pw', 'typed-secret')
+  await typeIntoControl(page, 'typed-secret')
+  await gate.admitFrame(Date.now() - 20)
+  // Act
+  await page.load('<p id="welcome">Welcome, typed-secret</p>')
+  await delay(CLEAR_OF_MARGIN_MS)
+  const verdict = await gate.admitFrame(Date.now() - 20)
+  // Assert
+  assert.deepEqual([verdict, failures], ['drop', ['value-copied-to-text']])
+})
+
+// protects=a new document that does not show the typed value keeps passing frames after a verification, and a later copy of the value in it fails the run; fails_when=the gate releases for good after the navigation, or counts the new page's first copy as page text; no_claim=pixels; real headless Chrome with a protocol navigation
+test('after a navigation the typed value is still watched: frames pass while it is absent and a later copy fails the run', async (context) => {
+  // Arrange
+  const page = await launchRealHeadlessPage(context)
+  if (!page) return
+  await page.load(PAGE)
+  const failures: SecretFrameFailureReason[] = []
+  const gate = new SecretFrameGate({
+    evaluate: (expression) => page.evaluate(expression),
+    onFailure: (reason) => void failures.push(reason),
+  })
+  await gate.arm('#pw', 'typed-secret')
+  await page.load('<p id="welcome">Welcome</p>')
+  await delay(CLEAR_OF_MARGIN_MS)
+  // Act
+  // The first image after the navigation finds the replacement and is held (the time before it was never verified); the next one is verified.
+  await gate.admitFrame(Date.now())
+  const before = await gate.admitFrame(Date.now())
+  await page.evaluate(
+    `document.getElementById('welcome').textContent = 'Welcome, typed-secret'`,
+  )
+  await settle(page)
+  const after = await gate.admitFrame(Date.now() - 20)
+  // Assert
+  assert.deepEqual(
+    [before, after, failures],
+    ['pass', 'drop', ['value-copied-to-text']],
+  )
+})
+
+// protects=a new document that shows the typed value in a plain control fails the run; fails_when=only rendered text is re-checked after a navigation; no_claim=real form posts
+test('a new document that shows the typed value in a plain control drops frames and fails the run', async (context) => {
+  // Arrange
+  const page = await launchRealHeadlessPage(context)
+  if (!page) return
+  await page.load(PAGE)
+  const failures: SecretFrameFailureReason[] = []
+  const gate = new SecretFrameGate({
+    evaluate: (expression) => page.evaluate(expression),
+    onFailure: (reason) => void failures.push(reason),
+  })
+  await gate.arm('#pw', 'typed-secret')
+  // Act
+  await page.load('<input id="echo" value="typed-secret">')
+  await delay(CLEAR_OF_MARGIN_MS)
   const verdict = await gate.admitFrame(Date.now() - 20)
   // Assert
   assert.deepEqual([verdict, failures], ['drop', ['control-replaced']])

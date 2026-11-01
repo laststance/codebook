@@ -2148,6 +2148,9 @@ export const SECRET_FRAME_OBSERVER_TIMEOUT_MS = 2_000
 /** The shortest secret value the secret frame observer checks for a copy into visible text; shorter values would match ordinary text (characters). */
 export const SECRET_FRAME_VALUE_COPY_MIN_CHARS = 4
 
+/** How many document replacements in a row the secret frame gate follows before it gives up and fails the run. */
+export const SECRET_FRAME_MAX_REPLACEMENTS_IN_A_ROW = 5
+
 /** The name of the page-global record of unsafe intervals that the secret frame observer keeps. */
 export const SECRET_FRAME_OBSERVER_GLOBAL = '__codebookSecretFrameGate'
 

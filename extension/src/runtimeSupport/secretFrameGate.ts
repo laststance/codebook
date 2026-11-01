@@ -1,11 +1,12 @@
 /**
  * The secret frame gate's invariant (every branch of the in-page observer and of the image paths below is checked against it):
- * while armed, and after a release, an image passes only if a verification that answered after its capture time shows no armed control, and no other control or rendered text, showed the secret then.
+ * while armed, and after a document replacement, an image passes only if a verification that answered after its capture time shows no armed control, and no other control or rendered text, showed the secret then.
  * A time that no verification covers (an observer that never answered, the gap between the last answer and a document's replacement) is not safe; it is a gap, not a pass.
  * Every image of a run that has a gate, stream frame or stop capture, asks the gate, armed or not, and reaches the recorder in the order it arrived.
  */
 import {
   SECRET_FRAME_MARGIN_MS,
+  SECRET_FRAME_MAX_REPLACEMENTS_IN_A_ROW,
   SECRET_FRAME_OBSERVER_GLOBAL,
   SECRET_FRAME_OBSERVER_TIMEOUT_MS,
   SECRET_FRAME_VALUE_COPY_MIN_CHARS,
@@ -47,24 +48,28 @@ export type SecretFrameGateOptions = {
  * Runs inside the page: watches one password control and keeps a record of the times it was not safe to draw.
  * Injected as source text by {@link SecretFrameGate.arm}; it must stay self-contained.
  * The page is unsafe while the armed element is connected but no longer a `password` control (whatever its selector matches now: the selector only serves to notice a replacement), while any other non-password control holds its last value (a replacement that shows it), and while that value appears in the page's rendered text more often than when the value arrived (text the page already showed, such as a "Forgot password?" label, is no copy). A control removed from the page, as a sign-in form that unmounts after its submit, or replaced by another password control shows nothing and stays safe.
- * @param selector - The control's selector.
+ * @param selector - The control's selector, or `null` in a document that replaced the one the learner typed in: there is no password control to watch, the value was never page text there (its baseline is zero), and only copies in rendered text and in plain controls are checked.
  * @param globalName - The page global the record is kept under.
  * @param copyMinChars - The shortest value checked for a copy into visible text.
  * @param secretValue - The value the learner will type, when the caller has it: its occurrences in the rendered text are counted now, before the value is sent, so the baseline never depends on whether a page handler registered earlier copies the typed value first. Kept only inside this observer.
  * @returns `{ ok: true }` once watching, or the reason the control is not a password control now.
  */
 function installSecretFrameObserver(
-  selector: string,
+  selector: string | null,
   globalName: string,
   copyMinChars: number,
   secretValue?: string,
 ):
   | { ok: true; origin: number }
   | { ok: false; reason: SecretFrameFailureReason } {
-  const first = document.querySelectorAll(selector)
-  const node = first.length === 1 ? first[0] : undefined
-  if (!(node instanceof HTMLInputElement) || node.type !== 'password')
+  const first = selector === null ? [] : document.querySelectorAll(selector)
+  const found = first.length === 1 ? first[0] : undefined
+  if (
+    selector !== null &&
+    (!(found instanceof HTMLInputElement) || found.type !== 'password')
+  )
     return { ok: false, reason: 'control-not-password' }
+  const node = selector === null ? undefined : (found as HTMLInputElement)
   const state: {
     open: number | null
     unsafe: [number, number][]
@@ -132,8 +137,9 @@ function installSecretFrameObserver(
     secretValue.length >= copyMinChars
       ? secretValue
       : undefined
+  // In a replacing document the value was never page text, so any occurrence is a copy.
   if (typedValue !== undefined)
-    baselines.set(typedValue, occurrencesOf(typedValue))
+    baselines.set(typedValue, selector === null ? 0 : occurrencesOf(typedValue))
   const copiedToText = (value: string): boolean => {
     const occurrences = occurrencesOf(value)
     const baseline = baselines.get(value)
@@ -161,7 +167,7 @@ function installSecretFrameObserver(
     )
   // The armed element itself, whatever the selector matches now: the selector only serves to notice a replacement.
   const armedControlReason = (): SecretFrameFailureReason | undefined => {
-    if (!node.isConnected) return undefined
+    if (node === undefined || !node.isConnected) return undefined
     // A show-password toggle changes the type; the selector may stop matching by then.
     if (node.type !== 'password') return 'control-not-password'
     if (node.value !== '') lastValue = node.value
@@ -199,7 +205,7 @@ function installSecretFrameObserver(
     }
   }
   // Without a value known beforehand, the baseline is taken when the value first arrives with an input event.
-  node.addEventListener('input', () => check())
+  node?.addEventListener('input', () => check())
   // A mutation callback runs before the next paint, so any painted unsafe state is recorded.
   new MutationObserver(() => check()).observe(document, {
     attributes: true,
@@ -213,6 +219,8 @@ function installSecretFrameObserver(
     requestAnimationFrame(watchPaints)
   }
   requestAnimationFrame(watchPaints)
+  // A replacing document may already show the value: the unsafe time then starts now, not at the first query.
+  if (selector === null) check()
   Object.defineProperty(window, globalName, {
     configurable: true,
     value: {
@@ -243,7 +251,8 @@ function installSecretFrameObserver(
 export class SecretFrameGate {
   /** Every control armed in the current document, each with the page global its observer keeps its record under; all are consulted for each image. */
   private observers: {
-    selector: string
+    /** `null` for an observer installed in a document that replaced the one the learner typed in. */
+    selector: string | null
     global: string
     /** Held only here and inside the page observer; never logged, journaled or put in a failure. */
     secretValue: string | undefined
@@ -262,6 +271,8 @@ export class SecretFrameGate {
   private failureReported = false
   /** The `performance.timeOrigin` of the document the observer was installed in; another value means the page loaded a new document. */
   private documentOrigin?: number
+  /** How many document replacements were followed without an answer from a new observer between them. */
+  private replacementsInRow = 0
 
   constructor(private readonly options: SecretFrameGateOptions) {}
 
@@ -367,6 +378,7 @@ export class SecretFrameGate {
     if (!this.armed) return this.admitUnarmed(fromMs, toMs, kind)
     const safe =
       this.lastAnswerMs >= toMs &&
+      !this.inUnverifiedGap(fromMs, toMs) &&
       !this.overlapsUnsafe(
         fromMs - SECRET_FRAME_MARGIN_MS,
         toMs + SECRET_FRAME_MARGIN_MS,
@@ -382,12 +394,16 @@ export class SecretFrameGate {
     toMs: number,
     kind: 'frame' | 'capture',
   ): 'pass' | 'drop' {
-    const inGap = this.unverifiedGaps.some(
-      ([start, end]) => fromMs <= end && toMs >= start,
-    )
-    if (!inGap) return 'pass'
+    if (!this.inUnverifiedGap(fromMs, toMs)) return 'pass'
     this.options.onDrop?.({ kind, atMs: toMs })
     return 'drop'
+  }
+
+  /** Whether `[fromMs, toMs]` touches a time no observer verified (the gap a document replacement left). */
+  private inUnverifiedGap(fromMs: number, toMs: number): boolean {
+    return this.unverifiedGaps.some(
+      ([start, end]) => fromMs <= end && toMs >= start,
+    )
   }
 
   /** Whether `[fromMs, toMs]` touches a known unsafe time, or follows the first one after a failure. */
@@ -415,13 +431,14 @@ export class SecretFrameGate {
       if (answered.length < reports.length) {
         // A new document has no observer and no password control; only the same document losing its observer is a failure.
         if (await this.documentWasReplaced()) {
-          this.release()
+          await this.continueInNewDocument()
           return
         }
         this.fail('observer-unanswered', -Infinity)
         return
       }
       // The oldest answer is what every observer vouches for.
+      this.replacementsInRow = 0
       this.lastAnswerMs = Math.min(...answered.map((report) => report.now))
       this.intervals = answered.flatMap((report) => report.unsafe)
       const opens = answered.flatMap((report) =>
@@ -459,13 +476,52 @@ export class SecretFrameGate {
   }
 
   /**
-   * Stops checking images after the page loaded a new document (a sign-in that redirects): the control that received the secret is gone with the old document, so there is no password to draw.
-   * A gate that already failed stays failed; a later secret operation arms it again.
+   * Keeps checking images after the page loaded a new document (a sign-in that redirects, a form that posts).
+   *
+   * The control that received the secret is gone with the old document, but the new page may render the value (a server-rendered echo). Every value the learner typed is watched again in the new document: its rendered text of every reachable root and its plain controls, with a baseline of zero, because the value was never page text there. Images stay held until a verification answered after their capture, and the time between the old observers' last answer and the new ones' installation stays an unverified gap.
+   * A value the host does not know (an arm without `secretValue`) cannot be watched again; the gate then has nothing to check there. A gate that already failed stays failed; a later secret operation arms it again.
    */
-  private release(): void {
+  private async continueInNewDocument(): Promise<void> {
     if (this.failureReason !== undefined) return
+    // A page that keeps replacing its document cannot be verified: the gate fails instead of looping.
+    if (++this.replacementsInRow > SECRET_FRAME_MAX_REPLACEMENTS_IN_A_ROW) {
+      this.fail('observer-unanswered', -Infinity)
+      return
+    }
+    // Each distinct typed value is watched once, whichever controls received it.
+    const values = [
+      ...new Set(
+        this.observers.flatMap((observer) =>
+          observer.secretValue === undefined ? [] : [observer.secretValue],
+        ),
+      ),
+    ]
     this.retireObserversExcept(undefined)
     this.documentOrigin = undefined
+    for (const secretValue of values) {
+      const entry = {
+        selector: null,
+        global: `${SECRET_FRAME_OBSERVER_GLOBAL}${++this.observersInstalled}`,
+        secretValue,
+      }
+      this.observers.push(entry)
+      try {
+        const result = (await this.options.evaluate(
+          `(${installSecretFrameObserver.toString()})(null,${JSON.stringify(entry.global)},${SECRET_FRAME_VALUE_COPY_MIN_CHARS},${JSON.stringify(secretValue)})`,
+          SECRET_FRAME_OBSERVER_TIMEOUT_MS,
+        )) as { ok?: boolean; origin?: number } | null
+        if (result?.ok !== true) this.fail('observer-unanswered', -Infinity)
+        else this.documentOrigin = result.origin
+      } catch {
+        this.fail('observer-unanswered', -Infinity)
+      }
+    }
+    if (this.observers.length === 0) return
+    // No image is verified until the new observers answered: the gap runs to the end of their installation.
+    const gap = this.unverifiedGaps.at(-1)
+    if (gap) gap[1] = Date.now()
+    // Ask once now, so the answer is current and a copy the page already shows fails at once.
+    await this.refresh()
   }
 
   /**
