@@ -556,6 +556,34 @@ function studyClient(
     playback('seek', mark.atMs, { index, atMs: mark.atMs })
   }
   /**
+   * The recorded position a Learning summary step stands for, read by {@link seekToMarkedMoment} while the browser replay is ready to move.
+   * @param stepId - The summary step's id.
+   * @returns The step's elapsed milliseconds, or `undefined` when the replay is not ready or the step has no recorded position.
+   * @example readySummaryStepPosition('result') // => 1250 in a ready replay, undefined while it loads
+   */
+  const readySummaryStepPosition = (
+    stepId: string | undefined,
+  ): number | undefined =>
+    current?.recording?.readiness === 'ready'
+      ? current.recording.learningSummary?.positions.find(
+          (value) => value.stepId === stepId,
+        )?.elapsedMs
+      : undefined
+  /**
+   * Moves the replay to the moment a clicked mark stands for: an operation mark, or a summary step linked to an operation, to that operation's moment, any other summary step to its recorded position; called by the page's click handler.
+   * @param target - The clicked button, carrying `data-operation-mark` or `data-summary-step`.
+   * @example seekToMarkedMoment(button) // a button with data-operation-mark="3" moves to operation 3
+   */
+  const seekToMarkedMoment = (target: HTMLElement): void => {
+    // An operation mark, or a summary step linked to one, moves the replay to that operation's moment.
+    if (target.dataset.operationMark) {
+      seekToOperation(Number(target.dataset.operationMark))
+      return
+    }
+    const position = readySummaryStepPosition(target.dataset.summaryStep)
+    if (position !== undefined) playback('seek', position)
+  }
+  /**
    * Finds the sent operation before or after the replay's position, for Previous and Next operation.
    * @param direction - Which way to step.
    * @returns The nearest sent operation in that direction, or `undefined`.
@@ -973,17 +1001,10 @@ function studyClient(
                 : {}),
             },
       )
-    } else if (target.dataset.operationMark) {
-      // An operation mark, or a summary step linked to one, moves the replay to that operation's moment.
-      seekToOperation(Number(target.dataset.operationMark))
-    } else if (target.dataset.summaryStep) {
-      const positions = current?.recording?.learningSummary?.positions
-      const position = positions?.find(
-        (value) => value.stepId === target.dataset.summaryStep,
-      )?.elapsedMs
-      if (position !== undefined && current?.recording?.readiness === 'ready')
-        playback('seek', position)
-    } else if (
+    } else if (target.dataset.operationMark || target.dataset.summaryStep)
+      // An operation mark or a Learning summary step moves the replay to the moment it stands for.
+      seekToMarkedMoment(target)
+    else if (
       target.dataset.presentation === 'restore' ||
       target.dataset.presentation === 'save-preference'
     ) {
