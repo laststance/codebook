@@ -25,6 +25,7 @@ import { isSecretName } from './isSecretName'
 import { redactSecretText } from './redactSecretText'
 import { redactValuePreview } from './redactValuePreview'
 import { shouldCaptureReplayScope } from './shouldCaptureReplayScope'
+import { stripTerminalControls } from './stripTerminalControls'
 
 const scopeResponse = z.object({
   scopes: z.array(
@@ -194,8 +195,10 @@ export async function captureReplayDebugSnapshot(
     (input.limits?.includeScope?.(frameIndex, scopeName) ?? true)
   const deadline = performance.now() + timeoutMs
   // Masks secrets before the cut, for every field: a secret straddling the cut would otherwise leave a fragment shorter than any pattern's minimum.
+  // Terminal controls go first: js-debug colors a DOM node's preview with ANSI SGR codes (`\u001b[34m<button …`), which are display noise in a saved value and would otherwise split a secret pattern.
   const shorten = (value: string) => {
-    const masked = redactSecretText(input.maskKnownText?.(value) ?? value)
+    const plain = stripTerminalControls(value)
+    const masked = redactSecretText(input.maskKnownText?.(plain) ?? plain)
     return masked.length <= REPLAY_DEBUG_TEXT_LIMIT_CHARS
       ? masked
       : `${masked.slice(0, REPLAY_DEBUG_TEXT_LIMIT_CHARS - REPLAY_DEBUG_TRUNCATION_MARKER.length)}${REPLAY_DEBUG_TRUNCATION_MARKER}`

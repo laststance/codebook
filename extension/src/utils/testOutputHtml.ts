@@ -74,5 +74,5 @@ function serverRegions(view: NodeTestApplicationView): string {
 function extensionFrameRegion(view: NodeTestApplicationView): string {
   const frame = view.frame
   const label = frame?.label ?? ''
-  return `<figure id="test-output-frame" class="extension-frame"><img id="test-output-frame-image" alt="${escapeHtml(label)}"${frame?.src ? ` src="${escapeHtml(frame.src)}"` : ' hidden'}${frame?.width ? ` width="${frame.width}"` : ''}${frame?.height ? ` height="${frame.height}"` : ''}><figcaption id="test-output-frame-label" class="status" title="${escapeHtml(frame?.reason ?? '')}">${escapeHtml(label)}</figcaption></figure>`
+  return `<figure id="test-output-frame" class="extension-frame"><img id="test-output-frame-image" alt="${escapeHtml(label)}"${frame?.src ? ` src="${escapeHtml(frame.src)}"` : ' hidden'}${frame?.width ? ` width="${frame.width}"` : ''}${frame?.height ? ` height="${frame.height}"` : ''}><figcaption id="test-output-frame-label" class="status" title="${escapeHtml(frame?.reason ?? label)}">${escapeHtml(label)}</figcaption></figure>`
 }

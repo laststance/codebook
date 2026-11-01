@@ -9,6 +9,7 @@ import { createHarness } from './helpers'
 import {
   capturedStop,
   extensionIdentity,
+  pngOf,
 } from './utils/chromeExtensionHistoryFixture'
 import { FakeChromeExtensionRuntime } from './utils/fakeChromeExtensionRuntime'
 import { openServerRepository } from './utils/nodeServerHistoryFixture'
@@ -200,4 +201,59 @@ test('a run on a full library goes on unrecorded and the resource says unavailab
   assert.equal(state.historyIssue.code, 'HISTORY_UNAVAILABLE')
   assert.match(state.historyIssue.message, /^Study library is full\./)
   assert.equal(state.historyUri, undefined)
+})
+
+// protects=the history resources the chat reads hold no frame bytes and no absolute path even when the history has filmstrip frames; fails_when=an event, the detail of a frame event or the top resource carries a base64 PNG, a data URL, the learning-storage path or a home or drive path; no_claim=masking of debugger values (their own tests)
+test('the history resources carry no frame bytes and no absolute paths for a history with recorded frames', async (context) => {
+  // Arrange
+  const { harness, run, record, repository } = await startRecordedRun(context)
+  const studyId = `${harness.service.instanceId}_${record.id}`
+  run.history?.frameObserver.frame({
+    data: pngOf(720, 640, 'resource').toString('base64'),
+    elapsedMs: run.history.frameObserver.elapsedMs(),
+    kind: 'stream',
+  })
+  run.history?.pauseOpened({
+    pauseId: `${record.id}:1:page:1`,
+    generation: 1,
+    context: 'page',
+    stopIndex: 1,
+    targetUrl: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/popup.html',
+    workerGeneration: 0,
+  })
+  run.history?.captured(
+    `${record.id}:1:page:1`,
+    capturedStop({ stopIndex: 1, context: 'page' }),
+  )
+  await harness.service.stop({
+    instanceId: harness.service.instanceId,
+    runId: record.id,
+  })
+
+  // Act
+  const events = await readPagedJson(
+    harness,
+    `codebook://node-history/${studyId}/events`,
+  )
+  const everyEvent: unknown[] = []
+  for (const [index] of events.entries()) {
+    everyEvent.push(
+      await readPagedJson(
+        harness,
+        `codebook://node-history/${studyId}/events/${index + 1}`,
+      ),
+    )
+  }
+  const top = await readPagedJson(harness, `codebook://node-history/${studyId}`)
+
+  // Assert
+  const text = JSON.stringify([events, everyEvent, top])
+  assert.ok(events.some((event: { type: string }) => event.type === 'frame'))
+  assert.equal(text.includes('iVBOR'), false)
+  assert.equal(text.includes('data:image'), false)
+  assert.equal(
+    text.includes(repository.extensionHistories.learningDirectory),
+    false,
+  )
+  assert.equal(/\/Users\/|\/home\/|[A-Za-z]:\\\\/.test(text), false)
 })

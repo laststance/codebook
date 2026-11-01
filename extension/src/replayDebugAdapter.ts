@@ -681,9 +681,13 @@ export class ReplayDebugAdapter {
     const variables: DebugProtocol.Variable[] = indices.map((index) => {
       const variable = this.snapshot!.variables[index]!
       return {
-        name: variable.name,
-        value: variable.value,
-        type: variable.type,
+        // Histories recorded before the capture stripped terminal controls may still hold ANSI color codes in a value; the stored snapshot stays as recorded.
+        name: stripTerminalControls(variable.name),
+        value: stripTerminalControls(variable.value),
+        type:
+          variable.type === undefined
+            ? undefined
+            : stripTerminalControls(variable.type),
         variablesReference:
           variable.children.length || variable.unavailable
             ? this.group(variable.children, variable.unavailable)

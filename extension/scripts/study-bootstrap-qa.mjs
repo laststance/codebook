@@ -4027,6 +4027,140 @@ async function check(page, options, collected) {
           serverRequestTitle.tabStop === '0' &&
           serverRequestTitle.pageScrolls === false,
       })
+      // Arrange: an Extension replay's Study message and Application document (Cycle 0069 task 1b): the replay header in extension words, and the recorded frame given the pane's height.
+      const extensionEvents = [
+        {
+          sequence: 1,
+          heading: 'Frame · 0.30 s',
+          body: 'Recorded extension frame',
+        },
+        {
+          sequence: 3,
+          heading: 'Page stop 1 · popup.js:2 · 0.50 s',
+          body: 'onClick',
+        },
+      ]
+      await publish({
+        ...serverReplayMessage(false, false),
+        nodeReplayProfile: 'chrome-extension',
+        nodeServerEvents: undefined,
+        nodeServerHistoryCatalog: [],
+        nodeExtensionEvents: extensionEvents,
+        nodeExtensionHistoryCatalog: [
+          {
+            studyId: 'server-study',
+            question: 'How does the popup add a bookmark?',
+            extensionName: 'Bookmark XP Explorer',
+            extensionVersion: '0.1.0',
+            surfaceKind: 'popup',
+            status: 'complete',
+          },
+        ],
+        nodeHistorySection: {
+          ...serverSection,
+          status: 'Result changed · capture complete · 1 stop',
+          position: 'Page stop 1 · 0.50 s',
+          events: 'Events (2)',
+          verdict: 'Result changed',
+        },
+      })
+      // Act: the Study pane's words for the replay.
+      const extensionStudy = await page.evaluate(() => {
+        const element = (id) => document.getElementById(id)
+        return {
+          heading: element('node-history-heading').textContent,
+          title: element('title').textContent,
+          understanding: element('node-history-understanding-label')
+            .textContent,
+          sequenceLabel: element('node-learning-sequence').getAttribute(
+            'aria-label',
+          ),
+          transportStatus: element('recording-status').textContent,
+          playLabel: element('playback-toggle').getAttribute('aria-label'),
+          events: Array.from(
+            document.querySelectorAll('#node-history-events h3'),
+            (heading) => heading.textContent,
+          ),
+        }
+      })
+      // Act: the Application document at a short pane (about 255 px) and a taller one, with a real 720 x 640 frame.
+      const extensionDocument = await openApplication(
+        options.html.extensionApplication,
+      )
+      const readExtensionFrame = async (height) => {
+        await extensionDocument.setViewportSize({ width: 720, height })
+        await extensionDocument.evaluate(async () => {
+          const canvas = document.createElement('canvas')
+          canvas.width = 720
+          canvas.height = 640
+          canvas.getContext('2d').fillRect(0, 0, 720, 640)
+          const image = document.getElementById('test-output-frame-image')
+          image.src = canvas.toDataURL('image/png')
+          await image.decode()
+        })
+        await settleFrames(extensionDocument)
+        return extensionDocument.evaluate(() => {
+          const box = (id) =>
+            document.getElementById(id).getBoundingClientRect()
+          const header = box('test-output-time')
+          const surface = box('test-output-test')
+          return {
+            imageHeight: Math.round(box('test-output-frame-image').height),
+            headerOnOneLine: Math.abs(header.top - surface.top) < header.height,
+            captionLines: Math.round(
+              box('test-output-frame-label').height /
+                parseFloat(
+                  getComputedStyle(
+                    document.getElementById('test-output-frame-label'),
+                  ).lineHeight || '16',
+                ),
+            ),
+            captionText: document.getElementById('test-output-frame-label')
+              .textContent,
+            footerShown:
+              getComputedStyle(document.querySelector('.test-output-footer'))
+                .display !== 'none',
+            pageScrolls:
+              document.documentElement.scrollHeight >
+              document.documentElement.clientHeight,
+          }
+        })
+      }
+      const shortPane = await readExtensionFrame(255)
+      const tallerPane = await readExtensionFrame(400)
+      await extensionDocument.close()
+      // Assert
+      // Value: protects=an Extension replay reads in extension words on the Study pane (heading, understanding, sequence, transport, event rows) and its recorded frame keeps most of a 255 px pane (one header line, one caption line, no footer sentence) while a 400 px pane shows the footer; fails_when=a word reads as a test or server replay's, the header stacks on two lines, the frame is squeezed under 150 px in the short pane, the caption is lost or the page scrolls; why_new=Cycle 0069 native smoke finding 3: the frame rendered about 100 px tall in a 255 px pane; seam=none; no_claim=the host's projection (studyWorkspaceExtensionReplay.test.ts) and VS Code's webview
+      cases.push({
+        name: 'an Extension replay reads in extension words on the Study pane and its recorded frame keeps the height of a short Application pane (Cycle 0069 task 1b)',
+        actual: { extensionStudy, shortPane, tallerPane },
+        passed:
+          JSON.stringify({
+            heading: extensionStudy.heading,
+            understanding: extensionStudy.understanding,
+            sequenceLabel: extensionStudy.sequenceLabel,
+            transportStatus: extensionStudy.transportStatus,
+            playLabel: extensionStudy.playLabel,
+            events: extensionStudy.events.slice(0, extensionEvents.length),
+          }) ===
+            JSON.stringify({
+              heading: 'Extension replay',
+              understanding: 'I understand this extension run',
+              sequenceLabel: 'Extension replay learning sequence',
+              transportStatus: 'Extension replay paused',
+              playLabel: 'Play Extension replay',
+              events: extensionEvents.map((event) => event.heading),
+            }) &&
+          shortPane.imageHeight >= 150 &&
+          shortPane.headerOnOneLine === true &&
+          shortPane.captionLines === 1 &&
+          shortPane.captionText === 'Recorded frame captured at this stop' &&
+          shortPane.footerShown === false &&
+          shortPane.pageScrolls === false &&
+          tallerPane.imageHeight > shortPane.imageHeight &&
+          tallerPane.footerShown === true &&
+          tallerPane.pageScrolls === false,
+      })
       const resultView = options.testReplayViews.result
       // Value: protects=a document written for a replay opens where the host says the learner was, and ignores state an earlier document left in the webview: a stored choice not to follow does not outlive the host's choice to follow (F151), a choice not to follow with a scroll anchor opens at that line with Jump to latest, and the learner's place is found again by the line's number and offset (F120, F138); fails_when=the document reads the webview state (it opens at the top of the output for a replay the learner left following), drops the anchor (it opens at the oldest kept line), or follows the output although the host kept the learner reading higher up; why_new=D22 moves the follow choice and the scroll anchor from the webview's state to the host, which passes them in the document's options; seam=none; no_claim=how the host files the reading (the workspace tests), VS Code's own webview state, which the stand-in plays
       // Act: three documents of the same replay at its result: the host's reading is following (with stale webview state saying otherwise), not following at line 20 and 7 px, and the reading a scroll in a first document reported.
@@ -12242,6 +12376,21 @@ const serverView = (generation, fields) => ({
   request: serverRequest,
   ...fields,
 })
+// An Extension replay in the Application pane: the recorded frame of a popup at a stop, worded as projectExtensionApplication words it; the image itself is drawn in the page.
+const extensionReplayView = {
+  profile: 'chrome-extension',
+  generation: 1,
+  time: 'Recorded extension frame · 122.87 s',
+  test: 'Bookmark XP Explorer 0.1.0 · popup',
+  name: 'Recorded extension frame · 122.87 s · Bookmark XP Explorer 0.1.0 · popup',
+  lines: [],
+  frame: {
+    src: 'data:image/png;base64,AAAA',
+    label: 'Recorded frame captured at this stop',
+    width: 720,
+    height: 640,
+  },
+}
 const serverReplayViews = {
   beforeResponse: serverView(1, {
     response: { state: 'No response recorded yet at this moment.' },
@@ -12320,6 +12469,10 @@ try {
         serverApplication: capturedAppHtml({
           ...message,
           nodeHistoryApplication: serverReplayViews.beforeResponse,
+        }),
+        extensionApplication: capturedAppHtml({
+          ...message,
+          nodeHistoryApplication: extensionReplayView,
         }),
       },
       testReplayViews,

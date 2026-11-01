@@ -2109,3 +2109,28 @@ test('a stop without recorded inspections shows only its captured scopes', () =>
     ['Locals'],
   )
 })
+
+// protects=a history recorded before the capture stripped terminal color codes still shows readable values in the native Variables view (Cycle 0069 smoke: page stop 1 `this`); fails_when=the adapter hands a stored value's escape sequences to the editor; no_claim=the stored snapshot bytes, which stay as recorded
+test('the native Variables view shows a recorded DOM node preview without its stored terminal color codes', () => {
+  // Arrange
+  const { adapter, request } = harness(),
+    snapshot = recorded()
+  snapshot.variables[0] = {
+    name: 'this',
+    value:
+      '\u001b[34m<button \u001b[34;1mclass\u001b[2m=\u001b[33m"dialog-btn"\u001b[39m>',
+    children: [],
+  }
+  adapter.select(snapshot, 'Recorded')
+  request('configurationDone')
+
+  // Act
+  const frame = request('stackTrace', { threadId: 1 }).body.stackFrames[0]
+  const scope = request('scopes', { frameId: frame.id }).body.scopes[0]
+  const variables = request('variables', {
+    variablesReference: scope.variablesReference,
+  }).body.variables
+
+  // Assert
+  assert.equal(variables[0].value, '<button class="dialog-btn">')
+})

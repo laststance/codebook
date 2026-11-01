@@ -264,7 +264,8 @@ export function installNodeTestOutput(
     if (!(image instanceof HTMLImageElement) || !caption) return
     const label = frame?.label ?? ''
     caption.textContent = label
-    caption.title = frame?.reason ?? ''
+    // The caption is one line that may be cut with an ellipsis, so its tooltip holds the whole label when there is no reason.
+    caption.title = frame?.reason ?? label
     image.alt = label
     if (frame?.src) {
       // The same source keeps its node's decoded pixels; only a different frame sets a new one.

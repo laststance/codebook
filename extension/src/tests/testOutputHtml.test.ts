@@ -155,3 +155,44 @@ test('the Application document of an Extension replay fits the recorded frame in
   assert.equal(html.includes('style="max-width:100%;height:auto"'), false)
   assert.equal(serverHtml.includes('.extension-frame'), false)
 })
+
+// Value: protects=a short Application pane (about 255 px in a side bar) gives the recorded extension frame the height: one header line, one caption line and no footer sentence; fails_when=the header stacks time and surface on two lines again, the caption wraps, or the footer shows in a pane no taller than 360 px; why_new=Cycle 0069 native smoke: the frame rendered about 100 px tall in a 255 px pane; seam=none; no_claim=the rendered pixel height, which the headless-Chrome check at 720x255 and 720x400 reports
+test('the Application document of an Extension replay leaves a short pane to the frame with a one-line header, a one-line caption and no footer', () => {
+  // Arrange
+  const view: NodeTestApplicationView = {
+    ...hostileView,
+    profile: 'chrome-extension',
+    lines: [],
+    frame: {
+      src: 'data:image/png;base64,AAAA',
+      label: 'Recorded frame from 1.2 s before this stop',
+      width: 720,
+      height: 640,
+    },
+  }
+
+  // Act
+  const html = testOutputHtml(view, 'fixed-nonce', 'study_1')
+
+  // Assert
+  assert.ok(
+    html.includes(
+      '.test-output-header{flex:none;display:flex;align-items:baseline;',
+    ),
+  )
+  assert.ok(
+    html.includes(
+      '.extension-frame figcaption{flex:none;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}',
+    ),
+  )
+  assert.ok(
+    html.includes(
+      '@media(max-height:360px){.test-output-footer{display:none}}',
+    ),
+  )
+  assert.ok(
+    html.includes(
+      'title="Recorded frame from 1.2 s before this stop">Recorded frame from 1.2 s before this stop</figcaption>',
+    ),
+  )
+})
