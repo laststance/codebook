@@ -185,9 +185,11 @@ export async function captureStudy(
     createdAt: summaryExplanation.createdAt,
   }
   // The saved study carries the canonical redacted configuration (secret and unresolved prepared texts masked), never the declared texts.
+  // The states are frozen at the first capture: a text still unresolved then stays masked in every later checkpoint, so the saved configuration and its hash never change (ENG-3).
+  record.canonicalTextStates ??= [...(runtime?.preparedTextStates ?? [])]
   const canonicalConfiguration = redactPreparedConfiguration(
     record.configuration,
-    runtime?.preparedTextStates ?? [],
+    record.canonicalTextStates,
     'canonical',
   )
   const configured =

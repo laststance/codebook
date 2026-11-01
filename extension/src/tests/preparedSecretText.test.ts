@@ -200,3 +200,45 @@ test('a prepared text reads [pending] in the run view until its control is resol
   assert.equal(JSON.stringify(view).includes(EMAIL), false)
   assert.deepEqual([...(view.preparedTextStates ?? [])], ['secret'])
 })
+
+// protects=ENG-3: a checkpoint saved while a prepared text was still unresolved keeps that text masked in every later checkpoint, so the library accepts the later checkpoints and the final save; fails_when=the text is classified plain afterwards and the stored configuration and its hash change, so the library refuses with "Configured study intent changed after acceptance."; no_claim=a real preparation (the run's view reports the unresolved states for the first capture, then the real ones)
+test('a checkpoint taken before a prepared text is classified plain keeps the saved configuration unchanged for the final save', async (context) => {
+  // Arrange
+  const { service, record, receipt, library, harness } =
+    await pausedPreparedRun(context)
+  const realView = harness.run.view.bind(harness.run)
+  let stillPreparing = true
+  harness.run.view = () => ({
+    ...realView(),
+    preparedTextStates: stillPreparing ? [] : realView().preparedTextStates,
+  })
+  const whilePreparing = await captureStudy(
+    service,
+    record,
+    library.workspaceKey,
+  )
+  assert.ok(whilePreparing)
+  await library.saveStudy(whilePreparing)
+  stillPreparing = false
+  // Act
+  await service.continue(
+    service.state(record).participants.browser.continueArguments!,
+  )
+  await service.stop(receipt)
+  const afterClassified = await captureStudy(
+    service,
+    record,
+    library.workspaceKey,
+  )
+  assert.ok(afterClassified)
+  await library.saveStudy(afterClassified)
+  // Assert
+  assert.deepEqual(preparedInputsOf(afterClassified.configuration), [
+    { selector: '#email', text: '[masked]' },
+    { selector: '#password', text: '[masked]' },
+  ])
+  assert.equal(
+    afterClassified.configurationHash,
+    whilePreparing.configurationHash,
+  )
+})

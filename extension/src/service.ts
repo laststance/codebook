@@ -200,6 +200,7 @@ import {
 import { readerNotFollowingRunRefusal } from './utils/readerNotFollowingRunRefusal'
 import type { RepositoryAdapterReadiness } from './utils/readRepositoryAdapterReadiness'
 import { redactExtensionInputs } from './utils/redactExtensionInputs'
+import type { PreparedTextState } from './utils/redactPreparedTexts'
 import { refusalFailureOf } from './utils/refusalFailureOf'
 import { releaseVitestListings } from './utils/releaseVitestListings'
 import { repositoryBrowserStartPrerequisites } from './utils/repositoryBrowserStartPrerequisites'
@@ -404,6 +405,8 @@ interface StudyRecordState {
   stopped: boolean
   /** The evidence's failure when the run's release ended ({@link StudyService.stopRecord}), the one {@link StudyService.state} reads for a stopped run: a write that fails later, such as an explanation saved after the end, is no failure of the run (Cycle 0046 row 699). */
   evidenceFailureAtStop?: string
+  /** How each prepared text was resolved when the first checkpoint or evidence write used the canonical configuration (ENG-3); every later stored or hashed form uses these, so a text unresolved then stays masked and the configuration hash never changes. */
+  canonicalTextStates?: (PreparedTextState | undefined)[]
   stopPromise?: Promise<void>
   cleanupError?: StudyError
   error?: StudyError
@@ -3035,7 +3038,7 @@ export class StudyService {
   ): string {
     return canonicalDefinition(
       definition,
-      record.runtime?.view().preparedTextStates,
+      record.canonicalTextStates ?? record.runtime?.view().preparedTextStates,
     ).configurationHash
   }
 
