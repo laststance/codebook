@@ -39,8 +39,8 @@ export type NodeLearningSaveMessage =
       kind: 'open-failed'
       title: string
       cause: string
-      /** Which replay failed to open; a server replay is worded with server words. Defaults to a test replay. */
-      profile?: 'node-test' | 'node-server'
+      /** Which replay failed to open; a server replay is worded with server words, an extension replay with extension words. Defaults to a test replay. */
+      profile?: 'node-test' | 'node-server' | 'chrome-extension'
     }
 
 /** The words of one message: the status item's text with its tooltip, or a question's or notification's text with its actions. */
@@ -191,8 +191,24 @@ export function describeNodeLearningSave(
     case 'open-failed':
       return {
         // A cause that ends its own sentence is not given a second full stop.
-        text: `Codebook could not open the ${message.profile === 'node-server' ? 'server' : 'test'} replay "${message.title}": ${cutCauseForDisplay(message.cause).replace(/\.$/, '')}. The saved history is unchanged; open it again from Saved studies.`,
+        text: `Codebook could not open the ${openFailedReplayWord(message.profile)} replay "${message.title}": ${cutCauseForDisplay(message.cause).replace(/\.$/, '')}. The saved history is unchanged; open it again from Saved studies.`,
         actions: [NODE_LEARNING_SAVE_ACTION.showDetails],
       }
   }
+}
+
+/**
+ * The word that names the replay in an open-failure notice, so an Extension replay is never called a test replay.
+ * Called by {@link describeNodeLearningSave} for the `open-failed` message.
+ * @param profile - The failed replay's profile; `undefined` for a test replay.
+ * @returns `server`, `Extension` or `test`.
+ * @example
+ * openFailedReplayWord('chrome-extension') // => 'Extension'
+ */
+function openFailedReplayWord(
+  profile: 'node-test' | 'node-server' | 'chrome-extension' | undefined,
+): 'server' | 'Extension' | 'test' {
+  if (profile === 'node-server') return 'server'
+  if (profile === 'chrome-extension') return 'Extension'
+  return 'test'
 }

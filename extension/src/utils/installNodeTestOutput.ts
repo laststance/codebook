@@ -257,6 +257,34 @@ export function installNodeTestOutput(
     applyRequestRegion(view.request)
     applyResponseRegion(view.response)
   }
+  /** Shows an Extension replay frame's image at its recorded size, or hides the image of a moment with no frame; called by {@link applyFrameRegion}. */
+  const applyFrameImage = (
+    image: HTMLImageElement,
+    frame: NodeTestApplicationView['frame'],
+  ): void => {
+    if (!frame?.src) {
+      image.removeAttribute('src')
+      image.hidden = true
+      return
+    }
+    // The same source keeps its node's decoded pixels; only a different frame sets a new one.
+    if (image.getAttribute('src') !== frame.src) image.src = frame.src
+    image.hidden = false
+    if (frame.width) image.width = frame.width
+    if (frame.height) image.height = frame.height
+  }
+  /** Brings an Extension replay's frame region to a view's in place: the image source and size, and the label that also names the image. */
+  const applyFrameRegion = (frame: NodeTestApplicationView['frame']): void => {
+    const image = document.getElementById('test-output-frame-image')
+    const caption = document.getElementById('test-output-frame-label')
+    if (!(image instanceof HTMLImageElement) || !caption) return
+    const label = frame?.label ?? ''
+    caption.textContent = label
+    // The caption is one line that may be cut with an ellipsis, so its tooltip holds the whole label when there is no reason.
+    caption.title = frame?.reason ?? label
+    image.alt = label
+    applyFrameImage(image, frame)
+  }
   const apply = (view: NodeTestApplicationView): void => {
     // The line the learner reads, taken before the lines change: a view that drops earlier lines would otherwise move it up (F354).
     const readingAnchor = follow ? undefined : currentAnchor()
@@ -265,7 +293,12 @@ export function installNodeTestOutput(
     element('test-output-time').textContent = view.time
     // A server replay has no cited test; its request and response regions take that place.
     if (view.profile === 'node-server') applyServerRegions(view)
-    else {
+    else if (view.profile === 'chrome-extension') {
+      applyFrameRegion(view.frame)
+      const test = element('test-output-test')
+      test.textContent = view.test
+      test.title = view.test
+    } else {
       const test = element('test-output-test')
       test.textContent = view.test
       test.title = view.test

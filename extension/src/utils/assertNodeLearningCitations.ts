@@ -10,6 +10,12 @@ export type CitationReference = {
   /** The declared stop a server stop citation names; when given, the cited stop must be a hit of it. */
   declaredStopIndex?: number
   channel?: 'stdout' | 'stderr'
+  /** The context an extension stop or pause citation names (`page`, `service-worker`); when given, the cited event must have been recorded in it. */
+  context?: string
+  /** The target URL an extension stop or pause citation names; when given, the cited event must carry it. */
+  targetUrl?: string
+  /** The service worker generation an extension citation names; when given, the cited event must carry it. */
+  workerGeneration?: number
 }
 
 /** What a material's content offers the citation check: its steps and their references. */
@@ -25,7 +31,9 @@ type CitingContent = {
  */
 function describeCitedEvent(event: CitableEvent | undefined): string {
   if (!event) return 'no event'
-  if (event.type === 'stop') return `a stop at ${event.path}:${event.line}`
+  if (event.type === 'stop')
+    return `a stop at ${event.path}:${event.line}${event.context === undefined ? '' : ` in the ${event.context} context`}`
+  if (event.type === 'pause') return `a pause in the ${event.context} context`
   return describeEventKind(event.type, 'channel' in event ? event.channel : '')
 }
 
@@ -37,6 +45,7 @@ function describeEventKind(
   if (type === 'output') return `an output on ${channel}`
   if (type === 'result') return 'the result'
   if (type === 'stop') return 'a stop'
+  if (type === 'pause') return 'a pause'
   if (type === 'request') return 'the request'
   if (type === 'response') return 'the response'
   return 'the request failure'
@@ -78,11 +87,34 @@ function citesEvent(
       event?.type === 'stop' &&
       event.sourceHash === reference.sourceHash &&
       (reference.declaredStopIndex === undefined ||
-        event.declaredStopIndex === reference.declaredStopIndex)
+        event.declaredStopIndex === reference.declaredStopIndex) &&
+      citesExtensionTarget(reference, event)
     )
+  if (reference.type === 'pause')
+    return event?.type === 'pause' && citesExtensionTarget(reference, event)
   if (reference.type === 'output')
     return event?.type === 'output' && event.channel === reference.channel
   return event?.type === reference.type
+}
+
+/**
+ * Says whether an extension citation's context, target URL and worker generation match the event's, for every one the citation names: a citation with the right sequence and source hash but another context cites another stop (the stop registry allows a page and a worker stop at one source location).
+ * @param reference - The step's reference.
+ * @param event - A stop or pause event.
+ * @returns `true` when every named part matches; a part the citation omits is not compared.
+ * @example citesExtensionTarget({ type: 'stop', sequence: 3, context: 'page' }, { type: 'stop', context: 'service-worker' }) // => false
+ */
+function citesExtensionTarget(
+  reference: CitationReference,
+  event: Extract<CitableEvent, { type: 'stop' | 'pause' }>,
+): boolean {
+  return (
+    (reference.context === undefined || event.context === reference.context) &&
+    (reference.targetUrl === undefined ||
+      event.targetUrl === reference.targetUrl) &&
+    (reference.workerGeneration === undefined ||
+      event.workerGeneration === reference.workerGeneration)
+  )
 }
 
 /**
@@ -92,10 +124,15 @@ function citesEvent(
  * @example describeCitationClaim({ type: 'output', sequence: 1, channel: 'stderr' }) // => 'an output on stderr'
  */
 function describeCitationClaim(reference: CitationReference): string {
+  const context =
+    reference.context === undefined
+      ? ''
+      : ` in the ${reference.context} context`
   if (reference.type === 'stop')
     return reference.declaredStopIndex === undefined
-      ? `a stop with sourceHash ${reference.sourceHash}`
-      : `a stop with sourceHash ${reference.sourceHash} of declaredStopIndex ${reference.declaredStopIndex}`
+      ? `a stop with sourceHash ${reference.sourceHash}${context}`
+      : `a stop with sourceHash ${reference.sourceHash} of declaredStopIndex ${reference.declaredStopIndex}${context}`
+  if (reference.type === 'pause') return `a pause${context}`
   return describeEventKind(reference.type, reference.channel)
 }
 

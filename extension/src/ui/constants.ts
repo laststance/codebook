@@ -16,6 +16,7 @@ import {
   STUDY_REMOVAL_SERVER_HISTORY_REFUSAL,
   STUDY_REMOVAL_WITHOUT_TRASH_MESSAGE,
 } from '../constants'
+import { NODE_EXTENSION_REPLAY_TEXT } from '../utils/describeExtensionReplay'
 import { NODE_SERVER_REPLAY_TEXT } from '../utils/describeNodeServerReplay'
 import { NODE_TEST_REPLAY_TEXT } from '../utils/describeNodeTestReplay'
 import type { ShortcutHelpEntry } from '../utils/installShortcutHelp'
@@ -48,10 +49,13 @@ const STUDY_SEQUENCE_LAYOUT = {
 const BROWSER_PLAYHEAD_SELECTOR = '#playhead:not([data-replay-family="test"])'
 /** The shared slider while it shows a test replay. */
 const TEST_PLAYHEAD_SELECTOR =
-  '#playhead[data-replay-family="test"]:not([data-replay-profile="node-server"])'
+  '#playhead[data-replay-family="test"]:not([data-replay-profile])'
 /** The shared slider while it shows a server replay: the page marks it with its profile, so a server replay's shortcut entries name a server replay and never a test. */
 const SERVER_PLAYHEAD_SELECTOR =
   '#playhead[data-replay-family="test"][data-replay-profile="node-server"]'
+/** The shared slider while it shows an Extension replay: the page marks it with its profile, so an Extension replay's shortcut entries name an Extension replay and never a test. */
+const EXTENSION_PLAYHEAD_SELECTOR =
+  '#playhead[data-replay-family="test"][data-replay-profile="chrome-extension"]'
 /** The test replay timeline's keys (C2 and DS-C): arrows step by event, Page keys by stop (Page Up forward, as for a recording), Home and End select the first and last event. */
 const TEST_REPLAY_TIMELINE_SHORTCUTS: ShortcutHelpEntry[] = (
   [
@@ -74,6 +78,13 @@ const SERVER_REPLAY_TIMELINE_SHORTCUTS: ShortcutHelpEntry[] =
     ...entry,
     context: 'Focused server replay timeline',
     selector: SERVER_PLAYHEAD_SELECTOR,
+  }))
+/** The Extension replay timeline's keys: the test replay's, under the Extension replay's own name and slider. */
+const EXTENSION_REPLAY_TIMELINE_SHORTCUTS: ShortcutHelpEntry[] =
+  TEST_REPLAY_TIMELINE_SHORTCUTS.map((entry) => ({
+    ...entry,
+    context: 'Focused Extension replay timeline',
+    selector: EXTENSION_PLAYHEAD_SELECTOR,
   }))
 export const STUDY_SHORTCUTS: ShortcutHelpEntry[] = [
   {
@@ -125,6 +136,7 @@ export const STUDY_SHORTCUTS: ShortcutHelpEntry[] = [
   },
   ...TEST_REPLAY_TIMELINE_SHORTCUTS,
   ...SERVER_REPLAY_TIMELINE_SHORTCUTS,
+  ...EXTENSION_REPLAY_TIMELINE_SHORTCUTS,
   {
     action: 'Previous / next content tab',
     keys: '← / →',
@@ -163,6 +175,8 @@ export const STUDY_UI_OPTIONS = {
   testReplay: NODE_TEST_REPLAY_TEXT,
   /** A server replay's fixed words, with the same keys; the pane switches to them while a server replay is shown. */
   serverReplay: NODE_SERVER_REPLAY_TEXT,
+  /** An Extension replay's fixed words, with the same keys; the pane switches to them while an Extension replay is shown. */
+  extensionReplay: NODE_EXTENSION_REPLAY_TEXT,
   /** The words of both transports' coverage strips. */
   coverage: TIMELINE_COVERAGE_TEXT,
   sequence: STUDY_SEQUENCE_LAYOUT,
@@ -220,6 +234,10 @@ export const STUDY_UI_OPTIONS = {
   ).join('; '),
   // The same tooltip while the slider shows a server replay: its own name for the context, never `test`.
   serverReplayTimelineTitle: SERVER_REPLAY_TIMELINE_SHORTCUTS.map(
+    (entry) => `${entry.action} — ${entry.keys} (${entry.context})`,
+  ).join('; '),
+  // The same tooltip while the slider shows an Extension replay: its own name for the context.
+  extensionReplayTimelineTitle: EXTENSION_REPLAY_TIMELINE_SHORTCUTS.map(
     (entry) => `${entry.action} — ${entry.keys} (${entry.context})`,
   ).join('; '),
   // The shared slider's keyboard shortcuts while it shows a test replay, for its `aria-keyshortcuts`.
@@ -303,3 +321,11 @@ body.test-output{height:100vh;padding:0;overflow:hidden}body.test-output main{di
 /* Compact replay keeps its empty header spacing; a disclosed layout notice uses the shared gap. */
 @media(max-width:420px){#learning-title{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}#learning-title:focus,body[data-replay=true] .learning-header h1:focus{display:block;overflow:visible}body[data-replay=true]{padding-top:8px;padding-left:12px;padding-right:12px}body[data-replay=true] .learning-header{margin-bottom:4px}body[data-replay=true] #reader-kind{display:none}body[data-replay=true] .learning-header h1{font-size:16px;margin:0 0 4px;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}body[data-replay=true] #reader-options{margin-bottom:4px}body[data-replay=true] #reader-options:has(+ #presentation-status:not(:empty)){margin-bottom:8px}body[data-replay=true] #reader-options>summary{font-size:13px}body[data-replay=true] #learning-material h2{margin:0 0 4px}body[data-replay=true] #learning-material p{margin:4px 0 8px}body[data-replay=true] #learning-material p.muted{font-size:12px;line-height:1.35}}
 `
+
+/**
+ * The Application pane's layout of an Extension replay's recorded frame, added to {@link STUDY_STYLES} for that profile only.
+ * Why: the pane's body never scrolls and a short pane (about 255 px in a side bar) must leave the image the height, so the header is one line (time and surface side by side, the surface cut with an ellipsis and whole in its tooltip), the caption is one line, the footer sentence shows only in a pane taller than 360 px, and the figure takes the height left while the image shrinks into it (contain, no stretch); the pane's script sets the image's recorded size, which this never upscales.
+ * Used by {@link testOutputHtml}.
+ */
+export const EXTENSION_FRAME_STYLES =
+  '.extension-frame{flex:1 1 auto;min-height:0;min-width:0;margin:4px 0;display:flex;flex-direction:column;align-items:flex-start;overflow:hidden}.extension-frame img{flex:0 1 auto;min-height:0;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;object-position:left top}.extension-frame figcaption{flex:none;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}body.test-output main{padding:6px 12px}body.test-output p{margin:2px 0}body.test-output .status{padding:2px 8px;margin:2px 0}.test-output-header{flex:none;display:flex;align-items:baseline;gap:4px 12px;min-width:0}.test-output-header>#test-output-time{flex:none;white-space:nowrap}.test-output-header>#test-output-test{flex:1 1 auto;min-width:0;display:block;white-space:nowrap;text-overflow:ellipsis;overflow:hidden}.test-output-header>#test-output-test:focus{white-space:normal;overflow:visible}.extension-frame{margin:2px 0}@media(max-height:360px){.test-output-footer{display:none}}'

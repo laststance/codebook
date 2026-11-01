@@ -186,3 +186,49 @@ test('a top-level-first capture sends no variables request for a scope without a
     'Historical variable count limit reached.',
   )
 })
+
+// protects=a DOM node preview that js-debug colors with ANSI SGR codes is stored as plain text (Cycle 0069 smoke: page stop 1 showed raw escape codes in Variables); fails_when=the capture saves the escape sequences of a value, so the replay prints raw codes; no_claim=js-debug's own coloring rules
+test('a captured DOM node preview is saved without its terminal color codes', async () => {
+  // Arrange
+  const colored =
+    '\u001b[34m<button \u001b[34;1mclass\u001b[2m=\u001b[33m"dialog-btn primary"\u001b[39m\u001b[22m>\u001b[0m'
+  const answer = (command: 'scopes' | 'variables'): Promise<unknown> =>
+    Promise.resolve(
+      command === 'scopes'
+        ? {
+            scopes: [
+              {
+                name: 'Block',
+                presentationHint: 'locals',
+                variablesReference: 100,
+              },
+            ],
+          }
+        : {
+            variables: [
+              { name: 'this', value: colored, variablesReference: 0 },
+            ],
+          },
+    )
+
+  // Act
+  const snapshot = await captureReplayDebugSnapshot({
+    stack: STACK,
+    verifiedSource: SOURCE,
+    assertCurrent() {},
+    request: answer,
+    limits: {
+      timeoutMs: 1_500,
+      maxFrames: 8,
+      maxVariables: 64,
+      maxDepth: 2,
+      topLevelFirst: true,
+    },
+  })
+
+  // Assert
+  assert.equal(
+    capturedValue(snapshot, 'this'),
+    '<button class="dialog-btn primary">',
+  )
+})

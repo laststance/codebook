@@ -7,6 +7,8 @@ import { StudyError } from '../errors'
 /** What a run needs from an extension's manifest.json. */
 export interface ExtensionManifest {
   name: string
+  /** The manifest's `version`; `unknown` when it is missing or not text (Chrome refuses such an extension, so a run never reaches it). */
+  version: string
   permissions: readonly string[]
   hostPermissions: readonly string[]
   /** `optional_permissions`: a trusted click can grant them with `chrome.permissions.request`, so they count like `permissions`. */
@@ -111,6 +113,8 @@ export async function readExtensionManifest(
   const background = isRecord(manifest.background) ? manifest.background : {}
   return {
     name: manifest.name,
+    version:
+      typeof manifest.version === 'string' ? manifest.version : 'unknown',
     permissions: stringList(manifest.permissions),
     hostPermissions: stringList(manifest.host_permissions),
     optionalPermissions: stringList(manifest.optional_permissions),

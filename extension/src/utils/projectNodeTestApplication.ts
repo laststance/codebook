@@ -23,7 +23,19 @@ export type NodeTestApplicationView = {
   /** Header line 2: the cited test, shown in at most two lines with this whole text in its tooltip; a server replay leaves it empty (its request has its own region). */
   test: string
   /** `node-server` for a server replay, whose document words its footer and Jump to latest with the server catalog and draws the two fixed regions below. */
-  profile?: 'node-server'
+  profile?: 'node-server' | 'chrome-extension'
+  /** An Extension replay's recorded surface frame for the moment; its document draws the image and the label instead of the output region. */
+  frame?: {
+    /** The PNG as a `data:` address; absent when no frame is recorded or loadable at this moment. */
+    src?: string
+    /** The label under the frame: recorded, its distance before a stop, or the no-frame state. */
+    label: string
+    /** The reason code when the frame's blob is missing or damaged. */
+    reason?: string
+    /** The frame's recorded size, kept so the image keeps its aspect ratio at any frame size. */
+    width?: number
+    height?: number
+  }
   /** A server replay's request region: the request line and the claim the replay may make about it. */
   request?: { line: string; claim: string }
   /** A server replay's response region for the selected moment: its state line, the recorded body in its own block and a note on a cut or empty body. */

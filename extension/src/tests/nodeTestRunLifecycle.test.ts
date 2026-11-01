@@ -25,6 +25,10 @@ import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
 
 import { createHarness } from './helpers'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
+import {
+  REPLAY_READER_REFUSAL,
+  readerShowingReplay,
+} from './utils/readerShowingReplay'
 import { ROOT_MODE_EXECUTION_PLAN } from './utils/rootModeExecutionPlan'
 
 /** The result a passing test's final continuation answers. */
@@ -2275,6 +2279,36 @@ test('a failed release of a test run names no storage path in the stop rejection
       run.service.state(record).cleanupError?.cause,
       "Error: process group still running in '<storage>/x'",
     )
+  } finally {
+    await run.harness.close()
+  }
+})
+
+// protects=a node-test start while the open reader shows a saved replay is refused before any test process or history exists, and the same start is accepted once the reader follows the run again; fails_when=the run starts and its Application tab keeps drawing the replay's frame while Run and Debug shows the replay's values beside the live stop; no_claim=the reader itself (a stub reports it)
+test('a node-test start while the reader shows a saved replay is refused before the test starts and runs after the return to the current run', async () => {
+  // Arrange
+  const run = await testRunHarness()
+  let fileChecks = 0
+  run.service.environment.checkNodeTestFiles = async () => {
+    fileChecks++
+    return ROOT_MODE_EXECUTION_PLAN
+  }
+  const reader = readerShowingReplay(run.service)
+  try {
+    // Act
+    const refused = await run.start('over-replay')
+    await waitUntil(() => refused.record.stopped, 'the refused run released')
+    const checksWhileRefused = fileChecks
+    reader.returnToCurrent()
+    const accepted = await run.start('after-return')
+    // Assert
+    assert.equal(refused.record.error?.code, 'PRESENTATION_UNAVAILABLE')
+    assert.equal(refused.record.error?.message, REPLAY_READER_REFUSAL)
+    assert.equal(refused.record.nodeHistoryWriter, undefined)
+    assert.equal(refused.record.nodeRun, undefined)
+    assert.equal(checksWhileRefused, 0)
+    assert.equal(accepted.record.error, undefined)
+    assert.equal(accepted.record.nodePhase, 'paused')
   } finally {
     await run.harness.close()
   }

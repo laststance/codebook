@@ -386,6 +386,7 @@ export async function resolveChromeExtensionRun(options: {
     root,
     extensionId,
     manifestName: manifest.name,
+    manifestVersion: manifest.version,
     permissions: manifest.permissions,
     hostPermissions: manifest.hostPermissions,
     surface: { kind: surface.kind, path: surface.path },

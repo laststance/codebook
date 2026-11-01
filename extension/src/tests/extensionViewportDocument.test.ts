@@ -12,7 +12,7 @@ const PANE: ExtensionPaneState = {
   title: 'codebook · Bookmark Notes · Extension popup',
   phase: 'Running the click',
   provenance:
-    'Operated by chat · Test profile · seeded data · Live only · replay unavailable',
+    'Operated by chat · Test profile · seeded data · Recording for replay',
   message: '',
   imageAlt: 'Extension popup of Bookmark Notes, captured from the test browser',
   detail: 'Declared clicks: Add note.',

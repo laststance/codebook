@@ -106,6 +106,7 @@ async function runOf(
     root,
     extensionId,
     manifestName: 'fixture',
+    manifestVersion: '1.0.0',
     permissions: [],
     hostPermissions: [],
     surface: { kind: 'popup', path: 'popup.html' },

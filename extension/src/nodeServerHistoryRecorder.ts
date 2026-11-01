@@ -1,8 +1,4 @@
-import {
-  NODE_SERVER_HISTORY_START_BOUND_MS,
-  SEAL_RETRY_DELAY_MS,
-  TRANSIENT_SEAL_ERROR_CODES,
-} from './constants'
+import { NODE_SERVER_HISTORY_START_BOUND_MS } from './constants'
 import {
   NodeServerHistorySinkImpl,
   type NodeServerHistorySinkInput,
@@ -16,7 +12,12 @@ import {
   describeNodeServerSealFailure,
   describeNodeServerSealTimeout,
 } from './utils/describeNodeServerSealFailure'
-import { systemErrorCode } from './utils/systemErrorCode'
+import { sealWithTransientRetry } from './utils/sealWithTransientRetry'
+import {
+  SEAL_DEADLINE_PASSED,
+  startSealDeadline,
+} from './utils/startSealDeadline'
+import { startWithinBound } from './utils/startWithinBound'
 
 /** Where a server run's history stands: its writer takes entries, it was sealed, or it was abandoned because it could not be written or sealed. */
 export type NodeServerHistoryStatus = 'recording' | 'sealed' | 'failed'
@@ -77,35 +78,26 @@ export class NodeServerHistoryRecorder {
     input: NodeServerHistoryBeginInput,
   ): Promise<NodeServerHistoryBegun> {
     const bound = input.startBoundMs ?? NODE_SERVER_HISTORY_START_BOUND_MS
-    const starting = input.start()
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const expired = Symbol('expired')
     try {
-      const writer = await Promise.race([
-        starting,
-        new Promise<typeof expired>((resolve) => {
-          timer = setTimeout(() => resolve(expired), bound)
-          timer.unref()
-        }),
-      ])
-      if (writer === expired) {
+      const started = await startWithinBound(
+        input.start(),
+        bound,
         // A start that finishes later is sealed with nothing in it, which removes its folder.
-        void starting
-          .then(
-            (late) => late.seal({ elapsedMs: 0, reason: 'stopped' }),
-            () => undefined,
-          )
-          .catch(() => undefined)
+        (late) => late.seal({ elapsedMs: 0, reason: 'stopped' }),
+      )
+      if ('timedOut' in started)
         return {
           unavailable: `the history did not start within ${bound / 1_000} s.`,
         }
+      const sink = new NodeServerHistorySinkImpl({
+        ...input.sink,
+        writer: started.writer,
+      })
+      return {
+        recorder: new NodeServerHistoryRecorder(started.writer, sink, input),
       }
-      const sink = new NodeServerHistorySinkImpl({ ...input.sink, writer })
-      return { recorder: new NodeServerHistoryRecorder(writer, sink, input) }
     } catch (error) {
       return { unavailable: input.describeCause(error) }
-    } finally {
-      if (timer) clearTimeout(timer)
     }
   }
 
@@ -140,17 +132,16 @@ export class NodeServerHistoryRecorder {
     boundMs: number,
   ): Promise<void> {
     this.sink.flush()
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const expired = Symbol('expired')
-    const deadline = new Promise<typeof expired>((resolve) => {
-      timer = setTimeout(() => resolve(expired), boundMs)
-      timer.unref()
-    })
+    const deadline = startSealDeadline(boundMs)
     try {
-      const raced = await Promise.race([this.sealWithRetry(end), deadline])
+      const raced = await Promise.race([
+        this.sealWithRetry(end),
+        deadline.passed,
+      ])
       // A writer whose seal is already published is never abandoned: the store lists it sealed, so the live run must read it sealed too.
-      const hash = raced === expired ? this.writer.publishedSealHash : raced
-      if (raced === expired && hash === undefined) {
+      const hash =
+        raced === SEAL_DEADLINE_PASSED ? this.writer.publishedSealHash : raced
+      if (raced === SEAL_DEADLINE_PASSED && hash === undefined) {
         this.abandon(describeNodeServerSealTimeout(boundMs / 1_000))
         return
       }
@@ -159,11 +150,12 @@ export class NodeServerHistoryRecorder {
       const reading = this.startSummaryRead()
       // After an expiry the shared deadline already settled: the seal settles at once with an unknown summary and the read fills it when it answers; otherwise the read shares the seal's deadline.
       const summary =
-        raced === expired
+        raced === SEAL_DEADLINE_PASSED
           ? undefined
-          : await Promise.race([reading, deadline.then(() => undefined)])
+          : await Promise.race([reading, deadline.passed.then(() => undefined)])
       this.sealed = { summary, hash }
-      if (raced === expired) this.fillSummaryWhenRead(reading, this.sealed)
+      if (raced === SEAL_DEADLINE_PASSED)
+        this.fillSummaryWhenRead(reading, this.sealed)
     } catch (error) {
       // A seal that was published before the fault (a cleanup after the rename) is never abandoned: the store lists it sealed, so the run reads it sealed too.
       const publishedHash = this.writer.publishedSealHash
@@ -172,7 +164,7 @@ export class NodeServerHistoryRecorder {
         // The read shares the seal's own deadline, so the whole seal settles within one bound.
         const summary = await Promise.race([
           this.startSummaryRead(),
-          deadline.then(() => undefined),
+          deadline.passed.then(() => undefined),
         ])
         this.sealed = { summary, hash: publishedHash }
         return
@@ -181,7 +173,7 @@ export class NodeServerHistoryRecorder {
         describeNodeServerSealFailure(this.input.describeCause(error)),
       )
     } finally {
-      if (timer) clearTimeout(timer)
+      deadline.cancel()
     }
   }
 
@@ -222,20 +214,10 @@ export class NodeServerHistoryRecorder {
   }
 
   /** Seals, and once more after a short wait when the first attempt failed with a transient file-system code. */
-  private async sealWithRetry(
-    end: NodeServerEndInput,
-  ): Promise<string | undefined> {
-    try {
-      return await this.writer.seal(end)
-    } catch (error) {
-      if (!TRANSIENT_SEAL_ERROR_CODES.includes(systemErrorCode(error)))
-        throw error
-      const wait =
-        this.input.retryDelay ??
-        ((milliseconds: number): Promise<void> =>
-          new Promise<void>((resolve) => setTimeout(resolve, milliseconds)))
-      await wait(SEAL_RETRY_DELAY_MS)
-      return this.writer.seal(end)
-    }
+  private sealWithRetry(end: NodeServerEndInput): Promise<string | undefined> {
+    return sealWithTransientRetry(
+      () => this.writer.seal(end),
+      this.input.retryDelay,
+    )
   }
 }

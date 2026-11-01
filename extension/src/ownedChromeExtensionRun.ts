@@ -18,6 +18,8 @@ import type {
   ExtensionContinueArguments,
   ExtensionDebuggerInput,
 } from './chromeExtensionDebugger'
+import { ExtensionHistoryPauseTracker } from './chromeExtensionHistoryPauseTracker'
+import type { ChromeExtensionHistorySink } from './chromeExtensionHistorySink'
 import {
   buildExtensionObserved,
   createExtensionObservationReader,
@@ -44,6 +46,7 @@ import type {
   ChromeExtensionRuntime,
   ChromeExtensionView,
 } from './runtime'
+import type { ViewportRecordingObserver } from './runtimeSupport/browserViewport'
 import type { OwnedBrowserLaunchOptions } from './runtimeSupport/ownedExtensionBrowser'
 import {
   readCdpString,
@@ -100,6 +103,8 @@ export type OwnedChromeExtensionRunInput = ChromeExtensionRunInput & {
   dependencies: ChromeExtensionRunDependencies
   /** Creates the Application view; absent → the run goes on without one. */
   createViewport?: ChromeExtensionViewportFactory
+  /** The Chrome the run launches, as `--version` reports it; the history's header names it. */
+  chromeVersion?: string
 }
 
 /** How a run ends; the first one wins. */
@@ -160,6 +165,10 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
   private readonly outputs: ChromeExtensionOutputLine[] = []
   private readonly captures: ChromeExtensionView['captures'] = []
   private readonly pinnedGenerations = new Set<number>()
+  /** The run's history once it started; `undefined` before, and for a run that goes on unrecorded. */
+  private history: ChromeExtensionHistorySink | undefined
+  /** What the history was told of the debugger's pauses; created with the history, once the declaration resolved. */
+  private historyPauses: ExtensionHistoryPauseTracker | undefined
   private stage: ChromeExtensionPhase = 'starting'
   private launchedAtMs: number | undefined
   /** Settles when a cleanup left a step that ignored its abort behind at the stop bound, so {@link OwnedChromeExtensionRun.prepare} answers then instead of waiting on that step. */
@@ -174,6 +183,8 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
   private surfaceSessionId: string | undefined
   private surfaceAttached = false
   private surfaceGone = false
+  /** Set when the test browser's connection or process ended without the run's own close. */
+  private browserGone = false
   private sourceCheck: (() => void | Promise<void>) | undefined
   private actionGuard: ExtensionActionGuard | undefined
   private lastReceipt: ExtensionClickReceipt | undefined
@@ -499,6 +510,9 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
     this.sourceCheck = dependencies.createSourceCheck(resolved)
     await this.sourceCheck()
     this.assertAccepting()
+    await this.startHistory(resolved)
+    this.assertAccepting()
+    this.showRecordingState()
     this.viewport?.setIdentity({
       manifestName: resolved.manifestName,
       surface: resolved.surface,
@@ -523,10 +537,85 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
     await this.becomeReady(resolved, browser)
   }
 
+  /**
+   * The frame observer the Application view gets before the history exists (the view opens in `starting`, the header needs the resolved declaration): it forwards to the history once that started, and frames only arrive after the surface attached, which is after.
+   * @example this.historyFrameObserver.elapsedMs() // => 0 before the history started
+   */
+  private readonly historyFrameObserver: ViewportRecordingObserver = {
+    elapsedMs: () => this.history?.frameObserver.elapsedMs() ?? 0,
+    frame: (frame) => this.history?.frameObserver.frame(frame),
+    closed: (closing) => this.history?.frameObserver.closed(closing),
+  }
+
+  /**
+   * Starts the run's history once the declaration resolved and keeps the sink; a refusal or a failure leaves the run going unrecorded.
+   * @param resolved - The resolved declaration whose extension, surface and stops the header names.
+   * @example await this.startHistory(resolved)
+   */
+  private async startHistory(resolved: ResolvedExtensionRun): Promise<void> {
+    const { beginHistory } = this.input
+    if (beginHistory === undefined) return
+    try {
+      // What can throw is built before the history begins, so a failure here never leaves a begun recorder the run does not feed.
+      const pauses = new ExtensionHistoryPauseTracker(
+        this.id,
+        resolved.surfaceUrl,
+        new URL(
+          resolved.workerPath ?? '',
+          `chrome-extension://${resolved.extensionId}/`,
+        ).href,
+      )
+      this.history = await beginHistory({
+        extension: {
+          id: resolved.extensionId,
+          name: resolved.manifestName,
+          version: resolved.manifestVersion,
+        },
+        surface: resolved.surface,
+        declaredStops: resolved.stops.map((stop) => ({
+          index: stop.index,
+          path: stop.path,
+          line: stop.line,
+          context: stop.context,
+        })),
+        chromeVersion: this.input.chromeVersion ?? 'unknown',
+      })
+      if (this.history) this.historyPauses = pauses
+    } catch {
+      // The history never fails the run.
+      this.history = undefined
+    }
+  }
+
+  /**
+   * Tells the Application view how the history stands: recording, partial with the code of the first missing part, or not recorded with the cause. The run is never changed by it.
+   * Called when the history started, on every change of the pause set and when the surface or browser ended.
+   * @example this.showRecordingState() // header ends with `Recording for replay`
+   */
+  private showRecordingState(): void {
+    const code = this.history?.livePartialCode
+    this.viewport?.setRecording(
+      this.history === undefined
+        ? {
+            kind: 'not-recorded',
+            reason:
+              this.input.historyUnavailable?.() ??
+              'recording is not available for this run',
+          }
+        : code === undefined
+          ? { kind: 'recording' }
+          : { kind: 'partial', code },
+    )
+  }
+
   /** Creates the Application view; a view the editor refuses (its layout guard, for example a foreign preview tab where the pane would go) leaves the run without one and says why, in the view and the journal (DR6). */
   private async openViewport(): Promise<ChromeExtensionViewport | undefined> {
     try {
-      return await this.input.createViewport?.(this.id, this.abort.signal)
+      return await this.input.createViewport?.(
+        this.id,
+        this.abort.signal,
+        this.input.beginHistory ? this.historyFrameObserver : undefined,
+      )
     } catch (error) {
       this.reportViewUnavailable(error)
       return undefined
@@ -693,6 +782,8 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
     if (this.ending !== undefined || this.surfaceGone) return
     if (this.stage !== 'ready' && this.stage !== 'observing') return
     this.surfaceGone = true
+    this.history?.surfaceEnded()
+    this.showRecordingState()
     this.observationAbort.abort()
     this.record('chrome-extension.surface-lost', {
       surface: resolved.surface.kind,
@@ -718,6 +809,9 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
 
   /** The browser's CDP connection or process ended without the run's own close. */
   private onBrowserLost(): void {
+    this.browserGone = true
+    this.history?.surfaceEnded()
+    this.showRecordingState()
     this.fail(
       new StudyError(
         'BROWSER_LOST',
@@ -731,6 +825,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
   /** A pause opened, finished its capture or ended. */
   private onDebuggerChange(): void {
     if (this.ending !== undefined) return
+    this.tellHistoryOfPauses()
     for (const pause of this.debug?.pauses() ?? []) {
       if (
         pause.kind === 'declared' &&
@@ -753,6 +848,49 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
     if (!this.debug?.pauses().some((pause) => pause.kind === 'declared'))
       this.viewport?.resumeLive()
     this.changed()
+  }
+
+  /**
+   * Tells the run's history what the debugger's pauses did since the last change. The history only queues what it is told; a fault of its own never reaches the run.
+   * Called by {@link OwnedChromeExtensionRun.onDebuggerChange} on every change of the pause set.
+   */
+  private tellHistoryOfPauses(): void {
+    const { history, debug } = this
+    if (history === undefined || debug === undefined) return
+    // A part the history lost shows in the header at once, while the run goes on.
+    this.showRecordingState()
+    try {
+      this.historyPauses?.sync(
+        debug.pauses(),
+        debug.workerGeneration(),
+        history,
+        () => this.isBrowserAlive(),
+      )
+    } catch {
+      // A history that throws must not end the run.
+    }
+  }
+
+  /** Whether the test browser and the surface are still alive and the run has not ended; the liveness signal that tells a manual resume from a lost browser. */
+  private isBrowserAlive(): boolean {
+    return !this.browserGone && !this.surfaceGone && this.ending === undefined
+  }
+
+  /**
+   * Decides the pauses that vanished with no continue when the run ends, before the history seals.
+   * Why: the debugger's pause set can change before the browser's loss reaches the run, so a vanished pause is decided on a later check (the next pause-set change, or here), never at the vanishing; the liveness here ignores `ending`, which is already set.
+   */
+  private settleVanishedPausesAtEnd(): void {
+    const { history } = this
+    if (history === undefined) return
+    try {
+      this.historyPauses?.settleUndecided(
+        () => !this.browserGone && !this.surfaceGone,
+        history,
+      )
+    } catch {
+      // A history that throws must not end the run.
+    }
   }
 
   /** Pins the surface's frame of a declared pause under its phase text (DR3); a paused page may not answer the capture, then the live frame stays. */
@@ -792,8 +930,12 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
         }),
       ])
       if (this.ending !== undefined || !this.isPauseOpen(generation)) return
+      // The history gets the frame at once; it never waits for the view's present below.
+      const pngBase64 = readCdpString(shot, 'data')
+      const pauseId = this.historyPauses?.pauseIdOf(generation)
+      if (pauseId !== undefined) this.history?.pinned(pauseId, pngBase64)
       const text = `Paused at stop ${stopIndex ?? '?'} of ${this.view().stopsDeclared} · ${context === 'service-worker' ? 'service worker' : 'page'}`
-      await this.viewport.pinPause(readCdpString(shot, 'data'), text)
+      await this.viewport.pinPause(pngBase64, text)
       // A continue answered while the frame was being pinned found nothing pinned: the live frame returns now.
       if (
         !this.isPauseOpen(generation) &&
@@ -986,6 +1128,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
         'NO_PAUSE',
         'The extension run is not paused at a declared stop.',
       )
+    this.historyPauses?.noteContinue(args.generation)
     try {
       await debug.resume(args, this.abort.signal)
     } catch (error) {
@@ -1054,6 +1197,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
       observedAtMs: this.elapsedMs(),
       roots: this.roots,
     })
+    if (this.observed) this.history?.resultObserved(this.observed)
   }
 
   // ------------------------------------------------------------------ endings
@@ -1112,6 +1256,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
   private async cleanup(ending: RunEnding): Promise<void> {
     this.cancelRunTimer?.()
     this.cancelSetupTimer?.()
+    this.settleVanishedPausesAtEnd()
     for (const cancelPinTimer of [...this.pinTimerCancels])
       this.safely(cancelPinTimer)
     this.pinTimerCancels.clear()

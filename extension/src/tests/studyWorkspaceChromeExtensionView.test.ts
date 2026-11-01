@@ -924,52 +924,49 @@ test('a next extension run reuses the kept Application pane without adding a dis
   }
 })
 
-// protects=SR13 and DR9: the editor's Save learning replay command refuses an extension run with its sentence, offers no Save item and changes no stored study; fails_when=the command stops the run, writes progress or answers another sentence; no_claim=the MCP surface's own refusal
-test('Save learning replay of an extension run refuses and stores nothing', async () => {
+// protects=AC3: the editor's Save learning replay command for an extension run that recorded no history tells why through a notice, stops nothing and changes no stored study; fails_when=the command throws the old refusal, stops the run or writes progress; no_claim=a run with a history (the save tests)
+test('Save learning replay of an extension run without a history stores nothing and does not stop the run', async () => {
   // Arrange
   const harness = await workspaceHarness()
   try {
     readerSeams(harness).stopOwnTimer()
     const storage = await harness.reader.learningStorage()
     const progressBefore = await storage.readProgress()
-    await startFakeChromeExtensionRun(harness)
+    const { record } = await startFakeChromeExtensionRun(harness)
     // Act
-    const saving = harness.reader.saveLearningReplay()
+    await harness.reader.saveLearningReplay()
     // Assert
-    await assert.rejects(
-      saving,
-      new Error(
-        'Saving an extension run is not available in this version; the live explanation stays in the chat.',
-      ),
-    )
     assert.deepEqual(await storage.readProgress(), progressBefore)
-    await readerSeams(harness).refresh()
-    assert.equal(harness.saveStatus.command, undefined)
+    assert.equal(record.stopped, false)
+    assert.deepEqual(
+      harness.informationMessages.map((notice) => notice.message),
+      ['Learning replay unavailable: no history was started.'],
+    )
   } finally {
     await harness.close()
   }
 })
 
-// protects=C4 and DR9: an extension run's status item shows the run's phase text from its view and carries no Save command, its tooltip saying why; fails_when=the item stays hidden during the run, shows Save learning replay, or words the phase differently from the viewport; no_claim=native status bar rendering
-test('the status item of an extension run shows its phase text and offers no Save', async () => {
+// protects=C4 and AC3: an extension run's status item shows the run's phase text from its view beside its learning replay state and offers Save learning replay; fails_when=the item stays hidden during the run, drops the phase text or still says the run is not saved; no_claim=native status bar rendering
+test('the status item of an extension run shows its phase text and its learning replay state', async () => {
   // Arrange
   const harness = await workspaceHarness()
   try {
     readerSeams(harness).stopOwnTimer()
     // Act
-    await startFakeChromeExtensionRun(harness)
+    const { record } = await startFakeChromeExtensionRun(harness)
     await readerSeams(harness).refresh()
     // Assert
     assert.equal(harness.saveStatus.visible, true)
     assert.equal(
       harness.saveStatus.text,
-      'Waiting for chat · next click 1 of 2',
+      'Waiting for chat · next click 1 of 2 · Learning replay unavailable: no history was started.',
     )
-    assert.equal(
-      harness.saveStatus.tooltip,
-      'Saving an extension run is not available in this version; the live explanation stays in the chat.',
-    )
-    assert.equal(harness.saveStatus.command, undefined)
+    assert.deepEqual(structuredClone(harness.saveStatus.command), {
+      title: 'Save learning replay',
+      command: 'codebook.saveLearningReplay',
+      arguments: [`${harness.service.instanceId}_${record.id}`],
+    })
   } finally {
     await harness.close()
   }

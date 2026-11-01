@@ -23,6 +23,20 @@ export type CitableEvent =
       line: number
       /** The declared stop a server stop belongs to; a test stop has none. */
       declaredStopIndex?: number
+      /** The context a chrome-extension stop was recorded in (`page`, `service-worker`). */
+      context?: string
+      /** The target URL of a chrome-extension stop's pause. */
+      targetUrl?: string
+      /** The service worker generation of a chrome-extension stop's pause; 0 for a page. */
+      workerGeneration?: number
+    }
+  | {
+      /** A chrome-extension pause (the `pause-open` entry), citable beside its capture. */
+      type: 'pause'
+      context: string
+      targetUrl: string
+      workerGeneration: number
+      stopIndex: number
     }
   | { type: 'output'; channel: 'stdout' | 'stderr' }
   | { type: 'result' }
@@ -201,7 +215,7 @@ export async function advanceHistoryScan<Types extends HistoryTypes>(
     try {
       const entry = rules.parseEntry(JSON.parse(line))
       rules.accept(scan.progress, entry, scan.header)
-      const citable = rules.citableOf(entry)
+      const citable = rules.citableOf(entry, scan.progress)
       if (citable) scan.citable.set(entry.sequence, citable)
       if (rules.keeps(entry)) scan.kept.push(entry)
     } catch (error) {

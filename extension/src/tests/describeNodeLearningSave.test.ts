@@ -180,3 +180,40 @@ test('opening a test replay during a browser replay is refused, and a failed ope
     actions: ['Show details'],
   })
 })
+
+// protects=N69: the open-failure notice names an Extension replay an Extension replay, and server and test replays keep their words; fails_when=an Extension replay is called a test replay
+test('a failed open names an Extension replay, a server replay and a test replay each by its own word', () => {
+  // Arrange / Act
+  const extension = describeNodeLearningSave({
+    kind: 'open-failed',
+    profile: 'chrome-extension',
+    title: 'Popup click',
+    cause: 'Native pane changed.',
+  })
+  const server = describeNodeLearningSave({
+    kind: 'open-failed',
+    profile: 'node-server',
+    title: 'Popup click',
+    cause: 'Native pane changed.',
+  })
+  const testReplay = describeNodeLearningSave({
+    kind: 'open-failed',
+    profile: 'node-test',
+    title: 'Popup click',
+    cause: 'Native pane changed.',
+  })
+
+  // Assert
+  assert.equal(
+    extension.text,
+    'Codebook could not open the Extension replay "Popup click": Native pane changed. The saved history is unchanged; open it again from Saved studies.',
+  )
+  assert.equal(
+    server.text,
+    'Codebook could not open the server replay "Popup click": Native pane changed. The saved history is unchanged; open it again from Saved studies.',
+  )
+  assert.equal(
+    testReplay.text,
+    'Codebook could not open the test replay "Popup click": Native pane changed. The saved history is unchanged; open it again from Saved studies.',
+  )
+})

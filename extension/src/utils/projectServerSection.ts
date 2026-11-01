@@ -7,6 +7,7 @@ import {
   describeServerStudyStatus,
   NODE_SERVER_REPLAY_TEXT,
 } from './describeNodeServerReplay'
+import { labelLearningStepActions } from './labelLearningStepActions'
 import type { NodeHistoryTimeline } from './projectNodeHistoryTimeline'
 import type { NodeLearningSummaryProjection } from './projectNodeLearningSummary'
 import {
@@ -187,13 +188,9 @@ function stepActionLabels(
   learning: NodeLearningSummaryProjection | undefined,
 ): Record<string, string> {
   const model = replay.shownModel
-  return Object.fromEntries(
-    (learning?.positions ?? []).flatMap((position) => {
-      const at = model.indexBySequence.get(position.sequence)
-      const event = at === undefined ? undefined : model.events[at]
-      return event
-        ? [[position.stepId, describeServerStepAction(event, model)] as const]
-        : []
-    }),
-  )
+  return labelLearningStepActions(learning, (sequence) => {
+    const at = model.indexBySequence.get(sequence)
+    const event = at === undefined ? undefined : model.events[at]
+    return event && describeServerStepAction(event, model)
+  })
 }

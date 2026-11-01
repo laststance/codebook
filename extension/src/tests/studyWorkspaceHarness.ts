@@ -805,6 +805,8 @@ export async function workspaceHarness(
   const historicalDebugInvalidationLabels: string[] = []
   const historicalDebuggers: TestReplayDebugger[] = []
   let historicalDebugInspection: ReplayInspection = 'inspected'
+  /** The failures the fake historical debugger throws from its next presentations, one per call, oldest first. */
+  const pendingHistoricalDebugFailures: Error[] = []
   let nextHistoricalDebugPresentation:
     | { wait: Promise<void>; entered(): void; recordedStopOnly: boolean }
     | undefined
@@ -868,6 +870,8 @@ export async function workspaceHarness(
         throw new Error(
           'Historical debugger closed. Reopen the learning replay to restore it.',
         )
+      const pendingFailure = pendingHistoricalDebugFailures.shift()
+      if (pendingFailure) throw pendingFailure
       historicalDebugPresentations.push({ snapshot, label, sourceDocument })
       // As for the real owner, a new snapshot, label or source is a new selection; the same one keeps its object.
       if (
@@ -8385,6 +8389,10 @@ export async function workspaceHarness(
     /** Models a values-loaded notification whose handling threw, which the real owner reports through its failure callback. @example harness.failHistoricalDebugNotification(new Error('reader closed')) */
     failHistoricalDebugNotification(error: Error): void {
       for (const debuggerView of historicalDebuggers) debuggerView.failed(error)
+    },
+    /** Makes the fake historical debugger's next presentation throw, as a launch the editor refused would. @example harness.failNextHistoricalDebugPresentation(new Error('launch refused')) */
+    failNextHistoricalDebugPresentation(error: Error): void {
+      pendingHistoricalDebugFailures.push(error)
     },
     /** Models the learner pressing Stop on the owned historical session: it becomes unavailable and tells the workspace the session ended. @example harness.endHistoricalDebugSession() */
     endHistoricalDebugSession(): void {

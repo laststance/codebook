@@ -77,6 +77,10 @@ export type HistoryWriterRules<Types extends HistoryTypes> = {
   /** The largest journal this profile writes. */
   readonly journalLimitBytes: number
   readonly maxEntries: number
+  /** The room kept free of this entry for the profile's closing entries (pauses ending, the result); an entry that would use it is refused without ending the timeline. Absent or undefined: the entry has no reserve, so its refusal ends the timeline. */
+  reserveFor?(
+    entry: Types['Entry'],
+  ): { bytes: number; entries: number } | undefined
   /** Parses a numbered entry the writer is about to write. */
   parseEntry(value: unknown): Types['Entry']
   /** Refuses an entry that breaks the profile's order rules; changes nothing. @throws The refusal. */
@@ -113,7 +117,11 @@ export type HistoryScanRules<Types extends HistoryTypes> = {
     entry: Types['Entry'],
     header: Types['Header'],
   ): void
-  citableOf(entry: Types['Entry']): CitableEvent | undefined
+  /** `progress` is what the entries up to and including this one established, for a profile whose citable event needs an earlier entry (an extension capture takes its context from its pause). */
+  citableOf(
+    entry: Types['Entry'],
+    progress: Types['Progress'],
+  ): CitableEvent | undefined
   /** Whether a scan keeps the whole entry (a recording keeps only what a summary counts). */
   keeps(entry: Types['Entry']): boolean
 }
@@ -147,6 +155,8 @@ export type HistoryStorageDescriptor<Types extends HistoryTypes> = {
   readonly profile: Types['Header']['profile']
   /** The folder under the learning directory. */
   readonly directoryName: string
+  /** Whether the store may remove a history of this profile ({@link NodeHistoryStore.removeHistory}); set for the chrome-extension profile only, so test and server histories keep refusing removal. */
+  readonly removable?: boolean
   readonly journalLimitBytes: number
   readonly sealLimitBytes: number
   /** What the store words when it meets a journal that does not verify. */
@@ -159,6 +169,8 @@ export type HistoryStorageDescriptor<Types extends HistoryTypes> = {
   parseSeal(value: unknown): Types['Seal']
   parseIndex(value: HistoryIndexOf<Types>): HistoryIndexOf<Types>
   scanRules: HistoryScanRules<Types>
+  /** Removes the leftovers of a writer that is gone (a temporary frame blob); called when the store reads a history that has no seal and no live writer. Never rejects. */
+  discardInterruptedLeftovers?(directory: string): Promise<void>
   /** Makes the writer of a reserved history; `describeCause` words a failure without private paths. */
   createWriter(
     directory: string,

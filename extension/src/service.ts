@@ -2,6 +2,9 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 
 import type { ChromeExtensionConfiguration } from './chromeExtensionConfigSchemas'
+import type { ChromeExtensionHistoryRecorder } from './chromeExtensionHistoryRecorder'
+import type { ExtensionHistoryIdentity } from './chromeExtensionHistorySink'
+import { chromeExtensionLearningMaterialContentSchema } from './chromeExtensionLearningSchemas'
 import { describeChromeExtensionProfile } from './chromeExtensionProfile'
 import { CONFIGURED_PROFILE } from './configuredProfile'
 import type {
@@ -24,7 +27,9 @@ import {
   API_VERSION,
   CHROME_EXTENSION_FAILED_STATE_CODES,
   CHROME_EXTENSION_PROFILE,
-  CHROME_EXTENSION_SAVE_REFUSAL,
+  CHROME_EXTENSION_EXPLAIN_REDIRECT,
+  EXTENSION_HISTORY_EMPTY_MESSAGE,
+  EXTENSION_HISTORY_STILL_RECORDING_TEXT,
   CHROME_EXTENSION_START_ANSWER_MS,
   CONTINUE_ANSWER_CALL_BUDGET_MS,
   CONTINUE_ANSWER_GRACE_MS,
@@ -53,6 +58,8 @@ import {
   STUDY_PRESENTATIONS,
   TRANSIENT_SEAL_ERROR_CODES,
   NODE_SERVER_HISTORY_SEAL_BOUND_MS,
+  EXTENSION_HISTORY_SEAL_BOUND_MS,
+  EXTENSION_HISTORY_START_BOUND_MS,
   NODE_SERVER_HISTORY_START_BOUND_MS,
 } from './constants'
 import {
@@ -173,6 +180,7 @@ import type { NodeTestExecutionPlan } from './utils/planNodeTestExecution'
 import { prepareNodeServerStudy } from './utils/prepareNodeServerStudy'
 import { prepareNodeTestStudy } from './utils/prepareNodeTestStudy'
 import { prepareRepositoryStudy } from './utils/prepareRepositoryStudy'
+import { projectChromeExtensionHistory } from './utils/projectChromeExtensionHistory'
 import { projectChromeExtensionState } from './utils/projectChromeExtensionState'
 import { projectNodeServerHistory } from './utils/projectNodeServerHistory'
 import { projectNodeServerState } from './utils/projectNodeServerState'
@@ -195,6 +203,7 @@ import { sanitizedStack } from './utils/sanitizedStack'
 import { settledWithin } from './utils/settledWithin'
 import { sleepUntilAborted } from './utils/sleepUntilAborted'
 import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
+import { startChromeExtensionHistory } from './utils/startChromeExtensionHistory'
 import { startNodeServerHistory } from './utils/startNodeServerHistory'
 import { StorageLockHeldError } from './utils/storageLockHeldError'
 import { studyErrorNamingCause } from './utils/studyErrorNamingCause'
@@ -326,6 +335,10 @@ export interface ChromeExtensionRecordState {
   >
   /** Stops listening to the run's changes once the run is released. */
   subscription?: { dispose(): void }
+  /** The run's history, from its resolved declaration to its seal; absent when none could start ({@link historyUnavailable}). */
+  history?: ChromeExtensionHistoryRecorder
+  /** Why the run has no history (storage unavailable, a full library, a refused or slow start); the live run goes on unrecorded. */
+  historyUnavailable?: string
 }
 /** A chrome-extension run's record with its extension state, as the narrowing {@link isChromeExtensionRecord} gives. */
 type ChromeExtensionStudyRecord = StudyRecord & {
@@ -530,14 +543,17 @@ function isChromeExtensionRecord(
 }
 
 /**
- * Refuses to save or explain a chrome-extension run: its live explanation stays in the chat and no study changes (SR13, SR37); called by {@link StudyService.explain}, {@link StudyService.explainNodeHistory} and {@link StudyService.snapshot}.
+ * Sends `codebook_explain` for a chrome-extension run to the durable history: its stops are saved there and the explanation through `codebook_explain_node_history`, as for test and server runs; called by {@link StudyService.explain} and {@link StudyService.snapshot}.
  * @param record - The run named by the call.
- * @throws `EVIDENCE_UNAVAILABLE` with {@link CHROME_EXTENSION_SAVE_REFUSAL} for a chrome-extension run; nothing for another profile.
- * @example refuseExtensionSave(record) // throws 'Saving an extension run is not available in this version; the live explanation stays in the chat.'
+ * @throws `EVIDENCE_UNAVAILABLE` naming `chromeExtension.historyUri` and `codebook_explain_node_history` for a chrome-extension run; nothing for another profile.
+ * @example redirectExtensionExplain(record) // throws 'Extension stops are saved in their durable history instead: read chromeExtension.historyUri …'
  */
-function refuseExtensionSave(record: StudyRecord): void {
+function redirectExtensionExplain(record: StudyRecord): void {
   if (record.profile === CHROME_EXTENSION_PROFILE)
-    throw new StudyError('EVIDENCE_UNAVAILABLE', CHROME_EXTENSION_SAVE_REFUSAL)
+    throw new StudyError(
+      'EVIDENCE_UNAVAILABLE',
+      CHROME_EXTENSION_EXPLAIN_REDIRECT,
+    )
 }
 
 /**
@@ -628,6 +644,9 @@ export class StudyService {
   nodeServerHistoryStartBoundMs = NODE_SERVER_HISTORY_START_BOUND_MS
   /** How long the seal of a node-server history may take before it is abandoned; a test sets a short one. */
   nodeServerHistorySealBoundMs = NODE_SERVER_HISTORY_SEAL_BOUND_MS
+  /** How long a chrome-extension run waits for its history to start, and for it to seal; a test sets short ones. */
+  chromeExtensionHistoryStartBoundMs = EXTENSION_HISTORY_START_BOUND_MS
+  chromeExtensionHistorySealBoundMs = EXTENSION_HISTORY_SEAL_BOUND_MS
   /** Sealed server histories whose unreadable summary already has its Output › Codebook entry. */
   private readonly nodeServerSummaryDiagnosed = new WeakSet<object>()
   /** How long `codebook_start` of a chrome-extension run waits for its preparation before it answers the phase reached (CR4); a test sets a short one. */
@@ -639,6 +658,18 @@ export class StudyService {
   private readonly repositoryRetirement = new AbortController()
   private readonly repositoryOpens = new Set<Promise<unknown>>()
   private readonly startKeys = new Map<string, StudyRecord>()
+  /** The number of the latest verdict read of each sealed extension history, so only that read writes the summary ({@link refreshExtensionSummary}). */
+  private readonly extensionSummaryGenerations = new WeakMap<object, number>()
+  /** Each Extension history's summary read in flight, by study id; an entry is removed when its read settles. */
+  private readonly extensionSummaryReads = new Map<
+    string,
+    Promise<
+      | Awaited<
+          ReturnType<NodeHistoryRepository['extensionHistories']['summarize']>
+        >
+      | undefined
+    >
+  >()
   /** Each server history's summary read in flight, by study id; an entry is removed when its read settles. */
   private readonly nodeServerSummaryReads = new Map<
     string,
@@ -2209,8 +2240,8 @@ export class StudyService {
   explain(input: ExplainInput): Promise<ExplanationReceipt> {
     this.assertMutable(input.instanceId)
     const record = this.record(input)
-    // An extension run is explained in the chat only; nothing of it is stored.
-    refuseExtensionSave(record)
+    // An extension run is saved in its durable history, through codebook_explain_node_history.
+    redirectExtensionExplain(record)
     // An explanation after the removal would be written into a directory that is in the Trash.
     this.assertEvidenceAvailable(record)
     // Internal callers must satisfy the same fact bounds as MCP before reserving or persisting an explanation.
@@ -2469,13 +2500,13 @@ export class StudyService {
     const identity = explainNodeHistorySchema
       .pick({ studyId: true, expectedRevision: true })
       .parse(rest)
-    // A study id of a chrome-extension run names no history: refuse before any store is read.
+    // A chrome-extension run that cannot be saved yet (recording, no history, failed) is refused before any store is read.
     const extensionRun = [...this.records.values()].find(
       (record) =>
         record.profile === CHROME_EXTENSION_PROFILE &&
         identity.studyId === `${this.instanceId}_${record.id}`,
     )
-    if (extensionRun) refuseExtensionSave(extensionRun)
+    if (extensionRun) this.assertExtensionHistorySavable(extensionRun)
     if (!this.nodeHistoryStore)
       throw new StudyError(
         'PREREQUISITE_MISSING',
@@ -2485,6 +2516,35 @@ export class StudyService {
     // A server history keeps its material in the server store, resolved by the study id's folder.
     const resolved = this.nodeHistoryRepository?.resolve(identity.studyId)
     try {
+      if (resolved?.profile === 'chrome-extension') {
+        const { store: extensionStore } = resolved
+        // A history another window still records is refused as this window's own is.
+        if (
+          (await extensionStore.summarize(identity.studyId))?.status ===
+          'recording'
+        )
+          throw new StudyError(
+            'HISTORY_STILL_RECORDING',
+            EXTENSION_HISTORY_STILL_RECORDING_TEXT,
+          )
+        const extensionMaterial = await withKnownNodeHistory(
+          extensionStore,
+          identity.studyId,
+          () =>
+            extensionStore.saveLearningMaterial(
+              identity.studyId,
+              identity.expectedRevision,
+              chromeExtensionLearningMaterialContentSchema.parse(input.content),
+            ),
+        )
+        await this.refreshExtensionSummary(identity.studyId)
+        // The open Extension replay shows the new revision without a reopen, as a server or test history does.
+        this.presentationController?.nodeHistoryLearningMaterialSaved(
+          identity.studyId,
+          extensionMaterial,
+        )
+        return extensionMaterial
+      }
       // An unknown id, or a history removed while it is saved, is a reference to correct, as at the history's resources (Cycle 0052 tasks 60, 75).
       if (resolved?.profile === 'node-server') {
         const { store: serverStore } = resolved
@@ -2524,6 +2584,142 @@ export class StudyService {
   }
 
   /**
+   * Refuses to save the learning of a chrome-extension run whose history cannot take it yet, at once and with no wait: still recording (stop the run first), never started (the run's `historyIssue`) or failed.
+   * @param record - The chrome-extension run named by the study id.
+   * @throws `HISTORY_STILL_RECORDING` while the run's history records; `EVIDENCE_UNAVAILABLE` with the cause for a run without a history; `HISTORY_SEAL_FAILED` for a history that could not be sealed. Nothing is written in any case.
+   * @example this.assertExtensionHistorySavable(record) // throws for a run that is still live
+   */
+  private assertExtensionHistorySavable(record: StudyRecord): void {
+    const history = record.chromeExtension?.history
+    if (!history)
+      throw new StudyError(
+        'EVIDENCE_UNAVAILABLE',
+        record.chromeExtension?.historyUnavailable ??
+          'This extension run recorded no history, so there is nothing to save.',
+        undefined,
+        'Tell the learner the cause; do not claim a saved replay.',
+      )
+    // A history removed as empty at the seal has nothing to save.
+    if (history.isRemovedAsEmpty)
+      throw new StudyError(
+        'EVIDENCE_UNAVAILABLE',
+        EXTENSION_HISTORY_EMPTY_MESSAGE,
+        undefined,
+        'Tell the learner no stop was reached; do not claim a saved replay.',
+      )
+    if (history.status === 'failed')
+      throw new StudyError(
+        'HISTORY_SEAL_FAILED',
+        history.failure ?? 'The history could not be sealed.',
+      )
+    if (history.status === 'recording')
+      throw new StudyError(
+        'HISTORY_STILL_RECORDING',
+        EXTENSION_HISTORY_STILL_RECORDING_TEXT,
+      )
+  }
+
+  /**
+   * Says whether a chrome-extension run has a sealed history whose learning material does not cover it yet, so `save-node-learning` is offered.
+   * @param record - The extension run.
+   * @returns `true` for a sealed, readable history with an entry whose learning coverage is not `complete`.
+   * @example this.extensionLearningIncomplete(record) // => true for a sealed history with no material
+   */
+  private extensionLearningIncomplete(record: StudyRecord): boolean {
+    const history = record.chromeExtension?.history
+    if (history?.status !== 'sealed') return false
+    const summary = history.sealed?.summary
+    return (
+      summary?.verification === 'verified' &&
+      summary.learningCoverage !== 'complete'
+    )
+  }
+
+  /**
+   * Finds the run this window holds for a history's study id.
+   * @param studyId - The history's id, `<instance id>_<run id>`.
+   * @returns The run's record, or `undefined` for a run another window holds.
+   * @example this.recordOfStudyId(`${this.instanceId}_${record.id}`) // => record
+   */
+  private recordOfStudyId(studyId: string): StudyRecord | undefined {
+    return [...this.records.values()].find(
+      (candidate) => `${this.instanceId}_${candidate.id}` === studyId,
+    )
+  }
+
+  /**
+   * Starts a stored summary read, or joins the one in flight for the study, so a stalled store holds one pending read and not one per run resource poll; the entry lives only until its read settles.
+   * @param reads - The in-flight reads of one history kind, by study id.
+   * @param studyId - The history to summarize.
+   * @param summarize - Starts the stored read.
+   * @param joinReadInFlight - `true` for a resource read, which may share the read in flight; a read after a material save starts its own.
+   * @param timeoutMs - How long the caller waits; a read that outlives it keeps running.
+   * @returns The summary, or `undefined` for a failed or too slow read.
+   * @example const reading = this.sharedSummaryRead(this.extensionSummaryReads, studyId, () => histories.summarize(studyId), true, 5_000)
+   */
+  private async sharedSummaryRead<Summary>(
+    reads: Map<string, Promise<Summary | undefined>>,
+    studyId: string,
+    summarize: () => Promise<Summary>,
+    joinReadInFlight: boolean,
+    timeoutMs: number,
+  ): Promise<Summary | undefined> {
+    let reading = joinReadInFlight ? reads.get(studyId) : undefined
+    if (!reading) {
+      const started = summarize().catch(() => undefined)
+      reading = started
+      reads.set(studyId, started)
+      void started.finally(() => {
+        if (reads.get(studyId) === started) reads.delete(studyId)
+      })
+    }
+    return waitWithin(reading, {
+      timeoutMs,
+      signal: new AbortController().signal,
+      sleep: sleepUntilAborted,
+    })
+  }
+
+  /**
+   * Reads an extension history's verdicts again after its material was saved, so the run resource reads the coverage of the latest material; a run this window does not hold, or one not sealed yet, keeps nothing to refresh.
+   * @param studyId - The history the material explains.
+   * @example await this.refreshExtensionSummary(studyId)
+   */
+  private async refreshExtensionSummary(
+    studyId: string,
+    joinReadInFlight = false,
+  ): Promise<void> {
+    const sealed =
+      this.recordOfStudyId(studyId)?.chromeExtension?.history?.sealed
+    const histories = this.nodeHistoryRepository?.extensionHistories
+    if (!sealed || !histories) return
+    // Only the latest read of a history writes its summary, so an older read that finishes last cannot overwrite a newer revision's coverage.
+    const request = (this.extensionSummaryGenerations.get(sealed) ?? 0) + 1
+    this.extensionSummaryGenerations.set(sealed, request)
+    const summary = await this.sharedSummaryRead(
+      this.extensionSummaryReads,
+      studyId,
+      () => histories.summarize(studyId),
+      joinReadInFlight,
+      this.chromeExtensionHistorySealBoundMs,
+    )
+    // A failed or too slow read keeps the sealed summary, and an older read never overwrites a newer one.
+    if (summary && this.extensionSummaryGenerations.get(sealed) === request)
+      sealed.summary = summary
+  }
+
+  /**
+   * Reads the stored history's verdicts again when a chrome-extension run's resource is read, so the coverage follows the material another window saved; a run without a sealed history keeps nothing to refresh.
+   * Called by {@link readResource} before it states a run.
+   * @param record - The run whose resource is read.
+   * @example await service.refreshExtensionVerdicts(record)
+   */
+  async refreshExtensionVerdicts(record: StudyRecord): Promise<void> {
+    if (record.profile !== CHROME_EXTENSION_PROFILE) return
+    await this.refreshExtensionSummary(`${this.instanceId}_${record.id}`, true)
+  }
+
+  /**
    * Says whether a server run has a history whose learning material does not cover it yet: recording or sealed, with a request sent, and not `complete` in learning coverage.
    * @param record - The server run.
    * @returns `true` while the chat can still save material for the history.
@@ -2549,9 +2745,7 @@ export class StudyService {
     studyId: string,
     joinReadInFlight = false,
   ): Promise<void> {
-    const sealed = [...this.records.values()].find(
-      (candidate) => `${this.instanceId}_${candidate.id}` === studyId,
-    )?.nodeServer?.history?.sealed
+    const sealed = this.recordOfStudyId(studyId)?.nodeServer?.history?.sealed
     const histories = this.nodeHistoryRepository?.serverHistories
     // Without a repository there is nothing to read again; the summary the seal read stays.
     if (!sealed || !histories) return
@@ -2559,25 +2753,14 @@ export class StudyService {
     const request = (sealed.summaryReads ?? 0) + 1
     sealed.summaryReads = request
     // A `summarize` that outlives the bound keeps running; its late answer is applied below only if no newer read started meanwhile.
-    let reading = joinReadInFlight
-      ? this.nodeServerSummaryReads.get(studyId)
-      : undefined
-    // Run resource reads of one study share the read in flight, so a stalled store holds one pending read, not one per poll; a read after a material save always starts its own, since the one in flight may predate the save.
-    if (!reading) {
-      const started = histories.summarize(studyId).catch(() => undefined)
-      reading = started
-      this.nodeServerSummaryReads.set(studyId, started)
-      // The entry lives only as long as its read, so no entry outlives a settled read or a forgotten run.
-      void started.finally(() => {
-        if (this.nodeServerSummaryReads.get(studyId) === started)
-          this.nodeServerSummaryReads.delete(studyId)
-      })
-    }
-    const summary = await waitWithin(reading, {
-      timeoutMs: this.nodeServerHistorySealBoundMs,
-      signal: new AbortController().signal,
-      sleep: sleepUntilAborted,
-    })
+    // A read after a material save always starts its own, since the one in flight may predate the save.
+    const summary = await this.sharedSummaryRead(
+      this.nodeServerSummaryReads,
+      studyId,
+      () => histories.summarize(studyId),
+      joinReadInFlight,
+      this.nodeServerHistorySealBoundMs,
+    )
     // A failed, empty or too slow read keeps the sealed summary, and an older read never overwrites a newer one.
     if (summary && sealed.summaryReads === request) sealed.summary = summary
   }
@@ -2641,9 +2824,7 @@ export class StudyService {
     studyId: string,
     material: { revision: number; content: NodeTestLearningMaterialContent },
   ): Promise<void> {
-    const record = [...this.records.values()].find(
-      (candidate) => `${this.instanceId}_${candidate.id}` === studyId,
-    )
+    const record = this.recordOfStudyId(studyId)
     if (!record) return
     record.nodeLearningMaterial = {
       revision: material.revision,
@@ -2734,7 +2915,7 @@ export class StudyService {
 
   /** Resolves committed snapshot identity without treating an old capture as a current pause. @example service.snapshot(record, snapshotUri).values */
   snapshot(record: StudyRecord, uri: string): RuntimeSnapshot {
-    refuseExtensionSave(record)
+    redirectExtensionExplain(record)
     if (record.profile === NODE_TEST_PROFILE)
       throw new StudyError(
         'EVIDENCE_UNAVAILABLE',
@@ -3294,7 +3475,13 @@ export class StudyService {
     ].filter((value) => value !== undefined)
     // After a stop whose release failed, only the stop is offered again (F91, D18).
     const nextActions = extension
-      ? extension.nextActions
+      ? [
+          ...extension.nextActions,
+          // A sealed extension history whose learning material does not cover it yet asks for codebook_explain_node_history, as a server run's does.
+          ...(this.extensionLearningIncomplete(record)
+            ? ['save-node-learning']
+            : []),
+        ]
       : server
         ? [
             ...server.nextActions,
@@ -3692,7 +3879,7 @@ export class StudyService {
     const view = record.chromeExtension.run?.view()
     return {
       state: extension.state,
-      // An extension run is never saved: it reads pending-teardown while it lives and not-demonstrated once it ended.
+      // An extension run reads pending-teardown while it lives and not-demonstrated once it ended; its saved replay is claimed from chromeExtension.learningCoverage and captureMissing.
       finalOutcome:
         record.stopped || record.error
           ? ('not-demonstrated' as const)
@@ -3702,6 +3889,11 @@ export class StudyService {
       chromeExtension: extension.chromeExtension && {
         ...extension.chromeExtension,
         configurationHash: prepared?.configurationHash,
+        ...projectChromeExtensionHistory({
+          recorder: record.chromeExtension.history,
+          unavailable: record.chromeExtension.historyUnavailable,
+          historyUri: `codebook://node-history/${this.instanceId}_${record.id}`,
+        }),
       },
       claimable: extension.claimable,
       manifestUri: prepared ? this.uri(record.id, 'manifest') : undefined,
@@ -3949,6 +4141,28 @@ export class StudyService {
       record.nodePhase = 'failed'
   }
 
+  /**
+   * Refuses a run that would start while the open reader shows saved history, before the application, a server, a test process or a history recorder is created; called first by every profile's preparation.
+   * Such a reader displays none of the run's captures, so a browser run would fail at its first one, and a test, server or extension run would draw the replay's frames and values beside the live session. The run has no effect: no study is saved for it and its slot and start key are free.
+   * @param record - The run being prepared; its exclusion is set to `refused-at-admission` when the reader is not following the run.
+   * @throws A `PRESENTATION_UNAVAILABLE` {@link StudyError} worded by {@link readerNotFollowingRunRefusal} when a reader is open and `followingCurrentRun` is false.
+   * @example this.assertReaderFollowsRun(record) // throws while a saved Extension replay is shown
+   */
+  private assertReaderFollowsRun(record: StudyRecord): void {
+    const presentation = this.presentationController?.presentationState()
+    if (
+      presentation?.state === 'open' &&
+      !presentation.reader.followingCurrentRun
+    ) {
+      // The run had no effect: no study is saved for it, as for a run the library refused.
+      record.historyExcluded = 'refused-at-admission'
+      throw new StudyError(
+        'PRESENTATION_UNAVAILABLE',
+        readerNotFollowingRunRefusal(presentation.reader.contentRevision),
+      )
+    }
+  }
+
   /** Acquires the adapter once; cancellation after an await drains rather than abandons it. @example await this.prepare(record) */
   private async prepare(record: StudyRecord): Promise<void> {
     if (record.profile === NODE_SERVER_PROFILE)
@@ -3964,19 +4178,7 @@ export class StudyService {
             'PREREQUISITE_MISSING',
             'Repository source/book storage is unavailable in this editor.',
           )
-        // An open reader that shows saved history displays none of this run's captures, so the run would fail at its first one, after the application was started: it ends here, before any input.
-        const presentation = this.presentationController?.presentationState()
-        if (
-          presentation?.state === 'open' &&
-          !presentation.reader.followingCurrentRun
-        ) {
-          // The run had no effect: no study is saved for it, as for a run the library refused.
-          record.historyExcluded = 'refused-at-admission'
-          throw new StudyError(
-            'PRESENTATION_UNAVAILABLE',
-            readerNotFollowingRunRefusal(presentation.reader.contentRevision),
-          )
-        }
+        this.assertReaderFollowsRun(record)
         // The admission precedes every awaited read, so no reader checkpoint captures a run the library will refuse.
         await this.admitStudy(record)
         if (this.stopping || record.stopping) return
@@ -3994,6 +4196,8 @@ export class StudyService {
         )
         this.environment.assertWorkspace?.()
       } else {
+        // A replay on screen refuses a test run before any test process or history exists.
+        this.assertReaderFollowsRun(record)
         this.environment.assertWorkspace?.()
         if (!this.repository)
           throw new StudyError(
@@ -4623,6 +4827,7 @@ export class StudyService {
       if (extensionRun && extensionRun !== cancellingExtensionRun)
         await extensionRun.stop()
       record.chromeExtension?.subscription?.dispose()
+      await this.sealChromeExtensionHistory(record)
       // The history ends with the run: stopped, closed or failed, sealed once however many callers join this stop.
       await this.sealNodeServerHistory(record)
       // A root listing that was not released is the run's to release: one still running fails this stop, so the run stays unstopped, the next start answers BUSY, and the next stop tries again.
@@ -5465,6 +5670,8 @@ export class StudyService {
   private async startChromeExtensionRun(
     record: ChromeExtensionStudyRecord,
   ): Promise<void> {
+    // A replay on screen refuses the run before any browser launch or history recorder.
+    this.assertReaderFollowsRun(record)
     this.environment.assertWorkspace?.()
     const state = record.chromeExtension
     const configuration = record.configuration
@@ -5504,6 +5711,9 @@ export class StudyService {
         sanitize: (text) => this.sanitizedCause(text, runRoots),
       }),
       privateRoots: runRoots,
+      beginHistory: (identity) =>
+        this.beginChromeExtensionHistory(record, identity),
+      historyUnavailable: () => record.chromeExtension?.historyUnavailable,
     })
     state.run = run
     state.subscription = run.onDidChange(() =>
@@ -5512,6 +5722,71 @@ export class StudyService {
     if (this.stopping || record.stopping) return
     await run.prepare()
     record.prepared = true
+  }
+
+  /**
+   * Starts the history of a chrome-extension run, within its bound, once its declaration resolved; a failure of any kind leaves the live run running unrecorded and is kept as the cause the run resource shows.
+   * @param record - The chrome-extension run.
+   * @param identity - What the run's declaration resolved to.
+   * @returns The sink the run feeds, or `undefined` when no history started.
+   * @example const sink = await this.beginChromeExtensionHistory(record, identity)
+   */
+  private async beginChromeExtensionHistory(
+    record: ChromeExtensionStudyRecord,
+    identity: ExtensionHistoryIdentity,
+  ): Promise<ChromeExtensionHistoryRecorder | undefined> {
+    const begun = await startChromeExtensionHistory({
+      repository: this.nodeHistoryRepository,
+      workspace: this.environment.workspace,
+      instanceId: this.instanceId,
+      runId: record.id,
+      createdAtMs: record.createdAt,
+      identity,
+      describeCause: (error) =>
+        error instanceof SavedStudyStorageFullError
+          ? fullLibraryMessage('run', error.limit, this.removalAvailability)
+          : this.sanitizedCause(error),
+      startBoundMs: this.chromeExtensionHistoryStartBoundMs,
+      // A fault of the history's own writer reaches Output › Codebook, as a failed test-history seal does.
+      onFault: (error) =>
+        this.diagnose(
+          'HISTORY_SINK_FAULT',
+          record,
+          error,
+          this.sanitizedCause(error),
+        ),
+    })
+    if ('recorder' in begun) {
+      record.chromeExtension.history = begun.recorder
+      return begun.recorder
+    }
+    record.chromeExtension.historyUnavailable = begun.unavailable
+    return undefined
+  }
+
+  /**
+   * Seals a chrome-extension run's history once the run ended, through the one seal every ending joins: the run completed, was stopped, failed or lost its surface. A history that cannot be sealed is abandoned with its cause and never fails the stop.
+   * @param record - The chrome-extension run whose browser and debugger were released.
+   * @example await this.sealChromeExtensionHistory(record)
+   */
+  private async sealChromeExtensionHistory(record: StudyRecord): Promise<void> {
+    const history = record.chromeExtension?.history
+    if (!history) return
+    const view = record.chromeExtension?.run?.view()
+    await history.seal(
+      {
+        failureCode: view?.runFailure?.code,
+        observed: view?.observed,
+      },
+      this.chromeExtensionHistorySealBoundMs,
+    )
+    if (history.status === 'failed' && history.failure)
+      this.diagnose(
+        'HISTORY_SEAL_FAILED',
+        record,
+        new Error(history.failure),
+        history.failure,
+      )
   }
 
   /**
@@ -5546,6 +5821,8 @@ export class StudyService {
   private async startNodeServerRun(
     record: NodeServerStudyRecord,
   ): Promise<void> {
+    // A replay on screen refuses the run before any server start or history recorder.
+    this.assertReaderFollowsRun(record)
     this.environment.assertWorkspace?.()
     if (!this.repository)
       throw new StudyError(

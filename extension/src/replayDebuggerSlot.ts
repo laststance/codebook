@@ -1,5 +1,6 @@
 import type { NodeTestHistoryEntry } from './nodeTestHistorySchemas'
 import type { ReplayDebugger } from './replayDebugger'
+import type { ReplayDebugSnapshot } from './replayDebugSchemas'
 import {
   describeNodeRecordedSource,
   NODE_RECORDED_SOURCE_TEXT,
@@ -181,6 +182,13 @@ export interface NodeHistoryMomentInput {
   isRequestCurrent: (request: number) => boolean
   /** The server words of a stop's thread, or nothing for a test stop. */
   serverStopThread: (stop: NodeTestHistoryStop) => ServerStopThread | undefined
+  /** An Extension replay's thread label for the selected stop, which replaces the test and server words; absent for the other replays. */
+  extensionThread?: string
+  /** An Extension replay's stop whose source is not recorded: the debugger shows its snapshot (when it has one) under its thread label, which names what is missing, with no source slot, and never the "Not recorded" thread of a moment without a stop. */
+  partialStop?: {
+    snapshot: ReplayDebugSnapshot | undefined
+    thread: string
+  }
 }
 
 /** The outcome of {@link presentNodeHistoryMoment}: nothing was presented, or the flags the reader commits. */
@@ -208,7 +216,8 @@ export async function presentNodeHistoryMoment(
 ): Promise<NodeHistoryMomentResult> {
   const { verifiedStop, request, isRequestCurrent } = input
   const isSuperseded = (): boolean => !isRequestCurrent(request)
-  if (!verifiedStop) {
+  const partialStop = verifiedStop ? undefined : input.partialStop
+  if (!verifiedStop && !partialStop) {
     // Only a retirement in progress is waited for; an owner the learner stopped is not replaced, so it stays stopped.
     if (slot.retiring) {
       await slot.retired()
@@ -231,20 +240,27 @@ export async function presentNodeHistoryMoment(
     if (isSuperseded()) return { presented: false }
   }
   const inspection = await slot.presentFor(isSuperseded, (debuggerView) =>
-    debuggerView.present(
-      verifiedStop.debuggerSnapshot,
-      describeNodeRecordedSource({
-        kind: 'thread',
-        stop: verifiedStop.index + 1,
-        path: verifiedStop.source.path,
-        line: verifiedStop.frame.line,
-        ...input.serverStopThread(verifiedStop),
-      }),
-      new AbortController().signal,
-      { uri: input.slotUri, hash: verifiedStop.source.hash },
-      // The stop's recorded inspections, so values outside the captured scopes stay inspectable in the native debugger.
-      verifiedStop.facts,
-    ),
+    !verifiedStop
+      ? debuggerView.present(
+          partialStop?.snapshot,
+          partialStop?.thread ?? '',
+          new AbortController().signal,
+        )
+      : debuggerView.present(
+          verifiedStop.debuggerSnapshot,
+          input.extensionThread ??
+            describeNodeRecordedSource({
+              kind: 'thread',
+              stop: verifiedStop.index + 1,
+              path: verifiedStop.source.path,
+              line: verifiedStop.frame.line,
+              ...input.serverStopThread(verifiedStop),
+            }),
+          new AbortController().signal,
+          { uri: input.slotUri, hash: verifiedStop.source.hash },
+          // The stop's recorded inspections, so values outside the captured scopes stay inspectable in the native debugger.
+          verifiedStop.facts,
+        ),
   )
   return {
     presented: true,

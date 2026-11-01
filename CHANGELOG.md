@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.70.0] - 2026-11-01 (development candidate)
+
+Cycle 0069 ([Issue #174](https://github.com/laststance/codebook/issues/174)), a feature cycle: a Chrome extension run that the chat explained live is now **saved and replayed** in VS Code and in Cursor. Before this version an extension run was live only and its save was refused.
+
+**Save an extension run as an Extension replay.** The run records its pauses in the extension page and the service worker, the source each stop executed, the debugger values and stack, the surface's frames and the result while the chat explains it. The chat saves it with `codebook_explain_node_history` after `codebook_stop`, or you press **Save learning replay** in the status bar; **Open replay** (the notice or the row in Saved studies) opens it at its first recorded stop. The Application view's header says `Recording for replay`, `Recording partial · <code>` or `Not recorded · <reason>` during the run.
+
+**Replay it without Chrome.** The replay shows the recorded frame of the surface (labeled recorded, with how long before the stop it was taken when no frame was recorded at the stop), the executed source, and in the editor's debugger a `Recorded page stop <n> · <path>:<line>` or `Recorded service worker stop <n> · <path>:<line>` thread with the recorded values and stack. A moment with no stop shows **Not recorded at this moment**. A stop resumed from the debug toolbar ends where it was resumed. The **Learning summary** stands in the chat's place, and the replay reopens at its saved position after the editor restarts. A part that was not recorded is named with an `EXTENSION_HISTORY_*` code in the replay, Saved studies and the run resource; the packaged README lists what each code means and what to do.
+
+**Delete an Extension replay from Saved studies.** It leaves the list and the saved study limit at once and goes to the system Trash. Test and server replays still cannot be deleted there.
+
+**A run does not start over a replay.** A test, server or extension run started while the Study shows a saved replay is refused with the reader-not-following answer, as a browser run already was; the chat returns to the current run first. Before this version such a run started and the Application pane and the debugger mixed the replay with the live run.
+
+Native evidence (development, no final-row credit): P06 `laststance/bookmark-xp-explorer` in VS Code 1.144.0 (Copilot Chat, GPT-6.1 Terra) and Cursor 3.27.22 (Agent, Grok 4.6 High Fast) on macOS 26, candidate `2368610b`, recorded in [Issue #174](https://github.com/laststance/codebook/issues/174); the findings of that trial and of the pre-landing reviews are fixed here, each with a test that fails without it.
+
+**Compatibility.** MCP API 1.13 (additive: the run resource's `chromeExtension.history`, `historyIssue`, `historyUri`, `learningCoverage`, `learningMissing` and `captureMissing`, and the help's save section) and bundled skill 1.0.62. Saved studies and histories of earlier versions open unchanged. To update, install this VSIX, reopen the work window and run **Codebook: Set Up AI Chat** so Cursor's managed skill updates.
+
 ## [0.2.69.0] - 2026-11-01 (development candidate)
 
 Cycle 0068 ([Issue #172](https://github.com/laststance/codebook/issues/172)), an owner-directed process cycle: the extension behaves as 0.2.68.0 for learners (no feature, no fix of product behavior). The replay debugger's lifecycle moved out of `studyWorkspace.ts` into its own module with the same behavior, verified by a native replay regression in VS Code and Cursor, and four repository commands now run the delivery steps that were done by hand.

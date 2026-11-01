@@ -6,6 +6,11 @@ import * as vscode from 'vscode'
 import { z } from 'zod'
 
 import type { RecordedStudyGroups } from './applicationGroupMarkerSchemas'
+import type {
+  ExtensionHistorySummary,
+  ExtensionHistoryTypes,
+} from './chromeExtensionHistoryTypes'
+import { ChromeExtensionLearningSave } from './chromeExtensionLearningSave'
 import { ChromeExtensionViewportView } from './chromeExtensionViewport'
 import {
   AGENT_SELECTION_APPLICATION_KEYBOARD_MESSAGES,
@@ -36,7 +41,6 @@ import {
   MAIN_THREAD_WEBVIEW_PREFIX,
   MAX_DEFERRED_OPEN_REPLIES,
   MAX_SOURCE_DOCUMENTS,
-  CHROME_EXTENSION_SAVE_REFUSAL,
   CHROME_EXTENSION_PROFILE,
   NODE_SERVER_PROFILE,
   NODE_TEST_PROFILE,
@@ -86,6 +90,8 @@ import {
   STUDY_REFRESH_INTERVAL_MS,
   STUDY_REMOVAL_REFUSALS,
   STUDY_REMOVAL_REFUSALS_WITHOUT_TRASH,
+  STUDY_REMOVAL_EXTENSION_HISTORY_REFUSALS,
+  STUDY_REMOVAL_EXTENSION_HISTORY_TRASH_REFUSED,
   STUDY_REMOVAL_SERVER_HISTORY_REFUSAL,
   STUDY_REMOVAL_WITHOUT_TRASH_MESSAGE,
   STUDY_SOURCE_SCHEME,
@@ -120,6 +126,8 @@ import {
   StudyRemovedWithItsRecordingError,
   UnreportedEditorFocusError,
 } from './errors'
+import { ExtensionReplayFrameCache } from './extensionReplayFrameCache'
+import type { HistoryIndexOf, HistoryTypes } from './historyStorageDescriptor'
 import { learningItemSchema } from './identitySchemas'
 import {
   repositorySelectionSchema,
@@ -179,6 +187,7 @@ import {
 import {
   presentNodeHistoryMoment,
   ReplayDebuggerSlot,
+  type NodeHistoryMomentInput,
 } from './replayDebuggerSlot'
 import type { ReplayDebugSnapshot } from './replayDebugSchemas'
 import type {
@@ -239,10 +248,19 @@ import {
   type StudyRemovalView,
   type StudyViewMessage,
 } from './ui/studyHtml'
+import {
+  adaptExtensionReplay,
+  extensionNativeKey,
+  type ExtensionReplayPresentation,
+} from './utils/adaptExtensionReplay'
 import type { ServerReplayPresentation } from './utils/adaptServerReplay'
 import { adoptWikiGroupReturn } from './utils/adoptWikiGroupReturn'
 import { awaitDocumentSettled } from './utils/awaitDocumentSettled'
 import { bookObservationHash } from './utils/bookObservationHash'
+import {
+  openingExtensionEvent,
+  restoreExtensionPlayhead,
+} from './utils/buildExtensionReplayModel'
 import {
   openingServerEvent,
   restoreServerPlayhead,
@@ -262,6 +280,12 @@ import { configuredObservationPosition } from './utils/configuredObservationPosi
 import { coveredSourceObstacle } from './utils/coveredSourceObstacle'
 import { createRecordingObserver } from './utils/createRecordingObserver'
 import { describeChromeExtensionViewStatus } from './utils/describeChromeExtensionStatus'
+import {
+  describeExtensionEventRow,
+  describeExtensionReplayRow,
+  describeExtensionThread,
+  NODE_EXTENSION_REPLAY_TEXT,
+} from './utils/describeExtensionReplay'
 import {
   describeNodeLearningSave,
   NODE_LEARNING_SAVE_ACTION,
@@ -354,6 +378,12 @@ import {
 } from './utils/placementRefusalReport'
 import { plannedStopLine } from './utils/plannedStopLine'
 import { presentServerHistory } from './utils/presentServerHistory'
+import { projectExtensionHistoryTimeline } from './utils/projectExtensionHistoryTimeline'
+import {
+  extensionStepTarget,
+  projectExtensionReplayViews,
+  type ExtensionShownFrame,
+} from './utils/projectExtensionReplayViews'
 import { projectLearningSummary } from './utils/projectLearningSummary'
 import {
   type NodeHistoryTimeline,
@@ -412,6 +442,7 @@ import {
 } from './utils/slotDeadline'
 import { stackRowsAtOneHeight } from './utils/stackRowsAtOneHeight'
 import { stripNodeHistorySummaryTexts } from './utils/stripNodeHistorySummaryTexts'
+import { stripTerminalControls } from './utils/stripTerminalControls'
 import { studyEvidenceDirectory } from './utils/studyEvidenceDirectory'
 import { studyRemovalMessages } from './utils/studyRemovalMessages'
 import { tabWithoutEditorObstacle } from './utils/tabWithoutEditorObstacle'
@@ -481,6 +512,18 @@ type NodeTestHistoryStop = Extract<NodeTestHistoryEntry, { type: 'stop' }>
 /** How {@link StudyWorkspace}'s return to a test replay's committed moment ended: the slot shows that moment again, a newer selection took over, or the slot could not show it (its row says why). */
 type NodeMomentReturn = 'returned' | 'superseded' | 'not-shown'
 
+/** What the native surfaces present for an Extension replay's moment; see {@link StudyWorkspace.extensionMomentOf}. */
+type ExtensionMomentPresentation = {
+  moment: ExtensionReplayPresentation['model']['moments'][number]
+  stop: ExtensionReplayPresentation['model']['moments'][number]['stop']
+  verifiedStop: NodeTestHistoryStop | undefined
+  thread: string | undefined
+  /** The thread label and the partial-stop shape the debugger presents the moment with. */
+  momentInput: Pick<NodeHistoryMomentInput, 'extensionThread' | 'partialStop'>
+  /** Equal for two moments whose native presentation is the same. */
+  nativeKey: string
+}
+
 /** What opening a replay reads: its history (a server replay's in its test-shaped view), the sidecars and the server presentation when it is one; see {@link StudyWorkspace.readNodeHistoryOpening}. */
 type NodeHistoryOpening = {
   history: NodeTestHistoryIndex
@@ -489,6 +532,7 @@ type NodeHistoryOpening = {
   savedSequence?: number
   positionError?: unknown
   serverReplay?: ServerReplayPresentation
+  extensionReplay?: ExtensionReplayPresentation
 }
 
 /** How one selection of a test replay's moment behaves; see {@link StudyWorkspace.selectNodeHistoryEvent}. */
@@ -853,6 +897,14 @@ export class StudyWorkspace {
       )?.materialRevision,
   })
 
+  /** Saves a chrome-extension run's learning replay from the status item; this workspace only wires the item and its command to it. */
+  private readonly chromeExtensionLearningSave =
+    new ChromeExtensionLearningSave({
+      service: () => this.service,
+      store: () => this.nodeHistoryRepository?.extensionHistories,
+      ...this.saveHostEditorParts(),
+    })
+
   private library?: LearningLibrary
   private recordings?: RecordingStore
   private nodeHistoryStore?: NodeTestHistoryStore
@@ -867,6 +919,18 @@ export class StudyWorkspace {
   private selectedNodeHistoryLearningMaterial?: NodeLearningMaterialOfHistory
   /** The selected history as a server replay presents it, when it is one: its model and its test-shaped view, which is {@link selectedNodeHistory} itself. Every surface that words or draws a moment asks it first ({@link nodeHistoryViews}). */
   private selectedServerReplay?: ServerReplayPresentation
+  /** The selected history as an Extension replay presents it, when it is one: its model and its test-shaped view, which is {@link selectedNodeHistory} itself. */
+  private selectedExtensionReplay?: ExtensionReplayPresentation
+  /** The selected Extension replay's lazily loaded frames, at most {@link EXTENSION_REPLAY_FRAME_CACHE_SIZE} decoded. */
+  private extensionFrames?: ExtensionReplayFrameCache
+  /** The frame loaded for the committed moment of the selected Extension replay. */
+  private extensionShownFrame?: ExtensionShownFrame
+  /** What the native surfaces show of the committed Extension moment ({@link extensionNativeKey}); they repaint only when it changes. */
+  private extensionNativeShown?: string
+  /** The selection request whose debugger launch failed and was kept open, or whose moment committed beside the learner's stopped debugger (Retry), so its moment must not count as shown natively. */
+  private extensionDebuggerFailedRequest?: number
+  /** The saved Extension replays Saved studies lists, listed with {@link nodeHistoryCatalog} ({@link listNodeHistoryCatalog}). */
+  private nodeExtensionHistoryCatalog: ExtensionHistorySummary[] = []
   private selectedNodeHistoryPage = 0
   private selectedNodeHistorySequence?: number
   /** The moment the recorded-source slot and the replay debugger show now: set when a selection commits with its slot, cleared when a selection leaves the moment and when the slot could not show it. The next selection of the committed moment leaves it again when a failed or overtaken selection took the surfaces off it (F191). */
@@ -8081,7 +8145,7 @@ export class StudyWorkspace {
           ),
       })
     },
-    createChromeExtensionViewport: async (runId, signal) => {
+    createChromeExtensionViewport: async (runId, signal, observer) => {
       let isFinal = false
       // The run's stop files, known once its configuration resolves (before that nothing moves).
       let stopFilePaths = new Set<string>()
@@ -8092,6 +8156,8 @@ export class StudyWorkspace {
         fail: () => undefined,
         scenario: 'normal',
         signal,
+        // The run's history receives the surface's frames through this observer; absent when the run records nothing.
+        observer,
         keepsEndedPane: () => isFinal,
         movesPausedSourceOut: (fsPath) =>
           stopFilePaths.has(canonicalFsPath(fsPath)),
@@ -11925,7 +11991,9 @@ export class StudyWorkspace {
         ? this.nodeServerLearningSave
         : record?.profile === NODE_TEST_PROFILE
           ? this.nodeLearningSave
-          : undefined
+          : record?.profile === CHROME_EXTENSION_PROFILE
+            ? this.chromeExtensionLearningSave
+            : undefined
     if (!service || !record || !owner) return undefined
     if (
       expectedStudyId !== undefined &&
@@ -11941,9 +12009,6 @@ export class StudyWorkspace {
   async saveLearningReplay(expectedStudyId?: string): Promise<void> {
     const service = this.service,
       record = this.currentRecord()
-    // An extension run stores nothing: the command refuses before any study, recording or checkpoint is touched (SR13, DR9).
-    if (hasChromeExtensionProfile(record))
-      throw new Error(CHROME_EXTENSION_SAVE_REFUSAL)
     // A server or test run's Save belongs to its own class, with the same delayed-click guard as a browser save.
     const nodeSave = this.nodeRunSave(service, record, expectedStudyId)
     if (nodeSave) return nodeSave
@@ -12034,7 +12099,26 @@ export class StudyWorkspace {
   }
 
   /**
-   * Draws the status item of a run whose profile owns its Save (server, test) or has none (extension); called by {@link publishLearningSave} before the browser run's own item.
+   * Gives the status item of a chrome-extension run: its phase text from the run's view beside its learning replay state.
+   * @param record - The current chrome-extension run.
+   * @returns The item, or `undefined` while the run is not yet created.
+   * @example const item = this.extensionSaveItem(record)
+   */
+  private extensionSaveItem(record: StudyRecord) {
+    const extension = record.chromeExtension
+    if (!extension?.run) return undefined
+    return this.chromeExtensionLearningSave.item(
+      record,
+      describeChromeExtensionViewStatus(
+        extension.run.view(),
+        extension.prepared?.configuration.clicks.map((click) => click.title) ??
+          [],
+      ).statusItem,
+    )
+  }
+
+  /**
+   * Draws the status item of a run whose profile owns its Save (server, test, extension); called by {@link publishLearningSave} before the browser run's own item.
    * @param record - The current run, if any.
    * @param studyId - The run's study id, when a service is attached.
    * @returns `true` when the item was drawn or hidden for this run's profile; `false` for a browser run, which the caller draws.
@@ -12044,30 +12128,15 @@ export class StudyWorkspace {
     record: ReturnType<StudyWorkspace['currentRecord']>,
     studyId: string | undefined,
   ): boolean {
-    // An extension run shows its phase text (C4) and never offers Save (DR9).
-    if (hasChromeExtensionProfile(record)) {
-      const extension = record?.chromeExtension
-      if (!extension?.run || !studyId) this.hideLearningSaveItem()
-      else
-        this.showLearningSaveItem(
-          describeChromeExtensionViewStatus(
-            extension.run.view(),
-            extension.prepared?.configuration.clicks.map(
-              (click) => click.title,
-            ) ?? [],
-          ).statusItem,
-          CHROME_EXTENSION_SAVE_REFUSAL,
-          undefined,
-          studyId,
-        )
-      return true
-    }
     // A server run's item shows what NodeServerLearningSave says of it, a test run's what NodeLearningSave says.
     let view
     if (record?.profile === NODE_SERVER_PROFILE && studyId)
       view = this.nodeServerLearningSave.item(record)
     else if (record?.profile === NODE_TEST_PROFILE)
       view = this.nodeLearningSave.item(record)
+    // An extension run's item shows its phase text (C4) beside what ChromeExtensionLearningSave says of its learning replay.
+    else if (record && hasChromeExtensionProfile(record))
+      view = this.extensionSaveItem(record)
     else return false
     if (!view || !studyId) this.hideLearningSaveItem()
     else
@@ -12455,8 +12524,11 @@ export class StudyWorkspace {
       this.nodeServerHistoryCatalog.some(
         (history) => history.studyId === studyId,
       ) ||
-      // A node-server run just saved is a server replay before the catalog lists it, never an ordinary recording.
-      [NODE_TEST_PROFILE, NODE_SERVER_PROFILE].some(
+      this.nodeExtensionHistoryCatalog.some(
+        (history) => history.studyId === studyId,
+      ) ||
+      // A node-server or extension run just saved is a replay before the catalog lists it, never an ordinary recording.
+      [NODE_TEST_PROFILE, NODE_SERVER_PROFILE, CHROME_EXTENSION_PROFILE].some(
         (profile) => this.recordOfStudy(studyId)?.profile === profile,
       )
     )
@@ -12781,12 +12853,15 @@ export class StudyWorkspace {
   /**
    * Names the Output › Codebook entry's surface and profile for a replay that did not open, from the catalogs, as the failure notification's wording does; called by {@link tellTestReplayOpenFailure} and {@link answerFailedTestReplayOpen}.
    * @param studyId - The replay's study id.
-   * @returns `open:server-replay` with profile `node-server` for a server replay (listed, or a node-server run of this window not yet listed); `open:test-replay` with `node-test` otherwise.
+   * @returns `open:server-replay` with profile `node-server` for a server replay (listed, or a node-server run of this window not yet listed); `open:extension-replay` with `chrome-extension` for an Extension replay ({@link isExtensionReplay}); `open:test-replay` with `node-test` otherwise.
    * @example this.replayOpenDiagnosticIdentity(studyId) // => { surface: 'open:server-replay', profile: 'node-server' }
    */
   private replayOpenDiagnosticIdentity(studyId: string): {
-    surface: 'open:server-replay' | 'open:test-replay'
-    profile: typeof NODE_SERVER_PROFILE | typeof NODE_TEST_PROFILE
+    surface: 'open:server-replay' | 'open:extension-replay' | 'open:test-replay'
+    profile:
+      | typeof NODE_SERVER_PROFILE
+      | typeof CHROME_EXTENSION_PROFILE
+      | typeof NODE_TEST_PROFILE
   } {
     const isListedTest = this.nodeHistoryCatalog.some(
       (history) => history.studyId === studyId,
@@ -12797,9 +12872,24 @@ export class StudyWorkspace {
         (history) => history.studyId === studyId,
       ) ||
         this.recordOfStudy(studyId)?.profile === NODE_SERVER_PROFILE)
-    return isServer
-      ? { surface: 'open:server-replay', profile: NODE_SERVER_PROFILE }
-      : { surface: 'open:test-replay', profile: NODE_TEST_PROFILE }
+    if (isServer)
+      return { surface: 'open:server-replay', profile: NODE_SERVER_PROFILE }
+    // An Extension replay is logged as its own surface, never as a test replay.
+    if (!isListedTest && this.isExtensionReplay(studyId))
+      return {
+        surface: 'open:extension-replay',
+        profile: CHROME_EXTENSION_PROFILE,
+      }
+    return { surface: 'open:test-replay', profile: NODE_TEST_PROFILE }
+  }
+
+  /** Whether the study is an Extension replay, listed or just saved by this window; worded as one in an open-failure notice. @example this.isExtensionReplay(studyId) // => true */
+  private isExtensionReplay(studyId: string): boolean {
+    return (
+      this.nodeExtensionHistoryCatalog.some(
+        (history) => history.studyId === studyId,
+      ) || this.recordOfStudy(studyId)?.profile === CHROME_EXTENSION_PROFILE
+    )
   }
 
   /**
@@ -12829,17 +12919,24 @@ export class StudyWorkspace {
     const serverSummary = this.nodeServerHistoryCatalog.find(
       (history) => history.studyId === studyId,
     )
+    const extensionSummary = this.nodeExtensionHistoryCatalog.find(
+      (history) => history.studyId === studyId,
+    )
     const failure = describeNodeLearningSave({
       kind: 'open-failed',
       // A server replay that cannot open is worded as one, never as a test replay, also before Saved studies lists it.
       ...(identity.profile === NODE_SERVER_PROFILE
         ? { profile: NODE_SERVER_PROFILE }
-        : {}),
+        : this.isExtensionReplay(studyId)
+          ? { profile: CHROME_EXTENSION_PROFILE }
+          : {}),
       title: summary
         ? [summary.testFile, ...(summary.testTitles ?? [])].join(' › ')
         : serverSummary
           ? (serverSummary.title ?? serverSummary.question)
-          : studyId,
+          : extensionSummary
+            ? (extensionSummary.title ?? extensionSummary.question)
+            : studyId,
       cause,
     })
     // The answer is handled whenever it arrives, outside every entry's turn.
@@ -12897,6 +12994,7 @@ export class StudyWorkspace {
         savedSequence,
         positionError,
         serverReplay,
+        extensionReplay,
       } = opening
       this.nodeHistoryPlaybackController?.dispose()
       this.replayDebuggers.current?.invalidate()
@@ -12906,6 +13004,17 @@ export class StudyWorkspace {
         this.nodeOutputReadings.clear()
       this.selectedNodeHistory = history
       this.selectedServerReplay = serverReplay
+      this.selectedExtensionReplay = extensionReplay
+      this.extensionShownFrame = undefined
+      this.extensionNativeShown = undefined
+      // The frames of the replay shown before are not kept; the new replay reads its own from its folder, by hash.
+      this.extensionFrames = extensionReplay
+        ? new ExtensionReplayFrameCache(
+            this.nodeHistoryRepository!.extensionHistories.historyDirectory(
+              history.header.studyId,
+            ),
+          )
+        : undefined
       this.nodeHistoryOpenToken = request
       // The pending close failure of another replay's withdrawn selection is not this replay's (F365).
       this.nodeSourceSlotCloseFailure = undefined
@@ -12921,7 +13030,7 @@ export class StudyWorkspace {
       this.selectedNodeHistoryStepId = undefined
       this.selectedNodeHistoryDebugAvailable = false
       this.selectedNodeHistoryValuesUninspected = false
-      // A Node history has no application frames; replace pixels from the prior browser study immediately.
+      // A test or server history has no application frames, and an Extension replay's frames load with its first moment: either way the pixels of the prior browser study go at once.
       this.presentApplication(this.message())
       // Each opened history gets its own controller; the present callback is bound to this study.
       this.nodeHistoryPlaybackController = new NodeHistoryPlaybackController({
@@ -12944,6 +13053,7 @@ export class StudyWorkspace {
         history,
         savedSequence,
         serverReplay,
+        extensionReplay,
       )
       this.nodeHistoryPlaybackController.open(
         history.entries.map((entry) => ({
@@ -13041,6 +13151,13 @@ export class StudyWorkspace {
         request,
         revision,
       )
+    if (resolved?.profile === 'chrome-extension')
+      return this.readExtensionHistoryOpening(
+        resolved.store,
+        studyId,
+        request,
+        revision,
+      )
     const store = this.nodeHistoryStore!
     const history = await store.read(studyId)
     if (this.historyOpenSuperseded(request, revision)) return undefined
@@ -13070,10 +13187,14 @@ export class StudyWorkspace {
     request: number,
     revision: number,
   ): Promise<NodeHistoryOpening | undefined> {
-    const journal = await store.read(studyId)
-    if (this.historyOpenSuperseded(request, revision)) return undefined
-    if (journal.status === 'recording')
-      throw new Error(NODE_SERVER_REPLAY_TEXT.stillRecording)
+    const journal = await this.readOpenableJournal(
+      store,
+      studyId,
+      request,
+      revision,
+      NODE_SERVER_REPLAY_TEXT.stillRecording,
+    )
+    if (!journal) return undefined
     const sidecars = await this.readOpeningSidecars(
       store,
       studyId,
@@ -13107,7 +13228,81 @@ export class StudyWorkspace {
   }
 
   /**
-   * Reads what opening a history shows besides its journal (the learner's decision, the learning material and the saved reader position) from either profile's store, stopping as soon as a newer request, a newer reader revision or the reader's close supersedes the open; called by {@link readNodeHistoryOpening} and {@link readServerHistoryOpening}.
+   * Reads a history's verified journal for its replay and refuses one another window is still recording, which opens once sealed or interrupted; called by {@link readServerHistoryOpening} and {@link readExtensionHistoryOpening}.
+   * @param store - The store the repository resolved.
+   * @param studyId - The history's study id.
+   * @param request - The open's request token.
+   * @param revision - The reader revision the open belongs to.
+   * @param stillRecording - The profile's sentence for a history still being recorded.
+   * @returns The journal, or `undefined` once the open is superseded.
+   * @throws When the journal cannot be read or verified, or the history is still being recorded.
+   * @example const journal = await this.readOpenableJournal(store, studyId, request, this.revision, NODE_SERVER_REPLAY_TEXT.stillRecording)
+   */
+  private async readOpenableJournal<Types extends HistoryTypes>(
+    store: NodeHistoryStore<Types>,
+    studyId: string,
+    request: number,
+    revision: number,
+    stillRecording: string,
+  ): Promise<HistoryIndexOf<Types> | undefined> {
+    const journal = await store.read(studyId)
+    if (this.historyOpenSuperseded(request, revision)) return undefined
+    if (journal.status === 'recording') throw new Error(stillRecording)
+    return journal
+  }
+
+  /**
+   * Reads a chrome-extension history for its replay: the journal dressed in the shared replay path, the learner's decision and the saved reader position restored to the nearest event at or before it; a history another window is still recording is refused, as it opens once sealed or interrupted. Called by {@link readNodeHistoryOpening} for a study id the repository resolves to the extension store.
+   * The history's saved learning material is read as a server replay's is; a history without material shows its recording alone.
+   * @param store - The extension store the repository resolved.
+   * @param studyId - The history's study id.
+   * @param request - The open's request token.
+   * @param revision - The reader revision the open belongs to.
+   * @returns The test-shaped history with the presentation and what was read, or `undefined` once the open is superseded.
+   * @throws When the journal cannot be read or verified, or the history is still being recorded.
+   * @example await this.readExtensionHistoryOpening(store, studyId, request, this.revision) // => { history, extensionReplay, savedSequence }
+   */
+  private async readExtensionHistoryOpening(
+    store: NodeHistoryStore<ExtensionHistoryTypes>,
+    studyId: string,
+    request: number,
+    revision: number,
+  ): Promise<NodeHistoryOpening | undefined> {
+    const journal = await this.readOpenableJournal(
+      store,
+      studyId,
+      request,
+      revision,
+      NODE_EXTENSION_REPLAY_TEXT.stillRecording,
+    )
+    if (!journal) return undefined
+    // The same sidecars a test or server replay reads: the decision, the saved position and the learning material (a material that cannot be read is reported and left out).
+    const sidecars = await this.readOpeningSidecars(
+      store,
+      studyId,
+      request,
+      revision,
+    )
+    if (!sidecars) return undefined
+    const extensionReplay = adaptExtensionReplay(journal)
+    // A saved sequence that names no timeline event (a capture or a pin) restores the nearest earlier event.
+    const restored =
+      sidecars.savedSequence === undefined
+        ? undefined
+        : restoreExtensionPlayhead(
+            extensionReplay.model,
+            sidecars.savedSequence,
+          )
+    return {
+      history: extensionReplay.history,
+      extensionReplay,
+      ...sidecars,
+      savedSequence: restored?.sequence,
+    }
+  }
+
+  /**
+   * Reads what opening a history shows besides its journal (the learner's decision, the learning material and the saved reader position) from either profile's store, stopping as soon as a newer request, a newer reader revision or the reader's close supersedes the open; called by {@link readNodeHistoryOpening}, {@link readServerHistoryOpening} and {@link readExtensionHistoryOpening}.
    * A decision or material that cannot be read is reported and left out, and a position that cannot be read is returned as its error, which the open reports once the replay is selected.
    * @param store - The store that holds the history.
    * @param studyId - The history's study id.
@@ -13119,7 +13314,8 @@ export class StudyWorkspace {
   private async readOpeningSidecars(
     store:
       | NodeHistoryStore<NodeTestHistoryTypes>
-      | NodeHistoryStore<NodeServerHistoryTypes>,
+      | NodeHistoryStore<NodeServerHistoryTypes>
+      | NodeHistoryStore<ExtensionHistoryTypes>,
     studyId: string,
     request: number,
     revision: number,
@@ -13132,17 +13328,53 @@ export class StudyWorkspace {
       }
     | undefined
   > {
-    const learningDecision = await store
-      .readLearningDecision(studyId)
-      .catch((error: unknown) => {
-        this.reportTestReplayFailure('progress', error)
-        return undefined
-      })
-    if (this.historyOpenSuperseded(request, revision)) return undefined
+    const progress = await this.readOpeningProgress(
+      store,
+      studyId,
+      request,
+      revision,
+    )
+    if (!progress) return undefined
     const learningMaterial = await store
       .readLearningMaterial(studyId)
       .catch((error: unknown) => {
         this.reportTestReplayFailure('history-learning', error)
+        return undefined
+      })
+    if (this.historyOpenSuperseded(request, revision)) return undefined
+    return { ...progress, learningMaterial }
+  }
+
+  /**
+   * Reads the part of an open that every profile shares: the learner's decision and the saved reader position, stopping as soon as a newer request, a newer reader revision or the reader's close supersedes the open; called by {@link readOpeningSidecars} and {@link readExtensionHistoryOpening}.
+   * A decision that cannot be read is reported and left out, and a position that cannot be read is returned as its error, which the open reports once the replay is selected.
+   * @param store - The store that holds the history.
+   * @param studyId - The history's study id.
+   * @param request - The open's request token.
+   * @param revision - The reader revision the open belongs to.
+   * @returns The decision and the position, or `undefined` once the open is superseded.
+   * @example await this.readOpeningProgress(store, studyId, request, this.revision) // => { learningDecision, savedSequence, positionError }
+   */
+  private async readOpeningProgress(
+    store:
+      | NodeHistoryStore<NodeTestHistoryTypes>
+      | NodeHistoryStore<NodeServerHistoryTypes>
+      | NodeHistoryStore<ExtensionHistoryTypes>,
+    studyId: string,
+    request: number,
+    revision: number,
+  ): Promise<
+    | {
+        learningDecision?: NodeTestHistoryLearningDecision
+        savedSequence?: number
+        positionError?: unknown
+      }
+    | undefined
+  > {
+    const learningDecision = await store
+      .readLearningDecision(studyId)
+      .catch((error: unknown) => {
+        this.reportTestReplayFailure('progress', error)
         return undefined
       })
     if (this.historyOpenSuperseded(request, revision)) return undefined
@@ -13151,7 +13383,7 @@ export class StudyWorkspace {
       (positionError: unknown) => ({ savedSequence: undefined, positionError }),
     )
     if (this.historyOpenSuperseded(request, revision)) return undefined
-    return { learningDecision, learningMaterial, ...position }
+    return { learningDecision, ...position }
   }
 
   /**
@@ -13166,9 +13398,13 @@ export class StudyWorkspace {
     history: NodeTestHistoryIndex,
     savedSequence: number | undefined,
     serverReplay: ServerReplayPresentation | undefined,
+    extensionReplay?: ExtensionReplayPresentation,
   ): number | undefined {
     if (savedSequence !== undefined) return savedSequence
     if (serverReplay) return openingServerEvent(serverReplay.model)?.sequence
+    // An Extension replay without a saved position opens on its first recorded stop, else its first event.
+    if (extensionReplay)
+      return openingExtensionEvent(extensionReplay.model)?.sequence
     return firstVerifiedStopSequence(history) ?? history.entries[0]?.sequence
   }
 
@@ -13757,6 +13993,10 @@ export class StudyWorkspace {
     this.nodeHistoryPlaybackController = undefined
     this.selectedNodeHistory = undefined
     this.selectedServerReplay = undefined
+    this.selectedExtensionReplay = undefined
+    this.extensionFrames = undefined
+    this.extensionShownFrame = undefined
+    this.extensionNativeShown = undefined
     this.nodeHistoryOpenToken = undefined
     this.selectedNodeHistoryLearningDecision = undefined
     this.selectedNodeHistoryLearningMaterial = undefined
@@ -14013,6 +14253,9 @@ export class StudyWorkspace {
     const serverReplay = this.selectedServerReplay
     if (serverReplay?.history === history)
       return this.serverReplayViews(serverReplay, selected)
+    const extensionReplay = this.selectedExtensionReplay
+    if (extensionReplay?.history === history)
+      return this.extensionReplayViews(extensionReplay, selected)
     const leavingPosition = this.leavingNodeHistoryPosition(history)
     // The recorded texts the surfaces print come without terminal and bidirectional controls (F131).
     const shown = this.shownNodeHistory(history)
@@ -14114,6 +14357,41 @@ export class StudyWorkspace {
   }
 
   /**
+   * Projects a selected Extension replay's views for the Study message; called by {@link nodeHistoryViews} for a history that is an Extension replay's test-shaped view, which hands the projection to {@link projectExtensionReplayViews} with this workspace's state.
+   * @param replay - The selected Extension replay.
+   * @param selected - The selected event in the replay's test-shaped history.
+   * @returns The Application view (the recorded frame) and the Study section.
+   * @example this.extensionReplayViews(replay, event).nodeHistorySection?.position // => 'Page stop 1 · 0.42 s'
+   */
+  private extensionReplayViews(
+    replay: ExtensionReplayPresentation,
+    selected: NodeTestHistoryIndex['entries'][number] | undefined,
+  ): Pick<
+    StudyViewMessage,
+    | 'nodeHistoryApplication'
+    | 'nodeHistorySection'
+    | 'nodeHistoryLearningSummary'
+  > {
+    const { views, memo } = projectExtensionReplayViews({
+      replay,
+      selected,
+      leavingPosition: this.leavingNodeHistoryPosition(replay.history),
+      opening:
+        this.pendingNodeHistory !== undefined &&
+        this.pendingNodeHistoryStudyId === replay.model.studyId,
+      shownFrame: this.extensionShownFrame,
+      memo: this.nodeHistoryApplicationMemo,
+      nextGeneration: () => ++this.nodeHistoryApplicationGeneration,
+      applicationClosed: !this.app,
+      timeline: this.nodeHistoryTimelineMarks(replay.history).timeline,
+      learningMaterial: this.selectedNodeHistoryLearningMaterial,
+      chosenStepId: this.selectedNodeHistoryStepId,
+    })
+    this.nodeHistoryApplicationMemo = memo
+    return views
+  }
+
+  /**
    * Finds the store that holds a history by its profile, so a server replay's decision and reader position are written to the server store; an id no folder holds resolves to no store, never to the test store. A reader without a repository has only the test store.
    * @param studyId - The history's study id.
    * @returns The store, or `undefined` once the reader has none or no history has this id.
@@ -14124,11 +14402,11 @@ export class StudyWorkspace {
   ):
     | NodeHistoryStore<NodeTestHistoryTypes>
     | NodeHistoryStore<NodeServerHistoryTypes>
+    | NodeHistoryStore<ExtensionHistoryTypes>
     | undefined {
     // An unresolved id answers that no history has it; it is not read from the test store.
-    return this.nodeHistoryRepository
-      ? this.nodeHistoryRepository.resolve(studyId)?.store
-      : this.nodeHistoryStore
+    if (!this.nodeHistoryRepository) return this.nodeHistoryStore
+    return this.nodeHistoryRepository.resolve(studyId)?.store
   }
 
   /**
@@ -14137,6 +14415,7 @@ export class StudyWorkspace {
    * @example this.replayKind() // => 'server'
    */
   private replayKind(): ReplayKind {
+    if (this.selectedExtensionReplay) return 'extension'
     return this.selectedServerReplay ? 'server' : 'test'
   }
 
@@ -14156,6 +14435,8 @@ export class StudyWorkspace {
    * @example this.recordedSourcePlaceholder() // => '// Recorded source · Not recorded at this moment\n// The server journal holds no source state for this moment.\n' for a server replay
    */
   private recordedSourcePlaceholder(): string {
+    if (this.selectedExtensionReplay)
+      return NODE_RECORDED_SOURCE_TEXT.extensionPlaceholder
     return this.selectedServerReplay
       ? NODE_RECORDED_SOURCE_TEXT.serverPlaceholder
       : NODE_RECORDED_SOURCE_TEXT.placeholder
@@ -14247,6 +14528,29 @@ export class StudyWorkspace {
   }
 
   /**
+   * Gives the Study message's Extension fields: the replay's profile, which switches the pane's words, and the words of each event on the page the event list shows; none without a selected Extension replay.
+   * @returns `nodeReplayProfile` and `nodeExtensionEvents`, or nothing.
+   * @example this.extensionReplayMessage().nodeExtensionEvents?.[0]?.heading // => 'Frame · 0.00 s'
+   */
+  private extensionReplayMessage(): Pick<
+    StudyViewMessage,
+    'nodeReplayProfile' | 'nodeExtensionEvents'
+  > {
+    const replay = this.selectedExtensionReplay
+    if (!replay || this.selectedNodeHistory !== replay.history) return {}
+    const first = this.selectedNodeHistoryPage * NODE_HISTORY_READER_PAGE_SIZE
+    return {
+      nodeReplayProfile: 'chrome-extension',
+      nodeExtensionEvents: replay.model.events
+        .slice(first, first + NODE_HISTORY_READER_PAGE_SIZE)
+        .map((event) => ({
+          sequence: event.sequence,
+          ...describeExtensionEventRow(event, replay.model),
+        })),
+    }
+  }
+
+  /**
    * Waits, for at most {@link NODE_HISTORY_POSITION_DRAIN_MS}, until no reader position write runs, so a close does not leave a write running into storage that is being removed (F197); called by {@link close}.
    * A loop that {@link runNodeHistoryPositionWrites} restarts from its own end (F366) is not in the writes seen at the first look, so the wait looks again after each round until none runs or the bound is reached (F395).
    * @example await this.drainNodeHistoryPositionWrites()
@@ -14288,13 +14592,16 @@ export class StudyWorkspace {
     timeline?: NodeHistoryTimeline
   } {
     if (this.nodeHistoryTimeline?.history !== history) {
-      // A server recording's timeline ends at its `end` entry.
-      const timeline = projectNodeHistoryTimeline(
-        history,
-        this.selectedServerReplay?.history === history
-          ? this.selectedServerReplay.model.endedAtMs
-          : undefined,
-      )
+      // An Extension replay's journal knows when each pause opened and closed, so its timeline is built from them; a server recording's timeline ends at its `end` entry.
+      const timeline =
+        this.selectedExtensionReplay?.history === history
+          ? projectExtensionHistoryTimeline(this.selectedExtensionReplay.model)
+          : projectNodeHistoryTimeline(
+              history,
+              this.selectedServerReplay?.history === history
+                ? this.selectedServerReplay.model.endedAtMs
+                : undefined,
+            )
       this.nodeHistoryTimeline = {
         history,
         marks: timeline ? { timeline } : {},
@@ -14331,6 +14638,8 @@ export class StudyWorkspace {
     // A server replay's display copy was made with its presentation.
     if (this.selectedServerReplay?.history === history)
       return this.selectedServerReplay.shown
+    if (this.selectedExtensionReplay?.history === history)
+      return this.selectedExtensionReplay.shown
     if (this.selectedNodeHistoryShown?.history !== history)
       this.selectedNodeHistoryShown = {
         history,
@@ -14369,8 +14678,18 @@ export class StudyWorkspace {
     repository: NodeHistoryRepository,
   ): Promise<void> {
     await repository.listByProfile().then(
-      ({ tests, servers, unavailable }) => {
+      ({ tests, servers, extensions, unavailable }) => {
         const failed = new Set(unavailable.map(({ profile }) => profile))
+        if (!failed.has('chrome-extension'))
+          this.nodeExtensionHistoryCatalog = extensions.map((summary) => ({
+            ...summary,
+            question: stripTerminalControls(summary.question),
+            extensionName: stripTerminalControls(summary.extensionName),
+            extensionVersion: stripTerminalControls(summary.extensionVersion),
+            ...(summary.reason
+              ? { reason: stripTerminalControls(summary.reason) }
+              : {}),
+          }))
         // A profile that could not be listed keeps its earlier catalog; the other is replaced.
         if (!failed.has('node-test'))
           this.nodeHistoryCatalog = tests.map((summary) =>
@@ -14513,33 +14832,43 @@ export class StudyWorkspace {
       pendingNodeHistoryIndex === undefined
         ? undefined
         : selectedNodeHistory?.entries[pendingNodeHistoryIndex]
+    // An Extension replay's frame inside a stop interval presents that stop's inspection state.
     const selectedNodeHistoryStop =
       selectedNodeHistoryEvent?.type === 'stop'
         ? selectedNodeHistoryEvent
-        : undefined
+        : selectedNodeHistory && selectedNodeHistoryEvent
+          ? this.extensionStopEntryAt(
+              selectedNodeHistory,
+              selectedNodeHistoryEvent.sequence,
+            )
+          : undefined
     const studyCatalog: StudyCatalogEntry[] = [
       ...this.catalog,
-      ...[...this.nodeHistoryCatalog, ...this.nodeServerHistoryCatalog].map(
-        (history) => ({
-          id: history.studyId,
-          savedAt: history.createdAt,
-          profile: history.profile,
-          // A server replay shares the test replay's row format: both open through the Node history reader, told apart by `profile`.
-          format: 'node-test-history' as const,
-          outcome:
-            history.profile === 'node-server'
-              ? describeServerReplayRow(history)
+      ...[
+        ...this.nodeHistoryCatalog,
+        ...this.nodeServerHistoryCatalog,
+        ...this.nodeExtensionHistoryCatalog,
+      ].map((history) => ({
+        id: history.studyId,
+        savedAt: history.createdAt,
+        profile: history.profile,
+        // Server and Extension replays share the test replay's row format: all open through the Node history reader, told apart by `profile`.
+        format: 'node-test-history' as const,
+        outcome:
+          history.profile === 'node-server'
+            ? describeServerReplayRow(history)
+            : history.profile === 'chrome-extension'
+              ? describeExtensionReplayRow(history)
               : describeNodeTestReplay({
                   kind: 'saved-row',
                   summary: history,
                 }),
-          metadata:
-            history.verification === 'verified'
-              ? ('validated' as const)
-              : ('unavailable' as const),
-          ...(history.reason ? { reason: history.reason } : {}),
-        }),
-      ),
+        metadata:
+          history.verification === 'verified'
+            ? ('validated' as const)
+            : ('unavailable' as const),
+        ...(history.reason ? { reason: history.reason } : {}),
+      })),
     ].sort((left, right) => right.savedAt.localeCompare(left.savedAt))
     return {
       type: 'study',
@@ -14574,6 +14903,7 @@ export class StudyWorkspace {
       // The recorded test names come without terminal and bidirectional controls, stripped when the catalog was listed (F131, F326).
       nodeHistoryCatalog: this.nodeHistoryCatalog,
       nodeServerHistoryCatalog: this.nodeServerHistoryCatalog,
+      nodeExtensionHistoryCatalog: this.nodeExtensionHistoryCatalog,
       nodeHistory: selectedNodeHistory && {
         ...this.shownNodeHistory(selectedNodeHistory),
         entries: this.shownNodeHistory(selectedNodeHistory).entries.slice(
@@ -14582,6 +14912,7 @@ export class StudyWorkspace {
         ),
       },
       ...this.serverReplayMessage(),
+      ...this.extensionReplayMessage(),
       nodeHistoryLearningDecision: this.selectedNodeHistoryLearningDecision,
       // The reader cannot hash captured text, so every shown stop whose source fails verification is named here and gets no Inspect.
       nodeHistoryUnverifiedStops: this.selectedNodeHistory?.entries
@@ -25258,12 +25589,22 @@ export class StudyWorkspace {
     }
     if (message.type === 'node-history-step') {
       const history = this.replayForMove(message.studyId)
-      const target = nodeHistoryStepTarget(
-        history.entries,
-        this.requestedNodeHistorySequence ?? this.selectedNodeHistorySequence,
-        message.direction,
-        message.unit,
-      )
+      const current =
+        this.requestedNodeHistorySequence ?? this.selectedNodeHistorySequence
+      // An Extension replay's entries follow its timeline, whose order is not always the journal's sequence order.
+      const target = this.selectedExtensionReplay
+        ? extensionStepTarget(
+            history.entries,
+            current,
+            message.direction,
+            message.unit ?? 'event',
+          )
+        : nodeHistoryStepTarget(
+            history.entries,
+            current,
+            message.direction,
+            message.unit,
+          )
       if (target === undefined)
         throw new Error(
           replayNoStep(this.replayKind(), message.direction, message.unit),
@@ -25288,7 +25629,8 @@ export class StudyWorkspace {
         throw new Error(this.replayRefusal('selectSavedBeforeInspecting'))
       if (
         history.entries.find((entry) => entry.sequence === message.sequence)
-          ?.type !== 'stop'
+          ?.type !== 'stop' &&
+        !this.extensionStopEntryAt(history, message.sequence)
       )
         throw new Error(this.replayRefusal('eventNotAStop'))
       await this.requestNodeHistoryEvent(history, message.sequence, {
@@ -25593,6 +25935,14 @@ export class StudyWorkspace {
       this.studyRemovalAvailability() === 'no-trash'
         ? STUDY_REMOVAL_REFUSALS_WITHOUT_TRASH
         : STUDY_REMOVAL_REFUSALS
+    // An Extension replay is no saved study of the library: its own refusals apply, and the library's (unlisted, newer format, unstopped run, open Recording) do not.
+    const extension = this.nodeExtensionHistoryCatalog.find(
+      (history) => history.studyId === studyId,
+    )
+    if (extension)
+      return this.studyOpening()
+        ? sentences.studyOpening
+        : this.extensionRemovalRefusal(extension)
     const refusals: [applies: boolean, sentence: string][] = [
       // The pane may still show the entry before the one the learner chose; a delete names what is shown once it has opened.
       [this.studyOpening(), sentences.studyOpening],
@@ -25623,6 +25973,23 @@ export class StudyWorkspace {
       [this.recordingOpenOrOpening(), sentences.recordingOpen],
     ]
     return refusals.find(([applies]) => applies)?.[1]
+  }
+
+  /**
+   * Says why an Extension replay cannot be deleted now: its run still records, or the reader shows it. A window without a Trash deletes nothing, so only listing its files is asked there and nothing refuses.
+   * @param history - The replay's catalog summary.
+   * @returns The refusal sentence, or `undefined` when the replay can be deleted (or its files listed).
+   * @example this.extensionRemovalRefusal(summary) // => 'Stop the run before deleting its Extension replay.'
+   */
+  private extensionRemovalRefusal(
+    history: ExtensionHistorySummary,
+  ): string | undefined {
+    if (this.studyRemovalAvailability() === 'no-trash') return undefined
+    if (history.status === 'recording')
+      return STUDY_REMOVAL_EXTENSION_HISTORY_REFUSALS.recording
+    if (this.selectedNodeHistory?.header.studyId === history.studyId)
+      return STUDY_REMOVAL_EXTENSION_HISTORY_REFUSALS.open
+    return undefined
   }
 
   /** Says whether a saved study or a Node test history the learner chose is still opening; until it is shown, a removal's neighbour and a delete request give way to it. @example if (this.studyOpening()) return */
@@ -25718,6 +26085,15 @@ export class StudyWorkspace {
     studyId: string,
   ): Promise<string[] | undefined> {
     try {
+      // An Extension replay is one folder of the history store: removing it by hand removes the journal, blobs and learning together.
+      const repository = this.nodeHistoryRepository
+      if (
+        repository &&
+        this.nodeExtensionHistoryCatalog.some(
+          (history) => history.studyId === studyId,
+        )
+      )
+        return [repository.extensionHistories.historyDirectory(studyId)]
       const evidence = await this.studyEvidenceToMove(studyId)
       return await this.library!.studyFiles(studyId, evidence.directory)
     } catch (error) {
@@ -25889,15 +26265,19 @@ export class StudyWorkspace {
   /**
    * Asks the learner in a native dialog whether the named study moves to the system Trash; while the dialog is open the removal is `confirming`.
    * Cancel, Escape and a dialog the host could not show all leave the study and the status line untouched.
-   * @param entry - The catalog entry the dialog names.
+   * @param studyId - The entry the dialog names.
+   * @param detail - The dialog's detail: which study, and what the removal does and keeps.
    * @returns Whether the learner pressed the confirming button.
-   * @example if (!(await this.askStudyRemoval(entry))) return
+   * @example if (!(await this.askStudyRemoval(entry.id, messages.confirmDetail(identityLine)))) return
    */
-  private async askStudyRemoval(entry: StudyCatalogEntry): Promise<boolean> {
+  private async askStudyRemoval(
+    studyId: string,
+    detail: string,
+  ): Promise<boolean> {
     const messages = studyRemovalMessages()
     this.studyRemoval = this.withRemovalRequest({
       status: 'confirming',
-      studyId: entry.id,
+      studyId,
     })
     this.publish()
     let confirmed = false
@@ -25905,10 +26285,7 @@ export class StudyWorkspace {
       confirmed =
         (await vscode.window.showWarningMessage(
           messages.confirmTitle,
-          {
-            modal: true,
-            detail: messages.confirmDetail(savedStudyIdentityLine(entry)),
-          },
+          { modal: true, detail },
           messages.confirmButton,
         )) === messages.confirmButton
     } finally {
@@ -25928,8 +26305,18 @@ export class StudyWorkspace {
   private async studyRemovalConfirmed(studyId: string): Promise<boolean> {
     if (this.refuseStudyRemoval(studyId)) return false
     if (await this.refuseRemovalWithoutTrash(studyId)) return false
+    const extension = this.nodeExtensionHistoryCatalog.find(
+      (candidate) => candidate.studyId === studyId,
+    )
     const entry = this.catalog.find((candidate) => candidate.id === studyId)
-    if (!entry || !(await this.askStudyRemoval(entry))) return false
+    const detail = extension
+      ? studyRemovalMessages().confirmExtensionDetail(
+          describeExtensionReplayRow(extension),
+        )
+      : entry &&
+        studyRemovalMessages().confirmDetail(savedStudyIdentityLine(entry))
+    if (detail === undefined || !(await this.askStudyRemoval(studyId, detail)))
+      return false
     return !this.refuseStudyRemoval(studyId)
   }
 
@@ -26056,6 +26443,12 @@ export class StudyWorkspace {
    * @example await this.moveSavedStudy(studyId)
    */
   private async moveSavedStudy(studyId: string): Promise<void> {
+    if (
+      this.nodeExtensionHistoryCatalog.some(
+        (history) => history.studyId === studyId,
+      )
+    )
+      return this.moveExtensionReplay(studyId)
     const messages = studyRemovalMessages()
     // A saved study or Node test history chosen from here on owns the reader; the neighbour gives way to it. Other actions that take a history request number (an item, a return, repository evidence) choose no entry.
     const choiceGeneration = this.studyChoices
@@ -26107,6 +26500,62 @@ export class StudyWorkspace {
     } finally {
       this.removalFollowersShowing--
     }
+  }
+
+  /**
+   * Removes a confirmed Extension replay: the history store renames its folder out of the listing under the storage lock ({@link NodeHistoryStore.removeHistory}), then the folder goes to the system Trash; called by {@link moveSavedStudy}.
+   * The outcome line says which: refused with the store's reason (nothing changed), moved, or removed from the list with the Trash refusing the folder, whose path the line names.
+   * @param studyId - The confirmed Extension replay.
+   * @example await this.moveExtensionReplay(studyId)
+   */
+  private async moveExtensionReplay(studyId: string): Promise<void> {
+    const messages = studyRemovalMessages()
+    const repository = this.nodeHistoryRepository
+    if (!repository) {
+      this.settleStudyRemoval({
+        status: 'refused',
+        studyId,
+        text: STUDY_REMOVAL_EXTENSION_HISTORY_REFUSALS.unknown,
+      })
+      return
+    }
+    const removal = await repository.extensionHistories.removeHistory(
+      studyId,
+      // The reader shows it, or is opening some history that may be it.
+      () =>
+        this.selectedNodeHistory?.header.studyId === studyId ||
+        this.pendingNodeHistory !== undefined,
+    )
+    if (removal.outcome === 'refused') {
+      this.settleStudyRemoval({
+        status: 'refused',
+        studyId,
+        text: STUDY_REMOVAL_EXTENSION_HISTORY_REFUSALS[removal.reason],
+      })
+      return
+    }
+    let trashError: unknown
+    try {
+      await vscode.workspace.fs.delete(
+        vscode.Uri.file(removal.stagedDirectory),
+        { recursive: true, useTrash: true },
+      )
+      this.service?.recordStudyRemoval(true)
+    } catch (error) {
+      trashError = error
+      this.service?.recordStudyRemoval(false)
+    }
+    // The replay left the listing at the rename, whatever the Trash answered.
+    await this.listNodeHistoryCatalog(repository)
+    this.settleStudyRemoval(
+      trashError === undefined
+        ? { status: 'moved', studyId, text: messages.extensionMoved }
+        : {
+            status: 'failed',
+            studyId,
+            text: `${STUDY_REMOVAL_EXTENSION_HISTORY_TRASH_REFUSED} ${removal.stagedDirectory}`,
+          },
+    )
   }
 
   /** Reads the catalog and the ledger again after a removal that moved no file, so the reader shows what the library holds now; a failed read is reported in its own line. @example await this.rereadLibraryAfterUnmovedRemoval() */
@@ -26808,6 +27257,8 @@ export class StudyWorkspace {
     const availabilityChanged =
       reason === 'session-ended' && this.selectedNodeHistoryDebugAvailable
     if (availabilityChanged) this.selectedNodeHistoryDebugAvailable = false
+    // An ended session shows no stop any more, so an Extension moment no longer counts as presented natively: only the learner's explicit reselection restarts it, while Play and seeks report the stopped debugger.
+    if (reason === 'session-ended') this.extensionNativeShown = undefined
     const hintShown =
       Boolean(this.replayUninspectedSnapshot) ||
       this.selectedNodeHistoryValuesUninspected
@@ -26872,42 +27323,59 @@ export class StudyWorkspace {
     const entry = position === undefined ? undefined : history.entries[position]
     if (!entry || position === undefined)
       throw new Error('The requested event of this test replay is unavailable.')
-    const verifiedStop =
-      entry.type === 'stop' && nodeStopSourceMatches(entry) ? entry : undefined
-    if (entry.type === 'stop' && !verifiedStop && requireDebugger)
+    const { extension, verifiedStop, isStopMoment, hasDebuggerStop } =
+      this.stopOfNodeMoment(history, entry)
+    if (isStopMoment && !verifiedStop && requireDebugger)
       throw new Error(
         'The selected stop of this test replay has no matching verified captured source for native debugging.',
       )
     // Only an explicit learner selection restarts a debugger the learner stopped; seek and Play report why they stopped.
     const debuggerStopped = this.replayDebuggers.current?.available === false
-    if (verifiedStop && debuggerStopped && !publish && !keepStoppedDebugger)
+    const nativeUnchanged = this.keepsNativeMoment(extension, requireDebugger)
+    if (
+      !nativeUnchanged &&
+      hasDebuggerStop &&
+      debuggerStopped &&
+      !publish &&
+      !keepStoppedDebugger
+    )
       throw new Error(
         'The replay debugger was stopped. Select this stop or use Inspect in native debugger to restart it.',
       )
     // Every refusal is past: only a selection that goes on supersedes the earlier one, so a refused one cannot strip the shown moment's slot of an earlier selection that is still leaving it (F165, D34).
     const request = ++this.selectedNodeHistoryRequest
     this.requestedNodeHistorySequence = sequence
-    // A step action or Inspect on the moment the surfaces show keeps every surface; another moment, or the committed one after a failed or overtaken selection took the surfaces off it, leaves at once (F191).
-    if (entry.sequence !== this.nodeSurfacesSequence)
-      this.leaveNodeHistoryMoment(entry.sequence)
-    // The slot's bytes change once the native views have redrawn the stop that was left (F385, F387); a newer selection that took over meanwhile owns the surfaces.
-    await this.nodeLeaveSettle?.done
-    if (request !== this.selectedNodeHistoryRequest) return
-    const slot = await this.showNodeSourceSlot(history, verifiedStop, request)
-    if (!slot) return
+    // The frame loads beside the native presentation; a newer selection discards it with its request token.
+    const framePending = extension
+      ? this.loadExtensionMomentFrame(entry.sequence, extension.moment)
+      : undefined
+    let slot: vscode.Uri | 'failed' | 'kept' | undefined = 'kept'
+    if (!nativeUnchanged) {
+      // A step action or Inspect on the moment the surfaces show keeps every surface; another moment, or the committed one after a failed or overtaken selection took the surfaces off it, leaves at once (F191).
+      if (entry.sequence !== this.nodeSurfacesSequence)
+        this.leaveNodeHistoryMoment(entry.sequence)
+      // The slot's bytes change once the native views have redrawn the stop that was left (F385, F387); a newer selection that took over meanwhile owns the surfaces.
+      await this.nodeLeaveSettle?.done
+      if (request !== this.selectedNodeHistoryRequest) return
+      slot = await this.showNodeSourceSlot(history, verifiedStop, request)
+      if (!slot) return
+    }
     // A slot that could not open leaves the debugger on no stop; the moment still commits beside the slot's Study row (S2-1), and Play stops here instead of failing the same slot at every later event (F185).
-    if (slot === 'failed') {
+    if (nativeUnchanged) {
+      // Nothing native changes between two moments of one stop (or of one stretch with no stop).
+    } else if (slot === 'failed') {
       this.nodeHistoryPlaybackController?.pause()
       // A reselect of the moment already shown skipped the leave step, so the debugger and the slot's bytes are taken off the moment here: late bytes of the failed show must not appear undecorated beside the failure row (F170).
       this.replayDebuggers.current?.invalidate()
       this.resetNodeSourceSlotText()
       this.selectedNodeHistoryDebugAvailable = false
       this.selectedNodeHistoryValuesUninspected = false
-    } else if (verifiedStop && debuggerStopped && keepStoppedDebugger) {
-      // The learner's stopped debugger stays stopped (Retry); the moment commits without a stop in it.
+    } else if (hasDebuggerStop && debuggerStopped && keepStoppedDebugger) {
+      // The learner's stopped debugger stays stopped (Retry); the moment commits without a stop in it, so it must not count as shown natively.
+      this.extensionDebuggerFailedRequest = request
       this.selectedNodeHistoryDebugAvailable = false
       this.selectedNodeHistoryValuesUninspected = false
-    } else {
+    } else if (slot !== 'kept') {
       try {
         if (
           !(await this.presentNodeHistoryDebuggerOrKeepOpen(
@@ -26916,6 +27384,7 @@ export class StudyWorkspace {
             request,
             keepOpenWithoutDebugger,
             isCurrent,
+            extension,
           ))
         ) {
           this.restoreWithdrawnNodeHistoryMoment(history, request)
@@ -26940,11 +27409,21 @@ export class StudyWorkspace {
         )
       }
     }
+    // An Extension replay's frame must have loaded before its moment commits, so the Application pane never shows another moment's frame; a load never rejects.
+    const loadedFrame = framePending ? await framePending : undefined
     // A caller that withdrew meanwhile (Pause, dispose) commits nothing, also after a slot that failed to open, which skips the debugger's own check.
     if (this.isNodeHistoryRequestOutdated(request, isCurrent)) {
       this.restoreWithdrawnNodeHistoryMoment(history, request)
       return
     }
+    // The frame and what the native surfaces show commit in the same synchronous block as the moment.
+    // A debugger launch that failed and was kept open leaves the surfaces on no shown moment, so Retry and a reselect present it again.
+    this.commitExtensionMoment(
+      extension,
+      loadedFrame,
+      slot === 'failed',
+      request,
+    )
     // The slot's stopped line and label commit with the moment, and the Study position and the Application header stop waiting for it.
     this.nodeHistoryLeftFor = undefined
     this.nodeSurfacesSequence = slot === 'failed' ? undefined : entry.sequence
@@ -26952,13 +27431,10 @@ export class StudyWorkspace {
       this.nodeSourceSlot = { ...this.nodeSourceSlot, stop: verifiedStop }
     this.decorateNodeSourceSlot(true)
     // A chosen step stays only with its own moment: a selection that lands on another event without a choice of its own (a seek, Play, Inspect) shows that event's first step (DS21).
-    this.selectedNodeHistoryStepId = nextNodeHistoryStepId(
-      stepChoice,
-      {
-        sequence: this.selectedNodeHistorySequence,
-        stepId: this.selectedNodeHistoryStepId,
-      },
+    this.selectedNodeHistoryStepId = this.nextStepIdAtMoment(
+      history,
       entry.sequence,
+      stepChoice,
     )
     this.selectedNodeHistorySequence = entry.sequence
     this.selectedNodeHistoryPage = Math.floor(
@@ -26970,6 +27446,197 @@ export class StudyWorkspace {
     if (publish) this.publish()
     // The reader position is written after the commit and never awaited, so a slow or stuck write holds neither the shown moment nor Play back (F197).
     this.queueNodeHistoryPositionWrite(history, entry.sequence)
+  }
+
+  /**
+   * Commits what an Extension replay's moment shows beside the Study position: its loaded frame and what the native surfaces present, so the next moment can tell whether they change. Called by {@link selectNodeHistoryEvent} in the block that commits the moment.
+   * @param extension - The moment's Extension presentation; nothing is committed for the other replays.
+   * @param frame - The frame loaded for the moment.
+   * @param slotFailed - Whether the source slot failed to open, which leaves the native surfaces on no known moment.
+   * @param request - The selection's request token; a debugger launch that failed and was kept open for it also leaves the surfaces on no known moment.
+   * @example this.commitExtensionMoment(extension, { sequence: 5, src }, false, 3)
+   */
+  private commitExtensionMoment(
+    extension: ExtensionMomentPresentation | undefined,
+    frame: ExtensionShownFrame | undefined,
+    slotFailed: boolean,
+    request: number,
+  ): void {
+    if (!extension) return
+    this.extensionShownFrame = frame
+    const launchFailed = this.extensionDebuggerFailedRequest === request
+    this.extensionNativeShown =
+      slotFailed || launchFailed ? undefined : extension.nativeKey
+  }
+
+  /**
+   * Finds the stop a selected event presents natively: an Extension replay's moment keeps the stop it lies in (a frame or a close event inside it shows that stop), any other replay's stop is the event itself when its source verifies.
+   * @param history - The selected replay's test-shaped history.
+   * @param entry - The selected event.
+   * @returns The Extension moment when the replay is one, the stop whose source verifies, and whether the moment lies in a stop at all.
+   * @example this.stopOfNodeMoment(history, entry).isStopMoment // => true for a stop of a test replay
+   */
+  private stopOfNodeMoment(
+    history: NodeTestHistoryIndex,
+    entry: NodeTestHistoryIndex['entries'][number],
+  ): {
+    extension: ExtensionMomentPresentation | undefined
+    verifiedStop: NodeTestHistoryStop | undefined
+    isStopMoment: boolean
+    /** Whether presenting this moment would restart a debugger the learner stopped: a verified stop, or an Extension replay's partial stop (source or capture missing). */
+    hasDebuggerStop: boolean
+  } {
+    const extension = this.extensionMomentOf(history, entry.sequence)
+    if (extension)
+      return {
+        extension,
+        verifiedStop: extension.verifiedStop,
+        isStopMoment: extension.stop !== undefined,
+        hasDebuggerStop: extension.stop !== undefined,
+      }
+    const verifiedStop =
+      entry.type === 'stop' && nodeStopSourceMatches(entry) ? entry : undefined
+    return {
+      extension,
+      verifiedStop,
+      isStopMoment: entry.type === 'stop',
+      hasDebuggerStop: verifiedStop !== undefined,
+    }
+  }
+
+  /**
+   * Says whether a moment leaves the native surfaces as they are: an Extension moment whose stop and its availability are the committed moment's repaints nothing, and only its Application frame changes.
+   * @param extension - The moment's Extension presentation, absent for the other replays.
+   * @param requireDebugger - Whether the selection is an explicit Inspect, which always presents.
+   * @returns `true` when the debugger and the source slot already show this moment.
+   * @example this.keepsNativeMoment(extension, false) // => true for a frame event inside the shown stop
+   */
+  private keepsNativeMoment(
+    extension: ExtensionMomentPresentation | undefined,
+    requireDebugger: boolean,
+  ): boolean {
+    return Boolean(
+      extension &&
+      !requireDebugger &&
+      extension.nativeKey === this.extensionNativeShown &&
+      this.nodeSurfacesSequence !== undefined &&
+      this.nodeSourceSlot,
+    )
+  }
+
+  /**
+   * Chooses the step shown with a selected event. A chosen step stays only with its own moment; inside one Extension stop interval the moment is the stop's, so the step also stays while the playhead moves over frames and inner closes without a step of its own.
+   * @param history - The selected replay's test-shaped history.
+   * @param sequence - The event being selected.
+   * @param stepChoice - The step the selection names; `{ stepId: undefined }` for an event's own control.
+   * @returns The step id to commit, or `undefined` for the event's first step.
+   * @example this.nextStepIdAtMoment(history, 3, { stepId: undefined }) // => 'second' for a frame inside the stop whose 'second' step is chosen
+   */
+  private nextStepIdAtMoment(
+    history: NodeTestHistoryIndex,
+    sequence: number,
+    stepChoice: { stepId: string | undefined } | undefined,
+  ): string | undefined {
+    const stopOf = (at: number): number | undefined =>
+      this.extensionStopEntryAt(history, at)?.sequence
+    const current = this.selectedNodeHistorySequence
+    const currentMoment =
+      current === undefined ? undefined : (stopOf(current) ?? current)
+    const isInsideShownStop =
+      stopOf(sequence) !== undefined && stopOf(sequence) === currentMoment
+    return nextNodeHistoryStepId(
+      stepChoice?.stepId === undefined && isInsideShownStop
+        ? undefined
+        : stepChoice,
+      { sequence: currentMoment, stepId: this.selectedNodeHistoryStepId },
+      stopOf(sequence) ?? sequence,
+    )
+  }
+
+  /**
+   * Finds the stop an Extension replay's event lies in, recorded or partial: a frame or an inner close inside a stop interval presents that stop's inspection state and accepts Inspect.
+   * @param history - The selected replay's test-shaped history.
+   * @param sequence - The event.
+   * @returns The stop's test-shaped entry; `undefined` for another replay or a moment with no stop.
+   * @example this.extensionStopEntryAt(history, 3)?.sequence // => 1 for a frame inside the first stop
+   */
+  private extensionStopEntryAt(
+    history: NodeTestHistoryIndex,
+    sequence: number,
+  ): NodeTestHistoryStop | undefined {
+    const replay = this.selectedExtensionReplay
+    if (replay?.history !== history) return undefined
+    const position = this.nodeHistoryEventPosition(history, sequence)
+    const stop =
+      position === undefined ? undefined : replay.model.moments[position]?.stop
+    return stop && replay.stopEntries.get(stop.pauseId)
+  }
+
+  /**
+   * Gives an Extension replay's moment at an event with what the native surfaces present for it: the selected stop's test-shaped entry, whether its source verifies, the debugger thread label and the key that says when the native presentation changes. Called by {@link selectNodeHistoryEvent} and {@link returnToCommittedNodeMoment}.
+   * @param history - The selected replay's test-shaped history.
+   * @param sequence - The event.
+   * @returns The moment's presentation; `undefined` when the selected replay is not an Extension replay or the history lacks the event.
+   * @example this.extensionMomentOf(history, 5)?.thread // => 'Recorded page stop 1 · popup.js:2'
+   */
+  private extensionMomentOf(
+    history: NodeTestHistoryIndex,
+    sequence: number,
+  ): ExtensionMomentPresentation | undefined {
+    const replay = this.selectedExtensionReplay
+    if (replay?.history !== history) return undefined
+    const position = this.nodeHistoryEventPosition(history, sequence)
+    const moment =
+      position === undefined ? undefined : replay.model.moments[position]
+    if (!moment) return undefined
+    const stopEntry = moment.stop && replay.stopEntries.get(moment.stop.pauseId)
+    const verifiedStop =
+      stopEntry && nodeStopSourceMatches(stopEntry) ? stopEntry : undefined
+    const thread = moment.stop
+      ? describeExtensionThread(moment.stop)
+      : undefined
+    return {
+      moment,
+      stop: moment.stop,
+      verifiedStop,
+      thread,
+      momentInput:
+        moment.stop && thread
+          ? {
+              extensionThread: thread,
+              ...(verifiedStop
+                ? {}
+                : {
+                    partialStop: {
+                      snapshot: moment.stop.hasSnapshot
+                        ? moment.stop.capture?.debuggerSnapshot
+                        : undefined,
+                      thread,
+                    },
+                  }),
+            }
+          : {},
+      nativeKey: extensionNativeKey(moment),
+    }
+  }
+
+  /**
+   * Loads the frame an Extension replay's moment shows, lazily by hash through the replay's bounded cache. A blob that is missing or damaged shows no frame for this moment only; it never rejects.
+   * @param sequence - The event the frame is for.
+   * @param moment - The moment, which says which frame to load.
+   * @returns The frame's address, or none for a moment with no frame or a frame that cannot be shown.
+   * @example await this.loadExtensionMomentFrame(5, moment) // => { sequence: 5, src: 'data:image/png;base64,…' }
+   */
+  private async loadExtensionMomentFrame(
+    sequence: number,
+    moment: ExtensionReplayPresentation['model']['moments'][number],
+  ): Promise<ExtensionShownFrame> {
+    const frame = moment.frame
+    if (frame.state === 'none' || !this.extensionFrames) return { sequence }
+    const loaded = await this.extensionFrames.load(frame.frame)
+    return loaded.ok
+      ? { sequence, src: `data:image/png;base64,${loaded.base64}` }
+      : { sequence, damaged: loaded.code }
   }
 
   /**
@@ -27059,10 +27726,11 @@ export class StudyWorkspace {
     const committed = history.entries.find(
       (entry) => entry.sequence === this.selectedNodeHistorySequence,
     )
-    const stop =
-      committed?.type === 'stop' && nodeStopSourceMatches(committed)
-        ? committed
-        : undefined
+    const { extension, verifiedStop: stop } = committed
+      ? this.stopOfNodeMoment(history, committed)
+      : { extension: undefined, verifiedStop: undefined }
+    // The native surfaces were emptied above, so the committed moment's presentation is shown again before the next moment may skip its repaint.
+    this.extensionNativeShown = undefined
     await this.nodeLeaveSettle?.done
     if (request !== this.selectedNodeHistoryRequest) return 'superseded'
     const slot = await this.showNodeSourceSlot(history, stop, request)
@@ -27078,11 +27746,15 @@ export class StudyWorkspace {
         slot,
         request,
         true,
+        undefined,
+        extension,
       ))
     )
       return 'superseded'
     if (request !== this.selectedNodeHistoryRequest) return 'superseded'
     if (!this.nodeSourceSlot) return 'not-shown'
+    if (presentDebugger && this.extensionDebuggerFailedRequest !== request)
+      this.extensionNativeShown = extension?.nativeKey
     this.nodeSourceSlot = { ...this.nodeSourceSlot, stop }
     this.nodeSurfacesSequence = this.selectedNodeHistorySequence
     this.settleNodeSourceSlotRow()
@@ -27156,6 +27828,7 @@ export class StudyWorkspace {
     request: number,
     keepOpenWithoutDebugger: boolean,
     isCurrent?: () => boolean,
+    extension?: ExtensionMomentPresentation,
   ): Promise<boolean> {
     try {
       const moment = await presentNodeHistoryMoment(this.replayDebuggers, {
@@ -27164,6 +27837,8 @@ export class StudyWorkspace {
         request,
         isRequestCurrent: (token) => token === this.selectedNodeHistoryRequest,
         serverStopThread: (stop) => this.serverStopThread(stop),
+        // An Extension replay's stop carries its own thread; one whose source is not recorded is presented by what it has, never as a moment without a stop.
+        ...extension?.momentInput,
       })
       // The final check and both flag writes share one synchronous block: a request superseded, closed or withdrawn while the result travelled back commits nothing.
       let presented = false
@@ -27187,6 +27862,7 @@ export class StudyWorkspace {
       if (request !== this.selectedNodeHistoryRequest) return false
       this.selectedNodeHistoryDebugAvailable = false
       this.selectedNodeHistoryValuesUninspected = false
+      this.extensionDebuggerFailedRequest = request
       this.reportTestReplayFailure(
         'replay-debugger',
         error,

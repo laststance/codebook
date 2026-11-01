@@ -6,6 +6,7 @@ import type { NodeHistoryStore } from '../nodeTestHistoryStore'
 import type { ResourceContent } from '../resources'
 
 import { answerUnreadableHistoryEntry } from './answerUnreadableHistoryEntry'
+import { readHistoryResourceTail } from './readHistoryResourceTail'
 import { readJsonPage } from './readJsonPage'
 import { rehydrateNodeServerEntries } from './rehydrateServerStopSnapshot'
 import { withKnownNodeHistory } from './withKnownNodeHistory'
@@ -193,47 +194,11 @@ export async function readServerHistoryResource(
       detail[2]?.slice(1),
     )
   }
-  if (
-    suffix === 'learning-material' ||
-    suffix?.startsWith('learning-material/pages/')
-  ) {
-    const material = await withKnownNodeHistory(store, studyId, () =>
-      store.readLearningMaterial(studyId),
-    )
-    return readJsonPage(
-      `${baseUri}/learning-material`,
-      material ?? {
-        studyId,
-        revision: 0,
-        status: 'not-saved',
-        content: undefined,
-      },
-      suffix.startsWith('learning-material/pages/')
-        ? suffix.slice('learning-material/'.length)
-        : undefined,
-    )
-  }
-  const summary = await withKnownNodeHistory(store, studyId, () =>
-    store.summarize(studyId),
-  )
-  return readJsonPage(
-    baseUri,
-    {
-      header: history.header,
-      status: history.status,
-      reason: history.reason,
-      seal: history.seal
-        ? {
-            status: history.seal.status,
-            endedAt: history.seal.endedAt,
-            entryCount: history.seal.entryCount,
-            capture: history.seal.capture,
-          }
-        : undefined,
-      entryCount: history.entries.length,
-      ...serverVerdicts(summary, history.seal !== undefined),
-      eventsUri: `${baseUri}/events`,
-    },
+  return readHistoryResourceTail({
+    store,
+    studyId,
+    history,
     suffix,
-  )
+    verdicts: (summary) => serverVerdicts(summary, history.seal !== undefined),
+  })
 }

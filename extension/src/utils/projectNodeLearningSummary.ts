@@ -1,3 +1,4 @@
+import type { ChromeExtensionLearningMaterial } from '../chromeExtensionLearningSchemas'
 import type { NodeServerLearningMaterial } from '../nodeServerLearningSchemas'
 import type {
   NodeTestHistoryIndex,
@@ -14,7 +15,9 @@ export type NodeLearningStepPosition = {
 
 /** The learning material of either history profile: the same question, title, summary, participants and steps, citing the entries of its own journal. */
 export type NodeLearningMaterialOfHistory =
-  NodeTestLearningMaterial | NodeServerLearningMaterial
+  | NodeTestLearningMaterial
+  | NodeServerLearningMaterial
+  | ChromeExtensionLearningMaterial
 
 /** A replay's learning material as the Study pane's summary renderer takes it, the browser summary's shape, with each referenced step's event. */
 export type NodeLearningSummaryProjection = {
@@ -33,6 +36,7 @@ export type NodeLearningSummaryProjection = {
  * A position names its event by sequence, so a step finds its own event even when several events share a time.
  * @param material - The saved learning material, absent when none was saved.
  * @param history - The selected history, all its entries.
+ * @param timelineSequenceOf - Maps the sequence a step's reference cites to the sequence of the timeline event it leads to, for a profile whose citations name entries that are not events themselves (an Extension replay's capture leads to its pause's open); absent, a reference leads to the event of its own sequence.
  * @returns The material's content and, for each step whose reference names an event of the history, that event's sequence; `undefined` without material.
  * @example
  * projectNodeLearningSummary(material, history)?.positions // => [{ stepId: 'stop-1', sequence: 3 }]
@@ -40,6 +44,7 @@ export type NodeLearningSummaryProjection = {
 export function projectNodeLearningSummary(
   material: NodeLearningMaterialOfHistory | undefined,
   history: Pick<NodeTestHistoryIndex, 'entries'>,
+  timelineSequenceOf?: (sequence: number) => number | undefined,
 ): NodeLearningSummaryProjection | undefined {
   if (!material) return
   const events = new Map(
@@ -47,7 +52,14 @@ export function projectNodeLearningSummary(
   )
   const positions: NodeLearningStepPosition[] = []
   for (const step of material.content.steps) {
-    const event = step.reference && events.get(step.reference.sequence)
+    const cited = step.reference?.sequence
+    const target =
+      cited === undefined
+        ? undefined
+        : timelineSequenceOf
+          ? timelineSequenceOf(cited)
+          : cited
+    const event = target === undefined ? undefined : events.get(target)
     // A step without a reference, or one whose event this history lacks, leads nowhere and gets no position.
     if (event)
       positions.push({

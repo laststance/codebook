@@ -80,7 +80,7 @@ test('the bundled skill has the chat disclose the run and name the permissions b
   // Assert
   assert.match(
     paragraph,
-    /Before `codebook_start`, tell the learner which extension and surface will run and the clicks you will perform, that the run uses a fresh browser profile with seeded test data and never their own Chrome data, that the extension may reach the hosts its manifest declares, that Codebook restarts the service worker before the clicks so its startup and idle lifecycle is not observed, that startup code of the page and the worker cannot be paused, and that the run is live only, with no learning replay/,
+    /Before `codebook_start`, tell the learner which extension and surface will run and the clicks you will perform, that the run uses a fresh browser profile with seeded test data and never their own Chrome data, that the extension may reach the hosts its manifest declares, that Codebook restarts the service worker before the clicks so its startup and idle lifecycle is not observed, that startup code of the page and the worker cannot be paused, and that the run is recorded so it can be saved as a learning replay/,
   )
   assert.match(
     paragraph,
@@ -128,15 +128,68 @@ test('the bundled skill reports a result as observed only when claimable and nev
   )
 })
 
-// protects=SR13 and SR37: an extension run is not saved; the chat keeps the explanation in the chat and calls neither save tool; fails_when=the chat tries to save an extension run or claims a replay; no_claim=the service's own refusal (service tests)
-test('the bundled skill keeps an extension run’s explanation in the chat and calls no save tool for it', async () => {
+// protects=SR13 and SR37: the extension route points the chat to the Saving an extension run paragraph and no longer tells it to keep the explanation in the chat; fails_when=the route drops the pointer or the refusal sentence returns; no_claim=the save paragraph's own rules (next test)
+test('the bundled skill sends an extension run to its save paragraph and no longer refuses the save', async () => {
   // Arrange / Act
   const paragraph = await readExtensionRuns()
 
   // Assert
   assert.match(
     paragraph,
-    /Saving an extension run is not available in this version: keep the explanation in the chat, and do not call `codebook_explain` or `codebook_explain_node_history` for it/,
+    /Save an extension run as described in \*\*Saving an extension run\*\*/,
+  )
+  assert.equal(
+    paragraph.includes(
+      'is not available in this version: keep the explanation',
+    ),
+    false,
+  )
+})
+
+// protects=DX-6: the skill saves an extension explanation only on API 1.13 or later (compared as a whole number), after codebook_stop, reading history and historyIssue, citing every stop with sourceHash and context, claiming a replay only on complete coverage and an empty captureMissing; fails_when=any of those rules leaves the paragraph; no_claim=how a chat follows it
+test('the bundled skill saves an extension run only on API 1.13, reads history first and claims a replay only on complete coverage', async () => {
+  // Arrange
+  const skill = await readBundledSkill()
+
+  // Act
+  const paragraph = skill
+    .split('\n')
+    .find((line) => line.startsWith('**Saving an extension run.**'))
+
+  // Assert
+  assert.ok(paragraph, 'the skill has a Saving an extension run paragraph')
+  assert.match(paragraph, /stop the run with `codebook_stop`/)
+  assert.match(
+    paragraph,
+    /check that `codebook_status` reports API 1\.13 or later \(compare the number after the dot as a whole number: 1\.13 is later than 1\.9\); on an older API tell the learner to update Codebook and do not try to save/,
+  )
+  assert.match(
+    paragraph,
+    /Read `chromeExtension\.history` and `chromeExtension\.historyIssue`/,
+  )
+  assert.match(paragraph, /`chromeExtension\.historyUri`/)
+  assert.match(paragraph, /codebook_explain_node_history/)
+  assert.match(
+    paragraph,
+    /every stop you explained \(with its `sourceHash` and `context`\)/,
+  )
+  assert.match(paragraph, /`chromeExtension\.learningMissing`/)
+  assert.match(
+    paragraph,
+    /only when `learningCoverage` is `complete` and `chromeExtension\.captureMissing` is empty/,
+  )
+  assert.match(paragraph, /\*\*Open replay\*\* or Saved studies opens it/)
+})
+
+// protects=DX-8: saved steps of an extension run stand alone like those of a test or server run; fails_when=the rule names only test and server runs; no_claim=the rule's other sentences
+test('the bundled skill extends the saved-steps-stand-alone rule to extension runs', async () => {
+  // Arrange / Act
+  const skill = await readBundledSkill()
+
+  // Assert
+  assert.match(
+    skill,
+    /A saved explanation of a test, server or extension run must be readable after the chat closes/,
   )
 })
 

@@ -19,6 +19,8 @@ import {
   NODE_SERVER_STOP_UNAVAILABLE_LIMIT,
   REPOSITORY_PATH_LIMIT_CHARS,
 } from './constants'
+import type { historySealReasonSchema } from './historySealSchemas'
+import { buildStructuredHistorySealSchema } from './historySealSchemas'
 import { studyIdSchema } from './legacyStudySchemas'
 import { nodeServerConfigSchema } from './nodeServerConfigSchemas'
 import { replayDebugSnapshotSchema } from './replayDebugSchemas'
@@ -194,38 +196,11 @@ export const nodeServerHistoryEntrySchema = z.discriminatedUnion('type', [
   }),
 ])
 
-/** One reason a server history is partial: a stable `code`, the `params` that make `text`, and the exact `text` the learner reads. */
-const nodeServerSealReasonSchema = z.strictObject({
-  code: z.string().min(1).max(128),
-  params: z.record(z.string(), z.union([z.string().max(1_024), z.number()])),
-  text: z.string().min(1).max(2_048),
-})
-
 /** The seal of a node-server history: its status, every reason uncut, the capture outcome and the journal's hash. */
-export const nodeServerHistorySealSchema = z
-  .strictObject({
-    version: z.literal(NODE_SERVER_HISTORY_FORMAT_VERSION),
-    studyId: studyIdSchema,
-    entryCount: z
-      .number()
-      .int()
-      .nonnegative()
-      .max(NODE_SERVER_HISTORY_MAX_ENTRIES),
-    journalBytes: z.number().int().nonnegative(),
-    journalHash: repositoryHashSchema,
-    status: z.enum(['complete', 'partial']),
-    endedAt: z.iso.datetime(),
-    reasons: z.array(nodeServerSealReasonSchema),
-    capture: z.enum(['complete', 'incomplete']),
-    /** The first reason's text cut to the index's bound, so a summary reads `reason` as for a test history. */
-    reason: z.string().max(1_024).optional(),
-  })
-  .refine(
-    (seal) =>
-      (seal.status === 'complete') === (seal.reasons.length === 0) &&
-      (seal.capture === 'complete') === (seal.reasons.length === 0),
-    'A seal is complete exactly when it names no reason.',
-  )
+export const nodeServerHistorySealSchema = buildStructuredHistorySealSchema(
+  NODE_SERVER_HISTORY_FORMAT_VERSION,
+  NODE_SERVER_HISTORY_MAX_ENTRIES,
+)
 
 export type NodeServerHistoryHeader = z.infer<
   typeof nodeServerHistoryHeaderSchema
@@ -234,7 +209,7 @@ export type NodeServerHistoryEntry = z.infer<
   typeof nodeServerHistoryEntrySchema
 >
 export type NodeServerHistorySeal = z.infer<typeof nodeServerHistorySealSchema>
-export type NodeServerSealReason = z.infer<typeof nodeServerSealReasonSchema>
+export type NodeServerSealReason = z.infer<typeof historySealReasonSchema>
 /** One `stop` entry of a node-server journal. */
 export type NodeServerStopEntry = Extract<
   NodeServerHistoryEntry,

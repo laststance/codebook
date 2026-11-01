@@ -22,6 +22,31 @@ export const HISTORY_SEAL_FILE = 'sealed.json'
  * It separates closed to new appends from draining accepted appends: an entry accepted before the seal began is written, then the seal follows; one offered after is refused at the call.
  * @example await writer.finish('partial', 'Cancelled by the learner.')
  */
+/** The failure of an append an entry or byte bound refused; a live run's header tells it from a disk failure ({@link ChromeExtensionHistoryRecorder.livePartialCode}). */
+export class HistoryLimitReachedError extends Error {}
+
+/**
+ * The refusal of an entry that would use the room a profile keeps free for its closing entries ({@link HistoryWriterRules.reserveFor}).
+ * Unlike a limit, it ends nothing: the writer goes on accepting the entries that may use the reserve, and the seal still names the size limit.
+ */
+export class HistoryReserveReachedError extends HistoryLimitReachedError {}
+
+/**
+ * Words a limit refusal as a reserve refusal when the entry ran into the room its profile keeps for closing entries, else as a plain limit; called by {@link HistoryJournalWriter} for the event and the byte limit.
+ * @param reserve - The room the refused entry may not use; absent for an entry with no reserve.
+ * @param message - The refusal's words.
+ * @returns A {@link HistoryReserveReachedError} with a reserve, else a {@link HistoryLimitReachedError}.
+ * @example limitRefusal({ bytes: 4096, entries: 3 }, 'Node history reached its event limit.') instanceof HistoryReserveReachedError // => true
+ */
+function limitRefusal(
+  reserve: { bytes: number; entries: number } | undefined,
+  message: string,
+): HistoryLimitReachedError {
+  return reserve
+    ? new HistoryReserveReachedError(message)
+    : new HistoryLimitReachedError(message)
+}
+
 export class HistoryJournalWriter<Types extends HistoryTypes> {
   private sequence = 0
   private entries = 0
@@ -40,6 +65,8 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
   private finishOperation?: Promise<string | undefined>
   /** The SHA-256 of the journal this writer sealed; `undefined` before the seal and after an abandoned one. */
   private sealedHash?: string
+  /** Set when the seal removed the folder because the history held nothing to replay. */
+  private removedAsEmpty = false
   /** Set once the store was told that this writer closed ({@link NodeHistoryJournalWriter.reportClosed}). */
   private closedReported = false
 
@@ -100,6 +127,7 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
         ))
       ) {
         this.sealedHash = sha256(journal)
+        this.removedAsEmpty = true
         this.closed = true
         this.reportClosed()
         return this.sealedHash
@@ -164,6 +192,12 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
     return this.abandoned ? undefined : this.sealedHash
   }
 
+  /** Whether the seal removed this history's folder because it held nothing to replay, so no resource for it answers; read by the recorder to tell a removed history from a sealed one. @example writer.wasRemovedAsEmpty */
+  // fallow-ignore-next-line unused-class-member
+  get wasRemovedAsEmpty(): boolean {
+    return this.removedAsEmpty
+  }
+
   /** The first failure that ended the timeline, if any; read by the run's resource to report a history that is failing while the run lives. @example writer.appendFailure?.message */
   get appendFailure(): Error | undefined {
     return this.failure
@@ -222,35 +256,9 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
           : new Error('Node history is already sealing or sealed.'),
       )
     const operation = this.pending.then(async () => {
-      // Evidence after a failed entry would follow a gap, so the verified prefix ends at the first failure.
-      if (this.failure) throw this.afterFailure(this.failure)
-      if (this.closed)
-        throw new Error('Node history is already sealing or sealed.')
-      if (this.entries >= this.rules.maxEntries) {
-        this.limitReached = true
-        throw new Error('Node history reached its event limit.')
-      }
-      const entry = this.rules.parseEntry({
-        ...input,
-        sequence: this.sequence + 1,
-      })
-      this.rules.check(entry)
+      const { entry, reserve } = this.acceptEntry(input)
       const line = Buffer.from(`${JSON.stringify(entry)}\n`)
-      const path = join(this.directory, HISTORY_JOURNAL_FILE),
-        handle = await open(path, 'a', PRIVATE_FILE_MODE)
-      try {
-        const stat = await handle.stat()
-        if (stat.size + line.byteLength > this.rules.journalLimitBytes) {
-          this.limitReached = true
-          throw new Error(
-            'Node history reached its storage limit; existing evidence remains readable.',
-          )
-        }
-        await handle.writeFile(line)
-        await handle.sync()
-      } finally {
-        await handle.close()
-      }
+      await this.appendLine(line, reserve)
       this.sequence = entry.sequence
       this.entries++
       this.confirmedBytes += line.byteLength
@@ -258,9 +266,72 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
     })
     // Later entries and the seal wait for this one without inheriting its rejection.
     this.pending = operation.catch((error: unknown) => {
+      // An entry refused only by the reserve leaves the timeline whole: later entries may still follow.
+      if (error instanceof HistoryReserveReachedError) return
       this.failure ??= error instanceof Error ? error : new Error(String(error))
     })
     return operation
+  }
+
+  /**
+   * Numbers one queued entry and checks it against the writer's state, the profile's event limit and its rules, before any byte is written; called by {@link append} when the entry's turn comes.
+   * @param input - The entry without its sequence.
+   * @returns The numbered entry and the room its profile keeps free for closing entries, when the entry may not use it.
+   * @throws The earlier failure, a closed writer, the event limit (a reserve refusal when only the kept room is left) or the profile's refusal.
+   * @example this.acceptEntry({ type: 'output', elapsedMs: 1, channel: 'stdout', text: 'ready' }).entry.sequence // => 1
+   */
+  private acceptEntry(input: Omit<Types['Entry'], 'sequence'>): {
+    entry: Types['Entry']
+    reserve: { bytes: number; entries: number } | undefined
+  } {
+    // Evidence after a failed entry would follow a gap, so the verified prefix ends at the first failure.
+    if (this.failure) throw this.afterFailure(this.failure)
+    if (this.closed)
+      throw new Error('Node history is already sealing or sealed.')
+    const entry = this.rules.parseEntry({
+      ...input,
+      sequence: this.sequence + 1,
+    })
+    // The room a profile keeps free for its closing entries is off limits to the entries it names.
+    const reserve = this.rules.reserveFor?.(entry)
+    if (this.entries >= this.rules.maxEntries - (reserve?.entries ?? 0)) {
+      this.limitReached = true
+      throw limitRefusal(reserve, 'Node history reached its event limit.')
+    }
+    this.rules.check(entry)
+    return { entry, reserve }
+  }
+
+  /**
+   * Appends one checked line to the journal and flushes it, refusing a line past the profile's byte limit (less the kept room); called by {@link append} after {@link acceptEntry}.
+   * @param line - The entry's JSON line.
+   * @param reserve - The room kept free for closing entries, when this entry may not use it.
+   * @throws The storage limit (a reserve refusal when only the kept room is left) or the I/O failure.
+   * @example await this.appendLine(Buffer.from('{"type":"output"}\n'), undefined)
+   */
+  private async appendLine(
+    line: Buffer,
+    reserve: { bytes: number; entries: number } | undefined,
+  ): Promise<void> {
+    const path = join(this.directory, HISTORY_JOURNAL_FILE),
+      handle = await open(path, 'a', PRIVATE_FILE_MODE)
+    try {
+      const stat = await handle.stat()
+      if (
+        stat.size + line.byteLength >
+        this.rules.journalLimitBytes - (reserve?.bytes ?? 0)
+      ) {
+        this.limitReached = true
+        throw limitRefusal(
+          reserve,
+          'Node history reached its storage limit; existing evidence remains readable.',
+        )
+      }
+      await handle.writeFile(line)
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
   }
 
   /** Words the refusal of an entry that follows a failed one. */

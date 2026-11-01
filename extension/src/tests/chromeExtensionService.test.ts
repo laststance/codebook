@@ -3,6 +3,7 @@ import { test } from 'node:test'
 
 import { StudyError } from '../errors'
 import { readResource } from '../resources'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { CHROME_EXTENSION_RECOVERY } from '../utils/chromeExtensionRecovery'
 
 import { createHarness } from './helpers'
@@ -11,6 +12,10 @@ import {
   FAKE_EXTENSION_MANIFEST,
   FakeChromeExtensionRuntime,
 } from './utils/fakeChromeExtensionRuntime'
+import {
+  REPLAY_READER_REFUSAL,
+  readerShowingReplay,
+} from './utils/readerShowingReplay'
 import {
   chromeExtensionConfigurationOf,
   startFakeChromeExtensionRun,
@@ -59,7 +64,7 @@ test('codebook_status lists the chrome-extension profile with its extension-clic
   ])
   assert.equal(profile?.recording?.available, false)
   assert.equal(status.capabilities.includes('extension-click'), true)
-  assert.equal(status.apiVersion, '1.12')
+  assert.equal(status.apiVersion, '1.13')
 })
 
 // protects=an editor without the Chrome extension adapter reads the profile as not ready with the adapter named; fails_when=status says ready without the run factory; no_claim=the Chrome version check, which the environment reports
@@ -406,14 +411,12 @@ test('a failed extension run keeps its own recovery in the run error, not the se
   )
 })
 
-// protects=SR13 and SR37: codebook_explain and codebook_explain_node_history answer the extension refusal sentence for an extension run and change no stored study; fails_when=either tool saves, answers another sentence or throws a different code; no_claim=the other profiles' saves
-test('codebook_explain and codebook_explain_node_history refuse an extension run with the same sentence and keep the store unchanged', async (context) => {
+// protects=AC3: codebook_explain redirects an extension run to its durable history and codebook_explain_node_history refuses a run that recorded no history with the cause, both without changing the run; fails_when=either tool saves, answers the old refusal sentence or throws another code; no_claim=a run that recorded a history (the save tests)
+test('codebook_explain redirects an extension run to its history and a run without a history cannot be saved', async (context) => {
   // Arrange
   const harness = await createHarness()
   context.after(() => harness.close())
   const { record } = await startFakeChromeExtensionRun(harness)
-  const sentence =
-    'Saving an extension run is not available in this version; the live explanation stays in the chat.'
   // Act, Assert
   await assert.rejects(
     async () =>
@@ -429,7 +432,8 @@ test('codebook_explain and codebook_explain_node_history refuse an extension run
     (error) =>
       error instanceof StudyError &&
       error.code === 'EVIDENCE_UNAVAILABLE' &&
-      error.message === sentence,
+      error.message.includes('chromeExtension.historyUri') &&
+      error.message.includes('codebook_explain_node_history'),
   )
   await assert.rejects(
     async () =>
@@ -447,7 +451,8 @@ test('codebook_explain and codebook_explain_node_history refuse an extension run
     (error) =>
       error instanceof StudyError &&
       error.code === 'EVIDENCE_UNAVAILABLE' &&
-      error.message === sentence,
+      error.message ===
+        'This extension run recorded no history, so there is nothing to save.',
   )
   assert.equal(record.explanations.size, 0)
   assert.equal(record.explanationKeys.size, 0)
@@ -508,4 +513,28 @@ test('a stop before the last click reads completed with a partial result, no obs
   assert.equal(state.chromeExtension.observed, null)
   assert.equal(state.claimable, false)
   assert.equal(state.error, undefined)
+})
+
+// protects=a chrome-extension start while the open reader shows a saved replay is refused before the browser launches, and the same start is accepted once the reader follows the run again; fails_when=the run starts and its Application tab keeps drawing the replay's frame while Run and Debug shows the replay's values beside the live stop; no_claim=the reader itself (a stub reports it)
+test('a chrome-extension start while the reader shows a saved replay is refused before the browser launches and runs after the return to the current run', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const reader = readerShowingReplay(harness.service)
+  // Act
+  const refused = await startFakeChromeExtensionRun(harness, {
+    key: 'replay',
+  })
+  await waitUntil(() => refused.record.stopped, 'the refused run ended')
+  reader.returnToCurrent()
+  const accepted = await startFakeChromeExtensionRun(harness, {
+    key: 'after-return',
+  })
+  // Assert
+  assert.equal(refused.record.error?.code, 'PRESENTATION_UNAVAILABLE')
+  assert.equal(refused.record.error?.message, REPLAY_READER_REFUSAL)
+  assert.equal(refused.record.historyExcluded, 'refused-at-admission')
+  assert.deepEqual(refused.created, [])
+  assert.equal(accepted.record.error, undefined)
+  assert.equal(accepted.record.prepared, true)
 })

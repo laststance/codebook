@@ -882,19 +882,19 @@ test('an open of a saved test replay overtaken by the reader’s close selects n
   }
 })
 
-// Value: protects=the Save item of a live test run drawn by a refresh while the Study pane is open but shows a browser replay: the refresh renders nothing of the run, so it draws the item itself; fails_when=the item stays hidden or stale while a browser replay holds the open pane; why_new=only a closed pane was tested (F76); seam=a fake owned Node run beside a recorded browser study; no_claim=the host's status bar drawing
+// Value: protects=the Save item of a live test run drawn by a refresh while the Study pane is open but shows a browser replay: the refresh renders nothing of the run, so it draws the item itself; fails_when=the item stays hidden or stale while a browser replay holds the open pane; why_new=only a closed pane was tested (F76); seam=a fake owned Node run beside a recorded browser study, opened after the run started (a start while a replay is shown is refused); no_claim=the host's status bar drawing
 test('a refresh draws the Save item of a live test run while a browser replay holds the open Study pane', async () => {
-  // Arrange
+  // Arrange: the learner opens a saved browser recording while the test run is live.
   const harness = await recordedReaderHarness()
   try {
     readerSeams(harness).stopOwnTimer()
+    const { studyId } = await startLiveTestRun(harness, 'browser-replay-save')
     await harness.reader.openRecording(harness.studyId)
     await waitUntil(
       () => harness.controller.state().readiness === 'ready',
       'the opened recording',
       READER_RESULT_BOUND_MS,
     )
-    const { studyId } = await startLiveTestRun(harness, 'browser-replay-save')
 
     // Act
     await readerSeams(harness).refresh()

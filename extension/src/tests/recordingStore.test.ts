@@ -28,6 +28,7 @@ import {
   type RecordingLimits,
 } from '../recordingStore'
 import { sha256 } from '../runtimeSupport/utils/sha256'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { useEditorMachineId } from '../utils/currentStorageOwner'
 import { recordingOwnerRecordPath } from '../utils/recordingOwnerRecordPath'
 import { systemTrashName } from '../utils/systemTrashName'
@@ -326,6 +327,12 @@ test('a recording whose writer’s process id went to a process begun after the 
   // Arrange: two recordings created ten minutes ago by a window that crashed; a process that began just now has its id. The first has no record of its writer (a recording of 0.2.29.0); the second's record names that id with the start of the window that wrote it.
   const first = await recordingHarness(context),
     second = await recordingHarness(context)
+  // macOS `ps -o lstart=` gives a start to the second: a child begun in this process's first second would carry this process's start, so it begins a second later at the earliest.
+  await waitUntil(
+    () => process.uptime() >= 1,
+    'this test process to be one second old, so a later process cannot share its start second',
+    5_000,
+  )
   const laterProcess = await idleChild(context)
   const createdAt = new Date(Date.now() - 10 * 60_000).toISOString()
   for (const { store, binding } of [first, second]) {

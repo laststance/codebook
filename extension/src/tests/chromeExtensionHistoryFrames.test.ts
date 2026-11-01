@@ -1,0 +1,351 @@
+import assert from 'node:assert/strict'
+import { existsSync } from 'node:fs'
+import fsPromises, { readdir } from 'node:fs/promises'
+import { join } from 'node:path'
+import { mock, test } from 'node:test'
+
+import { ExtensionHistoryFrameWriter } from '../chromeExtensionHistoryFrames'
+import type { ChromeExtensionHistoryWriter } from '../chromeExtensionHistoryWriter'
+import { sha256 } from '../runtimeSupport/utils/sha256'
+
+import {
+  EXTENSION_WORKSPACE_KEY,
+  extensionHistoryHeader,
+  openExtensionStore,
+  pngOf,
+} from './utils/chromeExtensionHistoryFixture'
+
+/** Opens a store with a controllable clock and starts a history on it. */
+async function framesOver(context: Parameters<typeof openExtensionStore>[0]) {
+  const clock = { nowMs: 0 }
+  const { store, learningDirectory } = await openExtensionStore(
+    context,
+    () => clock.nowMs,
+  )
+  const header = extensionHistoryHeader(EXTENSION_WORKSPACE_KEY)
+  const writer: ChromeExtensionHistoryWriter = await store.start(header)
+  const frames = new ExtensionHistoryFrameWriter(writer)
+  return { frames, writer, store, header, clock, learningDirectory }
+}
+
+/** The frame entries of a history, read back after its writer settled. */
+async function frameEntries(
+  store: Awaited<ReturnType<typeof framesOver>>['store'],
+  studyId: string,
+) {
+  const history = await store.read(studyId)
+  return history.entries.filter((entry) => entry.type === 'frame')
+}
+
+// protects=a stream frame's PNG is durable under frames/<sha256>.png before its frame entry is appended, with no temporary file left; fails_when=the entry is appended before the blob exists, or a .tmp file remains; no_claim=a crash between the blob and the entry (the failure matrix part)
+test('a stream frame is stored as frames/<sha256>.png before its frame entry is appended', async (context) => {
+  // Arrange
+  const { frames, writer, store, header, clock } = await framesOver(context)
+  const png = pngOf(720, 640, 'first')
+  const hash = sha256(png)
+  const blobPath = join(writer.historyDirectory, 'frames', `${hash}.png`)
+  const blobExistedWhenAppended: boolean[] = []
+  const appendFrame = writer.appendFrame.bind(writer)
+  writer.appendFrame = (input): Promise<void> => {
+    blobExistedWhenAppended.push(existsSync(blobPath))
+    return appendFrame(input)
+  }
+  clock.nowMs = 100
+
+  // Act
+  const offered = frames.offer({
+    data: png.toString('base64'),
+    kind: 'stream',
+    capturedAtMs: 100,
+  })
+  await frames.drain(2_000)
+  const entries = await frameEntries(store, header.studyId)
+
+  // Assert
+  assert.equal(offered, 'queued')
+  assert.deepEqual(blobExistedWhenAppended, [true])
+  assert.deepEqual(
+    entries.map((entry) => [
+      entry.hash,
+      entry.width,
+      entry.height,
+      entry.capturedAtMs,
+    ]),
+    [[hash, 720, 640, 100]],
+  )
+  assert.deepEqual(await readdir(join(writer.historyDirectory, 'frames')), [
+    `${hash}.png`,
+  ])
+})
+
+// protects=two identical frames store one blob and two entries, so a still surface costs bytes once; fails_when=the blob is written twice or the second entry is dropped; no_claim=the byte budget
+test('an identical frame is deduplicated by hash: one blob, two frame entries', async (context) => {
+  // Arrange
+  const { frames, writer, store, header, clock } = await framesOver(context)
+  const data = pngOf(720, 640, 'still').toString('base64')
+  clock.nowMs = 200
+
+  // Act
+  frames.offer({ data, kind: 'stream', capturedAtMs: 100 })
+  frames.offer({ data, kind: 'stream', capturedAtMs: 200 })
+  await frames.drain(2_000)
+  const entries = await frameEntries(store, header.studyId)
+
+  // Assert
+  assert.equal(entries.length, 2)
+  assert.equal(entries[0]?.hash, entries[1]?.hash)
+  assert.equal(
+    (await readdir(join(writer.historyDirectory, 'frames'))).length,
+    1,
+  )
+})
+
+// protects=stream frames are sampled at RECORDING_SAMPLE_INTERVAL_MS (50 ms) and a sampled-away frame is no failure; a pin is never sampled; fails_when=a frame inside the interval is queued, the filmstrip reads incomplete, or a pin is skipped; no_claim=20 fps under load
+test('a stream frame inside the sampling interval is sampled away without marking the filmstrip incomplete', async (context) => {
+  // Arrange
+  const { frames, writer, clock } = await framesOver(context)
+  clock.nowMs = 90
+  await writer.appendPauseOpen({
+    pauseId: 'run:1:page:1',
+    generation: 1,
+    context: 'page',
+    stopIndex: 1,
+    targetUrl: 'chrome-extension://abc/popup.html',
+    workerGeneration: 0,
+  })
+  clock.nowMs = 500
+  const frame = (salt: string, capturedAtMs: number) => ({
+    data: pngOf(720, 640, salt).toString('base64'),
+    kind: 'stream' as const,
+    capturedAtMs,
+  })
+
+  // Act
+  const first = frames.offer(frame('a', 100))
+  const tooSoon = frames.offer(frame('b', 120))
+  const next = frames.offer(frame('c', 150))
+  const pin = frames.offer({
+    data: pngOf(720, 640, 'pin').toString('base64'),
+    kind: 'pin',
+    pauseId: 'run:1:page:1',
+    capturedAtMs: 160,
+  })
+  await frames.drain(2_000)
+
+  // Assert
+  assert.deepEqual(
+    [first, tooSoon, next, pin],
+    ['queued', 'sampled-away', 'queued', 'queued'],
+  )
+  assert.equal(frames.isIncomplete, false)
+})
+
+// protects=frames of changing size are stored at their own size; fails_when=a resized frame is rejected or scaled; no_claim=decoding the PNG
+test('frames of changing size keep their recorded width and height', async (context) => {
+  // Arrange
+  const { frames, store, header, clock } = await framesOver(context)
+  clock.nowMs = 400
+
+  // Act
+  frames.offer({
+    data: pngOf(300, 200, 'a').toString('base64'),
+    kind: 'stream',
+    capturedAtMs: 100,
+  })
+  frames.offer({
+    data: pngOf(420, 360, 'b').toString('base64'),
+    kind: 'stream',
+    capturedAtMs: 200,
+  })
+  await frames.drain(2_000)
+  const entries = await frameEntries(store, header.studyId)
+
+  // Assert
+  assert.deepEqual(
+    entries.map((entry) => [entry.width, entry.height]),
+    [
+      [300, 200],
+      [420, 360],
+    ],
+  )
+})
+
+// protects=the offer never awaits and never throws: a frame that is no PNG is dropped and the filmstrip reads incomplete; fails_when=offer throws or returns a promise; no_claim=which frame was bad
+test('a frame that is not a PNG is dropped synchronously and marks the filmstrip incomplete', async (context) => {
+  // Arrange
+  const { frames } = await framesOver(context)
+
+  // Act
+  const result = frames.offer({
+    data: Buffer.from('not a png at all, just text').toString('base64'),
+    kind: 'stream',
+    capturedAtMs: 100,
+  })
+
+  // Assert
+  assert.equal(result, 'dropped')
+  assert.equal(frames.isIncomplete, true)
+})
+
+// protects=the pending queue is bounded at MAX_RECORDING_PENDING_BYTES: a burst against a blocked disk drops the excess, remembers it, and never grows memory without bound; fails_when=every frame is queued or the drop is not remembered; no_claim=the real disk speed
+test('a burst of frames against a blocked disk is dropped past the pending byte bound and remembered', async (context) => {
+  // Arrange
+  const { frames, writer, clock } = await framesOver(context)
+  clock.nowMs = 10_000
+  writer.appendFrame = (): Promise<void> => new Promise<void>(() => undefined)
+  const bigSalt = 'x'.repeat(3 * 1024 * 1024)
+
+  // Act
+  const results = [0, 1, 2, 3].map((index) =>
+    frames.offer({
+      data: pngOf(720, 640, `${index}${bigSalt}`).toString('base64'),
+      kind: 'stream',
+      capturedAtMs: 100 * (index + 1),
+    }),
+  )
+
+  // Assert
+  assert.deepEqual(results, ['queued', 'queued', 'dropped', 'dropped'])
+  assert.equal(frames.isIncomplete, true)
+})
+
+// protects=E-D: a pin is queued even when stream frames fill the pending byte bound, since the pending bound is for stream frames; fails_when=a pin is dropped because stream frames wait on a slow disk; no_claim=the pin's own reserve
+test('a pin is queued while stream frames fill the pending byte bound', async (context) => {
+  // Arrange
+  const { frames, writer, clock } = await framesOver(context)
+  clock.nowMs = 10_000
+  writer.appendFrame = (): Promise<void> => new Promise<void>(() => undefined)
+  const bigSalt = 'x'.repeat(3 * 1024 * 1024)
+  for (const index of [0, 1, 2])
+    frames.offer({
+      data: pngOf(720, 640, `${index}${bigSalt}`).toString('base64'),
+      kind: 'stream',
+      capturedAtMs: 100 * (index + 1),
+    })
+
+  // Act
+  const offered = frames.offer({
+    data: pngOf(720, 640, `pin${bigSalt}`).toString('base64'),
+    kind: 'pin',
+    pauseId: 'run:1:page:1',
+    capturedAtMs: 500,
+  })
+
+  // Assert
+  assert.equal(offered, 'queued')
+})
+
+// protects=one frame the history cannot accept is dropped alone: later frames and pins are still stored; fails_when=an unreadable frame stops every later frame and pin; no_claim=a failed disk write, which ends the filmstrip on purpose
+test('a frame that is not a readable PNG is dropped and the next stream frame and pin are still stored', async (context) => {
+  // Arrange
+  const { frames, writer, store, header, clock } = await framesOver(context)
+  clock.nowMs = 10_000
+  await writer.appendPauseOpen({
+    pauseId: 'run:1:page:1',
+    generation: 1,
+    context: 'page',
+    stopIndex: 1,
+    targetUrl: 'chrome-extension://abc/popup.html',
+    workerGeneration: 0,
+  })
+
+  // Act
+  const bad = frames.offer({
+    data: Buffer.from('not a png at all').toString('base64'),
+    kind: 'stream',
+    capturedAtMs: 100,
+  })
+  const good = frames.offer({
+    data: pngOf(720, 640, 'good').toString('base64'),
+    kind: 'stream',
+    capturedAtMs: 300,
+  })
+  const pin = frames.offer({
+    data: pngOf(720, 640, 'pinned').toString('base64'),
+    kind: 'pin',
+    pauseId: 'run:1:page:1',
+    capturedAtMs: 400,
+  })
+  await frames.drain(5_000)
+
+  // Assert
+  assert.deepEqual([bad, good, pin], ['dropped', 'queued', 'queued'])
+  assert.deepEqual(
+    (await frameEntries(store, header.studyId)).map((entry) => entry.kind),
+    ['stream', 'pin'],
+  )
+  assert.equal(frames.isIncomplete, true)
+})
+
+// protects=E-B/E-D: a frame whose store was running at the drain deadline publishes no blob and leaves no temporary file, and no entry names it; fails_when=the late store renames its blob after the queue was abandoned and the sealed history keeps an orphan PNG; no_claim=the seal's own deadline (recorder tests)
+test('a frame being stored when the drain deadline passes leaves no blob and no temporary file', async (context) => {
+  // Arrange
+  const { frames, writer, store, header } = await framesOver(context)
+  context.after(() => mock.restoreAll())
+  const realMkdir = fsPromises.mkdir.bind(fsPromises)
+  let release: () => void = () => undefined
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  let markHeld: () => void = () => undefined
+  const reached = new Promise<void>((resolve) => {
+    markHeld = resolve
+  })
+  mock.method(
+    fsPromises,
+    'mkdir',
+    async (...args: Parameters<typeof realMkdir>) => {
+      markHeld()
+      await held
+      return realMkdir(...args)
+    },
+  )
+  frames.offer({
+    data: pngOf(720, 640, 'in-flight').toString('base64'),
+    kind: 'stream',
+    capturedAtMs: 100,
+  })
+  await reached
+
+  // Act
+  // The store is held at its folder creation when the drain deadline passes; then it goes on.
+  await frames.drain(1)
+  release()
+  await frames['chain']
+  const left = await readdir(join(writer.historyDirectory, 'frames'))
+
+  // Assert
+  assert.deepEqual(left, [])
+  assert.equal(frames.failure, undefined)
+  assert.deepEqual(await frameEntries(store, header.studyId), [])
+})
+
+// protects=E-D: a temporary file the seal's cleanup removed under a running store is no fault; fails_when=the rename's ENOENT is reported as a frame failure and the live run's Output shows a spurious write error; no_claim=the cleanup's own scan
+test('a store whose temporary file the cleanup removed does not report a failure', async (context) => {
+  // Arrange
+  const { frames, writer } = await framesOver(context)
+  context.after(() => mock.restoreAll())
+  const realRename = fsPromises.rename.bind(fsPromises)
+  mock.method(
+    fsPromises,
+    'rename',
+    async (...args: Parameters<typeof realRename>) => {
+      // The deadline passes and the cleanup runs between the blob's flush and its rename.
+      await frames.drain(1)
+      await frames.removeTemporaryBlobs()
+      return realRename(...args)
+    },
+  )
+  frames.offer({
+    data: pngOf(720, 640, 'in-flight').toString('base64'),
+    kind: 'stream',
+    capturedAtMs: 100,
+  })
+
+  // Act
+  await frames['chain']
+
+  // Assert
+  assert.equal(frames.failure, undefined)
+  assert.deepEqual(await readdir(join(writer.historyDirectory, 'frames')), [])
+})

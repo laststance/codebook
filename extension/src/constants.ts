@@ -5,14 +5,15 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 /**
  * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ * 1.13 is additive: a chrome-extension run is saved as an Extension replay. `codebook_explain_node_history` accepts a chrome-extension history's material (steps citing a captured stop with its sourceHash and context, a pause or the result), the run resource gains `chromeExtension.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing`, `materialRevision` and `captureMissing`, `nextActions` offers `save-node-learning`, and a save while the history records is refused with `HISTORY_STILL_RECORDING`.
  * 1.12 is additive: Next Pages Router pages on the `next-dev-webpack` adapter (the `next-dev-webpack` readiness gains `routerKind`, `preparation` and `notes`, the repository-browser profile names its `nextRouters`, the resource of a Next run in a workspace with a Pages folder names its `nextRoute` (not a Next run in a workspace without one), the `NEXT_*` refusal codes and `SOURCE_CHANGED` for a Pages module replaced during the run, and `codebook://help/repository-browser` gains `startHere`, the Next quick start, the Pages support table and the Next refusal anchors). It also changes the click of every `repository-browser` run, App Router and Vite runs included: a click target whose centre lies outside the viewport is first scrolled to the middle of the viewport, where 1.11 read it as obscured (`click-target-obscured`); App Router and Vite runs are otherwise unchanged.
  * 1.11 is additive: the `vite-dev` adapter of the `repository-browser` profile (the adapter enum of the configuration, `codebook_status` adapter readiness under `profiles[].prerequisites.adapters`, the optional `viteVersion` of a Vite run manifest and resource, the `ADAPTER_MISROUTE` and `VITE_*` refusal codes, the Vite quick start and refusal anchors of `codebook://help/repository-browser`); a Vite study is saved in study format 5.
- * 1.10 is additive: the `chrome-extension` profile (the `extension-click` action, the `extension` participant of `codebook_continue`, the `chromeExtension` block and `claimable` of the run resource, `codebook://help/chrome-extension`); a chrome-extension run is not saved in this version.
+ * 1.10 is additive: the `chrome-extension` profile (the `extension-click` action, the `extension` participant of `codebook_continue`, the `chromeExtension` block and `claimable` of the run resource, `codebook://help/chrome-extension`); a chrome-extension run is live only at 1.10 (API 1.13 saves it).
  * 1.9 is additive: a node-server run is saved as a Server replay. `codebook_explain_node_history` accepts a server history's material (steps citing the request, a stop, output, the response or the request failure), the server run resource gains `nodeServer.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing` and `captureMissing`, `nextActions` offers `save-node-learning`, and `codebook://help/node-server` has a save section.
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
-export const API_VERSION = '1.12'
-export const EXTENSION_VERSION = '0.2.69'
+export const API_VERSION = '1.13'
+export const EXTENSION_VERSION = '0.2.70'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -2229,9 +2230,17 @@ export const EXTENSION_STOP_COMMAND_TIMEOUT_MS = 1_000
 export const EXTENSION_CHROME_VERSION_READ_BOUND_MS = 5_000
 
 // Lane D (Application view of a chrome-extension run, Cycle 0061 pt2)
-/** Header line 2 of an extension run's Application view in every phase, after the run too (DR1, C1, C2). */
+/** Header line 2 of an extension run's Application view in every phase, after the run too (DR1, C1, C2): what is true of the run itself; the recording state follows it (see {@link EXTENSION_VIEW_RECORDING_TEXT}). */
 export const EXTENSION_VIEW_PROVENANCE =
-  'Operated by chat · Test profile · seeded data · Live only · replay unavailable'
+  'Operated by chat · Test profile · seeded data'
+/** The recording state the Application view's header line 2 ends with (Cycle 0069, D16): while the history records, once it is partial (with the stable code of the first missing part) and when no history started (with its shortened cause). */
+export const EXTENSION_VIEW_RECORDING_TEXT = {
+  recording: 'Recording for replay',
+  partial: 'Recording partial',
+  notRecorded: 'Not recorded',
+} as const
+/** The longest cause the header's `Not recorded · <reason>` keeps; a longer one is cut at a word and ends with an ellipsis. */
+export const EXTENSION_VIEW_REASON_LIMIT_CHARS = 80
 /** `Page.stopScreencast` on the surface's session, sent when the view ends, is waited for this long; the view is already final without its answer. */
 export const EXTENSION_SCREENCAST_STOP_TIMEOUT_MS = 1_000
 
@@ -2253,9 +2262,91 @@ export const PAUSED_SOURCE_MOVE_ATTEMPTS = 2
 export const CHROME_EXTENSION_START_ANSWER_MS = 40_000
 /** The oldest Codebook extension version that serves the chrome-extension profile, reported by `codebook_status`. */
 export const CHROME_EXTENSION_MINIMUM_EXTENSION_VERSION = '0.2.59'
-/** What `codebook_explain`, `codebook_explain_node_history` and the Save command answer for a chrome-extension run: nothing of it is saved in this version (SR13, SR37). */
-export const CHROME_EXTENSION_SAVE_REFUSAL =
-  'Saving an extension run is not available in this version; the live explanation stays in the chat.'
+// Cycle 0069 lane A1: the chrome-extension history profile
+/** The folder of chrome-extension histories beside `node-tests.v1` and `node-servers.v1`; 0.2.69.0 builds no store for it, so a revert leaves its histories on disk, unlisted and never deleted. */
+export const CHROME_EXTENSION_HISTORY_DIRECTORY = 'chrome-extensions.v1'
+/** The `formatVersion` of a chrome-extension history's header and the `version` of its seal. */
+export const CHROME_EXTENSION_HISTORY_FORMAT_VERSION = 1
+/** The most entries one chrome-extension history holds: every frame the budget admits ({@link MAX_RECORDING_FRAMES}) plus 1,000 for pauses, captures, closes and the result. */
+export const EXTENSION_HISTORY_MAX_ENTRIES = 13_100
+/** The largest sequence any history profile can hold, for the schemas that profiles share (learning citations across profiles, the saved reader position): the service and the store still check the sequence against the one history, so the node-test and node-server limits keep their own bounds where one profile is parsed alone. */
+export const HISTORY_SHARED_MAX_SEQUENCE = Math.max(
+  NODE_TEST_HISTORY_MAX_ENTRIES,
+  NODE_SERVER_HISTORY_MAX_ENTRIES,
+  EXTENSION_HISTORY_MAX_ENTRIES,
+)
+/** Entries kept free of stream frames, so the closes and the result of a busy surface's run still fit. */
+export const EXTENSION_HISTORY_TERMINAL_RESERVE_ENTRIES = 100
+/** Bytes of the frame blobs ({@link MAX_RECORDING_PNG_BYTES}) kept for pinned pause frames: stream frames stop 32 MiB earlier, so a busy surface cannot crowd out stop frames. */
+export const EXTENSION_HISTORY_PIN_RESERVE_BYTES = 33_554_432
+/** Frames of the frame budget ({@link MAX_RECORDING_FRAMES}) kept for pinned pause frames. */
+export const EXTENSION_HISTORY_PIN_RESERVE_FRAMES = 100
+/** The largest journal of a chrome-extension history (events, snapshots and sources; frame blobs are apart): as {@link NODE_SERVER_HISTORY_LIMIT_BYTES}. */
+export const EXTENSION_HISTORY_JOURNAL_LIMIT_BYTES = 8_388_608
+/** The largest seal of a chrome-extension history; it holds every partial reason uncut. */
+export const EXTENSION_HISTORY_SEAL_LIMIT_BYTES = 262_144
+/** How long a chrome-extension run waits for its history to start before it goes on unrecorded; as {@link NODE_SERVER_HISTORY_START_BOUND_MS}. */
+export const EXTENSION_HISTORY_START_BOUND_MS = 2_000
+/** How long a chrome-extension history may take to seal before its writer is abandoned (the folder then lists as interrupted). */
+export const EXTENSION_HISTORY_SEAL_BOUND_MS = 10_000
+/** The folder inside a chrome-extension history that holds its frame blobs, `frames/<sha256>.png`. */
+export const EXTENSION_HISTORY_FRAMES_DIRECTORY = 'frames'
+/** The execution contexts this build reads in a chrome-extension history; an entry naming another one makes the history unavailable (a later build adds its context without a format bump). */
+export const EXTENSION_HISTORY_KNOWN_CONTEXTS: readonly string[] = [
+  'page',
+  'service-worker',
+]
+/** The cause of the terminal result a chrome-extension history appends when its run ended before the result was read; the capture evaluation judges a result with this cause as no recorded result. */
+export const EXTENSION_HISTORY_RESULT_UNREAD_CAUSE =
+  'The run ended before its result was read.'
+/** What the run resource and a save answer for a chrome-extension run that ended before any declared stop paused: its empty history was removed at the seal. */
+export const EXTENSION_HISTORY_EMPTY_MESSAGE =
+  'No declared stop was reached, so nothing was recorded.'
+/** How long a chrome-extension history waits at its end for the frames already queued before it seals; frames still queued then are dropped and the filmstrip reads incomplete. */
+export const EXTENSION_HISTORY_DRAIN_TIMEOUT_MS = 2_000
+/** The longest context, pause id, URL and path text an entry keeps. */
+export const EXTENSION_HISTORY_TEXT_LIMIT_CHARS = 2_048
+/** The stable codes of the parts a chrome-extension history can miss; each is listed in `captureMissing`. `formatNewer` and `frameDamaged` are listing and presentation reasons, never in `captureMissing`. */
+export const EXTENSION_HISTORY_REASON_CODES = {
+  filmstripMissing: 'EXTENSION_HISTORY_FILMSTRIP_MISSING',
+  pinnedFrameMissing: 'EXTENSION_HISTORY_PINNED_FRAME_MISSING',
+  snapshotMissing: 'EXTENSION_HISTORY_SNAPSHOT_MISSING',
+  sourceUnavailable: 'EXTENSION_HISTORY_SOURCE_UNAVAILABLE',
+  sizeLimit: 'EXTENSION_HISTORY_SIZE_LIMIT',
+  surfaceEnded: 'EXTENSION_HISTORY_SURFACE_ENDED',
+  stopNotReached: 'EXTENSION_HISTORY_STOP_NOT_REACHED',
+  resultMissing: 'EXTENSION_HISTORY_RESULT_MISSING',
+  appendFailed: 'EXTENSION_HISTORY_APPEND_FAILED',
+  formatNewer: 'EXTENSION_HISTORY_FORMAT_NEWER',
+  frameDamaged: 'EXTENSION_HISTORY_FRAME_DAMAGED',
+} as const
+/** The most decoded frames an Extension replay keeps in memory; a frame is loaded lazily by its hash and the least recently shown one leaves first. */
+export const EXTENSION_REPLAY_FRAME_CACHE_SIZE = 8
+/** The folder under the learning directory a removed history's folder is renamed into before it goes to the Trash; no listing or count scans it, so the rename is the removal's one atomic step. */
+export const NODE_HISTORY_REMOVAL_DIRECTORY = 'removed-histories.v1'
+/** Why an Extension replay cannot be removed from Saved studies right now, as the history store's removal and the Study workspace word it; nothing was deleted in any of these cases. */
+export const STUDY_REMOVAL_EXTENSION_HISTORY_REFUSALS = {
+  recording: 'Stop the run before deleting its Extension replay.',
+  open: 'Choose Overview or Live to leave the Extension replay before deleting it.',
+  saving: 'Wait for the Extension replay to finish saving before deleting it.',
+  unknown: 'This Extension replay is no longer listed.',
+  unsupported: 'Codebook cannot delete this replay here yet.',
+  renameFailed:
+    'The Extension replay could not be moved out of Saved studies. Nothing was deleted.',
+} as const
+/** What Saved studies says when the Trash refused the folder of a removed Extension replay: the replay is no longer listed, and its files stay in the folder the line names after this sentence. */
+export const STUDY_REMOVAL_EXTENSION_HISTORY_TRASH_REFUSED =
+  'The Extension replay left Saved studies, but the Trash refused its files. Delete this folder by hand:'
+/** What a listing says of a chrome-extension history one of whose entries names a context this build does not know. */
+export const EXTENSION_HISTORY_FORMAT_NEWER_TEXT =
+  'Recorded by a newer Codebook; update Codebook to open it.'
+
+/** What `codebook_explain` answers for a chrome-extension run: its stops are saved in the durable history, read at `chromeExtension.historyUri`, and the explanation is saved through `codebook_explain_node_history`. */
+export const CHROME_EXTENSION_EXPLAIN_REDIRECT =
+  'Extension stops are saved in their durable history instead: read chromeExtension.historyUri in the run resource and its events, then save learning through codebook_explain_node_history after codebook_stop.'
+/** What `codebook_explain_node_history` answers, with the code `HISTORY_STILL_RECORDING`, for a chrome-extension history whose run has not ended: the fix and what changed. */
+export const EXTENSION_HISTORY_STILL_RECORDING_TEXT =
+  'The chrome-extension history is still recording, so its learning material cannot be saved yet. Stop the run with codebook_stop, then save.'
 /** The error codes after which a chrome-extension run is `failed` or ended and cleaned up; a tool call whose wait ends in one answers with the run's state beside the error (DXR6). */
 export const CHROME_EXTENSION_FAILED_STATE_CODES: readonly string[] = [
   'INPUT_PARTIAL',
