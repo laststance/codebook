@@ -48,6 +48,25 @@ export class RepositorySourceService {
     private readonly now = Date.now,
   ) {}
 
+  /** Latest receipt time handed out, so receipts never run backward when the wall clock does. */
+  private lastReceiptMs = Number.NEGATIVE_INFINITY
+
+  /**
+   * Stamps an acquisition receipt that never precedes an earlier one of this service.
+   *
+   * Date.now follows the wall clock, which an NTP step or manual change can move backward between a
+   * prepared source and its final revalidation; the stored receipt must then still satisfy acquiredAt <= checkedAt.
+   * Called by {@link RepositorySourceService.acquire} for every source read.
+   *
+   * @returns An ISO time not earlier than any receipt time returned before.
+   * @example const checkedAt = this.receiptTime()
+   */
+  private receiptTime(): string {
+    // Clamp to the latest stamp: a backward clock step repeats the last time instead of preceding it.
+    this.lastReceiptMs = Math.max(this.lastReceiptMs, this.now())
+    return new Date(this.lastReceiptMs).toISOString()
+  }
+
   /** Lists a stable bounded path snapshot for MCP discovery; changed pagination requires explicit rediscovery. @example await sources.list() */
   async list(cursor?: string) {
     const catalog = await this.catalog(),
@@ -392,7 +411,7 @@ export class RepositorySourceService {
             lineCount: text.split(/\r\n|\r|\n/).length,
           },
           identity: after,
-          checkedAt: new Date(this.now()).toISOString(),
+          checkedAt: this.receiptTime(),
         }
       } finally {
         await handle.close()

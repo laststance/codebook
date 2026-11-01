@@ -518,6 +518,35 @@ test('expired and cancelled source preparation cannot later validate a publicati
   await assert.rejects(timed.revalidate(), /expired or was cancelled/)
 })
 
+// protects=a stored source receipt whose checkedAt is never earlier than its acquiredAt when the wall clock steps backward between preparation and revalidation; fails_when=revalidate returns checkedAt before acquiredAt and the book store refuses the publication with an invalid receipt; no_claim=a real clock step, a fake now stands in for Date.now
+test('a wall clock that steps backward between preparation and revalidation still yields a receipt checked no earlier than it was acquired', async (context) => {
+  // Arrange
+  const { directory, track } = await sourceHarness(context)
+  await track('src/module.ts')
+  let now = Date.parse('2026-01-01T00:00:10.000Z')
+  const sources = new RepositorySourceService(directory, () => now)
+  const prepared = await sources.prepare([
+    {
+      path: 'src/module.ts',
+      hash: '5e707638ceba927d6f9dbef0ee9935ebc85198b1f6bc55531c8dc64a1e13846b',
+    },
+  ])
+
+  // Act
+  now = Date.parse('2026-01-01T00:00:09.000Z')
+  const receipts = await prepared.revalidate()
+
+  // Assert
+  assert.deepEqual(receipts, [
+    {
+      path: 'src/module.ts',
+      hash: '5e707638ceba927d6f9dbef0ee9935ebc85198b1f6bc55531c8dc64a1e13846b',
+      acquiredAt: '2026-01-01T00:00:10.000Z',
+      checkedAt: '2026-01-01T00:00:10.000Z',
+    },
+  ])
+})
+
 test('conflicting and excessive distinct citations fail preparation before any source is acquired', async (context) => {
   // Arrange
   const { sources } = await sourceHarness(context)
