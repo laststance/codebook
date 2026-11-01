@@ -31,6 +31,44 @@ test('the saved-session help says what is kept, where it lives, how to remove it
     assert.ok(OPERATIONS_ERROR_CODES.includes(code), code)
 })
 
+// protects=cross-check 12 (one anchored saved-session section): setup and the run rules live under one key and one anchor, link the confirmation section, and no second saved-session key or repeated sentence remains; fails_when=a separate run section returns, a run rule goes missing, or a sentence is repeated; no_claim=wording
+test('the saved-session help is one section holding setup and run rules, linking the confirmation, with no repeated sentence', () => {
+  // Arrange
+  const help = { ...operationsHelp(), ...savedSessionHelp() }
+  const section = help.savedSession
+  // Act
+  const sentences = Object.values(section)
+    .filter((value): value is string => typeof value === 'string')
+    .flatMap((text) => text.split(/(?<=\.)\s+/))
+  // Assert
+  assert.deepEqual(
+    Object.keys(help).filter((key) => /savedsession/i.test(key)),
+    ['savedSession'],
+  )
+  for (const key of [
+    'setup',
+    'signInPaths',
+    'reasons',
+    'entryLoad',
+    'oneRun',
+    'origin',
+    'fresh',
+    'lastOperation',
+    'recording',
+    'confirmation',
+  ] as const)
+    assert.equal(typeof section[key], 'string', key)
+  assert.match(section.signInPaths, /1 to \d+ absolute paths/)
+  assert.match(section.entryLoad, /Pages-router route behind sign-in/)
+  assert.match(section.confirmation, /#saved-session-confirmation/)
+  assert.match(section.oneRun, /details\.heldBy reads run .* or removal/)
+  assert.equal(
+    help.operationsDeclare.savedSessionConfirmation.anchor,
+    'codebook://help/repository-browser#saved-session-confirmation',
+  )
+  assert.equal(new Set(sentences).size, sentences.length)
+})
+
 // protects=DX-9 and DES-1 vocabulary, G1/G2; fails_when=the README or skill lacks the commands, the password rule or the status-field rule, or a packaged text says "signed in for runs"; no_claim=translations
 test('the README and the bundled skill name both commands, forbid typing a password, tie the skill to codebook_status.savedSession, and never say signed in for runs', async () => {
   // Arrange

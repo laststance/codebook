@@ -159,6 +159,8 @@ export async function configuredRuntimeHarness(
     sourceMapNames?: string[]
     /** The text the debugger reports for `nextTheme` (its variable and the declared inspection) instead of `dark`. */
     capturedValue?: string | number | boolean
+    /** Further variables the debugger reports at a stop beside `nextTheme`, by name (such as a secret-named `sessionToken`), as the app's scope would hold. */
+    extraVariables?: Record<string, string>
     /** Makes the Vite stand-in reload the page, serving changed module bytes, right after the entry page was requested and before the run waits for the page to settle. */
     reloadDuringEntryLoad?: boolean
     /** Runs the Next configuration in a workspace with a Pages folder: the stand-in server answers the structured entry check, the `.next/dev` build is written around the cited source, and the page reports `window.next.router` ({@link NextPagesHarnessOptions}). */
@@ -593,6 +595,14 @@ export async function configuredRuntimeHarness(
               type: requiredValueUndefined ? 'undefined' : 'string',
               variablesReference: 0,
             },
+            ...Object.entries(options.extraVariables ?? {}).map(
+              ([name, value]) => ({
+                name,
+                value: JSON.stringify(value),
+                type: 'string',
+                variablesReference: 0,
+              }),
+            ),
           ],
         }
       if (command === 'continue') {

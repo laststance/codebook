@@ -10,7 +10,6 @@ import {
   SECRET_FRAME_VALUE_COPY_MIN_CHARS,
 } from './constants'
 import { ERROR_RECOVERY, type ErrorCode } from './errors'
-import { operationsSavedSessionRunsHelp } from './operationsSavedSessionRunsHelp'
 
 /**
  * Every code a version 3 run adds, in the order the help's error table lists them: the refusals of one operation, then the failures that end a run.
@@ -233,7 +232,7 @@ export function operationsHelp() {
         whileAsking:
           'Another key while the dialog is open answers BUSY with reason awaiting-confirmation; the same key joins the dialog. Codebook cannot close a dialog it stopped waiting for (no answer in time, or codebook_stop); an answer to that dialog is ignored and sends nothing. If your call ends before the learner answers (a client timeout), recover by reading the run resource or by sending the same key again, never a new one.',
         fresh:
-          'A run without the saved session shows no dialog: it acts on the app\'s local or seeded data without the learner\'s account, as a single click and an extension run do. A version 3 configuration with session: "fresh" runs without the saved session even when one exists.',
+          'A run without the saved session shows no dialog: it acts on the app\'s local or seeded data without the learner\'s account, as a single click and an extension run do. A configuration that declares session: "fresh" is described in the saved-session section (codebook://help/repository-browser#set-up-a-saved-session).',
         setting:
           'The learner may turn the dialog off for unattended use with codebook.confirmSavedSessionOperations in their user settings; a workspace setting is ignored. Never change it yourself.',
         noEditor:
@@ -255,7 +254,6 @@ export function operationsHelp() {
       limits:
         'Other secrets are masked by name and by format only: a session token, or a secret copied into a plainly named variable or printed as ordinary text, can stay visible in a captured value. Use a local test account, never a real one, for any flow that signs in.',
     },
-    ...operationsSavedSessionRunsHelp(),
     operationsErrorCodes: {
       anchor: 'codebook://help/repository-browser#error-codes',
       codes: Object.fromEntries(
