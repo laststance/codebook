@@ -322,8 +322,8 @@ test('chat text into a password control fails the run before anything is typed',
   assert.equal(view.operations?.[0]?.state, 'failed')
 })
 
-// protects=an ask-learner operation is typed with the learner's value, which the run keeps in memory for masking and reports through the secret hook right before the input; fails_when=the value is not typed, the hook is not called before the input, or the value shows in the journal, the view or the failure; no_claim=masking of sinks (another lane); the control is the harness's stand-in
-test('an ask-learner operation types the learner value, calls the secret hook before the input and keeps the value out of the journal and the view', async (context) => {
+// protects=an ask-learner operation is typed with the learner's value, which the run keeps in memory for masking, and the secret frame gate is armed by the operation; fails_when=the value is not typed, the gate stays unarmed, or the value shows in the journal, the view or the failure; no_claim=masking of sinks (another lane); the control is the harness's stand-in
+test('an ask-learner operation types the learner value with the frame gate armed and keeps the value out of the journal and the view', async (context) => {
   // Arrange
   const { run, insertedTexts } = await configuredRuntimeHarness(
     context,
@@ -345,10 +345,6 @@ test('an ask-learner operation types the learner value, calls the secret hook be
     },
   )
   await run.prepare()
-  const hooked: string[] = []
-  run.onSecretOperationSending = (selector): void => {
-    hooked.push(`${selector}:${insertedTexts.length}`)
-  }
   // Act
   run.action('op-1', OPERATION_ACTION, { learnerSecret: 'typed-by-learner' })
   const stop = await waitUntil(
@@ -360,7 +356,7 @@ test('an ask-learner operation types the learner value, calls the secret hook be
   await run.stop()
   // Assert
   assert.deepEqual(insertedTexts, ['typed-by-learner'])
-  assert.deepEqual(hooked, ['#password:0'])
+  assert.equal(run.secretFrameGate.armed, true)
   assert.equal([...run.learnerSecrets].join(','), 'typed-by-learner')
   const serialized = JSON.stringify({
     view: run.view(),

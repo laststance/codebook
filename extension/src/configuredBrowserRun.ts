@@ -726,11 +726,6 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private operationFailure?: OperationFailure
   /** The secrets the learner typed for `secret: "ask-learner"` operations: in memory only, never persisted or served; the sinks that mask exact occurrences read it through {@link learnerSecrets}. */
   private readonly learnerSecretValues = new Set<string>()
-  /**
-   * Called synchronously right before the input of an ask-learner operation is sent, with its selector; a no-op until a secret gate arms itself here.
-   * @example run.onSecretOperationSending = (selector) => gate.arm(selector)
-   */
-  onSecretOperationSending?: (selector: string) => void
 
   /**
    * Gives the secrets the learner typed for ask-learner operations, for the sinks that mask every exact occurrence of them (ENG-4).
@@ -5238,7 +5233,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         await prepared.discard()
         prepared = await prepare()
       }
-      const hooks = this.operationHooks(index, operation, prepared.isSecret)
+      const hooks = this.operationHooks(index, operation)
       // Every image path is gated from before the secret is typed (ENG-5); a control that is no safe password control gets no input.
       if (prepared.isSecret) await this.armSecretGate(index, operation.selector)
       await prepared.send({
@@ -5368,14 +5363,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Builds the moments of one operation's input for the engine: the dispatch, the acknowledgement and the value check each move the operation's record forward and are journaled without any text.
    * @param index - The operation (1-based).
    * @param operation - Its declaration, of which only the kind and selector are journaled.
-   * @param isSecret - Whether the learner typed the value: the secret gate hook is called right before the input.
    * @returns The hooks the engine calls.
-   * @example await prepared.send(this.operationHooks(1, operation, false))
+   * @example await prepared.send(this.operationHooks(1, operation))
    */
   private operationHooks(
     index: number,
     operation: OperationsRepositoryConfiguration['operations'][number],
-    isSecret: boolean,
   ) {
     const record = this.operationRecords[index - 1]!
     return {
@@ -5388,7 +5381,6 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           operationIndex: index,
           kind: operation.kind,
         })
-        if (isSecret) this.onSecretOperationSending?.(operation.selector)
         this.logOperation(index, 'info', `sending (${operation.kind})`)
       },
       acknowledged: (): void => {

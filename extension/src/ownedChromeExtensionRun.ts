@@ -919,7 +919,6 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
       return
     let cancelTimer: (() => void) | undefined
     try {
-      const requestedAtMs = Date.now()
       const shot = await Promise.race([
         browser.cdp.request(
           'Page.captureScreenshot',
@@ -940,14 +939,6 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
           this.pinTimerCancels.add(cancelTimer)
         }),
       ])
-      // A pause screenshot keeps no pixel from a window the secret gate cannot call safe.
-      if (
-        (await this.input.secretFrameGate?.admitCapture(
-          requestedAtMs,
-          Date.now(),
-        )) === 'drop'
-      )
-        return
       if (this.ending !== undefined || !this.isPauseOpen(generation)) return
       // The history gets the frame at once; it never waits for the view's present below.
       const pngBase64 = readCdpString(shot, 'data')

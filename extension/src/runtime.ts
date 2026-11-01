@@ -45,7 +45,6 @@ import type {
   ProfileLeft,
 } from './runtimeSupport/hostBrowser'
 import type { PauseIdentity, PauseGate } from './runtimeSupport/pauseGate'
-import type { SecretFrameGate } from './runtimeSupport/secretFrameGate'
 import type { StateChangingRequestQuestion } from './utils/askToSendStateChangingRequest'
 import type {
   RetryVitestListingRelease,
@@ -359,8 +358,6 @@ export type ChromeExtensionRunInput = {
   ) => Promise<ChromeExtensionHistorySink | undefined>
   /** Why no history started, once `beginHistory` resolved to `undefined`; the Application view's header words it as `Not recorded · <reason>`. */
   historyUnavailable?: () => string | undefined
-  /** The gate a pause screenshot passes once a secret input was sent; absent → every screenshot is kept. */
-  secretFrameGate?: SecretFrameGate
 }
 
 export type ConfiguredRuntimeSnapshot = Omit<
