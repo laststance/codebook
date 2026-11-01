@@ -62,3 +62,41 @@ test('a secret equal to a protocol key leaves the key and its value in a tool re
   // Assert
   assert.deepEqual(masked, { status: 'completed', ok: true })
 })
+
+// protects=an application value under an identifier-shaped name (resultKey, a values-map key, redirectUri) is masked when it only contains a secret; fails_when=the exemption keeps every string under an identifier name and a learner secret reaches the saved study; no_claim=Codebook-generated identifiers, covered by the generated-shape test below
+test('an application value under an identifier-shaped name has a secret inside it masked', () => {
+  // Arrange
+  const secrets = new Set(['hunter2hunter2'])
+  const value = {
+    resultKey: 'prefix-hunter2hunter2',
+    values: { 'value:resultKey': 'prefix-hunter2hunter2' },
+    redirectUri: 'https://x/?pw=hunter2hunter2',
+  }
+  // Act
+  const masked = maskRunSecretsDeep(value, secrets)
+  // Assert
+  assert.deepEqual(masked, {
+    resultKey: 'prefix-[masked]',
+    values: { 'value:resultKey': 'prefix-[masked]' },
+    redirectUri: 'https://x/?pw=[masked]',
+  })
+})
+
+// protects=a run URI and a 64-hex source hash keep their bytes when a short secret occurs inside them; fails_when=the generated-shape rule masks a Codebook identifier and the answer or saved study breaks; no_claim=every field name that holds an identifier
+test('a codebook run URI and a 64-hex hash keep their bytes around a short secret', () => {
+  // Arrange
+  const runUri =
+    'codebook://instance-1/runs/3f2cafe0-1111-4222-8333-444455556666'
+  const sourceHash = `00beef0${'1'.repeat(57)}`
+  // Act
+  const masked = maskRunSecretsDeep(
+    { runUri, sourceHash, note: 'typed cafe0 and beef0' },
+    new Set(['cafe0', 'beef0']),
+  )
+  // Assert
+  assert.deepEqual(masked, {
+    runUri,
+    sourceHash,
+    note: 'typed [masked] and [masked]',
+  })
+})

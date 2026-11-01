@@ -58,7 +58,7 @@ test('a secret inside a run id keeps runUri and continueArguments and still mask
   // Arrange
   const value = {
     runUri: 'codebook://studies/run-4821-a',
-    sessionId: 's-4821',
+    sessionId: '00004821-aaaa',
     message: 'bad 4821',
     state: {
       continueArguments: {
@@ -73,7 +73,7 @@ test('a secret inside a run id keeps runUri and continueArguments and still mask
   // Assert
   assert.deepEqual(masked, {
     runUri: 'codebook://studies/run-4821-a',
-    sessionId: 's-4821',
+    sessionId: '00004821-aaaa',
     message: 'bad [masked]',
     state: {
       continueArguments: {

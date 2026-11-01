@@ -17,10 +17,17 @@ const GENERATED_VALUE_KEYS: ReadonlySet<string> = new Set([
 const IDENTIFIER_KEY =
   /^(?:id|key|hash|uri)$|(?:Id|Ids|Key|Keys|Hash|Hashes|Uri|Uris)$/
 
+/** Generated shapes of Codebook's own identifiers: hex segments (UUID, run id, `<uuid>_<uuid>` study id, 64-hex hash, `<session>:<generation>` snapshot id; the first segment at least 8 digits), a `codebook://` URI without a query, and a repository item (`repository/<book>/<node>`). */
+const GENERATED_IDENTIFIER_SHAPES: readonly RegExp[] = [
+  /^[0-9a-f]{8,}(?:[-_:][0-9a-f]+)*$/i,
+  /^codebook:\/\/[A-Za-z0-9._~/:#-]+$/,
+  /^repository(?:\/[A-Za-z0-9._-]+){2}$/,
+]
+
 /**
- * Says whether a property holds an identifier Codebook generated, which keeps its bytes when learner secrets are masked.
+ * Says whether a property holds an identifier Codebook may have generated, which keeps its bytes when learner secrets are masked, provided the value has a generated shape.
  *
- * Why it exists: a short secret (`true`, a PIN, `cafe`) also occurs inside a URI, an id or a hash, and masking there makes the answer unusable (`runUri`, `continueArguments`) or fails a saved study's checks, while these fields never hold learner text. It is the one rule of which fields are identifiers; called by {@link maskRunSecretsDeep} for every property it walks.
+ * Why it exists: a short secret (`true`, a PIN, `cafe`) also occurs inside a URI, an id or a hash, and masking there makes the answer unusable (`runUri`, `continueArguments`) or fails a saved study's checks. It is the one rule of which fields are identifiers; called by {@link maskRunSecretsDeep} for every property it walks. Only the name selects the candidates: {@link keepIdentifier} still masks a string under such a name that has no generated shape (an application value such as `redirectUri: 'https://x/?pw=<secret>'` or `resultKey: 'prefix-<secret>'`).
  * @param key - The property name.
  * @param value - The property value.
  * @returns `true` for a generated-value key, or an identifier key holding a string or an array of strings.
@@ -37,18 +44,22 @@ function isGeneratedIdentifier(key: string, value: unknown): boolean {
 }
 
 /**
- * Keeps an identifier's bytes unless it is exactly a secret.
+ * Keeps a Codebook-generated identifier's bytes, and masks every other string under an identifier-shaped key.
  *
- * Why it exists: `{ apiKey: '<secret>' }` is learner text under an identifier-shaped key; only a secret merely inside an identifier is exempt. Called by {@link maskRunSecretsDeep} for each identifier property.
+ * Why it exists: `{ apiKey: '<secret>' }` and `{ redirectUri: 'https://x/?pw=<secret>' }` are application values under identifier-shaped keys; only a value with a generated shape ({@link GENERATED_IDENTIFIER_SHAPES}) that does not equal a secret keeps its bytes. Called by {@link maskRunSecretsDeep} for each identifier property.
  * @param value - A string, an array of strings, or a generated-value object under an identifier key.
  * @param secrets - The run-scoped secret values.
- * @returns The value with each string that equals a secret replaced by the mask; other values unchanged.
+ * @returns A string that equals a secret or has no generated shape is masked like any text; other values unchanged.
  * @example
- * keepIdentifier(['x', 'hunter2'], new Set(['hunter2'])) // => ['x', '[masked]']
+ * keepIdentifier(['0123abcd', 'hunter2'], new Set(['hunter2'])) // => ['0123abcd', '[masked]']
  */
 function keepIdentifier(value: unknown, secrets: ReadonlySet<string>): unknown {
-  if (typeof value === 'string')
-    return secrets.has(value) ? REDACTION_MASK : value
+  if (typeof value === 'string') {
+    if (secrets.has(value)) return REDACTION_MASK
+    return GENERATED_IDENTIFIER_SHAPES.some((shape) => shape.test(value))
+      ? value
+      : maskRunSecrets(value, secrets)
+  }
   if (Array.isArray(value))
     return value.map((entry) => keepIdentifier(entry, secrets))
   // A generated-value key holds an object that is kept whole.
