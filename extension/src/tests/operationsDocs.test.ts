@@ -198,7 +198,7 @@ test('the Error codes table has one anchored row per version 3 code with the aud
   assert.equal(rows.OPTION_NOT_AVAILABLE?.audience, 'chat')
 })
 
-// protects=DX-11: the packaged skill carries each pt1 safety rule; fails_when=a sentence leaves the skill or its version is not 1.0.64; no_claim=how a chat follows the rules
+// protects=DX-11: the packaged skill carries each pt1 safety rule, and (CodeRabbit 2 of pt2) its two answers to OPERATIONS_NOT_CONFIRMED name the details.question each is for; fails_when=a sentence leaves the skill, its version is not 1.0.64, or an answer to OPERATIONS_NOT_CONFIRMED applies to both questions; no_claim=how a chat follows the rules
 test('the bundled skill declares flows as operations, keeps secrets with the learner, claims only shown progress and never repeats unasked', async () => {
   // Arrange
   const skill = await readPackaged('skills', 'codebook', 'SKILL.md')
@@ -219,8 +219,16 @@ test('the bundled skill declares flows as operations, keeps secrets with the lea
   assert.ok(
     paragraph.includes('do not repeat the flow unless the learner asks'),
   )
+  // Each answer to OPERATIONS_NOT_CONFIRMED is tied to its details.question, as the code's recovery is: a declined saved-session dialog is never retried from the chat.
   assert.ok(
-    paragraph.includes('Relay `OPERATIONS_NOT_CONFIRMED` to the learner'),
+    paragraph.includes(
+      'When `OPERATIONS_NOT_CONFIRMED` has `details.question` `secret`, relay it to the learner and ask whether to try again',
+    ),
+  )
+  assert.ok(
+    paragraph.includes(
+      'When `OPERATIONS_NOT_CONFIRMED` has `details.question` `saved-session-operations`, relay it and tell the learner to choose **Review again** in the editor, never ask for that confirmation in the chat or whether to try again',
+    ),
   )
   assert.ok(paragraph.includes('warm a slow route in `before`'))
 })

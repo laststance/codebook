@@ -240,6 +240,44 @@ test('the service announces when a run starts and stops waiting for Review again
   assert.deepEqual(waiting, [receipt.runId, undefined])
 })
 
+// protects=OCR 10: operations confirmed through Review again stay confirmed when the "Operations confirmed" notice cannot be shown (the window is closing); fails_when=reviewSavedSessionOperations leaves the notice's rejection unhandled, which the extension host logs and Node's default unhandled-rejection mode turns into a crash; no_claim=the editor's notification API (a stand-in that rejects)
+test('Review again confirms the operations even when the confirmed notice cannot be shown', async (context) => {
+  // Arrange
+  const { service, receipt, environment } = await startRun(context, {
+    session: 'saved',
+  })
+  const hooks = recordHooks(environment)
+  hooks.answers.push(false, true)
+  environment.noticeOperationsConfirmation = async (notice) => {
+    hooks.notices.push(notice.kind)
+    if (notice.kind === 'confirmed') throw new Error('The window is closing.')
+    return undefined
+  }
+  await errorOf(() =>
+    service.performAction({
+      ...receipt,
+      key: 'op-1',
+      action: OPERATION_ACTION,
+    }),
+  )
+  const unhandled: unknown[] = []
+  const noteUnhandled = (reason: unknown): void => {
+    unhandled.push(reason)
+  }
+  process.on('unhandledRejection', noteUnhandled)
+  context.after(() => {
+    process.off('unhandledRejection', noteUnhandled)
+  })
+  // Act
+  const reviewed = await service.reviewSavedSessionOperations(receipt.runId)
+  // A rejection nobody handles is reported once the microtasks of this turn have run.
+  await new Promise((resolve) => setImmediate(resolve))
+  // Assert
+  assert.equal(reviewed, 'confirmed')
+  assert.deepEqual(hooks.notices, ['declined', 'confirmed'])
+  assert.deepEqual(unhandled, [])
+})
+
 // protects=CEO-S18/ENG-6: a dialog not answered in time is not confirmed, and its later Run answer is ignored and only offers Review again; fails_when=a late answer approves, sends operation 1, or is dropped without a notice; no_claim=the 300 s value (a constant)
 test('a dialog not answered in time is not confirmed, and its later Run answer is ignored and offers Review again', async (context) => {
   // Arrange

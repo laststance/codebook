@@ -16,7 +16,8 @@ export function describeOperationsConfirmationNotice(
   actions: readonly string[]
 } {
   const { repository } = notice
-  const reviewHint = 'Choose Review again to see its operations again.'
+  // The sentences name the button by its label, so they never point at a button the notice does not show.
+  const reviewHint = `Choose ${REVIEW_AGAIN_LABEL} to see its operations again.`
   if (notice.kind === 'confirmed')
     return {
       severity: 'information',
@@ -26,7 +27,7 @@ export function describeOperationsConfirmationNotice(
   const messages = {
     declined: `Operations not confirmed for ${repository}. Nothing was sent and the run is waiting. ${reviewHint}`,
     'timed-out': `Operations not confirmed for ${repository}: the dialog was not answered in time, so nothing was sent and the run is waiting. ${reviewHint}`,
-    'expired-answer': `Operations not confirmed for ${repository}: Codebook had stopped waiting for that dialog, so your answer was not used and nothing was sent. Choose Review again to confirm the operations.`,
+    'expired-answer': `Operations not confirmed for ${repository}: Codebook had stopped waiting for that dialog, so your answer was not used and nothing was sent. Choose ${REVIEW_AGAIN_LABEL} to confirm the operations.`,
   }
   return {
     severity: 'warning',

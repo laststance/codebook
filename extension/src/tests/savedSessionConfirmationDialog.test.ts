@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
+import { resolve } from 'node:path'
 import { test } from 'node:test'
 
+import * as constants from '../constants'
 import type { RepositoryOperation } from '../repositoryConfigSchemas'
 import { createSavedSessionOperationsAsker } from '../utils/createSavedSessionOperationsAsker'
 import { describeOperationsConfirmationNotice } from '../utils/describeOperationsConfirmationNotice'
@@ -8,6 +10,7 @@ import { describeSavedSessionOperations } from '../utils/describeSavedSessionOpe
 import { listSavedSessionOperations } from '../utils/listSavedSessionOperations'
 
 import { defer } from './utils/defer'
+import { loadModule } from './utils/loadModule'
 
 const FOUR_LINES = [
   { index: 1, kind: 'choose', title: 'Customer', value: 'Evil Rabbit' },
@@ -211,4 +214,37 @@ test('the Operations not confirmed notices offer Review again, and the confirmed
       'Operations confirmed for shop. Your AI chat can send them now; ask it to continue if it stopped waiting.',
     actions: [],
   })
+})
+
+// protects=OCR 44: every Operations not confirmed notice tells the learner to choose the button it shows, whatever that button's label is; fails_when=a message hard-codes the label, so a renamed or localized REVIEW_AGAIN_LABEL leaves the notice naming a button that no longer exists; no_claim=how the editor draws the notice
+test('each Operations not confirmed notice names the button it shows, also under another button label', async () => {
+  // Arrange
+  const relabeled = await loadModule<{
+    describeOperationsConfirmationNotice: typeof describeOperationsConfirmationNotice
+  }>(resolve(__dirname, '../utils/describeOperationsConfirmationNotice.js'), {
+    '../constants': { ...constants, REVIEW_AGAIN_LABEL: 'Show operations' },
+  })
+  // Act
+  const notices = (['declined', 'timed-out', 'expired-answer'] as const).map(
+    (kind) =>
+      relabeled.describeOperationsConfirmationNotice({
+        runId: 'r',
+        repository: 'shop',
+        kind,
+      }),
+  )
+  // Assert
+  // The loaded module's arrays belong to its own context: copied, they compare as plain values.
+  assert.deepEqual(
+    notices.map((notice) => [...notice.actions]),
+    [['Show operations'], ['Show operations'], ['Show operations']],
+  )
+  assert.deepEqual(
+    notices.map((notice) => notice.message),
+    [
+      'Operations not confirmed for shop. Nothing was sent and the run is waiting. Choose Show operations to see its operations again.',
+      'Operations not confirmed for shop: the dialog was not answered in time, so nothing was sent and the run is waiting. Choose Show operations to see its operations again.',
+      'Operations not confirmed for shop: Codebook had stopped waiting for that dialog, so your answer was not used and nothing was sent. Choose Show operations to confirm the operations.',
+    ],
+  )
 })

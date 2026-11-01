@@ -5844,11 +5844,14 @@ export class StudyService {
       // The failure was written to Output; the run stays declined.
       return 'declined'
     }
-    this.environment.noticeOperationsConfirmation?.({
-      runId: record.id,
-      repository: basename(this.environment.workspace),
-      kind: 'confirmed',
-    })
+    // The notice only informs: one the editor cannot show (a closing window) leaves the confirmation as it is.
+    void this.environment
+      .noticeOperationsConfirmation?.({
+        runId: record.id,
+        repository: basename(this.environment.workspace),
+        kind: 'confirmed',
+      })
+      .catch(() => undefined)
     return 'confirmed'
   }
 
