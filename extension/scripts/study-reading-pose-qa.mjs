@@ -837,6 +837,49 @@ async function check(page, options, collected) {
     passed:
       new Set(tops.slice(0, 3)).size === 3 && tops[3] === Math.min(...tops),
   })
+  // Value: protects=a fresh page's first replay message places the operation marks on the shown row before the page reports the message rendered, so the host and a case reading the page then see the marks where they stay; fails_when=the marks are placed on the row of no width the still hidden content had (marks 1, 2 and 4 at the row's start on three lines, mark 3 on a fourth, tops 0px|28px|84px|56px) and only the next frame's resize notification moves them; why_new=the case above failed on PR 177's CI and in 1 of 4, 2 of 9 and 1 of 20 local runs when it read the row before that frame; seam=none; no_claim=what the learner sees painted, which the resize observer corrected before the next paint already (stand-ins: the Study messages the host posts)
+  // Arrange: a fresh page whose host stand-in reads the marks in the task that reports a message rendered.
+  await page.goto(options.url)
+  await page.evaluate(() => {
+    window.sent = []
+    window.acquireVsCodeApi = () => ({
+      getState: () => undefined,
+      setState() {},
+      postMessage: (message) => {
+        if (message.type === 'rendered')
+          window.marksAtRendered = [
+            ...document.querySelectorAll('[data-operation-mark]'),
+          ].map((mark) => ({ left: mark.style.left, top: mark.style.top }))
+        window.sent.push(message)
+      },
+    })
+  })
+  await page.setContent(options.html)
+  // Act: the page's first Study message opens the crowded replay; two frames later every resize notification has been handled.
+  await publish(operationReplay(0, { operations: crowded }))
+  await waitUntilRendered(revisionAt(0))
+  const marksAtRendered = await page.evaluate(() => window.marksAtRendered)
+  await page.evaluate(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      ),
+  )
+  const marksAfterFrames = await page.evaluate(() =>
+    [...document.querySelectorAll('[data-operation-mark]')].map((mark) => ({
+      left: mark.style.left,
+      top: mark.style.top,
+    })),
+  )
+  // Assert
+  cases.push({
+    name: 'a fresh page places the crowded operation marks on the shown row before it reports its first replay message rendered',
+    actual: { marksAtRendered, marksAfterFrames },
+    passed:
+      (marksAtRendered ?? []).map((mark) => mark.top).join('|') ===
+        '0px|28px|56px|0px' &&
+      JSON.stringify(marksAtRendered) === JSON.stringify(marksAfterFrames),
+  })
   // Below 480 px the labels hide and the numbers stay.
   await page.setViewportSize({ width: 479, height: 640 })
   await render(operationReplay(0))

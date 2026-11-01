@@ -704,12 +704,13 @@ function studyClient(
         ),
       )
   }
-  // The last input of {@link renderOperationRow}, so a change of the row's width draws the marks again where the new width puts them.
+  // The last input of {@link renderOperationRow} and the rounded row width its marks stand on, so a change of the row's width draws the marks again where the new width puts them.
   let lastOperationRow:
     | {
         recording: NonNullable<StudyViewMessage['recording']>
         isTransportShown: boolean
         selectedHistoryGap: boolean
+        rowWidthPx: number
       }
     | undefined
   /**
@@ -740,7 +741,12 @@ function studyClient(
       return
     }
     const rowWidth = row.getBoundingClientRect().width
-    lastOperationRow = { recording, isTransportShown, selectedHistoryGap }
+    lastOperationRow = {
+      recording,
+      isTransportShown,
+      selectedHistoryGap,
+      rowWidthPx: Math.round(rowWidth),
+    }
     const { places, lineCount } = placeOperationMarks(marks, range, rowWidth)
     row.style.height = `${lineCount * options.operations.lineHeightPx}px`
     const focusedIndex = document.activeElement?.getAttribute(
@@ -1119,21 +1125,26 @@ function studyClient(
     else if (control === 'play' || control === 'pause')
       nodeHistoryPlayback(control)
   }
-  // The marks stand at pixel places of the row's width, which is not known while the pane is hidden and changes with the pane's width.
-  let operationRowWidth = 0
-  new ResizeObserver(() => {
+  /**
+   * Draws the operation marks again when the row is no longer as wide as the width they stand on; called by the row's resize observer when the pane's width changes, and by the Study message handler once the content is shown, before the page reports the message rendered.
+   * A page's first Study message arrives while its content is hidden, so {@link renderOperationRow} measures a row of no width and stacks every mark at the row's start; the resize observer would place them only at the next frame, after the page had reported the message rendered.
+   * @example fitOperationRowToWidth() // marks placed on a hidden row of 0 px are placed again on the shown row's 272 px
+   */
+  const fitOperationRowToWidth = (): void => {
+    // A hidden row keeps no input, so there are no marks to place.
+    if (!lastOperationRow) return
     const width = Math.round(
       element('operation-row').getBoundingClientRect().width,
     )
-    if (width === operationRowWidth) return
-    operationRowWidth = width
-    if (lastOperationRow)
-      renderOperationRow(
-        lastOperationRow.recording,
-        lastOperationRow.isTransportShown,
-        lastOperationRow.selectedHistoryGap,
-      )
-  }).observe(element('operation-row'))
+    if (width === lastOperationRow.rowWidthPx) return
+    renderOperationRow(
+      lastOperationRow.recording,
+      lastOperationRow.isTransportShown,
+      lastOperationRow.selectedHistoryGap,
+    )
+  }
+  // The marks stand at pixel places of the row's width, which changes with the pane's width.
+  new ResizeObserver(fitOperationRowToWidth).observe(element('operation-row'))
   element('previous-operation').addEventListener('click', () => {
     const target = operationStep('previous')
     if (target) seekToOperation(target.index)
@@ -4712,6 +4723,8 @@ function studyClient(
     element('study-content').inert = false
     element('study-content').hidden = false
     element('bootstrap-status').hidden = true
+    // Placed once the content is shown: the row a page's first message drew on was hidden and had no width.
+    fitOperationRowToWidth()
     // Every control is in its state for this message now; a pane without the focus (the learner is in Run and Debug) waits for its next focus event.
     if (document.hasFocus()) payTransportFocus()
     offerClampedTitles()
