@@ -2154,6 +2154,18 @@ export const SECRET_FRAME_MAX_REPLACEMENTS_IN_A_ROW = 5
 /** The name of the page-global record of unsafe intervals that the secret frame observer keeps. */
 export const SECRET_FRAME_OBSERVER_GLOBAL = '__codebookSecretFrameGate'
 
+/**
+ * The fewest milliseconds between two verification requests the secret frame gate sends to the page.
+ * Why 100: the screencast delivers at most about 30 images per second, and one verification answers every image captured before it was sent, so ten a second keep an image's wait for its verdict near 100 ms plus one round trip while the page and the evidence journal see 10 requests a second instead of one per image.
+ */
+export const SECRET_FRAME_MIN_VERIFICATION_INTERVAL_MS = 100
+
+/** How often the secret frame gate journals its counts of verifications, passes, drops and failures (ms); a summary is also written when the run ends. */
+export const SECRET_FRAME_SUMMARY_INTERVAL_MS = 5_000
+
+/** The `sourceURL` the run marks the secret frame gate's own page expressions with, so the script journal leaves them out. */
+export const SECRET_FRAME_SOURCE_URL = 'codebook-secret-frame-gate'
+
 /** The most characters of an incomplete trailing token or private-key block an output redactor holds back; past it the held part is released masked ({@link createOutputRedactor}). 8 KiB. */
 export const OUTPUT_REDACTION_HOLD_LIMIT_CHARS = 8_192
 

@@ -1005,6 +1005,18 @@ export async function configuredRuntimeHarness(
       }
       throw new Error(`Unexpected CDP request: ${method}`)
     },
+    /** The quiet path answers as the journaled one does; only the real Cdp differs in what it journals. */
+    requestQuietly(
+      method: string,
+      parameters?: Record<string, unknown>,
+      timeout?: number,
+    ) {
+      return (
+        this as unknown as {
+          request(m: string, p?: unknown, t?: number): Promise<unknown>
+        }
+      ).request(method, parameters, timeout)
+    },
   }
   const documents = [
     {

@@ -6,6 +6,8 @@
  */
 import {
   SECRET_FRAME_MARGIN_MS,
+  SECRET_FRAME_MIN_VERIFICATION_INTERVAL_MS,
+  SECRET_FRAME_SUMMARY_INTERVAL_MS,
   SECRET_FRAME_MAX_REPLACEMENTS_IN_A_ROW,
   SECRET_FRAME_OBSERVER_GLOBAL,
   SECRET_FRAME_OBSERVER_TIMEOUT_MS,
@@ -31,6 +33,22 @@ type ObserverReport = {
   reason?: SecretFrameFailureReason
 }
 
+/** The gate's counts since its last summary; a journal receives this instead of one event per verification or dropped image. */
+export type SecretFrameGateSummary = {
+  /** When the counted interval began (host clock, ms since the epoch). */
+  sinceMs: number
+  /** When it ended. */
+  untilMs: number
+  /** Verification requests sent to the page. */
+  verifications: number
+  /** Verifications the page did not answer. */
+  failures: number
+  /** Images of an armed gate let through. */
+  passes: number
+  /** Images of an armed or released gate withheld. */
+  drops: number
+}
+
 /** What a consumer of the gate supplies: one way to evaluate an expression in the page. */
 export type SecretFrameGateOptions = {
   /**
@@ -42,6 +60,8 @@ export type SecretFrameGateOptions = {
   onFailure?: (reason: SecretFrameFailureReason) => void
   /** Records a dropped image as an unrecorded gap (the recorder's 4A path). Optional. */
   onDrop?: (detail: { kind: 'frame' | 'capture'; atMs: number }) => void
+  /** Receives the counts of an interval of at least {@link SECRET_FRAME_SUMMARY_INTERVAL_MS}, and the rest on {@link SecretFrameGate.flushSummary}. Optional. */
+  onSummary?: (summary: SecretFrameGateSummary) => void
 }
 
 /**
@@ -273,6 +293,14 @@ export class SecretFrameGate {
   private documentOrigin?: number
   /** How many document replacements were followed without an answer from a new observer between them. */
   private replacementsInRow = 0
+  /** The verification waiting for its send time; every image captured before it is sent joins it and is answered by its report. */
+  private pendingVerification?: Promise<void>
+  /** The verification whose request is on the wire, so no second one is sent meanwhile. */
+  private verificationInFlight?: Promise<void>
+  /** When the last verification request was sent (host clock). */
+  private lastVerificationSentMs = 0
+  private counts = { verifications: 0, failures: 0, passes: 0, drops: 0 }
+  private summarySinceMs = Date.now()
 
   constructor(private readonly options: SecretFrameGateOptions) {}
 
@@ -372,8 +400,12 @@ export class SecretFrameGate {
   ): Promise<'pass' | 'drop'> {
     // Unarmed: nothing secret was sent, every image passes as before, except those of a gap left by a document replacement.
     if (!this.armed) return this.admitUnarmed(fromMs, toMs, kind)
-    // A verification must answer after the capture; one answered earlier is not reused.
-    if (this.lastAnswerMs < toMs + SECRET_FRAME_MARGIN_MS) await this.refresh()
+    // A verification must answer after the capture; one answered earlier is not reused. One that was already on the wire when the image arrived answers an earlier time, so the image asks for the next one.
+    if (this.lastAnswerMs < toMs + SECRET_FRAME_MARGIN_MS) {
+      await this.requestVerification()
+      if (this.lastAnswerMs < toMs && this.failureReason === undefined)
+        await this.requestVerification()
+    }
     // The page loaded a new document while the answer was awaited: the secret control is gone and the image shows the new page, unless it was captured in the gap before the replacement was noticed.
     if (!this.armed) return this.admitUnarmed(fromMs, toMs, kind)
     const safe =
@@ -383,9 +415,73 @@ export class SecretFrameGate {
         fromMs - SECRET_FRAME_MARGIN_MS,
         toMs + SECRET_FRAME_MARGIN_MS,
       )
-    if (safe) return 'pass'
+    if (safe) {
+      this.count('passes')
+      return 'pass'
+    }
     this.options.onDrop?.({ kind, atMs: toMs })
+    this.count('drops')
     return 'drop'
+  }
+
+  /** Adds to a count and journals the interval's summary once it is long enough. */
+  private count(name: keyof SecretFrameGate['counts']): void {
+    this.counts[name] += 1
+    if (Date.now() - this.summarySinceMs >= SECRET_FRAME_SUMMARY_INTERVAL_MS)
+      this.flushSummary()
+  }
+
+  /**
+   * Hands the counts of the interval so far to {@link SecretFrameGateOptions.onSummary}, when anything was counted.
+   * Called by the gate itself on an interval and by the run when it ends, so a short run still journals its counts.
+   * @example gate.flushSummary()
+   */
+  flushSummary(): void {
+    const { verifications, failures, passes, drops } = this.counts
+    if (verifications + failures + passes + drops === 0) return
+    const untilMs = Date.now()
+    this.options.onSummary?.({
+      sinceMs: this.summarySinceMs,
+      untilMs,
+      verifications,
+      failures,
+      passes,
+      drops,
+    })
+    this.summarySinceMs = untilMs
+    this.counts = { verifications: 0, failures: 0, passes: 0, drops: 0 }
+  }
+
+  /**
+   * Returns a verification that is sent after this call: at most one is on the wire, two requests are at least {@link SECRET_FRAME_MIN_VERIFICATION_INTERVAL_MS} apart, and every image asking before the send shares it.
+   * Nothing is sent unless an image asked, so a page with no new image costs no request.
+   */
+  private requestVerification(): Promise<void> {
+    this.pendingVerification ??= this.sendVerification()
+    return this.pendingVerification
+  }
+
+  private async sendVerification(): Promise<void> {
+    // The caller stores this promise before the send time is reached.
+    await Promise.resolve()
+    await this.verificationInFlight
+    const waitMs =
+      this.lastVerificationSentMs +
+      SECRET_FRAME_MIN_VERIFICATION_INTERVAL_MS -
+      Date.now()
+    if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs))
+    // From here on an image asking needs a verification sent after it.
+    this.pendingVerification = undefined
+    this.lastVerificationSentMs = Date.now()
+    this.counts.verifications += 1
+    const flight = this.refresh()
+    this.verificationInFlight = flight
+    try {
+      await flight
+    } finally {
+      if (this.verificationInFlight === flight)
+        this.verificationInFlight = undefined
+    }
   }
 
   /** Passes an image of a gate that is not (or no longer) armed unless it overlaps a gap no observer verified. */
@@ -544,6 +640,7 @@ export class SecretFrameGate {
 
   /** Stops capture for the rest of the run from `fromMs` on and reports the failure once. */
   private fail(reason: SecretFrameFailureReason, fromMs: number): void {
+    if (reason === 'observer-unanswered') this.counts.failures += 1
     this.failureReason ??= reason
     this.firstUnsafeMs = Math.min(this.firstUnsafeMs ?? Infinity, fromMs)
     if (this.failureReported) return

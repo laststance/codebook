@@ -9,6 +9,8 @@ interface PendingRequest {
   reject: (error: Error) => void
   timer: ReturnType<typeof setTimeout>
   delayMs: number
+  /** Whether a success is left out of the journal ({@link Cdp.requestQuietly}). */
+  quiet: boolean
 }
 type WireResponse = {
   id?: number
@@ -91,6 +93,20 @@ export class Cdp {
     >
   }
 
+  /**
+   * Sends a schema-typed request like {@link Cdp.request} but writes no `cdp.sent` or `cdp.response` journal event for a success, for a caller whose requests are too frequent for the evidence journal (the secret frame gate's verifications, which it summarises itself). Timeouts, send failures and error responses are still journaled.
+   * @example await cdp.requestQuietly('Runtime.evaluate', { expression: '1' }, 2_000)
+   */
+  requestQuietly<Method extends keyof ProtocolMapping.Commands>(
+    method: Method,
+    params: ProtocolMapping.Commands[Method]['paramsType'][0],
+    timeoutMs = ACTIVE_TIMEOUT_MS,
+  ): Promise<ProtocolMapping.Commands[Method]['returnType']> {
+    return this.send(method, params, timeoutMs, 0, true) as Promise<
+      ProtocolMapping.Commands[Method]['returnType']
+    >
+  }
+
   /** Enables event forwarding on js-debug's existing debugger owner. @example await cdp.subscribe(['Debugger.paused']) */
   async subscribe(events: string[]): Promise<void> {
     if (this.closed) throw new Error('CDP disconnected')
@@ -141,6 +157,7 @@ export class Cdp {
     params: unknown,
     timeoutMs = ACTIVE_TIMEOUT_MS,
     delayMs = 0,
+    quiet = false,
   ): Promise<unknown> {
     if (this.closed) return Promise.reject(new Error('CDP disconnected'))
     const id = ++this.nextId
@@ -150,11 +167,11 @@ export class Cdp {
         this.log('cdp.timeout', { id, method, timeoutMs })
         reject(new Error(`CDP ${method} timed out`))
       }, timeoutMs)
-      this.pending.set(id, { method, resolve, reject, timer, delayMs })
+      this.pending.set(id, { method, resolve, reject, timer, delayMs, quiet })
       if (method === 'Page.screencastFrameAck' && this.streamTelemetry) {
         this.streamTelemetry.sent++
         this.flushStreamTelemetry()
-      } else this.log('cdp.sent', { id, method })
+      } else if (!quiet) this.log('cdp.sent', { id, method })
       try {
         this.socket.send(JSON.stringify({ id, method, params }))
       } catch {
@@ -181,7 +198,7 @@ export class Cdp {
     ) {
       this.streamTelemetry.responses++
       this.flushStreamTelemetry()
-    } else
+    } else if (!pending.quiet || message.error)
       this.log('cdp.response', {
         id: message.id,
         method: pending.method,

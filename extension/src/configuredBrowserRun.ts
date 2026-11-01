@@ -50,6 +50,7 @@ import {
   REPOSITORY_STOP_MODULE_JOURNAL_LIMIT,
   REPOSITORY_RUN_TIMEOUT_MS,
   REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT,
+  SECRET_FRAME_SOURCE_URL,
   REPOSITORY_SETUP_TIMEOUT_MS,
   VITE_PAGE_GENERATION_LIMIT,
   VITE_SETUP_STEPS,
@@ -588,15 +589,20 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    */
   readonly secretFrameGate = new SecretFrameGate({
     evaluate: async (expression, timeoutMs) => {
-      const answer = await this.requireCdp().request(
+      // Quiet, and marked: the gate's many queries are neither journaled one by one nor listed as observed scripts; it journals its own summary.
+      const answer = await this.requireCdp().requestQuietly(
         'Runtime.evaluate',
-        { expression, returnByValue: true },
+        {
+          expression: `${expression}\n//# sourceURL=${SECRET_FRAME_SOURCE_URL}`,
+          returnByValue: true,
+        },
         timeoutMs,
       )
       return answer.result.value
     },
     onFailure: (reason) => this.failSecretVisible(reason),
-    onDrop: (detail) => this.evidence.record('secret-frame.dropped', detail),
+    onSummary: (summary) =>
+      this.evidence.record('secret-frame.summary', summary),
   })
   /** Where each prepared text stands; the real texts never leave {@link definition}'s memory. */
   private readonly preparedStates: PreparedTextState[] = []
@@ -4175,6 +4181,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     let observedScripts = 0
     cdp.on('Debugger.scriptParsed', (event) => {
+      // The secret frame gate's own expressions are no page script: not listed, not bound.
+      if (event.url === SECRET_FRAME_SOURCE_URL) return
       // The journal lists only the first scripts; a pause in a later one still needs its URL.
       participant.scriptUrls.set(event.scriptId, event.url)
       if (observedScripts++ < REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT)
@@ -8556,6 +8564,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       clearTimeout(this.transientBrowserPause.timer)
       this.transientBrowserPause = undefined
     }
+    // The gate's last counts are journaled once, with the run's other closing facts.
+    this.secretFrameGate.flushSummary()
     this.cleaning = true
     this.abort.abort()
     this.continuation = undefined

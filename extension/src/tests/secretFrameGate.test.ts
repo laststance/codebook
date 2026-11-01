@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
-import { test, type TestContext } from 'node:test'
+import { mock, test, type TestContext } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 
+import { Cdp } from '../runtimeSupport/cdp'
 import {
   SecretFrameGate,
   type SecretFrameFailureReason,
@@ -589,6 +590,8 @@ test('after a navigation the typed value is still watched: frames pass while it 
   // Act
   // The first image after the navigation finds the replacement and is held (the time before it was never verified); the next one is verified.
   await gate.admitFrame(Date.now())
+  // Not in the millisecond the gap ended in, which the gate treats as inside it.
+  await delay(5)
   const before = await gate.admitFrame(Date.now())
   await page.evaluate(
     `document.getElementById('welcome').textContent = 'Welcome, typed-secret'`,
@@ -620,4 +623,168 @@ test('a new document that shows the typed value in a plain control drops frames 
   const verdict = await gate.admitFrame(Date.now() - 20)
   // Assert
   assert.deepEqual([verdict, failures], ['drop', ['control-replaced']])
+})
+
+/** A socket that answers every `Runtime.evaluate` as a healthy page of the fake clock would, so the real {@link Cdp} sits between the gate and the page. */
+class AnsweringSocket extends EventTarget {
+  evaluations = 0
+  /** Since when the fake page's control draws its text, or `null` while it is a password control. */
+  openSince: number | null = null
+  send(value: string | ArrayBufferLike | Blob | ArrayBufferView): void {
+    const message = JSON.parse(String(value)) as {
+      id: number
+      params: { expression: string }
+    }
+    this.evaluations += 1
+    const { expression } = message.params
+    let answer: unknown = { ok: true, origin: 1 }
+    if (expression.includes('query()'))
+      answer = { now: Date.now(), open: this.openSince, unsafe: [] }
+    queueMicrotask(() =>
+      this.dispatchEvent(
+        new MessageEvent('message', {
+          data: JSON.stringify({
+            id: message.id,
+            result: { result: { value: answer } },
+          }),
+        }),
+      ),
+    )
+  }
+  close(): void {}
+}
+
+/** Lets promise chains and the fake socket's microtasks settle without moving the fake clock. */
+const settleMicrotasks = (): Promise<void> =>
+  new Promise((resolve) => setImmediate(resolve))
+
+/** An armed gate over a real {@link Cdp} (quiet requests, as the run sends them) and a fake page, with every journaled event counted. */
+async function gateOverCdp() {
+  const socket = new AnsweringSocket()
+  const journal: string[] = []
+  const cdp = new Cdp(socket, (type) => void journal.push(type))
+  const summaries: { verifications: number; passes: number; drops: number }[] =
+    []
+  const gate = new SecretFrameGate({
+    evaluate: async (expression, timeoutMs) => {
+      const answer = await cdp.requestQuietly(
+        'Runtime.evaluate',
+        { expression, returnByValue: true },
+        timeoutMs,
+      )
+      return answer.result.value
+    },
+    onSummary: (summary) => {
+      summaries.push(summary)
+      journal.push('secret-frame.summary')
+    },
+  })
+  await gate.arm('#pw', 'typed-secret')
+  return { socket, cdp, gate, journal, summaries }
+}
+
+// protects=a run with the gate armed through five minutes of 30 frames per second and a learning pause stays far below the evidence journal's 10,000 events, sends no verification while no image is captured, and passes every safe frame; fails_when=the gate sends and journals one verification per frame (the native trial's journal filled in about a minute and failed the run); no_claim=a real page and a real clock (the fake clock and a fake socket stand in), the journal's own limit (events are counted here)
+test('an armed gate over five minutes of frames and a pause journals few events and sends no verification while paused', async () => {
+  // Arrange
+  mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1_000_000 })
+  const { socket, cdp, gate, journal, summaries } = await gateOverCdp()
+  const verdicts: Promise<'pass' | 'drop'>[] = []
+  let evaluationsWhenPauseBegan = 0
+  let evaluationsWhenPauseEnded = 0
+  // Act
+  for (let frame = 0; frame < 9_000; frame += 1) {
+    // The learning pause: no frame arrives for 60 s.
+    if (frame === 3_000) {
+      // The verification owed to the last frames is sent before the pause is measured.
+      mock.timers.tick(200)
+      await settleMicrotasks()
+      evaluationsWhenPauseBegan = socket.evaluations
+      mock.timers.tick(60_000)
+      await settleMicrotasks()
+      evaluationsWhenPauseEnded = socket.evaluations
+    }
+    verdicts.push(gate.admitFrame(Date.now()))
+    mock.timers.tick(33)
+    await settleMicrotasks()
+  }
+  mock.timers.tick(200)
+  await settleMicrotasks()
+  gate.flushSummary()
+  const results = await Promise.all(verdicts)
+  mock.timers.reset()
+  cdp.close()
+  // Assert
+  assert.equal(results.filter((verdict) => verdict === 'pass').length, 9_000)
+  assert.equal(gate.failure, undefined)
+  assert.equal(evaluationsWhenPauseEnded - evaluationsWhenPauseBegan, 0)
+  assert.equal(journal.filter((type) => type.startsWith('cdp.')).length, 0)
+  assert.ok(journal.length < 500, `journal held ${journal.length} events`)
+  assert.ok(
+    socket.evaluations < 3_200,
+    `${socket.evaluations} page requests for 9,000 frames`,
+  )
+  assert.equal(
+    summaries.reduce((total, summary) => total + summary.passes, 0),
+    9_000,
+  )
+})
+
+// protects=verifications are spaced at least the minimum interval apart however fast frames arrive, and none is sent once frames stop; fails_when=a verification is sent per frame, or the gate keeps asking the page while nothing was captured; no_claim=real timing (fake clock and socket)
+test('verification requests stay within the minimum interval under a burst of frames and stop when frames stop', async () => {
+  // Arrange
+  mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 2_000_000 })
+  const { socket, cdp, gate } = await gateOverCdp()
+  const installs = socket.evaluations
+  // Act
+  for (let tick = 0; tick < 200; tick += 1) {
+    void gate.admitFrame(Date.now())
+    mock.timers.tick(5)
+    await settleMicrotasks()
+  }
+  mock.timers.tick(200)
+  await settleMicrotasks()
+  const afterBurst = socket.evaluations - installs
+  mock.timers.tick(30_000)
+  await settleMicrotasks()
+  const afterQuiet = socket.evaluations - installs
+  mock.timers.reset()
+  cdp.close()
+  // Assert
+  assert.equal(afterBurst <= 12, true, `${afterBurst} requests in one second`)
+  assert.equal(afterQuiet, afterBurst)
+})
+
+// protects=frames captured while the control draws its text are still dropped when verifications are shared and spaced, and earlier frames pass; fails_when=sharing a verification lets an unsafe frame through or drops a safe one; no_claim=a real page (a fake page reports the unsafe time)
+test('frames from the time the control draws its text are dropped and earlier frames pass under shared verifications', async () => {
+  // Arrange
+  mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 3_000_000 })
+  const { socket, cdp, gate } = await gateOverCdp()
+  const startedAt = Date.now()
+  const outcomes: { atMs: number; verdict: 'pass' | 'drop' }[] = []
+  // Act
+  for (let frame = 0; frame < 100; frame += 1) {
+    const atMs = Date.now() - startedAt
+    if (atMs >= 2_000 && socket.openSince === null)
+      socket.openSince = Date.now()
+    void gate
+      .admitFrame(Date.now())
+      .then((verdict) => outcomes.push({ atMs, verdict }))
+    mock.timers.tick(33)
+    await settleMicrotasks()
+  }
+  mock.timers.tick(500)
+  await settleMicrotasks()
+  mock.timers.reset()
+  cdp.close()
+  // Assert
+  assert.equal(
+    outcomes.filter((o) => o.atMs < 1_900 && o.verdict === 'drop').length,
+    0,
+  )
+  assert.equal(
+    outcomes.filter((o) => o.atMs >= 2_000 && o.verdict === 'pass').length,
+    0,
+  )
+  assert.equal(outcomes.length, 100)
+  assert.equal(gate.failure, 'control-not-password')
 })
