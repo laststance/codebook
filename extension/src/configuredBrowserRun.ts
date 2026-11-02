@@ -554,7 +554,12 @@ type DebugParticipant = {
     resumedByRun?: PreparedStop
   }
   /** A pause in one of React's server copies of a declared module (`about://React/Server/…`), kept apart until its `stopped` arrives and the run decides whether it is at an owned stop's position (F1). */
-  copyPause?: { event: Protocol.Debugger.PausedEvent; journaled: boolean }
+  copyPause?: {
+    event: Protocol.Debugger.PausedEvent
+    journaled: boolean
+    /** Gives the pause back to normal admission when no `stopped` arrives within {@link SERVER_RENDER_CLASSIFICATION_MS}. */
+    timer?: ReturnType<typeof setTimeout>
+  }
   /** The runtime is paused for its own instrumentation (a source map being read); it is no stop and no adapter breakpoint, but completion waits for its resume. */
   instrumentationPaused?: boolean
   /** A stack refresh announced while the accepted stop's own pause was still awaited or had been adopted: {@link ConfiguredBrowserRun.inspect} judges that stop, so the refresh's re-announced stop is consumed without a check of its own. */
@@ -711,7 +716,6 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private mainFrameUrl?: string
   /** The entry route's URL pattern, read once ({@link entryRoutePattern}). */
   private entryPattern?: string
-  private entryPatternRead = false
   /** Set when the hit being published was attributed `unconfirmed`. */
   private unconfirmedHit = false
   /** The continuation receipt of the last entry-render pause, shown while no operation exists to hold it. */
@@ -1189,6 +1193,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     await this.capture('before')
     this.alive()
     clearTimeout(this.progressTimer)
+    // A cancelled deadline leaves no bound for {@link restoreActiveBound} to re-arm.
+    this.activeBound = undefined
     this.status = 'ready'
     await this.persist()
     // A run that declares no operation sends no input: the entry page, its pauses and the run-level after conditions are the whole run.
@@ -1735,6 +1741,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     if (this.cleaning) return
     const verdict = await this.unexpectedHitVerdict(session, event)
+    if (verdict === 'gone') return
     if (verdict) {
       await this.resumeUnexpectedHit(session, event, verdict)
       return
@@ -1744,11 +1751,48 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Keeps a React copy pause apart until its `stopped` arrives, and bounds the wait: when no `stopped` comes within {@link SERVER_RENDER_CLASSIFICATION_MS} the pause goes back to normal admission instead of waiting for the run's deadline.
+   * Called by {@link admitPause} for a pause in React's copy of a declared module.
+   * @param event - The paused event.
+   * @param journaled - Whether the pause's observation was journaled.
+   * @example this.holdCopyPause(event, true)
+   */
+  private holdCopyPause(
+    event: Protocol.Debugger.PausedEvent,
+    journaled: boolean,
+  ): void {
+    const participant = this.participants.server
+    this.dropCopyPause()
+    const held: NonNullable<DebugParticipant['copyPause']> = {
+      event,
+      journaled,
+    }
+    held.timer = setTimeout(() => {
+      // Only the pause still held is given back; one the adapter resumed or the run decided on is gone.
+      if (participant.copyPause !== held || this.cleaning) return
+      participant.copyPause = undefined
+      this.admitPause('server', event, journaled, true)
+    }, SERVER_RENDER_CLASSIFICATION_MS)
+    participant.copyPause = held
+  }
+
+  /**
+   * Forgets the held React copy pause and its bound timer.
+   * Called wherever the copy pause is resolved: resumed by the run, given back, or resumed by the adapter itself.
+   * @example this.dropCopyPause()
+   */
+  private dropCopyPause(): void {
+    const participant = this.participants.server
+    clearTimeout(participant.copyPause?.timer)
+    participant.copyPause = undefined
+  }
+
+  /**
    * Decides whether the pause behind a `stopped` is a hit the run resumes: React's copy at an owned stop's position, or a repeat of a stop that already paused.
    * A copy elsewhere is given back to the pause intake as the held pause it would have been.
    * @param session - The server session.
    * @param event - The `stopped` event, whose thread the stack is read for.
-   * @returns The resume verdict, or `undefined` for every other pause.
+   * @returns The resume verdict, `'gone'` when the adapter resumed the copy meanwhile, or `undefined` for every other pause.
    * @example await this.unexpectedHitVerdict(session, event) // { action: 'resume', event: 'breakpoint.react-copy' }
    */
   private async unexpectedHitVerdict(
@@ -1759,16 +1803,19 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         ServerRenderHitVerdict,
         { event: 'breakpoint.react-copy' | 'breakpoint.repeat-hit' }
       >
+    | 'gone'
     | undefined
   > {
     const participant = this.participants.server
     const copy = participant.copyPause
     if (copy) {
-      if (await this.isAtOwnedStopPosition(session, event))
-        return { action: 'resume', event: 'breakpoint.react-copy' }
+      const isOwned = await this.isAtOwnedStopPosition(session, event)
+      // The adapter may have resumed the copy while the stack was read: nothing is paused, so nothing is resumed or admitted.
+      if (participant.copyPause !== copy) return 'gone'
+      if (isOwned) return { action: 'resume', event: 'breakpoint.react-copy' }
       // Not at a stop of this run: today's handling, as if the pause had come to the intake plainly.
-      participant.copyPause = undefined
-      this.admitPause('server', copy.event, copy.journaled)
+      this.dropCopyPause()
+      this.admitPause('server', copy.event, copy.journaled, true)
       return undefined
     }
     const held = participant.unannouncedPause
@@ -1803,6 +1850,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): Promise<boolean> {
     const threadId = event.body?.threadId
     if (!Number.isInteger(threadId)) return false
+    // A pause for another reason (a step, an exception, a `debugger` statement) is nobody's copy of an owned breakpoint.
+    if (event.body?.reason !== 'breakpoint') return false
     try {
       const stack: DebugProtocol.StackTraceResponse['body'] =
         await awaitResponse(
@@ -1823,11 +1872,30 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           stop.participant === 'server' &&
           this.armedStops.has(stop) &&
           resolve(stop.bundle.sourcePath) === framePath &&
-          frame.line === (stop.bound?.line ?? stop.armed.line),
+          this.isFrameAtOwnedPlace(session, stop, frame),
       )
     } catch {
       return false
     }
+  }
+
+  /**
+   * Tells whether a copy's top frame is at the place a stop is bound to, line and column: the run's binding, else the place its breakpoint verified, else the requested one.
+   * Called by {@link isAtOwnedStopPosition}, so another statement of the same line is not taken for the owned stop.
+   * @param session - The server session.
+   * @param stop - The armed stop.
+   * @param frame - The paused top frame.
+   * @returns `true` when line and column both match.
+   * @example this.isFrameAtOwnedPlace(session, stop, { line: 1, column: 10 }) // false for a stop bound at 1:1
+   */
+  private isFrameAtOwnedPlace(
+    session: vscode.DebugSession,
+    stop: PreparedStop,
+    frame: { line: number; column: number },
+  ): boolean {
+    const place =
+      stop.bound ?? stop.breakpoint?.verifiedPlace(session) ?? stop.armed
+    return frame.line === place.line && frame.column === place.column
   }
 
   /**
@@ -1844,7 +1912,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): Promise<void> {
     const participant = this.participants.server
     this.journalResumedHit(verdict)
-    participant.copyPause = undefined
+    this.dropCopyPause()
     participant.unannouncedPause = undefined
     await this.sendOwnedResume(session, event.body?.threadId)
     this.openCausalWindow('server')
@@ -1919,9 +1987,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       renderedRoute,
       entryPattern,
       browserOnEntryRoute:
-        entryPattern !== undefined &&
-        this.mainFrameUrl !== undefined &&
-        isBrowserOnEntryRoute(this.mainFrameUrl, entryPattern),
+        // During the entry load the main frame may not have committed before a pre-flush pause: the browser is then on its way to the entry route.
+        (this.entryLoad !== undefined && this.mainFrameUrl === undefined) ||
+        (entryPattern !== undefined &&
+          this.mainFrameUrl !== undefined &&
+          isBrowserOnEntryRoute(this.mainFrameUrl, entryPattern)),
       group: afterOperationOf(stop) ?? 0,
     })
   }
@@ -1958,20 +2028,22 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       return typeof answer?.result === 'string' ? answer.result : undefined
     })().catch(() => undefined)
     let timer: ReturnType<typeof setTimeout> | undefined
+    let onAbort: (() => void) | undefined
     const bound = new Promise<undefined>((resolve) => {
       timer = setTimeout(
         () => resolve(undefined),
         SERVER_RENDER_CLASSIFICATION_MS,
       )
       // A stop of the run ends the read as well; the caller then finds the run ending.
-      this.abort.signal.addEventListener('abort', () => resolve(undefined), {
-        once: true,
-      })
+      onAbort = (): void => resolve(undefined)
+      this.abort.signal.addEventListener('abort', onAbort, { once: true })
     })
     try {
       return renderedRouteOf(await Promise.race([read, bound]))
     } finally {
       clearTimeout(timer)
+      // The listener must not outlive the read: a long render classifies many hits on one signal.
+      if (onAbort) this.abort.signal.removeEventListener('abort', onAbort)
     }
   }
 
@@ -1981,8 +2053,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @example await this.entryRoutePattern() // '/dashboard'
    */
   private async entryRoutePattern(): Promise<string | undefined> {
-    if (this.entryPatternRead) return this.entryPattern
-    this.entryPatternRead = true
+    // Only a successful read is kept: a transient failure is retried on a later hit.
+    if (this.entryPattern !== undefined) return this.entryPattern
     try {
       const manifest = z
         .record(z.string(), z.string())
@@ -4204,8 +4276,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     stop: PreparedStop,
     place: { line: number; column: number },
   ): void {
+    // `expectedStopFor` reorders `this.stops`, so "earlier" is the declared order, not the array position.
     const earlier = this.stops
-      .slice(0, stop.declaredIndex)
+      .filter((candidate) => candidate.declaredIndex < stop.declaredIndex)
       .find(
         (candidate) =>
           this.isDeclaredElsewhereInFile(candidate, stop) &&
@@ -6049,6 +6122,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @param name - The participant whose runtime paused.
    * @param event - The pause as the runtime reported it.
    * @param journaled - Whether the pause's observation was journaled; a held pause past the journal's cap is only counted when it is retired.
+   * @param isReturnedCopy - Whether the pause is a React copy that {@link unexpectedHitVerdict} gives back to normal admission; it skips the copy detection.
    * @example
    * ```ts
    * this.admitPause('server', event) // a pause in getUser while auth.ts:23 is expected is held, not failed
@@ -6058,9 +6132,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     name: Participant,
     event: Protocol.Debugger.PausedEvent,
     journaled = true,
+    isReturnedCopy = false,
   ): void {
-    // A pause in React's copy of a declared module waits for its `stopped`, which decides whether it is at an owned stop's position (F1).
+    // A pause in React's copy of a declared module waits for its `stopped`, which decides whether it is at an owned stop's position (F1); a copy given back by {@link unexpectedHitVerdict} is not held again.
     if (
+      !isReturnedCopy &&
       name === 'server' &&
       this.rendersServerStops() &&
       isReactServerCopyUrl(
@@ -6069,7 +6145,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         ),
       )
     ) {
-      this.participants.server.copyPause = { event, journaled }
+      this.holdCopyPause(event, journaled)
       return
     }
     // A participant pauses once at a time; a second pause before the first one's resume is nobody's declared stop.
@@ -6149,6 +6225,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     return Boolean(
       participant.stopped ||
       participant.unannouncedPause ||
+      participant.copyPause ||
       this.pendingCdpStop?.participant === name,
     )
   }
@@ -6395,9 +6472,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /** Lists where each participant is still paused with no announced stop, server first, for the text of a deadline that expires meanwhile. A page pause the run itself is resuming is left out: a stop announced it, and the deadline's text names it with what became of that resume ({@link withPagePauseUnderResume}). @example this.unannouncedPausePlaces() // [{ participant: 'server', place: 'auth.ts:18' }] */
   private unannouncedPausePlaces(): UnannouncedPausePlace[] {
     return (['server', 'browser'] as const).flatMap((name) => {
-      const held = this.participants[name].unannouncedPause
-      return held && !held.resumedByRun
-        ? [{ participant: name, place: this.placeOf(name, held.event) }]
+      const participant = this.participants[name]
+      const held = participant.unannouncedPause
+      if (held && !held.resumedByRun)
+        return [{ participant: name, place: this.placeOf(name, held.event) }]
+      // A React copy pause awaiting its `stopped` is a pause nobody announced either.
+      return participant.copyPause
+        ? [
+            {
+              participant: name,
+              place: this.placeOf(name, participant.copyPause.event),
+            },
+          ]
         : []
     })
   }
@@ -6415,6 +6501,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private holdsNoUnannouncedPause(): boolean {
     return (
       !this.participants.server.unannouncedPause &&
+      !this.participants.server.copyPause &&
       !this.participants.browser.unannouncedPause
     )
   }
@@ -7323,6 +7410,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.moveForward(record, { state: 'done' })
     this.logOperation(index, 'info', `done (${record.effect})`)
     clearTimeout(this.progressTimer)
+    // A cancelled deadline leaves no bound for {@link restoreActiveBound} to re-arm.
+    this.activeBound = undefined
     this.status = 'ready'
     await this.persist()
   }
@@ -8389,7 +8478,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     // A copy hit the adapter resumed by itself before the run decided on it.
     if (participant.copyPause) {
-      participant.copyPause = undefined
+      this.dropCopyPause()
       this.journalUnheldResume(name, pausedForMs, isPauseOnlyCounted)
       return
     }
@@ -9078,10 +9167,6 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       await this.resumeClassifiedHit(stop, pause, verdict)
       return
     }
-    if (verdict) {
-      this.pausedRenderStops.add(stop)
-      this.unconfirmedHit = verdict.attribution === 'unconfirmed'
-    }
     stopped.generation = pause.generation
     // Where the program stands in the generated module: the place of a binding first known now, and the column of one the editor answers without.
     const pausedAt = stopped.event.callFrames[0]?.location
@@ -9190,6 +9275,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           status: 'failed',
           error: inspectionFailure.message,
         }
+    }
+    // The classified hit counts only once its pause is committed: a recoverable inspect failure above leaves a later genuine hit of the stop a first hit.
+    if (verdict) {
+      this.pausedRenderStops.add(stop)
+      this.unconfirmedHit = verdict.attribution === 'unconfirmed'
     }
     const receipt = this.evidence.record('snapshot.committed', {
       snapshotId: `${pause.sessionId}:${pause.generation}`,
@@ -9569,6 +9659,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.savingCompletion = true
     // A completed run has no deadline left: neither its phase's nor its whole-run deadline may fail it while it waits for its release.
     clearTimeout(this.progressTimer)
+    // A cancelled deadline leaves no bound for {@link restoreActiveBound} to re-arm.
+    this.activeBound = undefined
     clearTimeout(this.runTimer)
     this.evidence.record('screen.observed', {
       snapshotId: this.snapshot!.id,
@@ -10457,6 +10549,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       participant.gate.invalidate()
     this.browser.resumeViewport()
     clearTimeout(this.progressTimer)
+    // A cancelled deadline leaves no bound for {@link restoreActiveBound} to re-arm.
+    this.activeBound = undefined
     clearTimeout(this.runTimer)
     this.options.control?.signal.removeEventListener('abort', this.cancel)
     if (!['failed', 'completed'].includes(this.status))
@@ -10596,6 +10690,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       'Repository pause hold deadline exceeded',
     )
     this.holdingPause = true
+    this.activeBound = undefined
   }
   /** Applies the current active/hold/setup budget independently from the pending input's whole-run protocol timeout; an expiry while a participant is paused with no announced stop also says where. A reason given as a function is read at expiry, for a text that depends on what is known only then. Every deadline started here is no pause hold; {@link holdPauseDeadline} marks the one that is. @example this.progressDeadline(ACTIVE_TIMEOUT_MS, 'after timed out') */
   private progressDeadline(

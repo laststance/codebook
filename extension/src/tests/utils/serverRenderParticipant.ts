@@ -151,7 +151,10 @@ export function createServerParticipant(parts: ServerParticipantParts) {
           throw new Error(`Unexpected server evaluate: ${request.expression}`)
         const hit = request.frameId ?? currentHit
         routeReads.push(hit)
-        return answerRoute(routes.get(hit) ?? parts.defaultRoute)
+        // A per-hit `null` is an unreadable route; only an unset hit takes the default.
+        return answerRoute(
+          routes.has(hit) ? routes.get(hit)! : parts.defaultRoute,
+        )
       }
       if (command === 'continue') return answerContinue(arguments_)
       throw new Error(`Unexpected server DAP command: ${command}`)
