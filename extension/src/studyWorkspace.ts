@@ -444,6 +444,7 @@ import {
   type LearnersChoice,
   sameLearnersChoiceTarget,
 } from './utils/sameLearnersChoiceTarget'
+import { sameTabTarget } from './utils/sameTabTarget'
 import { type CauseRoots, sanitizeCause } from './utils/sanitizeCause'
 import { sanitizedStack } from './utils/sanitizedStack'
 import { sanitizeNodeTestHistory } from './utils/sanitizeNodeTestHistory'
@@ -3692,9 +3693,10 @@ export class StudyWorkspace {
 
   /**
    * Brings a tab that is no text file to the front of its group again and focuses that group, so a learner's choice a late show covered is back; called by {@link returnDisplacedCapturedSourceThenAdmit}.
-   * The tab is looked up again by its kind of input and label, since the editor may have replaced its objects; the editor's numbered command (first nine tabs of the active group) reveals it.
+   * The tab is looked up again in its group, since the editor may have replaced its objects: the same object first, then the tab that shows the same thing ({@link sameTabTarget}: kind of input, label and the resource or view it names, so another tab of the same label is not taken for it). The editor's numbered command (first nine tabs of the active group) reveals it.
+   * Nothing is run for a group that is gone or that the editor's numbered commands do not count: Cursor's focus commands count the groups of the main editor only and open a new empty group for the column after its last one ({@link placeOfRememberedGroup}). After the focus command the group must be the active one, else the numbered command would switch the front tab of whatever group is active.
    * @param choice - The group's column and the tab the learner chose.
-   * @returns `true` when the tab is in front of its group and the group is focused; `false` when the editor has no focus command for the group (a column beyond its eighth: the numbered tab command would then act on whatever group is active, so nothing is run) or the tab cannot be revealed by number.
+   * @returns `true` when the tab is in front of its group and the group is focused; `false` when the group is gone, lies outside the main editor or is not known to lie in it, the editor has no focus command for it (a column beyond its eighth), the focus command did not make it the active group, or the tab cannot be revealed by number.
    * @example await this.reactivateNonTextTab({ column: 2, tab }) // => true
    */
   private async reactivateNonTextTab(choice: {
@@ -3702,20 +3704,36 @@ export class StudyWorkspace {
     tab?: vscode.Tab
   }): Promise<boolean> {
     const focusCommand = focusEditorGroupCommand(choice.column)
-    if (!focusCommand) return false
+    const groupAtColumn = (): vscode.TabGroup | undefined =>
+      vscode.window.tabGroups.all.find(
+        (candidate) => candidate.viewColumn === choice.column,
+      )
+    const groupBefore = groupAtColumn()
+    // A closed group, or one the numbered focus commands do not count (another editor part's), gets no command: for Cursor's chat group it would open a new empty group in the Study grid.
+    if (
+      !focusCommand ||
+      !choice.tab ||
+      !groupBefore ||
+      (await this.placeOfRememberedGroup(groupBefore)) !== choice.column
+    )
+      return false
     await this.executeEditorCommand(focusCommand)
-    const group = vscode.window.tabGroups.all.find(
-      (candidate) => candidate.viewColumn === choice.column,
-    )
-    if (group?.activeTab?.label === choice.tab?.label) return true
-    const index = group?.tabs.findIndex(
-      (candidate) =>
-        candidate === choice.tab ||
-        (candidate.label === choice.tab?.label &&
-          candidate.input?.constructor === choice.tab?.input?.constructor),
-    )
+    // The numbered tab command acts on the active group: only a group the focus command made active may get it.
+    if (vscode.window.tabGroups.activeTabGroup.viewColumn !== choice.column)
+      return false
+    const group = groupAtColumn()
+    if (!group) return false
+    if (sameTabTarget(group.activeTab, choice.tab)) return true
+    // The very tab first, then the one that shows the same thing.
+    const sameObjectIndex = group.tabs.indexOf(choice.tab)
+    const index =
+      sameObjectIndex >= 0
+        ? sameObjectIndex
+        : group.tabs.findIndex((candidate) =>
+            sameTabTarget(candidate, choice.tab),
+          )
     // The editor numbers the first nine tabs of a group only; a tab is counted from 1.
-    const tabNumber = index === undefined ? 0 : index + 1
+    const tabNumber = index + 1
     if (tabNumber < 1 || tabNumber > EDITOR_NUMBERED_TAB_COMMAND_LIMIT)
       return false
     await this.executeEditorCommand(

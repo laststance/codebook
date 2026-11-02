@@ -564,6 +564,17 @@ export const UNTYPED_EDITOR_TAB_INPUT_KINDS = [
   'TabInputTextMultiDiff',
   'TabInputInteractiveWindow',
 ] as const
+/**
+ * The members of a tab's input that say which resource or view the tab shows, read with `Reflect.get` by {@link sameTabTarget}: the resource of a text, custom, notebook or interactive tab (`uri`), both sides of a diff (`original`, `modified`), the kind of a webview or custom editor (`viewType`) and of a notebook (`notebookType`). A member an input does not have is skipped. The editors give every tab a new object when a group changes, and tabs of different resources can share one label (two `index.ts` of different folders), so these members, not the tab object or its label, tell the tabs apart.
+ * @example TAB_INPUT_IDENTITY_FIELDS.map((field) => Reflect.get(diffInput, field)) // => [undefined, original, modified, undefined, undefined]
+ */
+export const TAB_INPUT_IDENTITY_FIELDS = [
+  'uri',
+  'original',
+  'modified',
+  'viewType',
+  'notebookType',
+] as const
 export const PRESENTATION_READING_LIMIT_PX = 10_000_000
 export const PRESENTATION_FOCUS_INDEX_LIMIT = 32
 export const PRESENTATION_READING_ANCHORS = [

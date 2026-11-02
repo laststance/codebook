@@ -1405,6 +1405,8 @@ export async function workspaceHarness(
   let chatRetakesKeyboardFromFirstGroup = false
   // Cursor 3.27.22: while the Agent chat part has the keyboard `workbench.action.focusFirstEditorGroup` does nothing, and a pane revealed with the focus takes the keyboard (it reports itself active) while the editor goes on naming the chat's group; see `ignoresFirstGroupFocusCommandBesideChat`.
   let ignoresFirstGroupFocusCommandBesideChatFlag = false
+  // The editor ran a numbered group focus command (second to eighth group) and left the active group where it was; see `ignoreNumberedGroupFocusCommands`.
+  let ignoresNumberedGroupFocusCommandsFlag = false
   // An editor that lists every webview tab under the main-thread view type (`mainThreadWebview-<viewType>`), Codebook's own panes included; see `reportsMainThreadWebviewViewTypes`.
   let reportsMainThreadWebviewViewTypesFlag = false
   // Cursor 3.23.12: "Navigate Down Call Stack" gives the frame's file the keyboard while the editor keeps naming the group it named before; see `keepNamingGroupAfterFrameNavigation`.
@@ -4521,7 +4523,10 @@ export async function workspaceHarness(
           )
             focusSeparatePartGroup()
           // The editor's commands for its second to eighth group give that group the keyboard focus and keep the tab it shows.
-          else if (focusedColumn > 1) {
+          else if (
+            focusedColumn > 1 &&
+            !ignoresNumberedGroupFocusCommandsFlag
+          ) {
             const mainGroups = groups.filter(
               (group) => group !== separateEditorPart?.group,
             )
@@ -7381,6 +7386,13 @@ export async function workspaceHarness(
       replacesGroupObjectsOnTabChanges = true
     },
     /**
+     * Makes the fake editor answer the numbered focus commands of its second to eighth group (`workbench.action.focusSecondEditorGroup` and the others) without changing the active group, as an editor does that has not taken the focus when the command resolves; the commands are still logged. The numbered tab commands (`workbench.action.openEditorAtIndexN`) keep acting on the active group.
+     * @example harness.ignoreNumberedGroupFocusCommands()
+     */
+    ignoreNumberedGroupFocusCommands(): void {
+      ignoresNumberedGroupFocusCommandsFlag = true
+    },
+    /**
      * Makes the fake editor answer `workbench.action.focusFirstEditorGroup` the way Cursor 3.27.12 was seen to while its Agent chat group is the active one (Cycle 0060, N60): the first group's pane reports itself active for a moment while the editor goes on naming the chat's group, the next layout read is answered for the main editor, and the chat input has the keyboard again right after that read, while later layout reads still answer for the main editor. No text editor is reported.
      * @example
      * const chat = harness.addSeparateEditorPart()
@@ -7429,7 +7441,7 @@ export async function workspaceHarness(
     },
     /**
      * Opens a learner's file as a diff editor in front of a group and gives it the keyboard, as the Source Control view's Open Changes does: the tab's input is a `TabInputTextDiff` of the file's original and its working copy, and the active text editor is the modified side's; both sides are visible text editors, and both editors report them with no view column (C61 c61-688-diffprobe, Cycle 0046 row 709). `showTextDocument` of that document opens a plain text tab of it in front of the diff, as both editors do for a resource shown in a diff (row 688). A group of VS Code's floating window (`addFloatingEditorWindow`) takes the diff too, and the floating window is the focused one then (row 720).
-     * @param filename - The learner's file.
+     * @param filename - The learner's file, relative to the harness's folder; a path into a subfolder (`app/index.ts`) names the file of that folder, and the tab's label is the file's base name, so two diffs of `index.ts` from different folders carry one label.
      * @param column - The group's view column.
      * @returns The modified document, the diff tab and the modified side's text editor.
      * @example const diff = harness.focusDiffEditor('auth.ts', 2) // auth.ts (Working Tree) in front of column 2 with the keyboard
@@ -7447,7 +7459,7 @@ export async function workspaceHarness(
       }
       const diffTab: Tab = {
         input: new TabInputTextDiff(originalDocument.uri, opened.document.uri),
-        label: `${filename} (Working Tree)`,
+        label: `${textTabLabel(opened.document.uri)} (Working Tree)`,
         isPreview: false,
       }
       opened.group.tabs.splice(

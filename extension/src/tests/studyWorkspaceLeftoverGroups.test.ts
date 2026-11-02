@@ -1483,6 +1483,132 @@ test('a learner’s tab in a group the editor cannot focus is not touched by a n
   }
 })
 
+/** What every not-kept answer of the return begins with, whichever sentence follows (the focus changed, and the learner's tab could not be brought back). */
+const FOCUS_CHANGED_NOT_KEPT_PATTERN =
+  /The editor focus changed while the captured source was returned, and /
+
+// Value: protects=the learner's own diff when another diff of the same label stands in the same group: the late show of the source covered the second diff the learner picked, and the return brings that one back and not the first with the same label; fails_when=the return looks the tab up by kind of input and label alone and finds the first diff of index.ts, then answers that the choice was kept; why_new=Cycle 0072 /ship pass 1 (Codex structured P2, outside 3); seam=restoreWithLearnerDuringSecondShow, focusDiffEditor on two files named index.ts of different folders in the source column and the late show covering them; no_claim=the diffs stand for any two non-text tabs of one label
+test('a learner’s second diff of the same label that the late show covered is brought back, not the first', async () => {
+  // Arrange: the moved copy has the keyboard in the fourth group.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await openRetainedStudy(harness)
+    await addLearnerGroup(harness)
+    harness.moveSource(4)
+    // Act: the learner opens the diff of app/index.ts and then the diff of lib/index.ts in the source column while the second show is pending; the show then covers both.
+    let appDiffTab: unknown, libDiffTab: unknown
+    const answer = await restoreWithLearnerDuringSecondShow(harness, () => {
+      appDiffTab = harness.focusDiffEditor('app/index.ts', 2).tab
+      libDiffTab = harness.focusDiffEditor('lib/index.ts', 2).tab
+    })
+    // Assert
+    const front = harness.groups.find(
+      (group) => group.viewColumn === 2,
+    )!.activeTab
+    assert.deepEqual(
+      {
+        answer,
+        bothDiffsCarryOneLabel:
+          front?.label === 'index.ts (Working Tree)' &&
+          harness.groups
+            .find((group) => group.viewColumn === 2)!
+            .tabs.filter((tab) => tab.label === 'index.ts (Working Tree)')
+            .length === 2,
+        frontIsTheSecondDiff: front === libDiffTab,
+        frontIsTheFirstDiff: front === appDiffTab,
+      },
+      {
+        answer: FOCUS_KEPT_ANSWER,
+        bothDiffsCarryOneLabel: true,
+        frontIsTheSecondDiff: true,
+        frontIsTheFirstDiff: false,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the front tab of the active group when the editor's focus command for the learner's group did not take effect: the numbered tab command is not run, so it cannot switch the tab of whatever group is active, possibly another learner's; the answer does not say the choice was kept; fails_when=the numbered command runs after a focus command whose group is not the active one; why_new=Cycle 0072 /ship pass 1 (native adversarial 6); seam=restoreWithLearnerDuringSecondShow, ignoreNumberedGroupFocusCommands, a chat tab in the learner's fourth group that a silent change put behind a file, and the harness's command log; no_claim=the chat tab stands for any non-text tab
+test('a learner’s tab whose group the focus command did not make active is not revealed by a numbered tab command', async () => {
+  // Arrange: the moved copy has the keyboard in the fourth group; the editor's numbered focus commands leave the active group where it is.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await openRetainedStudy(harness)
+    const learnerGroup = await addLearnerGroup(harness)
+    harness.moveSource(4)
+    harness.ignoreNumberedGroupFocusCommands()
+    const commandsBefore = harness.commands.length
+    // Act: the learner opens the chat tab in the fourth group, and a change without an event puts a file in front of it again; the late show of the source takes the keyboard to the source column.
+    const answer = await restoreWithLearnerDuringSecondShow(harness, () => {
+      harness.focusChatEditorTab(learnerGroup.viewColumn)
+      const group = harness.groups.find(
+        (candidate) => candidate.viewColumn === learnerGroup.viewColumn,
+      )!
+      group.activeTab = group.tabs[0]
+    })
+    // Assert
+    assert.deepEqual(
+      {
+        answerSaysTheTabCouldNotBeBroughtBack:
+          FOCUS_CHANGED_NOT_KEPT_PATTERN.test(answer) &&
+          !answer.includes('your choice was kept'),
+        numberedTabCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) => /openEditorAtIndex/.test(command)),
+      },
+      {
+        answerSaysTheTabCouldNotBeBroughtBack: true,
+        numberedTabCommands: [],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the Study grid when the learner's pick stands in a group of another editor part (Cursor's Agent chat group beyond the main editor's groups): the return runs neither the numbered focus command of its column, which Cursor answers with a new empty group in the main editor, nor a numbered tab command; fails_when=the return runs the focus command of any column the main editor does not have, so the Study grid gains an empty group; why_new=Cycle 0072 /ship pass 1 (Red Team, same function); seam=restoreWithLearnerDuringSecondShow, addSeparateEditorPart with the chat's focusTab as the learner's pick, and the harness's command log and groups; no_claim=Cursor's chat stands for any group the main editor does not count
+test('a learner’s pick of Cursor’s chat group beyond the main editor is not focused by a numbered group command that would open a new group', async () => {
+  // Arrange: the moved copy has the keyboard in the fourth group; Cursor's Agent chat part stands behind the main editor's four groups.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await openRetainedStudy(harness)
+    await addLearnerGroup(harness)
+    harness.moveSource(4)
+    const chat = harness.addSeparateEditorPart()
+    const groupCountBefore = harness.groups.length
+    const commandsBefore = harness.commands.length
+    // Act: the learner clicks into the chat while the second show is pending.
+    const answer = await restoreWithLearnerDuringSecondShow(harness, () => {
+      chat.focusTab()
+    })
+    // Assert
+    assert.deepEqual(
+      {
+        answerSaysTheTabCouldNotBeBroughtBack:
+          FOCUS_CHANGED_NOT_KEPT_PATTERN.test(answer) &&
+          !answer.includes('your choice was kept'),
+        groupCount: harness.groups.length,
+        commandsOfTheChatColumn: harness.commands
+          .slice(commandsBefore)
+          .filter((command) =>
+            /focusFifthEditorGroup|openEditorAtIndex/.test(command),
+          ),
+      },
+      {
+        answerSaysTheTabCouldNotBeBroughtBack: true,
+        groupCount: groupCountBefore,
+        commandsOfTheChatColumn: [],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the presentation transition when a helper of the return throws right after the transition was taken: the transition is released, so the next control is not refused as pending for good; fails_when=the try block starts later than the transition, a throw in the keyboard-place read leaves the transition owned and every later control is refused; why_new=Cycle 0072 task 1 review round (OCR lens A L4); seam=the reader's tab groups getter made to throw while the transition is owned; no_claim=which production helper throws
 test('a throw right after the return took the presentation transition releases it', async () => {
   // Arrange: the captured source stands in the learner's fourth group; reading the active group throws once the transition is owned.
