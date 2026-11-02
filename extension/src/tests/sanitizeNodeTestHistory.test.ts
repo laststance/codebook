@@ -187,3 +187,31 @@ test('a replay’s cited test file comes without controls, and a configuration w
   assert.equal(shown.header.configuration.testFile, 'src/theme.test.ts')
   assert.equal('testTitles' in shown.header.configuration, false)
 })
+
+// Value: protects=a test replay saved before the shape rules shows no Cookie value in the Study section's fact rows; fails_when=sanitizeNodeTestHistory prints a stored Cookie-shaped fact display as recorded; why_new=Cycle 0073 task 0 masks facts at every serving path, and the Study display copy is one of them; seam=none; no_claim=the native replay's fact variables (replayDebuggerSlot applies maskSavedFacts; covered by the serving-path scan)
+test('a stored Cookie-shaped fact display is shown masked and a non-secret display stays readable', () => {
+  // Arrange
+  const history = forgedHistory()
+  const stop = history.entries[2]
+  assert.equal(stop?.type, 'stop')
+  if (stop?.type !== 'stop') return
+  stop.facts = [
+    {
+      path: 'cookieHeader',
+      mode: 'value',
+      display: "'sid=opaque-session-value; theme=dark'",
+      type: 'string',
+    },
+    { path: 'theme', mode: 'value', display: "'theme=dark'", type: 'string' },
+  ]
+
+  // Act
+  const shown = sanitizeNodeTestHistory(history).entries[2]
+
+  // Assert
+  assert.equal(shown?.type, 'stop')
+  const displays =
+    shown?.type === 'stop' ? shown.facts.map((fact) => fact.display) : []
+  assert.equal(JSON.stringify(displays).includes('opaque-session-value'), false)
+  assert.equal(displays[1], "'theme=dark'")
+})

@@ -6,6 +6,7 @@ import {
   NODE_RECORDED_SOURCE_TEXT,
   type NodeRecordedSourceMessage,
 } from './utils/describeNodeRecordedSource'
+import { maskSavedFacts } from './utils/maskSavedFacts'
 import { untilAborted } from './utils/untilAborted'
 
 /** A recorded stop of a test replay, as {@link presentNodeHistoryMoment} presents it. */
@@ -259,7 +260,8 @@ export async function presentNodeHistoryMoment(
           new AbortController().signal,
           { uri: input.slotUri, hash: verifiedStop.source.hash },
           // The stop's recorded inspections, so values outside the captured scopes stay inspectable in the native debugger.
-          verifiedStop.facts,
+          // Facts saved before the shape rules are masked again before the native debugger shows them (Cycle 0073 task 0).
+          maskSavedFacts(verifiedStop.facts),
         ),
   )
   return {
