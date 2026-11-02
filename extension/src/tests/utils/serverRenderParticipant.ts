@@ -32,6 +32,11 @@ export interface ServerHit {
   source?: { line: number; column: number }
   /** What the work store answers on this frame; default the participant's default route. */
   route?: ServerRouteAnswer
+  /**
+   * The script was parsed before the run subscribed, as in a saved-session run whose warm-up load renders the entry route before the debugger attaches: it is never announced by `Debugger.scriptParsed`, and `Debugger.getScriptSource` answers the sealed text ending with `//# sourceURL=<url>`.
+   * `url` defaults to the sealed address; `scriptText` replaces the sealed text (before the comment).
+   */
+  unannounced?: { url?: string; scriptText?: string; reactCopy?: number }
 }
 
 /** Which of the two channels of a pause arrives first (`both` sends the CDP pause and then the DAP `stopped`). */
@@ -285,7 +290,29 @@ export function createServerParticipant(parts: ServerParticipantParts) {
 
   const pauseCdp = (hit: ServerHit = {}): number => {
     const scriptId = hit.scriptId ?? 'server'
-    if (!announced.has(scriptId)) announce(scriptId)
+    if (hit.unannounced) {
+      // Parsed before the subscription: only the text is known, never an announcement.
+      const url =
+        hit.unannounced.url ??
+        (hit.unannounced.reactCopy === undefined
+          ? parts.scriptUrl
+          : `about://React/Server/${parts.scriptUrl}?${hit.unannounced.reactCopy}`)
+      const text = hit.unannounced.scriptText
+      // The sealed text of a run that sets `serverModuleSourceUrl` already ends with its comment; another address replaces it.
+      const base = (text ?? parts.javascript).replace(
+        /\n\/\/# sourceURL=[^\n]*$/,
+        '',
+      )
+      const hasOwnAddress =
+        hit.unannounced.url === undefined &&
+        hit.unannounced.reactCopy === undefined
+      scriptTexts.set(
+        scriptId,
+        hasOwnAddress && (text ?? parts.javascript).includes('sourceURL=')
+          ? (text ?? parts.javascript)
+          : `${base}\n//# sourceURL=${url}`,
+      )
+    } else if (!announced.has(scriptId)) announce(scriptId)
     currentHit = ++hitNumber
     routes.set(
       currentHit,
@@ -349,6 +376,8 @@ export function createServerParticipant(parts: ServerParticipantParts) {
   const api = {
     /** The debug session the run sees as the server's. */
     session,
+    /** The address the sealed module is announced under. */
+    sealedUrl: parts.scriptUrl,
     /**
      * Announces a script as the debugger does when Next parses a module: the sealed address by default, any other address for a re-parsed instance or React's copy.
      * @example harness.server.announceScript('3794')
@@ -382,6 +411,26 @@ export function createServerParticipant(parts: ServerParticipantParts) {
         `"use strict";\n${parts.javascript}\n//# sourceURL=${url}\n//# sourceMappingURL=data:application/json;base64,${Buffer.from(JSON.stringify(map)).toString('base64')}`,
       )
       announce(scriptId, url)
+    },
+    /**
+     * Builds the text of an instance of the sealed module that carries its own inline source map, for {@link ServerHit.unannounced}.
+     * @param mappings - The instance's own mappings.
+     * @param url - The address in the text's `sourceURL` comment.
+     * @param changedOriginal - Puts another original text in the map, as a module whose source changed.
+     * @example harness.server.instanceText(';AAAA', 'webpack-internal:///(rsc)/./app/page.tsx', true)
+     */
+    instanceText(
+      mappings: string,
+      url: string,
+      changedOriginal = false,
+    ): string {
+      const map = { ...JSON.parse(parts.sourceMap), mappings }
+      if (changedOriginal) map.sourcesContent = ['var nextTheme = "light";\n']
+      const generated = parts.javascript.replace(
+        /\n\/\/# sourceURL=[^\n]*$/,
+        '',
+      )
+      return `"use strict";\n${generated}\n//# sourceURL=${url}\n//# sourceMappingURL=data:application/json;base64,${Buffer.from(JSON.stringify(map)).toString('base64')}`
     },
     /** Gives a script its own generated text, as a re-parsed instance with other code has. */
     setScriptText(scriptId: string, text: string): void {

@@ -41,7 +41,10 @@ import { citationContext } from '../../utils/citationContext'
 import { clientComponentRefusal } from '../../utils/clientComponentRefusal'
 import { configuredDomExpression } from '../../utils/configuredDomExpression'
 import { configuredScrollExpression } from '../../utils/configuredScrollExpression'
-import { createBundleVerifier } from '../../utils/createBundleVerifier'
+import {
+  createBundleVerifier,
+  isChangedOriginalError,
+} from '../../utils/createBundleVerifier'
 import type { NextPagesDiscoveryCache } from '../../utils/createNextPagesDiscoveryCache'
 import {
   describeNextEntryResponse,
@@ -185,6 +188,8 @@ export async function configuredRuntimeHarness(
     documentReadyState?: 'loading' | 'complete'
     /** The executed module's text instead of the default one-statement module, such as a Vite module with an inlined env value. */
     moduleJavascript?: string
+    /** Ends the executed server module's text with the `//# sourceURL=` comment webpack gives an evaluated module, so a script the run never saw parsed can be recognised by it at its first pause. */
+    serverModuleSourceUrl?: boolean
     /** Makes the Vite stand-in report these values as the ones it masks in kept module text, as the launcher's env-file values are. */
     maskedValues?: string[]
     /** Names the executed module's source map lists (its `names`), such as an env value an inlined constant carries. */
@@ -399,10 +404,13 @@ export async function configuredRuntimeHarness(
     ),
     source = reference.descriptor!.sources[0]!.text,
     // With a fixture the executed module mirrors the source line for line, so a pause can be placed on any of its lines; a Pages page executes the eval module of its chunk.
-    javascript =
+    baseJavascript =
       options.moduleJavascript ??
       pagesBuild?.moduleJavascript ??
-      (fixture ? source : 'const nextTheme = "dark";')
+      (fixture ? source : 'const nextTheme = "dark";'),
+    javascript = options.serverModuleSourceUrl
+      ? `${baseJavascript}\n//# sourceURL=webpack-internal:///(${options.serverSeal === 'rsc' ? 'rsc' : 'action-browser'})/./${definition.configuration.source.path}`
+      : baseJavascript
   const bundle: BundleSource = {
     sourcePath,
     source,
@@ -1604,6 +1612,7 @@ export async function configuredRuntimeHarness(
         },
       },
       './utils/createBundleVerifier': {
+        isChangedOriginalError,
         // The real verifier, with every scan of its sealed map recorded.
         createBundleVerifier: (sealed: BundleSource) => {
           const verifier = createBundleVerifier(sealed)

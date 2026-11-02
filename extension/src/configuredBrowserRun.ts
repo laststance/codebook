@@ -214,6 +214,7 @@ import { isReactServerCopyUrl } from './utils/isReactServerCopyUrl'
 import { isRefreshedFrameAtStop } from './utils/isRefreshedFrameAtStop'
 import { isRscScriptUrl } from './utils/isRscScriptUrl'
 import { isSameGeneratedPosition } from './utils/isSameGeneratedPosition'
+import { lastSourceUrlOf } from './utils/lastSourceUrlOf'
 import { launchDevelopmentServer } from './utils/launchDevelopmentServer'
 import { maskLearnerSecretText } from './utils/maskLearnerSecretText'
 import { maskNextServerOutput } from './utils/maskNextServerOutput'
@@ -555,6 +556,10 @@ type DebugParticipant = {
     /** The declared server stop the run was resuming the page for when it took this pause as its own (a page pause read while a resume of the run's own had no answer, {@link ConfiguredBrowserRun.ownPagePauseUnderResume}): its resume is then nobody else's, however long the adapter takes to answer. */
     resumedByRun?: PreparedStop
   }
+  /** A server pause in a script the run never saw parsed, kept apart while the script's address is read ({@link ConfiguredBrowserRun.discoverUnannouncedScript}); `done` settles when the pause went on to admission, or was dropped because the runtime resumed it first. */
+  discovering?: { event: Protocol.Debugger.PausedEvent; done: Promise<void> }
+  /** Script ids whose address was already looked up at a pause, so a script without a usable `sourceURL` is read once. */
+  discoveredScriptIds?: Set<string>
   /** A pause in one of React's server copies of a declared module (`about://React/Server/…`), kept apart until its `stopped` arrives and the run decides whether it is at an owned stop's position (F1). */
   copyPause?: {
     event: Protocol.Debugger.PausedEvent
@@ -1732,6 +1737,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     event: DebugProtocol.Event,
   ): Promise<void> {
     const participant = this.participants.server
+    // A pause whose script's address is still being read reaches admission when the read ends.
+    await participant.discovering?.done
     try {
       // The pause of this stop may arrive after its `stopped`: wait for the first kind of pause there is, within the classification bound.
       await waitUntil(
@@ -5957,7 +5964,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         })
       this.bindParsedScript(name, event)
     })
-    cdp.on('Debugger.paused', (event) => this.onCdpPaused(name, event))
+    cdp.on('Debugger.paused', (event) =>
+      this.onCdpPausedOrDiscover(name, event),
+    )
     cdp.on('Debugger.resumed', () => this.onCdpResumed(name))
     const events = [
       'Debugger.scriptParsed',
@@ -5994,6 +6003,91 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     await cdp.subscribe(events)
     this.alive()
+  }
+
+  /**
+   * Hands a server pause to {@link onCdpPaused} once the address of its script is known: a server module Next evaluated before the debugger attached is never announced by the proxy (it forwards only scripts parsed after its subscription), so the pause is held while the script's text is read once and its address bound like an announced script ({@link discoverUnannouncedScript}).
+   * Why it exists: without the address the pause cannot be matched to the stop's module, the copy hold cannot recognise a pre-attach React copy, and a saved-session run (whose warm-up load renders the entry route before the attach) fails with the source-bound wait. Called for every `Debugger.paused` of {@link observeParticipant}.
+   * @param name - The participant whose runtime paused; only the server's pauses are discovered (the page attaches before it loads).
+   * @param event - The paused event.
+   * @example this.onCdpPausedOrDiscover('server', event)
+   */
+  private onCdpPausedOrDiscover(
+    name: Participant,
+    event: Protocol.Debugger.PausedEvent,
+  ): void {
+    const participant = this.participants[name],
+      scriptId = event.callFrames[0]?.location.scriptId
+    if (
+      name !== 'server' ||
+      this.cleaning ||
+      event.reason === 'instrumentation' ||
+      scriptId === undefined ||
+      participant.scriptUrls.has(scriptId) ||
+      participant.discoveredScriptIds?.has(scriptId) ||
+      participant.discovering ||
+      !this.stops.some((stop) => stop.participant === 'server')
+    ) {
+      this.onCdpPaused(name, event)
+      return
+    }
+    participant.discoveredScriptIds ??= new Set()
+    participant.discoveredScriptIds.add(scriptId)
+    const discovering: NonNullable<DebugParticipant['discovering']> = {
+      event,
+      done: Promise.resolve(),
+    }
+    discovering.done = this.discoverUnannouncedScript(name, scriptId).then(
+      () => {
+        // The runtime resumed the pause while its script was read (the adapter's own hit), or the run ended: nothing is admitted.
+        if (participant.discovering !== discovering || this.cleaning) return
+        participant.discovering = undefined
+        this.onCdpPaused(name, event)
+      },
+    )
+    participant.discovering = discovering
+  }
+
+  /**
+   * Reads the text of a script the run never saw parsed, takes its address from the last `sourceURL` comment, records it like an announcement and binds it to the declared stops ({@link bindParsedScript}); for {@link onCdpPausedOrDiscover}.
+   * The read is bounded by {@link REPOSITORY_STOP_INSTANCE_READ_MS}; a read that fails or times out, and a text without a `sourceURL`, leave the script unknown, so the pause keeps today's handling.
+   * Lazy discovery at the first pause was chosen over a proactive one at subscription: the proxy offers no list of already parsed scripts without a `Debugger.enable` of its own, which would disturb the adapter's state.
+   * @param name - The participant whose runtime paused.
+   * @param scriptId - The script the paused top frame is in.
+   * @example await this.discoverUnannouncedScript('server', '1796')
+   */
+  private async discoverUnannouncedScript(
+    name: Participant,
+    scriptId: string,
+  ): Promise<void> {
+    const participant = this.participants[name]
+    let scriptSource: string
+    try {
+      scriptSource = await this.instanceTextOf(name, scriptId)
+    } catch {
+      return
+    }
+    const url = lastSourceUrlOf(scriptSource)
+    // A script announced meanwhile keeps its announced address; a run that ended judges nothing.
+    if (!url || participant.scriptUrls.has(scriptId) || !this.isRunOpen())
+      return
+    participant.scriptUrls.set(scriptId, url)
+    this.evidence.record('script.discovered', {
+      participant: name,
+      scriptId,
+      url,
+    })
+    this.bindParsedScript(name, {
+      scriptId,
+      url,
+      startLine: 0,
+      startColumn: 0,
+      endLine: scriptSource.split('\n').length - 1,
+      endColumn: 0,
+      executionContextId: 0,
+      hash: '',
+      buildId: '',
+    })
   }
 
   /** Journals the pauses the runtime reports (a declared stop's always; the runtime's instrumentation pauses and every other pause each up to {@link REPOSITORY_ADAPTER_PAUSE_JOURNAL_LIMIT}, the rest counted) and, during an action, hands a pause to {@link admitPause}; only a browser pause in a run that declares no browser stop keeps its own short bound. @example this.onCdpPaused('server', event) */
@@ -8528,6 +8622,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /** Matches each CDP resume to its own captured generation; a queued next stop cannot resume unobserved. A resume of a pause no debugger stop announced is not a continuation: {@link retireUnannouncedPause} retires it (and the transient browser pause of a run without browser stops is retired here), journaling its place and duration. The resume of a pause nothing holds (an instrumentation pause, a pause from before the action) is journaled when that pause was, otherwise counted. @example this.onCdpResumed('server') */
   private onCdpResumed(name: Participant): void {
     if (this.cleaning) return
+    // A pause resumed while its script's address was read is judged now, as it would have been on arrival, so its resume finds it.
+    const resumedWhileDiscovering = this.participants[name].discovering
+    if (resumedWhileDiscovering) {
+      this.participants[name].discovering = undefined
+      this.onCdpPaused(name, resumedWhileDiscovering.event)
+    }
     const participant = this.participants[name],
       pausedForMs = elapsedMsSince(
         participant.pauseObservedAtMs,
