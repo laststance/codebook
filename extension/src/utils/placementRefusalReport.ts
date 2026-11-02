@@ -48,6 +48,11 @@ export class PlacementEventLog {
     if (this.events.length > this.capacity) this.events.shift()
   }
 
+  /** Gives the time of the newest note, `undefined` while the log holds none. @example log.latestAtMs() // => 12 after log.record(12, 'groups closed [2]') */
+  latestAtMs(): number | undefined {
+    return this.events.at(-1)?.atMs
+  }
+
   /** Lists the events at or after a time. @example log.since(armedAtMs) // => [{ atMs: 12, what: 'groups closed [2]' }] */
   since(atMs: number): RefusalEvent[] {
     return this.events.filter((event) => event.atMs >= atMs)

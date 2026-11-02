@@ -107,6 +107,7 @@ import {
   FOREIGN_PREVIEW_ACTION,
   MOVE_VIEWS_COMMAND,
   LATE_GROUP_ACTIVATION_WAIT_MS,
+  OWN_EFFECT_NOISE_WINDOW_MS,
   REFUSAL_REPORT_EFFECTS,
   REFUSAL_REPORT_GROUP_TABS,
   SUMMARY_BESIDE_CHAT_MOVE_ARGUMENT,
@@ -7663,6 +7664,29 @@ export class StudyWorkspace {
     }
   }
 
+  /**
+   * Says whether the Application's own active report flipped from active to inactive as the editor's noise and not as the learner's input; asked by the guard of {@link retainPresentationPlacement} for its `appActive` comparison, in every host and for every presentation, entry and return.
+   * Cursor 3.27.22 reports the Application inactive while its group is still the active one and nothing else changed, moments after Codebook itself moved panes or focus (Cycle 0072 native C72-2, candidate ddc14faa attempt 2: +13 ms after the guard armed, Codebook's effects none since arming). The same state follows a learner's click into the Agent chat, which Cursor does not name as the active group, so the report alone cannot tell them apart: only a flip that comes within {@link OWN_EFFECT_NOISE_WINDOW_MS} of Codebook's own newest native effect counts as noise. The opposite flip (inactive to active) is the learner's click into the Application and stays compared, as does the Study pane's report.
+   * @param armedActive - The Application's active report when the guard armed.
+   * @returns `true` for an active-to-inactive flip while the active group still shows this reader's Application in front, soon after an effect of Codebook's own; `false` otherwise.
+   * @example this.isApplicationInactiveReportNoise(true) // => true 20 ms after Codebook revealed the Application and Cursor reported it inactive
+   */
+  private isApplicationInactiveReportNoise(
+    armedActive: boolean | undefined,
+  ): boolean {
+    const front = vscode.window.tabGroups.activeTabGroup.activeTab,
+      latestEffectMs = this.placementEffects.latestAtMs()
+    return Boolean(
+      armedActive === true &&
+      this.app?.active === false &&
+      front &&
+      this.isCodebookPaneInput(front.input, 'codebook.scopedBrowser') &&
+      this.isOwnPaneOrSourceTab(front) &&
+      latestEffectMs !== undefined &&
+      performance.now() - latestEffectMs <= OWN_EFFECT_NOISE_WINDOW_MS,
+    )
+  }
+
   /** Protects passive awaits in {@link performPresentation} from adopting learner pane/group/focus changes. @param callSite - Short name of the caller and its guard (`method/variable`), printed in a refusal's report so a native take can tell which await refused. @param retainFocus - Compares the focused group, tab and text editor too. @param acceptWikiGroupReturn - Takes the editor's own selection of the Repository Wiki's group beside the identical text editor as no change ({@link isWikiGroupBesideTextEditor}); only the borrow receipt of {@link readMainEditorGrid} asks for it (finding 606). @example const assertRetained = this.retainPresentationPlacement('open/assertPlacement'); */
   private retainPresentationPlacement(
     callSite: string,
@@ -7709,15 +7733,6 @@ export class StudyWorkspace {
     const source = focusedSource()
     let appActive = this.app?.active,
       contextActive = this.contextPanel?.active
-    /** Says whether the group the editor names as active still shows the Application in front: its own active report flipping then is the editor's noise, since no tab or group changed (Cursor 3.27.22 reports the Application inactive while its group is the active one, Cycle 0072 native C72-2). The Study pane's report stays compared: a learner's click into the chat part flips it with no other change. */
-    const activeGroupShowsApplication = (): boolean => {
-      const front = vscode.window.tabGroups.activeTabGroup.activeTab
-      return Boolean(
-        front &&
-        this.isCodebookPaneInput(front.input, 'codebook.scopedBrowser') &&
-        this.isOwnPaneOrSourceTab(front),
-      )
-    }
     // The focused group this receipt compares; only a receipt that accepts it follows the editor's own return to the Wiki's group (finding 606).
     let retainedFocus = {
       editor: textEditorFocusState(vscode.window.activeTextEditor),
@@ -7804,7 +7819,8 @@ export class StudyWorkspace {
               this.webviewCloseRevisions.get(focusedWebview),
           source: sameSource,
           appActive:
-            appActive === this.app?.active || activeGroupShowsApplication(),
+            appActive === this.app?.active ||
+            this.isApplicationInactiveReportNoise(appActive),
           contextActive: contextActive === this.contextPanel?.active,
         },
         retainFocus,

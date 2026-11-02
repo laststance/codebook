@@ -1524,7 +1524,8 @@ test('Open Study Workspace in Cursor right after a reload is not refused when th
   harness.leaveEmptyGroup(1)
   harness.focusMutableDraft('cards.tsx', 2)
   // Cursor names the Application's group active a few milliseconds after the main-grid read armed its placement guard.
-  let waitedForFocus = false
+  let waitedForFocus = false,
+    reportInjected = false
   const retainPlacement = harness.reader['retainPresentationPlacement'].bind(
     harness.reader,
   )
@@ -1536,7 +1537,10 @@ test('Open Study Workspace in Cursor right after a reload is not refused when th
     if (callSite === 'open/assertPlacement') waitedForFocus = true
     if (waitedForFocus && callSite === 'readMainEditorGrid/assertInitial') {
       waitedForFocus = false
-      queueMicrotask(() => harness.activatePaneByHand('codebook.scopedBrowser'))
+      queueMicrotask(() => {
+        reportInjected = true
+        harness.activatePaneByHand('codebook.scopedBrowser')
+      })
     }
     return assertRetained
   }
@@ -1546,6 +1550,8 @@ test('Open Study Workspace in Cursor right after a reload is not refused when th
     await harness.reader.action('arrange')
 
     // Assert
+    // The report the test is about came; without it the entry would pass for nothing.
+    assert.equal(reportInjected, true)
     assert.equal(harness.panelColumn('codebook.studyContext'), 3)
     assert.equal(harness.reader.presentationState().layoutConfirmed, true)
     assert.equal(chat.focused(), false)
@@ -1598,10 +1604,7 @@ test('Arrange Study Workspace answers after an Open Study Workspace was refused 
     )
 
     // Assert
-    assert.equal(
-      /presentation change or reader close is pending/.test(outcome),
-      false,
-    )
+    assert.equal(outcome, 'answered')
   } finally {
     await harness.close()
   }
@@ -1686,10 +1689,6 @@ test('a refused presentation change releases its transition when the chat focus 
     })
     const state = harness.reader.presentationState()
     enableFakeClock(context)
-    let focusReturnStarted = false
-    void held.started.then(() => {
-      focusReturnStarted = true
-    })
     const change = harness.reader
       .changePresentation({
         presentationId: state.presentationId,
@@ -1701,18 +1700,21 @@ test('a refused presentation change releases its transition when the chat focus 
         () => 'restored',
         (error: unknown) => String(error),
       )
-    await advanceClockUntil(context, () => focusReturnStarted, 20_000)
+    // Throws when the held focus return never starts, so a regression fails here and does not hang.
+    await advanceClockUntilSettled(context, held.started, 20_000)
     const whileHeld = await harness.reader.action('arrange').then(
       () => 'answered',
       (error: unknown) => String(error),
     )
 
     // Act
-    await advanceClockUntil(
+    const releasedAfterMs = await advanceClockUntil(
       context,
       () => harness.reader['presentationTransition'] === undefined,
       6_000,
     )
+    // `advanceClockUntil` answers undefined at its limit: a transition still set after the 5 s deadline fails here and does not hang.
+    assert.equal(releasedAfterMs !== undefined, true)
     assert.equal(harness.reader['presentationTransition'], undefined)
     await change
     const afterDeadline = await harness.reader.action('arrange').then(
@@ -1722,7 +1724,7 @@ test('a refused presentation change releases its transition when the chat focus 
 
     // Assert
     assert.match(whileHeld, /A presentation change or reader close is pending/)
-    assert.doesNotMatch(afterDeadline, /pending/)
+    assert.equal(afterDeadline, 'answered')
     assert.equal(
       logged.some(
         (entry) => entry.surface === 'presentation:focus-return-timed-out',
@@ -1833,18 +1835,15 @@ test('a focus return command that rejects still throws, and one that never answe
     harness.reader['executeEditorCommand'] = (): never =>
       new Promise(() => undefined) as never
     enableFakeClock(context)
-    let waitEnded = false
     const never = harness.reader['runFocusReturnCommand'](
       'composer.focusComposer',
       undefined,
       false,
-    ).then((result) => {
-      waitEnded = true
-      return result
-    })
+    )
 
     // Act
-    await advanceClockUntil(context, () => waitEnded, 6_000)
+    // Throws when the 5 s deadline never ends the wait, so a regression fails here and does not hang.
+    await advanceClockUntilSettled(context, never, 6_000)
     const result = await never
 
     // Assert

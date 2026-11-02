@@ -1962,6 +1962,8 @@ test("in Cursor, the move watch refuses a learner's pick of another file of the 
 /**
  * Arms the presentation placement guard while the Application reports itself active, then flips that report; the host noise of native C72-2 (attempt 2: "Application view state active=false visible=true column=1" with nothing else changed).
  * @param harness - The harness from {@link applicationSharingLearnerGroupBesideChat}.
+ * @param startsActive - What the Application reports when the guard arms; its flip then reports the opposite.
+ * @param callSite - The guard's call site name.
  * @returns The armed guard and the function that flips the Application's active report.
  * @example const { assertRetained, flipApplicationActive } = armPlacementWithApplicationActive(harness)
  */
@@ -1969,20 +1971,20 @@ function armPlacementWithApplicationActive(
   harness: Awaited<
     ReturnType<typeof applicationSharingLearnerGroupBesideChat>
   >['harness'],
+  startsActive = true,
+  callSite = 'readMainEditorGrid/assertInitial',
 ) {
   const application = harness.reader['app']!
-  let active = true
+  let active = startsActive
   Object.defineProperty(application, 'active', {
     configurable: true,
     get: () => active,
   })
-  const assertRetained = harness.reader['retainPresentationPlacement'](
-    'readMainEditorGrid/assertInitial',
-  )
+  const assertRetained = harness.reader['retainPresentationPlacement'](callSite)
   return {
     assertRetained,
     flipApplicationActive: (): void => {
-      active = false
+      active = !startsActive
     },
   }
 }
@@ -2039,6 +2041,72 @@ test("in Cursor, the placement guard still refuses a learner's click while the A
       /Native pane, group or focus changed while presentation waited; the learner arrangement was preserved\./,
     )
   } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a learner's click into the Application pane during a presentation change: the Application already stands in front of the active group with the keyboard elsewhere, the click flips its active report from inactive to active and changes no group, tab or file, and the guard refuses it so Codebook does not move the focus over the learner's choice (CodeRabbit r12, failure 1); fails_when=the guard takes every flip of the Application's active report as the editor's noise while the active group shows the Application, so the learner's click is ignored and the presentation takes the focus from it; why_new=Cycle 0072 task 2 review round (narrowing the ddc14faa relaxation to the active-to-inactive flip); seam=armPlacementWithApplicationActive (armed inactive, flipped to active), the reader's retainPresentationPlacement at a presentation call site; no_claim=the real Cursor's event timing (native Cursor trial)
+test("in Cursor, the placement guard of a presentation change refuses a learner's click into the Application that flips its report to active", async () => {
+  // Arrange
+  const { harness } = await applicationSharingLearnerGroupBesideChat()
+  try {
+    const { assertRetained, flipApplicationActive } =
+      armPlacementWithApplicationActive(
+        harness,
+        false,
+        'performPresentation/assertRetainedPlacement',
+      )
+    flipApplicationActive()
+
+    // Act
+    const outcome = (() => {
+      try {
+        assertRetained()
+        return 'retained'
+      } catch (error) {
+        return String(error)
+      }
+    })()
+
+    // Assert
+    assert.match(
+      outcome,
+      /Native pane, group or focus changed while presentation waited; the learner arrangement was preserved\./,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a learner's click into Cursor's Agent chat while Cursor goes on naming the Application's group active: the Application's report flips from active to inactive with no group, tab or file changed, long after Codebook's last own native effect, and the guard refuses it (CodeRabbit r12, failure 2), while the same flip right after Codebook's own effect stays the editor's noise (the ddc14faa test above); fails_when=the guard takes the active-to-inactive flip as noise at any time, so the click into the chat is ignored and Codebook moves the focus back over it; why_new=Cycle 0072 task 2 review round (the relaxation is limited to the window of Codebook's own effects); seam=armPlacementWithApplicationActive, the reader's retainPresentationPlacement, performance.now moved past OWN_EFFECT_NOISE_WINDOW_MS; no_claim=the real Cursor's event timing (native Cursor trial)
+test("in Cursor, the placement guard refuses the Application's active report flipping to inactive long after Codebook's own last effect", async (context) => {
+  // Arrange
+  const { harness } = await applicationSharingLearnerGroupBesideChat()
+  try {
+    const { assertRetained, flipApplicationActive } =
+      armPlacementWithApplicationActive(harness)
+    flipApplicationActive()
+    // The learner's click comes ten seconds after the last thing Codebook did.
+    const readAtMs = performance.now() + 10_000
+    context.mock.method(performance, 'now', () => readAtMs)
+
+    // Act
+    const outcome = (() => {
+      try {
+        assertRetained()
+        return 'retained'
+      } catch (error) {
+        return String(error)
+      }
+    })()
+
+    // Assert
+    assert.match(
+      outcome,
+      /Native pane, group or focus changed while presentation waited; the learner arrangement was preserved\./,
+    )
+  } finally {
+    context.mock.restoreAll()
     await harness.close()
   }
 })
