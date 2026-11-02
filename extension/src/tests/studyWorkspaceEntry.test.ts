@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { homedir } from 'node:os'
 import { test } from 'node:test'
 
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
@@ -1703,6 +1704,41 @@ test('a control refused as pending names every marker that refuses and says apar
     harness.reader['returningCurrent'] = undefined
     harness.reader['presentationOperation'] = undefined
     harness.reader['busy'] = undefined
+    await harness.close()
+  }
+})
+
+// Value: protects=the pending-refusal entry keeps the Output channel's sanitized-cause contract when a marker was set from an anonymous function, whose stack frame names a file location under the home directory instead of a method; fails_when=the entry writes that location unsanitized, so a private path reaches Output › Codebook, which learners copy into public reports; why_new=Cycle 0072 /ship pass 1 (native adversarial review, finding 5); seam=the reader's closing setter called from an anonymous callback, assertPresentationIdle, the diagnostics log; no_claim=which owners real markers have (named methods today)
+test('a control refused as pending writes no home-directory path when a marker was set from an anonymous function', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  try {
+    await harness.reader.open()
+    // The callback has no name, so its stack frame is this test file's location under the home directory.
+    ;[true].forEach((isClosing) => {
+      harness.reader['closing'] = isClosing
+    })
+
+    // Act
+    assert.throws(
+      () => harness.reader.assertPresentationIdle(),
+      /A presentation change or reader close is pending/,
+    )
+
+    // Assert
+    const cause =
+      logged.find(
+        (candidate) => candidate.surface === 'presentation:pending-refused',
+      )?.cause ?? ''
+    assert.match(cause, /^closing: set by \S+ \d+ ms ago$/)
+    assert.equal(cause.includes(homedir()), false)
+  } finally {
+    harness.reader['closing'] = false
     await harness.close()
   }
 })

@@ -1521,9 +1521,11 @@ export class StudyWorkspace {
       this.refreshing ? 'refreshing: set (not part of the refusal)' : undefined,
       this.arranging ? 'arranging: set (not part of the refusal)' : undefined,
     ].filter((line): line is string => line !== undefined)
+    // An owner read from an anonymous stack frame is a file location: each line is sanitized like every other cause before it reaches the Output channel ({@link sanitizeCause} joins lines, so it runs per line to keep one marker a line).
+    const roots = this.privateRoots()
     this.diagnostics?.log({
       surface: 'presentation:pending-refused',
-      cause: lines.join('\n'),
+      cause: lines.map((line) => sanitizeCause(line, roots)).join('\n'),
     })
   }
   /** Set from the start of a recording load until its first ready position, which retires a replay control's reported failure. */
