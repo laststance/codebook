@@ -17,6 +17,7 @@ import type { ReplayDebugSnapshot } from './replayDebugSchemas'
 import type { NodeServerResponse } from './runtime'
 import { cutTextToLength } from './utils/cutTextToLength'
 import { hideTrailingRootPrefix } from './utils/hideTrailingRootPrefix'
+import { maskSavedDebugSnapshot } from './utils/maskSavedDebugSnapshot'
 import { redactSecretText } from './utils/redactSecretText'
 import { resolveServerStopFrame } from './utils/resolveServerStopFrame'
 import type { CauseRoots } from './utils/sanitizeCause'
@@ -304,12 +305,15 @@ export class NodeServerHistorySinkImpl implements NodeServerHistorySink {
           reason:
             'The debugger could not read this required value at the stop.',
         })),
-        snapshot: maskSnapshot(read.snapshot, (text) =>
-          // A text the capture cut inside a private root loses that fragment first: the hider only matches whole roots.
-          this.hide(
-            this.input.roots
-              ? hideTrailingRootPrefix(text, this.input.roots)
-              : text,
+        // The saved-history rule runs here too, so a snapshot that did not come through the capture is stored masked.
+        snapshot: maskSavedDebugSnapshot(
+          maskSnapshot(read.snapshot, (text) =>
+            // A text the capture cut inside a private root loses that fragment first: the hider only matches whole roots.
+            this.hide(
+              this.input.roots
+                ? hideTrailingRootPrefix(text, this.input.roots)
+                : text,
+            ),
           ),
         ),
       })

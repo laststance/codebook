@@ -5,6 +5,7 @@ import { StudyError } from '../errors'
 import type { NodeHistoryStore } from '../nodeTestHistoryStore'
 import type { ResourceContent } from '../resources'
 
+import { maskSavedDebugSnapshot } from './maskSavedDebugSnapshot'
 import { readHistoryResourceTail } from './readHistoryResourceTail'
 import { readJsonPage } from './readJsonPage'
 import { withKnownNodeHistory } from './withKnownNodeHistory'
@@ -27,7 +28,7 @@ function leanExtensionEvent(
 }
 
 /**
- * Answers one entry's detail page: the entry as stored, whole.
+ * Answers one entry's detail page: the entry as stored, whole, with a capture's debugger snapshot masked again by {@link maskSavedDebugSnapshot} so a history saved before the shape rules serves no cookie or credential value.
  * Called by {@link readExtensionHistoryResource} for `events/<sequence>`.
  * @param baseUri - The history's resource address.
  * @param entries - The verified journal entries.
@@ -49,7 +50,16 @@ function readEntryDetail(
       'NOT_FOUND',
       `The history has no entry with sequence ${sequence}. Read ${baseUri}/events for the sequences it holds.`,
     )
-  return readJsonPage(`${baseUri}/events/${sequence}`, entry, page)
+  return readJsonPage(
+    `${baseUri}/events/${sequence}`,
+    entry.type === 'capture'
+      ? {
+          ...entry,
+          debuggerSnapshot: maskSavedDebugSnapshot(entry.debuggerSnapshot),
+        }
+      : entry,
+    page,
+  )
 }
 
 /**

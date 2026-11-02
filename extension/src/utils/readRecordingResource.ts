@@ -8,6 +8,7 @@ import type { StudyService } from '../service'
 import { declaredStopOfSnapshot } from './declaredStopOfSnapshot'
 import { describeBoundPlace, type BoundPlace } from './describeBoundPlace'
 import { explanationPlace, type ExplanationPlace } from './explanationPlace'
+import { maskSavedDebugSnapshot } from './maskSavedDebugSnapshot'
 import { readJsonPage } from './readJsonPage'
 
 /** A saved study as a recording context retains it. */
@@ -15,6 +16,30 @@ type SavedStudy = RecordingContext['study']
 
 /** One observation of a saved study. */
 type SavedObservation = SavedStudy['observations'][number]
+
+/**
+ * Masks the debugger snapshot of each observation of a recording context, so a study saved before the shape rules serves no cookie or credential value; the context's hash was verified when it was read, and its source text stays as recorded.
+ * Called by {@link readRecordingResource} before it serves a whole context.
+ * @param context - The verified recording context.
+ * @returns The context with each observation's debugger snapshot masked ({@link maskSavedDebugSnapshot}).
+ * @example maskContextSnapshots(context).study.observations[0]?.debugger // => the masked snapshot
+ */
+function maskContextSnapshots(context: RecordingContext): RecordingContext {
+  return {
+    ...context,
+    study: {
+      ...context.study,
+      observations: context.study.observations.map((observation) =>
+        observation.debugger
+          ? {
+              ...observation,
+              debugger: maskSavedDebugSnapshot(observation.debugger),
+            }
+          : observation,
+      ),
+    },
+  }
+}
 
 /**
  * Puts a saved observation's declared, requested and bound places together; called by {@link savedObservationResource}.
@@ -229,7 +254,7 @@ export async function readRecordingResource(
     if (suffix?.startsWith('context/')) {
       const [, contextHash, selection, ...page] = suffix.split('/')
       const { context } = await store.readContext(studyId, contextHash)
-      if (!selection) return json(context)
+      if (!selection) return json(maskContextSnapshots(context))
       return readJsonPage(
         `${base}/context/${contextHash}/learning`,
         {

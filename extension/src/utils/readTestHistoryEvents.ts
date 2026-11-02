@@ -2,6 +2,7 @@ import { StudyError } from '../errors'
 import type { NodeTestHistoryEntry } from '../nodeTestHistorySchemas'
 import type { ResourceContent } from '../resources'
 
+import { maskSavedDebugSnapshot } from './maskSavedDebugSnapshot'
 import { readJsonPage } from './readJsonPage'
 
 /** One test-history entry an agent may cite, in the lean form the events list returns: never the executed source text or a debugger snapshot. */
@@ -59,7 +60,7 @@ export function readTestEventsPage(
 }
 
 /**
- * Answers one test-history entry in full (a stop with its frame and debugger snapshot).
+ * Answers one test-history entry in full (a stop with its frame and debugger snapshot, masked again by {@link maskSavedDebugSnapshot} so a history saved before the shape rules serves no cookie or credential value).
  * Called by {@link readResource} for `events/<sequence>`.
  * @param baseUri - `codebook://node-history/<studyId>`.
  * @param studyId - The history's study id.
@@ -83,5 +84,14 @@ export function readTestEntryDetail(
       'NOT_FOUND',
       `The history ${studyId} has no entry with sequence ${sequence}. Read ${baseUri}/events for the sequences it holds.`,
     )
-  return readJsonPage(`${baseUri}/events/${sequence}`, entry, page)
+  return readJsonPage(
+    `${baseUri}/events/${sequence}`,
+    entry.type === 'stop'
+      ? {
+          ...entry,
+          debuggerSnapshot: maskSavedDebugSnapshot(entry.debuggerSnapshot),
+        }
+      : entry,
+    page,
+  )
 }
