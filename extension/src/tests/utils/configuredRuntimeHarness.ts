@@ -1,4 +1,5 @@
-import { join, resolve } from 'node:path'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { dirname, join, resolve } from 'node:path'
 import type { TestContext } from 'node:test'
 import { runInNewContext } from 'node:vm'
 
@@ -158,7 +159,11 @@ export async function configuredRuntimeHarness(
     /**
      * Gives a version 3 run its scripted Node participant (`harness.server`, see {@link createServerParticipant}): the stand-in server offers an inspector, the run attaches a `pwa-node` session and a second CDP channel, acknowledges the server stops' registrations, and a test sends the server's hits itself. Server stops are sealed at `(<serverSeal ?? 'action-browser'>)/./<path>`; `route` is the route the work store answers by default (`null`: unreadable). Without it a server stop's preparation ends after the seal, as before.
      */
-    serverRuntime?: { route?: string | null }
+    serverRuntime?: {
+      route?: string | null
+      /** The App paths manifest written to `.next/dev/server/app-paths-manifest.json` (manifest key to compiled page); by default one page for the entry path, such as `/dashboard/page`. */
+      appPaths?: Record<string, string>
+    }
     /** What `document.readyState` answers from the start (default `complete`); an entry-render test starts with `loading` and calls `setDocumentReadyState('complete')` once the page may load. */
     documentReadyState?: 'loading' | 'complete'
     /** The executed module's text instead of the default one-statement module, such as a Vite module with an inlined env value. */
@@ -1255,6 +1260,7 @@ export async function configuredRuntimeHarness(
         sourcePath,
         javascript,
         scriptUrl: serverScriptUrl,
+        sourceMap: bundle.sourceMap,
         workspace: repository.directory,
         defaultRoute: options.serverRuntime.route ?? null,
         evaluateOnCallFrame: evaluateInspection,
@@ -1263,6 +1269,24 @@ export async function configuredRuntimeHarness(
       })
     : undefined
   const serverLaunches: DebugSession['configuration'][] = []
+  // The compiled App paths manifest the run reads to know the entry route's pattern.
+  if (options.serverRuntime) {
+    const entryPathname = (options.entryPath ?? '/').split(/[?#]/)[0]!
+    const stem = entryPathname === '/' ? '' : entryPathname.replace(/\/$/, '')
+    const manifestPath = join(
+      repository.directory,
+      '.next/dev/server/app-paths-manifest.json',
+    )
+    await mkdir(dirname(manifestPath), { recursive: true })
+    await writeFile(
+      manifestPath,
+      JSON.stringify(
+        options.serverRuntime.appPaths ?? {
+          [`${stem}/page`]: `app${stem}/page.js`,
+        },
+      ),
+    )
+  }
   const vscode = {
     workspace: {
       textDocuments: documents,

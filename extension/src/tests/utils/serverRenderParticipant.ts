@@ -47,6 +47,8 @@ export interface ServerParticipantParts {
   javascript: string
   /** The address the sealed module is announced under. */
   scriptUrl: string
+  /** The sealed module's source map as JSON, which a further instance of the module carries with its own mappings. */
+  sourceMap: string
   /** The workspace the verified inspector reports. */
   workspace: string
   /** The route the work store answers on a frame whose hit names none; `null` for an unreadable route. */
@@ -352,6 +354,28 @@ export function createServerParticipant(parts: ServerParticipantParts) {
      */
     announceReactCopy(scriptId: string, copy: number): void {
       announce(scriptId, `about://React/Server/${parts.scriptUrl}?${copy}`)
+    },
+    /**
+     * Announces the sealed module again under a new script id, at the sealed address or in another webpack layer (`rsc`, `action-browser`), as Next parses a shared module for another route or layer: an extra leading line shifts the generated code by one line, and the instance carries its own inline source map.
+     * @param scriptId - The new script's id.
+     * @param layer - The layer in the address; omitted for the sealed address itself.
+     * @param mappings - The instance's own mappings; `;AAAA` puts the one statement on generated line 2, so a hit there is `generated: { line: 1, column: 0 }`.
+     * @example harness.server.announceInstance('5036', 'rsc')
+     */
+    announceInstance(
+      scriptId: string,
+      layer?: string,
+      mappings = ';AAAA',
+    ): void {
+      const url = layer
+        ? parts.scriptUrl.replace(/\([^)/]+\)/, `(${layer})`)
+        : parts.scriptUrl
+      const map = { ...JSON.parse(parts.sourceMap), mappings }
+      scriptTexts.set(
+        scriptId,
+        `"use strict";\n${parts.javascript}\n//# sourceURL=${url}\n//# sourceMappingURL=data:application/json;base64,${Buffer.from(JSON.stringify(map)).toString('base64')}`,
+      )
+      announce(scriptId, url)
     },
     /** Gives a script its own generated text, as a re-parsed instance with other code has. */
     setScriptText(scriptId: string, text: string): void {

@@ -1585,7 +1585,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       ENTRY_LOAD_POLL_MS,
     )
     try {
-      await entry.done.promise
+      // A stop of the run ends the wait; the deadlines of the run bound it otherwise.
+      await awaitResponse(
+        entry.done.promise,
+        'entry page load',
+        this.abort.signal,
+        REPOSITORY_RUN_TIMEOUT_MS,
+      )
     } finally {
       clearInterval(entry.timer)
     }
@@ -1699,6 +1705,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         () => resolve(undefined),
         SERVER_RENDER_CLASSIFICATION_MS,
       )
+      // A stop of the run ends the read as well; the caller then finds the run ending.
+      this.abort.signal.addEventListener('abort', () => resolve(undefined), {
+        once: true,
+      })
     })
     try {
       return renderedRouteOf(await Promise.race([read, bound]))
@@ -5505,7 +5515,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       events.push('Page.frameNavigated')
     }
     // A client-side navigation to a sign-in path commits no new document, so it is watched on its own event.
-    if (name === 'browser' && this.operationsConfiguration?.signInPaths) {
+    // The same event keeps the main frame's URL current for the route rule of a render hit (D18), also without a sign-in path.
+    if (
+      name === 'browser' &&
+      (this.operationsConfiguration?.signInPaths ||
+        this.stops.some((stop) => stop.participant === 'server'))
+    ) {
       cdp.on('Page.navigatedWithinDocument', (event) => {
         if (
           this.cleaning ||
@@ -5513,7 +5528,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           event.frameId !== this.mainFrameId
         )
           return
-        this.onSignInLanding(event.url)
+        this.mainFrameUrl = event.url
+        if (this.operationsConfiguration?.signInPaths)
+          this.onSignInLanding(event.url)
       })
       events.push('Page.navigatedWithinDocument')
     }
