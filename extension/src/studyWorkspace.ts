@@ -18946,35 +18946,47 @@ export class StudyWorkspace {
           ),
         ),
     )
-    /** Says whether the active text editor is the learner's file the move uncovered in the group the Application left: the file that was behind the pane (whatever the editor reported at arming), or the file in front of a group that showed none while no text editor was active. */
-    const isEditorShownByMove = (): boolean => {
+    // The groups whose uncovered file the watch has taken as the move's effect: the move uncovers one file per group, so any later editor change there is the learner's.
+    const groupsWithUncoveredFile = new Set<symbol | string>()
+    /** Names the group whose uncovered learner file is the active text editor: the file that was behind the Application (whatever the editor reported at arming), or the front file of a group that showed none while no text editor was active; only once per group. */
+    const findGroupUncoveredByMove = (): vscode.TabGroup | undefined => {
       const editor = vscode.window.activeTextEditor
       const group = vscode.window.tabGroups.all.find(
         (candidate) => candidate.viewColumn === editor?.viewColumn,
       )
-      if (!editor || !group) return false
+      if (!editor || !group) return undefined
+      const keys = this.groupKeysOf(group)
+      if (keys.some((key) => groupsWithUncoveredFile.has(key))) return undefined
       return isEditorUncoveredByMove({
         editorFile: editor.document.uri.toString(),
         frontNow: this.learnerViewOfGroup(group).front,
-        heldBehindPane: this.groupKeysOf(group)
+        heldBehindPane: keys
           .map((key) => heldBehindPane.get(key))
           .find((held) => held !== undefined),
         wasNoEditorAtArming: editorBefore === noEditor,
         hadLearnerFrontAtArming:
           this.learnerViewBefore(groupsBefore, group)?.front !== undefined,
       })
+        ? group
+        : undefined
     }
     let changed: string | undefined
     /** Latches the first change of the active text editor, or of a learner group's tabs or of the learner's tab in front of it, by the comparison's name. */
     const check = (isFinal = false): void => {
       const editorNow = textEditorFocusState(vscode.window.activeTextEditor)
       // The file the move uncovered in the active group is the active text editor from then on, and later changes to it are the learner's; the report of a text editor the new group kept ends with the pane in front of it (row 710).
-      if (
-        editorNow !== editorBefore &&
-        (isEditorShownByMove() ||
-          (editorNow === noEditor && this.isApplicationInFrontOfActiveGroup()))
-      )
-        editorBefore = editorNow
+      if (editorNow !== editorBefore) {
+        const uncoveredGroup = findGroupUncoveredByMove()
+        if (uncoveredGroup) {
+          for (const key of this.groupKeysOf(uncoveredGroup))
+            groupsWithUncoveredFile.add(key)
+          editorBefore = editorNow
+        } else if (
+          editorNow === noEditor &&
+          this.isApplicationInFrontOfActiveGroup()
+        )
+          editorBefore = editorNow
+      }
       changed ??=
         editorNow !== editorBefore
           ? 'active text editor'

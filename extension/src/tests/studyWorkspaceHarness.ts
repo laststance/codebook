@@ -3534,7 +3534,12 @@ export async function workspaceHarness(
             })
           }
           // A pane that moved or came to the front changed a group's tabs; a reveal of the pane already in front did not.
-          if (!wasInFront) replaceGroupObjects()
+          // The tabs-before-groups sequence above reported every step of the move, the end of it without a group report when asked: no trailing re-wrap names the groups again.
+          const reportedEveryStep =
+            closesAfterOpen &&
+            homeGroup !== undefined &&
+            reportsPaneMoveTabsBeforeGroupsFlag
+          if (!wasInFront && !reportedEveryStep) replaceGroupObjects()
           for (const listener of viewChanged) listener()
         }
       },
