@@ -52,6 +52,7 @@ import {
   REPOSITORY_STOP_MODULE_JOURNAL_LIMIT,
   ENTRY_LOAD_POLL_MS,
   SERVER_RENDER_CLASSIFICATION_MS,
+  SERVER_RENDER_PAUSE_POLL_MS,
   SERVER_RENDER_RESUMED_HIT_JOURNAL_LIMIT,
   SERVER_RENDER_ROUTE_EXPRESSION,
   REPOSITORY_RUN_TIMEOUT_MS,
@@ -190,6 +191,7 @@ import { declaredOperationsOf } from './utils/declaredOperationsOf'
 import { describeCdpPause } from './utils/describeCdpPause'
 import type { NextEntryResponse } from './utils/describeNextEntryResponse'
 import { describeNextLaunchFailure } from './utils/describeNextLaunchFailure'
+import { describeRenderRunMessage } from './utils/describeRenderRunMessage'
 import { elapsedMsSince } from './utils/elapsedMsSince'
 import { entryRoutePatternOf } from './utils/entryRoutePatternOf'
 import { bundleOfEvaluatedModule } from './utils/extractDevelopmentModule'
@@ -207,6 +209,7 @@ import { isPageStubOfSource } from './utils/isPageStubOfSource'
 import { isPauseAtBoundColumn } from './utils/isPauseAtBoundColumn'
 import { isPauseAtStop, type PauseStopTarget } from './utils/isPauseAtStop'
 import { isPauseInScript } from './utils/isPauseInScript'
+import { isReactServerCopyUrl } from './utils/isReactServerCopyUrl'
 import { isRefreshedFrameAtStop } from './utils/isRefreshedFrameAtStop'
 import { isRscScriptUrl } from './utils/isRscScriptUrl'
 import { isSameGeneratedPosition } from './utils/isSameGeneratedPosition'
@@ -274,6 +277,7 @@ import {
   type RenderedRoute,
   type ServerRenderHitVerdict,
 } from './utils/serverRenderHitVerdictOf'
+import { serverStopSetOf } from './utils/serverStopSetOf'
 import { signInRequiredMessage } from './utils/signInRequiredMessage'
 import type { MappedPositionsScan } from './utils/sourceMapMappedPositions'
 import {
@@ -461,6 +465,8 @@ type StopInstance = StopModule & {
   boundColumn?: { line: number; column: number; instanceColumn: number }
 }
 type PreparedStop = ReturnType<typeof configuredStops>[number] & {
+  /** The stop's place in the declared stop list, fixed when it was sealed; the run reorders the stops of a server set into the order they pause, so this index names the declaration, never the position in {@link ConfiguredBrowserRun.stops}. */
+  declaredIndex: number
   bundle: BundleSource
   verifier: ReturnType<typeof createBundleVerifier>
   script?: Protocol.Debugger.ScriptParsedEvent
@@ -546,6 +552,8 @@ type DebugParticipant = {
     /** The declared server stop the run was resuming the page for when it took this pause as its own (a page pause read while a resume of the run's own had no answer, {@link ConfiguredBrowserRun.ownPagePauseUnderResume}): its resume is then nobody else's, however long the adapter takes to answer. */
     resumedByRun?: PreparedStop
   }
+  /** A pause in one of React's server copies of a declared module (`about://React/Server/…`), kept apart until its `stopped` arrives and the run decides whether it is at an owned stop's position (F1). */
+  copyPause?: { event: Protocol.Debugger.PausedEvent; journaled: boolean }
   /** The runtime is paused for its own instrumentation (a source map being read); it is no stop and no adapter breakpoint, but completion waits for its resume. */
   instrumentationPaused?: boolean
   /** A stack refresh announced while the accepted stop's own pause was still awaited or had been adopted: {@link ConfiguredBrowserRun.inspect} judges that stop, so the refresh's re-announced stop is consumed without a check of its own. */
@@ -691,6 +699,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private readonly pausedRenderStops = new Set<PreparedStop>()
   /** How many resumed hits of each journal event type were seen, for the journal cap. */
   private readonly resumedHitCounts = new Map<string, number>()
+  /** The `stopped` events whose pause kind the run already settled, so a deferred event is handled once ({@link settleServerStop}). */
+  private readonly settledStops = new WeakSet<object>()
+  /** The active bound as it was last set for a stop, so a resumed hit gives back the time the held pause took ({@link restoreActiveBound}). */
+  private activeBound?: {
+    endsAtMs: number
+    reason: string | (() => string)
+  }
   /** The URL the main frame last committed, for the unreadable-route rule. */
   private mainFrameUrl?: string
   /** The entry route's URL pattern, read once ({@link entryRoutePattern}). */
@@ -1161,10 +1176,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     // A version 3 stop is armed in its operation's turn: a first stop declared after a later operation waits for that operation's dispatch.
     // After an entry load the stops of group 0 were continued: the first stop still ahead is the one armed here.
     const firstAhead = this.stops[this.stopIndex]
-    if (firstAhead && this.isStopDueBy(firstAhead, 1)) {
-      await this.armStop(firstAhead)
-      this.armedStops.add(firstAhead)
-    }
+    // Its set is armed with it: the stops of a render run concurrently (D15).
+    if (firstAhead && this.isStopDueBy(firstAhead, 1))
+      await this.armStopSet(this.stopIndex)
     // A later browser stop is armed only in its turn, but a module that is already loaded can be compared with its sealed bundle now, before any application effect.
     for (const laterStop of this.stops.slice(1))
       if (laterStop.participant === 'browser' && laterStop.script)
@@ -1631,6 +1645,241 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Gives the view's words for a server render in progress: the entry-render pause held now, or the wait for the next stop of a set after a continue (task 3a).
+   * Called by {@link view}.
+   * @returns `{ renderMessage }` when there is something to say, else an empty object.
+   * @example this.renderMessageView() // { renderMessage: 'Waiting for the next stop of this render (2 of 2).' }
+   */
+  private renderMessageView(): { renderMessage?: string } {
+    const held = this.status === 'paused-server' ? this.snapshot : undefined
+    const next = this.stops[this.stopIndex],
+      previous = this.stops[this.stopIndex - 1]
+    const isSetInProgress =
+      this.status === 'acting' &&
+      next?.participant === 'server' &&
+      previous?.participant === 'server' &&
+      afterOperationOf(next) === afterOperationOf(previous)
+    const groupStops = isSetInProgress
+      ? this.stops.filter(
+          (stop) =>
+            stop.participant === 'server' &&
+            afterOperationOf(stop) === afterOperationOf(next),
+        )
+      : []
+    const renderMessage = describeRenderRunMessage({
+      isEntryRenderPaused:
+        held?.execution === 'server-render' &&
+        held.attribution === 'entry-load',
+      ...(isSetInProgress
+        ? {
+            waitingForNext: {
+              position: groupStops.indexOf(next) + 1,
+              total: groupStops.length,
+            },
+          }
+        : {}),
+    })
+    return renderMessage ? { renderMessage } : {}
+  }
+
+  /**
+   * Tells whether the run can see render hits: a version 3 run that declares a server stop.
+   * Called by the pause intake to route copy hits and by {@link settleServerStop}.
+   * @returns `true` for a version 3 run with a server stop; `false` for versions 1 and 2, whose handling stays as in 0.2.72.0.
+   * @example this.rendersServerStops() // false for a browser-only operations run
+   */
+  private rendersServerStops(): boolean {
+    return (
+      this.operationsConfiguration !== undefined &&
+      this.stops.some((stop) => stop.participant === 'server')
+    )
+  }
+
+  /**
+   * Settles what a server `stopped` event is before the stop machinery sees it: a hit in React's copy of an owned stop's module, or a repeat hit of a stop that already paused, is resumed by the run and journaled (F1, X15); every other stop goes on to {@link onEvent} unchanged.
+   * Why it exists: the debugger's two channels have no common order, and these hits are nobody's declared pause, so the event must not fail the run as an unexpected stop. Called by {@link onEvent} for the server's `stopped` in a run that renders server stops.
+   * @param session - The server session that sent the event.
+   * @param event - The `stopped` event.
+   * @example this.track(this.settleServerStop(session, event))
+   */
+  private async settleServerStop(
+    session: vscode.DebugSession,
+    event: DebugProtocol.Event,
+  ): Promise<void> {
+    const participant = this.participants.server
+    try {
+      // The pause of this stop may arrive after its `stopped`: wait for the first kind of pause there is, within the classification bound.
+      await waitUntil(
+        () =>
+          participant.copyPause ||
+          participant.stopped ||
+          participant.unannouncedPause ||
+          this.pendingCdpStop,
+        'the pause behind a server stop',
+        SERVER_RENDER_CLASSIFICATION_MS,
+        this.abort.signal,
+        SERVER_RENDER_PAUSE_POLL_MS,
+      )
+    } catch (error) {
+      if (this.abort.signal.aborted) return
+      if (!(error instanceof WaitTimeoutError)) throw error
+    }
+    if (this.cleaning) return
+    const verdict = await this.unexpectedHitVerdict(session, event)
+    if (verdict) {
+      await this.resumeUnexpectedHit(session, event, verdict)
+      return
+    }
+    this.settledStops.add(event)
+    this.onEvent(session, event)
+  }
+
+  /**
+   * Decides whether the pause behind a `stopped` is a hit the run resumes: React's copy at an owned stop's position, or a repeat of a stop that already paused.
+   * A copy elsewhere is given back to the pause intake as the held pause it would have been.
+   * @param session - The server session.
+   * @param event - The `stopped` event, whose thread the stack is read for.
+   * @returns The resume verdict, or `undefined` for every other pause.
+   * @example await this.unexpectedHitVerdict(session, event) // { action: 'resume', event: 'breakpoint.react-copy' }
+   */
+  private async unexpectedHitVerdict(
+    session: vscode.DebugSession,
+    event: DebugProtocol.Event,
+  ): Promise<
+    | Extract<
+        ServerRenderHitVerdict,
+        { event: 'breakpoint.react-copy' | 'breakpoint.repeat-hit' }
+      >
+    | undefined
+  > {
+    const participant = this.participants.server
+    const copy = participant.copyPause
+    if (copy) {
+      if (await this.isAtOwnedStopPosition(session, event))
+        return { action: 'resume', event: 'breakpoint.react-copy' }
+      // Not at a stop of this run: today's handling, as if the pause had come to the intake plainly.
+      participant.copyPause = undefined
+      this.admitPause('server', copy.event, copy.journaled)
+      return undefined
+    }
+    const held = participant.unannouncedPause
+    if (!held) return undefined
+    const alreadyPaused = this.stops.slice(
+      0,
+      this.stopIndex + (this.continuation ? 1 : 0),
+    )
+    const location = held.event.callFrames[0]?.location
+    const isRepeat =
+      location !== undefined &&
+      isRscScriptUrl(participant.scriptUrls.get(location.scriptId)) &&
+      alreadyPaused.some(
+        (stop) =>
+          stop.participant === 'server' && this.isPauseOfStop(held.event, stop),
+      )
+    return isRepeat
+      ? { action: 'resume', event: 'breakpoint.repeat-hit' }
+      : undefined
+  }
+
+  /**
+   * Tells whether the paused top frame is at the position of a stop of this run that is armed, by the stack the debugger reports (the mapped source and line), for a hit in React's copy of a module (F1).
+   * @param session - The server session.
+   * @param event - The `stopped` event.
+   * @returns `true` when the frame is in the file of a stop this run armed (also one already retired: hits in flight arrive after the retirement) on the line that stop is requested or bound at; `false` otherwise or when the stack cannot be read in time.
+   * @example await this.isAtOwnedStopPosition(session, event) // true for the ?107 copy of table.tsx at line 15
+   */
+  private async isAtOwnedStopPosition(
+    session: vscode.DebugSession,
+    event: DebugProtocol.Event,
+  ): Promise<boolean> {
+    const threadId = event.body?.threadId
+    if (!Number.isInteger(threadId)) return false
+    try {
+      const stack: DebugProtocol.StackTraceResponse['body'] =
+        await awaitResponse(
+          session.customRequest('stackTrace', {
+            threadId,
+            startFrame: 0,
+            levels: 1,
+          }),
+          'repository copy hit stack',
+          this.abort.signal,
+          SERVER_RENDER_CLASSIFICATION_MS,
+        )
+      const frame = stack.stackFrames[0]
+      if (!frame?.source?.path) return false
+      const framePath = resolve(frame.source.path)
+      return this.stops.some(
+        (stop) =>
+          stop.participant === 'server' &&
+          this.armedStops.has(stop) &&
+          resolve(stop.bundle.sourcePath) === framePath &&
+          frame.line === (stop.bound?.line ?? stop.armed.line),
+      )
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Resumes a copy hit or a repeat hit through the run's own server-side resume, journals why, and gives the run back its state: nothing was consumed.
+   * @param session - The server session.
+   * @param event - The `stopped` event whose thread is resumed.
+   * @param verdict - The resume verdict whose event is journaled.
+   * @example await this.resumeUnexpectedHit(session, event, { action: 'resume', event: 'breakpoint.react-copy' })
+   */
+  private async resumeUnexpectedHit(
+    session: vscode.DebugSession,
+    event: DebugProtocol.Event,
+    verdict: Extract<ServerRenderHitVerdict, { action: 'resume' }>,
+  ): Promise<void> {
+    const participant = this.participants.server
+    this.journalResumedHit(verdict)
+    participant.copyPause = undefined
+    participant.unannouncedPause = undefined
+    await this.sendOwnedResume(session, event.body?.threadId)
+    this.openCausalWindow('server')
+  }
+
+  /**
+   * Sends the run's own `continue` for a hit nobody owns and waits for the debugger's answer; the `continued` and `resumed` events it causes are expected ones.
+   * @param session - The server session.
+   * @param threadId - The paused thread.
+   * @throws When the debugger refuses or does not answer; the run is failed first with the continuation sentence.
+   * @example await this.sendOwnedResume(session, 1)
+   */
+  private async sendOwnedResume(
+    session: vscode.DebugSession,
+    threadId: number | undefined,
+  ): Promise<void> {
+    this.participants.server.expectedResumeRequests++
+    try {
+      await awaitResponse(
+        session.customRequest('continue', { threadId }),
+        'repository render-hit resume',
+        this.abort.signal,
+      )
+      this.alive()
+    } catch (error) {
+      this.fail(`Continue uncertain: ${String(error)}`)
+      throw error
+    }
+  }
+
+  /**
+   * Gives a stop's active bound back after a held pause was resumed without being published: the bound counts from the arming or the last continue, so a resumed hit neither extends nor ends it.
+   * @example this.restoreActiveBound()
+   */
+  private restoreActiveBound(): void {
+    const bound = this.activeBound
+    if (!bound) return
+    this.progressDeadline(
+      Math.max(1, bound.endsAtMs - performance.now()),
+      bound.reason,
+    )
+  }
+
+  /**
    * Classifies a hit of an armed server stop in an `(rsc)` instance before anything is published (X15): reads the route Next renders on the paused frame and decides with {@link serverRenderHitVerdictOf} whether the hit is the learner's pause.
    * Why it exists: a render runs other routes' copies of a shared module and cached functions of other renders, and only the entry route's first hit is the stop the learner declared. Hits in other layers (`(action-browser)`, `(ssr)`, `(middleware)`) and runs of versions 1 and 2 keep their handling. Called by {@link inspect} once both channels of the pause matched.
    * @param stop - The declared stop the pause was accepted for.
@@ -1770,39 +2019,63 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     // The pause is nobody's stop: the accepted-stop state returns to what it was before the hit.
     participant.stopped = undefined
     this.acceptedStop = false
-    participant.expectedResumeRequests++
-    try {
-      await awaitResponse(
-        participant.selected!.customRequest('continue', {
-          threadId: pause.threadId,
-        }),
-        'repository render-hit resume',
-        this.abort.signal,
-      )
-      this.alive()
-    } catch (error) {
-      this.fail(`Continue uncertain: ${String(error)}`)
-      throw error
-    }
-    // The next hit of the same render is caused by the run's own resume, and the active bound counts from it.
+    await this.sendOwnedResume(participant.selected!, pause.threadId)
+    // The next hit of the same render is caused by the run's own resume; the stop's bound runs on from the arming or the last continue.
     this.openCausalWindow(stop.participant)
-    this.progressDeadline(ACTIVE_TIMEOUT_MS, () =>
-      this.renderStopNotReachedText(stop),
+    this.restoreActiveBound()
+  }
+
+  /**
+   * Tells whether a stop is a server-render stop of a group after an operation: a server stop sealed in the `(rsc)` layer whose group is 1 or later.
+   * Called by the unreached-stop wording, which gives these stops the coded `SERVER_STOP_NOT_REACHED` failure and leaves every other stop its sentence.
+   * @param stop - The declared stop.
+   * @returns `true` for a render stop observed after operation k >= 1.
+   * @example this.isRenderStopAfterOperation(this.stops[0]!) // true for a stop sealed in (rsc) declared afterOperation 1
+   */
+  private isRenderStopAfterOperation(stop: PreparedStop): boolean {
+    return (
+      stop.participant === 'server' &&
+      stop.sealedLayer === 'rsc' &&
+      (afterOperationOf(stop) ?? 0) >= 1
     )
   }
 
   /**
-   * Words the failure of a render stop that was not hit within the active bound after arming, a continue or a resumed hit: the coded entry-render failure for group 0, today's sentence otherwise.
-   * @param stop - The stop being waited for.
-   * @returns The failure text, read at expiry.
-   * @example this.renderStopNotReachedText(stop)
+   * Words and records the failure of a render stop that was not hit within the active bound after its operation or the last continue: `SERVER_STOP_NOT_REACHED` with phase `after-operation`.
+   * Inputs were sent, so the failure says so (`sent`, `sideEffects` unknown) and the chat never starts again unasked.
+   * @param stop - The stop that was not reached.
+   * @returns The coded failure text.
+   * @example this.afterOperationNotReachedText(stop) // 'SERVER_STOP_NOT_REACHED: Declared stop app/lib/data.ts:154 was not reached within 20 s after operation 1. It may have run only while …'
    */
-  private renderStopNotReachedText(stop: PreparedStop): string {
-    return afterOperationOf(stop) === 0
-      ? this.entryRenderNotReachedText('not-hit')
-      : this.operationsAccepted > 0
-        ? this.unreachedOperationReason(this.operationsAccepted)
-        : this.unreachedNextStopReason(stop)
+  private afterOperationNotReachedText(stop: PreparedStop): string {
+    const operationIndex = afterOperationOf(stop)!,
+      isOfGroup = (other: PreparedStop): boolean =>
+        other.participant === 'server' &&
+        afterOperationOf(other) === operationIndex,
+      place = this.declaredAt(stop)
+    this.operationFailure ??= {
+      code: 'SERVER_STOP_NOT_REACHED',
+      operationIndex,
+      sent: 'sent',
+      sideEffects: 'unknown',
+      logId: `${this.options.control?.runId ?? this.id}#${operationIndex}`,
+      serverRender: {
+        phase: 'after-operation',
+        stop: place,
+        pausedStops: this.stops
+          .slice(0, this.stopIndex)
+          .filter(isOfGroup)
+          .map((other) => this.declaredAt(other)),
+        notReachedStops: this.stops
+          .slice(this.stopIndex)
+          .filter(isOfGroup)
+          .map((other) => this.declaredAt(other)),
+      },
+    }
+    return formatRefusalFailure(
+      'SERVER_STOP_NOT_REACHED',
+      `Declared stop ${place} was not reached within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s after operation ${operationIndex}. It may have run only while Codebook prepared the page (code at module scope, or a cached result), or this render did not reach it. Declare the stop inside the component or function that runs on every render, then start a new run.`,
+    )
   }
 
   /**
@@ -1856,7 +2129,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.unconfirmedHit = false
     return {
       execution,
-      declaredIndex: this.stops.indexOf(stop),
+      declaredIndex: stop.declaredIndex,
       executionIndex: this.snapshots.length,
       ...(execution === 'server-render' && isUnconfirmed
         ? { attribution: 'unconfirmed' as const }
@@ -2288,6 +2561,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
     const prepared: PreparedStop = {
       ...stop,
+      declaredIndex: index,
       bundle: acquired.bundle,
       verifier,
       scan,
@@ -3776,7 +4050,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private declaredField(stop: PreparedStop): string {
     return configuredStopFields(
       this.definition.configuration.version,
-      this.stops.indexOf(stop),
+      stop.declaredIndex,
     ).source
   }
 
@@ -3790,7 +4064,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           other.source.line === stop.source.line,
       )
     return sharesLine
-      ? `${place} (stop ${this.stops.indexOf(stop) + 1} of ${this.stops.length})`
+      ? `${place} (stop ${stop.declaredIndex + 1} of ${this.stops.length})`
       : place
   }
 
@@ -3897,7 +4171,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     place: { line: number; column: number },
   ): void {
     const earlier = this.stops
-      .slice(0, this.stops.indexOf(stop))
+      .slice(0, stop.declaredIndex)
       .find(
         (candidate) =>
           this.isDeclaredElsewhereInFile(candidate, stop) &&
@@ -4850,6 +5124,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * ```
    */
   private unreachedNextStopReason(stop: PreparedStop): string {
+    if (this.isRenderStopAfterOperation(stop))
+      return this.afterOperationNotReachedText(stop)
     const unreached = 'Repository continuation reached no next declared pause',
       opening = `${unreached}: declared stop ${this.declaredAt(stop)}`,
       paused = this.unannouncedStopPlace(stop)
@@ -5749,12 +6025,25 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     event: Protocol.Debugger.PausedEvent,
     journaled = true,
   ): void {
+    // A pause in React's copy of a declared module waits for its `stopped`, which decides whether it is at an owned stop's position (F1).
+    if (
+      name === 'server' &&
+      this.rendersServerStops() &&
+      isReactServerCopyUrl(
+        this.participants.server.scriptUrls.get(
+          event.callFrames[0]?.location.scriptId ?? '',
+        ),
+      )
+    ) {
+      this.participants.server.copyPause = { event, journaled }
+      return
+    }
     // A participant pauses once at a time; a second pause before the first one's resume is nobody's declared stop.
     if (this.holdsPause(name)) {
       this.fail(`Additional ${name} stop invalidated the declared operation`)
       return
     }
-    const expectedStop = this.expectedStop(name)
+    const expectedStop = this.expectedStopFor(name, event)
     // On the stop's line but at another column than the debugger bound it at is another statement of that line, not the stop.
     if (!this.isPauseOfStop(event, expectedStop)) {
       // The stop expected now is kept, so a pause that came before a stop's turn never becomes that stop's pause later.
@@ -5877,6 +6166,31 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private isStopDueBy(stop: PreparedStop, operationsSent: number): boolean {
     const afterOperation = afterOperationOf(stop)
     return afterOperation === undefined || afterOperation <= operationsSent
+  }
+
+  /**
+   * Gives {@link admitPause} the stop a pause belongs to when the expected stop opens a set of server stops (D15): the stop of the set whose place the pause is at, moved to the expected position so that the run's linear order is the order the stops pause in.
+   * @param name - The participant whose runtime paused.
+   * @param event - The pause.
+   * @returns The expected stop, or the member of its set the pause is at (then swapped into the expected position); `undefined` when no stop is expected.
+   * @example this.expectedStopFor('server', event) // the second declared stop when the render ran it first
+   */
+  private expectedStopFor(
+    name: Participant,
+    event: Protocol.Debugger.PausedEvent,
+  ): PreparedStop | undefined {
+    const expected = this.expectedStop(name)
+    if (!expected || name !== 'server' || !this.operationsConfiguration)
+      return expected
+    const base = this.stops.indexOf(expected),
+      members = this.stopSetFrom(base)
+    const matched = members.find((member) => this.isPauseOfStop(event, member))
+    if (!matched || matched === expected) return expected
+    // The pause order becomes the stop order: the matched stop takes the expected position.
+    const matchedIndex = this.stops.indexOf(matched)
+    this.stops[base] = matched
+    this.stops[matchedIndex] = expected
+    return matched
   }
 
   /** Gives {@link admitPause} the stop a participant's pause may belong to; a participant whose turn it is not has none. @example this.expectedStop('browser') // undefined while a server stop is next */
@@ -6533,6 +6847,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (
       stop &&
       afterOperationOf(stop) === index &&
+      this.operationsDispatched >= index &&
+      this.isRenderStopAfterOperation(stop)
+    )
+      return this.afterOperationNotReachedText(stop)
+    if (
+      stop &&
+      afterOperationOf(stop) === index &&
       this.operationsDispatched >= index
     ) {
       const paused = this.unannouncedStopPlace(stop)
@@ -6799,9 +7120,42 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const stop = this.stops[this.stopIndex]
     if (!stop || afterOperationOf(stop) !== index || this.armedStops.has(stop))
       return
-    await this.armStop(stop)
-    this.armedStops.add(stop)
-    this.alive()
+    await this.armStopSet(this.stopIndex)
+  }
+
+  /**
+   * Lists the stops that form one set with the stop at an index (D15): the consecutive server stops of one operation group, or the stop alone for a browser stop.
+   * Called by {@link armStopSet} and by the pause intake ({@link expectedStopFor}).
+   * @param startIndex - The index in {@link stops} of the first stop of the set.
+   * @returns The set's stops in their current order; empty when `startIndex` is past the end.
+   * @example this.stopSetFrom(this.stopIndex).length // 2 for a Promise.all of two render stops
+   */
+  private stopSetFrom(startIndex: number): PreparedStop[] {
+    // Versions 1 and 2 arm one stop at a time, as in 0.2.72.0.
+    if (!this.operationsConfiguration)
+      return this.stops[startIndex] ? [this.stops[startIndex]] : []
+    return serverStopSetOf(
+      this.stops.map((stop) => ({
+        participant: stop.participant,
+        group: afterOperationOf(stop) ?? 0,
+      })),
+      startIndex,
+    ).map((index) => this.stops[index]!)
+  }
+
+  /**
+   * Arms the stop at an index together with the other stops of its set that are not armed yet, because a render runs them concurrently and the chat cannot see which layer Codebook sealed (D15).
+   * Called by {@link armStopsOfOperation} for an operation's first stop and by {@link continue} for the stop its continuation arms next.
+   * @param startIndex - The index in {@link stops} of the set's first unpaused stop.
+   * @example await this.armStopSet(this.stopIndex + 1)
+   */
+  private async armStopSet(startIndex: number): Promise<void> {
+    for (const member of this.stopSetFrom(startIndex)) {
+      if (this.armedStops.has(member)) continue
+      await this.armStop(member)
+      this.armedStops.add(member)
+      this.alive()
+    }
   }
 
   /**
@@ -7465,6 +7819,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         )
           this.track(this.retakeNewsByBreakLocations(stop, session))
       }
+    if (
+      event.event === 'stopped' &&
+      name === 'server' &&
+      this.rendersServerStops() &&
+      !this.settledStops.has(event)
+    ) {
+      // A hit the run resumes by itself (React's copy, a repeat) must not pass as an unexpected stop: its kind is settled first.
+      this.track(this.settleServerStop(session, event))
+      return
+    }
     if (event.event === 'stopped') {
       const body: DebugProtocol.StoppedEvent['body'] = event.body
       // The editor sends a server stop's breakpoint to the browser session too, and the page's stub of a "use server" module maps the same line: that browser pause belongs to the server stop's breakpoint, not to a stop of the page, so it is resumed.
@@ -7987,6 +8351,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           pausedForMs,
         })
       else this.unjournaledAdapterEvents++
+      return
+    }
+    // A copy hit the adapter resumed by itself before the run decided on it.
+    if (participant.copyPause) {
+      participant.copyPause = undefined
+      this.journalUnheldResume(name, pausedForMs, isPauseOnlyCounted)
       return
     }
     if (this.retireUnannouncedPause(name, pausedForMs)) return
@@ -8902,8 +9272,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       const nextStop = this.stopArmedAfter(stop)
       if (nextStop) {
         try {
-          await this.armStop(nextStop)
-          this.armedStops.add(nextStop)
+          await this.armStopSet(this.stopIndex + 1)
         } catch (error) {
           // Nothing has been resumed yet, so the record says exactly that instead of an uncertain continuation.
           this.fail(
@@ -9792,6 +10161,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       )
         ? { firstExecutionObserved: false as const }
         : {}),
+      ...this.renderMessageView(),
       cleaned: this.cleaned,
       resourcesReleased: this.resourcesReleased,
       browserProfileLeft: this.browser.profileLeft,
@@ -10200,6 +10570,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): void {
     clearTimeout(this.progressTimer)
     this.holdingPause = false
+    if (milliseconds !== REPOSITORY_PAUSE_HOLD_TIMEOUT_MS)
+      this.activeBound = { endsAtMs: performance.now() + milliseconds, reason }
     // The pause that explains an expiry arrives after the deadline's text was chosen, so the text is completed when it expires.
     this.progressTimer = setTimeout(
       () => this.fail(this.expiredDeadlineText(reason, milliseconds)),

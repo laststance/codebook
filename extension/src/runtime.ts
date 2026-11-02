@@ -478,6 +478,8 @@ export type ConfiguredRuntimeView = {
   status: string
   /** Present as `false` when the configuration declares a server stop: Codebook loads the page once before it arms a stop, so the first execution (module scope, first cache fill) is not observed. */
   firstExecutionObserved?: false
+  /** The words for a server render in progress (an entry-render pause held, or the wait for the next stop of a set), for the run resource's `message`. */
+  renderMessage?: string
   cleaned: boolean
   resourcesReleased: boolean
   /** The run's own browser profile folder when its cleanup could not remove it. It is no failed release: `cleaned`, `resourcesReleased` and the outcomes are as without it. */

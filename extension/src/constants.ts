@@ -2013,6 +2013,8 @@ export const REPOSITORY_STOP_MODULE_FIRST_JOURNAL_BEYOND_LIMIT = 50
 export const REPOSITORY_STOP_INSTANCE_READ_MS = 2_000
 /** The longest the run classifies a hit of an armed server stop in an `(rsc)` instance, counted from the first of its CDP pause and DAP `stopped` to the answer of the route read (the binding check, one `stackTrace` and one `evaluate`); past it the route counts as unreadable. Measured on the spike: median 60 ms, at most 102 ms warm, 214 ms and 257 ms for the first stops of a cold process. */
 export const SERVER_RENDER_CLASSIFICATION_MS = 1_000
+/** How often the run looks for the pause behind a server `stopped` while the pause has not arrived yet; the two channels of one pause arrive within milliseconds of each other. */
+export const SERVER_RENDER_PAUSE_POLL_MS = 5
 /** How often the entry-load phase reads whether the main frame's committed document finished loading while no server-render pause is held. */
 export const ENTRY_LOAD_POLL_MS = 100
 /** The constant expression a DAP `evaluate` on the paused top frame runs to read the route Next renders: only the work store's `route` string, never the request, headers or cookies. */

@@ -102,6 +102,7 @@ export function createServerParticipant(parts: ServerParticipantParts) {
   let continueBehavior:
     | { kind: 'refuse'; message: string }
     | { kind: 'hold'; released: Promise<void> }
+    | { kind: 'hold-answer'; released: Promise<void> }
     | { kind: 'no-events' }
     | undefined
   let breakpointsAcknowledged = 0
@@ -205,6 +206,8 @@ export function createServerParticipant(parts: ServerParticipantParts) {
       })
       listeners.get('Debugger.resumed')?.({})
     }
+    // The process runs on while the adapter's answer is still on its way.
+    if (behavior?.kind === 'hold-answer') await behavior.released
     return {}
   }
 
@@ -433,6 +436,17 @@ export function createServerParticipant(parts: ServerParticipantParts) {
       let release = (): void => {}
       continueBehavior = {
         kind: 'hold',
+        released: new Promise<void>((resolve) => {
+          release = resolve
+        }),
+      }
+      return release
+    },
+    /** Sends the `continued` and `resumed` events of the next resume at once but keeps the adapter's answer back until the returned function is called, so the process can hit again before the continue is acknowledged. */
+    holdNextContinueAnswer(): () => void {
+      let release = (): void => {}
+      continueBehavior = {
+        kind: 'hold-answer',
         released: new Promise<void>((resolve) => {
           release = resolve
         }),

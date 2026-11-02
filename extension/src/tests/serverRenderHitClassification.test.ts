@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test, type TestContext } from 'node:test'
 
 import {
+  ACTIVE_TIMEOUT_MS,
   SERVER_RENDER_CLASSIFICATION_MS,
   SERVER_RENDER_RESUMED_HIT_JOURNAL_LIMIT,
 } from '../constants'
@@ -291,4 +292,67 @@ test('a hit whose route cannot be read is resumed while the browser is on anothe
   // Assert
   assert.equal(journaled(harness, 'breakpoint.unattributed-resumed').length, 1)
   assert.equal(harness.run.view().participants.server?.snapshot, undefined)
+})
+
+// Value: protects=AC 17 and X16: a stop sealed in action-browser and hit in another route's (rsc) instance of the shared file is resumed and journaled breakpoint.other-route, not paused; fails_when=the shared-layer stop skips the route rule that stops sealed in rsc get; no_claim=that Next parses this instance (spike s10-bi); the harness seals from one layer
+test('a shared-file stop sealed in action-browser is resumed when another route renders its rsc instance', async (context) => {
+  // Arrange
+  const { harness } = await entryRenderRun(context, {
+    serverSeal: 'action-browser',
+  })
+  harness.server!.announceInstance('5036', 'rsc')
+  await waitUntil(
+    () => journaled(harness, 'stop.instance-sealed').length >= 1,
+    'the rsc instance was accepted',
+  )
+  // Act
+  harness.server!.hit({
+    scriptId: '5036',
+    generated: { line: 1, column: 0 },
+    route: '/dashboard/invoices',
+  })
+  await resumesReceived(harness, 1)
+  // Assert
+  assert.deepEqual(journaled(harness, 'breakpoint.other-route'), [
+    { route: '/dashboard/invoices' },
+  ])
+  assert.equal(harness.run.view().participants.server?.snapshot, undefined)
+})
+
+// Value: protects=AC 16: a hit that arrives before the answer to the run's own resume of the previous hit is classified on its own and pauses once; fails_when=the second hit is taken for the first one's events, fails the run as an additional stop, or is lost; no_claim=the adapter's real event order (spike s07-cdg: the next compile hit within milliseconds)
+test("a hit before the answer to the previous hit's resume is classified on its own", async (context) => {
+  // Arrange
+  const { harness } = await entryRenderRun(context)
+  const answer = harness.server!.holdNextContinueAnswer()
+  harness.server!.hit({ route: '/dashboard/invoices' })
+  await resumesReceived(harness, 1)
+  // Act
+  harness.server!.hit({ route: '/dashboard' })
+  answer()
+  const pause = await publishedPause(harness)
+  // Assert
+  assert.equal(pause.attribution, 'entry-load')
+  assert.equal(harness.server!.continues.length, 1)
+  assert.deepEqual(journaled(harness, 'breakpoint.other-route'), [
+    { route: '/dashboard/invoices' },
+  ])
+})
+
+// Value: protects=AC 21: a resume of another route's hit that the adapter never answers ends the run with the continuation sentence after the active bound; fails_when=the run waits forever or goes on with a paused server; no_claim=the 20 s bound's value (awaitResponse's own test), here a real wait
+test('a resume the adapter never answers fails the run with the continuation sentence', async (context) => {
+  // Arrange
+  const { harness } = await entryRenderRun(context)
+  harness.server!.holdNextContinue()
+  // Act
+  harness.server!.hit({ route: '/dashboard/invoices' })
+  await waitUntil(
+    () => harness.run.view().failures.length > 0,
+    'the run failed',
+    ACTIVE_TIMEOUT_MS + 5_000,
+  )
+  // Assert
+  assert.match(
+    harness.run.view().failures[0]!,
+    /^Continue uncertain: .*Timed out waiting for repository render-hit resume/,
+  )
 })

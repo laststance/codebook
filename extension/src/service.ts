@@ -3820,6 +3820,11 @@ export class StudyService {
         runtime?.operations ??
         [...record.actions.values()].map((action) => action.receipt),
       ...(operationStatus ? { operationStatus } : {}),
+      // A server render in progress says what it waits for, and that its first execution was not observed.
+      ...(runtime?.renderMessage ? { message: runtime.renderMessage } : {}),
+      ...(runtime?.firstExecutionObserved === false
+        ? { firstExecutionObserved: false as const }
+        : {}),
       ...(confirmation
         ? {
             confirmation: confirmation.state,
