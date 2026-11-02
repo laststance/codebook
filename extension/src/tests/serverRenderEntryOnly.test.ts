@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { LearningLibrary } from '../learningLibrary'
+import { readResource } from '../resources'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { captureStudy } from '../utils/captureStudy'
 import { snapshotSourceHashes } from '../utils/snapshotSourceHashes'
@@ -74,6 +75,56 @@ test('a completed run with no operation is saved and reopened with its entry pau
     ]),
     [['server-render', 'entry-load']],
   )
+})
+
+// Value: protects=API 1.16 the run resource's observation and the inspection resource each say what the entry-render pause is (execution, attribution, declaredIndex, executionIndex) so the chat names the pause as the run labels it; fails_when=either resource drops those fields and only the bare snapshot resource carries them; why_new=no service-level test read the run resource or the inspection for a server-render pause; seam=none; no_claim=a real Next dev server or the wording the chat gives the pause
+test('the run resource and the inspection resource label the entry-render pause with execution, attribution and indexes', async (context) => {
+  // Arrange
+  const run = await serviceHostedEntryRun(context)
+  const { harness, service, state } = run
+  await waitUntil(
+    () => harness.server!.breakpointsAcknowledged() > 0,
+    'the entry-render stop was armed',
+  )
+  await waitUntil(
+    () => harness.navigations.length >= 1,
+    'the entry navigation started',
+  )
+  harness.server!.hit({ route: '/dashboard' })
+  await waitUntil(() => state().state === 'paused-server', 'the entry pause')
+  // Act
+  const observation = state().observations[0]!
+  const inspection = await readResource(service, observation.inspectionUri)
+  if (!('text' in inspection)) throw new Error('The inspection is text.')
+  // The masked page carries the inspection facts as a JSON string in `content`.
+  const inspected = JSON.parse(JSON.parse(inspection.text).content)
+  // Assert
+  const label = {
+    execution: 'server-render',
+    attribution: 'entry-load',
+    declaredIndex: 0,
+    executionIndex: 0,
+  }
+  assert.deepEqual(
+    {
+      execution: observation.execution,
+      attribution: observation.attribution,
+      declaredIndex: observation.declaredIndex,
+      executionIndex: observation.executionIndex,
+    },
+    label,
+  )
+  assert.equal('operationIndex' in observation, false)
+  assert.deepEqual(
+    {
+      execution: inspected.execution,
+      attribution: inspected.attribution,
+      declaredIndex: inspected.declaredIndex,
+      executionIndex: inspected.executionIndex,
+    },
+    label,
+  )
+  assert.equal('operationIndex' in inspected, false)
 })
 
 // Value: protects=CodeRabbit minor (pass 4): a run of no operation whose run-level after conditions never hold ends with the coded OPERATION_AFTER_NOT_MET failure (operation 0, nothing sent), as the last operation of a run with operations does; fails_when=the 20 s deadline ends the run with the plain text "Timed out waiting for configured after conditions" and no operationFailure; no_claim=real time (the run's manual clock moves) or a real page's condition

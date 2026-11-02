@@ -204,6 +204,7 @@ import { nextNodeServerState } from './utils/nextNodeServerState'
 import { nodeTestResultKind } from './utils/nodeTestResultKind'
 import { numberSourceLines } from './utils/numberSourceLines'
 import { parseChromeExtensionConfiguration } from './utils/parseChromeExtensionConfiguration'
+import { pauseLabelOf } from './utils/pauseLabelOf'
 import type { NodeTestExecutionPlan } from './utils/planNodeTestExecution'
 import { prepareNodeServerStudy } from './utils/prepareNodeServerStudy'
 import { prepareNodeTestStudy } from './utils/prepareNodeTestStudy'
@@ -3923,6 +3924,8 @@ export class StudyService {
           actionId: snapshot.actionId,
           participant: snapshot.participant,
           capturePhase: snapshot.capturePhase,
+          // Only the labels the snapshot carries (a server-render pause); browser-only runs gain no key.
+          ...pauseLabelOf(snapshot),
           // Present only for a stop the debugger bound on another line than declared: the sentence that names the paused line.
           place: this.boundPlace(record, snapshot, false)?.place,
           snapshotUri: this.uri(

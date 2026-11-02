@@ -2348,6 +2348,10 @@ test('an observation committed on the line the debugger moved its stop to report
   assert.equal(JSON.stringify(facts.requestedSource), '{"line":1,"column":1}')
   assert.equal(facts.source.line, 2)
   assert.equal(facts.source.column, 1)
+  // A browser-only stop carries no pause label: neither resource gains a key for it.
+  assert.equal('attribution' in observation, false)
+  assert.equal('execution' in observation, false)
+  assert.equal('attribution' in facts, false)
 })
 
 /**

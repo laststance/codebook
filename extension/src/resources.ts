@@ -49,6 +49,7 @@ import { serverRenderHelp } from './serverRenderHelp'
 import type { StudyService } from './service'
 import { describeStudy } from './utils/describeStudy'
 import { omittedDetail } from './utils/omittedDetail'
+import { pauseLabelOf } from './utils/pauseLabelOf'
 import { readBoundedFile } from './utils/readBoundedFile'
 import { readExtensionHistoryResource } from './utils/readExtensionHistoryResource'
 import { readMaskedJsonPage } from './utils/readMaskedJsonPage'
@@ -702,6 +703,8 @@ export async function readResource(
         historical: true,
         pause: snapshot.pause,
         elapsedMs: snapshot.elapsedMs,
+        // Only the labels the snapshot carries (a server-render pause); browser-only runs gain no key.
+        ...pauseLabelOf(snapshot),
         // Only for a stop the debugger bound on another line than declared: the sentence that names the paused line.
         ...(boundPlace?.place && { place: boundPlace.place }),
         // The position the debugger bound and paused at; it lies on the declared line or a later line the stop's binding rule accepts, and may differ from the requested column.
