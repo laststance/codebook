@@ -1958,3 +1958,159 @@ test("in Cursor, the move watch refuses a learner's pick of another file of the 
     await harness.close()
   }
 })
+
+/**
+ * Arms the presentation placement guard while the Application reports itself active, then flips that report; the host noise of native C72-2 (attempt 2: "Application view state active=false visible=true column=1" with nothing else changed).
+ * @param harness - The harness from {@link applicationSharingLearnerGroupBesideChat}.
+ * @returns The armed guard and the function that flips the Application's active report.
+ * @example const { assertRetained, flipApplicationActive } = armPlacementWithApplicationActive(harness)
+ */
+function armPlacementWithApplicationActive(
+  harness: Awaited<
+    ReturnType<typeof applicationSharingLearnerGroupBesideChat>
+  >['harness'],
+) {
+  const application = harness.reader['app']!
+  let active = true
+  Object.defineProperty(application, 'active', {
+    configurable: true,
+    get: () => active,
+  })
+  const assertRetained = harness.reader['retainPresentationPlacement'](
+    'readMainEditorGrid/assertInitial',
+  )
+  return {
+    assertRetained,
+    flipApplicationActive: (): void => {
+      active = false
+    },
+  }
+}
+
+// Value: protects=the placement guard of the Recording's composition beside Cursor's Agent chat: the Application reporting itself inactive while its group is the active one, with no group, tab, focus or source changed, is the editor's noise and no refusal (native C72-2 candidate ddc14faa attempt 2: "Guard: retainPresentationPlacement, Failed checks: app active", the only event the Application's view state flip); fails_when=the guard compares the Application's or the Study pane's own active report, so the flip refuses with "Native pane, group or focus changed while presentation waited; the learner arrangement was preserved."; why_new=Cycle 0072 task 5 native C72-2 ddc14faa; seam=applicationSharingLearnerGroupBesideChat, the Application's active report, the reader's retainPresentationPlacement; no_claim=the real Cursor's event timing (native Cursor trial)
+test("in Cursor, the placement guard ignores the Application's own active report flipping with nothing else changed", async () => {
+  // Arrange
+  const { harness } = await applicationSharingLearnerGroupBesideChat()
+  try {
+    const { assertRetained, flipApplicationActive } =
+      armPlacementWithApplicationActive(harness)
+    flipApplicationActive()
+
+    // Act
+    const outcome = (() => {
+      try {
+        assertRetained()
+        return 'retained'
+      } catch (error) {
+        return String(error)
+      }
+    })()
+
+    // Assert
+    assert.equal(outcome, 'retained')
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's click during the Recording's composition: a learner who opens a file in another group while the Application's active report flips still refuses the placement; fails_when=the guard stops comparing the learner's focus together with the pane report, so the click is accepted and the recording arranges over it; why_new=Cycle 0072 task 5 native C72-2 ddc14faa (the guard must still refuse real input); seam=armPlacementWithApplicationActive, focusMutableDraft (the learner's click), the reader's retainPresentationPlacement; no_claim=the real Cursor's event timing
+test("in Cursor, the placement guard still refuses a learner's click while the Application's active report flips", async () => {
+  // Arrange
+  const { harness } = await applicationSharingLearnerGroupBesideChat()
+  try {
+    const { assertRetained, flipApplicationActive } =
+      armPlacementWithApplicationActive(harness)
+    flipApplicationActive()
+    harness.focusMutableDraft('auth.ts', 2)
+
+    // Act
+    const outcome = (() => {
+      try {
+        assertRetained()
+        return 'retained'
+      } catch (error) {
+        return String(error)
+      }
+    })()
+
+    // Assert
+    assert.match(
+      outcome,
+      /Native pane, group or focus changed while presentation waited; the learner arrangement was preserved\./,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the source-group retirement of the Recording's composition: the captured source's own editor becoming the active text editor is Codebook's step and no learner input, while a learner's file stays the learner's (native C72-2 candidate ddc14faa attempt 1: "Native input changed during source-group retirement; the newer choice was preserved."); fails_when=every active-editor change that is not the issued copy marks the retirement as revoked by the learner, so Cursor's report of the captured source revokes it; why_new=Cycle 0072 task 5 native C72-2 ddc14faa; seam=recordedReaderHarness, the reader's open (a captured source), focusMutableDraft (the learner's file), the reader's isCodebookOwnFocus; no_claim=the real Cursor's event timing (native Cursor trial)
+test("the source-group retirement reads the captured source's own editor as Codebook's focus and a learner's file as the learner's", async () => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.open()
+    const capturedEditor = harness.editor.window.visibleTextEditors.find(
+      (editor) => editor.document.uri.path.endsWith('/Captured-theme.ts'),
+    )!
+    harness.focusMutableDraft('notes.ts', 1)
+    const learnerEditor = harness.editor.window.visibleTextEditors.find(
+      (editor) => editor.document.uri.path.endsWith('/notes.ts'),
+    )!
+
+    // Act
+    const reads = [capturedEditor, learnerEditor].map((editor) =>
+      Reflect.apply(harness.reader['isCodebookOwnFocus'], harness.reader, [
+        editor,
+      ]),
+    )
+
+    // Assert
+    assert.deepEqual(reads, [true, false])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the Output entry of the source-group retirement's refusal: it writes the standard placement-refused entry naming the facts that failed and keeps its own sentence (native C72-2 ddc14faa attempt 1 had no diagnostic at all); fails_when=the refusal throws without writing the entry, so a native failure of this guard has no cause to read; why_new=Cycle 0072 task 5 native C72-2 ddc14faa; seam=recordedReaderHarness, the reader's diagnostics, armPlacementReport and assertRetirementInput; no_claim=what the retirement saw in a native run
+test('the source-group retirement writes the standard Output entry when it refuses', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  const entries: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry): void => {
+      entries.push(entry)
+    },
+    show: () => undefined,
+  }
+  try {
+    const armed = harness.reader['armPlacementReport'](
+      'retireSourceDerivedGroup',
+    )
+
+    // Act
+    const outcome = (() => {
+      try {
+        harness.reader['assertRetirementInput'](false, armed, ['learner input'])
+        return 'retained'
+      } catch (error) {
+        return String(error)
+      }
+    })()
+
+    // Assert
+    assert.match(
+      outcome,
+      /Native input changed during source-group retirement; the newer choice was preserved\./,
+    )
+    const entry = entries.find(
+      (candidate) => candidate.surface === 'presentation:placement-refused',
+    )
+    assert.match(
+      String(Reflect.get(entry ?? {}, 'cause')),
+      /Guard: retireSourceDerivedGroup\nFailed checks: learner input/,
+    )
+  } finally {
+    await harness.close()
+  }
+})

@@ -7612,6 +7612,15 @@ export class StudyWorkspace {
     const source = focusedSource()
     let appActive = this.app?.active,
       contextActive = this.contextPanel?.active
+    /** Says whether the group the editor names as active still shows the Application in front: its own active report flipping then is the editor's noise, since no tab or group changed (Cursor 3.27.22 reports the Application inactive while its group is the active one, Cycle 0072 native C72-2). The Study pane's report stays compared: a learner's click into the chat part flips it with no other change. */
+    const activeGroupShowsApplication = (): boolean => {
+      const front = vscode.window.tabGroups.activeTabGroup.activeTab
+      return Boolean(
+        front &&
+        this.isCodebookPaneInput(front.input, 'codebook.scopedBrowser') &&
+        this.isOwnPaneOrSourceTab(front),
+      )
+    }
     // The focused group this receipt compares; only a receipt that accepts it follows the editor's own return to the Wiki's group (finding 606).
     let retainedFocus = {
       editor: textEditorFocusState(vscode.window.activeTextEditor),
@@ -7697,7 +7706,8 @@ export class StudyWorkspace {
             focusedWebviewCloseRevision ===
               this.webviewCloseRevisions.get(focusedWebview),
           source: sameSource,
-          appActive: appActive === this.app?.active,
+          appActive:
+            appActive === this.app?.active || activeGroupShowsApplication(),
           contextActive: contextActive === this.contextPanel?.active,
         },
         retainFocus,
@@ -20065,6 +20075,7 @@ export class StudyWorkspace {
         'retireSourceDerivedGroup/assertPlacement',
         false,
       ),
+      armed = this.armPlacementReport('retireSourceDerivedGroup'),
       copiedDocument = currentSource?.document
     let inputChanged = false
     /**
@@ -20082,7 +20093,11 @@ export class StudyWorkspace {
           inputChanged = true
       }),
       vscode.window.onDidChangeActiveTextEditor((editor) => {
-        if (editor !== initialEditor && !isIssuedCopy(editor))
+        if (
+          editor !== initialEditor &&
+          !isIssuedCopy(editor) &&
+          !this.isCodebookOwnFocus(editor)
+        )
           inputChanged = true
       }),
       vscode.window.onDidChangeWindowState((state) => {
@@ -20104,12 +20119,18 @@ export class StudyWorkspace {
           })
         assertCurrent()
         assertPlacement()
-        this.assertRetiredSourceCopy(sourceToCopy, shown, version, {
-          inputChanged,
-          initialGroup,
-          initialInput,
-          originalIdentity,
-        })
+        this.assertRetiredSourceCopy(
+          sourceToCopy,
+          shown,
+          version,
+          {
+            inputChanged,
+            initialGroup,
+            initialInput,
+            originalIdentity,
+          },
+          armed,
+        )
         shown.selections = selections
       }
       // An already accepted copy needs no second reveal over a later draft when explicit preparation retries.
@@ -20134,7 +20155,7 @@ export class StudyWorkspace {
       }
       if (this.sourceDerivedGroup === owned) this.sourceDerivedGroup = undefined
       assertCurrent()
-      this.assertRetirementInput(!inputChanged)
+      this.assertRetirementInput(!inputChanged, armed, ['learner input'])
       return true
     } finally {
       for (const subscription of subscriptions) subscription.dispose()
@@ -20165,6 +20186,7 @@ export class StudyWorkspace {
    * @param shown - The editor returned by that accepted native copy.
    * @param version - The source version before the native call.
    * @param before - The existing sticky input flag, original active input and destination identity.
+   * @param armed - What {@link armPlacementReport} noted when the retirement began.
    * @throws The existing retirement error when source bytes, window or native input changed.
    * @example this.assertRetiredSourceCopy(source, shown, version, before)
    */
@@ -20178,6 +20200,7 @@ export class StudyWorkspace {
       initialInput: string | undefined
       originalIdentity: symbol | undefined
     },
+    armed: Parameters<StudyWorkspace['writePlacementRefusal']>[0],
   ): void {
     const activeGroup = vscode.window.tabGroups.activeTabGroup,
       keepsInitialInput =
@@ -20186,25 +20209,57 @@ export class StudyWorkspace {
       copiedInput =
         this.editorGroupIdentities.get(activeGroup) ===
           before.originalIdentity && vscode.window.activeTextEditor === shown
-    this.assertRetirementInput(
-      !before.inputChanged &&
-        vscode.window.state.focused &&
-        (keepsInitialInput || copiedInput) &&
-        source.document.version === version,
-    )
+    // Each comparison is kept apart, so the refusal's entry names the ones that failed.
+    const failed = [
+      ...(before.inputChanged ? ['learner input'] : []),
+      ...(vscode.window.state.focused ? [] : ['window focus']),
+      ...(keepsInitialInput ||
+      copiedInput ||
+      this.isCodebookOwnFocus(vscode.window.activeTextEditor)
+        ? []
+        : ['active input']),
+      ...(source.document.version === version ? [] : ['source version']),
+    ]
+    this.assertRetirementInput(!failed.length, armed, failed)
+  }
+
+  /**
+   * Says whether the keyboard stands on something Codebook placed itself: the Application or Study pane, or a captured source; asked by {@link retireSourceDerivedGroup} so a focus or active-editor report of Codebook's own steps is not read as a learner's input.
+   * Cursor 3.27.22 reports the active group and the active text editor moving between Codebook's own panes and its captured source while the source group is retired (Cycle 0072 native C72-2); none of that is the learner's choice.
+   * @param editor - The active text editor, or `undefined` for none.
+   * @returns `true` for a captured source's editor of this reader, or when no editor is active and the active group's front tab is Codebook's own; `false` otherwise.
+   * @example this.isCodebookOwnFocus(vscode.window.activeTextEditor) // => true while the Application pane has the keyboard
+   */
+  private isCodebookOwnFocus(editor: vscode.TextEditor | undefined): boolean {
+    if (editor)
+      return (
+        this.library !== undefined &&
+        editor.document.uri.scheme === STUDY_SOURCE_SCHEME &&
+        editor.document.uri.authority === this.library.workspaceKey
+      )
+    const front = vscode.window.tabGroups.activeTabGroup.activeTab
+    return Boolean(front && this.isOwnPaneOrSourceTab(front))
   }
 
   /**
    * Preserves the same input-loss error at both accepted-effect checks in {@link retireSourceDerivedGroup}.
    * @param retained - Whether that boundary still satisfies its caller's original input facts.
+   * @param armed - What {@link armPlacementReport} noted when the retirement began.
+   * @param failedChecks - The facts that no longer hold, named in the Output entry.
    * @throws When later input revoked source-group retirement.
-   * @example this.assertRetirementInput(!inputChanged)
+   * @example this.assertRetirementInput(!inputChanged, armed, ['learner input'])
    */
-  private assertRetirementInput(retained: boolean): void {
-    if (!retained)
-      throw new Error(
-        'Native input changed during source-group retirement; the newer choice was preserved.',
-      )
+  private assertRetirementInput(
+    retained: boolean,
+    armed: Parameters<StudyWorkspace['writePlacementRefusal']>[0],
+    failedChecks: readonly string[],
+  ): void {
+    if (retained) return
+    // The sentence stays; the entry names what the guard saw (none existed before Cycle 0072).
+    this.writePlacementRefusal(armed, failedChecks)
+    throw new Error(
+      'Native input changed during source-group retirement; the newer choice was preserved.',
+    )
   }
 
   /**
@@ -25107,6 +25162,25 @@ export class StudyWorkspace {
     failedChecks?: readonly string[],
     editorAtArming?: string,
   ): Error {
+    this.writePlacementRefusal(armed, failedChecks, editorAtArming)
+    // A marked error, so the presentation boundary words it with the recovery that names real controls.
+    return new PlacementRefusalError(
+      'Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.',
+    )
+  }
+
+  /**
+   * Writes the Output › Codebook entry of a refused placement guard (`presentation:placement-refused`); called by {@link refusePlacement} and by guards that keep their own refusal sentence ({@link assertRetirementInput}).
+   * @param armed - What {@link armPlacementReport} noted.
+   * @param failedChecks - The comparisons that failed, when the guard keeps them apart.
+   * @param editorAtArming - The active text editor at arming ({@link describeActiveEditor}), when the guard notes it.
+   * @example this.writePlacementRefusal(armed, ['learner input'])
+   */
+  private writePlacementRefusal(
+    armed: Parameters<StudyWorkspace['refusePlacement']>[0],
+    failedChecks?: readonly string[],
+    editorAtArming?: string,
+  ): void {
     const nowMs = performance.now()
     const cause = describePlacementRefusal({
       guard: armed.guard,
@@ -25146,10 +25220,6 @@ export class StudyWorkspace {
       ),
     })
     this.diagnostics?.log({ surface: 'presentation:placement-refused', cause })
-    // A marked error, so the presentation boundary words it with the recovery that names real controls.
-    return new PlacementRefusalError(
-      'Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.',
-    )
   }
 
   /**
