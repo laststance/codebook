@@ -1741,6 +1741,7 @@ test('an entry keeps accepting the editor’s own-pane focus report while anothe
   // Arrange
   const harness = await workspaceHarness(false)
   const releases: (() => void)[] = []
+  const entries: Promise<unknown>[] = []
   harness.reader['arrange'] = (): Promise<void> =>
     new Promise<void>((resolve) => releases.push(resolve))
   try {
@@ -1750,6 +1751,7 @@ test('an entry keeps accepting the editor’s own-pane focus report while anothe
       false,
       undefined,
     )
+    entries.push(first, second)
 
     // Act
     releases[0]!()
@@ -1761,6 +1763,9 @@ test('an entry keeps accepting the editor’s own-pane focus report while anothe
     await second
     assert.equal(harness.reader['acceptingOwnPaneFocusReports'], 0)
   } finally {
+    // Release every held arrangement, so a failed assertion cannot leave an entry pending and hang the close.
+    for (const release of releases) release()
+    await Promise.allSettled(entries)
     await harness.close()
   }
 })
