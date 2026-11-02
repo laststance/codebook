@@ -130,7 +130,7 @@ test('the Declare operations section names the limit, afterOperation, native sel
   assert.ok(text.includes('NAVIGATION_BEFORE_LAST_OPERATION'))
 })
 
-// protects=the help tells ask-learner, the refusal of chat text into a secret, the dots-and-dropped-frames honesty and the name-and-format limit with the local test account advice; fails_when=any of them leaves the section; no_claim=the masking itself
+// protects=the help tells ask-learner, the refusal of chat text into a secret, the dots-and-dropped-frames honesty, the name-and-format limit with the local test account advice, and that a masked value can be harmless while the chat repeats no credential-like value; fails_when=any of them leaves the section; no_claim=the masking itself
 test('the Secrets and masking section names ask-learner, the chat refusal, the frame gate honesty and the limit of name-based masking', async (context) => {
   // Arrange
   const help = await readHelp(context)
@@ -145,6 +145,9 @@ test('the Secrets and masking section names ask-learner, the chat refusal, the f
   assert.ok(text.includes('masked by name and by format only'))
   assert.ok(text.includes('local test account'))
   assert.ok(text.includes('[pending]'))
+  // A masked value can be harmless, and the chat repeats no credential-like value even when one appears unmasked.
+  assert.ok(text.includes('a non-secret value of a secret shape'))
+  assert.ok(text.includes('never repeat a credential-like value in the chat'))
 })
 
 // protects=the frames help tells a chat the same short-secret refusal as the ask-learner and prepared-text sentences; fails_when=the help says a secret shorter than 4 characters is sent and the run goes on with every later image dropped; no_claim=the refusals themselves (operationErrors.test.ts covers the box; armPreparedSecretGate is not exercised here)
