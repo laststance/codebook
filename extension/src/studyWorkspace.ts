@@ -3523,7 +3523,7 @@ export class StudyWorkspace {
         // Decided from the measured placement, not from the confirmation flag a status read may have retired for a benign change (a learner group beside the Study). Measured first: beside a chat part the layout read answers for the focused part, so the keyboard goes back to the chat only afterwards.
         confirmedByPlacement = await this.placementHoldsAfterReturn()
         assertOwned()
-        await giveKeyboardBack?.()
+        await giveKeyboardBack?.().catch(() => false)
         // A Close during the keyboard's return resets the reader: nothing below may confirm it.
         assertOwned()
       } catch (error) {
