@@ -3831,6 +3831,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.alive()
       this.evidence.record('breakpoint.registered', {
         participant: stop.participant,
+        // The stops of a set are armed together, so the entry names its own stop for the reader of the journal ({@link journaledBindingOfSnapshot}).
+        declaredIndex: stop.declaredIndex,
         ...receipt,
       })
       return { place: receipt.movedTo }

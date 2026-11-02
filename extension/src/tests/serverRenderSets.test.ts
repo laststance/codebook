@@ -4,6 +4,7 @@ import { test, type TestContext } from 'node:test'
 import type { RepositoryOperation } from '../repositoryConfigSchemas'
 import type { RuntimeControl } from '../runtime'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { journaledBindingOfSnapshot } from '../utils/journaledBindingOfSnapshot'
 
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
 
@@ -41,11 +42,13 @@ function controlOf(context: TestContext): RuntimeControl {
 /**
  * Opens a version 3 run with two server stops declared after operation 1 (a set) on the invoices route, prepared and with the operation sent.
  * @param seal - The layer the stops are sealed in.
+ * @param verifiedLines - The source lines whose registration the adapter verifies at once; the others stay pending until their pause.
  * @example const harness = await twoStopSet(context, 'rsc')
  */
 async function twoStopSet(
   context: TestContext,
   seal: 'rsc' | 'action-browser',
+  verifiedLines: number[] = [],
 ) {
   const harness = await configuredRuntimeHarness(
     context,
@@ -65,6 +68,7 @@ async function twoStopSet(
       },
     },
   )
+  harness.server!.verifyRegistrationsOnLines(verifiedLines)
   await harness.run.prepare()
   harness.run.action('op-1', 'repository-operation')
   await waitUntil(() => harness.inputsSeen() === 1, 'the input was sent')
@@ -374,4 +378,80 @@ test('the source without a snapshot stays the first declared stop module after t
   // Assert
   assert.equal(first.declaredIndex, 1)
   assert.equal(harness.run.source(itemId)?.javascript, firstDeclaredJavascript)
+})
+
+/**
+ * Pauses the stops of a two-stop set one after the other, the second declared stop first unless told otherwise, and reads what the journal says about each one's binding.
+ * @example const [second, first] = await bindingsOfPausedSet(context, [3])
+ */
+async function bindingsOfPausedSet(
+  context: TestContext,
+  verifiedLines: number[],
+  secondDeclaredPausesFirst = true,
+) {
+  const harness = await twoStopSet(context, 'rsc', verifiedLines)
+  const secondDeclaredHit = {
+    generated: SECOND_STOP_PLACE,
+    source: SECOND_STOP_SOURCE,
+  }
+  harness.server!.hit(secondDeclaredPausesFirst ? secondDeclaredHit : {})
+  const firstPause = await nextPause(harness)
+  await harness.run.continue('server', firstPause.pause)
+  await waitUntil(() => harness.server!.continues.length === 1, 'resumed')
+  harness.server!.hit(secondDeclaredPausesFirst ? {} : secondDeclaredHit)
+  const secondPause = await nextPause(harness, firstPause.id)
+  const view = harness.run.view()
+  return [firstPause, secondPause].map((snapshot) => ({
+    declaredIndex: snapshot.declaredIndex,
+    binding: journaledBindingOfSnapshot(
+      view.events,
+      view.snapshots,
+      snapshot.id,
+    ),
+  }))
+}
+
+// Value: protects=each stop of a set reading its own registration answer for when its binding became known (D15 arms all stops of a set first); fails_when=the second declared stop, which pauses first, reads the last registration of the interval, so the stop registered bound is reported at-pause and the stop still pending before-pause, or the later stop finds no answer; why_new=Cycle 0071 Codex review; seam=the scripted adapter verifying the registration on source line 1 only; no_claim=that a real adapter answers the two registrations in this order
+test('a set stop registered bound reports before-pause and its pending sibling at-pause, whichever pauses first', async (context) => {
+  // Arrange: line 1 (declared stop 0) is verified at registration, line 3 (declared stop 1) is not
+  // Act: declared stop 1 pauses first, then declared stop 0
+  const pauses = await bindingsOfPausedSet(context, [1])
+  // Assert
+  assert.deepEqual(
+    pauses.map((pause) => [pause.declaredIndex, pause.binding.acknowledged]),
+    [
+      [1, 'at-pause'],
+      [0, 'before-pause'],
+    ],
+  )
+})
+
+// Value: protects=the opposite registration states of the same set read apart; fails_when=a still-pending stop that pauses first is reported before-pause because the other stop's bound answer was read; why_new=Cycle 0071 Codex review; seam=the scripted adapter verifying the registration on source line 3 only; no_claim=that a real adapter answers the two registrations in this order
+test('a set stop registered pending reports at-pause although its sibling was registered bound', async (context) => {
+  // Arrange: line 3 (declared stop 1) is verified at registration, line 1 (declared stop 0) is not
+  // Act: declared stop 1 pauses first, then declared stop 0
+  const pauses = await bindingsOfPausedSet(context, [3])
+  // Assert
+  assert.deepEqual(
+    pauses.map((pause) => [pause.declaredIndex, pause.binding.acknowledged]),
+    [
+      [1, 'before-pause'],
+      [0, 'at-pause'],
+    ],
+  )
+})
+
+// Value: protects=a stop registered bound that pauses first in declared order keeping its own answer; fails_when=the first stop reads the pending answer of the stop armed after it and is reported at-pause; why_new=Cycle 0071 Codex review; seam=the scripted adapter verifying the registration on source line 1 only; no_claim=that a real adapter answers the two registrations in this order
+test('a first set stop registered bound reports before-pause when the later stop of the set was registered pending', async (context) => {
+  // Arrange: line 1 (declared stop 0) is verified at registration, line 3 (declared stop 1) is not
+  // Act: declared stop 0 pauses first, then declared stop 1
+  const pauses = await bindingsOfPausedSet(context, [1], false)
+  // Assert
+  assert.deepEqual(
+    pauses.map((pause) => [pause.declaredIndex, pause.binding.acknowledged]),
+    [
+      [0, 'before-pause'],
+      [1, 'at-pause'],
+    ],
+  )
 })

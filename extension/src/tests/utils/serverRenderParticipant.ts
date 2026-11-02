@@ -350,9 +350,13 @@ export function createServerParticipant(parts: ServerParticipantParts) {
     })
   }
 
+  /** The requested source lines whose registration the adapter verifies in its answer; every other registration stays pending. */
+  let verifiedRegistrationLines: number[] = []
+
   /** Sends the breakpoint registrations the editor holds for the sealed source to the server session, as the adapter acknowledges them (pending until the pause). */
   const acknowledgeBreakpoints = (): void => {
     const run = parts.run()
+    const verifiedLines = verifiedRegistrationLines
     const selected = parts.breakpoints
     const requestSequence = ++sequence
     run.onRequest(session, {
@@ -375,10 +379,18 @@ export function createServerParticipant(parts: ServerParticipantParts) {
       request_seq: requestSequence,
       success: true,
       body: {
-        breakpoints: selected.map((breakpoint) => ({
-          id: adapterId(breakpoint),
-          verified: false,
-        })),
+        breakpoints: selected.map((breakpoint) => {
+          const line = breakpoint.location.range.start.line + 1
+          // A registration on a line the test chose is verified at once; every other one stays pending until its pause.
+          return verifiedLines.includes(line)
+            ? {
+                id: adapterId(breakpoint),
+                verified: true,
+                line,
+                column: breakpoint.location.range.start.character + 1,
+              }
+            : { id: adapterId(breakpoint), verified: false }
+        }),
       },
     })
   }
@@ -530,6 +542,13 @@ export function createServerParticipant(parts: ServerParticipantParts) {
     /** Sets the route the work store answers on every later hit that names none (`null` for an unreadable route). */
     setDefaultRoute(route: string | null): void {
       parts.defaultRoute = route
+    },
+    /**
+     * Makes the adapter verify, in its next answers, the registrations requested on these source lines; every other registration stays pending until its pause.
+     * @example harness.server.verifyRegistrationsOnLines([1])
+     */
+    verifyRegistrationsOnLines(lines: number[]): void {
+      verifiedRegistrationLines = lines
     },
     /** Every DAP command the run sent the server session, in order. */
     commands,
