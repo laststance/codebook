@@ -83,7 +83,7 @@ export function isSecretHeaderName(name: string): boolean {
  * isSecretQueryParameter('code') // => true
  * isSecretQueryParameter('page') // => false
  */
-export function isSecretQueryParameter(name: string): boolean {
+function isSecretQueryParameter(name: string): boolean {
   return isSecretName(name) || name.toLowerCase() === 'code'
 }
 
@@ -138,7 +138,7 @@ export function isAuthorizationShape(text: string): boolean {
  * @example
  * maskSecretUrlQueries('/cb?code=abc&page=2') // => '/cb?code=[masked]&page=2'
  */
-export function maskSecretUrlQueries(text: string): string {
+function maskSecretUrlQueries(text: string): string {
   return text.replace(
     URL_QUERY,
     (_query, pairs: string) =>
