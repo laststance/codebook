@@ -4521,11 +4521,14 @@ function studyClient(
       for (const direction of ['previous', 'next'] as const) {
         const control = element(`${direction}-moment`)
         if (control instanceof HTMLButtonElement) {
-          control.disabled = recordedStep(direction) === undefined
-          // A server stop's name is part of the control's name, so the learner hears where the move goes.
-          const target = current?.moments.find(
-            (moment) => moment.elapsedMs === recordedStep(direction),
-          )?.pauseName
+          const step = recordedStep(direction)
+          control.disabled = step === undefined
+          // A server stop's name is part of the control's name, so the learner hears where the move goes; a disabled control has no target and keeps its plain label.
+          const target =
+            step === undefined
+              ? undefined
+              : current?.moments.find((moment) => moment.elapsedMs === step)
+                  ?.pauseName
           const base = `${direction === 'previous' ? 'Previous' : 'Next'} recorded stop`
           const label = target ? `${base}: ${target.text}` : base
           control.setAttribute('aria-label', label)
@@ -4568,6 +4571,11 @@ function studyClient(
         browserCoverageLegend(marks),
       )
       renderOperationRow(recording, isTransportShown, selectedHistoryGap)
+    }
+    // Leaving the replay clears the stop announcement, so a screen reader reads no stale stop and reopening the same replay announces it again.
+    if (!recording && announcedPauseKey !== undefined) {
+      announcedPauseKey = undefined
+      text('pause-announcement', '')
     }
     // Outside a replay, the last browser replay's operation row must not stay, nor its cached input.
     clearOperationRowOutsideReplay(recording, replayFamily)

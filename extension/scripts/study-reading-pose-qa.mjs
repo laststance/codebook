@@ -1155,6 +1155,7 @@ async function check(page, options, collected) {
     })
   })
   await publish(serverRenderReplay(1, { presentedMs: 1000 }))
+  await waitUntilRendered(revisionAt(1))
   const announcements = await page.evaluate(
     () => document.getElementById('pause-announcement').textContent,
   )
@@ -1189,6 +1190,63 @@ async function check(page, options, collected) {
       announcementWrites === 0 &&
       announcements ===
         'Selected stop: Page load · Server render · app/lib/data.ts:23',
+  })
+  // Leaving the replay empties the stop announcement; reopening the same replay announces its stop again.
+  await publish({ ...serverRenderReplay(2), recording: undefined })
+  await waitUntilRendered(revisionAt(2))
+  const announcementAfterLeaving = await page.evaluate(
+    () => document.getElementById('pause-announcement').textContent,
+  )
+  await publish(serverRenderReplay(3, { presentedMs: 1000 }))
+  await waitUntilRendered(revisionAt(3))
+  const announcementAfterReopening = await page.evaluate(
+    () => document.getElementById('pause-announcement').textContent,
+  )
+  // protects=a screen reader reads no stale selected stop after the learner leaves the replay, and the same replay reopened announces its stop again; fails_when=the announcement keeps its text without a recording or the reopened replay stays silent; no_claim=native screen reader speech (stand-ins: the Study message the host posts)
+  cases.push({
+    name: 'leaving a replay clears the selected stop announcement and reopening it announces the stop again',
+    actual: { announcementAfterLeaving, announcementAfterReopening },
+    passed:
+      announcementAfterLeaving === '' &&
+      announcementAfterReopening ===
+        'Selected stop: Page load · Server render · app/lib/data.ts:23',
+  })
+  // A disabled Next recorded stop has no target: a stop without a recorded time must not lend it a name.
+  await publish({
+    ...serverRenderReplay(4, { presentedMs: 5000 }),
+    moments: [
+      ...pauseMoments,
+      {
+        ...pauseMoments[0],
+        id: `${selectedId}-untimed`,
+        elapsedMs: undefined,
+        pauseName: {
+          state: 'Page load',
+          kind: 'Server render',
+          path: 'app/unreached.ts',
+          line: 1,
+          text: 'Page load · Server render · app/unreached.ts:1',
+        },
+      },
+    ],
+  })
+  await waitUntilRendered(revisionAt(4))
+  const disabledNext = await page.evaluate(() => {
+    const next = document.getElementById('next-moment')
+    return {
+      disabled: next.disabled,
+      label: next.getAttribute('aria-label'),
+      title: next.title,
+    }
+  })
+  // protects=the disabled Next recorded stop at the last stop names no stop; fails_when=the disabled control's label or tooltip names a stop that is not a move target; no_claim=native theme colours (stand-ins: the Study message the host posts)
+  cases.push({
+    name: 'a disabled Next recorded stop at the last stop keeps its plain name',
+    actual: disabledNext,
+    passed:
+      disabledNext.disabled &&
+      disabledNext.label === 'Next recorded stop' &&
+      disabledNext.title === 'Next recorded stop',
   })
   await page.screenshot({ path: `${options.output}/server-render-replay.png` })
 }
