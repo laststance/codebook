@@ -3481,7 +3481,17 @@ export class StudyWorkspace {
         document: vscode.TextDocument,
       ): Promise<void> => {
         // What the learner chose meanwhile: a text file (the active text editor changes) or a tab that is no text file (a Settings page), seen as the front tab of the active group.
-        const chosen: { column: number; document?: vscode.TextDocument }[] = []
+        const chosen: {
+          column: number
+          document?: vscode.TextDocument
+          tab?: vscode.Tab
+        }[] = []
+        // A switch to a tab that is no text file shows as the front tab of the active group, whether the learner opened it (tab events) or moved to a group that already showed it (group events only).
+        const noteNonTextFront = (): void => {
+          const group = vscode.window.tabGroups.activeTabGroup
+          if (group.activeTab && this.textTabUri(group.activeTab) === undefined)
+            chosen.push({ column: group.viewColumn, tab: group.activeTab })
+        }
         const listeners = [
           vscode.window.onDidChangeActiveTextEditor((editor) => {
             if (editor && editor.document.uri.toString() !== sourceUri)
@@ -3490,14 +3500,8 @@ export class StudyWorkspace {
                 document: editor.document,
               })
           }),
-          vscode.window.tabGroups.onDidChangeTabs(() => {
-            const group = vscode.window.tabGroups.activeTabGroup
-            if (
-              group.activeTab &&
-              this.textTabUri(group.activeTab) === undefined
-            )
-              chosen.push({ column: group.viewColumn })
-          }),
+          vscode.window.tabGroups.onDidChangeTabs(noteNonTextFront),
+          vscode.window.tabGroups.onDidChangeTabGroups(noteNonTextFront),
         ]
         try {
           await this.showTextDocumentNoted(document, {
@@ -3511,17 +3515,14 @@ export class StudyWorkspace {
         assertOwned()
         const learnersChoice = chosen.at(-1)
         if (!learnersChoice) return
-        // The learner's target gets the keyboard back: a file is shown again, any other tab through the focus command of its group.
+        // The learner's target gets the keyboard back: a file is shown again; any other tab is brought to the front of its group again (the late show may have covered it) and its group is focused.
         if (learnersChoice.document)
           await this.showTextDocumentNoted(learnersChoice.document, {
             viewColumn: learnersChoice.column,
             preserveFocus: false,
             preview: false,
           })
-        else {
-          const focusCommand = focusEditorGroupCommand(learnersChoice.column)
-          if (focusCommand) await this.executeEditorCommand(focusCommand)
-        }
+        else await this.reactivateNonTextTab(learnersChoice)
         abortForLearner()
       }
       /** Closes the Codebook-owned copy where the rules above allow it, and keeps a learner's choice of focus made meanwhile. */
@@ -3567,6 +3568,8 @@ export class StudyWorkspace {
             transition.cancellation.signal,
           )
           assertOwned()
+          // A file the learner picked while the reading position was restored keeps the keyboard.
+          assertLearnerKept()
           if (copyHasKeyboard) {
             await takeKeyboardWithSource(document)
             expectedPlace = keyboardPlace()
@@ -3602,6 +3605,38 @@ export class StudyWorkspace {
       requester,
       fromPane,
     )
+  }
+
+  /**
+   * Brings a tab that is no text file to the front of its group again and focuses that group, so a learner's choice a late show covered is back; called by {@link returnDisplacedCapturedSourceThenAdmit}.
+   * The tab is looked up again by its kind of input and label, since the editor may have replaced its objects; the editor's numbered command (first nine tabs of the active group) reveals it.
+   * @param choice - The group's column and the tab the learner chose.
+   * @example await this.reactivateNonTextTab({ column: 2, tab })
+   */
+  private async reactivateNonTextTab(choice: {
+    column: number
+    tab?: vscode.Tab
+  }): Promise<void> {
+    const focusCommand = focusEditorGroupCommand(choice.column)
+    if (focusCommand) await this.executeEditorCommand(focusCommand)
+    const group = vscode.window.tabGroups.all.find(
+      (candidate) => candidate.viewColumn === choice.column,
+    )
+    const index = group?.tabs.findIndex(
+      (candidate) =>
+        candidate === choice.tab ||
+        (candidate.label === choice.tab?.label &&
+          candidate.input?.constructor === choice.tab?.input?.constructor),
+    )
+    if (
+      group?.activeTab?.label !== choice.tab?.label &&
+      index !== undefined &&
+      index >= 0 &&
+      index < 9
+    )
+      await this.executeEditorCommand(
+        `workbench.action.openEditorAtIndex${index + 1}`,
+      )
   }
 
   /**

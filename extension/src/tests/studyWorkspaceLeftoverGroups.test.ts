@@ -903,6 +903,140 @@ test('a learner’s switch to a non-text tab while the show that hands the copy�
   }
 })
 
+/**
+ * Runs an agent's Restore of the Study whose captured source stands in the learner's fourth group with the keyboard, holds its second show and lets the test act while that show is pending.
+ * @param harness - The reader and the fake editor.
+ * @param whileSecondShowPends - The learner's action.
+ * @returns The Restore's outcome text.
+ * @example const answer = await restoreWithLearnerDuringSecondShow(harness, () => harness.focusChatEditorTab(2))
+ */
+async function restoreWithLearnerDuringSecondShow(
+  harness: Harness,
+  whileSecondShowPends: () => void,
+): Promise<string> {
+  const before = harness.reader.presentationState()
+  const sourceUri = harness.reader.inspect().sourceUri!
+  const first = harness.holdNextTextDocumentShow({ uri: sourceUri })
+  const restoring = harness.reader
+    .changePresentation(
+      {
+        presentationId: before.presentationId,
+        expectedRevision: before.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'restore',
+      },
+      'agent',
+    )
+    .then(
+      () => 'answered',
+      (error: unknown) => String(error),
+    )
+  await first.started
+  first.release()
+  const second = harness.holdNextTextDocumentShow({ uri: sourceUri })
+  await second.started
+  whileSecondShowPends()
+  second.release()
+  return restoring
+}
+
+const FOCUS_KEPT_ANSWER =
+  'Error: The editor focus changed while the captured source was returned; your choice was kept. Choose Restore Study workspace layout again.'
+
+// Value: protects=a learner's move to a group that already shows a tab that is no text file, made while the second show is pending and seen as a group event alone: that group keeps the keyboard; fails_when=only tab events and text-editor changes are watched, so the late show takes the keyboard back and the Restore answers success; why_new=Cycle 0072 task 1 candidate Codex review of d3204739 (P2 1); seam=restoreWithLearnerDuringSecondShow and activatePaneGroupByGroupEventOnly on the Study pane's group; no_claim=the Study pane's tab stands for any existing non-text tab
+test('a learner’s move to an existing non-text group while the second show is pending keeps that group focused', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await openRetainedStudy(harness)
+    harness.moveSource((await addLearnerGroup(harness)).viewColumn)
+    // Act
+    const answer = await restoreWithLearnerDuringSecondShow(harness, () =>
+      harness.activatePaneGroupByGroupEventOnly('codebook.studyContext'),
+    )
+    // Assert
+    assert.deepEqual(
+      {
+        answer,
+        activeColumn: harness.editor.window.tabGroups.activeTabGroup.viewColumn,
+      },
+      { answer: FOCUS_KEPT_ANSWER, activeColumn: 3 },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a non-text tab the learner picks in the source's own column while the second show is pending: the late show covers it, so the return brings that tab to the front of its group again; fails_when=only the group is focused and Captured source stays in front of the learner's tab although the answer says the choice was kept; why_new=Cycle 0072 task 1 candidate Codex review of d3204739 (P2 2); seam=restoreWithLearnerDuringSecondShow, focusChatEditorTab in column 2 and the harness's numbered tab command; no_claim=the chat tab stands for any non-text tab
+test('a learner’s non-text tab in the source column is in front of its group again after the late show', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await openRetainedStudy(harness)
+    harness.moveSource((await addLearnerGroup(harness)).viewColumn)
+    // Act
+    const answer = await restoreWithLearnerDuringSecondShow(harness, () =>
+      harness.focusChatEditorTab(2),
+    )
+    // Assert
+    assert.deepEqual(
+      {
+        answer,
+        frontOfSourceColumn: harness.groups.find(
+          (group) => group.viewColumn === 2,
+        )?.activeTab?.label,
+      },
+      { answer: FOCUS_KEPT_ANSWER, frontOfSourceColumn: 'Chat' },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a file the learner picks while the returned editor's reading position is restored: it keeps the keyboard and the return stops; fails_when=only ownership is checked after that wait, so the second show takes the keyboard and the baseline adopts it; why_new=Cycle 0072 task 1 candidate Codex review of d3204739 (P2 3); seam=the harness's changeAfterNextReadingReveal with focusMutableDraft; no_claim=the click is the harness's focus of a draft
+test('a file the learner picks while the reading position is restored keeps the keyboard', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await openRetainedStudy(harness)
+    harness.moveSource((await addLearnerGroup(harness)).viewColumn)
+    const before = harness.reader.presentationState()
+    harness.changeAfterNextReadingReveal(() => {
+      harness.focusMutableDraft('data.ts', 4)
+    })
+    // Act
+    const answer = await harness.reader
+      .changePresentation(
+        {
+          presentationId: before.presentationId,
+          expectedRevision: before.presentationControlRevision,
+          mode: 'study-workspace',
+          action: 'restore',
+        },
+        'agent',
+      )
+      .then(
+        () => 'answered',
+        (error: unknown) => String(error),
+      )
+    // Assert
+    assert.deepEqual(
+      {
+        answer,
+        activeFile: harness.editor.window.activeTextEditor?.document.uri.fsPath
+          .split('/')
+          .pop(),
+      },
+      { answer: FOCUS_KEPT_ANSWER, activeFile: 'data.ts' },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a selection the learner changes in the moved copy while the first show is pending: the new selection travels to the returned editor; fails_when=the selections are read before the waits, so the stale ones are applied and the copy closes with the learner's change lost; why_new=Cycle 0072 task 1 candidate Codex review of f46f65c4 (P2 2); seam=the workspace harness's holdNextTextDocumentShow and the moved editor's selections; no_claim=the visible range
 test('a selection the learner changes in the moved copy while the first show is pending travels to the returned editor', async () => {
   // Arrange: the first show of the source is held while the moved copy has its selection at line 22.

@@ -4474,6 +4474,16 @@ export async function workspaceHarness(
           // The group that already was the active one comes back with the sizes the rows had before the panel was maximized (VS Code 1.140.0: 344 / 343 before and after).
           if (name === 'workbench.action.focusActiveEditorGroup')
             panelMaximized = false
+          // The numbered command of the editor puts the n-th tab of the active group in front of it.
+          const openAtIndex =
+            /^workbench\.action\.openEditorAtIndex([1-9])$/.exec(name)
+          if (openAtIndex) {
+            const tab = activeTabGroup.tabs[Number(openAtIndex[1]) - 1]
+            if (tab) {
+              activeTabGroup.activeTab = tab
+              for (const listener of tabChangeListeners) listener()
+            }
+          }
           // Every command that gives an editor group or the chat the keyboard takes it from the page body.
           if (
             name === 'workbench.action.focusActiveEditorGroup' ||
