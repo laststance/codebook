@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.2.73.0] - 2026-11-02 (development candidate)
+
+Cycle 0071 ([Issue #179](https://github.com/laststance/codebook/issues/179)), a feature cycle: a web app run of a Next.js App Router page can now **pause the page's server render**, so the chat can show how the server fetches and shapes the data a page displays, with the values in the native debugger.
+
+**Stop in a server component.** In a version 3 run with `adapter: "next-dev-webpack"`, a stop with `participant: "server"` in an App Router server component of the entry route, or in a function it calls (a data function, for example), now pauses the server render. Codebook chooses the layer itself; the chat declares no layer. The quick start is the `serverRenderQuickStart` section of `codebook://help/repository-browser`, with two complete configurations, an entry render and a re-render observed after one operation.
+
+**The page load itself, or a render after an operation.** `afterOperation: 0` pauses the render of the page load, before the page has loaded; continuing lets it finish. `afterOperation: 1` or more pauses the render of the entry route observed after that operation (a search that changes the URL's query, for example). The pause names say which: `Page load · Server render · <path:line>` and `After operation <k> · Server render · <path:line>`. Codebook says "observed after operation k" and never that the operation caused the render; when it cannot read which route rendered, the pause reads `route not confirmed`.
+
+**Runs without operations.** When every stop has `afterOperation: 0`, leave `operations` out (an empty `operations: []` is refused with `INVALID_CONFIGURATION` naming the field). Such a run sends nothing that changes the app, so its run resource reads `confirmation: "not-needed"`, also with a saved session.
+
+**Saved and replayed.** Server-render pauses are saved with their recorded source, values and call stack and replay on the shared timeline. A run with a server stop reports `firstExecutionObserved: false`, and the replay says beside the Learning summary that Codebook loaded the page once before recording, so code at module scope and a first cache fill were not observed.
+
+**Clear refusals.** A stop in a client component (`'use client'`) is refused with `NEXT_STOP_NOT_SEALED` (`details.reason`: `client-component`) before any input is sent: declare it as a browser stop. A stop the render does not reach fails with `SERVER_STOP_NOT_REACHED`, naming the phase, the stops that paused and the ones that did not; a page that does not finish loading within 20 s after its last server-render pause fails with `ENTRY_LOAD_TIMEOUT`. With operations, the run-level `after` must hold only after the last operation. The help and the skill now say so, and the search quick start checks the search box's `value` attribute.
+
+**Also fixed.** Codebook's guidance names the Study pane button by the text it shows, **Restore Study workspace layout**.
+
+**Limits.** Server-side code of Pages Router pages, the server code of routes other than the entry route, route handlers, middleware or `proxy`, and Turbopack are not supported (Codebook always starts `next dev --webpack`). Each wait is bounded at 20 s with no override.
+
+Native evidence (development, no final-row credit): `nextjs-dashboard` on macOS 26, VS Code 1.144.0 (Copilot Chat, GPT-6.1 Terra) explaining an invoice search with three server-render pauses observed after the search, and Cursor 3.27.22 (Agent, Grok 4.6 High Fast) explaining the dashboard totals with two pauses in the page load and no operation; both saved, replayed with the chat closed (every pause, a 4A gap, the keyboard path, a reopen after reload) and recorded with OBS, on candidate `a58205e3`.
+
+**Compatibility.** MCP API 1.16 is additive: `afterOperation: 0`, an omitted `operations`, the pause fields `execution`, `attribution`, `operationIndex`, `declaredIndex` and `executionIndex`, `firstExecutionObserved`, the codes `SERVER_STOP_NOT_REACHED` and `ENTRY_LOAD_TIMEOUT`, and the `client-component` reason. Bundled skill 1.0.65. A study with a server stop, `afterOperation: 0` or no `operations` is saved as format 8 (`.study.v8.json`), which Codebook 0.2.72.0 lists as saved by a newer Codebook and does not open; studies with browser stops only stay format 7, and every study saved before still opens.
+
 ## [0.2.72.0] - 2026-11-02 (development candidate)
 
 Cycle 0070 part 2 ([Issue #176](https://github.com/laststance/codebook/issues/176)), a feature cycle: a web app run can now **start with a saved session** you set up once by hand, so the chat can explain flows behind sign-in. A run that uses it **asks you to confirm its operations** first, and the frame check now **withholds images while a frame from another origin is on screen** after a secret, instead of recording it unchecked.
