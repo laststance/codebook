@@ -2,6 +2,7 @@ import { configuredObservationSchema } from '../configuredStudySchemas'
 import {
   REPOSITORY_BROWSER_ACTION,
   REPOSITORY_BROWSER_PROFILE,
+  SERVER_RENDER_STUDY_VERSION,
 } from '../constants'
 import { EvidenceIntegrityError, StudyError } from '../errors'
 import { readResource } from '../resources'
@@ -47,6 +48,11 @@ export async function captureStudy(
     }
   }
   const observations: RetainedStudy['observations'][number][] = []
+  const keepsExecutionFields =
+    record.profile === REPOSITORY_BROWSER_PROFILE &&
+    record.definition !== undefined &&
+    studyFormatOfConfiguration(record.definition.configuration) ===
+      SERVER_RENDER_STUDY_VERSION
   const captures: RetainedStudy['captures'][number][] = []
   for (const reference of state.observations) {
     const snapshotUri = reference.snapshotUri
@@ -85,9 +91,18 @@ export async function captureStudy(
         throw new Error(
           'Configured snapshot differs from its committed source/receipt.',
         )
+      // Only a format 8 study keeps the execution fields; an older format is written exactly as before.
+      const {
+        execution: _execution,
+        declaredIndex: _declaredIndex,
+        executionIndex: _executionIndex,
+        attribution: _attribution,
+        operationIndex: _operationIndex,
+        ...olderSnapshot
+      } = snapshot
       observations.push(
         configuredObservationSchema.parse({
-          ...snapshot,
+          ...(keepsExecutionFields ? snapshot : olderSnapshot),
           snapshotUri,
           interpretations,
         }),
@@ -210,6 +225,10 @@ export async function captureStudy(
           ...(runtime?.profile === REPOSITORY_BROWSER_PROFILE &&
           runtime.viteVersion
             ? { viteVersion: runtime.viteVersion }
+            : {}),
+          // A format 8 study says the first execution of the page was not observed.
+          ...(keepsExecutionFields && runtime?.firstExecutionObserved === false
+            ? { firstExecutionObserved: false as const }
             : {}),
           operation:
             runtime?.profile === REPOSITORY_BROWSER_PROFILE
