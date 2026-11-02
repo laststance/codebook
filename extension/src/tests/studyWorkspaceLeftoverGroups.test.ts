@@ -579,6 +579,151 @@ test('a second control during the preference save of a returned captured source 
   }
 })
 
+// Value: protects=the pane sizes of a later Restore after a captured source return: a resized grid is measured again and not confirmed from the return's receipt; fails_when=the later Restore answers confirmed from the receipt marker and the resized 80:20 panes stay; why_new=Cycle 0072 task 1 candidate Codex review of c6bd53f0 (P2 1); seam=the workspace harness with a started run, two arrange actions, moveSource into column 1 and setEditorLayout; no_claim=the native sizes of the editor
+test('a later Arrange measures the grid again and restores resized panes instead of confirming from the return’s receipt', async () => {
+  // Arrange: a following run whose captured source was returned by one Arrange, then the learner resized the panes.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let live: { close(): void } | undefined
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await harness.service.record(receipt).preparation
+    await harness.reader.open()
+    live = await harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    const arranged = harness.editorLayout()
+    harness.moveSource(1)
+    await harness.reader.action('arrange')
+    await harness.editor.commands.executeCommand('vscode.setEditorLayout', {
+      orientation: 0,
+      groups: [{ size: 0.8 }, { size: 0.2 }],
+    })
+    // Act
+    await harness.reader.action('arrange')
+    // Assert
+    assert.deepEqual(
+      {
+        layoutConfirmed: harness.reader.presentationState().layoutConfirmed,
+        layout: harness.editorLayout(),
+      },
+      { layoutConfirmed: true, layout: arranged },
+    )
+  } finally {
+    live?.close()
+    await harness.close()
+  }
+})
+
+// Value: protects=the transition of a repeated Restore after a captured source return: it owns the transition through its preference save, so a second control is refused; fails_when=the repeated Restore, with no moved copy left, runs without the transition and a control is admitted mid-save; why_new=Cycle 0072 task 1 candidate Codex review of c6bd53f0 (P2 2); seam=the workspace harness's holdPresentationPreference and changePresentation; no_claim=none beyond protects
+test('a repeated Arrange after the captured source returned refuses a second control during its preference save', async () => {
+  // Arrange: the first Arrange returned the source from the learner's fourth group.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let release = (): void => {}
+  try {
+    await openRetainedStudy(harness)
+    harness.moveSource((await addLearnerGroup(harness)).viewColumn)
+    await harness.reader.action('arrange')
+    const held = harness.holdPresentationPreference()
+    release = held.release
+    const arranging = harness.reader.action('arrange')
+    await held.started
+    const during = harness.reader.presentationState()
+    // Act
+    await assert.rejects(
+      async () =>
+        harness.reader.changePresentation({
+          presentationId: during.presentationId,
+          expectedRevision: during.presentationControlRevision,
+          mode: 'study-workspace',
+          action: 'restore',
+        }),
+      {
+        code: 'PRESENTATION_UNAVAILABLE',
+        message: /presentation change or reader close is pending/,
+      },
+    )
+    held.release()
+    await arranging
+    // Assert
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true)
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
+// Value: protects=a learner's click into another group while the editor closes the moved copy that had the keyboard: the learner's choice is kept and the source is not shown over it; fails_when=the return shows the source with the keyboard after the close whatever the learner did meanwhile; why_new=Cycle 0072 task 1 candidate Codex review of c6bd53f0 (P2 3); seam=the workspace harness's holdNextTabCloseResponse and focusMutableDraft as the learner's click; no_claim=the click is the harness's focus of a draft
+test('a learner’s click into another group while the moved copy closes keeps that file focused', async () => {
+  // Arrange: the moved copy has the keyboard in the learner's fourth group and the editor's answer to its close is held.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let release = (): void => {}
+  try {
+    await openRetainedStudy(harness)
+    harness.moveSource((await addLearnerGroup(harness)).viewColumn)
+    const before = harness.reader.presentationState()
+    const held = harness.holdNextTabCloseResponse()
+    release = held.release
+    const restoring = harness.reader
+      .changePresentation(
+        {
+          presentationId: before.presentationId,
+          expectedRevision: before.presentationControlRevision,
+          mode: 'study-workspace',
+          action: 'restore',
+        },
+        'agent',
+      )
+      .catch(() => undefined)
+    await held.started
+    // Act: the learner clicks into data.ts of the first group, then the close answers.
+    harness.focusMutableDraft('data.ts', 1)
+    held.release()
+    await restoring
+    // Assert
+    assert.equal(
+      harness.editor.window.activeTextEditor?.document.uri.fsPath
+        .split('/')
+        .pop(),
+      'data.ts',
+    )
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
+// Value: protects=the layout receipt after a return that confirmed a grid with a learner group: a later status read still reads the layout confirmed; fails_when=the receipt keeps the earlier grid, so the next status read calls the learner group a changed grid and retires the confirmation; why_new=Cycle 0072 task 1 candidate Codex review of c6bd53f0 (P2 4); seam=the workspace harness, readPresentationState after Arrange; no_claim=none beyond protects
+test('a status read after the captured source returned beside a learner group still reads the layout confirmed', async () => {
+  // Arrange: the captured source stands in the learner's fourth group.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await openRetainedStudy(harness)
+    harness.moveSource((await addLearnerGroup(harness)).viewColumn)
+    await harness.reader.action('arrange')
+    // Act
+    const read = await harness.reader.readPresentationState()
+    // Assert
+    assert.deepEqual(
+      { layoutConfirmed: read.layoutConfirmed, reason: read.reason },
+      { layoutConfirmed: true, reason: undefined },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=Close Study Workspace while Arrange is returning the captured source: Close waits for the return, so no Codebook-owned captured-source tab is left or reopened after the cleanup; fails_when=the return is not registered as the presentation operation, Close cleans up at once and the late show opens the captured source again; why_new=Cycle 0072 task 1 CodeRabbit CLI pass 4 (A); seam=the workspace harness's holdNextTextDocumentShow, the reader's arrange and close; no_claim=none beyond protects
 test('Close Study Workspace during the captured source’s return leaves no captured-source tab open once both have finished', async () => {
   // Arrange: the captured source stands in the learner's fourth group and the editor's show of it is held.

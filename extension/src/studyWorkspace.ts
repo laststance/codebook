@@ -3285,11 +3285,24 @@ export class StudyWorkspace {
       return false
     const wasConfirmed = this.presentationConfirmed
     this.presentationConfirmed = true
+    let holds: boolean
     try {
-      return this.presentationState().layoutConfirmed
+      holds = this.presentationState().layoutConfirmed
     } finally {
       this.presentationConfirmed = wasConfirmed
     }
+    // A confirmation of the measured grid carries the grid it measured: the stale receipt would make the next status read call a benign learner group a changed grid.
+    if (holds)
+      this.layoutReceipt = {
+        ...receipt,
+        signature: JSON.stringify(layout),
+        groups: vscode.window.tabGroups.all.map((group) => ({
+          group,
+          column: group.viewColumn,
+        })),
+        panes: this.studyPanePositions(),
+      }
+    return holds
   }
 
   /**
@@ -3365,7 +3378,7 @@ export class StudyWorkspace {
     let confirmedByPlacement: boolean | undefined
     // Releases the return's transition; it stays owned until the answer is final, so no control is admitted between the new revision and the saved preference.
     let releaseTransition = (): void => {}
-    if (displaced && this.sourceUri) {
+    {
       // The admission conditions of any presentation change hold now and across every native step below.
       const runtimeIdentity = this.assertPresentationAdmission()
       // A chat that holds the keyboard gets it back after the placement, as in every other arrangement.
@@ -3395,7 +3408,7 @@ export class StudyWorkspace {
           )
       }
       const sourceColumn = STUDY_PRESENTATIONS['study-workspace'].sourceColumn
-      const sourceUri = this.sourceUri.toString()
+      const sourceUri = this.sourceUri?.toString()
       /** Names the front tab of the active group and the window focus: what a learner's click or leaving the window changes. */
       const keyboardPlace = (): string =>
         JSON.stringify([
@@ -3404,20 +3417,23 @@ export class StudyWorkspace {
           vscode.window.state.focused,
         ])
       const placeAtStart = keyboardPlace()
-      /** A learner's own change of focus during the return wins: the return stops and the learner's choice stays. The return itself takes no keyboard, so any change of the place since its start is the learner's. */
-      const assertLearnerKept = (): void => {
-        if (keyboardPlace() === placeAtStart) return
+      /** Stops the return and keeps the learner's own choice of focus. */
+      const abortForLearner = (): never => {
         this.yieldFocusToLearner()
         throw new StudyError(
           'PRESENTATION_UNAVAILABLE',
           'The editor focus changed while the captured source was returned; your choice was kept. Choose Restore Study workspace layout again.',
         )
       }
+      /** A learner's own change of focus during the return wins. The return itself takes no keyboard, so any change of the place since its start is the learner's. */
+      const assertLearnerKept = (): void => {
+        if (keyboardPlace() !== placeAtStart) abortForLearner()
+      }
       /** Finds the Codebook-owned copy as the editor lists it now: tab and group objects may be new since the return began. */
       const currentCopy = ():
         { group: vscode.TabGroup; tab: vscode.Tab } | undefined => {
         const group = vscode.window.tabGroups.all.find(
-          (candidate) => candidate.viewColumn === displaced.group.viewColumn,
+          (candidate) => candidate.viewColumn === displaced?.group.viewColumn,
         )
         const tab = group?.tabs.find(
           (candidate) =>
@@ -3429,39 +3445,55 @@ export class StudyWorkspace {
       // The copy in front of the learner's keyboard hands that keyboard to the source when it goes.
       const copyHasKeyboard =
         vscode.window.tabGroups.activeTabGroup.activeTab === currentCopy()?.tab
-      try {
-        const document = await vscode.workspace.openTextDocument(this.sourceUri)
-        assertOwned()
-        assertLearnerKept()
-        // The show leaves the keyboard where the request put it (the Study pane for Arrange, the learner's file or the chat for an agent); a learner's click while it is pending is therefore never taken back.
-        const stop = this.returnedSourceStop()
-        const editor = await this.showTextDocumentNoted(document, {
-          viewColumn: sourceColumn,
-          preserveFocus: true,
-          preview: false,
-          selection: stop,
-        })
-        assertOwned()
-        assertLearnerKept()
-        this.sourceGroup = vscode.window.tabGroups.all.find(
-          (group) => group.viewColumn === sourceColumn,
-        )
-        // The returned editor is a new one: it gets the stopped line and the source annotation the ordinary placement draws.
-        this.decorateReturnedSource(editor)
-        // The Codebook-owned copy closes only after the new show succeeded, never when the learner pinned it (as {@link retireMovedSourceCopies} keeps pinned copies), and never as the last tab of a learner group, which would leave the editor to close that group; such a copy stays beside the source, which the placement accepts.
+      /** Closes the Codebook-owned copy where the rules above allow it, and keeps a learner's choice of focus made meanwhile. */
+      const closeMovedCopy = async (
+        document: vscode.TextDocument,
+      ): Promise<void> => {
         const copy = currentCopy()
-        if (copy && !copy.tab.isPinned && copy.group.tabs.length > 1) {
-          await vscode.window.tabGroups.close([copy.tab], true)
+        if (!copy || copy.tab.isPinned || copy.group.tabs.length <= 1) return
+        await vscode.window.tabGroups.close([copy.tab], true)
+        assertOwned()
+        if (!copyHasKeyboard) assertLearnerKept()
+        else {
+          // Closing the copy that had the keyboard hands it to the learner's tab behind it; a learner who chose another group meanwhile keeps that choice.
+          if (
+            vscode.window.tabGroups.activeTabGroup.viewColumn !==
+            copy.group.viewColumn
+          )
+            abortForLearner()
+          // The source takes the keyboard, in the place the copy stood.
+          await this.showTextDocumentNoted(document, {
+            viewColumn: STUDY_PRESENTATIONS['study-workspace'].sourceColumn,
+            preserveFocus: false,
+            preview: false,
+          })
+        }
+        assertOwned()
+      }
+      try {
+        if (displaced && this.sourceUri) {
+          const document = await vscode.workspace.openTextDocument(
+            this.sourceUri,
+          )
           assertOwned()
-          if (copyHasKeyboard) {
-            // Closing the copy that had the keyboard hands it to the learner's tab behind it: the source takes it, in the place the copy stood.
-            await this.showTextDocumentNoted(document, {
-              viewColumn: sourceColumn,
-              preserveFocus: false,
-              preview: false,
-            })
-          } else assertLearnerKept()
+          assertLearnerKept()
+          // The show leaves the keyboard where the request put it (the Study pane for Arrange, the learner's file or the chat for an agent); a learner's click while it is pending is therefore never taken back.
+          const stop = this.returnedSourceStop()
+          const editor = await this.showTextDocumentNoted(document, {
+            viewColumn: sourceColumn,
+            preserveFocus: true,
+            preview: false,
+            selection: stop,
+          })
           assertOwned()
+          assertLearnerKept()
+          this.sourceGroup = vscode.window.tabGroups.all.find(
+            (group) => group.viewColumn === sourceColumn,
+          )
+          // The returned editor is a new one: it gets the stopped line and the source annotation the ordinary placement draws.
+          this.decorateReturnedSource(editor)
+          // The Codebook-owned copy closes only after the new show succeeded, never when the learner pinned it (as {@link retireMovedSourceCopies} keeps pinned copies), and never as the last tab of a learner group, which would leave the editor to close that group; such a copy stays beside the source, which the placement accepts.
+          await closeMovedCopy(document)
         }
         // Decided from the measured placement, not from the confirmation flag a status read may have retired for a benign change (a learner group beside the Study). Measured first: beside a chat part the layout read answers for the focused part, so the keyboard goes back to the chat only afterwards.
         confirmedByPlacement = await this.placementHoldsAfterReturn()
@@ -3475,21 +3507,7 @@ export class StudyWorkspace {
     // The source standing in its column again can confirm the retained grid by itself; a full placement would refuse the learner groups.
     // A mismatch of the measured placement (resized panes) goes on to the ordinary placement, which restores the sizes.
     if (confirmedByPlacement ?? this.presentationState().layoutConfirmed) {
-      this.presentationConfirmed = true
-      this.capturedSourceReturnReceipt = this.layoutReceipt
-      this.requestedPresentation = undefined
-      this.presentationReason = undefined
-      this.errors.delete('presentation')
-      this.errors.delete('layout')
-      // Like every admitted change, the answer is a new control revision: a second control holding the old one is refused as stale.
-      this.presentationControlRevision++
-      this.publish()
-      try {
-        await this.savePresentationPreference(input.mode, this.presentationId)
-      } finally {
-        releaseTransition()
-      }
-      return { ...this.presentationState(), state: 'open' as const }
+      return this.confirmReturnedLayout(input, releaseTransition)
     }
     releaseTransition()
     return this.admitPresentation(
@@ -3498,6 +3516,33 @@ export class StudyWorkspace {
       requester,
       fromPane,
     )
+  }
+
+  /**
+   * Answers a Restore whose layout the return confirmed: the flags of a confirmed arrangement, a new control revision (a second control holding the old one is refused as stale), the saved preference with the transition still held, and the completed state published only once the transition is released.
+   * @param input - The Restore or selection being answered.
+   * @param releaseTransition - Releases the return's transition.
+   * @returns The confirmed state, `'open'`.
+   * @example return this.confirmReturnedLayout(input, releaseTransition)
+   */
+  private async confirmReturnedLayout(
+    input: PresentationIntent,
+    releaseTransition: () => void,
+  ): Promise<PresentationState> {
+    this.presentationConfirmed = true
+    this.capturedSourceReturnReceipt = this.layoutReceipt
+    this.requestedPresentation = undefined
+    this.presentationReason = undefined
+    this.errors.delete('presentation')
+    this.errors.delete('layout')
+    this.presentationControlRevision++
+    try {
+      await this.savePresentationPreference(input.mode, this.presentationId)
+    } finally {
+      releaseTransition()
+    }
+    this.publish()
+    return { ...this.presentationState(), state: 'open' as const }
   }
 
   /**
