@@ -171,7 +171,7 @@ export function unquotePreviewString(preview: string): string | undefined {
  * Finds where a quoted element that starts at `start` ends, on its own line.
  * @param text - The text.
  * @param start - The index of the opening quote.
- * @returns The index after the closing quote, or -1 when the line ends first (an apostrophe in prose opens no element).
+ * @returns The index after the closing quote, or -1 when the line ends first (an apostrophe in prose opens no element). A single quote followed by a word character is an apostrophe and does not close.
  * @example endOfLiteral("'a\\'b', x", 0) // => 6
  */
 function endOfLiteral(text: string, start: number): number {
@@ -179,7 +179,12 @@ function endOfLiteral(text: string, start: number): number {
   for (let index = start + 1; index < text.length; index++) {
     const character = text[index]
     if (character === '\\') index++
-    else if (character === quote) return index + 1
+    // An apostrophe inside a word (`don't`) does not close an element.
+    else if (
+      character === quote &&
+      !(quote === "'" && /\w/.test(text[index + 1] ?? ''))
+    )
+      return index + 1
     else if (character === '\n') return -1
   }
   return -1
@@ -236,6 +241,8 @@ export function maskShapedLiterals(
   for (let index = 0; index < text.length; index++) {
     const quote = text[index]
     if (quote !== "'" && quote !== '"' && quote !== '`') continue
+    // A quote right after a word character is an apostrophe or a unit mark (`it's`, `5"`), not the start of an element.
+    if (index > 0 && /\w/.test(text[index - 1] ?? '')) continue
     const end = endOfLiteral(text, index)
     if (end === -1) continue
     const literal = text.slice(index, end)

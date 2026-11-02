@@ -75,3 +75,15 @@ test('the output redactor masks a Cookie pair split over two chunks and a rawHea
     "[masked]\n[\n  'Host',\n  'x',\n  'Cookie',\n  [masked],\n  ... 1 more item\n]\n",
   )
 })
+
+// protects=a quoted Cookie value that follows an apostrophe in a log line; fails_when=the apostrophe of "don't" or "it's" opens an element that swallows the quote of the Cookie value, so the value is printed; no_claim=a log line whose quotes are unbalanced in any other way
+test('development-server output masks a quoted Cookie value after an apostrophe in the same log line', () => {
+  // Arrange
+  const output = `don't log 'sid=${COOKIE_VALUE}; theme=dark' it's done\n`
+
+  // Act
+  const masked = maskNextServerOutput(output)
+
+  // Assert
+  assert.equal(masked, "don't log <redacted> it's done\n")
+})
