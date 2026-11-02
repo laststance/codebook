@@ -3476,6 +3476,34 @@ export class StudyWorkspace {
       // The copy in front of the learner's keyboard hands that keyboard to the source when it goes.
       const copyHasKeyboard =
         vscode.window.tabGroups.activeTabGroup.activeTab === currentCopy()?.tab
+      /** The copy that had the keyboard hands it to the source before it closes, so the close hands it to no tab behind the copy. A learner who chose another file while this show is pending keeps it: the file is shown again and the return stops, with the copy left open. */
+      const takeKeyboardWithSource = async (
+        document: vscode.TextDocument,
+      ): Promise<void> => {
+        const chosen: vscode.TextEditor[] = []
+        const listener = vscode.window.onDidChangeActiveTextEditor((editor) => {
+          if (editor && editor.document.uri.toString() !== sourceUri)
+            chosen.push(editor)
+        })
+        try {
+          await this.showTextDocumentNoted(document, {
+            viewColumn: sourceColumn,
+            preserveFocus: false,
+            preview: false,
+          })
+        } finally {
+          listener.dispose()
+        }
+        assertOwned()
+        const learnersFile = chosen.at(-1)
+        if (!learnersFile) return
+        await this.showTextDocumentNoted(learnersFile.document, {
+          viewColumn: learnersFile.viewColumn,
+          preserveFocus: false,
+          preview: false,
+        })
+        abortForLearner()
+      }
       /** Closes the Codebook-owned copy where the rules above allow it, and keeps a learner's choice of focus made meanwhile. */
       const closeMovedCopy = async (): Promise<void> => {
         const copy = currentCopy()
@@ -3493,23 +3521,27 @@ export class StudyWorkspace {
           assertOwned()
           assertLearnerKept()
           // The show leaves the keyboard where the request put it (the Study pane for Arrange, the learner's file or the chat for an agent); a learner's click while it is pending is therefore never taken back.
-          const stop = this.returnedSourceStop()
+          // The reading state of the moved copy (its selections and visible range) travels to the new editor; the stopped line is used only when the copy has none.
+          const copyEditor = vscode.window.visibleTextEditors.find(
+            (candidate) =>
+              candidate.viewColumn === displaced.group.viewColumn &&
+              candidate.document.uri.toString() === sourceUri,
+          )
+          const copySelections = copyEditor?.selections
+          const restoreReading = retainEditorReadingPosition(copyEditor)
           const editor = await this.showTextDocumentNoted(document, {
             viewColumn: sourceColumn,
             preserveFocus: true,
             preview: false,
-            selection: stop,
+            selection: copyEditor ? undefined : this.returnedSourceStop(),
           })
           assertOwned()
           assertLearnerKept()
+          if (copySelections) editor.selections = copySelections
+          await restoreReading(editor, transition.cancellation.signal)
+          assertOwned()
           if (copyHasKeyboard) {
-            // The copy that had the keyboard hands it to the source before it closes, so the close hands it to no tab behind the copy; only while the keyboard is still where the copy had it.
-            await this.showTextDocumentNoted(document, {
-              viewColumn: sourceColumn,
-              preserveFocus: false,
-              preview: false,
-            })
-            assertOwned()
+            await takeKeyboardWithSource(document)
             expectedPlace = keyboardPlace()
           }
           this.sourceGroup = vscode.window.tabGroups.all.find(

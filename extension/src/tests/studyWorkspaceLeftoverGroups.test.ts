@@ -784,6 +784,103 @@ for (const [recovery, run] of [
       }
     })
 
+// Value: protects=a learner's click into another file while the second show (the one that hands the moved copy's keyboard to the source) is pending: the learner's file keeps the keyboard, the copy stays open and the Restore is not confirmed; fails_when=the late show takes the keyboard and the return adopts that as its baseline, closes the copy and confirms; why_new=Cycle 0072 task 1 candidate Codex review of 2dea5111 (P2 1); seam=the workspace harness's holdNextTextDocumentShow held twice in a row and focusMutableDraft as the learner's click; no_claim=the click is the harness's focus of a draft
+test('a learner’s click while the show that hands the copy’s keyboard to the source is pending keeps that file and the copy', async () => {
+  // Arrange: the moved copy has the keyboard in the fourth group; the first show runs, the second one is held.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let release = (): void => {}
+  try {
+    await openRetainedStudy(harness)
+    const learnerGroup = await addLearnerGroup(harness)
+    harness.moveSource(learnerGroup.viewColumn)
+    const before = harness.reader.presentationState()
+    const sourceUri = harness.reader.inspect().sourceUri!
+    const first = harness.holdNextTextDocumentShow({ uri: sourceUri })
+    const restoring = harness.reader
+      .changePresentation(
+        {
+          presentationId: before.presentationId,
+          expectedRevision: before.presentationControlRevision,
+          mode: 'study-workspace',
+          action: 'restore',
+        },
+        'agent',
+      )
+      .then(
+        () => 'answered',
+        (error: unknown) => String(error),
+      )
+    await first.started
+    first.release()
+    // The second show starts right after the first one resolves; its hold is set in the same turn.
+    const second = harness.holdNextTextDocumentShow({ uri: sourceUri })
+    release = second.release
+    await second.started
+    // Act: the learner clicks data.ts while the second show is pending, then it finishes.
+    harness.focusMutableDraft('data.ts', 4)
+    second.release()
+    const answer = await restoring
+    // Assert
+    assert.deepEqual(
+      {
+        answer,
+        activeFile: harness.editor.window.activeTextEditor?.document.uri.fsPath
+          .split('/')
+          .pop(),
+        copyStillOpen: learnerGroup.tabs.some(
+          (tab) => tab.label === 'Captured-theme.ts',
+        ),
+      },
+      {
+        answer:
+          'Error: The editor focus changed while the captured source was returned; your choice was kept. Choose Restore Study workspace layout again.',
+        activeFile: 'data.ts',
+        copyStillOpen: true,
+      },
+    )
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
+// Value: protects=the reading state of the moved copy: two selections the learner made in it travel to the editor the return opens in the Study source column; fails_when=the return opens the new editor at the stopped line only, so the learner's selections are lost when the copy closes; why_new=Cycle 0072 task 1 candidate Codex review of 2dea5111 (P2 2); seam=the workspace harness's source editors and their selections; no_claim=the visible range, which the harness reports as one fixed range
+test('Arrange keeps two selections the learner made in the moved copy of the captured source', async () => {
+  // Arrange: the moved copy in the fourth group carries two selections.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await openRetainedStudy(harness)
+    const learnerGroup = await addLearnerGroup(harness)
+    harness.moveSource(learnerGroup.viewColumn)
+    const sourceUri = harness.reader.inspect().sourceUri
+    const copyEditor = harness.editor.window.visibleTextEditors.find(
+      (editor) =>
+        editor.viewColumn === learnerGroup.viewColumn &&
+        editor.document.uri.toString() === sourceUri,
+    )!
+    const at = (line: number) => ({
+      anchor: new harness.editor.Position(line, 0),
+      active: new harness.editor.Position(line, 0),
+    })
+    Reflect.set(copyEditor, 'selections', [at(3), at(7)])
+    // Act
+    await harness.reader.action('arrange')
+    // Assert
+    const returned = harness.editor.window.visibleTextEditors.find(
+      (editor) =>
+        editor.viewColumn === 2 && editor.document.uri.toString() === sourceUri,
+    )
+    assert.deepEqual(
+      returned?.selections.map((selection) => selection.active.line),
+      [3, 7],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a learner's switch between two files of the same name in different folders, in one column, while the return waits for the source document: the return notices the switch and shows nothing over the learner's file; fails_when=the return compares front tabs by label, misses the switch and shows the captured source; why_new=Cycle 0072 task 1 candidate Codex review of ddc14faa (P2); seam=the workspace harness's holdNextSource, focusMutableDraft with two files named index.ts and textDocumentShows; no_claim=the switch is the harness's focus of a draft
 test('a learner’s switch to a same-named file in another folder while the return opens the source keeps that file and shows nothing', async () => {
   // Arrange: left/index.ts has the keyboard in the fourth group beside the moved copy; the open of the source is held.
