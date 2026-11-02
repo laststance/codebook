@@ -47,7 +47,7 @@ test('the old document finishing before the entry document commits is not the en
   await harness.run.continue('server', pause.pause)
   await sleep(450)
   // Assert: no commit, no load
-  assert.equal(harness.run.view().status, 'preparing')
+  assert.equal(harness.run.view().status, 'resuming')
   assert.deepEqual([...harness.run.view().failures], [])
   // Act: the entry document commits and has loaded
   harness.answerNavigation()
@@ -70,7 +70,7 @@ test('a child frame loading does not make the entry page loaded', async (context
   harness.loadSubframe()
   await sleep(450)
   // Assert
-  assert.equal(harness.run.view().status, 'preparing')
+  assert.equal(harness.run.view().status, 'resuming')
   assert.deepEqual([...harness.run.view().failures], [])
   // Act: the main frame commits
   harness.answerNavigation()

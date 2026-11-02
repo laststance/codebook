@@ -69,7 +69,10 @@ test('a saved session whose second entry load lands on sign-in ends the zero-ope
   // Assert
   await assert.rejects(prepared)
   const view = harness.run.view()
-  assert.match(view.failures[0]!, /^SIGN_IN_REQUIRED\(redirected-to-sign-in\): /)
+  assert.match(
+    view.failures[0]!,
+    /^SIGN_IN_REQUIRED\(redirected-to-sign-in\): /,
+  )
   assert.equal(view.snapshots.length, 0)
   assert.deepEqual(harness.navigations, [
     'http://localhost:4321/dashboard',

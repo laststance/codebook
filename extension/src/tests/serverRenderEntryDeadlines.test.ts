@@ -124,7 +124,11 @@ test('an entry pause held past the 300 s pause hold fails with the pause hold re
 // Value: protects=AC 6 (c): the whole-run deadline reached during an entry pause fails with today's wall-deadline reason, and the server and the page are released; fails_when=the entry pause extends or suspends the whole-run deadline; no_claim=the 600 s production length (the control's deadline is 200 s from the start)
 test('the whole-run deadline reached during an entry pause fails with the wall-deadline reason and releases the server and the page', async (context) => {
   // Arrange
-  const harness = await entryRenderHarness(context, {}, entryControl(context, 200_000))
+  const harness = await entryRenderHarness(
+    context,
+    {},
+    entryControl(context, 200_000),
+  )
   const prepared = harness.run.prepare().catch((error: unknown) => error)
   await heldEntryPause(harness)
   // Act

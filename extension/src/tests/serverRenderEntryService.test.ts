@@ -3,8 +3,11 @@ import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { SERVER_RENDER_ENTRY_CONFIGURATION, serverRenderHelp } from '../serverRenderHelp'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import {
+  SERVER_RENDER_ENTRY_CONFIGURATION,
+  serverRenderHelp,
+} from '../serverRenderHelp'
 import { captureStudy } from '../utils/captureStudy'
 import { configuredDomExpression } from '../utils/configuredDomExpression'
 
@@ -61,7 +64,10 @@ async function armedEntryNavigation(
 test('following the quick start call order, an entry-render pause is read as paused before the page loads and one codebook_continue completes the run', async (context) => {
   // Arrange: the help's quick start declares the same shape as the run under test
   const quickStart = serverRenderHelp().serverRenderQuickStart
-  assert.match(quickStart.callOrder[4]!, /preparing: wait and poll\. paused: read inspectionUri and sourceUri, explain the values in the chat, then codebook_continue with the current continueArguments\./)
+  assert.match(
+    quickStart.callOrder[4]!,
+    /preparing: wait and poll\. paused: read inspectionUri and sourceUri, explain the values in the chat, then codebook_continue with the current continueArguments\./,
+  )
   const run = await serviceHostedEntryRun(
     context,
     savedSessionOptions({
@@ -110,7 +116,7 @@ test('following the quick start call order, an entry-render pause is read as pau
   // Act: continue with the current continueArguments
   harness.setDocumentReadyState('complete')
   const answer = await service.continueToNextState(
-    paused.participants.server!.continueArguments!,
+    paused.participants.server.continueArguments!,
   )
   // Assert
   assert.equal('next' in answer ? answer.next : undefined, 'result')
@@ -130,12 +136,22 @@ test('a mixed run asks the saved-session confirmation after the entry pause was 
     context,
     savedSessionOptions({
       operations: [
-        { kind: 'click', title: 'Create Invoice', selector: 'button[type=submit]' },
+        {
+          kind: 'click',
+          title: 'Create Invoice',
+          selector: 'button[type=submit]',
+        },
       ],
       stopOperations: [0, 1],
       stopParticipants: ['server', 'server'],
     }),
-    [{ line: 1, column: 7, inspections: [{ path: 'nextTheme', mode: 'value', required: true }] }],
+    [
+      {
+        line: 1,
+        column: 7,
+        inspections: [{ path: 'nextTheme', mode: 'value', required: true }],
+      },
+    ],
   )
   const { harness, service, state, receipt } = run
   const asked: { inputsSeen: number; runState: string }[] = []
@@ -178,8 +194,18 @@ test('a mixed run asks the saved-session confirmation after the entry pause was 
   const [first, second] = harness.run.view().snapshots
   assert.deepEqual(
     [
-      [first?.attribution, first?.operationIndex, first?.declaredIndex, first?.executionIndex],
-      [second?.attribution, second?.operationIndex, second?.declaredIndex, second?.executionIndex],
+      [
+        first?.attribution,
+        first?.operationIndex,
+        first?.declaredIndex,
+        first?.executionIndex,
+      ],
+      [
+        second?.attribution,
+        second?.operationIndex,
+        second?.declaredIndex,
+        second?.executionIndex,
+      ],
     ],
     [
       ['entry-load', undefined, 0, 0],
@@ -230,7 +256,11 @@ test('a declined confirmation after an entry pause leaves a partial format 8 stu
     context,
     savedSessionOptions({
       operations: [
-        { kind: 'click', title: 'Create Invoice', selector: 'button[type=submit]' },
+        {
+          kind: 'click',
+          title: 'Create Invoice',
+          selector: 'button[type=submit]',
+        },
       ],
       stopOperations: [0],
       stopParticipants: ['server'],
@@ -249,7 +279,11 @@ test('a declined confirmation after an entry pause leaves a partial format 8 stu
   const declined = await service
     .performAction({ ...receipt, key: 'op-1', action: 'repository-operation' })
     .catch((error: { code: string }) => error)
-  const saved = await captureStudy(service, service.record(receipt), WORKSPACE_KEY)
+  const saved = await captureStudy(
+    service,
+    service.record(receipt),
+    WORKSPACE_KEY,
+  )
   // Assert
   assert.equal((declined as { code: string }).code, 'OPERATIONS_NOT_CONFIRMED')
   assert.equal(harness.inputsSeen(), 0)
@@ -268,7 +302,7 @@ test('a declined confirmation after an entry pause leaves a partial format 8 stu
 test('an entry page that does not load after the last continue fails with ENTRY_LOAD_TIMEOUT and masks the entry path query', async (context) => {
   // Arrange
   const run = await serviceHostedEntryRun(context, {
-    entryPath: '/dashboard?token=sekret-q-91',
+    entryPath: '/dashboard?ref=sekret-q-91',
   })
   const { harness, state } = run
   await armedEntryNavigation(run, 1)
@@ -285,8 +319,11 @@ test('an entry page that does not load after the last continue fails with ENTRY_
   // Assert
   const error = state().error!
   assert.equal(error.code, 'ENTRY_LOAD_TIMEOUT')
-  assert.match(error.recovery!, /resourcesReleased/)
-  assert.match(error.recovery!, /codebook:\/\/help\/repository-browser#ENTRY_LOAD_TIMEOUT\.$/)
+  assert.match(error.recovery, /resourcesReleased/)
+  assert.match(
+    error.recovery,
+    /codebook:\/\/help\/repository-browser#ENTRY_LOAD_TIMEOUT\.$/,
+  )
   assert.deepEqual(
     {
       entryRoute: error.details?.entryRoute,
@@ -295,7 +332,7 @@ test('an entry page that does not load after the last continue fails with ENTRY_
       sideEffects: error.details?.sideEffects,
     },
     {
-      entryRoute: '/dashboard?token=<redacted>',
+      entryRoute: '/dashboard?ref=<redacted>',
       lastPausedStop: 'src/theme.ts:1',
       sent: 'not-sent',
       sideEffects: 'none',
@@ -322,7 +359,10 @@ test('an entry page that loads without reaching the stop fails with SERVER_STOP_
   // Assert
   const error = state().error!
   assert.equal(error.code, 'SERVER_STOP_NOT_REACHED')
-  assert.match(error.message, /^The page finished without reaching declared stop src\/theme\.ts:1\. It may have run only while Codebook prepared the page/)
+  assert.match(
+    error.message,
+    /^The page finished without reaching declared stop src\/theme\.ts:1\. It may have run only while Codebook prepared the page/,
+  )
   assert.deepEqual(JSON.parse(JSON.stringify(error.details)), {
     phase: 'entry-render',
     stop: 'src/theme.ts:1',
@@ -376,7 +416,10 @@ test('a saved edit of the module paused in an entry render ends the run with SOU
   await armedEntryNavigation(run, 1)
   harness.server!.hit({ route: '/dashboard' })
   await waitUntil(() => state().state === 'paused-server', 'the entry pause')
-  await writeFile(join(harness.directory, 'src/theme.ts'), 'var nextTheme = "light";\n')
+  await writeFile(
+    join(harness.directory, 'src/theme.ts'),
+    'var nextTheme = "light";\n',
+  )
   // Act
   const outcome = await service
     .continueToNextState(state().participants.server!.continueArguments!)
@@ -384,4 +427,57 @@ test('a saved edit of the module paused in an entry render ends the run with SOU
   // Assert
   assert.equal((outcome as { code: string }).code, 'SOURCE_CHANGED')
   assert.equal(harness.server!.continues.length, 0)
+})
+
+// Value: protects=task 3a run messages and AC 15 set progress: after a continue inside a set of two entry-render stops the run resource says it waits for the next stop (2 of 2), and a held second pause reads the set position; fails_when=the waiting message is missing or counts wrong, or the status item keeps the old pause words; no_claim=the status item widget (its text is the shared operationStatus)
+test('inside a set of two entry-render stops the run resource says it waits for the next stop after the first continue', async (context) => {
+  // Arrange
+  const run = await serviceHostedEntryRun(
+    context,
+    {
+      operations: {
+        operations: [],
+        stopOperations: [0, 0],
+        stopParticipants: ['server', 'server'],
+      },
+    },
+    [
+      {
+        line: 1,
+        column: 7,
+        inspections: [{ path: 'nextTheme', mode: 'value', required: true }],
+      },
+    ],
+  )
+  const { harness, state, service } = run
+  await armedEntryNavigation(run, 1)
+  harness.server!.hit({ route: '/dashboard' })
+  await waitUntil(() => state().state === 'paused-server', 'the first pause')
+  assert.equal(
+    state().operationStatus,
+    'Page load · paused in server render (1 of 2)',
+  )
+  // Act
+  await service.continue(state().participants.server!.continueArguments!)
+  await waitUntil(
+    () => state().message !== undefined && state().state !== 'paused-server',
+    'waiting for the next stop',
+  )
+  // Assert
+  assert.equal(
+    state().message,
+    'Waiting for the next stop of this render (2 of 2).',
+  )
+  // Act
+  harness.server!.hit({
+    generated: { line: 0, column: 6 },
+    source: { line: 1, column: 7 },
+    route: '/dashboard',
+  })
+  await waitUntil(() => state().state === 'paused-server', 'the second pause')
+  // Assert
+  assert.equal(
+    state().operationStatus,
+    'Page load · paused in server render (2 of 2)',
+  )
 })

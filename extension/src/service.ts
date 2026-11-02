@@ -209,6 +209,7 @@ import { prepareNodeTestStudy } from './utils/prepareNodeTestStudy'
 import { prepareRepositoryStudy } from './utils/prepareRepositoryStudy'
 import { projectChromeExtensionHistory } from './utils/projectChromeExtensionHistory'
 import { projectChromeExtensionState } from './utils/projectChromeExtensionState'
+import { projectEntryRenderMessage } from './utils/projectEntryRenderMessage'
 import { projectNodeServerHistory } from './utils/projectNodeServerHistory'
 import { projectNodeServerState } from './utils/projectNodeServerState'
 import {

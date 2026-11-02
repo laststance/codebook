@@ -23,17 +23,15 @@ function entryRenderFieldsOf(snapshot: object | undefined): EntryRenderFields {
  */
 export function projectEntryRenderMessage(
   view:
-    | Pick<
-        RuntimeView,
-        'status' | 'participants' | 'snapshots' | 'definition'
-      >
+    | Pick<RuntimeView, 'status' | 'participants' | 'snapshots' | 'definition'>
     | undefined,
 ): string | undefined {
   if (!view) return undefined
   const entryPauses = view.snapshots.filter((snapshot) => {
     const fields = entryRenderFieldsOf(snapshot)
     return (
-      fields.execution === 'server-render' && fields.operationIndex === undefined
+      fields.execution === 'server-render' &&
+      fields.operationIndex === undefined
     )
   })
   if (!entryPauses.length) return undefined
