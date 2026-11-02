@@ -1235,7 +1235,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         : {}),
     }
     this.status = 'resuming'
-    this.progressDeadline(ACTIVE_TIMEOUT_MS, () => this.afterDeadlineReason())
+    // Conditions that never hold end the run with the coded run-level failure the last operation of a run with operations gets (operation 0: nothing was sent).
+    this.progressDeadline(ACTIVE_TIMEOUT_MS, () =>
+      this.operationDeadlineText(0, 'run-after'),
+    )
     this.track(this.observeAfter(undefined))
   }
 

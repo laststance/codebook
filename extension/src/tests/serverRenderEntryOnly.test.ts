@@ -73,6 +73,48 @@ test('a completed run with no operation is saved and reopened with its entry pau
   )
 })
 
+// Value: protects=CodeRabbit minor (pass 4): a run of no operation whose run-level after conditions never hold ends with the coded OPERATION_AFTER_NOT_MET failure (operation 0, nothing sent), as the last operation of a run with operations does; fails_when=the 20 s deadline ends the run with the plain text "Timed out waiting for configured after conditions" and no operationFailure; no_claim=real time (the run's manual clock moves) or a real page's condition
+test('a run of no operation whose after conditions never hold fails with a coded run-level reason that names nothing sent', async (context) => {
+  // Arrange
+  const harness = await entryRenderHarness(context)
+  harness.failAfterWith({ conditionIndex: 0, reason: 'not-visible' })
+  const prepared = harness.run.prepare().catch((error: unknown) => error)
+  const pause = await heldEntryPause(harness)
+  harness.setDocumentReadyState('complete')
+  await harness.run.continue('server', pause.pause)
+  await prepared
+  await waitUntil(
+    () => harness.run.view().status === 'resuming',
+    'the run observes its after conditions',
+  )
+  // Act
+  harness.advance(20_000)
+  await waitUntil(
+    () => harness.run.view().failures.length > 0,
+    'the run failed',
+  )
+  // Assert
+  const failure = harness.run.view().operationFailure
+  assert.match(
+    harness.run.view().failures[0]!,
+    /^OPERATION_AFTER_NOT_MET: The entry page loaded, but its result could not be confirmed/,
+  )
+  assert.deepEqual(
+    {
+      code: failure?.code,
+      operationIndex: failure?.operationIndex,
+      path: failure?.path,
+      sent: failure?.sent,
+    },
+    {
+      code: 'OPERATION_AFTER_NOT_MET',
+      operationIndex: 0,
+      path: 'after',
+      sent: 'not-sent',
+    },
+  )
+})
+
 // Value: protects=CodeRabbit minor: a run of no operation whose run-level after conditions stop holding after the result was captured fails with a run-level OPERATION_AFTER_NOT_MET reason; fails_when=the failure is a TypeError ("Cannot read properties of undefined") from naming operation 0; no_claim=the wording of a real page's failed condition
 test('a run of no operation whose after conditions fail after the capture fails with a run-level reason, not a TypeError', async (context) => {
   // Arrange
