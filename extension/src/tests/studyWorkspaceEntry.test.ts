@@ -1862,6 +1862,56 @@ test('a focus return command that rejects still throws, and one that never answe
   }
 })
 
+// Value: protects=a learner who clicks an Application tab that an earlier extension host left behind (the editor kept it when the entry closed leftovers) while an entry arranges: that move is the learner's and the guard's baseline does not move, while Cursor's own report of the live Application is still taken; fails_when=the own-pane check looks at the view type only, so the dead tab passes for one of this reader's panes; why_new=Cycle 0072 task 2, CodeRabbit pass 11 minor; seam=leaveDeadCodebookPane noted as inherited after the cold open, adoptOwnPaneFocusReport on the groups of the dead tab and of the live Application; no_claim=the real Cursor's answer (native Cursor trial)
+test('an entry refuses the learner’s move to a dead Application tab of an earlier host and still takes the editor’s report of the live Application', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.focusMutableDraft('cards.tsx', 1)
+  try {
+    await harness.reader.open()
+    // The earlier host's Application tab stands in the learner's group, noted as left over.
+    const deadTab = harness.leaveDeadCodebookPane('codebook.scopedBrowser', 2)
+    harness.reader['noteInheritedPaneTab'](deadTab as never)
+    const groupAt = (column: number): never =>
+      harness.editor.window.tabGroups.all.find(
+        (group) => group.viewColumn === column,
+      ) as never
+    harness.activatePaneByHand('codebook.scopedBrowser')
+    const liveColumn = harness.panelColumn('codebook.scopedBrowser')
+    assert.ok(liveColumn)
+    // The text editor state is the one both reports leave unchanged.
+    const baseline = {
+      nativeGroup: {},
+      focusedGroup: undefined,
+      retainedFocus: {
+        editor: textEditorFocusState(
+          harness.editor.window.activeTextEditor as never,
+        ),
+        group: undefined,
+      },
+    }
+
+    // Act
+    const toDead = harness.reader['adoptOwnPaneFocusReport'](
+      true,
+      groupAt(2),
+      baseline as never,
+    )
+    const toLive = harness.reader['adoptOwnPaneFocusReport'](
+      true,
+      groupAt(liveColumn),
+      baseline as never,
+    )
+
+    // Assert
+    assert.equal(toDead, baseline)
+    assert.notEqual(toLive, baseline)
+  } finally {
+    await harness.close()
+  }
+})
+
 test('first Study entry accepts its application tab registering during the initial native layout read', async () => {
   // Arrange
   const harness = await workspaceHarness(false)

@@ -7605,6 +7605,9 @@ export class StudyWorkspace {
       active === baseline.nativeGroup ||
       !(input instanceof vscode.TabInputWebview) ||
       !this.isCodebookPaneInput(input, ...STUDY_PANE_KINDS) ||
+      // A pane an earlier extension host left behind is no pane of this reader's: the learner's click into it is the learner's.
+      !active.activeTab ||
+      !this.isOwnPaneOrSourceTab(active.activeTab) ||
       textEditorFocusState(vscode.window.activeTextEditor) !==
         baseline.retainedFocus.editor
     )
