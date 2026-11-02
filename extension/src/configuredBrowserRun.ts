@@ -240,6 +240,7 @@ import {
   pagePauseUnderResumeText,
   type PagePauseUnderResume,
 } from './utils/pagePauseUnderResumeText'
+import { pathnameLeftFromEntry } from './utils/pathnameLeftFromEntry'
 import { pausePlace } from './utils/pausePlace'
 import { placeAfterDeclaringLine } from './utils/placeAfterDeclaringLine'
 import { preparedInputsOf } from './utils/preparedInputsOf'
@@ -1624,14 +1625,22 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.cleaning ||
       this.entryLoad !== entry ||
       entry.loaderId === undefined ||
+      this.status === 'failed' ||
       this.status.startsWith('paused-')
     )
       return
+    const readLoaderId = entry.loaderId
     const read = await this.requireCdp().requestQuietly('Runtime.evaluate', {
       expression: 'document.readyState',
       returnByValue: true,
     })
-    if (this.entryLoad !== entry || this.status.startsWith('paused-')) return
+    // A document committed while the read was in flight is another loader's: this read says nothing about it.
+    if (
+      this.entryLoad !== entry ||
+      entry.loaderId !== readLoaderId ||
+      this.status.startsWith('paused-')
+    )
+      return
     if (read.result.value !== 'complete') return
     const remaining = this.stops
       .slice(this.stopIndex)
@@ -2370,7 +2379,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       return false
     const sent = this.operationsDispatched
     const total = declaredOperationsOf(this.operationsConfiguration!).length
-    if (sent >= total) {
+    // The entry load is no sign-out flow: a run with no operation lands on sign-in before its entry page loaded, which is the refusal and releases the armed stops (X22).
+    if (sent >= total && !this.entryLoad) {
       // A sign-out flow ends on its sign-in page: the run-level after decides (D13).
       this.signInLandingAfterLast = landedOn
       this.evidence.record('page.sign-in-after-last-operation')
@@ -2707,6 +2717,26 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Fails the run with `NEXT_ENTRY_REDIRECTED` when the main frame committed a document of another path than the entry path while the entry load is under way, so a `redirect()` of the entry render ends as the redirect it is, whatever stop a shared layout of the target holds.
+   * Called by {@link onPageNavigated} for a run in the entry-load phase, after the sign-in landing was judged.
+   * @param url - The URL the main frame committed.
+   * @returns `true` when the run failed now.
+   * @example if (this.refuseEntryLoadRedirect('http://localhost:3000/dashboard/other')) return
+   */
+  private refuseEntryLoadRedirect(url: string): boolean {
+    const entryPath = this.definition.configuration.entryPath ?? '/'
+    const left = pathnameLeftFromEntry(url, entryPath)
+    if (left === undefined) return false
+    this.fail(
+      formatRefusalFailure(
+        'NEXT_ENTRY_REDIRECTED',
+        nextEntryLeftMessage(entryPath, left, 'after-load'),
+      ),
+    )
+    return true
+  }
+
+  /**
    * Treats a main-frame page load of a Vite run: a reload before the inputs starts a new page generation, a load after them ends the run.
    * Why: Vite's dependency optimizer can reload the page once after its first load. The stops' earlier script bindings belong to the old page, so they are discarded and bound again from the new parse (which is compared with the sealed bytes again before arming); once inputs may be in the page, a load makes the click's outcome unknown.
    * Called by the `Page.frameNavigated` observer of {@link observeParticipant}.
@@ -2727,6 +2757,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (this.entryLoad) this.entryLoad.loaderId = event.frame.loaderId
     // A landing on a declared sign-in path is judged before any navigation rule, so it is never reported as another refusal (E4).
     if (this.onSignInLanding(event.frame.url)) return
+    // A redirect away from the entry path during the entry load decides before any stop of the load does (X22).
+    if (this.entryLoad && this.refuseEntryLoadRedirect(event.frame.url)) return
     // A Next version 3 run follows client-side navigation, but a full document load before its last operation ends it; Vite keeps its own rule below.
     if (this.operationsConfiguration && this.adapter?.name !== 'vite-dev') {
       this.onOperationsNavigation()

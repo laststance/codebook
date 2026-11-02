@@ -164,6 +164,12 @@ export async function configuredRuntimeHarness(
       /** The App paths manifest written to `.next/dev/server/app-paths-manifest.json` (manifest key to compiled page); by default one page for the entry path, such as `/dashboard/page`. */
       appPaths?: Record<string, string>
     }
+    /**
+     * Keeps the answer of every `Page.navigate` back, and the main frame's commit with it, until a test calls {@link answerNavigation}, as a pause before the response headers does (spike s05-preshell: answer and commit came after the continue). Only for a run opened with `serverRuntime`.
+     */
+    holdNavigation?: boolean
+    /** The path the main frame lands on after the nth `Page.navigate` of a saved-session run (zero-based), when it differs from `navigationLandsOn`; later navigations use `navigationLandsOn`. */
+    navigationLandings?: string[]
     /** What `document.readyState` answers from the start (default `complete`); an entry-render test starts with `loading` and calls `setDocumentReadyState('complete')` once the page may load. */
     documentReadyState?: 'loading' | 'complete'
     /** The executed module's text instead of the default one-statement module, such as a Vite module with an inlined env value. */
@@ -468,6 +474,14 @@ export async function configuredRuntimeHarness(
   let documentReadyState: 'loading' | 'complete' =
     options.documentReadyState ?? 'complete'
   let navigationCount = 0
+  /** The `Page.navigate` requests whose answer is held, oldest first ({@link holdNavigation}). */
+  const heldNavigations: {
+    url: string
+    answer: () => void
+    reject: (error: Error) => void
+  }[] = []
+  /** The timeout each `Page.navigate` request asked for (`undefined`: the channel's own default). */
+  const navigateTimeouts: (number | undefined)[] = []
   let closeAttempts = 0
   const serverOrigin = options.serverOrigin ?? 'http://127.0.0.1:4321'
   const savedLease: SavedSessionRunLease = {
@@ -925,6 +939,9 @@ export async function configuredRuntimeHarness(
       rejectHeldInsert(new Error('CDP disconnected'))
       rejectHeldScreenshot(new Error('CDP disconnected'))
       rejectContinuation(new Error('DAP disconnected'))
+      // A request the channel never answered fails with it, as the real channel's pending requests do.
+      for (const held of heldNavigations.splice(0))
+        held.reject(new Error('CDP disconnected'))
       onClose()
     },
     async request(
@@ -1079,10 +1096,31 @@ export async function configuredRuntimeHarness(
         return { result: { value: pageEvaluation(parameters?.expression) } }
       if (method === 'Page.navigate') {
         navigations.push(String(parameters?.url))
+        navigateTimeouts.push(timeout)
+        if (options.holdNavigation && options.serverRuntime) {
+          const url = String(parameters?.url)
+          return new Promise<object>((resolve, reject) => {
+            heldNavigations.push({
+              url,
+              reject,
+              answer: () => {
+                listeners.get('Page.frameNavigated')?.({
+                  frame: {
+                    id: 'main',
+                    url,
+                    loaderId: `loader-${++navigationCount}`,
+                  },
+                })
+                resolve({})
+              },
+            })
+          })
+        }
         // A saved-session run's page reports the document it commits: the path asked for, or the one a test chose it lands on.
         if (options.savedSession) {
           // The landing may carry a query, as a redirect to sign-in carries its callback; the page's pathname has none.
           const landing =
+            options.navigationLandings?.[navigations.length - 1] ??
             options.navigationLandsOn ??
             new URL(String(parameters?.url)).pathname
           pagePathname = landing.split('?')[0]!
@@ -1919,6 +1957,29 @@ export async function configuredRuntimeHarness(
       listeners.get('Page.frameNavigated')?.({
         frame: { id: 'main', url: 'http://localhost:4321/' },
       })
+    },
+    /** The timeout each `Page.navigate` request asked for, in order (`undefined`: the channel's own default). */
+    navigateTimeouts,
+    /** How many `Page.navigate` requests are still unanswered ({@link holdNavigation}). */
+    heldNavigationCount: (): number => heldNavigations.length,
+    /** Answers the oldest held `Page.navigate` and commits the main frame's document for it, as the browser does once the response headers arrive. @example harness.answerNavigation() */
+    answerNavigation(): void {
+      heldNavigations.shift()?.answer()
+    },
+    /** Commits another main-frame document with a new loader, as a redirect or a script's `location.replace` does, and says the page is now on this path. @example harness.commitMainFrame('/login') */
+    commitMainFrame(path: string): void {
+      pagePathname = path.split('?')[0]!
+      listeners.get('Page.frameNavigated')?.({
+        frame: {
+          id: 'main',
+          url: `http://localhost:4321${path}`,
+          loaderId: `loader-${++navigationCount}`,
+        },
+      })
+    },
+    /** Reports the page's inspector channel as lost, as Chrome crashing or closing does. */
+    disconnectPage(): void {
+      proxy.close()
     },
     /** Reports a page load inside a frame other than the main one. */
     loadSubframe(): void {
