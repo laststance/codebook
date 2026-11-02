@@ -23,7 +23,7 @@ export type RefusalEditorView =
  * @returns `none`, `<name>` or `<name> (column <n>)`.
  * @example describeRefusalEditor({ name: 'cards.tsx', viewColumn: 2 }) // => 'cards.tsx (column 2)'
  */
-export function describeRefusalEditor(editor: RefusalEditorView): string {
+function describeRefusalEditor(editor: RefusalEditorView): string {
   if (!editor) return 'none'
   const name = Array.from(editor.name)
     .slice(0, REFUSAL_REPORT_LABEL_CHARS)

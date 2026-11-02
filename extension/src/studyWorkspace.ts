@@ -19266,7 +19266,7 @@ export class StudyWorkspace {
   /**
    * Describes the active text editor for a refusal report: its file name (sanitized) and column, or none; called by {@link watchLearnerViewDuringApplicationMove} and {@link refusePlacement}.
    * @param editor - The active text editor, if any.
-   * @returns The view, or `undefined` for none; {@link describeRefusalEditor} words it and cuts a long name.
+   * @returns The view, or `undefined` for none; {@link describePlacementRefusal} words it and cuts a long name.
    * @example this.describeActiveEditor(vscode.window.activeTextEditor) // => { name: 'cards.tsx', viewColumn: 2 }
    */
   private describeActiveEditor(
