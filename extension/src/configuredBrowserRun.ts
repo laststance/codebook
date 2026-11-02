@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { lstat, readFile } from 'node:fs/promises'
+import { lstat } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
@@ -43,6 +43,7 @@ import {
   REPOSITORY_BROWSER_ACTION,
   REDACTED_MODULE_LABEL,
   REPOSITORY_BROWSER_PROFILE,
+  REPOSITORY_CHUNK_LIMIT_BYTES,
   OPERATIONS_CONFIG_VERSION,
   REPOSITORY_OPERATION_ACTION,
   REPOSITORY_PAUSE_HOLD_TIMEOUT_MS,
@@ -261,6 +262,7 @@ import { readNextRouterKind } from './utils/readNextRouterKind'
 import { readNextServerOnlyReason } from './utils/readNextServerOnlyReason'
 import { readPagesDevelopmentBundle } from './utils/readPagesDevelopmentBundle'
 import { readNextInstallation } from './utils/readRepositoryAdapterReadiness'
+import { readRepositoryBuildText } from './utils/readRepositoryBuildText'
 import { redactNextEntryPath } from './utils/redactNextEntryPath'
 import { redactPreparedConfiguration } from './utils/redactPreparedConfiguration'
 import type { PreparedTextState } from './utils/redactPreparedTexts'
@@ -2200,6 +2202,33 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Races a read against {@link SERVER_RENDER_CLASSIFICATION_MS} and the run's stop.
+   * @param read - The read; a rejection counts as no answer.
+   * @returns The read's value, or `undefined` for a failed read, the elapsed bound or a stop of the run.
+   * @example await this.withinClassificationBound(readRepositoryBuildText(root, path, limit))
+   */
+  private async withinClassificationBound<T>(
+    read: Promise<T>,
+  ): Promise<T | undefined> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let onAbort: (() => void) | undefined
+    const bound = new Promise<undefined>((resolve) => {
+      timer = setTimeout(
+        () => resolve(undefined),
+        SERVER_RENDER_CLASSIFICATION_MS,
+      )
+      onAbort = (): void => resolve(undefined)
+      this.abort.signal.addEventListener('abort', onAbort, { once: true })
+    })
+    try {
+      return await Promise.race([read.catch(() => undefined), bound])
+    } finally {
+      clearTimeout(timer)
+      if (onAbort) this.abort.signal.removeEventListener('abort', onAbort)
+    }
+  }
+
+  /**
    * Gives the URL pattern of the entry route (the manifest key the run resolved for the entry, converted to URL form), read once from the compiled App paths manifest.
    * @returns The pattern; `undefined` when the manifest cannot be read or resolves no page, which makes every route read compare as unreadable.
    * @example await this.entryRoutePattern() // '/dashboard'
@@ -2208,19 +2237,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     // Only a successful read is kept: a transient failure is retried on a later hit.
     if (this.entryPattern !== undefined) return this.entryPattern
     try {
-      const manifest = z
-        .record(z.string(), z.string())
-        .parse(
-          JSON.parse(
-            await readFile(
-              join(
-                this.options.workspace,
-                '.next/dev/server/app-paths-manifest.json',
-              ),
-              'utf8',
-            ),
-          ),
-        )
+      // Bounded like the bundle reads of sealing (size, regular file, no links), by the classification bound and by the run's stop.
+      const text = await this.withinClassificationBound(
+        readRepositoryBuildText(
+          this.options.workspace,
+          '.next/dev/server/app-paths-manifest.json',
+          REPOSITORY_CHUNK_LIMIT_BYTES,
+          this.abort.signal,
+        ),
+      )
+      // A failed, oversized, non-regular or slow read leaves the route unreadable (D18).
+      if (text === undefined) return undefined
+      const manifest = z.record(z.string(), z.string()).parse(JSON.parse(text))
       this.entryPattern = entryRoutePatternOf(
         resolveNextClientManifest(
           manifest,

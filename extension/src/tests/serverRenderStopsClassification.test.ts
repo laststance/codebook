@@ -189,3 +189,13 @@ test('the route expression answer is a route only when it is a quoted or bare UR
   })
   assert.deepEqual(renderedRouteOf(undefined), { state: 'unreadable' })
 })
+
+// Value: protects=AC 19: a route answer longer than the cap is unreadable and never journaled; fails_when=an over-long string starting with a slash is taken for a route; why_new=the answer had no length bound; seam=none; no_claim=none beyond protects
+test('an over-long route answer is unreadable and a route at the cap is read', () => {
+  // Arrange
+  const atCap = `/${'a'.repeat(2_047)}`
+  const overCap = `/${'a'.repeat(2_048)}`
+  // Act, Assert
+  assert.deepEqual(renderedRouteOf(atCap), { state: 'read', route: atCap })
+  assert.deepEqual(renderedRouteOf(`'${overCap}'`), { state: 'unreadable' })
+})

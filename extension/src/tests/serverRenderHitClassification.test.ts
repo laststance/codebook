@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
+import { rm, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
+import { promisify } from 'node:util'
 
 import {
   ACTIVE_TIMEOUT_MS,
+  REPOSITORY_CHUNK_LIMIT_BYTES,
   SERVER_RENDER_CLASSIFICATION_MS,
   SERVER_RENDER_RESUMED_HIT_JOURNAL_LIMIT,
 } from '../constants'
@@ -355,4 +360,42 @@ test('a resume the adapter never answers fails the run with the continuation sen
     harness.run.view().failures[0]!,
     /^Continue uncertain: .*Timed out waiting for repository render-hit resume/,
   )
+})
+
+const APP_PATHS_MANIFEST = '.next/dev/server/app-paths-manifest.json'
+
+// Value: protects=C3/D18: a route manifest replaced after sealing by a file over the byte limit is not read whole; fails_when=the oversized manifest is parsed and the hit is paused as entry-load; why_new=the manifest was re-read with a plain unbounded readFile; seam=none; no_claim=a real Next build
+test('a route manifest replaced by an oversized file leaves the route unreadable and resumes the hit as unattributed', async (context) => {
+  // Arrange
+  const { harness } = await entryRenderRun(context)
+  const manifestPath = join(harness.directory, APP_PATHS_MANIFEST)
+  // A valid manifest padded past the limit: only a bound refuses it.
+  await writeFile(
+    manifestPath,
+    `{"/dashboard/page":"app/dashboard/page.js"}${' '.repeat(REPOSITORY_CHUNK_LIMIT_BYTES)}`,
+  )
+  // Act
+  harness.server!.hit({ route: '/dashboard' })
+  await resumesReceived(harness, 1)
+  // Assert
+  assert.equal(journaled(harness, 'breakpoint.unattributed-resumed').length, 1)
+})
+
+// Value: protects=C3/D18: a route manifest replaced by a FIFO after sealing neither hangs the classification nor blocks the run; fails_when=the hit is never classified because the read waits for a writer; why_new=the manifest read had no regular-file check; seam=none; no_claim=Windows (no FIFOs)
+test('a route manifest replaced by a FIFO leaves the route unreadable and resumes the hit as unattributed', async (context) => {
+  if (process.platform === 'win32') {
+    context.skip('FIFOs do not exist on Windows')
+    return
+  }
+  // Arrange
+  const { harness } = await entryRenderRun(context)
+  const manifestPath = join(harness.directory, APP_PATHS_MANIFEST)
+  await rm(manifestPath)
+  await promisify(execFile)('mkfifo', [manifestPath])
+  context.after(() => rm(manifestPath, { force: true }))
+  // Act
+  harness.server!.hit({ route: '/dashboard' })
+  await resumesReceived(harness, 1)
+  // Assert
+  assert.equal(journaled(harness, 'breakpoint.unattributed-resumed').length, 1)
 })
