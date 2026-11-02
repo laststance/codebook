@@ -158,3 +158,44 @@ test('the entry navigation starts only after the entry-render stop was registere
   assert.equal(harness.navigations.length, 1)
   void prepared.catch(() => undefined)
 })
+
+// Value: protects=a readyState read that rejects during the entry load (context gone in a commit, request timeout) is "not loaded yet", so the entry page still loads and the run proceeds; fails_when=the rejection reaches the run's tracker and fails it with an uncoded transport error; no_claim=the real error text Chrome gives
+test('a readyState read that rejects during the entry load does not fail the run', async (context) => {
+  // Arrange
+  const harness = await entryRenderHarness(context)
+  harness.rejectNextReadyStateRead()
+  const prepared = harness.run.prepare()
+  // Act
+  const pause = await heldEntryPause(harness)
+  harness.setDocumentReadyState('complete')
+  await harness.run.continue('server', pause.pause)
+  // Assert
+  await prepared
+  await waitUntil(
+    () => harness.run.view().status === 'completed',
+    'the run completed',
+  )
+  assert.deepEqual([...harness.run.view().failures], [])
+  assert.ok(harness.readyStateReads() >= 2)
+})
+
+// Value: protects=the entry-load poll starts no second readyState read while one is pending (a paused page answers none), so reads do not queue; fails_when=every 100 ms tick starts another read; no_claim=Chrome's own request queue
+test('no second readyState read starts while one is pending during the entry load', async (context) => {
+  // Arrange
+  const harness = await entryRenderHarness(context)
+  const release = harness.holdReadyStateReads()
+  context.after(release)
+  const prepared = harness.run.prepare()
+  void prepared.catch(() => undefined)
+  await armedEntry(harness)
+  await waitUntil(() => harness.readyStateReads() >= 1, 'the first read')
+  // Act: five poll ticks pass while the read is unanswered
+  await new Promise<void>((resolve) => setTimeout(resolve, 550))
+  // Assert
+  assert.equal(harness.readyStateReads(), 1)
+  release()
+  await waitUntil(
+    () => harness.readyStateReads() >= 2,
+    'a read after the pending one was answered',
+  )
+})

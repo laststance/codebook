@@ -349,3 +349,29 @@ test('a hit of the second set stop in an instance still being read is matched to
   assert.deepEqual([second.declaredIndex, second.executionIndex], [0, 1])
   assert.equal(harness.run.view().failures.length, 0)
 })
+
+// Value: protects=the source resource without a snapshot names the first DECLARED stop's module, the module the sealed manifest hashes, after a render ran the second declared stop first; fails_when=source() reads this.stops[0], which the pause-order swap made the second declared stop; no_claim=the real bundles of two modules (the harness seals one module for both stops, so the test gives the second stop a marked copy)
+test('the source without a snapshot stays the first declared stop module after the second declared stop paused first', async (context) => {
+  // Arrange
+  const harness = await twoStopSet(context, 'rsc')
+  const internals = harness.run as unknown as {
+    stops: { declaredIndex: number; bundle: { javascript: string } }[]
+    definition: { descriptor: { itemId: string } }
+  }
+  const itemId = internals.definition.descriptor.itemId
+  const firstDeclaredJavascript = internals.stops[0]!.bundle.javascript
+  // The second declared stop gets its own module text, so the two stops' modules differ.
+  internals.stops[1]!.bundle = {
+    ...internals.stops[1]!.bundle,
+    javascript: 'var secondStopModule = 1;',
+  }
+  // Act: the second declared stop runs first
+  harness.server!.hit({
+    generated: SECOND_STOP_PLACE,
+    source: SECOND_STOP_SOURCE,
+  })
+  const first = await nextPause(harness)
+  // Assert
+  assert.equal(first.declaredIndex, 1)
+  assert.equal(harness.run.source(itemId)?.javascript, firstDeclaredJavascript)
+})

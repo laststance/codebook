@@ -495,6 +495,10 @@ export async function configuredRuntimeHarness(
   const signInNotices: SignInRequiredReason[] = []
   // The pathname the stand-in page reports; a landing replaces it.
   let pagePathname = options.entryPath ?? '/'
+  // How many `document.readyState` reads the run started, whether the next one rejects, and the promise a held read waits on.
+  let readyStateReadsStarted = 0
+  let rejectNextReadyStateRead = false
+  let readyStateHold: Promise<void> | undefined
   let documentReadyState: 'loading' | 'complete' =
     options.documentReadyState ?? 'complete'
   let navigationCount = 0
@@ -1120,6 +1124,21 @@ export async function configuredRuntimeHarness(
                 ? { ok: true, origin: 1 }
                 : { ok: false, reason: 'control-not-password' },
           },
+        }
+      }
+      if (
+        method === 'Runtime.evaluate' &&
+        parameters?.expression === 'document.readyState'
+      ) {
+        readyStateReadsStarted++
+        if (rejectNextReadyStateRead) {
+          rejectNextReadyStateRead = false
+          throw new Error('Execution context was destroyed.')
+        }
+        // A held read answers only after the test releases it, as a read does while the page's JS is paused.
+        if (readyStateHold) {
+          await readyStateHold
+          return { result: { value: pageEvaluation(parameters.expression) } }
         }
       }
       if (method === 'Runtime.evaluate')
@@ -1868,6 +1887,23 @@ export async function configuredRuntimeHarness(
     /** Changes what `document.readyState` answers from now on, so a test lets the entry page finish loading once its server stops were continued. @example harness.setDocumentReadyState('complete') */
     setDocumentReadyState(state: 'loading' | 'complete'): void {
       documentReadyState = state
+    },
+    /** How many `document.readyState` reads the run started so far. @example harness.readyStateReads() */
+    readyStateReads: (): number => readyStateReadsStarted,
+    /** Makes the next `document.readyState` read reject, as one does when the execution context is gone in a commit. @example harness.rejectNextReadyStateRead() */
+    rejectNextReadyStateRead(): void {
+      rejectNextReadyStateRead = true
+    },
+    /** Holds every later `document.readyState` read unanswered until the returned function is called, as a paused page does. @returns The release. @example const release = harness.holdReadyStateReads() */
+    holdReadyStateReads(): () => void {
+      let release = (): void => {}
+      readyStateHold = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return (): void => {
+        readyStateHold = undefined
+        release()
+      }
     },
     /** How many operation inputs the stand-in page received (version 3 runs). */
     inputsSeen: (): number => inputsSeen,

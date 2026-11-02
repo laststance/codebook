@@ -451,6 +451,8 @@ type EntryLoadState = {
   startedAtMs: number
   /** The entry-render stops that paused and were continued, as `path:line`. */
   pausedStops: string[]
+  /** Whether a `document.readyState` read is pending, so the poll starts no second one. */
+  readInFlight?: boolean
   /** The poll that reads the document state. */
   timer?: ReturnType<typeof setInterval>
 }
@@ -1650,11 +1652,21 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.status.startsWith('paused-')
     )
       return
+    // A read still pending (the page's JS is paused) is not stacked with another one.
+    if (entry.readInFlight) return
     const readLoaderId = entry.loaderId
-    const read = await this.requireCdp().requestQuietly('Runtime.evaluate', {
-      expression: 'document.readyState',
-      returnByValue: true,
-    })
+    entry.readInFlight = true
+    const read = await this.requireCdp()
+      .requestQuietly('Runtime.evaluate', {
+        expression: 'document.readyState',
+        returnByValue: true,
+      })
+      // A failed read (context gone in a commit, request timeout) is "not loaded yet"; the entry-load deadline and the failure codes still bound the phase.
+      .catch(() => undefined)
+      .finally(() => {
+        entry.readInFlight = false
+      })
+    if (!read) return
     // A document committed while the read was in flight is another loader's: this read says nothing about it.
     if (
       this.entryLoad !== entry ||
@@ -2753,6 +2765,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Gives the stop declared first, found by its fixed declared index because {@link expectedStopFor} reorders `this.stops` to follow the order a render paused its set.
+   * Called by {@link freezeSealedStops} (the manifest hashes) and {@link source} (the snapshot-less source), which must name the same module whatever the pause order.
+   * @returns The stop with declared index 0, or `undefined` before the stops are prepared.
+   * @example this.firstDeclaredStop()?.bundle // the declared first stop's module, even after the second stop paused first
+   */
+  private firstDeclaredStop(): PreparedStop | undefined {
+    return this.stops.find((stop) => stop.declaredIndex === 0)
+  }
+
+  /**
    * Binds the run's manifest to the first stop's current seal and refuses a stop that can never bind, after all stops are sealed or sealed again.
    * Called by {@link prepareOwned} after the first seal and by {@link resealStopsForGeneration} after each renewal, so the manifest always names the bytes that are checked.
    * @throws When a later stop's line has no mapped position in its sealed module.
@@ -2762,7 +2784,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * ```
    */
   private freezeSealedStops(): void {
-    const first = this.stops[0]!
+    const first = this.firstDeclaredStop()!
     const { itemId, bookTitle, nodeTitle, anchors, citationContext } =
       this.definition.descriptor
     this.sealedManifest = {
@@ -10324,7 +10346,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (item !== this.definition.descriptor.itemId) return undefined
     const bundle =
       snapshotId === undefined
-        ? this.stops[0]?.bundle
+        ? this.firstDeclaredStop()?.bundle
         : this.snapshotBundles.get(snapshotId)
     if (!bundle) return undefined
     const archivedModule = this.archivedModuleText(bundle)
