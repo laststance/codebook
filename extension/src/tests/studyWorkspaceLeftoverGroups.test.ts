@@ -511,6 +511,74 @@ test('Arrange after the captured source moved into the Application’s group and
   }
 })
 
+// Value: protects=the stopped line of a captured source that Arrange returned from a learner group: the returned editor's caret stands on the stopped line, so a long file shows it; fails_when=the return opens the editor without a selection and the file shows its top; why_new=Cycle 0072 task 1 CodeRabbit CLI pass 5 (minor 1); seam=the workspace harness's source editor selections; no_claim=the native scroll position, only the selection that reveals it
+test('Arrange puts the caret of the returned captured source on the stopped line', async () => {
+  // Arrange: the captured source stands in the learner's fourth group.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await openRetainedStudy(harness)
+    harness.moveSource((await addLearnerGroup(harness)).viewColumn)
+    const stoppedLine = harness.reader.inspect().view!.model.source.line - 1
+    // Act
+    await harness.reader.action('arrange')
+    // Assert
+    const returned = harness.editor.window.visibleTextEditors.find(
+      (editor) =>
+        editor.viewColumn === 2 &&
+        editor.document.uri.toString() === harness.reader.inspect().sourceUri,
+    )
+    assert.deepEqual(
+      {
+        stoppedLineIsTheCaret:
+          returned?.selections[0]?.active.line === stoppedLine,
+        stoppedLine,
+      },
+      { stoppedLineIsTheCaret: true, stoppedLine },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the revision rule while the preference of a confirmed return is being saved: a second control during the save is refused with the pending sentence; fails_when=the return releases its transition before the save, so a control reading the new revision is admitted mid-save; why_new=Cycle 0072 task 1 CodeRabbit CLI pass 5 (minor 2); seam=the workspace harness's holdPresentationPreference and changePresentation; no_claim=none beyond protects
+test('a second control during the preference save of a returned captured source is refused with the pending sentence', async () => {
+  // Arrange: the captured source stands in the learner's fourth group and the preference write is held.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let release = (): void => {}
+  try {
+    await openRetainedStudy(harness)
+    harness.moveSource((await addLearnerGroup(harness)).viewColumn)
+    const held = harness.holdPresentationPreference()
+    release = held.release
+    const arranging = harness.reader.action('arrange')
+    await held.started
+    const during = harness.reader.presentationState()
+    // Act
+    await assert.rejects(
+      async () =>
+        harness.reader.changePresentation({
+          presentationId: during.presentationId,
+          expectedRevision: during.presentationControlRevision,
+          mode: 'study-workspace',
+          action: 'restore',
+        }),
+      {
+        code: 'PRESENTATION_UNAVAILABLE',
+        message: /presentation change or reader close is pending/,
+      },
+    )
+    held.release()
+    await arranging
+    // Assert
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true)
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
 // Value: protects=Close Study Workspace while Arrange is returning the captured source: Close waits for the return, so no Codebook-owned captured-source tab is left or reopened after the cleanup; fails_when=the return is not registered as the presentation operation, Close cleans up at once and the late show opens the captured source again; why_new=Cycle 0072 task 1 CodeRabbit CLI pass 4 (A); seam=the workspace harness's holdNextTextDocumentShow, the reader's arrange and close; no_claim=none beyond protects
 test('Close Study Workspace during the captured source’s return leaves no captured-source tab open once both have finished', async () => {
   // Arrange: the captured source stands in the learner's fourth group and the editor's show of it is held.

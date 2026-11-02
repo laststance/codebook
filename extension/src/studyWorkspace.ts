@@ -3094,6 +3094,19 @@ export class StudyWorkspace {
   }
 
   /**
+   * Names the stopped line of the selected source as an empty range, which the return shows its editor at; `undefined` for a gap of a recording, which has no stop.
+   * @returns The range at the start of the stopped line.
+   * @example editor.setDecorations(this.highlight, [this.returnedSourceStop()!])
+   */
+  private returnedSourceStop(): vscode.Range | undefined {
+    const message = this.message(true),
+      position = new vscode.Position(message.model.source.line - 1, 0)
+    return this.recordingActive && !message.model.observation
+      ? undefined
+      : new vscode.Range(position, position)
+  }
+
+  /**
    * Draws the stopped line and, for a live source view, the source annotation on the editor the return of a displaced captured source opened: decorations belong to one editor, and the moved copy's editor kept the earlier ones. Called by {@link returnDisplacedCapturedSourceThenAdmit}.
    * @param editor - The editor shown in the Study source column.
    * @example this.decorateReturnedSource(editor)
@@ -3104,12 +3117,8 @@ export class StudyWorkspace {
       source = message.model.source,
       position = new vscode.Position(source.line - 1, 0)
     // A gap in a recording has no stopped line, as in the ordinary render.
-    editor.setDecorations(
-      this.highlight,
-      this.recordingActive && !message.model.observation
-        ? []
-        : [new vscode.Range(position, position)],
-    )
+    const stop = this.returnedSourceStop()
+    editor.setDecorations(this.highlight, stop ? [stop] : [])
     if (!this.sourceIdentity || !isLiveSourceViewUri(this.sourceUri)) return
     const study = this.selectedStudy(true)
     editor.setDecorations(this.sourceIdentity, [
@@ -3254,6 +3263,8 @@ export class StudyWorkspace {
       lifetime = this.lifetime
     // `undefined` while the return did not run; then the state decides, otherwise only the measured placement does.
     let confirmedByPlacement: boolean | undefined
+    // Releases the return's transition; it stays owned until the answer is final, so no control is admitted between the new revision and the saved preference.
+    let releaseTransition = (): void => {}
     if (displaced && this.sourceUri) {
       // The admission conditions of any presentation change hold now and across every native step below.
       const runtimeIdentity = this.assertPresentationAdmission()
@@ -3265,6 +3276,10 @@ export class StudyWorkspace {
         cancellation: new AbortController(),
       }
       this.presentationTransition = transition
+      releaseTransition = (): void => {
+        if (this.presentationTransition === transition)
+          this.presentationTransition = undefined
+      }
       const assertOwned = (): void => {
         this.assertLifetime(lifetime)
         if (
@@ -3319,10 +3334,12 @@ export class StudyWorkspace {
         assertOwned()
         assertLearnerKept()
         // The show leaves the keyboard where the request put it (the Study pane for Arrange, the learner's file or the chat for an agent); a learner's click while it is pending is therefore never taken back.
+        const stop = this.returnedSourceStop()
         const editor = await this.showTextDocumentNoted(document, {
           viewColumn: sourceColumn,
           preserveFocus: true,
           preview: false,
+          selection: stop,
         })
         assertOwned()
         assertLearnerKept()
@@ -3350,9 +3367,9 @@ export class StudyWorkspace {
         confirmedByPlacement = await this.placementHoldsAfterReturn()
         assertOwned()
         await giveKeyboardBack?.()
-      } finally {
-        if (this.presentationTransition === transition)
-          this.presentationTransition = undefined
+      } catch (error) {
+        releaseTransition()
+        throw error
       }
     }
     // The source standing in its column again can confirm the retained grid by itself; a full placement would refuse the learner groups.
@@ -3367,9 +3384,14 @@ export class StudyWorkspace {
       // Like every admitted change, the answer is a new control revision: a second control holding the old one is refused as stale.
       this.presentationControlRevision++
       this.publish()
-      await this.savePresentationPreference(input.mode, this.presentationId)
+      try {
+        await this.savePresentationPreference(input.mode, this.presentationId)
+      } finally {
+        releaseTransition()
+      }
       return { ...this.presentationState(), state: 'open' as const }
     }
+    releaseTransition()
     return this.admitPresentation(
       { ...input, expectedRevision: this.presentationControlRevision },
       'pending',
