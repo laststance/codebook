@@ -39,7 +39,9 @@ Read the archived docs before the work each governs (other records, prompts, ext
 Fix every carried defect in the next cycle; sole exception: the [ship review limit](#delivery). No planning choice, review outcome or skill default overrides this; a feature cycle starts clean.
 
 - **Dependencies first**, every cycle (both kinds), before other work.
-  - Run `pnpm --dir extension update --latest '!@types/vscode' '!@vscode/*' '!@types/node'`, then move `@types/node` to the newest version of the pinned Node major.
+  - Run `pnpm --dir extension update --latest '!@types/vscode' '!@vscode/*' '!@types/node' '!typescript'`, then move `@types/node` to the newest version of the pinned Node major and `typescript` to the newest 6.x.
+  - No TypeScript 7: the native port has no JS API for ESLint.
+  - Fallow always follows its latest release, majors included: catching up later is costlier than scoring a small step.
   - VS Code packages, `engines` and the Node pins stay as they are: a newer VS Code API than Cursor's breaks the extension in Cursor.
   - Keep exact pins, fix breakages, pass the checks, and commit on the cycle branch.
   - A Fallow or c8 version change follows the [Fallow](#commands-and-checks) retake rules.
@@ -284,6 +286,10 @@ Formatting: `pnpm --dir extension format` / `format:check` and the lint-staged h
 
 **Fallow.**
 
+- **Lower the scores actively**, in any cycle.
+  - A finding a behaviour-neutral refactor can remove is refactored: tests unchanged and green, and the native path rechecked when it is natively verified.
+  - The fixed findings are then dropped from their baseline.
+  - Prefer the hotspots and targets `fallow health --hotspots --targets` ranks, and `fallow fix --dry-run` for dead code.
 - `pnpm --dir extension dupes` / `dead-code` fail on clones or dead code beyond `fallow-dupes-baseline.json` / `fallow-dead-code-baseline.json` (Fallow 3.37.0). `.fallowrc.json` excludes tests and scripts (`health.ignore`, `duplicates.ignore`; `ignoreFindings` keeps them entry points, so code they call counts as used).
 - `pnpm --dir extension health` (`scripts/checkHealth.mjs`, 20-min job) scores health with this run's coverage against `fallow-health-measured-baseline.json` (cyclomatic 20, cognitive 15, CRAP 30). Exit 0 clean, 1 findings, 2 refused/no verdict (e.g. pins differing from `fallow-health-reference.json`, a runner option in `NODE_OPTIONS`). Only option: `--format json`; never writes a baseline.
   - Baselines = the current codebase at the retake, not one fixed old revision: fix findings above the committed baseline in the source.
