@@ -29,6 +29,22 @@ export function sameTabTarget(
   )
 }
 
+/**
+ * Writes what a tab shows as one text, for a comparison that keeps a place as text: the kind of input, the label and the input's resource and view members ({@link TAB_INPUT_IDENTITY_FIELDS}); called by {@link StudyWorkspace}'s return of a displaced captured source to name a front tab that is no text file.
+ * Two tabs {@link sameTabTarget} tells apart by their members write different texts; a new object of the same tab writes the same text.
+ * @param tab - The tab.
+ * @returns The text, its parts joined by a NUL character.
+ * @example tabTargetText(diffOfAppIndex) === tabTargetText(diffOfLibIndex) // => false for "index.ts (Working Tree)" in two folders
+ */
+export function tabTargetText(tab: Tab): string {
+  const input = inputObject(tab)
+  return [
+    input?.constructor.name ?? '',
+    tab.label,
+    ...TAB_INPUT_IDENTITY_FIELDS.map((field) => memberText(input, field) ?? ''),
+  ].join('\u0000')
+}
+
 /** Reads a tab's input as an object; a tab the editor gives no input (Cursor's chat) has none. */
 function inputObject(tab: Tab): object | undefined {
   return typeof tab.input === 'object' && tab.input !== null

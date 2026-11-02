@@ -1579,6 +1579,96 @@ test('a learner’s tab whose group the focus command did not make active is not
   }
 })
 
+// Value: protects=the learner's switch between two diffs of one label in the source column while the return opens the captured source: the switch is the learner's change of focus, so the return stops, keeps the newer diff in front and answers that the choice was kept; fails_when=the keyboard's place names a tab that is no text file by its label alone, so the switch reads as no change and the Restore answers success with the source over the diff the learner just picked; why_new=Cycle 0072 candidate fe103b13 Codex review (P2 3); seam=focusDiffEditor on app/index.ts and lib/index.ts in the source column, the learner's switch made before the return's first await ends (the open of the captured source); no_claim=the diffs stand for any two non-text tabs of one label
+test('a learner’s switch to another diff of the same label while the return opens the source stops the Restore and keeps that diff', async () => {
+  // Arrange: the captured source stands in the learner's fourth group; the diff of app/index.ts has the keyboard in the source column.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await openRetainedStudy(harness)
+    await addLearnerGroup(harness)
+    harness.moveSource(4)
+    harness.focusDiffEditor('app/index.ts', 2)
+    const before = harness.reader.presentationState()
+    // Act: the Restore starts and the learner picks the diff of lib/index.ts in the same column while the source is still being opened.
+    const restoring = harness.reader
+      .changePresentation(
+        {
+          presentationId: before.presentationId,
+          expectedRevision: before.presentationControlRevision,
+          mode: 'study-workspace',
+          action: 'restore',
+        },
+        'agent',
+      )
+      .then(
+        () => 'answered',
+        (error: unknown) => String(error),
+      )
+    const libDiffTab = harness.focusDiffEditor('lib/index.ts', 2).tab
+    const answer = await restoring
+    // Assert
+    assert.deepEqual(
+      {
+        answer,
+        frontIsTheLibDiff:
+          harness.groups.find((group) => group.viewColumn === 2)!.activeTab ===
+          libDiffTab,
+      },
+      { answer: FOCUS_KEPT_ANSWER, frontIsTheLibDiff: true },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the presentation transition when the editor never answers the layout read that confirms the returned arrangement: after the presentation deadline the Restore answers an error naming that step and the transition is released; fails_when=the layout read after the return is awaited with no deadline, so every later control answers that a presentation change is pending and Close waits for good; why_new=Cycle 0072 candidate fe103b13 Codex review (P2 1); seam=holdNextCommand on vscode.getEditorLayout armed once the second show is released, the fake clock, the reader's presentationTransition; no_claim=which native layout command a host uses beyond the harness's
+test('a layout read after the return that the editor never answers ends the Restore with an error at the presentation deadline', async (context) => {
+  // Arrange: the moved copy has the keyboard in the fourth group, so the return shows the source twice and then reads the layout.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let releaseLayout = (): void => {}
+  try {
+    await openRetainedStudy(harness)
+    harness.moveSource((await addLearnerGroup(harness)).viewColumn)
+    // Act
+    const answer = await restoreWithLearnerDuringSecondShow(
+      harness,
+      () => {},
+      async (answering) => {
+        // Armed after the second show, so the held command is the return's own layout read; faked before its deadline is armed.
+        const heldLayout = harness.holdNextCommand('vscode.getEditorLayout')
+        releaseLayout = heldLayout.release
+        enableFakeClock(context)
+        await advanceClockUntilSettled(context, heldLayout.started, 2_000)
+        await advanceClockUntilSettled(
+          context,
+          answering,
+          PRESENTATION_READY_TIMEOUT_MS + 1_000,
+        )
+        resetFakeClock(context)
+      },
+    )
+    // Assert
+    assert.deepEqual(
+      {
+        answer,
+        transitionReleased:
+          harness.reader['presentationTransition'] === undefined,
+      },
+      {
+        answer:
+          'Error: The editor gave no answer to the layout read after the return within 5 seconds, so Codebook stopped returning the captured source; the editor may still finish that step. Choose Restore Study workspace layout again.',
+        transitionReleased: true,
+      },
+    )
+  } finally {
+    resetFakeClock(context)
+    releaseLayout()
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's editor after the return gave up on a step: the editor's answer to the focus command of the learner's group arrives after the step deadline, the Restore has already answered its timeout, and the late answer sends no numbered tab command that would switch a front tab under the learner, a Close or the next Restore; fails_when=the abandoned reactivation goes on with its next editor command once the late answer arrives; why_new=Cycle 0072 /ship pass 2 (native adversarial rerun 2, Red Team 1); seam=restoreWithLearnerDuringSecondShow, holdNextCommand on the fourth group's focus command released after the deadline, the fake clock, the harness's command log; no_claim=the late completion of the editor's own command (the focus still moves; the editor may finish it)
 test('a learner’s tab whose group focus the editor answers after the return gave up gets no numbered tab command', async (context) => {
   // Arrange: the moved copy has the keyboard in the fourth group; the editor holds its answer to the fourth group's focus command.

@@ -3,7 +3,7 @@ import { test } from 'node:test'
 
 import type { Tab } from 'vscode'
 
-import { sameTabTarget } from '../utils/sameTabTarget'
+import { sameTabTarget, tabTargetText } from '../utils/sameTabTarget'
 
 /** A resource as far as {@link sameTabTarget} reads it: its text. */
 type FakeUri = { toString: () => string }
@@ -244,5 +244,28 @@ test('multi-file diffs of the same label are the same editor only when they list
   assert.deepEqual(
     { sameDiffs, otherDiffs },
     { sameDiffs: true, otherDiffs: false },
+  )
+})
+
+// Value: protects=the return's keyboard place names a tab that is no text file by what it shows, so a switch between two diffs of one label is a change and a new object of the same diff is none; fails_when=the text carries the label alone (a switch reads as no change) or the tab object (every re-created tab reads as a change); why_new=Cycle 0072 candidate fe103b13 Codex review (P2 3); seam=none; no_claim=the editors' real tab inputs
+test('the text of a tab tells two diffs of one label apart and keeps a re-created tab the same', () => {
+  // Arrange
+  const diffOf = (folder: string) =>
+    tab(
+      'index.ts (Working Tree)',
+      new FakeDiffInput(
+        uri(`git:///${folder}/index.ts?HEAD`),
+        uri(`file:///${folder}/index.ts`),
+      ),
+    )
+  // Act
+  const reCreated =
+    tabTargetText(diffOf('app')) === tabTargetText(diffOf('app'))
+  const otherFolder =
+    tabTargetText(diffOf('app')) === tabTargetText(diffOf('lib'))
+  // Assert
+  assert.deepEqual(
+    { reCreated, otherFolder },
+    { reCreated: true, otherFolder: false },
   )
 })

@@ -444,7 +444,7 @@ import {
   type LearnersChoice,
   sameLearnersChoiceTarget,
 } from './utils/sameLearnersChoiceTarget'
-import { sameTabTarget } from './utils/sameTabTarget'
+import { sameTabTarget, tabTargetText } from './utils/sameTabTarget'
 import { type CauseRoots, sanitizeCause } from './utils/sanitizeCause'
 import { sanitizedStack } from './utils/sanitizedStack'
 import { sanitizeNodeTestHistory } from './utils/sanitizeNodeTestHistory'
@@ -3318,7 +3318,11 @@ export class StudyWorkspace {
   private async placementHoldsAfterReturn(): Promise<boolean> {
     const receipt = this.layoutReceipt
     if (!receipt) return false
-    const layout = await this.readPassivePresentationLayout()
+    // Bounded like the return's other native steps: a layout read the editor never answers must not keep the transition, and a late answer must not rewrite the receipt after the return gave up.
+    const layout = await this.awaitReturnStep(
+      this.readPassivePresentationLayout(),
+      'the layout read after the return',
+    )
     if (layout === undefined) return false
     if (
       editorLayoutGroupCount(layout) ===
@@ -3471,7 +3475,10 @@ export class StudyWorkspace {
           const front = vscode.window.tabGroups.activeTabGroup.activeTab
           return JSON.stringify([
             vscode.window.tabGroups.activeTabGroup.viewColumn,
-            frontDocument ?? this.textTabUri(front) ?? front?.label,
+            // A tab that is no text file is named by what it shows, so another tab of the same label (a diff of another folder's index.ts) is a change.
+            frontDocument ??
+              this.textTabUri(front) ??
+              (front ? tabTargetText(front) : undefined),
             vscode.window.state.focused,
           ])
         }
