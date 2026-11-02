@@ -1710,3 +1710,60 @@ test("in Cursor, a group the learner opened during the Application's move and th
     await harness.close()
   }
 })
+
+// Value: protects=Codebook's own move beside Cursor's Agent chat when the editor re-wraps the groups and the observer names them only after the watch began: a learner group unnamed at the start and named later is the same group, so the move is no learner change; fails_when=the before-state is found by the identity alone, the group named later misses its entry and its learner tabs read as a group the learner opened, refusing with "Native pane, group or focus changed while presentation waited; the learner arrangement was preserved."; why_new=Cycle 0072 task 5 review (CodeRabbit pass 4a); seam=applicationSharingLearnerGroupBesideChat, an observeEditorGroups that has not named the groups when the watch begins, rewrapGroupObjects, the reader's watchLearnerViewDuringApplicationMove; no_claim=the real Cursor's event timing (native Cursor trial)
+test('in Cursor, a learner group unnamed when the move watch began and named later is not read as a group the learner opened', async () => {
+  // Arrange
+  const { harness } = await applicationSharingLearnerGroupBesideChat()
+  try {
+    const observe = harness.reader['observeEditorGroups'].bind(harness.reader)
+    harness.reader['observeEditorGroups'] = (): void => undefined
+    harness.rewrapGroupObjects()
+    const watch = harness.reader['watchLearnerViewDuringApplicationMove']()
+    harness.reader['observeEditorGroups'] = observe
+
+    // Act
+    harness.rewrapGroupObjects()
+    const outcome = (() => {
+      try {
+        watch.assertUnchanged()
+        return 'unchanged'
+      } catch (error) {
+        return String(error)
+      }
+    })()
+    watch.dispose()
+
+    // Assert
+    assert.equal(outcome, 'unchanged')
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Codebook's own move beside Cursor's Agent chat when the editor re-wraps the groups and the group report that names them has not arrived at the watch's final assertion: a learner group named at the start and unnamed at the end is the same group, so the move is no learner change; fails_when=the final assertion looks a group up by its column while the before-state holds it by its identity alone, the group misses its entry and its learner tabs read as a group the learner opened, refusing with "Native pane, group or focus changed while presentation waited; the learner arrangement was preserved."; why_new=Cycle 0072 task 5 review (CodeRabbit pass 4b); seam=applicationSharingLearnerGroupBesideChat, an observeEditorGroups that has not heard the re-wrapped groups, rewrapGroupObjects, the reader's watchLearnerViewDuringApplicationMove; no_claim=the real Cursor's event timing (native Cursor trial)
+test('in Cursor, a learner group named when the move watch began and re-wrapped unnamed before its final assertion is not read as a group the learner opened', async () => {
+  // Arrange
+  const { harness } = await applicationSharingLearnerGroupBesideChat()
+  try {
+    const watch = harness.reader['watchLearnerViewDuringApplicationMove']()
+    harness.reader['observeEditorGroups'] = (): void => undefined
+
+    // Act
+    harness.rewrapGroupObjects()
+    const outcome = (() => {
+      try {
+        watch.assertUnchanged()
+        return 'unchanged'
+      } catch (error) {
+        return String(error)
+      }
+    })()
+    watch.dispose()
+
+    // Assert
+    assert.equal(outcome, 'unchanged')
+  } finally {
+    await harness.close()
+  }
+})

@@ -6102,6 +6102,10 @@ export async function workspaceHarness(
       leaveChatForMainEditor()
       for (const panel of panels) panel.notifyViewState()
     },
+    /** Gives every group a new object now and reports the groups as changed, with no tab changed, as Cursor's group report that follows a tab report does. @example harness.rewrapGroupObjects() */
+    rewrapGroupObjects(): void {
+      replaceGroupObjects()
+    },
     /** Gives every tab of the fake tab model a new Tab object now, as Cursor's extension host does when the editor sends a whole new tab model (the model of `rebuildTabObjectsAtGroupRemoval`, without a group removal); the tab listeners hear nothing, as at a removed group's rebuild. @example harness.rebuildTabObjectsNow() */
     rebuildTabObjectsNow(): void {
       rebuildTabObjects()

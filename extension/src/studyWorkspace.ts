@@ -18538,12 +18538,12 @@ export class StudyWorkspace {
     )
     const noEditor = textEditorFocusState(undefined)
     let editorBefore = textEditorFocusState(vscode.window.activeTextEditor)
-    // A group unnamed when the watch began is kept apart by its column, so several of them do not collapse into one entry.
+    // Each group is kept under its identity and under its column: a group unnamed now and named later, or named now and re-wrapped unnamed later, is still found.
     const groupsBefore = new Map(
-      vscode.window.tabGroups.all.map((group) => [
-        this.groupKeyOf(group),
-        this.learnerViewOfGroup(group),
-      ]),
+      vscode.window.tabGroups.all.flatMap((group) => {
+        const view = this.learnerViewOfGroup(group)
+        return this.groupKeysOf(group).map((key) => [key, view] as const)
+      }),
     )
     /** Says whether the active text editor is the learner's file the move brought to the front of the active group, whose front was the Application pane, while no text editor had the keyboard. */
     const isEditorShownByMove = (): boolean => {
@@ -18555,7 +18555,7 @@ export class StudyWorkspace {
         editor &&
         group &&
         editorBefore === noEditor &&
-        groupsBefore.get(this.groupKeyOf(group))?.front === undefined &&
+        this.learnerViewBefore(groupsBefore, group)?.front === undefined &&
         this.learnerViewOfGroup(group).front === editor.document.uri.toString(),
       )
     }
@@ -18605,13 +18605,38 @@ export class StudyWorkspace {
   }
 
   /**
-   * Names a group for the before-state of {@link watchLearnerViewDuringApplicationMove}: its identity, or its column while the editor's group report has not named it.
+   * Names a group for the before-state of {@link watchLearnerViewDuringApplicationMove}: its identity when the editor's group report named it, and always its column.
    * @param group - An editor group.
-   * @returns The group's identity, else `column:<n>`.
-   * @example this.groupKeyOf(group) // => 'column:2' for a group {@link observeEditorGroups} has not named
+   * @returns The group's identity (if named) and `column:<n>`, in that order.
+   * @example this.groupKeysOf(group) // => [Symbol(), 'column:2'], or ['column:2'] for a group {@link observeEditorGroups} has not named
    */
-  private groupKeyOf(group: vscode.TabGroup): symbol | string {
-    return this.editorGroupIdentities.get(group) ?? `column:${group.viewColumn}`
+  private groupKeysOf(group: vscode.TabGroup): (symbol | string)[] {
+    const identity = this.editorGroupIdentities.get(group)
+    return [
+      ...(identity === undefined ? [] : [identity]),
+      `column:${group.viewColumn}`,
+    ]
+  }
+
+  /**
+   * Finds what a group's learner part was when {@link watchLearnerViewDuringApplicationMove} began: by its identity first, then by its column.
+   * @param groupsBefore - The watch's before-state, by {@link groupKeysOf}.
+   * @param group - An editor group of now.
+   * @returns The group's learner view of the start, or `undefined` for a group that stood in neither.
+   * @example this.learnerViewBefore(groupsBefore, group)?.front
+   */
+  private learnerViewBefore(
+    groupsBefore: ReadonlyMap<
+      symbol | string,
+      ReturnType<StudyWorkspace['learnerViewOfGroup']>
+    >,
+    group: vscode.TabGroup,
+  ): ReturnType<StudyWorkspace['learnerViewOfGroup']> | undefined {
+    for (const key of this.groupKeysOf(group)) {
+      const view = groupsBefore.get(key)
+      if (view) return view
+    }
+    return undefined
   }
 
   /**
@@ -18634,7 +18659,7 @@ export class StudyWorkspace {
       // At the final assertion no report is awaited any more: a group still unnamed then is compared by its column, so a group the learner opened is seen.
       if (identity === undefined && !isFinal) continue
       const now = this.learnerViewOfGroup(group),
-        before = groupsBefore.get(this.groupKeyOf(group))
+        before = this.learnerViewBefore(groupsBefore, group)
       // A group whose front was a Codebook tab or none is compared by its learner tabs alone: the move can uncover a learner's tab there.
       if (
         (before?.tabs ?? '') !== now.tabs ||
