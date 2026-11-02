@@ -1410,6 +1410,8 @@ export class StudyWorkspace {
     runtimeIdentity?: string
   }
   private presentationOperation?: Promise<PresentationState>
+  /** The layout receipt that {@link returnDisplacedCapturedSourceThenAdmit} confirmed; while it is the current one, a later Restore keeps that confirmation. */
+  private capturedSourceReturnReceipt?: StudyWorkspace['layoutReceipt']
   /** Set from the start of a recording load until its first ready position, which retires a replay control's reported failure. */
   private replayLoadAwaitingReady = false
   /** The ledger write {@link saveShownRecordingSelection} started for the recording shown last; the playback controller's position save waits for it, so an unbounded {@link PlaybackController.settle} (tests, {@link PlaybackController.dispose}) ends after it, and {@link openLearningReplay} awaits it after its bounded one. It never rejects. */
@@ -1760,12 +1762,21 @@ export class StudyWorkspace {
     fromPane = requester === 'learner',
   ): Promise<PresentationState> {
     // A Codebook-owned captured source that the learner moved into a group of their own goes back to its Study column first; the placement below cannot move it (more than three groups) or never looks at it (a run's following composition).
-    if (this.restoresDisplacedCapturedSource(input))
-      return this.returnDisplacedCapturedSourceThenAdmit(
+    if (this.restoresDisplacedCapturedSource(input)) {
+      // Registered like every presentation path, so Close waits for the return's native steps and a late show cannot reopen an owned tab after the cleanup.
+      const pending = this.returnDisplacedCapturedSourceThenAdmit(
         input,
         requester,
         fromPane,
       )
+      this.presentationOperation = pending
+      const release = (): void => {
+        if (this.presentationOperation === pending)
+          this.presentationOperation = undefined
+      }
+      pending.then(release, release)
+      return pending
+    }
     return this.admitPresentation(input, 'pending', requester, fromPane)
   }
 
@@ -3037,6 +3048,79 @@ export class StudyWorkspace {
   }
 
   /**
+   * Builds the annotation at the end of the selected source line that names the capture, the recording's time or the gap; shared by {@link renderSelection}'s live view and {@link decorateReturnedSource}.
+   * @param model - The selected reader model.
+   * @param source - The selected source with its line, text and hash.
+   * @param declaredSourcePosition - The declared position of the observation, when the study has one.
+   * @param position - The selected line.
+   * @returns The decoration option to pass to the editor's source-identity decoration type.
+   * @example editor.setDecorations(this.sourceIdentity, [this.sourceIdentityDecoration(model, source, declared, position)])
+   */
+  private sourceIdentityDecoration(
+    model: ReturnType<StudyWorkspace['message']>['model'],
+    source: ReturnType<StudyWorkspace['message']>['model']['source'],
+    declaredSourcePosition: { path: string; line: number } | undefined,
+    position: vscode.Position,
+  ): vscode.DecorationOptions {
+    const sourceName = declaredSourcePosition?.path ?? model.selection.itemId
+    const recordedMoment = (this.playbackPending ?? this.playback?.bundle())
+      ?.projection.positionMs
+    const recordedTimeLabel =
+      recordedMoment === undefined
+        ? 'time unavailable'
+        : `${(recordedMoment / MILLISECONDS_PER_SECOND).toFixed(2)} s`
+    let sourceLabel = model.observation
+      ? `Captured: ${sourceName}:${source.line} · declared ${declaredSourcePosition?.line ?? source.line}`
+      : `Declared source: ${sourceName}:${source.line} · not yet observed`
+    // Historical provenance names the selected time; a gap cannot inherit another capture's annotation.
+    if (this.recordingActive)
+      sourceLabel = model.observation
+        ? `Recorded: ${sourceName}:${source.line} · ${recordedTimeLabel} · declared ${declaredSourcePosition?.line ?? source.line}`
+        : 'Recorded source · Not recorded at this moment'
+    const endOfLine = new vscode.Position(
+      position.line,
+      source.text.split('\n')[position.line]?.length ?? 0,
+    )
+    return {
+      range: new vscode.Range(endOfLine, endOfLine),
+      hoverMessage: plainMarkdownText(
+        `${sourceLabel} · captured SHA-256 ${source.hash}`,
+      ),
+      renderOptions: { after: { contentText: `  ${sourceLabel}` } },
+    }
+  }
+
+  /**
+   * Draws the stopped line and, for a live source view, the source annotation on the editor the return of a displaced captured source opened: decorations belong to one editor, and the moved copy's editor kept the earlier ones. Called by {@link returnDisplacedCapturedSourceThenAdmit}.
+   * @param editor - The editor shown in the Study source column.
+   * @example this.decorateReturnedSource(editor)
+   */
+  private decorateReturnedSource(editor: vscode.TextEditor): void {
+    if (!this.highlight || !this.sourceUri) return
+    const message = this.message(true),
+      source = message.model.source,
+      position = new vscode.Position(source.line - 1, 0)
+    // A gap in a recording has no stopped line, as in the ordinary render.
+    editor.setDecorations(
+      this.highlight,
+      this.recordingActive && !message.model.observation
+        ? []
+        : [new vscode.Range(position, position)],
+    )
+    if (!this.sourceIdentity || !isLiveSourceViewUri(this.sourceUri)) return
+    const study = this.selectedStudy(true)
+    editor.setDecorations(this.sourceIdentity, [
+      this.sourceIdentityDecoration(
+        message.model,
+        source,
+        study &&
+          configuredObservationPosition(study, message.model.observation?.id),
+        position,
+      ),
+    ])
+  }
+
+  /**
    * Tells whether a Restore or selection of the unconfirmed Study workspace must first bring a displaced captured source back; asked by {@link changePresentation}. A stale, busy or unfocused request is left to {@link admitPresentation}, which refuses it.
    * @param input - The requested change.
    * @returns `true` when {@link displacedCapturedSourceTab} finds a tab to return.
@@ -3048,7 +3132,13 @@ export class StudyWorkspace {
       (input.action === 'restore' || input.action === 'select') &&
       input.mode === 'study-workspace' &&
       input.mode === state.mode &&
-      !state.layoutConfirmed &&
+      // A displaced source is returned while the layout is unconfirmed; a layout this return confirmed (its receipt is still the current one) stays accepted by a later Restore, which the full placement would refuse beside the learner's groups.
+      (this.displacedCapturedSourceTab() !== undefined
+        ? !state.layoutConfirmed
+        : state.layoutConfirmed &&
+          !this.enlargedLayoutReceipt &&
+          this.layoutReceipt !== undefined &&
+          this.layoutReceipt === this.capturedSourceReturnReceipt) &&
       // A selected or opening test replay restores its own slots; the article's source stays where it is (F413).
       !this.testReplayHoldsComposition() &&
       input.presentationId === this.presentationId &&
@@ -3060,8 +3150,7 @@ export class StudyWorkspace {
       !this.returningCurrent &&
       !this.closing &&
       this.isPresentationAdmissionOpen() &&
-      vscode.window.state.focused &&
-      this.displacedCapturedSourceTab() !== undefined
+      vscode.window.state.focused
     )
   }
 
@@ -3196,10 +3285,9 @@ export class StudyWorkspace {
           vscode.window.state.focused,
         ])
       const placeAtStart = keyboardPlace()
-      /** A learner's own change of focus during the return wins: the return stops and the learner's choice stays. */
-      const assertLearnerKept = (isOurs: (column: number) => boolean): void => {
-        const group = vscode.window.tabGroups.activeTabGroup
-        if (vscode.window.state.focused && isOurs(group.viewColumn)) return
+      /** A learner's own change of focus during the return wins: the return stops and the learner's choice stays. The return itself takes no keyboard, so any change of the place since its start is the learner's. */
+      const assertLearnerKept = (): void => {
+        if (keyboardPlace() === placeAtStart) return
         this.yieldFocusToLearner()
         throw new StudyError(
           'PRESENTATION_UNAVAILABLE',
@@ -3207,55 +3295,57 @@ export class StudyWorkspace {
         )
       }
       /** Finds the Codebook-owned copy as the editor lists it now: tab and group objects may be new since the return began. */
-      const currentCopy = (): vscode.Tab | undefined =>
-        vscode.window.tabGroups.all
-          .find((group) => group.viewColumn === displaced.group.viewColumn)
-          ?.tabs.find(
-            (tab) =>
-              this.ownsCapturedSourceTab(tab) &&
-              this.textTabUri(tab) === sourceUri,
-          )
+      const currentCopy = ():
+        { group: vscode.TabGroup; tab: vscode.Tab } | undefined => {
+        const group = vscode.window.tabGroups.all.find(
+          (candidate) => candidate.viewColumn === displaced.group.viewColumn,
+        )
+        const tab = group?.tabs.find(
+          (candidate) =>
+            this.ownsCapturedSourceTab(candidate) &&
+            this.textTabUri(candidate) === sourceUri,
+        )
+        return group && tab ? { group, tab } : undefined
+      }
+      // The copy in front of the learner's keyboard hands that keyboard to the source when it goes.
+      const copyHasKeyboard =
+        vscode.window.tabGroups.activeTabGroup.activeTab === currentCopy()?.tab
       try {
         const document = await vscode.workspace.openTextDocument(this.sourceUri)
         assertOwned()
-        assertLearnerKept(() => keyboardPlace() === placeAtStart)
-        await this.showTextDocumentNoted(document, {
+        assertLearnerKept()
+        // The show leaves the keyboard where the request put it (the Study pane for Arrange, the learner's file or the chat for an agent); a learner's click while it is pending is therefore never taken back.
+        const editor = await this.showTextDocumentNoted(document, {
           viewColumn: sourceColumn,
-          preserveFocus: false,
+          preserveFocus: true,
           preview: false,
         })
         assertOwned()
-        assertLearnerKept((column) => column === sourceColumn)
+        assertLearnerKept()
         this.sourceGroup = vscode.window.tabGroups.all.find(
           (group) => group.viewColumn === sourceColumn,
         )
-        // The Codebook-owned copy closes only after the new show succeeded, only while it still stands in its group, and never when the learner pinned it (as {@link retireMovedSourceCopies} keeps pinned copies); a pinned copy stays beside the source, which the placement accepts.
+        // The returned editor is a new one: it gets the stopped line and the source annotation the ordinary placement draws.
+        this.decorateReturnedSource(editor)
+        // The Codebook-owned copy closes only after the new show succeeded, never when the learner pinned it (as {@link retireMovedSourceCopies} keeps pinned copies), and never as the last tab of a learner group, which would leave the editor to close that group; such a copy stays beside the source, which the placement accepts.
         const copy = currentCopy()
-        if (copy && !copy.isPinned) {
-          await vscode.window.tabGroups.close([copy], true)
+        if (copy && !copy.tab.isPinned && copy.group.tabs.length > 1) {
+          await vscode.window.tabGroups.close([copy.tab], true)
           assertOwned()
-          // Closing the copy can hand the keyboard to the learner's tab behind it: the source takes it back, unless the learner chose another place meanwhile.
-          if (
-            vscode.window.activeTextEditor?.document.uri.toString() !==
-            document.uri.toString()
-          ) {
-            assertLearnerKept(
-              (column) =>
-                column === sourceColumn ||
-                column === displaced.group.viewColumn,
-            )
+          if (copyHasKeyboard) {
+            // Closing the copy that had the keyboard hands it to the learner's tab behind it: the source takes it, in the place the copy stood.
             await this.showTextDocumentNoted(document, {
               viewColumn: sourceColumn,
               preserveFocus: false,
               preview: false,
             })
-            assertOwned()
-          }
+          } else assertLearnerKept()
+          assertOwned()
         }
-        await giveKeyboardBack?.()
-        // Decided from the measured placement, not from the confirmation flag a status read may have retired for a benign change (a learner group beside the Study).
+        // Decided from the measured placement, not from the confirmation flag a status read may have retired for a benign change (a learner group beside the Study). Measured first: beside a chat part the layout read answers for the focused part, so the keyboard goes back to the chat only afterwards.
         confirmedByPlacement = await this.placementHoldsAfterReturn()
         assertOwned()
+        await giveKeyboardBack?.()
       } finally {
         if (this.presentationTransition === transition)
           this.presentationTransition = undefined
@@ -3264,6 +3354,7 @@ export class StudyWorkspace {
     // The source standing in its column again can confirm the retained grid by itself; a full placement would refuse the learner groups.
     if (confirmedByPlacement || this.presentationState().layoutConfirmed) {
       this.presentationConfirmed = true
+      this.capturedSourceReturnReceipt = this.layoutReceipt
       this.requestedPresentation = undefined
       this.presentationReason = undefined
       this.errors.delete('presentation')
@@ -16007,38 +16098,13 @@ export class StudyWorkspace {
           this.assertLifetime(lifetime)
           if (revision !== this.revision) return
           // The native annotation names the selected capture without adding a header to its source bytes.
-          const sourceName = declaredSourcePosition?.path ?? itemId
-          const recordedMoment = (
-            this.playbackPending ?? this.playback?.bundle()
-          )?.projection.positionMs
-          const recordedTimeLabel =
-            recordedMoment === undefined
-              ? 'time unavailable'
-              : `${(recordedMoment / MILLISECONDS_PER_SECOND).toFixed(2)} s`
-          let sourceLabel = message.model.observation
-            ? `Captured: ${sourceName}:${source.line} · declared ${declaredSourcePosition?.line ?? source.line}`
-            : `Declared source: ${sourceName}:${source.line} · not yet observed`
-          // Historical provenance names the selected time; a gap cannot inherit another capture's annotation.
-          if (this.recordingActive)
-            sourceLabel = message.model.observation
-              ? `Recorded: ${sourceName}:${source.line} · ${recordedTimeLabel} · declared ${declaredSourcePosition?.line ?? source.line}`
-              : 'Recorded source · Not recorded at this moment'
-          const endOfLine = new vscode.Position(
-            position.line,
-            source.text.split('\n')[position.line]?.length ?? 0,
-          )
           editor.setDecorations(this.sourceIdentity!, [
-            {
-              range: new vscode.Range(endOfLine, endOfLine),
-              hoverMessage: plainMarkdownText(
-                `${sourceLabel} · captured SHA-256 ${source.hash}`,
-              ),
-              renderOptions: {
-                after: {
-                  contentText: `  ${sourceLabel}`,
-                },
-              },
-            },
+            this.sourceIdentityDecoration(
+              message.model,
+              source,
+              declaredSourcePosition,
+              position,
+            ),
           ])
           if (existingView)
             editor.revealRange(new vscode.Range(position, position))

@@ -378,3 +378,189 @@ test('a control holding the revision from before Arrange is refused as stale aft
     await harness.close()
   }
 })
+
+for (const [window, following] of [
+  ['a fourth learner group beside the Study', false],
+  ['a third learner group beside a following run', true],
+] as const)
+  // Value: protects=a second Arrange or Restore after the first one returned the captured source from a learner group: it keeps the confirmed layout and the learner group; fails_when=the second request falls to the full placement, which refuses "More than three editor groups are open" and unconfirms the layout, so every later Restore fails; why_new=Cycle 0072 task 1 candidate Codex review P2 (1); seam=the workspace harness, moveSource and two arrange actions; no_claim=none beyond protects
+  test(`a second Arrange after the first returned the captured source keeps the layout confirmed with ${window}`, async () => {
+    // Arrange: the first Arrange returned the source from the learner's group.
+    const harness = await workspaceHarness(following)
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    let live: { close(): void } | undefined
+    try {
+      if (following) {
+        const receipt = harness.service.start({
+          instanceId: harness.service.instanceId,
+          profile: 'repository-browser',
+          configuration: harness.configuration,
+          key: randomUUID(),
+        })
+        await harness.service.record(receipt).preparation
+        await harness.reader.open()
+        live = await harness.reader.presentation.createViewport(
+          receipt.runId,
+          () => {},
+          () => {},
+          'normal',
+        )
+      } else await openRetainedStudy(harness)
+      const learnerGroup = await addLearnerGroup(harness)
+      harness.moveSource(learnerGroup.viewColumn)
+      await harness.reader.action('arrange')
+      // Act
+      await harness.reader.action('arrange')
+      // Assert
+      const state = harness.reader.presentationState()
+      assert.deepEqual(
+        {
+          layoutConfirmed: state.layoutConfirmed,
+          reason: state.reason,
+          learnerGroup: learnerGroupAfter(harness, learnerGroup),
+        },
+        {
+          layoutConfirmed: true,
+          reason: undefined,
+          learnerGroup: {
+            open: true,
+            column: following ? 3 : 4,
+            files: ['data.ts', 'search.tsx'],
+          },
+        },
+      )
+    } finally {
+      live?.close()
+      await harness.close()
+    }
+  })
+
+// Value: protects=a learner's click into data.ts while the editor's show of the captured source is still pending: the learner keeps the keyboard, the return shows the source without taking it and stops; fails_when=the show takes the keyboard (preserveFocus false) and the learner's file loses it; why_new=Cycle 0072 task 1 candidate Codex review P2 (2); seam=the workspace harness's holdNextTextDocumentShow and focusMutableDraft as the learner's click; no_claim=the click is the harness's focus of a draft
+test('a learner’s click into their file while the show of the captured source is pending keeps the keyboard in that file', async () => {
+  // Arrange: the captured source stands in the learner's fourth group and the editor's show of it is held.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let release = (): void => {}
+  try {
+    await openRetainedStudy(harness)
+    harness.moveSource((await addLearnerGroup(harness)).viewColumn)
+    const held = harness.holdNextTextDocumentShow({
+      uri: harness.reader.inspect().sourceUri!,
+    })
+    release = held.release
+    const arranging = harness.reader.action('arrange')
+    await held.started
+    // Act
+    harness.focusMutableDraft('data.ts', 4)
+    held.release()
+    await arranging
+    // Assert
+    assert.equal(
+      harness.editor.window.activeTextEditor?.document.uri.fsPath
+        .split('/')
+        .pop(),
+      'data.ts',
+    )
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
+// Value: protects=Close Study Workspace while Arrange is returning the captured source: Close waits for the return, so no Codebook-owned captured-source tab is left or reopened after the cleanup; fails_when=the return is not registered as the presentation operation, Close cleans up at once and the late show opens the captured source again; why_new=Cycle 0072 task 1 CodeRabbit CLI pass 4 (A); seam=the workspace harness's holdNextTextDocumentShow, the reader's arrange and close; no_claim=none beyond protects
+test('Close Study Workspace during the captured source’s return leaves no captured-source tab open once both have finished', async () => {
+  // Arrange: the captured source stands in the learner's fourth group and the editor's show of it is held.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let release = (): void => {}
+  try {
+    await openRetainedStudy(harness)
+    harness.moveSource((await addLearnerGroup(harness)).viewColumn)
+    const held = harness.holdNextTextDocumentShow({
+      uri: harness.reader.inspect().sourceUri!,
+    })
+    release = held.release
+    const arranging = harness.reader.action('arrange').catch(() => undefined)
+    await held.started
+    // Act: the learner closes the Study workspace, then the held show finishes.
+    const closing = harness.reader.close()
+    held.release()
+    await arranging
+    await closing
+    // Assert
+    assert.deepEqual(
+      harness.groups
+        .flatMap((group) => group.tabs.map((tab) => tab.label))
+        .filter((label) => label.startsWith('Captured-')),
+      [],
+    )
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
+// Value: protects=the returned source's stopped line and annotation: the editor the return opens in the Study source column is decorated like the ordinary placement decorates it; fails_when=the new editor gets no decoration, so the stopped line is not marked after Arrange; why_new=Cycle 0072 task 1 candidate Codex review P2 (3); seam=the workspace harness's decoratedColumns of the source highlight; no_claim=the Recorded annotation of a live source view is not asserted here
+test('Arrange marks the stopped line in the editor it returns the captured source to', async () => {
+  // Arrange: the captured source stands in the learner's fourth group; earlier decoration calls are forgotten.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await openRetainedStudy(harness)
+    harness.moveSource((await addLearnerGroup(harness)).viewColumn)
+    harness.clearDecorations()
+    // Act
+    await harness.reader.action('arrange')
+    // Assert
+    assert.equal(harness.decoratedColumns().includes(2), true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the keyboard of the request: Arrange gave the Study pane the keyboard and it is still there after the captured source returned; fails_when=the return takes the keyboard into the Captured source in column 2; why_new=Cycle 0072 task 1 candidate Codex review P2 (4); seam=the workspace harness's active tab group; no_claim=a chat holding the keyboard is not modelled
+test('Arrange leaves the keyboard in the Study pane after the captured source returned', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await openRetainedStudy(harness)
+    harness.moveSource((await addLearnerGroup(harness)).viewColumn)
+    // Act
+    await harness.reader.action('arrange')
+    // Assert
+    assert.equal(harness.editor.window.tabGroups.activeTabGroup.viewColumn, 3)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's group when it holds nothing but the moved copy of the captured source: Arrange leaves the group open and the layout confirmed; fails_when=Arrange closes the last tab, the editor closes the emptied group and the learner's group is gone; why_new=Cycle 0072 task 1 candidate Codex review P2 (5); seam=the workspace harness with a fourth group that holds only the moved copy and the editor closing emptied groups; no_claim=none beyond protects
+test('Arrange keeps the learner’s group open when it holds only the moved copy of the captured source', async () => {
+  // Arrange: a fourth group holds only the moved copy.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.closeDisposedPanelTabsLater()
+  try {
+    await openRetainedStudy(harness)
+    await harness.editor.commands.executeCommand('vscode.setEditorLayout', {
+      orientation: 0,
+      groups: [{}, {}, {}, {}],
+    })
+    const learnerGroup = harness.groups.find((group) => group.viewColumn === 4)!
+    harness.moveSource(4)
+    // Act
+    await harness.reader.action('arrange')
+    // Assert
+    const state = harness.reader.presentationState()
+    assert.deepEqual(
+      {
+        groupOpen: harness.groups.includes(learnerGroup),
+        layoutConfirmed: state.layoutConfirmed,
+      },
+      { groupOpen: true, layoutConfirmed: true },
+    )
+  } finally {
+    await harness.close()
+  }
+})
