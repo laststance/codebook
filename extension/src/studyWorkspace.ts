@@ -3519,7 +3519,10 @@ export class StudyWorkspace {
         ): Promise<vscode.TextEditor> => {
           const watch = this.watchLearnersChoice(sourceUri, sourceColumn)
           try {
-            const shown = await show()
+            const shown = await this.awaitReturnStep(
+              show(),
+              'the show of the captured source',
+            )
             assertOwned()
             if (
               windowSwitchEndsReturn &&
@@ -3535,12 +3538,19 @@ export class StudyWorkspace {
               watch.ignoreOwnEffectOf(choice)
               let choiceBack = true
               if (choice.document) {
-                await this.showTextDocumentNoted(choice.document, {
-                  viewColumn: choice.column,
-                  preserveFocus: false,
-                  preview: false,
-                })
-              } else choiceBack = await this.reactivateNonTextTab(choice)
+                await this.awaitReturnStep(
+                  this.showTextDocumentNoted(choice.document, {
+                    viewColumn: choice.column,
+                    preserveFocus: false,
+                    preview: false,
+                  }),
+                  'the show of your choice',
+                )
+              } else
+                choiceBack = await this.awaitReturnStep(
+                  this.reactivateNonTextTab(choice),
+                  'the focus command that brings your choice back',
+                )
               assertOwned()
               // No newer pick since this re-show: the latest choice is in front again, as far as the editor could bring it back.
               if (watch.choices.length === seen) {
@@ -3558,14 +3568,18 @@ export class StudyWorkspace {
         const closeMovedCopy = async (): Promise<void> => {
           const copy = currentCopy()
           if (!copy || copy.tab.isPinned || copy.group.tabs.length <= 1) return
-          await vscode.window.tabGroups.close([copy.tab], true)
+          await this.awaitReturnStep(
+            vscode.window.tabGroups.close([copy.tab], true),
+            'the close of the moved copy',
+          )
           assertOwned()
           // The copy no longer has the keyboard (the source has it, or the request's place does), so the close moves nothing: any change since is the learner's, also a front tab of the copy's own group.
           assertLearnerKept()
         }
         if (displaced && this.sourceUri) {
-          const document = await vscode.workspace.openTextDocument(
-            this.sourceUri,
+          const document = await this.awaitReturnStep(
+            vscode.workspace.openTextDocument(this.sourceUri),
+            'the open of the captured source',
           )
           assertOwned()
           assertLearnerKept()
@@ -3663,6 +3677,41 @@ export class StudyWorkspace {
       requester,
       fromPane,
     )
+  }
+
+  /**
+   * Waits for one native call of the captured source's return for at most {@link PRESENTATION_READY_TIMEOUT_MS}, so a call the editor never answers cannot keep the presentation transition, and with it every control and Close, waiting for good; called by {@link returnDisplacedCapturedSourceThenAdmit} for each of its native awaits.
+   * The call is neither cancelled nor repeated: it may still finish after the deadline, and the return has stopped by then. The return's catch releases the transition and the control answers the refusal.
+   * @param call - The pending native call (an open, a show, a tab close or the editor's numbered or group command).
+   * @param description - Names the step in the refusal and the diagnostic, such as `the show of the captured source`.
+   * @returns What the call answered.
+   * @throws {@link StudyError} `PRESENTATION_UNAVAILABLE` naming the step when the call gave no answer in time (logged as `presentation:source-return-timed-out`); whatever the call itself rejected with otherwise.
+   * @example const editor = await this.awaitReturnStep(this.showTextDocumentNoted(document, { viewColumn: 2 }), 'the show of the captured source')
+   */
+  private async awaitReturnStep<Value>(
+    call: PromiseLike<Value>,
+    description: string,
+  ): Promise<Value> {
+    try {
+      return await awaitResponse(
+        call,
+        description,
+        undefined,
+        PRESENTATION_READY_TIMEOUT_MS,
+      )
+    } catch (error) {
+      // Only the deadline is told apart; the editor's own rejection passes on as it is.
+      if (!(error instanceof WaitTimeoutError)) throw error
+      const seconds = PRESENTATION_READY_TIMEOUT_MS / MILLISECONDS_PER_SECOND
+      this.diagnostics?.log({
+        surface: 'presentation:source-return-timed-out',
+        cause: `${description} gave no answer within ${PRESENTATION_READY_TIMEOUT_MS} ms; the wait ended and the editor may still finish it later.`,
+      })
+      throw new StudyError(
+        'PRESENTATION_UNAVAILABLE',
+        `The editor gave no answer to ${description} within ${seconds} seconds, so Codebook stopped returning the captured source; the editor may still finish that step. Choose Restore Study workspace layout again.`,
+      )
+    }
   }
 
   /**

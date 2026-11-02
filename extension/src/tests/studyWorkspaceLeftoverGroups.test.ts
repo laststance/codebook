@@ -2,8 +2,10 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 
+import { PRESENTATION_READY_TIMEOUT_MS } from '../constants'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
 
 import {
   openRetainedStudy,
@@ -11,6 +13,12 @@ import {
   workspaceHarness,
 } from './studyWorkspaceHarness'
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
+import {
+  advanceClockUntil,
+  advanceClockUntilSettled,
+  enableFakeClock,
+  resetFakeClock,
+} from './utils/fakeClock'
 
 type Harness = Awaited<ReturnType<typeof workspaceHarness>>
 
@@ -2280,6 +2288,76 @@ test('a file the learner picks in the source column while the first show is pend
       },
     )
   } finally {
+    release()
+    await harness.close()
+  }
+})
+
+// Value: protects=the presentation transition when the editor never answers the first show of the captured source: after the presentation deadline the Restore answers an error that names the step, the transition is released and a following Arrange is admitted, so no control stays refused as pending for good and Close is not left waiting; fails_when=the show is awaited with no deadline, so the Restore never settles, the transition stays owned and every later control answers "A presentation change or reader close is pending."; why_new=Cycle 0072 /ship pass 1 (native adversarial review: the return awaited its native calls with no deadline); seam=holdNextTextDocumentShow on the captured source and never released, the fake clock, agentRestoreOutcome, the reader's presentationTransition and the diagnostics log; no_claim=the other four bounded steps (the open, the hand-off show, the corrective shows and the close) go through the same helper and are not each timed here
+test('a first show of the captured source that the editor never answers ends the Restore with an error at the presentation deadline and a following Arrange is admitted', async (context) => {
+  // Arrange: the captured source stands in the learner's fourth group and the editor's first show of it is held for good.
+  const harness = await workspaceHarness(false)
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let release = (): void => {}
+  try {
+    await openRetainedStudy(harness)
+    harness.moveSource((await addLearnerGroup(harness)).viewColumn)
+    const held = harness.holdNextTextDocumentShow({
+      uri: harness.reader.inspect().sourceUri!,
+    })
+    release = held.release
+    enableFakeClock(context)
+    const restoring = agentRestoreOutcome(harness)
+    // Throws when the held show never starts, so a regression fails here and does not hang.
+    await advanceClockUntilSettled(context, held.started, 2_000)
+    const whileWaiting = await harness.reader.action('arrange').then(
+      () => 'answered',
+      (error: unknown) => String(error),
+    )
+    // Act: the presentation deadline passes.
+    const releasedAfterMs = await advanceClockUntil(
+      context,
+      () => harness.reader['presentationTransition'] === undefined,
+      PRESENTATION_READY_TIMEOUT_MS + 1_000,
+    )
+    // `advanceClockUntil` answers undefined at its limit: a transition still owned after the deadline fails here and does not hang.
+    assert.notEqual(
+      releasedAfterMs,
+      undefined,
+      'the transition stayed owned past the presentation deadline',
+    )
+    const answer = await restoring
+    resetFakeClock(context)
+    const followingArrange = await harness.reader.action('arrange').then(
+      () => 'answered',
+      (error: unknown) => String(error),
+    )
+    // Assert
+    assert.deepEqual(
+      {
+        whileWaiting,
+        answer,
+        followingArrange,
+        timeoutLogged: logged.some(
+          (entry) => entry.surface === 'presentation:source-return-timed-out',
+        ),
+      },
+      {
+        whileWaiting:
+          'Error: A presentation change or reader close is pending. Read its state before another control.',
+        answer:
+          'Error: The editor gave no answer to the show of the captured source within 5 seconds, so Codebook stopped returning the captured source; the editor may still finish that step. Choose Restore Study workspace layout again.',
+        followingArrange: 'answered',
+        timeoutLogged: true,
+      },
+    )
+  } finally {
+    resetFakeClock(context)
     release()
     await harness.close()
   }
