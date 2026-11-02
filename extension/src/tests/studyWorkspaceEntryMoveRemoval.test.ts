@@ -1808,3 +1808,122 @@ test("in Cursor, the Study pane's Recording opens at the first press when the mo
     await harness.close()
   }
 })
+
+/**
+ * Arms the move watch while the editor reports cards.tsx as the active text editor although the Application covers it, then lets the Application leave the learner's group: the state the native run C72-2 refused although Codebook's own move caused it.
+ * @param harness - The harness from {@link applicationSharingLearnerGroupBesideChat}.
+ * @returns The armed watch, with the Application already moved out of the learner's group, the learner group's column, and `endStaleReport`, which ends the stale report.
+ * @example const watch = await armWatchWithStaleEditor(harness)
+ */
+async function armWatchWithStaleEditor(
+  harness: Awaited<
+    ReturnType<typeof applicationSharingLearnerGroupBesideChat>
+  >['harness'],
+) {
+  const staleTab = harness.groups
+    .flatMap((group) => group.tabs)
+    .find((tab) => tab.label === 'data.ts')!
+  const learnerColumn = harness.groups.find((group) =>
+    group.tabs.includes(staleTab),
+  )!.viewColumn
+  const windowApi = harness.editor.window
+  const realEditor = Object.getOwnPropertyDescriptor(
+    windowApi,
+    'activeTextEditor',
+  )!
+  // Cursor kept reporting data.ts, another file of the learner's group, as the active text editor while the Application covered the group.
+  Object.defineProperty(windowApi, 'activeTextEditor', {
+    configurable: true,
+    get: () => ({
+      document: { uri: Reflect.get(staleTab.input, 'uri'), version: 1 },
+      selections: [],
+      viewColumn: learnerColumn,
+    }),
+  })
+  const watch = harness.reader['watchLearnerViewDuringApplicationMove']()
+  // The Application leaves the learner's group; cards.tsx is the file it uncovers. The learner's group stays the active one, so the editor names no other active text editor until the uncovered file is reported.
+  harness.movePanel('codebook.scopedBrowser', learnerColumn + 1)
+  await harness.controller.settle()
+  /** Ends the stale report: the editor names what it really shows from then on. */
+  const endStaleReport = (): void => {
+    Object.defineProperty(windowApi, 'activeTextEditor', realEditor)
+  }
+  return { watch, learnerColumn, endStaleReport }
+}
+
+// Value: protects=the move of the Application out of the learner's group beside Cursor's Agent chat when the editor reported another file of the group (data.ts) as the active text editor while the Application covered it (native C72-2 candidate 787050d4: cards.tsx, the file the move uncovers, is the active editor of its group afterwards): the move is no learner change; fails_when=the report at arming that is not "no text editor" makes the uncovered file read as a change of the active text editor and the watch refuses with "Native pane, group or focus changed while presentation waited; the learner arrangement was preserved."; why_new=Cycle 0072 task 5 native C72-2; seam=applicationSharingLearnerGroupBesideChat, an activeTextEditor reported at arming, movePanel (the Application leaves), focusExistingSource (the uncovered file becomes active), the reader's watchLearnerViewDuringApplicationMove; no_claim=that Cursor reports another file at arming (the native log does not show the editor at arming) and the real Cursor's event timing
+test('in Cursor, the move watch accepts the file the Application uncovers as the active editor of its group although the editor reported another file of the group before the move', async () => {
+  // Arrange
+  const { harness } = await applicationSharingLearnerGroupBesideChat()
+  try {
+    const { watch, endStaleReport } = await armWatchWithStaleEditor(harness)
+    endStaleReport()
+    harness.focusExistingSource(
+      harness.editor.window.visibleTextEditors.find((editor) =>
+        editor.document.uri.path.endsWith('/cards.tsx'),
+      )!,
+    )
+
+    // Act
+    const outcome = (() => {
+      try {
+        watch.assertUnchanged()
+        return 'unchanged'
+      } catch (error) {
+        return String(error)
+      }
+    })()
+    watch.dispose()
+
+    // Assert
+    assert.equal(outcome, 'unchanged')
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's own choice during the Application's move out of their group: a learner who opens notes.ts in that group, or who focuses auth.ts in another group, while the Application leaves still refuses the move, also when the editor reported another file at arming; fails_when=the uncovered-file rule accepts any editor change in a group the Application left, so a file the learner opens there or an editor of another group is read as the move's effect and the recording arranges over the learner's choice; why_new=Cycle 0072 task 5 native C72-2 (the guard must still refuse real input); seam=armWatchWithStaleEditor, focusMutableDraft (the learner's click or new file), the reader's watchLearnerViewDuringApplicationMove; no_claim=the real Cursor's event timing
+for (const learnerAction of [
+  'opens notes.ts in that group',
+  'focuses auth.ts in another group',
+] as const)
+  test(`in Cursor, the move watch still refuses when the learner ${learnerAction} while the Application leaves their group`, async () => {
+    // Arrange
+    const { harness, refusals } =
+      await applicationSharingLearnerGroupBesideChat()
+    try {
+      const { watch, learnerColumn, endStaleReport } =
+        await armWatchWithStaleEditor(harness)
+      endStaleReport()
+
+      // Act
+      if (learnerAction === 'opens notes.ts in that group')
+        harness.focusMutableDraft('notes.ts', learnerColumn)
+      else harness.focusMutableDraft('auth.ts', learnerColumn + 1)
+      const outcome = (() => {
+        try {
+          watch.assertUnchanged()
+          return 'unchanged'
+        } catch (error) {
+          return String(error)
+        }
+      })()
+      watch.dispose()
+
+      // Assert
+      assert.match(
+        outcome,
+        /Native pane, group or focus changed while presentation waited; the learner arrangement was preserved\./,
+      )
+      // The entry names the comparison that latched and the editor at arming and at refusal.
+      const cause = String(Reflect.get(refusals[0] ?? {}, 'cause'))
+      assert.match(cause, /Active text editor at arming: data\.ts \(column 1\)/)
+      assert.match(cause, /Failed checks: active text editor/)
+      assert.match(
+        cause,
+        /Active text editor at refusal: (auth|notes)\.ts \(column \d\)/,
+      )
+    } finally {
+      await harness.close()
+    }
+  })

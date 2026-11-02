@@ -126,7 +126,7 @@ function describeRefusalEvents(
 /**
  * Words what a refused placement guard saw, for one Output › Codebook entry that names the guard, the groups before and after and the editor's events with the milliseconds since the guard was armed; called by {@link StudyWorkspace} when one of its placement guards refuses.
  * The guard's call site, the checks that failed, each group's front tab, the focused tab at arming against the active tab at the refusal and the effects Codebook itself issued since arming are optional: a guard that does not name them prints the first lines only.
- * @param input - The guard's name, the arm time, the groups at arm time and now, and the events since arming; optionally the call site, the failed checks, the focused tab then and the active tab now, and Codebook's own effects since arming.
+ * @param input - The guard's name, the arm time, the groups at arm time and now, and the events since arming; optionally the call site, the failed checks, the focused tab then and the active tab now, the active text editor then and now (file name and column), and Codebook's own effects since arming.
  * @returns The multi-line cause text.
  * @example describePlacementRefusal({ guard: 'placement', armedAtMs: 0, nowMs: 130, before, after, events }) // => 'Guard: placement\nArmed 130 ms before the refusal\nBefore: …'
  */
@@ -142,6 +142,7 @@ export function describePlacementRefusal(input: {
     atArming: RefusalTabView | undefined
     atRefusal: RefusalTabView | undefined
   }
+  editors?: { atArming: string; atRefusal: string }
   events: readonly RefusalEvent[]
   effects?: readonly RefusalEvent[]
 }): string {
@@ -166,6 +167,12 @@ export function describePlacementRefusal(input: {
       ? [
           `Focused tab at arming: ${describeRefusalTab(input.focus.atArming)}`,
           `Active tab at refusal: ${describeRefusalTab(input.focus.atRefusal)}`,
+        ]
+      : []),
+    ...(input.editors
+      ? [
+          `Active text editor at arming: ${input.editors.atArming}`,
+          `Active text editor at refusal: ${input.editors.atRefusal}`,
         ]
       : []),
     'Events while armed:',

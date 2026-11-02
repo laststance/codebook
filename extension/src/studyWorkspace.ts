@@ -352,6 +352,7 @@ import { isCollapsedEditorGroup } from './utils/isCollapsedEditorGroup'
 import { isCollapsedEditorLayout } from './utils/isCollapsedEditorLayout'
 import { isCurrentRunRememberedWhileClosed } from './utils/isCurrentRunRememberedWhileClosed'
 import { isDiffTabOfDocument } from './utils/isDiffTabOfDocument'
+import { isEditorUncoveredByMove } from './utils/isEditorUncoveredByMove'
 import { isLiveSourceViewUri } from './utils/isLiveSourceViewUri'
 import { isNodeSourceSlotPath } from './utils/isNodeSourceSlotPath'
 import {
@@ -18918,22 +18919,47 @@ export class StudyWorkspace {
         return this.groupKeysOf(group).map((key) => [key, view] as const)
       }),
     )
-    /** Says whether the active text editor is the learner's file the move brought to the front of the active group, whose front was the Application pane, while no text editor had the keyboard. */
+    const editorAtArming = this.describeActiveEditor(
+      vscode.window.activeTextEditor,
+    )
+    // The learner files each group held behind the Application pane when the pane was the group's front tab: the files the move can uncover there.
+    const heldBehindPane = new Map<symbol | string, string[]>(
+      vscode.window.tabGroups.all
+        .filter(
+          (group) =>
+            group.activeTab &&
+            this.isCodebookPaneInput(
+              group.activeTab.input,
+              'codebook.scopedBrowser',
+            ) &&
+            this.isOwnPaneOrSourceTab(group.activeTab),
+        )
+        .flatMap((group) =>
+          this.groupKeysOf(group).map(
+            (key) => [key, this.learnersTabKeysOf(group)] as const,
+          ),
+        ),
+    )
+    /** Says whether the active text editor is the learner's file the move uncovered in the group the Application left: the file that was behind the pane (whatever the editor reported at arming), or the file in front of a group that showed none while no text editor was active. */
     const isEditorShownByMove = (): boolean => {
       const editor = vscode.window.activeTextEditor
       const group = vscode.window.tabGroups.all.find(
         (candidate) => candidate.viewColumn === editor?.viewColumn,
       )
-      return Boolean(
-        editor &&
-        group &&
-        editorBefore === noEditor &&
-        this.learnerViewBefore(groupsBefore, group)?.front === undefined &&
-        this.learnerViewOfGroup(group).front === editor.document.uri.toString(),
-      )
+      if (!editor || !group) return false
+      return isEditorUncoveredByMove({
+        editorFile: editor.document.uri.toString(),
+        frontNow: this.learnerViewOfGroup(group).front,
+        heldBehindPane: this.groupKeysOf(group)
+          .map((key) => heldBehindPane.get(key))
+          .find((held) => held !== undefined),
+        wasNoEditorAtArming: editorBefore === noEditor,
+        hadLearnerFrontAtArming:
+          this.learnerViewBefore(groupsBefore, group)?.front !== undefined,
+      })
     }
-    let changed = false
-    /** Latches a change of the active text editor, or of a learner group's tabs or of the learner's tab in front of it. */
+    let changed: string | undefined
+    /** Latches the first change of the active text editor, or of a learner group's tabs or of the learner's tab in front of it, by the comparison's name. */
     const check = (isFinal = false): void => {
       const editorNow = textEditorFocusState(vscode.window.activeTextEditor)
       // The file the move uncovered in the active group is the active text editor from then on, and later changes to it are the learner's; the report of a text editor the new group kept ends with the pane in front of it (row 710).
@@ -18943,9 +18969,10 @@ export class StudyWorkspace {
           (editorNow === noEditor && this.isApplicationInFrontOfActiveGroup()))
       )
         editorBefore = editorNow
-      changed ||=
-        editorNow !== editorBefore ||
-        this.hasLearnerGroupChangedSince(groupsBefore, isFinal)
+      changed ??=
+        editorNow !== editorBefore
+          ? 'active text editor'
+          : this.findLearnerGroupChangeSince(groupsBefore, isFinal)
     }
     const subscriptions = [
       vscode.window.tabGroups.onDidChangeTabs(() => check()),
@@ -18955,7 +18982,8 @@ export class StudyWorkspace {
     return {
       assertUnchanged: (): void => {
         check(true)
-        if (changed) throw this.refusePlacement(armed)
+        if (changed)
+          throw this.refusePlacement(armed, [changed], editorAtArming)
       },
       dispose: (): void => {
         for (const subscription of subscriptions) subscription.dispose()
@@ -19013,19 +19041,19 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether a group's learner tabs, or the learner's tab in front of it, changed since {@link watchLearnerViewDuringApplicationMove} began; asked by that watch at every reported change (row 670).
+   * Names the first comparison that finds a group's learner tabs, or the learner's tab in front of it, changed since {@link watchLearnerViewDuringApplicationMove} began; asked by that watch at every reported change (row 670).
    * @param groupsBefore - Each group's {@link learnerViewOfGroup} when the watch began, by the group's identity. A group {@link observeEditorGroups} has not named yet (Cursor sends a tab report with every group an object anew before the group report) is left out until it is named, or compared by its column at the final assertion.
    * @param isFinal - `true` for the watch's final assertion.
-   * @returns `true` once a group holds other learner tabs than it held (also a group that had none), or shows another learner's tab in front than the one it showed; `false` otherwise.
-   * @example this.hasLearnerGroupChangedSince(groupsBefore) // => true after the learner brought Release notes to the front of auth.ts's group
+   * @returns `'learner group tabs'` once a group holds other learner tabs than it held (also a group that had none), `'learner group front tab'` once it shows another learner's tab in front than the one it showed; `undefined` otherwise.
+   * @example this.findLearnerGroupChangeSince(groupsBefore) // => 'learner group front tab' after the learner brought Release notes to the front of auth.ts's group
    */
-  private hasLearnerGroupChangedSince(
+  private findLearnerGroupChangeSince(
     groupsBefore: ReadonlyMap<
       symbol | string,
       ReturnType<StudyWorkspace['learnerViewOfGroup']>
     >,
     isFinal = false,
-  ): boolean {
+  ): string | undefined {
     for (const group of vscode.window.tabGroups.all) {
       const identity = this.editorGroupIdentities.get(group)
       // Cursor sends a tab report with every group an object anew before the group report that names them ({@link observeEditorGroups} runs on that one): a group not named yet is compared at the report that names it, and at the watch's final assertion, not read as a new group the learner opened.
@@ -19034,13 +19062,23 @@ export class StudyWorkspace {
       const now = this.learnerViewOfGroup(group),
         before = this.learnerViewBefore(groupsBefore, group)
       // A group whose front was a Codebook tab or none is compared by its learner tabs alone: the move can uncover a learner's tab there.
-      if (
-        (before?.tabs ?? '') !== now.tabs ||
-        (before?.front !== undefined && before.front !== now.front)
-      )
-        return true
+      if ((before?.tabs ?? '') !== now.tabs) return 'learner group tabs'
+      if (before?.front !== undefined && before.front !== now.front)
+        return 'learner group front tab'
     }
-    return false
+    return undefined
+  }
+
+  /**
+   * Words the active text editor for a refusal report: its file name and column, sanitized, or `none`; called by {@link watchLearnerViewDuringApplicationMove} and {@link refusePlacement}.
+   * @param editor - The active text editor, if any.
+   * @returns `<file name> (column <n>)`, or `none`.
+   * @example this.describeActiveEditor(vscode.window.activeTextEditor) // => 'cards.tsx (column 2)'
+   */
+  private describeActiveEditor(editor: vscode.TextEditor | undefined): string {
+    if (!editor) return 'none'
+    const name = editor.document.uri.path.split('/').at(-1) ?? ''
+    return `${sanitizeCause(name, this.privateRoots())} (column ${editor.viewColumn})`
   }
 
   /**
@@ -25034,6 +25072,7 @@ export class StudyWorkspace {
    * The sentence the learner reads is unchanged; the entry carries the guard's call site and failed checks when it names them, the groups before and after with each group's front tab, the focused tab at arming against the active tab now, the editor's events since the guard was armed (group changes, tab operations, pane view-state changes, the active text editor) and the native effects Codebook itself issued since then (N55-F4, Cycle 0056 task 17).
    * @param armed - What {@link armPlacementReport} noted.
    * @param failedChecks - The comparisons that failed, when the guard keeps them apart.
+   * @param editorAtArming - The active text editor at arming ({@link describeActiveEditor}); the entry then also names the one at the refusal.
    * @returns A {@link PlacementRefusalError} with the refusal sentence; the presentation boundary words it with {@link PLACEMENT_REFUSED_RECOVERY}.
    * @example throw this.refusePlacement(armed, ['focus group'])
    */
@@ -25048,6 +25087,7 @@ export class StudyWorkspace {
       focusedTab?: RefusalTabView | undefined
     },
     failedChecks?: readonly string[],
+    editorAtArming?: string,
   ): Error {
     const nowMs = performance.now()
     const cause = describePlacementRefusal({
@@ -25070,6 +25110,16 @@ export class StudyWorkspace {
             },
           }
         : {}),
+      ...(editorAtArming === undefined
+        ? {}
+        : {
+            editors: {
+              atArming: editorAtArming,
+              atRefusal: this.describeActiveEditor(
+                vscode.window.activeTextEditor,
+              ),
+            },
+          }),
       events: this.sanitizeRefusalNotes(
         this.placementEvents.since(armed.armedAtMs),
       ),
