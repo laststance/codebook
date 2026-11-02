@@ -9187,6 +9187,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       await this.resumeClassifiedHit(stop, pause, verdict)
       return
     }
+    // The hit is the learner's pause: the hold replaces the active bound for good.
+    this.activeBound = undefined
     stopped.generation = pause.generation
     // Where the program stands in the generated module: the place of a binding first known now, and the column of one the editor answers without.
     const pausedAt = stopped.event.callFrames[0]?.location
@@ -10710,7 +10712,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       'Repository pause hold deadline exceeded',
     )
     this.holdingPause = true
-    this.activeBound = undefined
+    // The active bound stays until {@link inspect} decides the hit is the learner's pause: an automatic resume gives it back ({@link restoreActiveBound}).
   }
   /** Applies the current active/hold/setup budget independently from the pending input's whole-run protocol timeout; an expiry while a participant is paused with no announced stop also says where. A reason given as a function is read at expiry, for a text that depends on what is known only then. Every deadline started here is no pause hold; {@link holdPauseDeadline} marks the one that is. @example this.progressDeadline(ACTIVE_TIMEOUT_MS, 'after timed out') */
   private progressDeadline(

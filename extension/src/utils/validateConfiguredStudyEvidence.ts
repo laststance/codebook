@@ -13,6 +13,7 @@ import { afterOperationOf } from './afterOperationOf'
 import { assertConfiguredDescriptor } from './assertConfiguredDescriptor'
 import { assertObservationFormatFields } from './assertObservationFormatFields'
 import { configuredStops } from './configuredStops'
+import { hasObservedOperationResult } from './hasObservedOperationResult'
 import { isCrossRuntimeStudy } from './isCrossRuntimeStudy'
 import { isSavedBindingReceiptAtStop } from './isSavedBindingReceiptAtStop'
 import { isSavedSourceAtStop } from './isSavedSourceAtStop'
@@ -292,8 +293,7 @@ export function validateConfiguredStudyEvidence(
         step.evidence !== 'observed' ||
         reference.configurationHash !== study.configurationHash ||
         study.finalOutcome !== 'demonstrated' ||
-        !study.operation?.afterVerified ||
-        !study.operation.inputAcknowledged
+        !hasObservedOperationResult(study.operation)
       )
         throw new Error(
           'Learning summary result lacks verified terminal evidence.',

@@ -7,17 +7,22 @@ import { test } from 'node:test'
 import { LearningLibrary } from '../learningLibrary'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { captureStudy } from '../utils/captureStudy'
+import { snapshotSourceHashes } from '../utils/snapshotSourceHashes'
 
-import { entryRenderHarness, heldEntryPause } from './utils/entryRenderHarness'
+import {
+  armedEntry,
+  entryRenderHarness,
+  heldEntryPause,
+} from './utils/entryRenderHarness'
 import { serviceHostedEntryRun } from './utils/entryRenderService'
 
 /** A workspace key in the shape a saved study carries. */
 const WORKSPACE_KEY = 'a'.repeat(64)
 
-/** Pauses the entry render of a service-hosted run and continues it, then lets the page finish loading. @example await completeEntryOnly(run) */
+/** Pauses the entry render of a service-hosted run and continues it, then lets the page finish loading. @returns The snapshot URI of the entry pause. @example const snapshotUri = await completeEntryOnly(run) */
 async function completeEntryOnly(
   run: Awaited<ReturnType<typeof serviceHostedEntryRun>>,
-): Promise<void> {
+): Promise<string> {
   const { harness, service, state } = run
   await waitUntil(
     () => harness.server!.breakpointsAcknowledged() > 0,
@@ -29,9 +34,12 @@ async function completeEntryOnly(
   )
   harness.server!.hit({ route: '/dashboard' })
   await waitUntil(() => state().state === 'paused-server', 'the entry pause')
+  // The snapshot of the entry pause, read before the continue releases it.
+  const snapshotUri = state().participants.server!.snapshotUri!
   harness.setDocumentReadyState('complete')
   await service.continue(state().participants.server!.continueArguments!)
   await waitUntil(() => state().state === 'completed', 'the completed run')
+  return snapshotUri
 }
 
 // Value: protects=H3 a completed run of no operation (entry render only) saves and reopens; fails_when=the validator refuses the synthetic entry-load operation that completion creates, so Save fails with "Configured operations are missing from a started run."; no_claim=a real Next dev server (a stand-in server hits the armed stop)
@@ -116,5 +124,92 @@ test('a preparation step after the entry page loaded that outlasts 20 s does not
   assert.doesNotMatch(
     harness.run.view().failures[0] ?? '',
     /^ENTRY_LOAD_TIMEOUT/,
+  )
+})
+
+// Value: protects=P2 of the Codex review: a completed run of no operation, stopped, gets a terminalReference that a chat's learning summary may cite, and the saved study with that summary reopens; fails_when=the entry-load operation (no input acknowledged) leaves terminalReference undefined, explain refuses the reference, or the saved study fails its learning-summary validation; no_claim=a real Next dev server (a stand-in server hits the armed stop)
+test('a completed run with no operation gives a terminal reference that a learning summary cites and the saved study reopens with it', async (context) => {
+  // Arrange
+  const run = await serviceHostedEntryRun(context)
+  const { service, receipt, state } = run
+  const snapshotUri = await completeEntryOnly(run)
+  const sourceHash = snapshotSourceHashes(
+    service.snapshot(service.record(receipt), snapshotUri),
+  ).typescript
+  // Act
+  await service.stop(receipt)
+  const terminalReference = state().terminalReference
+  const explained = await service.explain({
+    ...receipt,
+    key: 'entry-summary',
+    snapshotUri,
+    sourceHash,
+    valuePaths: ['value:nextTheme'],
+    interpretation: 'The entry render held the dark theme.',
+    learningSummary: {
+      question: 'What does the entry page render?',
+      title: 'Entry render',
+      summary: 'The entry render paused with the dark theme.',
+      participants: [{ id: 'page', label: 'Page' }],
+      steps: [
+        {
+          id: 'entry',
+          from: 'page',
+          to: 'page',
+          label: 'Entry render',
+          explanation: 'The stop records nextTheme as dark.',
+          evidence: 'observed',
+          reference: { snapshotUri, sourceHash },
+        },
+        {
+          id: 'result',
+          from: 'page',
+          to: 'page',
+          label: 'Page loaded',
+          explanation: 'The verified after frame shows the loaded page.',
+          evidence: 'observed',
+          reference: terminalReference!,
+        },
+      ],
+    },
+  })
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-entry-summary-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const saved = await captureStudy(
+    service,
+    service.record(receipt),
+    WORKSPACE_KEY,
+  )
+  const library = new LearningLibrary(directory, WORKSPACE_KEY)
+  await library.saveStudy(saved!)
+  const reopened = await library.readStudy(saved!.id)
+  // Assert
+  assert.equal(terminalReference?.kind, 'terminal')
+  assert.match(explained.explanationUri, /explanations\//)
+  assert.equal(reopened.learningSummary?.content.steps[1]?.evidence, 'observed')
+})
+
+// Value: protects=P2 of the Codex review: an automatically resumed hit of another route gives the stop's 20 s bound back; fails_when=the hit's pause hold replaces the bound by 300 s (the run survives 20 s from the arming) or the hold stays after the resume; no_claim=real time (the run's manual clock moves)
+test('an auto-resumed hit of another route leaves the 20 s bound to reach the stop in force', async (context) => {
+  // Arrange
+  const harness = await entryRenderHarness(context)
+  const prepared = harness.run.prepare().catch((error: unknown) => error)
+  await armedEntry(harness)
+  harness.server!.hit({ route: '/dashboard/invoices' })
+  await waitUntil(
+    () => harness.server!.continues.length >= 1,
+    'the other route hit was resumed',
+  )
+  // Act
+  harness.advance(20_000)
+  await waitUntil(
+    () => harness.run.view().failures.length > 0,
+    'the run failed 20 s after the arming',
+  )
+  await prepared
+  // Assert
+  assert.match(
+    harness.run.view().failures[0] ?? '',
+    /^SERVER_STOP_NOT_REACHED|^ENTRY_LOAD_TIMEOUT/,
   )
 })

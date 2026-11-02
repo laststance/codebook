@@ -179,6 +179,7 @@ import {
   fullLibraryMessage,
   type StudyRemovalAvailability,
 } from './utils/fullLibraryMessage'
+import { hasObservedOperationResult } from './utils/hasObservedOperationResult'
 import { historyExclusionReason } from './utils/historyExclusionReason'
 import { historyExclusionState } from './utils/historyExclusionState'
 import { initialStudyRemovalAvailability } from './utils/initialStudyRemovalAvailability'
@@ -2512,8 +2513,7 @@ export class StudyService {
         step.evidence !== 'observed' ||
         !record.stopped ||
         runtime?.finalOutcome !== 'demonstrated' ||
-        !runtime.operation?.afterVerified ||
-        !runtime.operation.inputAcknowledged ||
+        !hasObservedOperationResult(runtime.operation) ||
         !record.definition ||
         step.reference.configurationHash !==
           this.canonicalConfigurationHash(record, record.definition) ||
@@ -3991,8 +3991,7 @@ export class StudyService {
       terminalReference:
         record.stopped &&
         runtime?.finalOutcome === 'demonstrated' &&
-        runtime.operation?.afterVerified &&
-        runtime.operation.inputAcknowledged &&
+        hasObservedOperationResult(runtime.operation) &&
         runtime.captures.after?.status === 'captured' &&
         runtime.captures.after.renderer?.hash &&
         record.definition
