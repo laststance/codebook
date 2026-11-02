@@ -160,8 +160,11 @@ test('a pause screenshot answered after its continue is not recorded as the pin'
 // protects=AC 7d / E-J: with recording on and a writer that never finishes, the run's click and stop add no wait: the same calls in the same order, the same timers armed with the same delays, and no timer fired by hand; fails_when=recording makes the click or stop await the history, arm another timer or change a call; no_claim=a real disk's speed (the writer never answers)
 test('a run with a stalled recording clicks and stops with the same calls and timers as an unrecorded run', async (context) => {
   // Arrange
+  let frameEntriesOffered = 0
   class StalledWriter extends ChromeExtensionHistoryWriter {
-    protected override append(): Promise<void> {
+    protected override append(input: { readonly type: string }): Promise<void> {
+      // A frame's entry follows its blob's rename, and the frame queue stalls on this entry, so nothing touches the folder after the first one.
+      if (input.type === 'frame') frameEntriesOffered += 1
       return new Promise<void>(() => undefined)
     }
   }
@@ -216,6 +219,11 @@ test('a run with a stalled recording clicks and stops with the same calls and ti
   // Act
   const unrecorded = await drive(undefined)
   const recorded = await drive(stalledHistory)
+  // The recorded run's first frame blob is renamed into the folder before its entry reaches the stalled writer; the folder's removal after the test must not race that write.
+  await waitUntil(
+    () => frameEntriesOffered > 0,
+    "the recorded run's first frame entry",
+  )
 
   // Assert
   assert.deepEqual(recorded.log, unrecorded.log)
