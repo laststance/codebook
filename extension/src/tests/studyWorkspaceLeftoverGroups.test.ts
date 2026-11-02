@@ -1785,3 +1785,42 @@ test('a learner’s click into another group while the captured source is shown 
     await harness.close()
   }
 })
+
+// Value: protects=a learner who has one file open in two groups and picks it in the second group while the return shows their first pick (the same file in the first group) again: the pick in the second group is recorded as theirs and ends with the keyboard there; fails_when=picks are matched by document alone, so the pick in the second group is dropped as the return's own re-show, the late re-show returns the keyboard to the first group and the answer still says the choice was kept; why_new=Cycle 0072 task 1 candidate Codex review of af968024 (P2 2); seam=restoreWithLearnerDuringSecondShow, holdNextTextDocumentShow held for the corrective re-show and focusMutableDraft of data.ts in the fourth and fifth group; no_claim=the picks are the harness's focus of drafts
+test('a learner’s pick of the same file in another group while the return shows their first pick again keeps the keyboard in that other group', async () => {
+  // Arrange: data.ts is open in the fourth and the fifth group; the moved copy has the keyboard in the fourth group.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await openRetainedStudy(harness)
+    const copyGroup = await addLearnerGroup(harness)
+    await addLearnerGroup(harness)
+    harness.moveSource(copyGroup.viewColumn)
+    // Act: the learner picks data.ts in the fourth group while the second show is pending; the return shows it again, and the learner picks data.ts in the fifth group while that waits.
+    const answer = await restoreWithLearnerDuringSecondShow(
+      harness,
+      () => {
+        harness.focusMutableDraft('data.ts', 4)
+      },
+      async () => {
+        const reshow = harness.holdNextTextDocumentShow()
+        await reshow.started
+        harness.focusMutableDraft('data.ts', 5)
+        reshow.release()
+      },
+    )
+    // Assert
+    assert.deepEqual(
+      {
+        answer,
+        activeFile: harness.editor.window.activeTextEditor?.document.uri.fsPath
+          .split('/')
+          .pop(),
+        activeColumn: harness.editor.window.tabGroups.activeTabGroup.viewColumn,
+      },
+      { answer: FOCUS_KEPT_ANSWER, activeFile: 'data.ts', activeColumn: 5 },
+    )
+  } finally {
+    await harness.close()
+  }
+})
