@@ -16,6 +16,9 @@ import {
 } from './utils/entryRenderHarness'
 import { serviceHostedEntryRun } from './utils/entryRenderService'
 
+/** The idempotency name of the explanation that carries the learning summary. */
+const SUMMARY_EXPLANATION = 'entry-summary'
+
 /** A workspace key in the shape a saved study carries. */
 const WORKSPACE_KEY = 'a'.repeat(64)
 
@@ -185,7 +188,7 @@ test('a completed run with no operation gives a terminal reference that a learni
   const terminalReference = state().terminalReference
   const explained = await service.explain({
     ...receipt,
-    key: 'entry-summary',
+    key: SUMMARY_EXPLANATION,
     snapshotUri,
     sourceHash,
     valuePaths: ['value:nextTheme'],

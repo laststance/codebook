@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { ENTRY_LOAD_OPERATION_KEY } from '../constants'
 import { hasObservedOperationResult } from '../utils/hasObservedOperationResult'
 
 /** The continued pause an entry-load record stands on; its shape does not matter to the rule. */
@@ -10,7 +11,7 @@ const CONTINUED_PAUSE = { sessionId: 'server', generation: 1 }
 test('the entry-load record of a run of no operation is an observed result once its after conditions held', () => {
   // Arrange
   const record = {
-    key: 'entry-load',
+    key: ENTRY_LOAD_OPERATION_KEY,
     inputDispatched: false,
     inputAcknowledged: false,
     afterVerified: true,
@@ -26,7 +27,7 @@ test('the entry-load record of a run of no operation is an observed result once 
 test('an operation keyed entry-load whose input was dispatched but not acknowledged is not an observed result', () => {
   // Arrange
   const record = {
-    key: 'entry-load',
+    key: ENTRY_LOAD_OPERATION_KEY,
     inputDispatched: true,
     inputAcknowledged: false,
     afterVerified: true,

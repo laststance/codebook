@@ -9,6 +9,7 @@ import {
   type ConfiguredStudy,
 } from '../configuredStudySchemas'
 import {
+  ENTRY_LOAD_OPERATION_KEY,
   READABLE_STUDY_VERSION,
   SERVER_RENDER_STUDY_VERSION,
   STUDY_STORAGE_FORMATS,
@@ -401,7 +402,7 @@ test('a verified entry-load result is refused when the configuration declares op
     finalOutcome: 'not-demonstrated',
     operation: {
       id: '00000000-0000-4000-8000-000000000071',
-      key: 'entry-load',
+      key: ENTRY_LOAD_OPERATION_KEY,
       inputDispatched: false,
       inputAcknowledged: false,
       continuedPause: entryPause.pause,
