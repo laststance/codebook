@@ -1,17 +1,8 @@
-diff --git a/dist/cjs/validation/types.d.ts b/dist/cjs/validation/types.d.ts
-index 9fa92226c8781ea09b09bfdf1cce055f0ce1a7df..eea0f1037d816e91b29faa28dff49e91c79470a3 100644
---- a/dist/cjs/validation/types.d.ts
-+++ b/dist/cjs/validation/types.d.ts
-@@ -1,4 +1,4 @@
--import type { JSONSchema } from 'json-schema-typed';
-+import type { JSONSchema } from 'json-schema-typed' with { 'resolution-mode': 'import' };
- /**
-  * JSON Schema type definition (JSON Schema Draft 2020-12)
-  *
 diff --git a/dist/cjs/server/webStandardStreamableHttp.js b/dist/cjs/server/webStandardStreamableHttp.js
+index f87ab6bc..fa010afe 100644
 --- a/dist/cjs/server/webStandardStreamableHttp.js
 +++ b/dist/cjs/server/webStandardStreamableHttp.js
-@@ -565,6 +565,10 @@
+@@ -577,6 +577,10 @@ class WebStandardStreamableHTTPServerTransport {
                  // if it only contains notifications or responses, return 202
                  for (const message of messages) {
                      this.onmessage?.(message, { authInfo: options?.authInfo, requestInfo });
@@ -22,7 +13,7 @@ diff --git a/dist/cjs/server/webStandardStreamableHttp.js b/dist/cjs/server/webS
                  }
                  return new Response(null, { status: 202 });
              }
-@@ -581,12 +585,21 @@
+@@ -593,12 +597,21 @@ class WebStandardStreamableHTTPServerTransport {
              if (this._enableJsonResponse) {
                  // For JSON response mode, return a Promise that resolves when all responses are ready
                  return new Promise(resolve => {
@@ -49,7 +40,7 @@ diff --git a/dist/cjs/server/webStandardStreamableHttp.js b/dist/cjs/server/webS
                      for (const message of messages) {
                          if ((0, types_js_1.isJSONRPCRequest)(message)) {
                              this._requestToStreamMapping.set(message.id, streamId);
-@@ -934,6 +947,7 @@
+@@ -946,6 +959,7 @@ class WebStandardStreamableHTTPServerTransport {
                      else {
                          stream.resolveJson(new Response(JSON.stringify(responses), { status: 200, headers }));
                      }
@@ -57,10 +48,21 @@ diff --git a/dist/cjs/server/webStandardStreamableHttp.js b/dist/cjs/server/webS
                  }
                  else {
                      // End the SSE stream
+diff --git a/dist/cjs/validation/types.d.ts b/dist/cjs/validation/types.d.ts
+index 9fa92226..eea0f103 100644
+--- a/dist/cjs/validation/types.d.ts
++++ b/dist/cjs/validation/types.d.ts
+@@ -1,4 +1,4 @@
+-import type { JSONSchema } from 'json-schema-typed';
++import type { JSONSchema } from 'json-schema-typed' with { 'resolution-mode': 'import' };
+ /**
+  * JSON Schema type definition (JSON Schema Draft 2020-12)
+  *
 diff --git a/dist/esm/server/webStandardStreamableHttp.js b/dist/esm/server/webStandardStreamableHttp.js
+index dbc18fd5..9959aceb 100644
 --- a/dist/esm/server/webStandardStreamableHttp.js
 +++ b/dist/esm/server/webStandardStreamableHttp.js
-@@ -562,6 +562,10 @@
+@@ -574,6 +574,10 @@ export class WebStandardStreamableHTTPServerTransport {
                  // if it only contains notifications or responses, return 202
                  for (const message of messages) {
                      this.onmessage?.(message, { authInfo: options?.authInfo, requestInfo });
@@ -71,7 +73,7 @@ diff --git a/dist/esm/server/webStandardStreamableHttp.js b/dist/esm/server/webS
                  }
                  return new Response(null, { status: 202 });
              }
-@@ -578,12 +582,21 @@
+@@ -590,12 +594,21 @@ export class WebStandardStreamableHTTPServerTransport {
              if (this._enableJsonResponse) {
                  // For JSON response mode, return a Promise that resolves when all responses are ready
                  return new Promise(resolve => {
@@ -98,7 +100,7 @@ diff --git a/dist/esm/server/webStandardStreamableHttp.js b/dist/esm/server/webS
                      for (const message of messages) {
                          if (isJSONRPCRequest(message)) {
                              this._requestToStreamMapping.set(message.id, streamId);
-@@ -931,6 +944,7 @@
+@@ -943,6 +956,7 @@ export class WebStandardStreamableHTTPServerTransport {
                      else {
                          stream.resolveJson(new Response(JSON.stringify(responses), { status: 200, headers }));
                      }

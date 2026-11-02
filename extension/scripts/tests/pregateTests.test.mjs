@@ -403,7 +403,7 @@ test('the pre-gate policy runs package.test.mjs for every file its package build
       manifest: testsSelectedBy(policy.dependencies, 'extension/package.json'),
       patch: testsSelectedBy(
         policy.dependencies,
-        'extension/patches/@modelcontextprotocol__sdk@1.30.0.patch',
+        'extension/patches/@modelcontextprotocol__sdk@1.32.2.patch',
       ),
       ignoreRules: testsSelectedBy(policy.dependencies, '.gitignore'),
     },
