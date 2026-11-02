@@ -377,7 +377,18 @@ export type ChromeExtensionRunInput = {
 export type ConfiguredRuntimeSnapshot = Omit<
   ConfiguredObservation,
   'snapshotUri' | 'interpretations'
->
+> & {
+  /** What ran at this pause: the page, a server action or a server render (the paused script's layer decides between the last two). */
+  execution?: 'browser' | 'server-action' | 'server-render'
+  /** The position of the stop in the declared stop list. */
+  declaredIndex?: number
+  /** The order in which the run paused its stops (0-based). */
+  executionIndex?: number
+  /** Server-render pauses only: why the pause is attributed to the entry route's render. */
+  attribution?: 'entry-load' | 'after-operation' | 'unconfirmed'
+  /** With `after-operation`: the operation (k >= 1) after which the render was observed. */
+  operationIndex?: number
+}
 export type RuntimeSnapshot = ConfiguredRuntimeSnapshot
 export type RuntimeAction =
   typeof REPOSITORY_BROWSER_ACTION | typeof REPOSITORY_OPERATION_ACTION
@@ -465,6 +476,8 @@ export type ConfiguredRuntimeView = {
   /** The route a Next run in a workspace with a Pages folder resolved its entry path to, once known: the router that serves it, the manifest key, and for a Pages route its workspace-relative source. Absent for a Vite run and a Next run in a workspace without a Pages folder. */
   nextRoute?: { router: 'app' | 'pages'; route: string; source?: string }
   status: string
+  /** Present as `false` when the configuration declares a server stop: Codebook loads the page once before it arms a stop, so the first execution (module scope, first cache fill) is not observed. */
+  firstExecutionObserved?: false
   cleaned: boolean
   resourcesReleased: boolean
   /** The run's own browser profile folder when its cleanup could not remove it. It is no failed release: `cleaned`, `resourcesReleased` and the outcomes are as without it. */

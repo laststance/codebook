@@ -260,6 +260,7 @@ import {
 import { sameScriptUrl } from './utils/sameScriptUrl'
 import { sanitizeCause } from './utils/sanitizeCause'
 import { selfDeclaredInspectionHint } from './utils/selfDeclaredInspectionHint'
+import { serverExecutionOfScriptUrl } from './utils/serverExecutionOfScriptUrl'
 import { signInRequiredMessage } from './utils/signInRequiredMessage'
 import type { MappedPositionsScan } from './utils/sourceMapMappedPositions'
 import {
@@ -1597,6 +1598,42 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       return
     }
     if (entry.finishing) entry.done.resolve()
+  }
+
+  /**
+   * Gives the labels every pause snapshot carries for the saved study: what ran, the stop's declared position, the order the run paused it in, and for a server render the attribution to the entry route.
+   * Called by {@link inspect} when it builds the snapshot.
+   * @param stop - The stop that paused.
+   * @param scriptUrl - The address of the script it paused in.
+   * @returns `execution`, `declaredIndex`, `executionIndex`, and `attribution` (with `operationIndex`) for a server-render pause.
+   * @example this.pauseLabelFields(stop, 'webpack-internal:///(rsc)/./app/page.tsx') // { execution: 'server-render', declaredIndex: 0, executionIndex: 0, attribution: 'entry-load' }
+   */
+  private pauseLabelFields(
+    stop: PreparedStop,
+    scriptUrl: string | undefined,
+  ): Pick<
+    ConfiguredRuntimeSnapshot,
+    | 'execution'
+    | 'declaredIndex'
+    | 'executionIndex'
+    | 'attribution'
+    | 'operationIndex'
+  > {
+    const execution =
+      stop.participant === 'browser'
+        ? ('browser' as const)
+        : serverExecutionOfScriptUrl(scriptUrl)
+    const group = afterOperationOf(stop)
+    return {
+      execution,
+      declaredIndex: this.stops.indexOf(stop),
+      executionIndex: this.snapshots.length,
+      ...(execution === 'server-render' && group !== undefined
+        ? group === 0
+          ? { attribution: 'entry-load' as const }
+          : { attribution: 'after-operation' as const, operationIndex: group }
+        : {}),
+    }
   }
 
   /**
@@ -8501,6 +8538,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       actionId: REPOSITORY_BROWSER_ACTION,
       capturePhase: phase,
       participant: stop.participant,
+      ...this.pauseLabelFields(stop, executedModule.script?.url),
       pause: { ...pause },
       capturedAt: receipt.wallTime,
       elapsedMs: receipt.elapsedMs,
@@ -9491,6 +9529,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       viteVersion: this.viteVersion,
       nextRoute: this.nextRoute,
       status: this.status,
+      ...(configuredStops(this.definition.configuration).some(
+        (stop) => stop.participant === 'server',
+      )
+        ? { firstExecutionObserved: false as const }
+        : {}),
       cleaned: this.cleaned,
       resourcesReleased: this.resourcesReleased,
       browserProfileLeft: this.browser.profileLeft,
