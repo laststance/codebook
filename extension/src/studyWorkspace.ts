@@ -20301,21 +20301,20 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether the keyboard stands on something Codebook placed itself: the Application or Study pane, or a captured source; asked by {@link retireSourceDerivedGroup} so a focus or active-editor report of Codebook's own steps is not read as a learner's input.
-   * Cursor 3.27.22 reports the active group and the active text editor moving between Codebook's own panes and its captured source while the source group is retired (Cycle 0072 native C72-2); none of that is the learner's choice.
+   * Says whether the keyboard stands on something Codebook placed itself in the step being retired: the captured source being retired, or the Application or Study pane; asked by {@link retireSourceDerivedGroup} so a focus or active-editor report of Codebook's own steps is not read as a learner's input.
+   * Cursor 3.27.22 reports the active group and the active text editor moving between Codebook's own panes and the retiring captured source while the source group is retired (Cycle 0072 native C72-2). A captured source of another observation is the learner's choice. A learner's click into the Application or Study pane raises no selection event and cannot be told from Cursor's own report of the pane, so the pane case stays Codebook's.
    * @param editor - The active text editor, or `undefined` for none.
-   * @returns `true` for a captured source's editor of this reader, or when no editor is active and the active group's front tab is Codebook's own; `false` otherwise.
+   * @returns `true` for the editor of the captured source being retired ({@link editorShowsDocument}), or when no editor is active and the active group's front tab is the Application or Study pane of this reader; `false` otherwise.
    * @example this.isCodebookOwnFocus(vscode.window.activeTextEditor) // => true while the Application pane has the keyboard
    */
   private isCodebookOwnFocus(editor: vscode.TextEditor | undefined): boolean {
-    if (editor)
-      return (
-        this.library !== undefined &&
-        editor.document.uri.scheme === STUDY_SOURCE_SCHEME &&
-        editor.document.uri.authority === this.library.workspaceKey
-      )
+    if (editor) return editorShowsDocument(editor, this.sourceUri)
     const front = vscode.window.tabGroups.activeTabGroup.activeTab
-    return Boolean(front && this.isOwnPaneOrSourceTab(front))
+    return Boolean(
+      front &&
+      this.isOwnPaneOrSourceTab(front) &&
+      !this.ownsCapturedSourceTab(front),
+    )
   }
 
   /**

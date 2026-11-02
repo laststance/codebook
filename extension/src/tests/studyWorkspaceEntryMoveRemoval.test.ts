@@ -2043,7 +2043,7 @@ test("in Cursor, the placement guard still refuses a learner's click while the A
   }
 })
 
-// Value: protects=the source-group retirement of the Recording's composition: the captured source's own editor becoming the active text editor is Codebook's step and no learner input, while a learner's file stays the learner's (native C72-2 candidate ddc14faa attempt 1: "Native input changed during source-group retirement; the newer choice was preserved."); fails_when=every active-editor change that is not the issued copy marks the retirement as revoked by the learner, so Cursor's report of the captured source revokes it; why_new=Cycle 0072 task 5 native C72-2 ddc14faa; seam=recordedReaderHarness, the reader's open (a captured source), focusMutableDraft (the learner's file), the reader's isCodebookOwnFocus; no_claim=the real Cursor's event timing (native Cursor trial)
+// Value: protects=the source-group retirement of the Recording's composition: the captured source's own editor becoming the active text editor is Codebook's step and no learner input, while a learner's file, and the captured source of another observation, stay the learner's (CodeRabbit pass 11; native C72-2 candidate ddc14faa attempt 1: "Native input changed during source-group retirement; the newer choice was preserved."); fails_when=every active-editor change that is not the issued copy marks the retirement as revoked by the learner, so Cursor's report of the captured source revokes it, or every captured source of the workspace counts as Codebook's, so the learner's selection of another observation's source is missed; why_new=Cycle 0072 task 5 native C72-2 ddc14faa; seam=recordedReaderHarness, the reader's open (a captured source), focusMutableDraft (the learner's file), the reader's isCodebookOwnFocus; no_claim=the real Cursor's event timing (native Cursor trial)
 test("the source-group retirement reads the captured source's own editor as Codebook's focus and a learner's file as the learner's", async () => {
   // Arrange
   const harness = await recordedReaderHarness()
@@ -2058,15 +2058,27 @@ test("the source-group retirement reads the captured source's own editor as Code
       (editor) => editor.document.uri.path.endsWith('/notes.ts'),
     )!
 
-    // Act
-    const reads = [capturedEditor, learnerEditor].map((editor) =>
+    const read = (editor: typeof capturedEditor): unknown =>
       Reflect.apply(harness.reader['isCodebookOwnFocus'], harness.reader, [
         editor,
-      ]),
-    )
+      ])
+
+    // Act
+    const retiringSource = read(capturedEditor),
+      learnersFile = read(learnerEditor)
+    // The retiring source is another observation's now: its captured source is the learner's choice.
+    Reflect.set(harness.reader, 'sourceUri', learnerEditor.document.uri)
+    const anotherObservationsSource = read(capturedEditor)
 
     // Assert
-    assert.deepEqual(reads, [true, false])
+    assert.deepEqual(
+      { retiringSource, learnersFile, anotherObservationsSource },
+      {
+        retiringSource: true,
+        learnersFile: false,
+        anotherObservationsSource: false,
+      },
+    )
   } finally {
     await harness.close()
   }
