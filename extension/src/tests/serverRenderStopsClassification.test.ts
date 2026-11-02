@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import { entryRoutePatternOf } from '../utils/entryRoutePatternOf'
 import { isBrowserOnEntryRoute } from '../utils/isBrowserOnEntryRoute'
 import { isReactServerCopyUrl } from '../utils/isReactServerCopyUrl'
+import { renderedRouteOf } from '../utils/renderedRouteOf'
 import { serverExecutionOfScriptUrl } from '../utils/serverExecutionOfScriptUrl'
 import {
   serverRenderHitVerdictOf,
@@ -172,4 +173,19 @@ test('consecutive server stops of one group form one set', () => {
   assert.deepEqual(serverStopSetOf(stops, 2), [2])
   assert.deepEqual(serverStopSetOf(stops, 3), [3])
   assert.deepEqual(serverStopSetOf(stops, 4), [])
+})
+
+// Value: protects=AC 19/C3: the adapter's quoted string result is the route, and an absent store, an error or no answer is an unreadable route; fails_when=undefined or an error text is taken for a route; no_claim=a real adapter (spike s07-cdg printed the store values as quoted strings)
+test('the route expression answer is a route only when it is a quoted or bare URL pattern', () => {
+  // Arrange, Act, Assert
+  assert.deepEqual(renderedRouteOf("'/dashboard/invoices'"), {
+    state: 'read',
+    route: '/dashboard/invoices',
+  })
+  assert.deepEqual(renderedRouteOf('/'), { state: 'read', route: '/' })
+  assert.deepEqual(renderedRouteOf('undefined'), { state: 'unreadable' })
+  assert.deepEqual(renderedRouteOf('ReferenceError: require is not defined'), {
+    state: 'unreadable',
+  })
+  assert.deepEqual(renderedRouteOf(undefined), { state: 'unreadable' })
 })
