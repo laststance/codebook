@@ -215,6 +215,7 @@ import {
   projectNodeTestOutcome,
   type NodeTestHistoryState,
 } from './utils/projectNodeTestOutcome'
+import { projectPageLoadStatus } from './utils/projectPageLoadStatus'
 import { readerNotFollowingRunRefusal } from './utils/readerNotFollowingRunRefusal'
 import type { RepositoryAdapterReadiness } from './utils/readRepositoryAdapterReadiness'
 import { redactExtensionInputs } from './utils/redactExtensionInputs'
@@ -3782,6 +3783,7 @@ export class StudyService {
       runtime?.operations,
       record.stopped ? 'stopped' : terminalReason ? 'failed' : runtime?.status,
       runtime?.operationFailure,
+      projectPageLoadStatus(runtime),
     )
     const confirmation = this.operationsConfirmationOf(record)
     const material = {

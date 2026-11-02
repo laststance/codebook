@@ -1012,6 +1012,164 @@ async function check(page, options, collected) {
       linkSeek?.positionMs === 1500,
   })
   await page.screenshot({ path: `${options.output}/operation-row.png` })
+
+  // Cycle 0071 (task 3a): a replay of server-render pauses, with no operations.
+  const selectedId = options.message.model.observation?.id ?? 'none'
+  const pauseMoments = [
+    {
+      id: selectedId,
+      itemId: 'repository/book/node',
+      title: 'Page load · Server render · app/lib/data.ts:23',
+      pauseName: {
+        state: 'Page load',
+        kind: 'Server render',
+        path: 'app/lib/data.ts',
+        line: 23,
+        text: 'Page load · Server render · app/lib/data.ts:23',
+      },
+      at: '2026-11-02T00:00:00.000Z',
+      elapsedMs: 1000,
+    },
+    {
+      id: 'second',
+      itemId: 'repository/book/node',
+      title:
+        'After operation 2 · Server render · app/ui/invoices/table.tsx:8 · route not confirmed (declared 1)',
+      pauseName: {
+        state: 'After operation 2',
+        kind: 'Server render',
+        path: 'app/ui/invoices/table.tsx',
+        line: 8,
+        attribution: 'route not confirmed',
+        declared: 1,
+        text: 'After operation 2 · Server render · app/ui/invoices/table.tsx:8 · route not confirmed (declared 1)',
+      },
+      at: '2026-11-02T00:00:01.000Z',
+      elapsedMs: 3000,
+    },
+    {
+      id: 'third',
+      itemId: 'repository/book/node',
+      title: 'Server action · app/lib/actions.ts:5',
+      pauseName: {
+        kind: 'Server action',
+        path: 'app/lib/actions.ts',
+        line: 5,
+        text: 'Server action · app/lib/actions.ts:5',
+      },
+      at: '2026-11-02T00:00:02.000Z',
+      elapsedMs: 5000,
+    },
+  ]
+  const serverRenderReplay = (step, overrides = {}) => ({
+    ...operationReplay(step, {
+      operations: [],
+      firstExecutionNote: true,
+      presentedMs: 1000,
+      ...overrides,
+    }),
+    moments: pauseMoments,
+  })
+  const readPauses = () =>
+    page.evaluate(() => ({
+      noteVisible: document
+        .getElementById('first-execution-note')
+        .checkVisibility(),
+      noteText: document.getElementById('first-execution-text').textContent,
+      rowVisible: document.getElementById('operation-row').checkVisibility(),
+      previousEnabled: !document.getElementById('previous-moment').disabled,
+      nextEnabled: !document.getElementById('next-moment').disabled,
+      nextName: document
+        .getElementById('next-moment')
+        .getAttribute('aria-label'),
+      momentNames: [...document.querySelectorAll('.pause-moment')].map(
+        (moment) => moment.getAttribute('aria-label'),
+      ),
+      momentTexts: [...document.querySelectorAll('.pause-moment')].map(
+        (moment) => moment.textContent,
+      ),
+      announcement: document.getElementById('pause-announcement').textContent,
+      selected: document.getElementById('observation').textContent,
+    }))
+  for (const width of [960, 320]) {
+    await page.setViewportSize({ width, height: 640 })
+    await render(serverRenderReplay(0))
+    const pauses = await readPauses()
+    // protects=a learner sees the run-level note and every pause named by kind and attribution in words, with Previous/Next recorded stop kept and no operation row; fails_when=the note is missing, a pause name loses its attribution suffix or declared position, or the operation row shows for a zero-operation replay; no_claim=native theme colours (stand-ins: the Study message the host posts)
+    cases.push({
+      name: `a zero-operation server-render replay shows the first-execution note, named pauses and Previous/Next recorded stop without an operation row at ${width} px`,
+      actual: pauses,
+      passed:
+        pauses.noteVisible &&
+        pauses.noteText ===
+          'First execution not observed: Codebook loaded the page once before recording.' &&
+        !pauses.rowVisible &&
+        pauses.nextEnabled &&
+        pauses.nextName ===
+          'Next recorded stop: After operation 2 · Server render · app/ui/invoices/table.tsx:8 · route not confirmed (declared 1)' &&
+        pauses.momentNames[1] ===
+          'After operation 2 · Server render · app/ui/invoices/table.tsx:8 · route not confirmed (declared 1) · 3.00 s' &&
+        pauses.momentTexts[0] ===
+          'Page load · Server render · app/lib/data.ts:23 · 1.00 s' &&
+        pauses.momentTexts[2] ===
+          'Server action · app/lib/actions.ts:5 · 5.00 s' &&
+        pauses.selected.startsWith(
+          'Page load · Server render · app/lib/data.ts:23 · Recorded observation',
+        ) &&
+        pauses.announcement ===
+          'Selected stop: Page load · Server render · app/lib/data.ts:23',
+    })
+  }
+  // At the narrow width the attribution suffix stays whole while the path gives way first.
+  const narrowPause = await page.evaluate(() => {
+    const moment = document.querySelectorAll('.pause-moment')[1]
+    const box = (selector) =>
+      moment.querySelector(selector).getBoundingClientRect()
+    const attribution = box('.pause-attribution')
+    return {
+      attributionWidth: Math.round(attribution.width),
+      attributionClipped:
+        attribution.right > moment.getBoundingClientRect().right + 1,
+      attributionText: moment.querySelector('.pause-attribution').textContent,
+    }
+  })
+  cases.push({
+    name: 'at 320 px the route not confirmed suffix stays whole while the path is cut',
+    actual: narrowPause,
+    passed:
+      !narrowPause.attributionClipped &&
+      narrowPause.attributionText === ' · route not confirmed',
+  })
+  // The note stays visible when the Learning summary is collapsed or open, and one announcement per stop change.
+  await page.setViewportSize({ width: 960, height: 640 })
+  await render(serverRenderReplay(0))
+  await publish(serverRenderReplay(1, { presentedMs: 1000 }))
+  const announcements = await page.evaluate(
+    () => document.getElementById('pause-announcement').textContent,
+  )
+  const summaryOpen = await page.evaluate(() => {
+    document.getElementById('learning-material').hidden = false
+    return document.getElementById('first-execution-note').checkVisibility()
+  })
+  const summaryCollapsed = await page.evaluate(() => {
+    document.getElementById('learning-material').hidden = true
+    return document.getElementById('first-execution-note').checkVisibility()
+  })
+  await page.locator('#first-execution-details summary').click()
+  const detailsOpen = await page.evaluate(() =>
+    document.querySelector('#first-execution-details p').checkVisibility(),
+  )
+  cases.push({
+    name: 'the first-execution note stays visible with the Learning summary open or collapsed, opens its details, and a repeated message does not announce the stop again',
+    actual: { announcements, summaryOpen, summaryCollapsed, detailsOpen },
+    passed:
+      summaryOpen &&
+      summaryCollapsed &&
+      detailsOpen &&
+      announcements ===
+        'Selected stop: Page load · Server render · app/lib/data.ts:23',
+  })
+  await page.screenshot({ path: `${options.output}/server-render-replay.png` })
 }
 
 const report = {
