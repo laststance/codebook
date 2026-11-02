@@ -1100,6 +1100,8 @@ export async function workspaceHarness(
   let reportsPaneMoveAsOpenThenCloseFlag = false
   /** Whether a pane's move is reported with each tab report before the group report that names its groups, and with the old group's next tab in front before the close; see `reportsPaneMoveTabsBeforeGroups`. */
   let reportsPaneMoveTabsBeforeGroupsFlag = false
+  /** Whether the close that ends a pane's move is reported with no group report after it; see `reportsPaneCloseWithoutGroupReport`. */
+  let reportsPaneCloseWithoutGroupReportFlag = false
   /** The removals of groups a pane's move left empty that the fake editor has not run yet; see `removeGroupLeftByPanelMoveLater`. */
   const pendingMoveRemovals: (() => void)[] = []
   let closeDisposedPanelTabsLater = false
@@ -3334,11 +3336,15 @@ export async function workspaceHarness(
             reportsPaneMoveTabsBeforeGroupsFlag
           ) {
             // Cursor 3.27.22 sends each tab report with every group an object anew before the group report that names them (Cycle 0072 task 5: tabs opened and changed +2 ms, groups +3 ms, cards.tsx in front +6 ms, the pane's tab closed +7 ms): a tab listener meets groups the group observer has not named yet.
-            const reportTabsThenGroups = (events: TabChanges[]): void => {
+            const reportTabsThenGroups = (
+              events: TabChanges[],
+              namesGroups = true,
+            ): void => {
               replaceGroupObjects([], undefined, false)
               for (const event of events)
                 for (const listener of tabChangeListeners) listener(event)
-              changedGroups({ opened: [], closed: [], changed: [...groups] })
+              if (namesGroups)
+                changedGroups({ opened: [], closed: [], changed: [...groups] })
               group = currentGroupOf(group) ?? group
               homeGroup = currentGroupOf(homeGroup!) ?? homeGroup
             }
@@ -3357,9 +3363,10 @@ export async function workspaceHarness(
               ])
             }
             homeGroup.tabs = homeGroup.tabs.filter((tab) => tab !== nativeTab)
-            reportTabsThenGroups([
-              { opened: [], closed: [nativeTab], changed: [] },
-            ])
+            reportTabsThenGroups(
+              [{ opened: [], closed: [nativeTab], changed: [] }],
+              !reportsPaneCloseWithoutGroupReportFlag,
+            )
           } else if (closesAfterOpen && homeGroup) {
             // The open is reported with every group an object anew, then the old group's tab closes.
             replaceGroupObjects()
@@ -6368,6 +6375,19 @@ export async function workspaceHarness(
       reportsPaneMoveAsOpenThenCloseFlag = true
       replacesGroupObjectsOnTabChanges = true
       reportsPaneMoveTabsBeforeGroupsFlag = true
+    },
+    /**
+     * Makes the fake editor, with {@link reportsPaneMoveTabsBeforeGroups}, end a pane's move with the close of its tab and no group report after it, as Cursor 3.27.22 did in native run C72-2 (tabs closed +6 ms, nothing named the re-wrapped groups afterwards): the groups stay unnamed through the move's end.
+     * @example
+     * harness.reportsPaneMoveTabsBeforeGroups()
+     * harness.reportsPaneCloseWithoutGroupReport()
+     */
+    reportsPaneCloseWithoutGroupReport(): void {
+      assert.ok(
+        reportsPaneMoveTabsBeforeGroupsFlag,
+        'reportsPaneCloseWithoutGroupReport needs reportsPaneMoveTabsBeforeGroups() to be called first',
+      )
+      reportsPaneCloseWithoutGroupReportFlag = true
     },
     /**
      * Makes the fake editor open a text tab as a preview in place of the preview tab its group already shows, as Cursor 3.27.22 did at the debugger's stop in the Application's group (N64p2-F2): a Codebook pane that is that preview is disposed, so its tab and its webview go.

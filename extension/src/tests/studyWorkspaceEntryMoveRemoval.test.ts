@@ -1767,3 +1767,44 @@ test('in Cursor, a learner group named when the move watch began and re-wrapped 
     await harness.close()
   }
 })
+
+// Value: protects=the Study pane's Recording button after a reload beside Cursor's Agent chat when the editor names the groups at the Application's open and ends the move with the close of its tab and no group report (Cursor 3.27.22 native C72-2 candidate 787050d4: groups +2 ms, cards.tsx in front +6 ms, the pane's tab closed +6 ms, the active text editor 17 ms after the move): the recording opens at the first press with the learner's files kept; fails_when=the move watch reads the learner's file that comes to the front and becomes the active text editor in the group the Application left as a learner's choice, or the groups left unnamed at the move's end as a group the learner opened, refusing with "Native pane, group or focus changed while presentation waited; the learner arrangement was preserved."; why_new=Cycle 0072 task 5 native C72-2; seam=applicationSharingLearnerGroupBesideChat, reportsPaneCloseWithoutGroupReport, the revealPane wrapper that reports the learner's front file as the active text editor, the reader's openRecording; no_claim=the real Cursor's event timing (native Cursor trial)
+test("in Cursor, the Study pane's Recording opens at the first press when the move ends with the close of the Application's tab and no group report", async () => {
+  // Arrange
+  const { harness, refusals } = await applicationSharingLearnerGroupBesideChat()
+  harness.reportsPaneCloseWithoutGroupReport()
+  const revealPane = harness.reader['revealPane'].bind(harness.reader)
+  harness.reader['revealPane'] = (panel, column, preserveFocus): void => {
+    revealPane(panel, column, preserveFocus)
+    // The learner's front file becomes the active text editor of its group as a consequence of the Application's move.
+    if (column === 1)
+      harness.focusExistingSource(
+        harness.editor.window.visibleTextEditors.find((editor) =>
+          editor.document.uri.path.endsWith('/cards.tsx'),
+        )!,
+      )
+  }
+  try {
+    // Act
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Assert
+    assert.deepEqual(
+      {
+        refusals: refusals.length,
+        playback: harness.controller.state().readiness,
+        reason: harness.reader.presentationState().reason,
+        applicationColumn: harness.panelColumn('codebook.scopedBrowser'),
+      },
+      {
+        refusals: 0,
+        playback: 'ready',
+        reason: undefined,
+        applicationColumn: 1,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
