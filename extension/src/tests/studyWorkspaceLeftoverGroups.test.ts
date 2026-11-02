@@ -784,6 +784,46 @@ for (const [recovery, run] of [
       }
     })
 
+// Value: protects=a learner's switch between two files of the same name in different folders, in one column, while the return waits for the source document: the return notices the switch and shows nothing over the learner's file; fails_when=the return compares front tabs by label, misses the switch and shows the captured source; why_new=Cycle 0072 task 1 candidate Codex review of ddc14faa (P2); seam=the workspace harness's holdNextSource, focusMutableDraft with two files named index.ts and textDocumentShows; no_claim=the switch is the harness's focus of a draft
+test('a learner’s switch to a same-named file in another folder while the return opens the source keeps that file and shows nothing', async () => {
+  // Arrange: left/index.ts has the keyboard in the fourth group beside the moved copy; the open of the source is held.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let release = (): void => {}
+  try {
+    await openRetainedStudy(harness)
+    harness.moveSource((await addLearnerGroup(harness)).viewColumn)
+    harness.focusMutableDraft('left/index.ts', 4)
+    const before = harness.reader.presentationState()
+    const held = harness.holdNextSource({
+      uri: harness.reader.inspect().sourceUri!,
+    })
+    release = held.release
+    const showsBefore = harness.textDocumentShows().length
+    const restoring = harness.reader
+      .changePresentation(
+        {
+          presentationId: before.presentationId,
+          expectedRevision: before.presentationControlRevision,
+          mode: 'study-workspace',
+          action: 'restore',
+        },
+        'agent',
+      )
+      .catch(() => undefined)
+    await held.started
+    // Act: the learner switches to right/index.ts in the same column, then the open finishes.
+    harness.focusMutableDraft('right/index.ts', 4)
+    held.release()
+    await restoring
+    // Assert
+    assert.equal(harness.textDocumentShows().length, showsBefore)
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
 // Value: protects=a learner's selection of another tab inside the group of the moved copy while the editor closes that copy: the learner's tab stays focused and the source is not shown over it; fails_when=only a change of group is noticed, so the front-tab change inside the same group is lost to the return's re-show; why_new=Cycle 0072 task 1 candidate Codex review of 787050d4 (P2 1); seam=the workspace harness's holdNextTabCloseResponse and focusMutableDraft in the copy's own group; no_claim=the click is the harness's focus of a draft
 test('a learner’s selection of another tab in the moved copy’s own group while it closes keeps that file focused', async () => {
   // Arrange: the moved copy has the keyboard in the learner's fourth group and the editor's answer to its close is held.

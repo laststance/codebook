@@ -3437,13 +3437,15 @@ export class StudyWorkspace {
       }
       const sourceColumn = STUDY_PRESENTATIONS['study-workspace'].sourceColumn
       const sourceUri = this.sourceUri?.toString()
-      /** Names the front tab of the active group and the window focus: what a learner's click or leaving the window changes. */
-      const keyboardPlace = (): string =>
-        JSON.stringify([
+      /** Names the front tab of the active group by its document (two files of one name in different folders differ) and the window focus: what a learner's click or leaving the window changes. */
+      const keyboardPlace = (): string => {
+        const front = vscode.window.tabGroups.activeTabGroup.activeTab
+        return JSON.stringify([
           vscode.window.tabGroups.activeTabGroup.viewColumn,
-          vscode.window.tabGroups.activeTabGroup.activeTab?.label,
+          this.textTabUri(front) ?? front?.label,
           vscode.window.state.focused,
         ])
+      }
       // The place the return expects the keyboard at; it moves only where the return itself takes the keyboard.
       let expectedPlace = keyboardPlace()
       /** Stops the return and keeps the learner's own choice of focus. */
@@ -3522,6 +3524,8 @@ export class StudyWorkspace {
         confirmedByPlacement = await this.placementHoldsAfterReturn()
         assertOwned()
         await giveKeyboardBack?.()
+        // A Close during the keyboard's return resets the reader: nothing below may confirm it.
+        assertOwned()
       } catch (error) {
         releaseTransition()
         throw error
@@ -3555,14 +3559,16 @@ export class StudyWorkspace {
     releaseTransition: () => void,
     lifetime: number,
   ): Promise<PresentationState> {
-    this.presentationConfirmed = true
-    this.capturedSourceReturnReceipt = this.layoutReceipt
-    this.requestedPresentation = undefined
-    this.presentationReason = undefined
-    this.errors.delete('presentation')
-    this.errors.delete('layout')
-    this.presentationControlRevision++
     try {
+      // A workspace that closed before this answer is not confirmed, and no preference is written for it.
+      this.assertLifetime(lifetime)
+      this.presentationConfirmed = true
+      this.capturedSourceReturnReceipt = this.layoutReceipt
+      this.requestedPresentation = undefined
+      this.presentationReason = undefined
+      this.errors.delete('presentation')
+      this.errors.delete('layout')
+      this.presentationControlRevision++
       await this.savePresentationPreference(input.mode, this.presentationId)
     } finally {
       releaseTransition()
