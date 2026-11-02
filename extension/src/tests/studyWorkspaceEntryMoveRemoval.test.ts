@@ -2114,3 +2114,41 @@ test('the source-group retirement writes the standard Output entry when it refus
     await harness.close()
   }
 })
+
+// Value: protects=the move watch when the editor reports the uncovered file more than once while the move settles, each time with other selection state (native C72-2 candidate 2dea5111: the active text editor reported at column 2 after the group's front tab changed, "Failed checks: active text editor", "Active text editor at arming: none", "at refusal: cards.tsx (column 2)"): every report of the same uncovered file in its group is the move's effect; fails_when=the first report marks the group and the second report of the same file is read as the learner's, refusing with "Native pane, group or focus changed while presentation waited; the learner arrangement was preserved."; why_new=Cycle 0072 task 5 native C72-2 2dea5111; seam=armWatchWithStaleEditor, focusExistingSource (the uncovered file), an editor selection set after it, the reader's watchLearnerViewDuringApplicationMove; no_claim=the real Cursor's event timing (native Cursor trial)
+test('in Cursor, the move watch accepts a second report of the same uncovered file with other selection state', async () => {
+  // Arrange
+  const { harness } = await applicationSharingLearnerGroupBesideChat()
+  try {
+    const { watch, endStaleReport } = await armWatchWithStaleEditor(harness)
+    endStaleReport()
+    const uncovered = harness.editor.window.visibleTextEditors.find((editor) =>
+      editor.document.uri.path.endsWith('/cards.tsx'),
+    )!
+    harness.focusExistingSource(uncovered)
+    // The editor reports the same file again, now with a selection the reveal set.
+    Reflect.set(uncovered, 'selections', [
+      {
+        anchor: { line: 0, character: 1 },
+        active: { line: 0, character: 1 },
+      },
+    ])
+    harness.focusExistingSource(uncovered)
+
+    // Act
+    const outcome = (() => {
+      try {
+        watch.assertUnchanged()
+        return 'unchanged'
+      } catch (error) {
+        return String(error)
+      }
+    })()
+    watch.dispose()
+
+    // Assert
+    assert.equal(outcome, 'unchanged')
+  } finally {
+    await harness.close()
+  }
+})

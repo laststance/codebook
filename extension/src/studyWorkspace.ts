@@ -18988,19 +18988,27 @@ export class StudyWorkspace {
           ),
         ),
     )
-    // The groups whose uncovered file the watch has taken as the move's effect: the move uncovers one file per group, so any later editor change there is the learner's.
-    const groupsWithUncoveredFile = new Set<symbol | string>()
-    /** Names the group whose uncovered learner file is the active text editor: the file that was behind the Application (whatever the editor reported at arming), or the front file of a group that showed none while no text editor was active; only once per group. */
-    const findGroupUncoveredByMove = (): vscode.TabGroup | undefined => {
+    // The file the watch has taken as the move's effect, by group: the move uncovers one file per group. The editor may report that same file again with another column, selection or version while the move settles (Cursor 3.27.22, native C72-2); another file there is the learner's.
+    const uncoveredFileOfGroup = new Map<symbol | string, string>()
+    /** Names the group whose uncovered learner file is the active text editor: the file that was behind the Application (whatever the editor reported at arming), or the front file of a group that showed none while no text editor was active; later reports of that same file in that group count too, no other file does. */
+    const findGroupUncoveredByMove = ():
+      { group: vscode.TabGroup; file: string } | undefined => {
       const editor = vscode.window.activeTextEditor
       const group = vscode.window.tabGroups.all.find(
         (candidate) => candidate.viewColumn === editor?.viewColumn,
       )
       if (!editor || !group) return undefined
       const keys = this.groupKeysOf(group)
-      if (keys.some((key) => groupsWithUncoveredFile.has(key))) return undefined
+      const editorFile = editor.document.uri.toString()
+      const uncoveredFile = keys
+        .map((key) => uncoveredFileOfGroup.get(key))
+        .find((file) => file !== undefined)
+      if (uncoveredFile !== undefined)
+        return uncoveredFile === editorFile
+          ? { group, file: editorFile }
+          : undefined
       return isEditorUncoveredByMove({
-        editorFile: editor.document.uri.toString(),
+        editorFile,
         frontNow: this.learnerViewOfGroup(group).front,
         heldBehindPane: keys
           .map((key) => heldBehindPane.get(key))
@@ -19009,19 +19017,19 @@ export class StudyWorkspace {
         hadLearnerFrontAtArming:
           this.learnerViewBefore(groupsBefore, group)?.front !== undefined,
       })
-        ? group
+        ? { group, file: editorFile }
         : undefined
     }
     let changed: string | undefined
     /** Latches the first change of the active text editor, or of a learner group's tabs or of the learner's tab in front of it, by the comparison's name. */
     const check = (isFinal = false): void => {
       const editorNow = textEditorFocusState(vscode.window.activeTextEditor)
-      // The file the move uncovered in the active group is the active text editor from then on, and later changes to it are the learner's; the report of a text editor the new group kept ends with the pane in front of it (row 710).
+      // The file the move uncovered in the active group is the active text editor from then on, and its later reports stay the move's; another file there is the learner's; the report of a text editor the new group kept ends with the pane in front of it (row 710).
       if (editorNow !== editorBefore) {
-        const uncoveredGroup = findGroupUncoveredByMove()
-        if (uncoveredGroup) {
-          for (const key of this.groupKeysOf(uncoveredGroup))
-            groupsWithUncoveredFile.add(key)
+        const uncovered = findGroupUncoveredByMove()
+        if (uncovered) {
+          for (const key of this.groupKeysOf(uncovered.group))
+            uncoveredFileOfGroup.set(key, uncovered.file)
           editorBefore = editorNow
         } else if (
           editorNow === noEditor &&
