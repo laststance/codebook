@@ -1884,6 +1884,7 @@ test('the Fallow workflow runs measured health, dupes, dead-code and architectur
     'dupes',
     'dead-code',
     'architecture',
+    'analyses',
   ])
   assert.deepEqual(scriptsOf(jobs.health), ['build', 'health'])
   assert.deepEqual(scriptsOf(jobs.dupes), ['dupes'])
@@ -1891,4 +1892,60 @@ test('the Fallow workflow runs measured health, dupes, dead-code and architectur
   assert.deepEqual(scriptsOf(jobs.architecture), ['architecture'])
   for (const job of Object.values(jobs))
     assert.match(job, /uses: \.\/\.github\/actions\/prepare\n/)
+})
+
+// Value: protects=the owner's rule that every free local Fallow analysis runs in CI: audit gates the change against its base with the committed baselines, and flags, security, similar-code and suppressions run beside it in one job's parallel steps and only report; fails_when=an analysis leaves the workflow, audit stops gating (a fallback after it) or loses its base or baselines, a reporting analysis can fail the job, or the analyses move into jobs of their own; why_new=Cycle 0073 dependency step (owner rule of 2026-11-02); seam=the text of .github/workflows/fallow.yml; no_claim=that GitHub runs the parallel group, that the similar-code model downloads on the runner, or what each analysis finds (CI shows those)
+test('the Fallow workflow runs audit as a gate and flags, security, similar-code and suppressions as reports, in parallel steps of one job', async () => {
+  // Arrange
+  const workflow = await repositoryText('.github/workflows/fallow.yml')
+  const analysesJob = workflow.slice(workflow.indexOf('\n  analyses:\n'))
+
+  // Act
+  // Each step of the parallel group starts with `- name:` at ten spaces; its lines run to the next step.
+  const parallelGroup = analysesJob.slice(analysesJob.indexOf('- parallel:'))
+  const steps = Object.fromEntries(
+    [
+      ...parallelGroup.matchAll(
+        /^ {10}- name: (.+)\n((?:(?! {10}- name: ).*\n?)*)/gm,
+      ),
+    ].map(([, name, body]) => [
+      name,
+      body
+        .split('\n')
+        .filter((line) => !line.trim().startsWith('#'))
+        .join('\n'),
+    ]),
+  )
+
+  // Assert
+  assert.match(analysesJob, /\n {10}fetch-depth: 0\n/)
+  assert.match(
+    analysesJob,
+    /\n {6}FALLOW_AUDIT_BASE: \$\{\{ github\.event\.pull_request\.base\.sha \|\| github\.event\.before \}\}\n/,
+  )
+  assert.deepEqual(Object.keys(steps), [
+    'Run fallow audit',
+    'Report fallow flags',
+    'Report fallow security candidates',
+    'Report fallow similar code',
+    'Report fallow suppressions',
+  ])
+  assert.match(
+    steps['Run fallow audit'],
+    /fallow audit --dead-code-baseline fallow-dead-code-baseline\.json\s+--dupes-baseline fallow-dupes-baseline\.json --health-baseline fallow-health-baseline\.json/,
+  )
+  assert.doesNotMatch(steps['Run fallow audit'], /\|\|/)
+  assert.match(steps['Report fallow flags'], /fallow flags[^\n]*\|\|/)
+  assert.match(
+    steps['Report fallow security candidates'],
+    /fallow security[^\n]*\|\|/,
+  )
+  assert.match(
+    steps['Report fallow similar code'],
+    /fallow similar-code setup --local --yes[\s\S]*fallow similar-code \|\|/,
+  )
+  assert.match(
+    steps['Report fallow suppressions'],
+    /fallow suppressions[^\n]*\|\|/,
+  )
 })
