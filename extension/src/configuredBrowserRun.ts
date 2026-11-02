@@ -7327,7 +7327,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         reason: body.reason,
       })
       this.track(this.inspect(pause))
-    } else if (event.event === 'continued' && this.operation) {
+    } else if (
+      event.event === 'continued' &&
+      (this.operation || this.entryLoad)
+    ) {
       const continuation = this.continuation,
         isIdle = this.isIdleContinued(name)
       // An idle one belongs to a pause the adapter resumed by itself; a hook that pauses in a loop sends one per turn, so they share that journal cap.
