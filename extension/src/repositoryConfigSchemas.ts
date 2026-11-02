@@ -345,7 +345,7 @@ const operationsConfigurationShape = z.strictObject({
     .array(repositoryOperationSchema)
     .min(
       1,
-      'configuration.operations is empty: omit the field for a run with no operation, or declare 1 to 8 operations.',
+      `configuration.operations is empty: omit the field for a run with no operation, or declare 1 to ${REPOSITORY_OPERATION_LIMIT} operations.`,
     )
     .max(REPOSITORY_OPERATION_LIMIT)
     .optional(),
@@ -437,6 +437,27 @@ function validateOperations(
 }
 
 /**
+ * Words the refusal of a stop that waits for an operation while `operations` is omitted, with the way out its participant has.
+ * Called by {@link validateStopAfterOperations}.
+ * @param value - The stop's `afterOperation` (1 or more).
+ * @param field - The dotted configuration path of that field.
+ * @param participant - The stop's participant; only a server stop may use afterOperation 0.
+ * @returns The refusal sentence; a browser stop is told to declare the operations only.
+ * @example describeOmittedOperationsRefusal(1, 'configuration.afterOperation', 'browser') // '… but operations is omitted; declare the operations.'
+ */
+function describeOmittedOperationsRefusal(
+  value: number,
+  field: string,
+  participant: 'browser' | 'server',
+): string {
+  const advice =
+    participant === 'server'
+      ? 'declare the operations, or use afterOperation 0 on every server stop.'
+      : 'declare the operations.'
+  return `afterOperation ${value} is declared at ${field}, but operations is omitted; ${advice}`
+}
+
+/**
  * Refuses the `afterOperation` rules of a version 3 configuration: 0 (the entry render) only on a server stop, a value no greater than the declared operation count, omitted `operations` only when every stop is 0, and a value that never decreases along the declared stop order.
  * Called by {@link validateOperations}.
  * @param configuration - A parsed version 3 configuration.
@@ -476,7 +497,7 @@ function validateStopAfterOperations(
         path,
         message:
           configuration.operations === undefined
-            ? `afterOperation ${value} is declared at ${field}, but operations is omitted; declare the operations, or use afterOperation 0 on every server stop.`
+            ? describeOmittedOperationsRefusal(value, field, participant)
             : `afterOperation ${value} is declared at ${field}, but the run declares ${operationCount} operations.`,
       })
     // A later stop cannot belong to an earlier operation than the stop before it: the stops are taken in declared order.

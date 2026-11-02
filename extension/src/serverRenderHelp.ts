@@ -165,7 +165,7 @@ export function serverRenderHelp() {
         {
           item: 'existing configurations (versions 1, 2 and 3 with browser stops)',
           change:
-            'unchanged: they run and are saved as before; a version 3 study with browser stops only is still saved as format 7; studies saved before 0.2.73.0, a format 7 study with a server stop included, still open',
+            'unchanged: they run and are saved as before; a version 3 study with browser stops only is still saved as format 7; every study saved before 0.2.73.0 still opens, including a format 7 study with a server-action stop',
         },
         {
           item: 'minimum for a server-render stop',

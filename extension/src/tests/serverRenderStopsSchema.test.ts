@@ -125,6 +125,19 @@ test('omitted operations with a stop after operation 1 is refused and names the 
   ])
 })
 
+// protects=the refusal for a browser stop with omitted operations does not offer afterOperation 0, which a browser stop cannot use; fails_when=the advice for a browser stop still says to use afterOperation 0 on every server stop; no_claim=none beyond protects
+test('omitted operations with a browser stop after operation 1 advises declaring the operations only', () => {
+  // Arrange, Act
+  const issues = issuesOf((configuration) => {
+    configuration.participant = 'browser'
+    configuration.afterOperation = 1
+  })
+  // Assert
+  assert.deepEqual(issues, [
+    'afterOperation: afterOperation 1 is declared at configuration.afterOperation, but operations is omitted; declare the operations.',
+  ])
+})
+
 // protects=one later stop with afterOperation 1 keeps operations required even when the first stop is an entry-render stop; fails_when=omitted operations is accepted for a mixed set; no_claim=none beyond protects
 test('omitted operations with a mixed set of stops names the stop that needs an operation', () => {
   // Arrange, Act
