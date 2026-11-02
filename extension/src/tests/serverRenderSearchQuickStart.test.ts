@@ -10,18 +10,20 @@ import { configuredDomExpression } from '../utils/configuredDomExpression'
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
 import { fakePageContext, type FakePageElement } from './utils/fakePageContext'
 
-/** The page of the development target's invoices route before the search: the heading and the search box, pagination without a query. */
+/** The page of the development target's invoices route before the search: the heading and the search box without a value attribute. */
 const PAGE_BEFORE_SEARCH: FakePageElement[] = [
   { selector: 'h1', textContent: 'Invoices' },
   { selector: 'input[placeholder="Search invoices..."]', textContent: '' },
-  { selector: 'a[href*="page=2"]', textContent: '2' },
 ]
 
-/** The same route after the search "paid": the pagination links carry the query. */
+/** The same route after the search "paid": the search box's value attribute carries the term. */
 const PAGE_AFTER_SEARCH: FakePageElement[] = [
-  ...PAGE_BEFORE_SEARCH,
-  { selector: 'a[href*="query=paid"]', textContent: '2' },
-  { selector: 'a[href*="query=paid"]', textContent: '' },
+  { selector: 'h1', textContent: 'Invoices' },
+  {
+    selector: 'input[placeholder="Search invoices..."]',
+    textContent: '',
+    attributes: { value: 'paid' },
+  },
 ]
 
 /** Builds the control the service gives a run. @example controlOf(context) */

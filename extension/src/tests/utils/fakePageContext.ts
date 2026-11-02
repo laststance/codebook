@@ -4,6 +4,8 @@ export type FakePageElement = {
   textContent: string
   /** `false` makes the element hidden (zero geometry); default visible. */
   visible?: boolean
+  /** The element's attributes; an absent name reads `null`, as in a page. */
+  attributes?: Record<string, string>
 }
 
 /**
@@ -24,6 +26,7 @@ export function fakePageContext(
           .map((element) => ({
             textContent: element.textContent,
             isConnected: true,
+            getAttribute: (name: string) => element.attributes?.[name] ?? null,
             getBoundingClientRect: () =>
               element.visible === false
                 ? { width: 0, height: 0 }

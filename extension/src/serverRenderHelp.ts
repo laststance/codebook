@@ -34,7 +34,7 @@ export const SERVER_RENDER_ENTRY_CONFIGURATION = {
 /**
  * A complete version 3 configuration for a re-render observed after one operation: one `text` operation into the search box, a server stop in the page and a server stop in the data function, both `afterOperation: 1`.
  * Served as `serverRenderQuickStart.searchRerender` and parsed by the same test as {@link SERVER_RENDER_ENTRY_CONFIGURATION}.
- * Its run-level `after` is a shape example: it must hold only after the last operation, so it reads something only the searched page shows (here the pagination link to page 2, whose address carries the query); a heading that is visible before the search would be refused with `INPUT_NOT_ACCEPTED`.
+ * Its run-level `after` is a shape example: it must hold only after the last operation, so it reads something only the searched state shows (here the search box's value attribute once the URL carries the query); a heading that is visible before the search would be refused with `INPUT_NOT_ACCEPTED`.
  */
 export const SERVER_RENDER_SEARCH_CONFIGURATION = {
   version: 3,
@@ -57,8 +57,15 @@ export const SERVER_RENDER_SEARCH_CONFIGURATION = {
   before: [
     { kind: 'visible', selector: 'input[placeholder="Search invoices..."]' },
   ],
-  // Only the searched result shows a pagination link whose address carries the query, so the condition cannot hold before the search.
-  after: [{ kind: 'text', selector: 'a[href*="query=paid"]', equals: '2' }],
+  // Only the searched state writes the term into the search box's value attribute (the URL carries the query), so the condition cannot hold before the search.
+  after: [
+    {
+      kind: 'attribute',
+      selector: 'input[placeholder="Search invoices..."]',
+      attribute: 'value',
+      equals: 'paid',
+    },
+  ],
   operations: [
     {
       kind: 'text',
@@ -132,7 +139,7 @@ export function serverRenderHelp() {
         'configurationEntryRender: the stop pauses the render that serves the entry route on the page load (entry /dashboard, operations omitted, one server stop with afterOperation 0 in fetchCardData of app/lib/data.ts).',
       searchRerender: `configurationSearchRerender: entry /dashboard/invoices, one text operation into the search box, and server stops with afterOperation 1 in app/dashboard/invoices/page.tsx and in app/lib/data.ts. The render is sent with ${REPOSITORY_OPERATION_ACTION}; a stop pauses the render of the entry route that Codebook observed after operation 1.`,
       afterConditionRule:
-        'The run-level after must hold only after the last operation: Codebook reads it just before that operation and refuses the run with INPUT_NOT_ACCEPTED (nothing is sent) when it already holds. For a search, check something only the searched result shows (the example reads the pagination link to page 2, whose address carries the query), never a heading or control the page shows before the search.',
+        'The run-level after must hold only after the last operation: Codebook reads it just before that operation and refuses the run with INPUT_NOT_ACCEPTED (nothing is sent) when it already holds. For a search, check what only the searched state shows (the example reads the value attribute of the search box once the URL carries the query), never a heading or control the page shows before the search.',
       copyFrom: SERVER_RENDER_COPY_FROM,
       callOrder: [
         'codebook_status: confirm API 1.16 or later and that profiles[].configurationVersions lists 3 and the next-dev-webpack adapter is ready; copy instanceId. On an older API tell the learner to update Codebook; never use version 2 instead.',
