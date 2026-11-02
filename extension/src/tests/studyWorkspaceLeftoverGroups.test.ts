@@ -241,3 +241,101 @@ test('Arrange Study Workspace keeps the learner’s pinned copy of the captured 
     await harness.close()
   }
 })
+
+// Value: protects=the refusal a Restore gets while a control (Click, Continue, Stop) or a Live Return runs, also when the captured source stands in a learner group: the same "Wait for the current control…" sentence as before, with nothing moved; fails_when=the return's predicate skips the admission conditions, so show and close run beside the control and the source leaves the learner's group; why_new=Cycle 0072 task 1 second CodeRabbit CLI round (Major); seam=the workspace harness with a fourth editor group, the reader's busy marker and changePresentation; no_claim=the busy marker is set by hand, not by a real control
+test('a Restore while a control runs is refused with the wait sentence and leaves the captured source in the learner’s group', async () => {
+  // Arrange: the captured source stands in the learner's fourth group and a control is running.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await openRetainedStudy(harness)
+    harness.moveSource((await addLearnerGroup(harness)).viewColumn)
+    const before = harness.reader.presentationState()
+    harness.reader['busy'] = Symbol('control')
+    // Act
+    const refusal = assert.rejects(
+      async () =>
+        harness.reader.changePresentation({
+          presentationId: before.presentationId,
+          expectedRevision: before.presentationControlRevision,
+          mode: 'study-workspace',
+          action: 'restore',
+        }),
+      {
+        code: 'PRESENTATION_UNAVAILABLE',
+        message: /Wait for the current control, source or navigation/,
+      },
+    )
+    await refusal
+    harness.reader['busy'] = undefined
+    // Assert
+    assert.equal(harness.sourceColumn(), 4)
+  } finally {
+    harness.reader['busy'] = undefined
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's click into another tab right after Arrange: the return stops, the learner's tab keeps the keyboard and the source is not shown over it; fails_when=the return shows the captured source with the keyboard after the learner's click, so the learner's choice is taken back; why_new=Cycle 0072 task 1 second review round (OCR M1); seam=the workspace harness with a fourth editor group, holdNextSource on the captured source and focusMutableDraft as the learner's click; no_claim=the click is the harness's focus of a draft, not a real pointer event
+test('a learner’s click into another tab while Arrange returns the captured source keeps that tab focused and does not show the source over it', async () => {
+  // Arrange: the captured source stands in the learner's fourth group and its document open is held.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let release = (): void => {}
+  try {
+    await openRetainedStudy(harness)
+    harness.moveSource((await addLearnerGroup(harness)).viewColumn)
+    const held = harness.holdNextSource({
+      uri: harness.reader.inspect().sourceUri!,
+    })
+    release = held.release
+    const arranging = harness.reader.action('arrange')
+    await held.started
+    // Act: the learner clicks data.ts in their group, then the open finishes.
+    harness.focusMutableDraft('data.ts', 4)
+    held.release()
+    await arranging
+    // Assert
+    assert.deepEqual(
+      {
+        activeFile: harness.editor.window.activeTextEditor?.document.uri.fsPath
+          .split('/')
+          .pop(),
+        sourceColumn: harness.sourceColumn(),
+        layoutConfirmed: harness.reader.presentationState().layoutConfirmed,
+      },
+      { activeFile: 'data.ts', sourceColumn: 4, layoutConfirmed: false },
+    )
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
+// Value: protects=the revision rule after the captured source's return: a second control that still holds the revision of the request that was answered is refused as stale; fails_when=the confirmed answer of the return keeps the old control revision, so a stale control is admitted; why_new=Cycle 0072 task 1 second review round (OCR M2); seam=the workspace harness with a fourth editor group, the reader's arrange action and changePresentation; no_claim=none beyond protects
+test('a control holding the revision from before Arrange is refused as stale after the captured source returned', async () => {
+  // Arrange: the captured source stands in the learner's fourth group.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await openRetainedStudy(harness)
+    harness.moveSource((await addLearnerGroup(harness)).viewColumn)
+    const before = harness.reader.presentationState()
+    // Act
+    await harness.reader.action('arrange')
+    // Assert
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true)
+    await assert.rejects(
+      async () =>
+        harness.reader.changePresentation({
+          presentationId: before.presentationId,
+          expectedRevision: before.presentationControlRevision,
+          mode: 'study-workspace',
+          action: 'restore',
+        }),
+      { code: 'STALE_PRESENTATION' },
+    )
+  } finally {
+    await harness.close()
+  }
+})

@@ -3055,9 +3055,28 @@ export class StudyWorkspace {
       input.expectedRevision === this.presentationControlRevision &&
       !this.presentationOperation &&
       !this.presentationTransition &&
+      // The idle conditions of {@link assertPresentationIdle} and {@link assertPresentationAdmission}: a control, a Live Return, a close or a pending source or navigation is refused by the admission itself, as before.
+      !this.busy &&
+      !this.returningCurrent &&
+      !this.closing &&
+      this.isPresentationAdmissionOpen() &&
       vscode.window.state.focused &&
       this.displacedCapturedSourceTab() !== undefined
     )
+  }
+
+  /**
+   * Says whether {@link assertPresentationAdmission} would admit a presentation change now, without throwing; asked by {@link restoresDisplacedCapturedSource}.
+   * @returns `false` while a control, a save, a source or navigation, or a run's capture or resume is pending.
+   * @example if (this.isPresentationAdmissionOpen()) this.returnDisplacedCapturedSourceThenAdmit(…)
+   */
+  private isPresentationAdmissionOpen(): boolean {
+    try {
+      this.assertPresentationAdmission()
+      return true
+    } catch {
+      return false
+    }
   }
 
   /**
@@ -3116,6 +3135,10 @@ export class StudyWorkspace {
     const displaced = this.displacedCapturedSourceTab(),
       lifetime = this.lifetime
     if (displaced && this.sourceUri) {
+      // The admission conditions of any presentation change hold now and across every native step below.
+      const runtimeIdentity = this.assertPresentationAdmission()
+      // A chat that holds the keyboard gets it back after the placement, as in every other arrangement.
+      const giveKeyboardBack = this.retainForeignTabFocus(undefined)
       // The return owns the presentation transition before its first await, so no other request starts between its native steps.
       const transition = {
         id: this.presentationId,
@@ -3128,7 +3151,8 @@ export class StudyWorkspace {
           this.presentationTransition !== transition ||
           transition.id !== this.presentationId ||
           input.expectedRevision !== this.presentationControlRevision ||
-          transition.cancellation.signal.aborted
+          transition.cancellation.signal.aborted ||
+          runtimeIdentity !== this.assertPresentationAdmission()
         )
           throw new StudyError(
             'PRESENTATION_UNAVAILABLE',
@@ -3136,30 +3160,63 @@ export class StudyWorkspace {
           )
       }
       const sourceColumn = STUDY_PRESENTATIONS['study-workspace'].sourceColumn
+      const sourceUri = this.sourceUri.toString()
+      /** Names the front tab of the active group and the window focus: what a learner's click or leaving the window changes. */
+      const keyboardPlace = (): string =>
+        JSON.stringify([
+          vscode.window.tabGroups.activeTabGroup.viewColumn,
+          vscode.window.tabGroups.activeTabGroup.activeTab?.label,
+          vscode.window.state.focused,
+        ])
+      const placeAtStart = keyboardPlace()
+      /** A learner's own change of focus during the return wins: the return stops and the learner's choice stays. */
+      const assertLearnerKept = (isOurs: (column: number) => boolean): void => {
+        const group = vscode.window.tabGroups.activeTabGroup
+        if (vscode.window.state.focused && isOurs(group.viewColumn)) return
+        this.yieldFocusToLearner()
+        throw new StudyError(
+          'PRESENTATION_UNAVAILABLE',
+          'The editor focus changed while the captured source was returned; your choice was kept. Choose Restore Study workspace layout again.',
+        )
+      }
+      /** Finds the Codebook-owned copy as the editor lists it now: tab and group objects may be new since the return began. */
+      const currentCopy = (): vscode.Tab | undefined =>
+        vscode.window.tabGroups.all
+          .find((group) => group.viewColumn === displaced.group.viewColumn)
+          ?.tabs.find(
+            (tab) =>
+              this.ownsCapturedSourceTab(tab) &&
+              this.textTabUri(tab) === sourceUri,
+          )
       try {
         const document = await vscode.workspace.openTextDocument(this.sourceUri)
         assertOwned()
+        assertLearnerKept(() => keyboardPlace() === placeAtStart)
         await this.showTextDocumentNoted(document, {
           viewColumn: sourceColumn,
           preserveFocus: false,
           preview: false,
         })
         assertOwned()
+        assertLearnerKept((column) => column === sourceColumn)
         this.sourceGroup = vscode.window.tabGroups.all.find(
           (group) => group.viewColumn === sourceColumn,
         )
         // The Codebook-owned copy closes only after the new show succeeded, only while it still stands in its group, and never when the learner pinned it (as {@link retireMovedSourceCopies} keeps pinned copies); a pinned copy stays beside the source, which the placement accepts.
-        if (
-          !displaced.tab.isPinned &&
-          displaced.group.tabs.includes(displaced.tab)
-        ) {
-          await vscode.window.tabGroups.close([displaced.tab], true)
+        const copy = currentCopy()
+        if (copy && !copy.isPinned) {
+          await vscode.window.tabGroups.close([copy], true)
           assertOwned()
-          // Closing the copy can hand the keyboard to the learner's tab behind it: the source takes it back.
+          // Closing the copy can hand the keyboard to the learner's tab behind it: the source takes it back, unless the learner chose another place meanwhile.
           if (
             vscode.window.activeTextEditor?.document.uri.toString() !==
             document.uri.toString()
           ) {
+            assertLearnerKept(
+              (column) =>
+                column === sourceColumn ||
+                column === displaced.group.viewColumn,
+            )
             await this.showTextDocumentNoted(document, {
               viewColumn: sourceColumn,
               preserveFocus: false,
@@ -3168,6 +3225,7 @@ export class StudyWorkspace {
             assertOwned()
           }
         }
+        await giveKeyboardBack?.()
       } finally {
         if (this.presentationTransition === transition)
           this.presentationTransition = undefined
@@ -3180,7 +3238,10 @@ export class StudyWorkspace {
       this.presentationReason = undefined
       this.errors.delete('presentation')
       this.errors.delete('layout')
+      // Like every admitted change, the answer is a new control revision: a second control holding the old one is refused as stale.
+      this.presentationControlRevision++
       this.publish()
+      await this.savePresentationPreference(input.mode, this.presentationId)
       return { ...this.presentationState(), state: 'open' as const }
     }
     return this.admitPresentation(
