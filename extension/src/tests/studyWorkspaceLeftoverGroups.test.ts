@@ -9,10 +9,12 @@ type Harness = Awaited<ReturnType<typeof workspaceHarness>>
 /**
  * Adds a group of the learner's to the right of the Study panes, with two unrelated editors in it.
  * @param harness - The reader and the fake editor.
- * @returns The column of the new group.
- * @example const column = await addLearnerGroup(harness) // => 4 beside three Study groups
+ * @returns The new group itself, so a test can tell it from every other group after the recovery.
+ * @example const group = await addLearnerGroup(harness) // => group.viewColumn 4 beside three Study groups
  */
-async function addLearnerGroup(harness: Harness): Promise<number> {
+async function addLearnerGroup(
+  harness: Harness,
+): Promise<Harness['groups'][number]> {
   const column = harness.groups.length + 1
   await harness.editor.commands.executeCommand('vscode.setEditorLayout', {
     orientation: 0,
@@ -20,12 +22,27 @@ async function addLearnerGroup(harness: Harness): Promise<number> {
   })
   harness.focusMutableDraft('data.ts', column)
   harness.focusMutableDraft('search.tsx', column)
-  return column
+  return harness.groups.find((group) => group.viewColumn === column)!
 }
 
-/** Lists the labels of every open tab in the order of the groups. @example openLabels(harness) // => ['data.ts', 'search.tsx'] */
-function openLabels(harness: Harness): string[] {
-  return harness.groups.flatMap((group) => group.tabs.map((tab) => tab.label))
+/**
+ * Describes where the learner's two files stand after a recovery: whether the learner's own group is still open, and which learner files it holds.
+ * @param harness - The reader and the fake editor.
+ * @param group - The learner group recorded before the recovery.
+ * @returns The group's open state, column and its learner file labels.
+ * @example learnerGroupAfter(harness, group) // => { open: true, column: 4, files: ['data.ts', 'search.tsx'] }
+ */
+function learnerGroupAfter(
+  harness: Harness,
+  group: Harness['groups'][number],
+): { open: boolean; column: number; files: string[] } {
+  return {
+    open: harness.groups.includes(group),
+    column: group.viewColumn,
+    files: group.tabs
+      .map((tab) => tab.label)
+      .filter((label) => label === 'data.ts' || label === 'search.tsx'),
+  }
 }
 
 const recoveries: readonly (readonly [
@@ -62,7 +79,8 @@ for (const [recovery, run] of recoveries)
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
     try {
       await openRetainedStudy(harness)
-      harness.moveSource(await addLearnerGroup(harness))
+      const learnerGroup = await addLearnerGroup(harness)
+      harness.moveSource(learnerGroup.viewColumn)
       assert.equal(
         harness.reader.presentationState().layoutConfirmed,
         false,
@@ -76,8 +94,11 @@ for (const [recovery, run] of recoveries)
         { layoutConfirmed: state.layoutConfirmed, reason: state.reason },
         { layoutConfirmed: true, reason: undefined },
       )
-      assert.equal(openLabels(harness).includes('data.ts'), true)
-      assert.equal(openLabels(harness).includes('search.tsx'), true)
+      assert.deepEqual(learnerGroupAfter(harness, learnerGroup), {
+        open: true,
+        column: 4,
+        files: ['data.ts', 'search.tsx'],
+      })
       assert.equal(harness.sourceColumn(), 2)
     } finally {
       await harness.close()
@@ -106,7 +127,8 @@ for (const [recovery, run] of recoveries)
         () => {},
         'normal',
       )
-      harness.moveSource(await addLearnerGroup(harness))
+      const learnerGroup = await addLearnerGroup(harness)
+      harness.moveSource(learnerGroup.viewColumn)
       assert.deepEqual(
         {
           layoutConfirmed: harness.reader.presentationState().layoutConfirmed,
@@ -122,11 +144,100 @@ for (const [recovery, run] of recoveries)
         { layoutConfirmed: state.layoutConfirmed, reason: state.reason },
         { layoutConfirmed: true, reason: undefined },
       )
-      assert.equal(openLabels(harness).includes('data.ts'), true)
-      assert.equal(openLabels(harness).includes('search.tsx'), true)
+      assert.deepEqual(learnerGroupAfter(harness, learnerGroup), {
+        open: true,
+        column: 3,
+        files: ['data.ts', 'search.tsx'],
+      })
       assert.equal(harness.sourceColumn(), 2)
     } finally {
       live?.close()
       await harness.close()
     }
   })
+
+// Value: protects=the learner's newer Study request while Arrange is bringing the captured source back from a learner group: the second request is refused at once with the pending-change sentence and never places panes over the first; fails_when=the return starts no presentation transition, so a second Restore starts during the first one's document open and both place the source and move the keyboard; why_new=Cycle 0072 task 1 CodeRabbit CLI Major (the return awaited a document open without owning the transition); seam=the workspace harness with a fourth editor group, holdNextSource on the captured source and the reader's changePresentation; no_claim=the harness holds the document open, not the editor's real latency
+test('a second Restore during the captured source’s return is refused with the pending-change sentence and the first Arrange still confirms the layout', async () => {
+  // Arrange: the captured source stands in the learner's fourth group and its document open is held.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let release = (): void => {}
+  try {
+    await openRetainedStudy(harness)
+    harness.moveSource((await addLearnerGroup(harness)).viewColumn)
+    const before = harness.reader.presentationState()
+    const held = harness.holdNextSource({
+      uri: harness.reader.inspect().sourceUri!,
+    })
+    release = held.release
+    // Act: Arrange starts and waits in the document open; a second Restore of the same revision arrives.
+    const arranging = harness.reader.action('arrange')
+    await held.started
+    await assert.rejects(
+      async () =>
+        harness.reader.changePresentation({
+          presentationId: before.presentationId,
+          expectedRevision: before.presentationControlRevision,
+          mode: 'study-workspace',
+          action: 'restore',
+        }),
+      {
+        code: 'PRESENTATION_UNAVAILABLE',
+        message: /presentation change or reader close is pending/,
+      },
+    )
+    held.release()
+    await arranging
+    // Assert
+    const state = harness.reader.presentationState()
+    assert.deepEqual(
+      { layoutConfirmed: state.layoutConfirmed, reason: state.reason },
+      { layoutConfirmed: true, reason: undefined },
+    )
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
+// Value: protects=a learner's pinned copy of the captured source in their own group: Arrange shows the source in its Study column, confirms the layout and leaves the pinned copy open and pinned; fails_when=Arrange closes the pinned tab (the learner loses the tab and its pin); why_new=Cycle 0072 task 1 CodeRabbit CLI Major (the close ignored isPinned, as retireMovedSourceCopies does not); seam=the workspace harness with a fourth editor group, moveSource and a pinned moved tab; no_claim=an unpinned copy's close is covered by the recovery tests above
+test('Arrange Study Workspace keeps the learner’s pinned copy of the captured source open in their group and confirms the layout', async () => {
+  // Arrange: the captured source stands pinned in the learner's fourth group.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await openRetainedStudy(harness)
+    const learnerGroup = await addLearnerGroup(harness)
+    harness.moveSource(learnerGroup.viewColumn)
+    const sourceUri = harness.reader.inspect().sourceUri
+    const pinned = learnerGroup.tabs.find(
+      (tab) =>
+        tab.input !== undefined &&
+        'uri' in tab.input &&
+        tab.input.uri.toString() === sourceUri,
+    )!
+    pinned.isPinned = true
+    // Act
+    await harness.reader.action('arrange')
+    // Assert
+    const state = harness.reader.presentationState()
+    assert.deepEqual(
+      {
+        layoutConfirmed: state.layoutConfirmed,
+        reason: state.reason,
+        pinnedStillOpen: learnerGroup.tabs.includes(pinned),
+        pinned: pinned.isPinned,
+        sourceColumn: harness.sourceColumn(),
+      },
+      {
+        layoutConfirmed: true,
+        reason: undefined,
+        pinnedStillOpen: true,
+        pinned: true,
+        sourceColumn: 2,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})

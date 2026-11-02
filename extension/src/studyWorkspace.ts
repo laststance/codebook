@@ -3049,6 +3049,8 @@ export class StudyWorkspace {
       input.mode === 'study-workspace' &&
       input.mode === state.mode &&
       !state.layoutConfirmed &&
+      // A selected or opening test replay restores its own slots; the article's source stays where it is (F413).
+      !this.testReplayHoldsComposition() &&
       input.presentationId === this.presentationId &&
       input.expectedRevision === this.presentationControlRevision &&
       !this.presentationOperation &&
@@ -3114,23 +3116,62 @@ export class StudyWorkspace {
     const displaced = this.displacedCapturedSourceTab(),
       lifetime = this.lifetime
     if (displaced && this.sourceUri) {
-      const document = await vscode.workspace.openTextDocument(this.sourceUri)
-      this.assertLifetime(lifetime)
-      // Only the Codebook-owned tab closes, and only while it still stands in its group; closing it first lets the source's own display below end with the keyboard in the source column.
-      if (displaced.group.tabs.includes(displaced.tab))
-        await vscode.window.tabGroups.close([displaced.tab], true)
-      this.assertLifetime(lifetime)
-      await this.showTextDocumentNoted(document, {
-        viewColumn: STUDY_PRESENTATIONS['study-workspace'].sourceColumn,
-        preserveFocus: false,
-        preview: false,
-      })
-      this.assertLifetime(lifetime)
-      this.sourceGroup = vscode.window.tabGroups.all.find(
-        (group) =>
-          group.viewColumn ===
-          STUDY_PRESENTATIONS['study-workspace'].sourceColumn,
-      )
+      // The return owns the presentation transition before its first await, so no other request starts between its native steps.
+      const transition = {
+        id: this.presentationId,
+        cancellation: new AbortController(),
+      }
+      this.presentationTransition = transition
+      const assertOwned = (): void => {
+        this.assertLifetime(lifetime)
+        if (
+          this.presentationTransition !== transition ||
+          transition.id !== this.presentationId ||
+          input.expectedRevision !== this.presentationControlRevision ||
+          transition.cancellation.signal.aborted
+        )
+          throw new StudyError(
+            'PRESENTATION_UNAVAILABLE',
+            'The presentation changed while the captured source was returned. Read its state before another control.',
+          )
+      }
+      const sourceColumn = STUDY_PRESENTATIONS['study-workspace'].sourceColumn
+      try {
+        const document = await vscode.workspace.openTextDocument(this.sourceUri)
+        assertOwned()
+        await this.showTextDocumentNoted(document, {
+          viewColumn: sourceColumn,
+          preserveFocus: false,
+          preview: false,
+        })
+        assertOwned()
+        this.sourceGroup = vscode.window.tabGroups.all.find(
+          (group) => group.viewColumn === sourceColumn,
+        )
+        // The Codebook-owned copy closes only after the new show succeeded, only while it still stands in its group, and never when the learner pinned it (as {@link retireMovedSourceCopies} keeps pinned copies); a pinned copy stays beside the source, which the placement accepts.
+        if (
+          !displaced.tab.isPinned &&
+          displaced.group.tabs.includes(displaced.tab)
+        ) {
+          await vscode.window.tabGroups.close([displaced.tab], true)
+          assertOwned()
+          // Closing the copy can hand the keyboard to the learner's tab behind it: the source takes it back.
+          if (
+            vscode.window.activeTextEditor?.document.uri.toString() !==
+            document.uri.toString()
+          ) {
+            await this.showTextDocumentNoted(document, {
+              viewColumn: sourceColumn,
+              preserveFocus: false,
+              preview: false,
+            })
+            assertOwned()
+          }
+        }
+      } finally {
+        if (this.presentationTransition === transition)
+          this.presentationTransition = undefined
+      }
     }
     // The source standing in its column again can confirm the retained grid by itself; a full placement would refuse the learner groups.
     if (this.presentationState().layoutConfirmed) {
