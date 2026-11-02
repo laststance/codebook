@@ -9,6 +9,7 @@ import {
 } from '../replayDebugSchemas'
 
 import { maskSavedDebugSnapshot } from './maskSavedDebugSnapshot'
+import { maskSavedFacts } from './maskSavedFacts'
 import { nodeServerSourceKey } from './nodeServerJournalRules'
 
 /**
@@ -49,9 +50,9 @@ function rehydrateServerStopSnapshot(
 }
 
 /**
- * Lists a journal's entries with every stop's snapshot restored, which is the one place the read path rehydrates; `source` entries are kept as storage-only entries.
+ * Lists a journal's entries with every stop's snapshot restored and its facts masked again ({@link maskSavedFacts}), which is the one place the read path rehydrates; `source` entries are kept as storage-only entries.
  * @param entries - The verified journal's entries in order.
- * @returns The same entries, each stop carrying its full snapshot.
+ * @returns The same entries, each stop carrying its full, masked snapshot and its masked facts.
  * @example rehydrateNodeServerEntries(history.entries).filter((entry) => entry.type === 'stop')
  */
 export function rehydrateNodeServerEntries(
@@ -64,6 +65,7 @@ export function rehydrateNodeServerEntries(
     if (entry.type !== 'stop') return entry
     return {
       ...entry,
+      facts: maskSavedFacts(entry.facts),
       debuggerSnapshot: rehydrateServerStopSnapshot(entry, sources),
     }
   })

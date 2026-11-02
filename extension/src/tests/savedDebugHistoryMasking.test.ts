@@ -22,6 +22,7 @@ import { maskSavedDebugSnapshot } from '../utils/maskSavedDebugSnapshot'
 import { createHarness } from './helpers'
 import {
   capturedStop,
+  extensionHistoryHeader,
   extensionIdentity,
 } from './utils/chromeExtensionHistoryFixture'
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
@@ -50,6 +51,58 @@ const SECRETS = [COOKIE_VALUE, PEER_ADDRESS]
 const SOURCE_TEXT =
   'export function handler(req) {\n  // Cookie: a=1; b=2\n  return req\n}\n'
 const SOURCE_HASH = sha256(SOURCE_TEXT)
+
+// The facts below are what a study saved by 0.2.73.1 or earlier holds: made-up opaque values that only the shape of their string marks as credentials.
+const FACT_COOKIE_VALUE = [
+  'FACT',
+  'COOKIE',
+  'VALUE',
+  'opaque',
+  '5d7e20b4',
+].join('-')
+const FACT_AUTH_CODE = ['FACT', 'OAUTH', 'CODE', '71c9a3e8'].join('-')
+const FACT_BASIC_CREDENTIAL = ['Zm9v', 'YmFy', 'b3BhcXVl'].join('')
+const FACT_SECRETS = [FACT_COOKIE_VALUE, FACT_AUTH_CODE, FACT_BASIC_CREDENTIAL]
+/**
+ * The declared string facts an older version saved as the debugger previews them (quotes included): three credential shapes under names no rule reads as secret, and two plain strings that must stay readable.
+ * Keyed `<mode>:<path>` as the Node server and Chrome extension histories keep facts.
+ */
+const OLD_FORMAT_FACT_DISPLAYS: Record<string, string> = {
+  'value:cookieHeader': `'sid=${FACT_COOKIE_VALUE}; theme=dark'`,
+  'value:basicHeader': `'Basic ${FACT_BASIC_CREDENTIAL}'`,
+  'value:callbackUrl': `'https://shop.example/cb?code=${FACT_AUTH_CODE}&page=2'`,
+  'value:page': "'page=2'",
+  'value:note': "'Token expired'",
+}
+
+/** Fails when a scripted fact secret appears in the served text, and when a plain fact or the readable rest of the callback URL is gone. */
+function assertServedFactsMasked(served: string): void {
+  for (const secret of FACT_SECRETS)
+    assert.equal(served.includes(secret), false, `the chat reads ${secret}`)
+  assert.equal(served.includes('page=2'), true)
+  assert.equal(served.includes('Token expired'), true)
+  assert.equal(served.includes('shop.example/cb?code=[masked]'), true)
+}
+
+/** A snapshot with no credential in it, so an assertion about facts reads nothing the snapshot rule masks. */
+function plainSnapshot(
+  topFrameSource: NonNullable<ReplayDebugSnapshot['frames'][number]['source']>,
+): ReplayDebugSnapshot {
+  return {
+    version: 1,
+    frames: [
+      {
+        name: 'handler',
+        line: topFrameSource.line,
+        column: 1,
+        source: topFrameSource,
+        scopes: [{ name: 'Local', variables: [0] }],
+      },
+    ],
+    variables: [{ name: 'id', value: '7', type: 'string', children: [] }],
+    limitations: [],
+  }
+}
 
 /**
  * Builds the snapshot an older version saved for a request handler's stop: a cookie record, a Cookie header string, the flat `rawHeaders` array and a socket, all unmasked.
@@ -371,18 +424,166 @@ test('a Chrome extension history saved with unmasked cookie values serves its ca
   assertServedMasked(detail.content)
 })
 
-/** A saved web study whose only observation holds the snapshot an older version saved, and the recording store that serves its context. */
-async function webStudyWithOldSnapshot(context: TestContext) {
+// protects=the test history's lean events list and stop detail, which the chat reads to cite a stop and its facts; fails_when=a history saved before the shape rules serves a Cookie header, a Basic credential or a callback code from a declared string fact, or masks the plain strings beside them; no_claim=the debugger snapshot of the stop (the detail tests above)
+test('a test history saved with credential-shaped string facts serves its events list and stop detail with those facts masked', async () => {
+  // Arrange
+  const harness = await createHarness()
+  try {
+    const workspaceKey = '0'.repeat(64)
+    const store = new NodeTestHistoryStore(
+      join(harness.directory, '.learning'),
+      workspaceKey,
+    )
+    const header = nodeTestHistoryHeader(workspaceKey)
+    const writer = await store.start(header)
+    await writer.appendStop({
+      index: 0,
+      runId: 'test-run',
+      sessionId: 'test-session',
+      threadId: 1,
+      elapsedMs: 5,
+      worker: { pid: 1, processGroup: 1, workspace: '/private/test' },
+      source: header.configuration.source,
+      frame: { id: 1, name: 'handler', line: 1, column: 1 },
+      variables: [],
+      facts: Object.entries(OLD_FORMAT_FACT_DISPLAYS).map(([key, display]) => ({
+        path: key.slice('value:'.length),
+        mode: 'value' as const,
+        display,
+      })),
+      debuggerSnapshot: plainSnapshot({
+        name: header.configuration.source.path,
+        text: SOURCE_TEXT,
+        hash: sha256(SOURCE_TEXT),
+        line: 1,
+      }),
+    })
+    await writer.finish('partial', 'The learner stopped this run.')
+    harness.service.nodeHistoryStore = store
+    const baseUri = `codebook://node-history/${header.studyId}`
+
+    // Act
+    const events = await readPaged(harness.service, `${baseUri}/events`)
+    const detail = await readPaged(harness.service, `${baseUri}/events/1`)
+
+    // Assert
+    assertServedFactsMasked(events.content)
+    assertServedFactsMasked(detail.content)
+    assert.match(events.content, /"display":"\[masked\]"/)
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=the Node server history's lean events list and stop detail, which the chat reads to cite a stop and its facts; fails_when=a history saved before the shape rules serves a Cookie header, a Basic credential or a callback code from a declared string fact, or masks the plain strings beside them; no_claim=the debugger snapshot of the stop (the detail test above)
+test('a Node server history saved with credential-shaped string facts serves its events list and stop detail with those facts masked', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { repository } = await openServerRepository(context)
+  const header = nodeServerHistoryHeader(SERVER_WORKSPACE_KEY, {
+    declaredStops: 1,
+  })
+  const writer = await repository.serverHistories.start(header)
+  await writer.appendRequest({
+    elapsedMs: 1,
+    attempt: 1,
+    method: 'POST',
+    path: header.declaredRequest.path,
+    bodyBytes: 14,
+  })
+  await writer.appendRequestSent({ elapsedMs: 2, attempt: 1 })
+  await writer.appendStop(
+    serverStopCapture({
+      declaredStopIndex: 0,
+      hit: 1,
+      line: 2,
+      elapsedMs: 10,
+      facts: OLD_FORMAT_FACT_DISPLAYS,
+    }),
+  )
+  await writer.appendResponse({
+    elapsedMs: 20,
+    status: 201,
+    contentType: 'application/json',
+    body: '{"id":7}',
+    bodyBytes: 8,
+    readCut: false,
+    location: null,
+    requestDurationMs: 10,
+  })
+  await writer.seal({ elapsedMs: 30, reason: 'stopped' })
+  harness.service.nodeHistoryStore = repository.testHistories
+  harness.service.nodeHistoryRepository = repository
+  const baseUri = `codebook://node-history/${header.studyId}`
+
+  // Act
+  const events = await readPaged(harness.service, `${baseUri}/events`)
+  const stopSequence = (
+    events.parsed as { sequence: number; type: string }[]
+  ).find((event) => event.type === 'stop')?.sequence
+  const detail = await readPaged(
+    harness.service,
+    `${baseUri}/events/${stopSequence}`,
+  )
+
+  // Assert
+  assertServedFactsMasked(events.content)
+  assertServedFactsMasked(detail.content)
+  assert.match(events.content, /"value:cookieHeader":"\[masked\]"/)
+})
+
+// protects=the Chrome extension history's lean events list and capture detail, which the chat reads to cite a capture and its facts; fails_when=a history saved before the shape rules serves a Cookie header, a Basic credential or a callback code from a capture's facts, or masks the plain strings beside them; no_claim=the debugger snapshot of the capture (the detail test above) and the pause's own target URL, which identifies the pause
+test('a Chrome extension history saved with credential-shaped string facts serves its events list and capture detail with those facts masked', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { repository } = await openServerRepository(context)
+  const header = extensionHistoryHeader(SERVER_WORKSPACE_KEY)
+  const writer = await repository.extensionHistories.start(header)
+  const pauseId = 'old-run:1:page:1'
+  const stop = capturedStop({ stopIndex: 1, context: 'page' })
+  await writer.appendPauseOpen({
+    pauseId,
+    generation: 1,
+    context: 'page',
+    stopIndex: 1,
+    targetUrl: stop.targetUrl,
+    workerGeneration: 0,
+  })
+  await writer.appendCapture({
+    pauseId,
+    path: stop.path,
+    line: stop.line,
+    sourceHash: stop.sha256,
+    sourceBytes: Buffer.byteLength(stop.snapshot.frames[0]?.source?.text ?? ''),
+    debuggerSnapshot: stop.snapshot,
+    facts: { stopIndex: 1, ...OLD_FORMAT_FACT_DISPLAYS },
+  })
+  await writer.appendPauseClose({ pauseId, reason: 'continue' })
+  await writer.seal()
+  harness.service.nodeHistoryRepository = repository
+  harness.service.nodeHistoryStore = repository.testHistories
+  const baseUri = `codebook://node-history/${header.studyId}`
+
+  // Act
+  const events = await readPaged(harness.service, `${baseUri}/events`)
+  const detail = await readPaged(harness.service, `${baseUri}/events/2`)
+
+  // Assert
+  assert.equal((detail.parsed as { type: string }).type, 'capture')
+  assertServedFactsMasked(events.content)
+  assertServedFactsMasked(detail.content)
+  assert.match(events.content, /"value:cookieHeader":"\[masked\]"/)
+})
+
+/** Saves a web study and its recording context in a private directory, and returns the recording store that serves them. */
+async function saveWebStudy(
+  context: TestContext,
+  study: ReturnType<typeof createConfiguredStudy>,
+) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-web-study-'))
   context.after(() => rm(directory, { recursive: true, force: true }))
-  const study = createConfiguredStudy()
-  const observation = study.observations[0]!
-  observation.debugger = oldFormatSnapshot({
-    name: 'src/theme.ts',
-    text: observation.source.text,
-    hash: observation.source.hash,
-    line: observation.source.line,
-  })
   const library = new LearningLibrary(directory, study.workspaceKey)
   const store = new RecordingStore(directory, study.workspaceKey)
   await library.saveStudy(study)
@@ -405,6 +606,33 @@ async function webStudyWithOldSnapshot(context: TestContext) {
   return { study, store, contextHash: saved.hash }
 }
 
+/** A saved web study whose only observation holds the snapshot an older version saved, and the recording store that serves its context. */
+async function webStudyWithOldSnapshot(context: TestContext) {
+  const study = createConfiguredStudy()
+  const observation = study.observations[0]!
+  observation.debugger = oldFormatSnapshot({
+    name: 'src/theme.ts',
+    text: observation.source.text,
+    hash: observation.source.hash,
+    line: observation.source.line,
+  })
+  return saveWebStudy(context, study)
+}
+
+/** A saved web study whose only observation holds the declared string values an older version saved, a Cookie header and a callback URL, one of them cited by its explanation. */
+async function webStudyWithOldFacts(context: TestContext) {
+  const study = createConfiguredStudy()
+  const observation = study.observations[0]!
+  const cookieHeader = `sid=${FACT_COOKIE_VALUE}; theme=dark`
+  observation.values['value:nextTheme'] = cookieHeader
+  observation.values['value:selection'] =
+    `https://shop.example/cb?code=${FACT_AUTH_CODE}&page=2`
+  observation.interpretations[0]!.facts = [
+    { path: 'value:nextTheme', value: cookieHeader },
+  ]
+  return saveWebStudy(context, study)
+}
+
 // protects=the recording context the chat reads for a saved web study; fails_when=the context of a study saved before the shape rules serves an observation's cookie values; no_claim=the learning resource, which lists no snapshot
 test('a saved web study with unmasked cookie values serves its recording context masked', async (context) => {
   // Arrange
@@ -422,6 +650,37 @@ test('a saved web study with unmasked cookie values serves its recording context
 
   // Assert
   assertServedMasked(resource.text)
+})
+
+// protects=the recording context and the learning resource the chat reads for a saved web study's declared values and the facts its explanations cite; fails_when=a study saved before the shape rules serves a Cookie header or a callback code from an observation's values or an explanation's facts, or masks the plain values beside them; no_claim=the debugger snapshot of the observation (the test above)
+test('a saved web study with credential-shaped string values serves its recording context and learning resource with those values masked', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { study, store, contextHash } = await webStudyWithOldFacts(context)
+  harness.service.recordings = store
+  const contextUri = `codebook://${harness.service.instanceId}/studies/${study.id}/recording/context/${contextHash}`
+
+  // Act
+  const whole = await readResource(harness.service, contextUri)
+  if (!('text' in whole)) throw new Error('The context is JSON.')
+  const learning = await readPaged(harness.service, `${contextUri}/learning`)
+
+  // Assert
+  for (const served of [whole.text, learning.content]) {
+    for (const secret of [FACT_COOKIE_VALUE, FACT_AUTH_CODE])
+      assert.equal(served.includes(secret), false, `the chat reads ${secret}`)
+    assert.equal(served.includes('shop.example/cb?code=[masked]&page=2'), true)
+    assert.equal(served.includes('"value:enabled":false'), true)
+  }
+  assert.match(learning.content, /"value:nextTheme":"\[masked\]"/)
+  assert.match(
+    JSON.stringify(
+      (learning.parsed as { observations: { interpretations: unknown }[] })
+        .observations[0]?.interpretations,
+    ),
+    /"value":"\[masked\]"/,
+  )
 })
 
 /** Lists the source files under `directory` that the reader scan reads, relative to it. */
@@ -443,8 +702,8 @@ async function listSourceFiles(directory: string): Promise<string[]> {
     .sort()
 }
 
-// protects=every module that reads saved debugger history applies the saved-history mask before it serves it; fails_when=a new module parses replayDebugSnapshotSchema without being classified here, a serving reader or detail resource stops calling maskSavedDebugSnapshot, or a paged resource serves a debuggerSnapshot without it; no_claim=that the mask is correct (the detail resource tests above)
-test('every reader of saved debugger history is classified and each serving reader applies maskSavedDebugSnapshot', async () => {
+// protects=every module that reads saved debugger history applies the saved-history masks before it serves it; fails_when=a new module parses replayDebugSnapshotSchema without being classified here, a serving reader or detail resource stops calling maskSavedDebugSnapshot, a paged resource serves a debuggerSnapshot without it, or a module that serves saved facts stops calling maskSavedFacts; no_claim=that the masks are correct (the detail resource tests above)
+test('every reader of saved debugger history is classified and each serving reader applies maskSavedDebugSnapshot and maskSavedFacts', async () => {
   // Arrange
   const sourceRoot = join(__dirname, '..', '..', 'src')
   const files = await listSourceFiles(sourceRoot)
@@ -474,6 +733,15 @@ test('every reader of saved debugger history is classified and each serving read
     'utils/readTestHistoryEvents.ts',
     'nodeServerHistorySink.ts',
   ]
+  /** Serve the facts of a saved stop or study, in a list, a detail entry, a replay model or a recording context. */
+  const factServingModules = [
+    'resources.ts',
+    'utils/readExtensionHistoryResource.ts',
+    'utils/readRecordingResource.ts',
+    'utils/readServerHistoryResource.ts',
+    'utils/readTestHistoryEvents.ts',
+    'utils/rehydrateServerStopSnapshot.ts',
+  ]
   const classified = new Set([
     ...schemaDeclarers,
     ...captureWriters,
@@ -495,6 +763,17 @@ test('every reader of saved debugger history is classified and each serving read
       !/\bmaskSavedDebugSnapshot\b/.test(text)
     )
   })
+  const unmaskedFactServing = factServingModules.filter(
+    (file) => !/\bmaskSavedFacts\b/.test(texts.get(file) ?? ''),
+  )
+  const factsPagedWithoutMask = files.filter((file) => {
+    const text = texts.get(file)!
+    return (
+      /\.facts\b/.test(text) &&
+      /\b(?:readJsonPage|readMaskedJsonPage)\(/.test(text) &&
+      !/\bmaskSavedFacts\b/.test(text)
+    )
+  })
   // The server history resource reaches the mask through the rehydration it calls.
   const serverResourceRehydrates = /\brehydrateNodeServerEntries\(/.test(
     texts.get('utils/readServerHistoryResource.ts')!,
@@ -508,6 +787,8 @@ test('every reader of saved debugger history is classified and each serving read
   )
   assert.deepEqual(unmaskedServing, [])
   assert.deepEqual(pagedWithoutMask, [])
+  assert.deepEqual(unmaskedFactServing, [])
+  assert.deepEqual(factsPagedWithoutMask, [])
   assert.equal(serverResourceRehydrates, true)
 })
 

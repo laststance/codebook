@@ -6,6 +6,7 @@ import type { NodeHistoryStore } from '../nodeTestHistoryStore'
 import type { ResourceContent } from '../resources'
 
 import { answerUnreadableHistoryEntry } from './answerUnreadableHistoryEntry'
+import { maskSavedFacts } from './maskSavedFacts'
 import { readHistoryResourceTail } from './readHistoryResourceTail'
 import { readJsonPage } from './readJsonPage'
 import { rehydrateNodeServerEntries } from './rehydrateServerStopSnapshot'
@@ -20,7 +21,7 @@ type LeanServerEvent = Record<string, unknown> & {
 
 /**
  * Reduces one journal entry to its lean, citable form, or to nothing for an entry no learning step may cite (`source`, `end`, the send marks and `output-truncated`).
- * Called by {@link readServerHistoryResource} for the events list; the whole entry, snapshot and body included, is {@link readServerHistoryResource}'s per-entry detail.
+ * Called by {@link readServerHistoryResource} for the events list; the whole entry, snapshot and body included, is {@link readServerHistoryResource}'s per-entry detail. A stop's facts are masked again by {@link maskSavedFacts}, so a history saved before the shape rules serves no Cookie, Authorization or secret URL query value.
  * @param entry - A server journal entry as stored.
  * @returns The lean event, or `undefined` for a storage-only entry.
  * @example leanServerEvent(stopEntry) // => { sequence: 4, type: 'stop', elapsedMs: 60, declaredStopIndex: 0, hit: 1, path: 'src/handler.ts', line: 2, sourceHash: '…', facts: { 'value:id': '7' } }
@@ -50,7 +51,7 @@ function leanServerEvent(
         path: entry.source.path,
         line: entry.source.line,
         sourceHash: entry.source.hash,
-        facts: entry.facts,
+        facts: maskSavedFacts(entry.facts),
         unavailable: entry.unavailable,
       }
     case 'output':

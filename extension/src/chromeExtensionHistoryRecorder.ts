@@ -20,6 +20,7 @@ import {
 import { HistoryLimitReachedError } from './nodeHistoryJournalWriter'
 import type { ChromeExtensionObserved } from './runtime'
 import type { ViewportRecordingObserver } from './runtimeSupport/browserViewport'
+import { maskSavedFacts } from './utils/maskSavedFacts'
 import { sealWithTransientRetry } from './utils/sealWithTransientRetry'
 import {
   SEAL_DEADLINE_PASSED,
@@ -216,12 +217,13 @@ export class ChromeExtensionHistoryRecorder implements ChromeExtensionHistorySin
         sourceHash: capture.sha256,
         sourceBytes: Buffer.byteLength(top?.source?.text ?? ''),
         debuggerSnapshot: capture.snapshot,
-        facts: {
+        // The target URL is the one free text of a capture's facts: a secret query value in it is masked like the one of any fact.
+        facts: maskSavedFacts({
           stopIndex: capture.stopIndex,
           context: capture.context,
           workerGeneration: capture.workerGeneration,
           targetUrl: capture.targetUrl,
-        },
+        }),
       }),
     )
   }

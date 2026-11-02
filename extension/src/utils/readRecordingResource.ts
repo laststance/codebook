@@ -9,6 +9,7 @@ import { declaredStopOfSnapshot } from './declaredStopOfSnapshot'
 import { describeBoundPlace, type BoundPlace } from './describeBoundPlace'
 import { explanationPlace, type ExplanationPlace } from './explanationPlace'
 import { maskSavedDebugSnapshot } from './maskSavedDebugSnapshot'
+import { maskSavedFacts } from './maskSavedFacts'
 import { readJsonPage } from './readJsonPage'
 
 /** A saved study as a recording context retains it. */
@@ -18,25 +19,28 @@ type SavedStudy = RecordingContext['study']
 type SavedObservation = SavedStudy['observations'][number]
 
 /**
- * Masks the debugger snapshot of each observation of a recording context, so a study saved before the shape rules serves no cookie or credential value; the context's hash was verified when it was read, and its source text stays as recorded.
- * Called by {@link readRecordingResource} before it serves a whole context.
+ * Masks what each observation of a recording context holds beside its recorded source text, so a study saved before the shape rules serves no cookie, credential or secret URL query value: the debugger snapshot ({@link maskSavedDebugSnapshot}), the captured values and the facts each explanation cites ({@link maskSavedFacts}). The context's hash was verified when it was read, and its source text stays as recorded.
+ * Called by {@link readRecordingResource} before it serves a whole context or the learning resource built from it.
  * @param context - The verified recording context.
- * @returns The context with each observation's debugger snapshot masked ({@link maskSavedDebugSnapshot}).
- * @example maskContextSnapshots(context).study.observations[0]?.debugger // => the masked snapshot
+ * @returns The context with each observation masked.
+ * @example maskSavedContext(context).study.observations[0]?.values // => { 'value:cookieHeader': '[masked]' }
  */
-function maskContextSnapshots(context: RecordingContext): RecordingContext {
+function maskSavedContext(context: RecordingContext): RecordingContext {
   return {
     ...context,
     study: {
       ...context.study,
-      observations: context.study.observations.map((observation) =>
-        observation.debugger
-          ? {
-              ...observation,
-              debugger: maskSavedDebugSnapshot(observation.debugger),
-            }
-          : observation,
-      ),
+      observations: context.study.observations.map((observation) => ({
+        ...observation,
+        values: maskSavedFacts(observation.values),
+        interpretations: observation.interpretations.map((interpretation) => ({
+          ...interpretation,
+          facts: maskSavedFacts(interpretation.facts),
+        })),
+        ...(observation.debugger && {
+          debugger: maskSavedDebugSnapshot(observation.debugger),
+        }),
+      })),
     },
   }
 }
@@ -253,8 +257,9 @@ export async function readRecordingResource(
   try {
     if (suffix?.startsWith('context/')) {
       const [, contextHash, selection, ...page] = suffix.split('/')
-      const { context } = await store.readContext(studyId, contextHash)
-      if (!selection) return json(maskContextSnapshots(context))
+      const saved = await store.readContext(studyId, contextHash)
+      const context = maskSavedContext(saved.context)
+      if (!selection) return json(context)
       return readJsonPage(
         `${base}/context/${contextHash}/learning`,
         {

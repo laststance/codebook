@@ -3,6 +3,7 @@ import type { NodeTestHistoryEntry } from '../nodeTestHistorySchemas'
 import type { ResourceContent } from '../resources'
 
 import { maskSavedDebugSnapshot } from './maskSavedDebugSnapshot'
+import { maskSavedFacts } from './maskSavedFacts'
 import { readJsonPage } from './readJsonPage'
 
 /** One test-history entry an agent may cite, in the lean form the events list returns: never the executed source text or a debugger snapshot. */
@@ -13,7 +14,7 @@ type LeanTestEvent = Record<string, unknown> & {
 }
 
 /**
- * Reduces one test journal entry to the lean form a learning step cites: a stop keeps its sequence, index, source path, line and hash and its facts; an output keeps its channel and text (the journal bounds one output entry); the result keeps its exit code and signal.
+ * Reduces one test journal entry to the lean form a learning step cites: a stop keeps its sequence, index, source path, line and hash and its facts, masked again by {@link maskSavedFacts} so a history saved before the shape rules serves no Cookie, Authorization or secret URL query value; an output keeps its channel and text (the journal bounds one output entry); the result keeps its exit code and signal.
  * Called by {@link readTestEventsPage}; the whole entry (snapshot, frame, output tail) is {@link readTestEntryDetail}'s answer.
  * @param entry - A test journal entry as stored.
  * @returns The lean event.
@@ -33,7 +34,7 @@ function leanTestEvent(entry: NodeTestHistoryEntry): LeanTestEvent {
         path: entry.source.path,
         line: entry.source.line,
         sourceHash: entry.source.hash,
-        facts: entry.facts,
+        facts: maskSavedFacts(entry.facts),
       }
     case 'output':
       return { ...head, channel: entry.channel, text: entry.text }
@@ -60,7 +61,7 @@ export function readTestEventsPage(
 }
 
 /**
- * Answers one test-history entry in full (a stop with its frame and debugger snapshot, masked again by {@link maskSavedDebugSnapshot} so a history saved before the shape rules serves no cookie or credential value).
+ * Answers one test-history entry in full (a stop with its frame, its facts and its debugger snapshot, masked again by {@link maskSavedFacts} and {@link maskSavedDebugSnapshot} so a history saved before the shape rules serves no cookie or credential value).
  * Called by {@link readResource} for `events/<sequence>`.
  * @param baseUri - `codebook://node-history/<studyId>`.
  * @param studyId - The history's study id.
@@ -89,6 +90,7 @@ export function readTestEntryDetail(
     entry.type === 'stop'
       ? {
           ...entry,
+          facts: maskSavedFacts(entry.facts),
           debuggerSnapshot: maskSavedDebugSnapshot(entry.debuggerSnapshot),
         }
       : entry,

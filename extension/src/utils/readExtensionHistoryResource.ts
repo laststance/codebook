@@ -6,13 +6,14 @@ import type { NodeHistoryStore } from '../nodeTestHistoryStore'
 import type { ResourceContent } from '../resources'
 
 import { maskSavedDebugSnapshot } from './maskSavedDebugSnapshot'
+import { maskSavedFacts } from './maskSavedFacts'
 import { readHistoryResourceTail } from './readHistoryResourceTail'
 import { readJsonPage } from './readJsonPage'
 import { withKnownNodeHistory } from './withKnownNodeHistory'
 
 /**
  * Reduces one journal entry to the lean form the events list returns: never a snapshot, the executed source text or frame bytes (a frame is named by its hash).
- * Called by {@link readExtensionHistoryResource} for the events list; the whole entry is its own detail resource.
+ * Called by {@link readExtensionHistoryResource} for the events list; the whole entry is its own detail resource. A capture's facts are masked again by {@link maskSavedFacts}, so a history saved before the shape rules serves no Cookie, Authorization or secret URL query value.
  * @param entry - An extension journal entry as stored.
  * @returns The lean event.
  * @example leanExtensionEvent(captureEntry) // => { sequence: 4, type: 'capture', elapsedMs: 60, pauseId, path: 'popup.js', line: 3, sourceHash: '…', sourceBytes: 812 }
@@ -22,13 +23,13 @@ function leanExtensionEvent(
 ): Record<string, unknown> {
   if (entry.type === 'capture') {
     const { debuggerSnapshot: _snapshot, ...lean } = entry
-    return lean
+    return { ...lean, facts: maskSavedFacts(lean.facts) }
   }
   return entry
 }
 
 /**
- * Answers one entry's detail page: the entry as stored, whole, with a capture's debugger snapshot masked again by {@link maskSavedDebugSnapshot} so a history saved before the shape rules serves no cookie or credential value.
+ * Answers one entry's detail page: the entry as stored, whole, with a capture's facts and debugger snapshot masked again by {@link maskSavedFacts} and {@link maskSavedDebugSnapshot} so a history saved before the shape rules serves no cookie or credential value.
  * Called by {@link readExtensionHistoryResource} for `events/<sequence>`.
  * @param baseUri - The history's resource address.
  * @param entries - The verified journal entries.
@@ -55,6 +56,7 @@ function readEntryDetail(
     entry.type === 'capture'
       ? {
           ...entry,
+          facts: maskSavedFacts(entry.facts),
           debuggerSnapshot: maskSavedDebugSnapshot(entry.debuggerSnapshot),
         }
       : entry,

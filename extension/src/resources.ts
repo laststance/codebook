@@ -48,7 +48,9 @@ import { savedSessionHelp } from './savedSessionHelp'
 import { serverRenderHelp } from './serverRenderHelp'
 import type { StudyService } from './service'
 import { describeStudy } from './utils/describeStudy'
+import { maskFactString } from './utils/maskFactString'
 import { maskSavedDebugSnapshot } from './utils/maskSavedDebugSnapshot'
+import { maskSavedFacts } from './utils/maskSavedFacts'
 import { omittedDetail } from './utils/omittedDetail'
 import { pauseLabelOf } from './utils/pauseLabelOf'
 import { readBoundedFile } from './utils/readBoundedFile'
@@ -61,7 +63,6 @@ import {
   readTestEntryDetail,
   readTestEventsPage,
 } from './utils/readTestHistoryEvents'
-import { redactValuePreview } from './utils/redactValuePreview'
 import { secondsText } from './utils/secondsText'
 import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
 import { withKnownNodeHistory } from './utils/withKnownNodeHistory'
@@ -586,12 +587,9 @@ export async function readResource(
       // The values beside the snapshot and the snapshot itself pass the saved-history rule again before they are paged.
       variables: stop.variables.map((variable) => ({
         ...variable,
-        value: redactValuePreview(variable.value),
+        value: maskFactString(variable.value),
       })),
-      facts: stop.facts.map((fact) => ({
-        ...fact,
-        display: redactValuePreview(fact.display),
-      })),
+      facts: maskSavedFacts(stop.facts),
       debuggerSnapshot: maskSavedDebugSnapshot(stop.debuggerSnapshot),
     }
     return readMaskedJsonPage(

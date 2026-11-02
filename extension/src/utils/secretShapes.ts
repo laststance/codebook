@@ -191,6 +191,29 @@ function endOfLiteral(text: string, start: number): number {
 }
 
 /**
+ * Masks a text that is, as a whole, a Cookie header or an Authorization value, or that holds a URL with secret query values.
+ * Why: one decision for a quoted element of a preview ({@link maskedLiteral}) and for a string a fact or a saved study keeps without quotes ({@link maskFactString}); the predicates stay in this module. A `Bearer` credential is left to {@link redactSecretText}, which masks its token and keeps the word.
+ * @param text - A whole string, without quotes.
+ * @param mask - What replaces a whole credential; the capture's {@link REDACTION_MASK} unless a caller keeps another marker.
+ * @returns `mask` for a Cookie-shaped or Authorization-shaped string; the text with each secret query value masked for a URL; the same text when it holds none.
+ * @example
+ * maskBareShape('sid=abc; theme=dark') // => '[masked]'
+ * maskBareShape('/cb?code=abc&page=2') // => '/cb?code=[masked]&page=2'
+ * maskBareShape('theme=dark') // => 'theme=dark'
+ */
+export function maskBareShape(
+  text: string,
+  mask: string = REDACTION_MASK,
+): string {
+  if (
+    isCookieHeaderShape(text) ||
+    (isAuthorizationShape(text) && !BEARER_CREDENTIAL.test(text.trim()))
+  )
+    return mask
+  return maskSecretUrlQueries(text)
+}
+
+/**
  * Decides what a quoted element becomes: the mask for a value that follows a secret header name or shows a Cookie or Authorization shape, itself with its secret query values masked for a URL, or nothing for an element that holds no credential.
  * Called by {@link maskShapedLiterals}.
  * @param literal - The element with its quotes.
@@ -204,18 +227,13 @@ function maskedLiteral(
   isValueOfHeaderName: boolean,
   mask: string,
 ): string | undefined {
+  if (isValueOfHeaderName) return mask
   const inner = literal.slice(1, -1)
-  if (
-    isValueOfHeaderName ||
-    isCookieHeaderShape(inner) ||
-    (isAuthorizationShape(inner) && !BEARER_CREDENTIAL.test(inner.trim()))
-  )
-    return mask
-  const withoutSecretQueries = maskSecretUrlQueries(inner)
+  const maskedInner = maskBareShape(inner, mask)
+  if (maskedInner === inner) return undefined
+  // A whole credential loses its quotes with its value; a URL keeps them around its readable rest.
   const quote = literal.charAt(0)
-  return withoutSecretQueries === inner
-    ? undefined
-    : `${quote}${withoutSecretQueries}${quote}`
+  return maskedInner === mask ? mask : `${quote}${maskedInner}${quote}`
 }
 
 /**
