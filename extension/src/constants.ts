@@ -565,13 +565,19 @@ export const UNTYPED_EDITOR_TAB_INPUT_KINDS = [
   'TabInputInteractiveWindow',
 ] as const
 /**
- * The members of a tab's input that say which resource or view the tab shows, read with `Reflect.get` by {@link sameTabTarget}: the resource of a text, custom, notebook or interactive tab (`uri`), both sides of a diff (`original`, `modified`), the kind of a webview or custom editor (`viewType`) and of a notebook (`notebookType`). A member an input does not have is skipped. The editors give every tab a new object when a group changes, and tabs of different resources can share one label (two `index.ts` of different folders), so these members, not the tab object or its label, tell the tabs apart.
- * @example TAB_INPUT_IDENTITY_FIELDS.map((field) => Reflect.get(diffInput, field)) // => [undefined, original, modified, undefined, undefined]
+ * The members of a tab's input that say which resource or view the tab shows, read with `Reflect.get` by {@link sameTabTarget}: the resource of a text, custom, notebook or interactive tab (`uri`), the input box of an interactive window (`inputBoxUri`), both sides of a diff (`original`, `modified`), the files of a merge editor (`base`, `input1`, `input2`, `result`), the diffs of a multi-file diff (`textDiffs`, each compared by its own members), the kind of a webview or custom editor (`viewType`) and of a notebook (`notebookType`). A member an input does not have is skipped. The editors give every tab a new object when a group changes, and tabs of different resources can share one label (two `index.ts` of different folders), so these members, not the tab object or its label, tell the tabs apart.
+ * @example TAB_INPUT_IDENTITY_FIELDS.map((field) => Reflect.get(diffInput, field)) // => [undefined, undefined, original, modified, undefined, undefined, undefined, undefined, undefined, undefined, undefined]
  */
 export const TAB_INPUT_IDENTITY_FIELDS = [
   'uri',
+  'inputBoxUri',
   'original',
   'modified',
+  'base',
+  'input1',
+  'input2',
+  'result',
+  'textDiffs',
   'viewType',
   'notebookType',
 ] as const

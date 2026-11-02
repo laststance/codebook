@@ -36,11 +36,22 @@ function inputObject(tab: Tab): object | undefined {
     : undefined
 }
 
-/** Reads one member of an input as text, `undefined` when the input lacks it. */
+/** Reads one member of an input as text, `undefined` when the input lacks it; a list (a multi-file diff's `textDiffs`) reads as its entries' own members ({@link entryText}), in order. */
 function memberText(
   input: object | undefined,
   field: string,
 ): string | undefined {
   const value: unknown = input ? Reflect.get(input, field) : undefined
-  return value === undefined ? undefined : String(value)
+  if (value === undefined) return undefined
+  return Array.isArray(value)
+    ? value.map((entry: unknown) => entryText(entry)).join('\n')
+    : String(value)
+}
+
+/** Reads one entry of a listed member: an object by its identity members (a diff's `original` and `modified`), anything else as text. */
+function entryText(entry: unknown): string {
+  if (typeof entry !== 'object' || entry === null) return String(entry)
+  return TAB_INPUT_IDENTITY_FIELDS.map(
+    (field) => memberText(entry, field) ?? '',
+  ).join('|')
 }

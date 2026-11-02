@@ -178,3 +178,71 @@ test('a missing tab is not the same editor as another missing tab', () => {
   // Assert
   assert.equal(same, false)
 })
+
+/** A merge editor's tab input, as the editors export it: the common base, both sides and the result file. */
+class FakeMergeInput {
+  constructor(
+    readonly base: FakeUri,
+    readonly input1: FakeUri,
+    readonly input2: FakeUri,
+    readonly result: FakeUri,
+  ) {}
+}
+
+/** A multi-file diff's tab input: its own resource and the diffs it lists, each with both sides. */
+class FakeMultiDiffInput {
+  constructor(
+    readonly uri: FakeUri,
+    readonly textDiffs: FakeDiffInput[],
+  ) {}
+}
+
+// Value: protects=two merge editors of one label (a conflict in two folders' index.ts) are two editors, told apart by the files they merge; fails_when=a merge editor is compared by label and kind alone, so the return brings the other conflict to the front and says the learner's choice was kept; why_new=Cycle 0072 /ship pass 2 (Red Team 3, native adversarial rerun 4); seam=none; no_claim=the editors' real merge editor input (its members are read by name)
+test('two merge editors of the same label for different result files are different editors', () => {
+  // Arrange
+  const appConflict = tab(
+    'Merging: index.ts',
+    new FakeMergeInput(
+      uri('git:///app/index.ts?base'),
+      uri('git:///app/index.ts?ours'),
+      uri('git:///app/index.ts?theirs'),
+      uri('file:///app/index.ts'),
+    ),
+  )
+  const libConflict = tab(
+    'Merging: index.ts',
+    new FakeMergeInput(
+      uri('git:///lib/index.ts?base'),
+      uri('git:///lib/index.ts?ours'),
+      uri('git:///lib/index.ts?theirs'),
+      uri('file:///lib/index.ts'),
+    ),
+  )
+  // Act
+  const same = sameTabTarget(appConflict, libConflict)
+  // Assert
+  assert.equal(same, false)
+})
+
+// Value: protects=two multi-file diffs of one label are told apart by the diffs they list, and a re-created one of the same diffs is the same editor; fails_when=the list member is compared as text of its objects ("[object Object]"), so any two multi-file diffs of one label read as one editor, or the same one reads as two; why_new=Cycle 0072 /ship pass 2 (Red Team 3, native adversarial rerun 4); seam=none; no_claim=the editors' real multi-file diff input
+test('multi-file diffs of the same label are the same editor only when they list the same diffs', () => {
+  // Arrange
+  const workingTree = (folder: string) =>
+    tab(
+      'Changes',
+      new FakeMultiDiffInput(uri('multi-diff-editor:changes'), [
+        new FakeDiffInput(
+          uri(`git:///${folder}/index.ts?HEAD`),
+          uri(`file:///${folder}/index.ts`),
+        ),
+      ]),
+    )
+  // Act
+  const sameDiffs = sameTabTarget(workingTree('app'), workingTree('app'))
+  const otherDiffs = sameTabTarget(workingTree('app'), workingTree('lib'))
+  // Assert
+  assert.deepEqual(
+    { sameDiffs, otherDiffs },
+    { sameDiffs: true, otherDiffs: false },
+  )
+})
