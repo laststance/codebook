@@ -6357,6 +6357,35 @@ export async function workspaceHarness(
       lastSourceEditor = movedEditor
       activeTextEditorChanged(lastSourceEditor)
     },
+    /**
+     * Gives the keyboard to the Captured source tab the learner moved into a group of theirs, as a click on that tab does: the tab is in front of its group, the group is the active one, and the copy's text editor is reported as the active text editor. The shape of `focusMutableDraft` for the copy a draft cannot stand for (the same document and tab as `moveSource` left).
+     * @param column - The view column of the learner's group that holds the copy.
+     * @example harness.moveSource(4); harness.focusMutableDraft('data.ts', 4); harness.clickMovedSourceTab(4) // the copy is in front of group 4 again, with the keyboard
+     */
+    clickMovedSourceTab(column: number): void {
+      const sourceUri = lastSourceEditor?.document.uri.toString()
+      const group = groups.find((candidate) => candidate.viewColumn === column)
+      const tab = group?.tabs.find(
+        (candidate) =>
+          candidate.input instanceof TabInputText &&
+          candidate.input.uri.toString() === sourceUri,
+      )
+      const editor = visibleSourceEditors.find(
+        (candidate) =>
+          candidate.group.viewColumn === column &&
+          candidate.document.uri.toString() === sourceUri,
+      )
+      assert.ok(
+        group && tab && editor,
+        'The group must hold the moved Captured source tab and its editor',
+      )
+      group.activeTab = tab
+      activeTabGroup = group
+      leaveChatForMainEditor()
+      keyboardOnBody = false
+      keyboardInView = false
+      activeTextEditorChanged(editor)
+    },
     editorLayout: () => structuredClone(editorLayout),
     changeEditorLayout(layout: unknown): void {
       explicitEditorLayout = true

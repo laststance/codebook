@@ -3475,14 +3475,14 @@ export class StudyWorkspace {
           )
         // The place the return expects the keyboard at; it moves only where the return itself takes the keyboard.
         let expectedPlace = keyboardPlace()
-        /** Stops the return and keeps the learner's own choice of focus. */
+        /** Stops the return and keeps the learner's own choice of focus; `choiceKept` is `false` when the latest choice could not be brought back to the front (a group with no focus command, a tab no numbered command reaches, a newer pick after the last re-show). */
         const abortForLearner = (choiceKept = true): never => {
           this.yieldFocusToLearner()
           throw new StudyError(
             'PRESENTATION_UNAVAILABLE',
             choiceKept
               ? 'The editor focus changed while the captured source was returned; your choice was kept. Choose Restore Study workspace layout again.'
-              : 'The editor focus changed while the captured source was returned, and your tab is in a group the editor has no focus command for, so Codebook could not bring it back. Choose Restore Study workspace layout again.',
+              : 'The editor focus changed while the captured source was returned, and Codebook could not bring your latest choice back to the front. Choose it again, then choose Restore Study workspace layout.',
           )
         }
         /** A learner's own change of focus during the return wins. The return itself takes no keyboard, so any change of the place since its start is the learner's. */
@@ -3506,40 +3506,50 @@ export class StudyWorkspace {
         const copyHasKeyboard =
           vscode.window.tabGroups.activeTabGroup.activeTab ===
           currentCopy()?.tab
-        /** The copy that had the keyboard hands it to the source before it closes, so the close hands it to no tab behind the copy. A learner who chose another file while this show is pending keeps it: the file is shown again and the return stops, with the copy left open. */
-        const takeKeyboardWithSource = async (
-          document: vscode.TextDocument,
-        ): Promise<void> => {
-          const watch = this.watchLearnersChoice(sourceUri)
+        /**
+         * Runs one of the return's two shows of the captured source while it watches what the learner picks: the first show leaves the keyboard where the request put it, the second takes it for the source, so the copy that had the keyboard hands it over before it closes. A pick made while the show is pending is shown again, the latest one, and the return stops with the copy left open.
+         * @param show - Sends the show to the editor.
+         * @param windowSwitchEndsReturn - Whether a switch to another window while the show is pending ends the return, also when the learner came back (the hand-off); the first show leaves the window to {@link assertLearnerKept}.
+         * @returns The editor the show answered with, when the learner picked nothing.
+         * @throws The learner's-choice refusal ({@link abortForLearner}) when the learner picked or left the window meanwhile.
+         */
+        const showWatchingLearnersPicks = async (
+          show: () => Thenable<vscode.TextEditor>,
+          windowSwitchEndsReturn: boolean,
+        ): Promise<vscode.TextEditor> => {
+          const watch = this.watchLearnersChoice(sourceUri, sourceColumn)
           try {
-            await this.showTextDocumentNoted(document, {
-              viewColumn: sourceColumn,
-              preserveFocus: false,
-              preview: false,
-            })
+            const shown = await show()
             assertOwned()
-            // A switch to another window during the hand-off ends the return, also when the learner came back.
-            if (watch.windowLeft() || !vscode.window.state.focused)
+            if (
+              windowSwitchEndsReturn &&
+              (watch.windowLeft() || !vscode.window.state.focused)
+            )
               abortForLearner()
-            if (watch.choices.length === 0) return
+            if (watch.choices.length === 0) return shown
             // The learner's target gets the keyboard back: a file is shown again; any other tab is brought to the front of its group again (the late show may have covered it) and its group is focused. The watch goes on while that is done, so a newer pick wins over the one being shown again.
-            let choiceKept = true
+            let latestChoiceBack = false
             for (let round = 0; round < LEARNER_CHOICE_RESHOW_LIMIT; round++) {
               const choice = watch.choices.at(-1)!
               const seen = watch.choices.length
               watch.ignoreOwnEffectOf(choice)
+              let choiceBack = true
               if (choice.document) {
                 await this.showTextDocumentNoted(choice.document, {
                   viewColumn: choice.column,
                   preserveFocus: false,
                   preview: false,
                 })
-                choiceKept = true
-              } else choiceKept = await this.reactivateNonTextTab(choice)
+              } else choiceBack = await this.reactivateNonTextTab(choice)
               assertOwned()
-              if (watch.choices.length === seen) break
+              // No newer pick since this re-show: the latest choice is in front again, as far as the editor could bring it back.
+              if (watch.choices.length === seen) {
+                latestChoiceBack = choiceBack
+                break
+              }
             }
-            abortForLearner(choiceKept)
+            // The bound ended the loop with a newer pick recorded after the last re-show: that pick was covered and stays `false`.
+            return abortForLearner(latestChoiceBack)
           } finally {
             watch.dispose()
           }
@@ -3567,13 +3577,17 @@ export class StudyWorkspace {
               candidate.document.uri.toString() === sourceUri,
           )
           const placeOnceSourceShown = placeWithSourceShown()
-          let editor = await this.showTextDocumentNoted(document, {
-            viewColumn: sourceColumn,
-            preserveFocus: true,
-            preview: false,
-            selection: copyEditor ? undefined : this.returnedSourceStop(),
-          })
-          assertOwned()
+          // A file the learner picks while this show is pending is shown again and ends the return: the show puts the source in front of its column, which can cover that pick.
+          let editor = await showWatchingLearnersPicks(
+            () =>
+              this.showTextDocumentNoted(document, {
+                viewColumn: sourceColumn,
+                preserveFocus: true,
+                preview: false,
+                selection: copyEditor ? undefined : this.returnedSourceStop(),
+              }),
+            false,
+          )
           // The show puts the source in front of its column, and the front tab of the keyboard's group changes with it when that group is the source column (the learner's file there stays open behind it): that is this return's own switch, not input. Anything else that moved the place is the learner's.
           if (keyboardPlace() === placeOnceSourceShown)
             expectedPlace = placeOnceSourceShown
@@ -3603,7 +3617,16 @@ export class StudyWorkspace {
           // A file the learner picked while the reading position was restored keeps the keyboard.
           assertLearnerKept()
           if (copyHasKeyboard) {
-            await takeKeyboardWithSource(document)
+            // The copy that had the keyboard hands it to the source before it closes, so the close hands it to no tab behind the copy.
+            await showWatchingLearnersPicks(
+              () =>
+                this.showTextDocumentNoted(document, {
+                  viewColumn: sourceColumn,
+                  preserveFocus: false,
+                  preview: false,
+                }),
+              true,
+            )
             expectedPlace = keyboardPlace()
             // The learner may have moved the caret in the original tab while the hand-off was pending; the latest position is taken just before that tab closes.
             await carryReadingState()
@@ -3643,13 +3666,18 @@ export class StudyWorkspace {
   }
 
   /**
-   * Starts watching what the learner chooses while the return hands the moved copy's keyboard to the source: a text file (the active text editor changes), a tab that is no text file (a Settings page, seen as the front tab of the active group, also when only the group changed), and a switch away from the window. Called by {@link returnDisplacedCapturedSourceThenAdmit}.
+   * Starts watching what the learner chooses while the return shows the captured source in its Study column (the first show, and the hand-off that takes the moved copy's keyboard): a text file (the active text editor changes), a tab that is no text file (a Settings page, seen as the front tab of the active group, also when only the group changed), and a switch away from the window. Called by {@link returnDisplacedCapturedSourceThenAdmit}.
    * A diff side reports no view column: its file is not shown again (that would duplicate it in the source column); its group and front tab are the choice. The effects of showing a choice again are the return's own and are not recorded as new picks ({@link ignoreOwnEffectOf}), so a newer pick made while the choice is shown again is the only one that follows it.
-   * @param sourceUri - The captured source's URI; its own activation is no choice.
+   * The captured source's activation in the source column is Codebook's own show and no choice; the same document in any other column is a pick (the learner chose the moved copy). The tab in front of the active group when the watch starts is no pick either, as the editor reports it again (Cursor does) or its tab events fire while the source opens, until a different pick has been recorded: then choosing it again is one.
+   * @param sourceUri - The captured source's URI.
+   * @param sourceColumn - The Study source column, where the return itself shows the source.
    * @returns The picks in order, the window-switch latch, the own-effect filter and the disposal of the listeners.
-   * @example const watch = this.watchLearnersChoice(sourceUri); try { await show() } finally { watch.dispose() }
+   * @example const watch = this.watchLearnersChoice(sourceUri, 2); try { await show() } finally { watch.dispose() }
    */
-  private watchLearnersChoice(sourceUri: string | undefined): {
+  private watchLearnersChoice(
+    sourceUri: string | undefined,
+    sourceColumn: number,
+  ): {
     choices: LearnersChoice[]
     windowLeft: () => boolean
     ignoreOwnEffectOf: (choice: LearnersChoice) => void
@@ -3658,9 +3686,27 @@ export class StudyWorkspace {
     const choices: LearnersChoice[] = []
     let ownEffect: LearnersChoice | undefined,
       windowLeft = false
+    // The tab in front of the active group now: what the editor reports again at arming is not the learner's pick.
+    const armedGroup = vscode.window.tabGroups.activeTabGroup
+    const armedTab = armedGroup.activeTab
+    const isArmedFront = (choice: LearnersChoice): boolean => {
+      if (!armedTab || armedGroup.viewColumn !== choice.column) return false
+      const armedUri = this.textTabUri(armedTab)
+      // A text file is told by its document, any other tab as {@link sameLearnersChoiceTarget} tells it.
+      if (choice.document) return armedUri === choice.document.uri.toString()
+      return (
+        armedUri === undefined &&
+        sameLearnersChoiceTarget(
+          { column: armedGroup.viewColumn, tab: armedTab },
+          choice,
+        )
+      )
+    }
     const note = (choice: LearnersChoice): void => {
-      if (!ownEffect || !sameLearnersChoiceTarget(ownEffect, choice))
-        choices.push(choice)
+      if (ownEffect && sameLearnersChoiceTarget(ownEffect, choice)) return
+      // Until a different pick is recorded, the tab in front at arming is the place the learner already was in.
+      if (choices.length === 0 && isArmedFront(choice)) return
+      choices.push(choice)
     }
     const noteNonTextFront = (): void => {
       const group = vscode.window.tabGroups.activeTabGroup
@@ -3669,7 +3715,13 @@ export class StudyWorkspace {
     }
     const listeners = [
       vscode.window.onDidChangeActiveTextEditor((editor) => {
-        if (!editor || editor.document.uri.toString() === sourceUri) return
+        if (!editor) return
+        // Codebook's own show of the source in the source column is no choice; the same document in another column is the moved copy, which the learner can pick.
+        if (
+          editor.document.uri.toString() === sourceUri &&
+          editor.viewColumn === sourceColumn
+        )
+          return
         if (editor.viewColumn === undefined) noteNonTextFront()
         else note({ column: editor.viewColumn, document: editor.document })
       }),

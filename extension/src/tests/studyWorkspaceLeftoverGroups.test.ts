@@ -955,14 +955,14 @@ test('a learner’s switch to a non-text tab while the show that hands the copy�
  * Runs an agent's Restore of the Study whose captured source stands in the learner's fourth group with the keyboard, holds its second show and lets the test act while that show is pending.
  * @param harness - The reader and the fake editor.
  * @param whileSecondShowPends - The learner's action.
- * @param afterSecondShowReleased - A step run in the same turn as the release of that show, before the return goes on (to hold the next show, for example).
+ * @param afterSecondShowReleased - A step run in the same turn as the release of that show, before the return goes on (to hold the next show, for example); it gets the Restore's answer, which settles when the return ends.
  * @returns The Restore's outcome text.
  * @example const answer = await restoreWithLearnerDuringSecondShow(harness, () => harness.focusChatEditorTab(2))
  */
 async function restoreWithLearnerDuringSecondShow(
   harness: Harness,
   whileSecondShowPends: () => void,
-  afterSecondShowReleased?: () => Promise<void>,
+  afterSecondShowReleased?: (answer: Promise<string>) => Promise<void>,
 ): Promise<string> {
   const before = harness.reader.presentationState()
   const sourceUri = harness.reader.inspect().sourceUri!
@@ -987,12 +987,15 @@ async function restoreWithLearnerDuringSecondShow(
   await second.started
   whileSecondShowPends()
   second.release()
-  await afterSecondShowReleased?.()
+  await afterSecondShowReleased?.(restoring)
   return restoring
 }
 
 const FOCUS_KEPT_ANSWER =
   'Error: The editor focus changed while the captured source was returned; your choice was kept. Choose Restore Study workspace layout again.'
+
+const LATEST_CHOICE_NOT_BACK_ANSWER =
+  'Error: The editor focus changed while the captured source was returned, and Codebook could not bring your latest choice back to the front. Choose it again, then choose Restore Study workspace layout.'
 
 // Value: protects=a learner's move to a group that already shows a tab that is no text file, made while the second show is pending and seen as a group event alone: that group keeps the keyboard; fails_when=only tab events and text-editor changes are watched, so the late show takes the keyboard back and the Restore answers success; why_new=Cycle 0072 task 1 candidate Codex review of d3204739 (P2 1); seam=restoreWithLearnerDuringSecondShow and activatePaneGroupByGroupEventOnly on the Study pane's group; no_claim=the Study pane's tab stands for any existing non-text tab
 test('a learner’s move to an existing non-text group while the second show is pending keeps that group focused', async () => {
@@ -1473,8 +1476,7 @@ test('a learner’s tab in a group the editor cannot focus is not touched by a n
           .filter((command) => /openEditorAtIndex/.test(command)),
       },
       {
-        answer:
-          'Error: The editor focus changed while the captured source was returned, and your tab is in a group the editor has no focus command for, so Codebook could not bring it back. Choose Restore Study workspace layout again.',
+        answer: LATEST_CHOICE_NOT_BACK_ANSWER,
         numberedTabCommands: [],
       },
     )
@@ -2019,9 +2021,6 @@ for (const [positionMs, moment, expectedLabel, expectedStopLines] of [
     }
   })
 
-const NO_FOCUS_COMMAND_ANSWER =
-  'Error: The editor focus changed while the captured source was returned, and your tab is in a group the editor has no focus command for, so Codebook could not bring it back. Choose Restore Study workspace layout again.'
-
 for (const [position, revealedByNumber] of [
   [9, true],
   [10, false],
@@ -2065,7 +2064,7 @@ for (const [position, revealedByNumber] of [
               numberedTabCommands: ['workbench.action.openEditorAtIndex9'],
             }
           : {
-              answer: NO_FOCUS_COMMAND_ANSWER,
+              answer: LATEST_CHOICE_NOT_BACK_ANSWER,
               chatPosition: 10,
               frontOfSourceColumn: 'Captured-theme.ts',
               numberedTabCommands: [],
@@ -2076,7 +2075,7 @@ for (const [position, revealedByNumber] of [
     }
   })
 
-// Value: protects=the bound of the return's corrective re-shows (LEARNER_CHOICE_RESHOW_LIMIT, 3): a learner who picks another file at every re-show is shown their pick again three times and no more, so the return ends instead of following the learner for good; fails_when=the loop has no bound or a larger one, so a fourth re-show of the learner's latest pick follows, or a smaller one stops the learner's picks before the third; why_new=Cycle 0072 task 1, test gap (the newer-pick test ends after two re-shows and never reaches the bound); seam=restoreWithLearnerDuringSecondShow, holdNextTextDocumentShow held for each re-show, focusMutableDraft as the learner's picks and the harness's list of shown documents; no_claim=which file the learner ends in: a pick made while the third re-show waits is covered by it
+// Value: protects=the bound of the return's corrective re-shows (LEARNER_CHOICE_RESHOW_LIMIT, 3): a learner who picks another file at every re-show is shown their pick again three times and no more, so the return ends instead of following the learner for good, and the answer says Codebook could not bring the latest choice back (the third re-show covered it) instead of claiming it was kept; fails_when=the loop has no bound or a larger one, so a fourth re-show of the learner's latest pick follows, or a smaller one stops the learner's picks before the third (the answer then arrives before the re-show starts), or the bound ends with the "your choice was kept" sentence over a newer pick; why_new=Cycle 0072 task 1, test gap (the newer-pick test ends after two re-shows and never reaches the bound), then Cycle 0072 /ship pass 1 (Codex outside voice 5 and the core review: the bound answered kept over a newer pick; the 1 s timer as give-up); seam=restoreWithLearnerDuringSecondShow, holdNextTextDocumentShow held for each re-show, focusMutableDraft as the learner's picks and the harness's list of shown documents; no_claim=the picks are the harness's focus of drafts
 test('a learner who picks another file at every corrective re-show is shown their pick again three times and the return then ends', async () => {
   // Arrange: the moved copy has the keyboard in the fourth group, which also holds data.ts and search.tsx.
   const harness = await workspaceHarness(false)
@@ -2091,18 +2090,14 @@ test('a learner who picks another file at every corrective re-show is shown thei
       () => {
         harness.focusMutableDraft('data.ts', 4)
       },
-      async () => {
+      async (returnEnded) => {
         for (const file of ['search.tsx', 'data.ts', 'search.tsx']) {
           const reshow = harness.holdNextTextDocumentShow()
-          // A bound lower than three ends the return before this re-show starts: fail then, not wait for ever.
-          let giveUp: NodeJS.Timeout | undefined
+          // A bound lower than three ends the return before this re-show starts: the answer arrives first and the test fails, with no timer to wait for.
           const started = await Promise.race([
             reshow.started.then(() => true),
-            new Promise<boolean>((resolve) => {
-              giveUp = setTimeout(resolve, 1_000, false)
-            }),
+            returnEnded.then(() => false),
           ])
-          clearTimeout(giveUp)
           assert.ok(
             started,
             `the re-show before the pick of ${file} never began`,
@@ -2121,13 +2116,171 @@ test('a learner who picks another file at every corrective re-show is shown thei
           .slice(showsBefore)
           .map((shown) => shown.name)
           .filter((name) => name === 'data.ts' || name === 'search.tsx'),
+        frontOfFourthGroup: harness.groups.find(
+          (group) => group.viewColumn === 4,
+        )?.activeTab?.label,
+        activeColumn: harness.editor.window.tabGroups.activeTabGroup.viewColumn,
       },
       {
-        answer: FOCUS_KEPT_ANSWER,
+        answer: LATEST_CHOICE_NOT_BACK_ANSWER,
         reshownPicks: ['data.ts', 'search.tsx', 'data.ts'],
+        frontOfFourthGroup: 'data.ts',
+        activeColumn: 4,
       },
     )
   } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a learner's pick of the moved Captured source copy in their own group, made after another pick while the second show is pending: the copy is a pick like any file, so the return shows it again and its group keeps the keyboard with the copy in front; fails_when=every report of the captured source's document is dropped, so the corrective re-show brings the earlier pick (data.ts) back over the copy while the answer says the choice was kept; why_new=Cycle 0072 /ship pass 1 (Codex structured review P2, outside voice 2); seam=restoreWithLearnerDuringSecondShow, focusMutableDraft for the first pick and clickMovedSourceTab for the second; no_claim=the harness's click stands for any way a learner activates the copy's tab
+test('a learner who picks data.ts and then the moved Captured source copy in their group while the second show is pending keeps the copy in front', async () => {
+  // Arrange: the moved copy has the keyboard in the fourth group, which also holds data.ts and search.tsx.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await openRetainedStudy(harness)
+    harness.moveSource((await addLearnerGroup(harness)).viewColumn)
+    // Act: the learner picks data.ts and then the copy, both in the fourth group, while the second show is pending.
+    const answer = await restoreWithLearnerDuringSecondShow(harness, () => {
+      harness.focusMutableDraft('data.ts', 4)
+      harness.clickMovedSourceTab(4)
+    })
+    // Assert
+    assert.deepEqual(
+      {
+        answer,
+        frontOfFourthGroup: harness.groups.find(
+          (group) => group.viewColumn === 4,
+        )?.activeTab?.label,
+        activeColumn: harness.editor.window.tabGroups.activeTabGroup.viewColumn,
+      },
+      {
+        answer: FOCUS_KEPT_ANSWER,
+        frontOfFourthGroup: 'Captured-theme.ts',
+        activeColumn: 4,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the editor's report of the active editor again while the second show is pending (Cursor re-reports it): the copy that already had the keyboard is no pick of the learner's, so the hand-off completes and the copy closes; fails_when=the copy's document in its own group counts as a pick without a different pick before it, so the return stops with "your choice was kept" over a learner who did nothing; why_new=Cycle 0072 /ship pass 1 (Codex structured review P2, outside voice 2: the guard of the re-pick fix); seam=restoreWithLearnerDuringSecondShow and clickMovedSourceTab as the editor's report of the copy that has the keyboard; no_claim=Cursor's own report is not reproduced, only its shape
+test('the editor reporting the copy that has the keyboard again while the second show is pending is no pick and the hand-off completes', async () => {
+  // Arrange: the moved copy has the keyboard in the fourth group.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await openRetainedStudy(harness)
+    const learnerGroup = await addLearnerGroup(harness)
+    harness.moveSource(learnerGroup.viewColumn)
+    // Act: the editor reports the copy as the active editor again while the second show is pending.
+    const answer = await restoreWithLearnerDuringSecondShow(harness, () => {
+      harness.clickMovedSourceTab(learnerGroup.viewColumn)
+    })
+    // Assert
+    assert.deepEqual(
+      {
+        answer,
+        copyStillOpen: learnerGroup.tabs.some(
+          (tab) => tab.label === 'Captured-theme.ts',
+        ),
+      },
+      { answer: 'answered', copyStillOpen: false },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the Study pane in front of the active group when a Restore starts the return of the captured source: the editor reports that group again while the first show is pending (a tab or group event as the source's tab opens), and the tab in front at the start is no pick of the learner's, so the return completes and the copy closes; fails_when=the tab in front when the first show starts counts as a pick, so the return refuses with "your choice was kept" over a learner who did nothing; why_new=Cycle 0072 /ship pass 1 (Codex outside voice 1: the first show is watched, a Restore from the Study pane must not abort); seam=holdNextTextDocumentShow on the captured source, activatePaneGroupByGroupEventOnly on the Study pane's group before and during the show, and agentRestoreOutcome; no_claim=Cursor's own reports are not reproduced, only their shape
+test('a group event that names the Study pane again while the first show is pending is no pick and the Restore completes', async () => {
+  // Arrange: the captured source stands in the learner's fourth group; the Study pane is in front of the active group, and the editor's first show of the source is held.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let release = (): void => {}
+  try {
+    await openRetainedStudy(harness)
+    const learnerGroup = await addLearnerGroup(harness)
+    harness.moveSource(learnerGroup.viewColumn)
+    harness.activatePaneGroupByGroupEventOnly('codebook.studyContext')
+    const held = harness.holdNextTextDocumentShow({
+      uri: harness.reader.inspect().sourceUri!,
+    })
+    release = held.release
+    const restoring = agentRestoreOutcome(harness)
+    await held.started
+    // Act: the editor reports the Study pane's group as the active one again, then the show finishes.
+    harness.activatePaneGroupByGroupEventOnly('codebook.studyContext')
+    held.release()
+    const answer = await restoring
+    // Assert
+    assert.deepEqual(
+      {
+        answer,
+        copyStillOpen: learnerGroup.tabs.some(
+          (tab) => tab.label === 'Captured-theme.ts',
+        ),
+        frontOfSourceColumn: harness.groups.find(
+          (group) => group.viewColumn === 2,
+        )?.activeTab?.label,
+      },
+      {
+        answer: 'answered',
+        copyStillOpen: false,
+        frontOfSourceColumn: 'Captured-theme.ts',
+      },
+    )
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
+// Value: protects=a file the learner picks in the Study source column while the first show of the captured source is pending: the show puts the source in front of that column and covers the pick, so the return shows the pick again and stops with the choice kept; fails_when=the first show runs unwatched and the place after it equals the place expected for the source in front, so the Restore answers success over the learner's pick; why_new=Cycle 0072 /ship pass 1 (Codex outside voice 1); seam=the workspace harness's holdNextTextDocumentShow on the captured source, focusMutableDraft of notes.ts and other.ts in the source column and agentRestoreOutcome; no_claim=the pick is the harness's focus of a draft
+test('a file the learner picks in the source column while the first show is pending is shown again over the source and refuses the Restore', async () => {
+  // Arrange: notes.ts is in front of the source column with the keyboard, and the editor's first show of the captured source is held.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let release = (): void => {}
+  try {
+    await openRetainedStudy(harness)
+    harness.moveSource((await addLearnerGroup(harness)).viewColumn)
+    harness.focusMutableDraft('notes.ts', 2)
+    const revisionBefore =
+      harness.reader.presentationState().presentationControlRevision
+    const held = harness.holdNextTextDocumentShow({
+      uri: harness.reader.inspect().sourceUri!,
+    })
+    release = held.release
+    const restoring = agentRestoreOutcome(harness)
+    await held.started
+    // Act: the learner picks other.ts in the same column, then the show finishes.
+    harness.focusMutableDraft('other.ts', 2)
+    held.release()
+    const answer = await restoring
+    // Assert
+    assert.deepEqual(
+      {
+        answer,
+        frontOfSourceColumn: harness.groups.find(
+          (group) => group.viewColumn === 2,
+        )?.activeTab?.label,
+        activeColumn: harness.editor.window.tabGroups.activeTabGroup.viewColumn,
+        revisionAdvanced:
+          harness.reader.presentationState().presentationControlRevision >
+          revisionBefore,
+      },
+      {
+        answer: FOCUS_KEPT_ANSWER,
+        frontOfSourceColumn: 'other.ts',
+        activeColumn: 2,
+        revisionAdvanced: false,
+      },
+    )
+  } finally {
+    release()
     await harness.close()
   }
 })
