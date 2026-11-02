@@ -304,6 +304,9 @@ Formatting: `pnpm --dir extension format` / `format:check` and the lint-staged h
   - A command a Fallow update adds gets its CI step in that cycle's dependency step.
   - Deterministic pass/fail results gate, against a baseline where the command has one.
   - Candidate or discovery output (`security`, `similar-code`, `flags`, `suppressions`) goes to the job summary without gating.
+  - `mutation` checks that tests fail without the code they test, which a delegated fixer may skip.
+    - It runs in its own job with `--time-budget 10m` (about 10 minutes is the limit; 30 is too long).
+    - It gates with `--min-score` once a measured run sets the level.
   - Prefer `parallel:` steps in one job over new jobs: 20 concurrent jobs on the Free plan.
   - Fallow Cloud runtime coverage stays out: it is paid.
 
