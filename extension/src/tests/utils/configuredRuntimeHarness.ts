@@ -2,7 +2,7 @@ import { join, resolve } from 'node:path'
 import type { TestContext } from 'node:test'
 import { runInNewContext } from 'node:vm'
 
-import type { DebugSession } from 'vscode'
+import type { DebugSession, DebugSessionOptions } from 'vscode'
 
 import type { ConfiguredBrowserRun } from '../../configuredBrowserRun'
 import type * as ConfiguredBrowserRunModule from '../../configuredBrowserRun'
@@ -19,7 +19,7 @@ import type {
   RepositoryConfiguration,
   RepositoryOperation,
 } from '../../repositoryConfigSchemas'
-import type { RuntimeControl } from '../../runtime'
+import type { Participant, RuntimeControl } from '../../runtime'
 import type { ViewportRecordingObserver } from '../../runtimeSupport/browserViewport'
 import type { ProfileLeft } from '../../runtimeSupport/hostBrowser'
 import type {
@@ -72,6 +72,7 @@ import {
   type NextPagesPageState,
 } from './nextPagesWorkspace'
 import { repositoryHarness } from './repositoryHarness'
+import { createServerParticipant } from './serverRenderParticipant'
 import { sourceBreakpointRequest } from './sourceBreakpointRequest'
 
 /** What the owned page reports for a condition that does not hold; `textDifference` is left open so a test can send a value the run must refuse. */
@@ -154,6 +155,12 @@ export async function configuredRuntimeHarness(
     sealHangs?: boolean
     /** Makes the stand-in server seal answer as {@link readDevelopmentBundle} does for a Next server stop: the layer it sealed (`action-browser` or `rsc`), or the client-component refusal of a `'use client'` file's reference stub. */
     serverSeal?: 'action-browser' | 'rsc' | 'client-component'
+    /**
+     * Gives a version 3 run its scripted Node participant (`harness.server`, see {@link createServerParticipant}): the stand-in server offers an inspector, the run attaches a `pwa-node` session and a second CDP channel, acknowledges the server stops' registrations, and a test sends the server's hits itself. Server stops are sealed at `(<serverSeal ?? 'action-browser'>)/./<path>`; `route` is the route the work store answers by default (`null`: unreadable). Without it a server stop's preparation ends after the seal, as before.
+     */
+    serverRuntime?: { route?: string | null }
+    /** What `document.readyState` answers from the start (default `complete`); an entry-render test starts with `loading` and calls `setDocumentReadyState('complete')` once the page may load. */
+    documentReadyState?: 'loading' | 'complete'
     /** The executed module's text instead of the default one-statement module, such as a Vite module with an inlined env value. */
     moduleJavascript?: string
     /** Makes the Vite stand-in report these values as the ones it masks in kept module text, as the launcher's env-file values are. */
@@ -217,8 +224,11 @@ export async function configuredRuntimeHarness(
      * Runs a version 3 configuration of ordered operations instead of the single action: the first stop and each of `additionalStops` follow the operation `stopOperations` names (the first stop first). A stop's pause is reported inside the input of its operation, which the page answers only once the operation's last stop was continued, as a handler paused in the debugger does.
      */
     operations?: {
+      /** The operations; an empty list omits the field from the configuration (allowed when every stop declares `afterOperation: 0`). */
       operations: RepositoryOperation[]
       stopOperations: number[]
+      /** The participant of each stop, the first stop first; by default the first is `options.participant ?? 'browser'` and every other stop is a browser stop. */
+      stopParticipants?: Participant[]
       /** The controls the stand-in page reports, by selector. */
       controls?: Record<string, FakeControl>
       /** Selectors whose text the page reads back differently after the insert, as a control that rewrites its value does. */
@@ -275,14 +285,21 @@ export async function configuredRuntimeHarness(
         adapter: reference.configuration.adapter,
         book: reference.configuration.book,
         source: reference.configuration.source,
-        participant: options.participant ?? ('browser' as const),
+        participant:
+          options.operations.stopParticipants?.[0] ??
+          options.participant ??
+          ('browser' as const),
         afterOperation: options.operations.stopOperations[0]!,
         before: reference.configuration.action.before,
         after: reference.configuration.action.after,
-        operations: options.operations.operations,
+        ...(options.operations.operations.length
+          ? { operations: options.operations.operations }
+          : {}),
         inspections: reference.configuration.inspections,
         additionalStops: additionalStops.map((stop, index) => ({
-          participant: 'browser' as const,
+          participant:
+            options.operations!.stopParticipants?.[index + 1] ??
+            ('browser' as const),
           source: {
             ...reference.configuration.source,
             line: stop.line,
@@ -443,6 +460,9 @@ export async function configuredRuntimeHarness(
   const signInNotices: SignInRequiredReason[] = []
   // The pathname the stand-in page reports; a landing replaces it.
   let pagePathname = options.entryPath ?? '/'
+  let documentReadyState: 'loading' | 'complete' =
+    options.documentReadyState ?? 'complete'
+  let navigationCount = 0
   let closeAttempts = 0
   const serverOrigin = options.serverOrigin ?? 'http://127.0.0.1:4321'
   const savedLease: SavedSessionRunLease = {
@@ -741,6 +761,9 @@ export async function configuredRuntimeHarness(
   const operationsOption = options.operations
   /** Tells whether the result of the action is visible: the single input was sent, or the last operation of a version 3 run was acknowledged. */
   const isResultVisible = (): boolean => {
+    // A run with no operation shows its result once the entry page loaded: there is no input to wait for.
+    if (operationsOption && operationsOption.operations.length === 0)
+      return true
     const view = run.view()
     return view.operations
       ? view.operations.at(-1)?.ack === 'yes'
@@ -748,8 +771,19 @@ export async function configuredRuntimeHarness(
   }
   /** Tells whether a declared stop follows the operation the page just received an input for and pauses its handler; after {@link suppressInputPause} the input runs past that stop's line and is answered at once. */
   const stopPausesLatestInput = (): boolean =>
-    emitInputPause &&
-    (operationsOption?.stopOperations.includes(inputsSeen) ?? false)
+    emitInputPause && indexOfFirstBrowserStopOf(inputsSeen) >= 0
+  /** Finds the first browser stop that follows an operation: a server stop never pauses the page's handler, the server renders on its own. */
+  function indexOfFirstBrowserStopOf(operationIndex: number): number {
+    return (
+      operationsOption?.stopOperations.findIndex(
+        (stopOperation, index) =>
+          stopOperation === operationIndex &&
+          (operationsOption.stopParticipants?.[index] ??
+            (index === 0 ? (options.participant ?? 'browser') : 'browser')) ===
+            'browser',
+      ) ?? -1
+    )
+  }
   /** Keeps the page's answer to an input open until the last stop of its operation was continued. */
   const holdInputUntilContinued = (): Promise<void> =>
     new Promise<void>((resolve, reject) => {
@@ -758,7 +792,7 @@ export async function configuredRuntimeHarness(
     })
   /** Reports the first stop that follows the operation the page just received an input for. */
   const emitFirstStopOfLatestInput = (): void => {
-    const index = operationsOption!.stopOperations.indexOf(inputsSeen)
+    const index = indexOfFirstBrowserStopOf(inputsSeen)
     emitPause(
       index === 0 ? 1 : additionalStops[index - 1]!.column,
       index === 0 ? 1 : additionalStops[index - 1]!.line,
@@ -826,7 +860,7 @@ export async function configuredRuntimeHarness(
   /** Answers what the page evaluates: its location, and the configured DOM conditions, of which the after conditions hold only once the input was sent. */
   const pageEvaluation = (expression: string | undefined): unknown => {
     if (expression === NEXT_PAGES_STATE_EXPRESSION) return nextPagesState()
-    if (expression === 'document.readyState') return 'complete'
+    if (expression === 'document.readyState') return documentReadyState
     if (expression === 'location.href') return 'about:blank'
     if (expression === 'location.pathname') return pagePathname
     if (expression === '[location.origin,location.pathname]')
@@ -857,6 +891,14 @@ export async function configuredRuntimeHarness(
       ? undefined
       : (options.capturedValue ?? 'dark')
   }
+  /** Evaluates a declared inspection's expression against the scope the stand-in debugger shows at a pause (page and server alike). */
+  const evaluateInspection = (expression: string | undefined): unknown =>
+    runInNewContext(expression ?? '', {
+      nextTheme: requiredInspectionValue(),
+      setTheme() {},
+      enabled: false,
+      selection: null,
+    })
   const proxy = {
     closed: false,
     get onClose() {
@@ -1043,9 +1085,19 @@ export async function configuredRuntimeHarness(
             frame: {
               id: 'main',
               url: `http://localhost:4321${landing}`,
+              loaderId: `loader-${++navigationCount}`,
             },
           })
         }
+        // A run with a scripted server commits the entry document for the main frame's loader, as the entry-load phase waits for.
+        else if (options.serverRuntime)
+          listeners.get('Page.frameNavigated')?.({
+            frame: {
+              id: 'main',
+              url: String(parameters?.url),
+              loaderId: `loader-${++navigationCount}`,
+            },
+          })
         if (options.adapter)
           listeners.get('Page.frameNavigated')?.({
             frame: { id: 'main', url: String(parameters?.url) },
@@ -1089,14 +1141,7 @@ export async function configuredRuntimeHarness(
       if (method === 'Debugger.evaluateOnCallFrame') {
         try {
           return {
-            result: {
-              value: runInNewContext(parameters?.expression ?? '', {
-                nextTheme: requiredInspectionValue(),
-                setTheme() {},
-                enabled: false,
-                selection: null,
-              }),
-            },
+            result: { value: evaluateInspection(parameters?.expression) },
           }
         } catch {
           return {
@@ -1202,12 +1247,44 @@ export async function configuredRuntimeHarness(
       },
     },
   ]
+  // The scripted Node participant of a run that declares server stops (opt in with `serverRuntime`).
+  const serverScriptUrl = `webpack-internal:///(${options.serverSeal === 'rsc' ? 'rsc' : 'action-browser'})/./${definition.configuration.source.path}`
+  const serverParticipant = options.serverRuntime
+    ? createServerParticipant({
+        run: () => run,
+        sourcePath,
+        javascript,
+        scriptUrl: serverScriptUrl,
+        workspace: repository.directory,
+        defaultRoute: options.serverRuntime.route ?? null,
+        evaluateOnCallFrame: evaluateInspection,
+        breakpoints,
+        released: (name) => releases.push(name),
+      })
+    : undefined
+  const serverLaunches: DebugSession['configuration'][] = []
   const vscode = {
-    workspace: { textDocuments: documents },
+    workspace: {
+      textDocuments: documents,
+      getWorkspaceFolder: () => undefined,
+    },
     debug: {
       breakpoints,
       addBreakpoints(added: TestBreakpoint[]): void {
         breakpoints.push(...added)
+        if (serverParticipant)
+          queueMicrotask(() => serverParticipant.acknowledgeBreakpoints())
+      },
+      async startDebugging(
+        _folder: unknown,
+        config: DebugSession['configuration'],
+        _startOptions?: DebugSessionOptions,
+      ): Promise<boolean> {
+        if (!serverParticipant) throw new Error('No server participant')
+        serverLaunches.push(config)
+        Object.assign(serverParticipant.session.configuration, config)
+        run.addSession(serverParticipant.session)
+        return true
       },
       removeBreakpoints(removed: TestBreakpoint[]): void {
         for (const breakpoint of removed) {
@@ -1229,6 +1306,8 @@ export async function configuredRuntimeHarness(
             ),
           },
         })
+        if (serverParticipant)
+          queueMicrotask(() => serverParticipant.acknowledgeBreakpoints())
         if (removedAck)
           queueMicrotask(() =>
             run.onResponse(selected, {
@@ -1250,6 +1329,7 @@ export async function configuredRuntimeHarness(
         releases.push('debugger')
         run.terminated(root)
         run.terminated(selected)
+        if (serverParticipant) run.terminated(serverParticipant.session)
       },
     },
     Uri: { file: (path: string) => ({ scheme: 'file', fsPath: path }) },
@@ -1326,6 +1406,7 @@ export async function configuredRuntimeHarness(
         )
     },
     outputTail: () => options.nextPages?.outputTail ?? '',
+    ...serverParticipant?.application,
     close: async (): Promise<void> => {
       releases.push('application')
     },
@@ -1427,7 +1508,14 @@ export async function configuredRuntimeHarness(
           }
         },
       },
-      './runtimeSupport/cdp': { Cdp: { connect: async () => proxy } },
+      './runtimeSupport/cdp': {
+        Cdp: {
+          connect: async (url: string) =>
+            serverParticipant && url.endsWith('/server')
+              ? serverParticipant.proxy
+              : proxy,
+        },
+      },
       './utils/createBundleVerifier': {
         // The real verifier, with every scan of its sealed map recorded.
         createBundleVerifier: (sealed: BundleSource) => {
@@ -1446,6 +1534,8 @@ export async function configuredRuntimeHarness(
           _workspace: string,
           source: Parameters<typeof clientComponentRefusal>[0],
           signal: AbortSignal,
+          _entryPath?: string,
+          execution?: string,
         ) => {
           // A hung `.next/dev` read ends only when the run is cancelled.
           if (options.sealHangs)
@@ -1454,10 +1544,19 @@ export async function configuredRuntimeHarness(
             )
           if (options.serverSeal === 'client-component')
             throw clientComponentRefusal(source)
+          // A server stop of a run with a scripted server is sealed at the address of the layer it is sealed from.
+          const isServerStop =
+            serverParticipant && execution === 'server-action'
           return {
-            bundle,
+            bundle: isServerStop
+              ? { ...bundle, scriptUrl: serverScriptUrl }
+              : bundle,
             discovery: {},
-            ...(options.serverSeal ? { layer: options.serverSeal } : {}),
+            ...(serverParticipant
+              ? { layer: options.serverSeal ?? 'action-browser' }
+              : options.serverSeal
+                ? { layer: options.serverSeal }
+                : {}),
           }
         },
       },
@@ -1666,6 +1765,14 @@ export async function configuredRuntimeHarness(
     releases,
     emitPause,
     emitCdpPause,
+    /** The scripted Node participant of a run opened with `serverRuntime` (see {@link createServerParticipant}); `undefined` otherwise. */
+    server: serverParticipant?.api,
+    /** The configuration of each server debug session the run started, in order. */
+    serverLaunches,
+    /** Changes what `document.readyState` answers from now on, so a test lets the entry page finish loading once its server stops were continued. @example harness.setDocumentReadyState('complete') */
+    setDocumentReadyState(state: 'loading' | 'complete'): void {
+      documentReadyState = state
+    },
     /** How many operation inputs the stand-in page received (version 3 runs). */
     inputsSeen: (): number => inputsSeen,
     /** How many owned stop breakpoints the run has requested so far (a retired one still counts), so a test sees whether a stop was armed yet. */
