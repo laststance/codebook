@@ -2180,25 +2180,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           context: 'repl',
         })
       return typeof answer?.result === 'string' ? answer.result : undefined
-    })().catch(() => undefined)
-    let timer: ReturnType<typeof setTimeout> | undefined
-    let onAbort: (() => void) | undefined
-    const bound = new Promise<undefined>((resolve) => {
-      timer = setTimeout(
-        () => resolve(undefined),
-        SERVER_RENDER_CLASSIFICATION_MS,
-      )
-      // A stop of the run ends the read as well; the caller then finds the run ending.
-      onAbort = (): void => resolve(undefined)
-      this.abort.signal.addEventListener('abort', onAbort, { once: true })
-    })
-    try {
-      return renderedRouteOf(await Promise.race([read, bound]))
-    } finally {
-      clearTimeout(timer)
-      // The listener must not outlive the read: a long render classifies many hits on one signal.
-      if (onAbort) this.abort.signal.removeEventListener('abort', onAbort)
-    }
+    })()
+    // A stop of the run ends the read as well; the caller then finds the run ending.
+    return renderedRouteOf(await this.withinClassificationBound(read))
   }
 
   /**
@@ -2224,6 +2208,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       return await Promise.race([read.catch(() => undefined), bound])
     } finally {
       clearTimeout(timer)
+      // The listener must not outlive the read: a long render classifies many hits on one signal.
       if (onAbort) this.abort.signal.removeEventListener('abort', onAbort)
     }
   }
