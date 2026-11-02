@@ -312,6 +312,45 @@ test('a learner’s click into another tab while Arrange returns the captured so
   }
 })
 
+// Value: protects=the recovery of a learner who added a fourth group, whose status was read by the chat (which retires the Study's confirmation because the grid changed), and who then moved the captured source into it: Arrange confirms the layout and keeps the group; fails_when=the return decides its short confirmation from the retired confirmation flag, so Restore falls to the full placement and answers "The Study panes changed during Restore"; why_new=Cycle 0072 task 1 CodeRabbit CLI pass 3 (Major); seam=the workspace harness, readPresentationState as the chat's status read, a fourth editor group and moveSource; no_claim=the status read is the reader's own, not a real chat tool call
+test('Arrange confirms the layout after a status read retired the confirmation of a grid that gained a learner group and the captured source moved into it', async () => {
+  // Arrange: a confirmed Study, a fourth learner group, a status read that retires the confirmation, then the captured source moved into that group.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await openRetainedStudy(harness)
+    const learnerGroup = await addLearnerGroup(harness)
+    const read = await harness.reader.readPresentationState()
+    harness.moveSource(learnerGroup.viewColumn)
+    // Act
+    await harness.reader.action('arrange')
+    // Assert
+    const state = harness.reader.presentationState()
+    assert.deepEqual(
+      {
+        readConfirmed: read.layoutConfirmed,
+        layoutConfirmed: state.layoutConfirmed,
+        reason: state.reason,
+        sourceColumn: harness.sourceColumn(),
+        learnerGroup: learnerGroupAfter(harness, learnerGroup),
+      },
+      {
+        readConfirmed: false,
+        layoutConfirmed: true,
+        reason: undefined,
+        sourceColumn: 2,
+        learnerGroup: {
+          open: true,
+          column: 4,
+          files: ['data.ts', 'search.tsx'],
+        },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the revision rule after the captured source's return: a second control that still holds the revision of the request that was answered is refused as stale; fails_when=the confirmed answer of the return keeps the old control revision, so a stale control is admitted; why_new=Cycle 0072 task 1 second review round (OCR M2); seam=the workspace harness with a fourth editor group, the reader's arrange action and changePresentation; no_claim=none beyond protects
 test('a control holding the revision from before Arrange is refused as stale after the captured source returned', async () => {
   // Arrange: the captured source stands in the learner's fourth group.

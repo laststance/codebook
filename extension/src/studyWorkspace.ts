@@ -3066,6 +3066,32 @@ export class StudyWorkspace {
   }
 
   /**
+   * Says whether the panes stand where the last arrangement's receipt recorded them after the captured source returned, whatever the confirmation flag says; asked by {@link returnDisplacedCapturedSourceThenAdmit}.
+   * The Study's own grid must not have changed: with the receipt's group count the measured grid has to equal the receipt's signature, so a resized grid is not confirmed. A grid that gained learner groups beside the Study cannot be compared with that signature and is accepted on the panes' positions.
+   * @returns `true` when the state would read confirmed if the flag were set.
+   * @example if (await this.placementHoldsAfterReturn()) this.presentationConfirmed = true
+   */
+  private async placementHoldsAfterReturn(): Promise<boolean> {
+    const receipt = this.layoutReceipt
+    if (!receipt) return false
+    const layout = await this.readPassivePresentationLayout()
+    if (layout === undefined) return false
+    if (
+      editorLayoutGroupCount(layout) ===
+        editorLayoutGroupCount(JSON.parse(receipt.signature)) &&
+      JSON.stringify(layout) !== receipt.signature
+    )
+      return false
+    const wasConfirmed = this.presentationConfirmed
+    this.presentationConfirmed = true
+    try {
+      return this.presentationState().layoutConfirmed
+    } finally {
+      this.presentationConfirmed = wasConfirmed
+    }
+  }
+
+  /**
    * Says whether {@link assertPresentationAdmission} would admit a presentation change now, without throwing; asked by {@link restoresDisplacedCapturedSource}.
    * @returns `false` while a control, a save, a source or navigation, or a run's capture or resume is pending.
    * @example if (this.isPresentationAdmissionOpen()) this.returnDisplacedCapturedSourceThenAdmit(…)
@@ -3134,6 +3160,7 @@ export class StudyWorkspace {
   ): Promise<PresentationState> {
     const displaced = this.displacedCapturedSourceTab(),
       lifetime = this.lifetime
+    let confirmedByPlacement = false
     if (displaced && this.sourceUri) {
       // The admission conditions of any presentation change hold now and across every native step below.
       const runtimeIdentity = this.assertPresentationAdmission()
@@ -3226,13 +3253,16 @@ export class StudyWorkspace {
           }
         }
         await giveKeyboardBack?.()
+        // Decided from the measured placement, not from the confirmation flag a status read may have retired for a benign change (a learner group beside the Study).
+        confirmedByPlacement = await this.placementHoldsAfterReturn()
+        assertOwned()
       } finally {
         if (this.presentationTransition === transition)
           this.presentationTransition = undefined
       }
     }
     // The source standing in its column again can confirm the retained grid by itself; a full placement would refuse the learner groups.
-    if (this.presentationState().layoutConfirmed) {
+    if (confirmedByPlacement || this.presentationState().layoutConfirmed) {
       this.presentationConfirmed = true
       this.requestedPresentation = undefined
       this.presentationReason = undefined
