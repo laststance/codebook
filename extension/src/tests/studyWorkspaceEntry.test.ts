@@ -4,6 +4,7 @@ import { test } from 'node:test'
 
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
+import { textEditorFocusState } from '../utils/textEditorFocusState'
 
 import {
   readerSeams,
@@ -1731,6 +1732,74 @@ test('a refused presentation change releases its transition when the chat focus 
   } finally {
     resetFakeClock(context)
     held.release()
+    await harness.close()
+  }
+})
+
+// Value: protects=the entry's acceptance of Cursor's own-pane focus report (the Application's group named active after the Study pane took the focus) while two Opens overlap: the Open that finishes first must not end the acceptance of the one still arranging; fails_when=the acceptance is a flag that the first finished arrangement clears, so the second Open's guard refuses Cursor's report with "Native pane, group or focus changed while presentation waited"; why_new=Cycle 0072 task 2, CodeRabbit pass 6 minor 1; seam=arrangeForEntry with the reader's arrange held, the acceptance count; no_claim=the real Cursor's answer (native Cursor trial)
+test('an entry keeps accepting the editor’s own-pane focus report while another entry’s arrangement has finished', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  const releases: (() => void)[] = []
+  harness.reader['arrange'] = (): Promise<void> =>
+    new Promise<void>((resolve) => releases.push(resolve))
+  try {
+    const first = harness.reader['arrangeForEntry'](undefined, false, undefined)
+    const second = harness.reader['arrangeForEntry'](
+      undefined,
+      false,
+      undefined,
+    )
+
+    // Act
+    releases[0]!()
+    await first
+
+    // Assert
+    assert.equal(harness.reader['acceptingOwnPaneFocusReports'], 1)
+    releases[1]!()
+    await second
+    assert.equal(harness.reader['acceptingOwnPaneFocusReports'], 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a learner who moves to a Repository Wiki tab in another group while an entry arranges (text editor unchanged): that move is the learner's and is refused, not taken for Cursor's report of the Application and Study panes; fails_when=the own-pane check accepts every Codebook pane, the Repository Wiki among them, so the guard adopts the learner's move as its new focus baseline; why_new=Cycle 0072 task 2, CodeRabbit pass 6 minor 2; seam=adoptOwnPaneFocusReport with fake groups whose front tab is a Codebook webview; no_claim=the real Cursor's answer (native Cursor trial)
+test('an entry takes the editor’s move to the Application pane for its own report and a move to a Repository Wiki pane for the learner’s', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  const baseline = {
+    nativeGroup: {},
+    focusedGroup: undefined,
+    retainedFocus: {
+      editor: textEditorFocusState(
+        harness.editor.window.activeTextEditor as never,
+      ),
+      group: undefined,
+    },
+  }
+  const groupShowing = (viewType: string): never =>
+    ({
+      activeTab: { input: new harness.editor.TabInputWebview(viewType) },
+    }) as never
+  try {
+    // Act
+    const toWiki = harness.reader['adoptOwnPaneFocusReport'](
+      true,
+      groupShowing('mainThreadWebview-codebook.repositoryWiki'),
+      baseline as never,
+    )
+    const toApplication = harness.reader['adoptOwnPaneFocusReport'](
+      true,
+      groupShowing('mainThreadWebview-codebook.scopedBrowser'),
+      baseline as never,
+    )
+
+    // Assert
+    assert.equal(toWiki, baseline)
+    assert.notEqual(toApplication, baseline)
+  } finally {
     await harness.close()
   }
 })

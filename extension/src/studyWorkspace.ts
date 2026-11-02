@@ -864,6 +864,12 @@ const UNNOTED_EDITOR_COMMANDS: ReadonlySet<string> = new Set([
   'setContext',
 ])
 
+/** The view types of the Application and the Study explanation: the own panes whose focus report an entry takes for no change of the learner's (the Repository Wiki is not among them). */
+const STUDY_PANE_KINDS = [
+  'codebook.scopedBrowser',
+  'codebook.studyContext',
+] as const
+
 /** Owns the retained learner reader while {@link StudyService} owns execution; activation constructs it before MCP-first runs. @example await workspace.open() */
 export class StudyWorkspace {
   private service?: StudyService
@@ -1404,8 +1410,8 @@ export class StudyWorkspace {
   private presentationPreference: PresentationState['preference'] = {
     status: 'default',
   }
-  /** `true` while {@link open} arranges the panes of an entry: the placement guards then take the editor's report of another own pane as the active one for no change of the learner's (Cursor 3.27.22 after a reload). */
-  private acceptingOwnPaneFocusReport = false
+  /** Greater than 0 while {@link open} arranges the panes of an entry: the placement guards then take the editor's report of another own pane as the active one for no change of the learner's (Cursor 3.27.22 after a reload). */
+  private acceptingOwnPaneFocusReports = 0
 
   private presentationTransitionValue?: {
     id: string
@@ -7426,7 +7432,7 @@ export class StudyWorkspace {
     retainLayout: boolean,
     retiredContextGroup: Parameters<StudyWorkspace['arrange']>[5],
   ): Promise<void> {
-    this.acceptingOwnPaneFocusReport = true
+    this.acceptingOwnPaneFocusReports++
     try {
       await this.arrange(
         signal,
@@ -7437,7 +7443,7 @@ export class StudyWorkspace {
         retiredContextGroup,
       )
     } finally {
-      this.acceptingOwnPaneFocusReport = false
+      this.acceptingOwnPaneFocusReports--
     }
   }
 
@@ -7461,7 +7467,7 @@ export class StudyWorkspace {
       !accepts ||
       active === baseline.nativeGroup ||
       !(input instanceof vscode.TabInputWebview) ||
-      !this.isCodebookPaneInput(input) ||
+      !this.isCodebookPaneInput(input, ...STUDY_PANE_KINDS) ||
       textEditorFocusState(vscode.window.activeTextEditor) !==
         baseline.retainedFocus.editor
     )
@@ -7535,8 +7541,8 @@ export class StudyWorkspace {
     }
     // Only the entry's own arrangement takes the editor's report of another own pane as no change of the learner's.
     const acceptsOwnPaneReport =
-      this.acceptingOwnPaneFocusReport &&
-      this.isCodebookPaneInput(focusedTab?.input)
+      this.acceptingOwnPaneFocusReports > 0 &&
+      this.isCodebookPaneInput(focusedTab?.input, ...STUDY_PANE_KINDS)
     return (): void => {
       const active = vscode.window.tabGroups.activeTabGroup
       // Cursor 3.27.22 names the Application's group active again moments after the Study pane took the focus; the entry's arrangement takes that report as no change of the learner's.
