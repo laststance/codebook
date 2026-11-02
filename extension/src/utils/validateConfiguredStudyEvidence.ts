@@ -13,6 +13,7 @@ import { afterOperationOf } from './afterOperationOf'
 import { assertConfiguredDescriptor } from './assertConfiguredDescriptor'
 import { assertObservationFormatFields } from './assertObservationFormatFields'
 import { configuredStops } from './configuredStops'
+import { declaredOperationsOf } from './declaredOperationsOf'
 import { hasObservedOperationResult } from './hasObservedOperationResult'
 import { isCrossRuntimeStudy } from './isCrossRuntimeStudy'
 import { isSavedBindingReceiptAtStop } from './isSavedBindingReceiptAtStop'
@@ -315,11 +316,15 @@ export function validateConfiguredStudyEvidence(
         JSON.stringify(observation.pause))
   )
     throw new Error('Configured continuation differs from the captured pause.')
+  // Only the synthetic record of a run that declares no operation stands without an acknowledged input: it dispatched none.
+  const isEntryOnlyRecord =
+    operation?.key === ENTRY_LOAD_OPERATION_KEY &&
+    !operation.inputDispatched &&
+    configuration.version === OPERATIONS_CONFIG_VERSION &&
+    declaredOperationsOf(configuration).length === 0
   if (
     operation?.afterVerified &&
-    // The aggregate record of a run of no operation dispatched no input, so it has none to acknowledge.
-    ((!operation.inputAcknowledged &&
-      operation.key !== ENTRY_LOAD_OPERATION_KEY) ||
+    ((!operation.inputAcknowledged && !isEntryOnlyRecord) ||
       !operation.continuedPause ||
       study.observations.length !== stops.length ||
       observation !== study.observations.at(-1))

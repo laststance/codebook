@@ -374,6 +374,52 @@ test('a group-0 observation with no dispatched operation validates in format 8 a
   })
 })
 
+// protects=OCR medium on the fix round: only a run that declares no operation may keep a verified result without an acknowledged input; fails_when=a saved study whose configuration declares operations reopens with an aggregate record keyed "entry-load", no input and a verified result, so its learning summary may cite a result no operation produced; no_claim=a real saved run (a hand-built format 8 study stands in)
+test('a verified entry-load result is refused when the configuration declares operations', () => {
+  // Arrange
+  const complete = createOperationsStudy()
+  const [, server] = complete.observations
+  const baseConfiguration = complete.configuration
+  if (baseConfiguration.version !== 3)
+    throw new Error('A version 3 configuration is needed.')
+  const [serverStop] = baseConfiguration.additionalStops ?? []
+  const entryRenderConfiguration = restopped(complete, [
+    { ...serverStop!, afterOperation: 0 },
+  ])
+  const entryPause = {
+    ...server!,
+    elapsedMs: 500,
+    execution: 'server-render' as const,
+    attribution: 'entry-load' as const,
+    declaredIndex: 0,
+    executionIndex: 0,
+  }
+  const forged: ConfiguredStudy = {
+    ...complete,
+    configuration: entryRenderConfiguration,
+    configurationHash: sha256(JSON.stringify(entryRenderConfiguration)),
+    finalOutcome: 'not-demonstrated',
+    operation: {
+      id: '00000000-0000-4000-8000-000000000071',
+      key: 'entry-load',
+      inputDispatched: false,
+      inputAcknowledged: false,
+      continuedPause: entryPause.pause,
+      afterVerified: true,
+    },
+    // Every declared operation done with its result verified, so only the aggregate record's input rule can refuse it.
+    observations: [entryPause],
+  }
+  // Act
+  const accept = (): void =>
+    validateConfiguredStudyEvidence(forged, forged.workspaceKey)
+  // Assert
+  assert.throws(accept, {
+    message:
+      'Configured after verification lacks confirmed input and continuation.',
+  })
+})
+
 // protects=format 7 stays the strict 0.2.72.0 shape: the format 8 fields are refused in it; fails_when=a format 7 study accepts execution, declaredIndex or firstExecutionObserved; no_claim=the writer
 test('a format 7 study that carries a format 8 field is refused', () => {
   // Arrange
