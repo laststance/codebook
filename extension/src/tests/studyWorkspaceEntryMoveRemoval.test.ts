@@ -8,7 +8,10 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
 
-import { workspaceHarness } from './studyWorkspaceHarness'
+import {
+  recordedReaderHarness,
+  workspaceHarness,
+} from './studyWorkspaceHarness'
 
 // Value: protects=an agent's Return Current in Cursor when the editor removes the group the Application's own move emptied together with its report of that move (F382, Cursor 3.26.16 candidate 3773701: the removal arrived 44 ms after the move began, `watchLearnerViewDuringApplicationMove` armed 52 ms before the refusal): the Return reaches the live run, nothing is written as a refused placement, and the Application stands at column 1 with the learner's two files kept; fails_when=the removal of the emptied group is not marked as Codebook's own before the move is issued, so Cursor's new objects for every group lose the identities of the groups behind it and the watch reads them as the learner's change and refuses with "Native pane, group or focus changed while presentation waited; the learner arrangement was preserved."; why_new=Cycle 0050 F382 (the first native run with the guard diagnostics); seam=applicationGroupMarkers (a record the resized grid no longer equals), leaveEmptyLockedGroup, addSeparateEditorPart (Cursor's chat part), replaceGroupObjectsOnTabChanges, rebuildTabObjectsAtGroupRemoval, closeEmptyGroupsAfterPanelMove (the removal comes with the move), the reader's agent select and returnToCurrent, the diagnostics log; no_claim=the VS Code first-Open-replay refusal of the same sentence
 test("in Cursor, an agent's Return Current reaches the live run when the editor removes the group the Application's move emptied together with the move", async () => {
@@ -1550,6 +1553,123 @@ test('a stop file already open in another group is not shown again beside the Ap
     )
   } finally {
     viewport.close()
+    await harness.close()
+  }
+})
+
+/**
+ * Builds Cursor 3.27.22's window after a reload and an Open Study Workspace beside the Agent chat part: the Application stands in the learner's group with data.ts and cards.tsx, auth.ts has a group of its own, the editor reports the Application's move out of the learner's group as Cursor did in task 5 of Cycle 0072, and the diagnostics are collected.
+ * @returns The harness and the placement refusals the diagnostics received.
+ * @example const { harness, refusals } = await applicationSharingLearnerGroupBesideChat()
+ */
+async function applicationSharingLearnerGroupBesideChat() {
+  const harness = await recordedReaderHarness()
+  const refusals: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry): void => {
+      if (entry.surface === 'presentation:placement-refused')
+        refusals.push(entry)
+    },
+    show: () => undefined,
+  }
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 229 }, { size: 349 }, { size: 109 }],
+  })
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.rebuildTabObjectsAtGroupRemoval()
+  harness.closeEmptyGroupsAfterPanelMove()
+  harness.leavePaneFocusUnreportedBesideChat()
+  harness.ignoresFirstGroupFocusCommandBesideChat()
+  harness.reportsMainThreadWebviewViewTypes()
+  harness.reportsPaneMoveAsOpenThenClose()
+  harness.reportsPaneMoveTabsBeforeGroups()
+  harness.keepTextEditorReportAfterNewGroup()
+  harness.reactivatePreviousGroupAfterInsertion()
+  harness.leaveEmptyLockedGroup(1)
+  harness.focusMutableDraft('data.ts', 2)
+  harness.focusMutableDraft('cards.tsx', 2)
+  harness.focusMutableDraft('auth.ts', 3)
+  chat.focusTab()
+  await harness.reader.open()
+  // The reload left no pane and the entry opened the Application in the learner's group; the captured source stands apart from it.
+  harness.movePanel('codebook.scopedBrowser', 2)
+  await harness.controller.settle()
+  const capturedTab = harness.groups
+    .flatMap((group) => group.tabs)
+    .find((tab) => tab.label === 'Captured-theme.ts')
+  if (capturedTab) harness.closeTabByHand(capturedTab)
+  return { harness, refusals }
+}
+
+// Value: protects=the Study pane's Recording button after a reload beside Cursor's Agent chat, where the Application pane shares the learner's group with data.ts and cards.tsx: the recording opens at the first press, with the Application in its own group at column 1 and the learner's two files kept in front of their group; fails_when=the move watch reads a group it has no identity for yet as a group the learner changed (Cursor reports each tab change with every group an object anew before the group report that names them, so the learner's group, which keeps cards.tsx in front once the Application leaves it, looks like a new group holding two learner tabs) and refuses with "Native pane, group or focus changed while presentation waited; the learner arrangement was preserved." (Cursor 3.27.22 native, Cycle 0072 task 5: the Recording button failed twice, a retry from the Learning summary succeeded); why_new=Cycle 0072 task 5; seam=recordedReaderHarness, addSeparateEditorPart, reportsPaneMoveAsOpenThenClose with reportsPaneMoveTabsBeforeGroups, keepTextEditorReportAfterNewGroup, reactivatePreviousGroupAfterInsertion, movePanel (the entry's Application in the learner's group), the reader's openRecording and the revealPane wrapper that reports the learner's front file as the active text editor (the editor's report 18 ms after the move); no_claim=the real Cursor's event timing (native Cursor trial) and the entry's own placement of the Application in the learner's group
+test("in Cursor, the Study pane's Recording opens at the first press when the Application shares the learner's group and the editor names the learner's group before the group report", async () => {
+  // Arrange
+  const { harness, refusals } = await applicationSharingLearnerGroupBesideChat()
+  const revealPane = harness.reader['revealPane'].bind(harness.reader)
+  harness.reader['revealPane'] = (panel, column, preserveFocus): void => {
+    revealPane(panel, column, preserveFocus)
+    // The learner's front file becomes the active text editor of its group as a consequence of the Application's move.
+    if (column === 1)
+      harness.focusExistingSource(
+        harness.editor.window.visibleTextEditors.find((editor) =>
+          editor.document.uri.path.endsWith('/cards.tsx'),
+        )!,
+      )
+  }
+  try {
+    // Act
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Assert
+    assert.deepEqual(
+      {
+        refusals: refusals.length,
+        playback: harness.controller.state().readiness,
+        reason: harness.reader.presentationState().reason,
+        applicationColumn: harness.panelColumn('codebook.scopedBrowser'),
+        learnerTabs: harness.groups
+          .find((group) => group.tabs.some((tab) => tab.label === 'cards.tsx'))
+          ?.tabs.map((tab) => tab.label)
+          .filter((label) => label.endsWith('.ts') || label.endsWith('.tsx')),
+      },
+      {
+        refusals: 0,
+        playback: 'ready',
+        reason: undefined,
+        applicationColumn: 1,
+        learnerTabs: ['data.ts', 'cards.tsx'],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's own choice during the Application's move out of their group beside Cursor's Agent chat: a click into auth.ts in its own group while the pane moves is no effect of Codebook's move, so the recording is refused as a learner's change and the learner's arrangement is kept; fails_when=a group with no identity yet is skipped for good and the learner's click into another group's file is taken for the move's effect, so the recording goes on arranging over the learner's choice; why_new=Cycle 0072 task 5 (the guard of the test above must still refuse real input); seam=as in the test above, with focusMutableDraft's focus (the learner's click) in the revealPane wrapper; no_claim=the real Cursor's event timing (native Cursor trial)
+test("in Cursor, a learner's click into another group's file while the Application leaves their group refuses the Recording and keeps their choice", async () => {
+  // Arrange
+  const { harness, refusals } = await applicationSharingLearnerGroupBesideChat()
+  const revealPane = harness.reader['revealPane'].bind(harness.reader)
+  harness.reader['revealPane'] = (panel, column, preserveFocus): void => {
+    revealPane(panel, column, preserveFocus)
+    // The learner clicks into auth.ts while the pane is on its way.
+    if (column === 1) harness.focusMutableDraft('auth.ts', 3)
+  }
+  try {
+    // Act
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Assert
+    assert.equal(refusals.length, 1)
+    assert.match(
+      harness.reader.presentationState().reason ?? '',
+      /Native pane, group or focus changed while presentation waited; the learner arrangement was preserved\./,
+    )
+  } finally {
     await harness.close()
   }
 })

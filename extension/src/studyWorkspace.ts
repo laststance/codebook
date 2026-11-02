@@ -18474,7 +18474,7 @@ export class StudyWorkspace {
 
   /**
    * Says whether a group's learner tabs, or the learner's tab in front of it, changed since {@link watchLearnerViewDuringApplicationMove} began; asked by that watch at every reported change (row 670).
-   * @param groupsBefore - Each group's {@link learnerViewOfGroup} when the watch began, by the group's identity.
+   * @param groupsBefore - Each group's {@link learnerViewOfGroup} when the watch began, by the group's identity. A group {@link observeEditorGroups} has not named yet (Cursor sends a tab report with every group an object anew before the group report) is left out until it is named.
    * @returns `true` once a group holds other learner tabs than it held (also a group that had none), or shows another learner's tab in front than the one it showed; `false` otherwise.
    * @example this.hasLearnerGroupChangedSince(groupsBefore) // => true after the learner brought Release notes to the front of auth.ts's group
    */
@@ -18485,8 +18485,11 @@ export class StudyWorkspace {
     >,
   ): boolean {
     for (const group of vscode.window.tabGroups.all) {
+      const identity = this.editorGroupIdentities.get(group)
+      // Cursor sends a tab report with every group an object anew before the group report that names them ({@link observeEditorGroups} runs on that one): a group not named yet is compared at the report that names it, and at the watch's final assertion, not read as a new group the learner opened.
+      if (identity === undefined) continue
       const now = this.learnerViewOfGroup(group),
-        before = groupsBefore.get(this.editorGroupIdentities.get(group))
+        before = groupsBefore.get(identity)
       // A group whose front was a Codebook tab or none is compared by its learner tabs alone: the move can uncover a learner's tab there.
       if (
         (before?.tabs ?? '') !== now.tabs ||
