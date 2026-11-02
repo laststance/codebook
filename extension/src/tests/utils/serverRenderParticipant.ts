@@ -115,6 +115,8 @@ export function createServerParticipant(parts: ServerParticipantParts) {
     | undefined
   let breakpointsAcknowledged = 0
   let closed = false
+  /** Holds the answer of the next `stackTrace` until released, as an adapter that is slow to read a stack. */
+  let heldStackAnswer: Promise<void> | undefined
 
   const session: DebugSession = {
     id: 'server-session',
@@ -127,6 +129,9 @@ export function createServerParticipant(parts: ServerParticipantParts) {
       if (command === 'requestCDPProxy')
         return { host: '127.0.0.1', port: 1235, path: '/server' }
       if (command === 'stackTrace') {
+        const held = heldStackAnswer
+        heldStackAnswer = undefined
+        await held
         const frame = frames.get(currentHit) ?? { line: 1, column: 1 }
         return {
           stackFrames: [
@@ -508,6 +513,14 @@ export function createServerParticipant(parts: ServerParticipantParts) {
           release = resolve
         }),
       }
+      return release
+    },
+    /** Keeps the answer of the next `stackTrace` back until the returned function is called, as an adapter that is slow to read a stack. */
+    holdNextStackTrace(): () => void {
+      let release = (): void => {}
+      heldStackAnswer = new Promise<void>((resolve) => {
+        release = resolve
+      })
       return release
     },
     /** Makes the adapter answer the next resume without sending `continued` or `Debugger.resumed`, as a resume that did not happen. */

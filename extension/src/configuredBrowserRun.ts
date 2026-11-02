@@ -568,6 +568,8 @@ type DebugParticipant = {
     journaled: boolean
     /** Gives the pause back to normal admission when no `stopped` arrives within {@link SERVER_RENDER_CLASSIFICATION_MS}. */
     timer?: ReturnType<typeof setTimeout>
+    /** Set by that timer when it gave the pause back, so a verdict still reading the stack tells this hand-off from the adapter's own resume ({@link ConfiguredBrowserRun.unexpectedHitVerdict}). */
+    handedToAdmission?: true
   }
   /** The runtime is paused for its own instrumentation (a source map being read); it is no stop and no adapter breakpoint, but completion waits for its resume. */
   instrumentationPaused?: boolean
@@ -1870,6 +1872,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     held.timer = setTimeout(() => {
       // Only the pause still held is given back; one the adapter resumed or the run decided on is gone.
       if (participant.copyPause !== held || this.cleaning) return
+      held.handedToAdmission = true
       participant.copyPause = undefined
       this.admitPause('server', event, journaled, true)
     }, SERVER_RENDER_CLASSIFICATION_MS)
@@ -1910,6 +1913,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const copy = participant.copyPause
     if (copy) {
       const isOwned = await this.isAtOwnedStopPosition(session, event)
+      // The copy-hold timer gave the pause back to admission while the stack was read: the pause is still paused, and this `stopped` is the one that decides it.
+      if (copy.handedToAdmission)
+        return this.verdictOfHandedBackCopy(copy, isOwned)
       // The adapter may have resumed the copy while the stack was read: nothing is paused, so nothing is resumed or admitted.
       if (participant.copyPause !== copy) return 'gone'
       if (isOwned) return { action: 'resume', event: 'breakpoint.react-copy' }
@@ -1929,6 +1935,33 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.isRepeatOfPausedStop(held.event, alreadyPaused)
       ? { action: 'resume', event: 'breakpoint.repeat-hit' }
       : undefined
+  }
+
+  /**
+   * Gives the verdict for a copy pause that the copy-hold timer handed back to admission while its `stopped` was being classified.
+   * Why it exists: the hand-off clears {@link DebugParticipant.copyPause} like an adapter resume does, but the runtime is still paused, so the notification must not be dropped.
+   * @param copy - The copy pause the timer gave back.
+   * @param isOwned - Whether the stack put the copy at an owned stop's position.
+   * @returns The copy-resume verdict when the pause is still held and owned; `undefined` to let the stop machinery see the event when admission kept the pause as a stop; `'gone'` when nothing holds the pause any more (the adapter resumed it after the hand-off, or admission dropped it).
+   * @example this.verdictOfHandedBackCopy(copy, true) // { action: 'resume', event: 'breakpoint.react-copy' }
+   */
+  private verdictOfHandedBackCopy(
+    copy: NonNullable<DebugParticipant['copyPause']>,
+    isOwned: boolean,
+  ):
+    | Extract<ServerRenderHitVerdict, { event: 'breakpoint.react-copy' }>
+    | 'gone'
+    | undefined {
+    const participant = this.participants.server
+    const isHeldAsUnannounced =
+      participant.unannouncedPause?.event === copy.event
+    const isAdmittedAsStop =
+      participant.stopped?.event === copy.event ||
+      this.pendingCdpStop?.event === copy.event
+    if (isOwned && isHeldAsUnannounced)
+      return { action: 'resume', event: 'breakpoint.react-copy' }
+    if (isAdmittedAsStop) return undefined
+    return isHeldAsUnannounced ? undefined : 'gone'
   }
 
   /**
