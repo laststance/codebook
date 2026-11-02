@@ -1444,7 +1444,7 @@ test('first Study entry refuses an unfocused explanation when a second editor pa
   }
 })
 
-// Value: protects=Codebook: Open Study Workspace in Cursor 3.27.22 after Developer: Reload Window, where the Agent chat's group stays the active tab group while the placed Context pane holds the keyboard: the entry answers instead of ending with the error dialog "Timed out waiting for Study explanation native focus", the Context pane stays at column 3 and the chat's group stays the one the editor names; fails_when=the wait for the Context pane's native focus accepts only the pane's own group as the active tab group or a layout read that counts every tab group, while the editor's layout counts the main editor's groups only and the chat's group stands beyond them, so a pane that is placed and visible never satisfies it; why_new=Cycle 0072 task 2 (Cursor 3.27.22 exthost log codebook.openStudyWorkspace; the focus here is one the editor attributes to the chat's group); seam=addSeparateEditorPart (Cursor's chat part), focusTab, nameChatGroupWhilePaneHoldsKeyboard, the reader's open (entry of an arranged workspace); no_claim=the real Cursor's answer (native Cursor trial)
+// Value: protects=Codebook: Open Study Workspace in Cursor 3.27.22 after Developer: Reload Window, where the Agent chat's group stays the active tab group while the placed Context pane holds the keyboard: the entry answers instead of ending with the error dialog "Timed out waiting for Study explanation native focus", the Context pane stays at column 3 and the chat's group stays the one the editor names; fails_when=the wait for the Context pane's native focus accepts only the pane's own group as the active tab group or a layout read that counts every tab group, while the editor's layout counts the main editor's groups only and the chat's group stands beyond them, so a pane that is placed and visible never satisfies it; why_new=Cycle 0072 task 2 (Cursor 3.27.22 exthost log codebook.openStudyWorkspace; the focus here is one the editor attributes to the chat's group); seam=addSeparateEditorPart (Cursor's chat part), focusTab, nameChatGroupWhilePaneHoldsKeyboard, the reader's open (entry of an arranged workspace); no_claim=that the native pending sentence is reproduced here (it is not: the fake editor leaves nothing pending after this refusal, so this test guards the path and does not fail on the earlier code), the real Cursor's answer (native Cursor trial)
 test('Open Study Workspace in Cursor after a reload answers while the Agent chat group stays the named active group', async () => {
   // Arrange
   const harness = await workspaceHarness(false)
@@ -1507,6 +1507,98 @@ test('Open Study Workspace in Cursor right after a reload answers although the e
         .slice(commandsBefore)
         .filter((command) => /^workbench\.action\.focus.*Group/.test(command)),
       [],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the first Open Study Workspace after Developer: Reload Window in Cursor 3.27.22 with the Agent chat open (native C72-2, candidate 81c749f1, 01:14:02): the entry places its panes and confirms the layout although the editor names the Application's group active again a few milliseconds after the Study pane took the focus, with no input of the learner's and no effect of Codebook's, and a later Arrange answers; fails_when=the placement guard of the main-grid read takes that move between two of Codebook's own panes for the learner's change and refuses with "Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.", which leaves the entry's presentation transition pending so the next Arrange answers "A presentation change or reader close is pending."; why_new=Cycle 0072 task 2 follow-up (the cold-open test above forces the naming before the guard arms; here it comes while the guard waits); seam=addSeparateEditorPart, leaveEmptyGroup, focusMutableDraft in column 2, onNextPanel with a delayed activatePaneByHand, the reader's cold open and arrange; no_claim=what makes Cursor name the Application's group, the real Cursor's answer (native Cursor trial)
+test('Open Study Workspace in Cursor right after a reload is not refused when the editor names the Application group active while the main grid is read, and a later Arrange answers', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  harness.leaveEmptyGroup(1)
+  harness.focusMutableDraft('cards.tsx', 2)
+  // Cursor names the Application's group active a few milliseconds after the main-grid read armed its placement guard.
+  let waitedForFocus = false
+  const retainPlacement = harness.reader['retainPresentationPlacement'].bind(
+    harness.reader,
+  )
+  harness.reader['retainPresentationPlacement'] = (
+    callSite,
+    ...rest
+  ): (() => void) => {
+    const assertRetained = retainPlacement(callSite, ...rest)
+    if (callSite === 'open/assertPlacement') waitedForFocus = true
+    if (waitedForFocus && callSite === 'readMainEditorGrid/assertInitial') {
+      waitedForFocus = false
+      queueMicrotask(() => harness.activatePaneByHand('codebook.scopedBrowser'))
+    }
+    return assertRetained
+  }
+  try {
+    // Act
+    await harness.reader.open()
+    await harness.reader.action('arrange')
+
+    // Assert
+    assert.equal(harness.panelColumn('codebook.studyContext'), 3)
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true)
+    assert.equal(chat.focused(), false)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Codebook: Arrange Study Workspace after an Open Study Workspace that the learner's own click refused (native C72-2, 01:14:40 and 01:15:32: the command answered "A presentation change or reader close is pending. Read its state before another control." twice, 80 s apart, until Close and Open recovered it): a learner who clicks one of their text tabs while the entry reads the main grid keeps that focus, the entry reports the learner's change, and the next Arrange answers instead of finding a presentation change still pending; fails_when=the refused entry leaves its presentation transition or operation pending, so every later control is refused with the pending sentence; why_new=Cycle 0072 task 2 follow-up (the refusal path of the entry); seam=addSeparateEditorPart, leaveEmptyGroup, focusMutableDraft (the learner's click during the read), the wrapped placement guard, the reader's open and action; no_claim=that the native pending sentence is reproduced here (it is not: the fake editor leaves nothing pending after this refusal, so this test guards the path and does not fail on the earlier code), the real Cursor's answer (native Cursor trial)
+test('Arrange Study Workspace answers after an Open Study Workspace was refused by the learner clicking a text tab during the main-grid read', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.addSeparateEditorPart()
+  harness.leaveEmptyGroup(1)
+  harness.focusMutableDraft('cards.tsx', 2)
+  let waitedForFocus = false
+  const retainPlacement = harness.reader['retainPresentationPlacement'].bind(
+    harness.reader,
+  )
+  harness.reader['retainPresentationPlacement'] = (
+    callSite,
+    ...rest
+  ): (() => void) => {
+    const assertRetained = retainPlacement(callSite, ...rest)
+    if (callSite === 'open/assertPlacement') waitedForFocus = true
+    if (waitedForFocus && callSite === 'readMainEditorGrid/assertInitial') {
+      waitedForFocus = false
+      // The learner clicks into their own text tab right after the guard armed.
+      queueMicrotask(() => harness.focusMutableDraft('cards.tsx', 2))
+    }
+    return assertRetained
+  }
+  try {
+    await assert.rejects(
+      harness.reader.open(),
+      /Native pane, group or focus changed while presentation waited/,
+    )
+
+    harness.controller.command({
+      studyId: harness.studyId,
+      action: 'open',
+      expectedRevision: harness.controller.state().revision,
+    })
+    await harness.controller.settle()
+    // Act
+    const outcome = await harness.reader.action('arrange').then(
+      () => 'answered',
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.equal(
+      /presentation change or reader close is pending/.test(outcome),
+      false,
     )
   } finally {
     await harness.close()

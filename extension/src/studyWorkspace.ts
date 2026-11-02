@@ -1404,6 +1404,9 @@ export class StudyWorkspace {
   private presentationPreference: PresentationState['preference'] = {
     status: 'default',
   }
+  /** `true` while {@link open} arranges the panes of an entry: the placement guards then take the editor's report of another own pane as the active one for no change of the learner's (Cursor 3.27.22 after a reload). */
+  private acceptingOwnPaneFocusReport = false
+
   private presentationTransition?: {
     id: string
     cancellation: AbortController
@@ -7278,6 +7281,75 @@ export class StudyWorkspace {
     }
   }
 
+  /**
+   * Arranges the Study panes for {@link open} while the placement guards take the editor's report of another own pane as the active one for no change of the learner's; called by {@link open} in place of {@link arrange}.
+   * @param signal - The entry's cancellation.
+   * @param retainLayout - What {@link arrange} takes as its third argument.
+   * @param retiredContextGroup - What {@link arrange} takes as its sixth argument.
+   * @returns Once {@link arrange} has finished; the acceptance ends with it, also when it throws.
+   * @example await this.arrangeForEntry(signal, false, undefined)
+   */
+  private async arrangeForEntry(
+    signal: AbortSignal | undefined,
+    retainLayout: boolean,
+    retiredContextGroup: Parameters<StudyWorkspace['arrange']>[5],
+  ): Promise<void> {
+    this.acceptingOwnPaneFocusReport = true
+    try {
+      await this.arrange(
+        signal,
+        'study',
+        retainLayout,
+        undefined,
+        undefined,
+        retiredContextGroup,
+      )
+    } finally {
+      this.acceptingOwnPaneFocusReport = false
+    }
+  }
+
+  /**
+   * Moves the focus baseline of a placement guard to another own pane when the editor's active group moved from one of Codebook's own panes to another own pane without a change of the learner's text editor; asked by the guard of {@link retainPresentationPlacement} each time it asserts, where Cursor 3.27.22 names the Application's group active again moments after the Study pane took the focus in an entry ({@link open}).
+   * @param accepts - Whether the guard began in an entry's arrangement with the focus in an own pane.
+   * @param active - The group the editor names active now.
+   * @param baseline - What the guard compared against so far.
+   * @returns The new baseline for such a report; `baseline` itself for a learner's text tab, a group without an own pane in front, or a guard outside an entry.
+   * @example this.adoptOwnPaneFocusReport(true, applicationGroup, baseline) // => a baseline naming the Application's group and tab
+   */
+  private adoptOwnPaneFocusReport<
+    Baseline extends {
+      nativeGroup: vscode.TabGroup
+      focusedGroup: unknown
+      retainedFocus: { editor: string; group: unknown }
+    },
+  >(accepts: boolean, active: vscode.TabGroup, baseline: Baseline): Baseline {
+    const input = active.activeTab?.input
+    if (
+      !accepts ||
+      active === baseline.nativeGroup ||
+      !(input instanceof vscode.TabInputWebview) ||
+      !this.isCodebookPaneInput(input) ||
+      textEditorFocusState(vscode.window.activeTextEditor) !==
+        baseline.retainedFocus.editor
+    )
+      return baseline
+    const group = this.editorGroupIdentities.get(active)
+    return {
+      ...baseline,
+      nativeGroup: active,
+      focusedTab: active.activeTab,
+      focusedGroup: group,
+      focusedWebview: input.viewType,
+      focusedWebviewCloseRevision: this.webviewCloseRevisions.get(
+        input.viewType,
+      ),
+      appActive: this.app?.active,
+      contextActive: this.contextPanel?.active,
+      retainedFocus: { ...baseline.retainedFocus, group },
+    }
+  }
+
   /** Protects passive awaits in {@link performPresentation} from adopting learner pane/group/focus changes. @param callSite - Short name of the caller and its guard (`method/variable`), printed in a refusal's report so a native take can tell which await refused. @param retainFocus - Compares the focused group, tab and text editor too. @param acceptWikiGroupReturn - Takes the editor's own selection of the Repository Wiki's group beside the identical text editor as no change ({@link isWikiGroupBesideTextEditor}); only the borrow receipt of {@link readMainEditorGrid} asks for it (finding 606). @example const assertRetained = this.retainPresentationPlacement('open/assertPlacement'); */
   private retainPresentationPlacement(
     callSite: string,
@@ -7295,14 +7367,14 @@ export class StudyWorkspace {
         group,
         column: group.viewColumn,
       }))
-    const nativeGroup = vscode.window.tabGroups.activeTabGroup,
+    let nativeGroup = vscode.window.tabGroups.activeTabGroup,
       focusedTab = nativeGroup.activeTab
-    const focusedGroup = this.editorGroupIdentities.get(nativeGroup)
-    const focusedWebview =
+    let focusedGroup = this.editorGroupIdentities.get(nativeGroup)
+    let focusedWebview =
       focusedTab?.input instanceof vscode.TabInputWebview
         ? focusedTab.input.viewType
         : undefined
-    const focusedWebviewCloseRevision =
+    let focusedWebviewCloseRevision =
       focusedWebview === undefined
         ? undefined
         : this.webviewCloseRevisions.get(focusedWebview)
@@ -7321,16 +7393,40 @@ export class StudyWorkspace {
       this.app?.active || this.contextPanel?.active
         ? undefined
         : vscode.window.activeTextEditor?.document.uri.toString()
-    const source = focusedSource(),
-      appActive = this.app?.active,
+    const source = focusedSource()
+    let appActive = this.app?.active,
       contextActive = this.contextPanel?.active
     // The focused group this receipt compares; only a receipt that accepts it follows the editor's own return to the Wiki's group (finding 606).
     let retainedFocus = {
       editor: textEditorFocusState(vscode.window.activeTextEditor),
       group: focusedGroup,
     }
+    // Only the entry's own arrangement takes the editor's report of another own pane as no change of the learner's.
+    const acceptsOwnPaneReport =
+      this.acceptingOwnPaneFocusReport &&
+      this.isCodebookPaneInput(focusedTab?.input)
     return (): void => {
       const active = vscode.window.tabGroups.activeTabGroup
+      // Cursor 3.27.22 names the Application's group active again moments after the Study pane took the focus; the entry's arrangement takes that report as no change of the learner's.
+      ;({
+        nativeGroup,
+        focusedTab,
+        focusedGroup,
+        focusedWebview,
+        focusedWebviewCloseRevision,
+        appActive,
+        contextActive,
+        retainedFocus,
+      } = this.adoptOwnPaneFocusReport(acceptsOwnPaneReport, active, {
+        nativeGroup,
+        focusedTab,
+        focusedGroup,
+        focusedWebview,
+        focusedWebviewCloseRevision,
+        appActive,
+        contextActive,
+        retainedFocus,
+      }))
       retainedFocus = adoptWikiGroupReturn(
         retainedFocus,
         {
@@ -9057,12 +9153,12 @@ export class StudyWorkspace {
         if (pending !== pendingBefore) this.recordingRevealedByEntry = pending
       }
       // Capture ownership after explicit view reveals finish resizing the native workbench.
-      await this.arrange(
+      // Cursor names another own pane active moments after the Study pane took the focus;
+      // arrangeForEntry makes the placement guards take that report as no change of the learner,
+      // while a learner's text tab or another group still refuses.
+      await this.arrangeForEntry(
         signal,
-        'study',
         Boolean(compositionReservation) || (!firstOpen && !compositionChanged),
-        undefined,
-        undefined,
         retiredContextGroup,
       )
       this.assertLifetime(lifetime)
