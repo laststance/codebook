@@ -2182,7 +2182,7 @@ export const PANE_RETURN_PRESS_WINDOW_MS = 300
 /** A seek less than this far before a recorded stop presents that stop: recorded stops sit at fractional receipt milliseconds (122,822.02), and a driver that rounds down must not land in the gap before it. */
 export const PLAYBACK_SEEK_STOP_SNAP_MS = 1
 
-/** Insertion mode identifiers of pinned parse5 8.0.1; used by {@link readHtmlStartTags} for current select rules and proven absent-end handling. */
+/** Insertion mode identifiers of pinned parse5 8.1.0; used by {@link readHtmlStartTags} for current select rules and proven absent-end handling. */
 export const HTML_PARSER_IN_BODY_MODE = 6
 export const HTML_PARSER_IN_TABLE_MODE = 8
 export const HTML_PARSER_IN_CAPTION_MODE = 10
@@ -2217,7 +2217,7 @@ export const HTML_PARSER_ABSENT_END_MODE_TABLE_NAMES = new Map<
 ])
 /** Ends the body rules act on although no element of their name is open, so {@link readHtmlStartTags} never skips them: `</p>` inserts an empty p and `</br>` a br, and in foreign content each first leaves it. */
 export const HTML_PARSER_ABSENT_END_BODY_NAMES = new Set(['br', 'p'])
-/** The names of the HTML standard's svg case table (37 names, as Chrome 151 adjusts them) that pinned parse5 8.0.1's table (36) lacks, each with its svg case; {@link readHtmlStartTags} writes a start or end tag of one in svg case in svg content, as parse5 does for the others. */
+/** The names of the HTML standard's svg case table (37 names, as Chrome 151 adjusts them) that pinned parse5 8.1.0's table (36) lacks, each with its svg case; {@link readHtmlStartTags} writes a start or end tag of one in svg case in svg content, as parse5 does for the others. */
 export const HTML_PARSER_SVG_CASE_NAMES_PARSE5_LACKS = new Map([
   ['fedropshadow', 'feDropShadow'],
 ])
