@@ -3,4 +3,4 @@ allowBuilds:
   'esbuild@0.28.2': true
   unrs-resolver: true
 patchedDependencies:
-  '@modelcontextprotocol/sdk@1.30.0': patches/@modelcontextprotocol__sdk@1.30.0.patch
+  '@modelcontextprotocol/sdk@1.32.2': patches/@modelcontextprotocol__sdk@1.32.2.patch

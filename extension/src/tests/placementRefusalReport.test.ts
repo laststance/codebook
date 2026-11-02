@@ -189,3 +189,21 @@ test('keeps as many notes as the capacity the log was given', () => {
   assert.equal(log.since(0).length, 48)
   assert.equal(log.since(0)[0]!.what, 'effect 12')
 })
+
+// Value: protects=the time of the newest note that the Application's inactive-report guard measures its window from (OWN_EFFECT_NOISE_WINDOW_MS): the newest note's time, also after the capacity pushed the oldest ones out, and none for an empty log; fails_when=the log answers the oldest note's time or throws for an empty log, so a fresh effect looks old (the learner's click and the editor's noise swap places) or the guard cannot read a log without effects; why_new=Cycle 0072 task 2, test gap (the harness cases cannot tell the newest note from the oldest: its effects are all younger than the window); seam=none; no_claim=which effects Codebook records
+test('names the time of the newest note, none for an empty log, also after the capacity pushed older notes out', () => {
+  // Arrange
+  const emptyLog = new PlacementEventLog(2)
+  const fullLog = new PlacementEventLog(2)
+  fullLog.record(10, 'groups closed [2]')
+  fullLog.record(40, 'reveal Application')
+  fullLog.record(90, 'showTextDocument column 2')
+
+  // Act
+  const emptyLogNewest = emptyLog.latestAtMs()
+  const fullLogNewest = fullLog.latestAtMs()
+
+  // Assert
+  assert.equal(emptyLogNewest, undefined)
+  assert.equal(fullLogNewest, 90)
+})

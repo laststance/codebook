@@ -38,6 +38,15 @@ Read the archived docs before the work each governs (other records, prompts, ext
 
 Fix every carried defect in the next cycle; sole exception: the [ship review limit](#delivery). No planning choice, review outcome or skill default overrides this; a feature cycle starts clean.
 
+- **Dependencies first**, every cycle (both kinds), before other work.
+  - Run `pnpm --dir extension update --latest '!@types/vscode' '!@vscode/*' '!@types/node' '!typescript'`, then move `@types/node` to the newest version of the pinned Node major and `typescript` to the newest 6.x.
+  - No TypeScript 7: the native port has no JS API for ESLint.
+  - Fallow always follows its latest release, majors included: catching up later is costlier than scoring a small step.
+  - VS Code packages, `engines` and the Node pins stay as they are: a newer VS Code API than Cursor's breaks the extension in Cursor.
+  - Keep exact pins, fix breakages, pass the checks, and commit on the cycle branch.
+  - A Fallow or c8 version change follows the [Fallow](#commands-and-checks) retake rules.
+  - Small steps keep breaking changes cheap and security fixes immediate. A high `pnpm audit` advisory found mid-cycle is a defect of that cycle.
+
 - **Defect** = a Critical or Major finding (a review marks it critical, major, high, blocking, P0 or P1) or a failed gate, CI or native check. Medium, Minor, Low and informational findings, test gaps and doc debt are no defects: fixed when cheap and in scope, else answered Skip and named once in the PR or a short later-candidate list; they never start a bug-fix cycle.
 - **Feature cycle**: an increment of the final product. Starts only with nothing carried in; planned from the final product alone (`/spec` + plan reviews, from PRODUCT_GOAL.md and the gap audit). Defects it leaves unfixed are carried.
 - **Bug-fix cycle**: follows any cycle that left a defect; fixes those, nothing else.
@@ -77,9 +86,10 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 
 - One bounded cycle at a time toward the complete product; after each merge `/spec` (+ the plan reviews the scope needs) writes the next cycle's Issue.
 - Work on a `codex/` branch; keep existing edits; reuse a fitting checkout.
-- Per cycle: local CodeRabbit CLI + `open-code-review-delegate` → `/ship` as PR → required CI → separate exact-HEAD gate → merge as its own step with `--match-head-commit`.
+- Per cycle: one review round (4 local CodeRabbit CLI passes + 4 `open-code-review-delegate` reviews, all in parallel) → its fixes → `/ship` as PR → required CI → separate exact-HEAD gate → merge as its own step with `--match-head-commit`.
+- One round only: after that round's fixes go straight to `/ship`; no second CodeRabbit/OCR round to recheck the fixes (the `/ship` review catches what they break).
 - Parallel reviews: start every review that reads no other review's result at the same time, never one after another.
-  - Examples: local CodeRabbit CLI with `open-code-review-delegate`; `/ship` pass 1's reviews (Codex structured review, red team, specialists); a plan-review phase's native and outside voices (outside one in a background shell, then the native agent).
+  - Examples: the 4 CodeRabbit CLI passes (one worktree each, within the included hourly reviews, never `--use-credits`) with the 4 OCR delegates (split by review lens when few files qualify); `/ship` pass 1's reviews (Codex structured review, red team, specialists); a plan-review phase's native and outside voices (outside one in a background shell, then the native agent).
   - A review waits only for a result or tree it reads: `/autoplan` phases stay in order (each reviews the previous phase's amendments); a fix-check waits for its fix.
 - Parallel fixers: choose the fixer count and item split that finishes soonest, cost no object.
   - Independent items needing no knowledge of each other → one subagent each (100 such items → 100 subagents, each in its own worktree from the branch head); only items sharing a file region or depending on another's result share a subagent or run in order.
@@ -119,7 +129,7 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
   - overrides no-carry for those recorded defects only.
 - The limit is `/ship`'s alone (one round is long; full convergence would stall delivery); it records defects of `/ship` rounds the PR cannot close (e.g. a Major finding whose fix/proof needs an unknown root cause or a native check).
 - A Critical finding never merges open: one the PR cannot close holds the merge until fixed (cycle + delivery rules).
-- Local CodeRabbit CLI and OCR delegate: Critical/Major findings follow the cycle rule, as do gate, CI and native-check failures; below Major per the defect rule. CodeRabbit CLI: once on the PR's final range; more only after a fix it must recheck.
+- Local CodeRabbit CLI and OCR delegate: Critical/Major findings follow the cycle rule, as do gate, CI and native-check failures; below Major per the defect rule. CodeRabbit CLI: the one parallel round on the cycle's final range before `/ship`.
 
 **Skills** (read each installed SKILL.md at invocation; this map guides, copies no workflow):
 
@@ -193,6 +203,7 @@ No decision log; delivery chain and ship limit: [Delivery](#delivery).
   - Skip a rule, convention or skill step that plainly adds nothing to the product instead of following it by habit.
   - Docs unrelated to the application ride on the current work branch: no separate PR, no wait on CI with an obvious result.
   - Still forbidden: spending money without the owner's permission; anything illegal. Irreversible steps under **Never without the owner** still wait for the owner.
+- **Process feedback:** a development-flow step that wastes much time, or a step the rules lack for completing the product, once noticed → a post in the repository's [GitHub Discussions](https://github.com/laststance/codebook/discussions) (category Ideas): observation, evidence, cost, proposal. Public: no private paths or secrets. The current cycle continues meanwhile.
 - **The owner cannot answer:** every decision point → the recommended option, named in the Issue's Owner decisions. Owner-directed pause → stop at once; only the owner's explicit message lifts it. A conditional pause ("when X is done, stop") is not immediate.
 - **Dedicated Windows development machine:** setup and repair (IME settings, QA reinstall/reset, needed data removal) need no new permission. Spend the time on live explanation, save and synchronized replay. Remedy truly needing the owner → research it, finish independent preparation, give concrete verified steps. Outcomes and gates still govern.
 - **Never without the owner:** buying credits, subscription or billing changes, new or changed credentials, permanent deletion, security settings, repository visibility.
@@ -275,6 +286,10 @@ Formatting: `pnpm --dir extension format` / `format:check` and the lint-staged h
 
 **Fallow.**
 
+- **Lower the scores actively**, in any cycle.
+  - A finding a behaviour-neutral refactor can remove is refactored: tests unchanged and green, and the native path rechecked when it is natively verified.
+  - The fixed findings are then dropped from their baseline.
+  - Prefer the hotspots and targets `fallow health --hotspots --targets` ranks, and `fallow fix --dry-run` for dead code.
 - `pnpm --dir extension dupes` / `dead-code` fail on clones or dead code beyond `fallow-dupes-baseline.json` / `fallow-dead-code-baseline.json` (Fallow 3.37.0). `.fallowrc.json` excludes tests and scripts (`health.ignore`, `duplicates.ignore`; `ignoreFindings` keeps them entry points, so code they call counts as used).
 - `pnpm --dir extension health` (`scripts/checkHealth.mjs`, 20-min job) scores health with this run's coverage against `fallow-health-measured-baseline.json` (cyclomatic 20, cognitive 15, CRAP 30). Exit 0 clean, 1 findings, 2 refused/no verdict (e.g. pins differing from `fallow-health-reference.json`, a runner option in `NODE_OPTIONS`). Only option: `--format json`; never writes a baseline.
   - Baselines = the current codebase at the retake, not one fixed old revision: fix findings above the committed baseline in the source.
@@ -283,7 +298,18 @@ Formatting: `pnpm --dir extension format` / `format:check` and the lint-staged h
 - `pnpm --dir extension health:static` (~2 s; in `check` after `lint`, before tests): same cyclomatic/cognitive limits without coverage, per function (`--baseline-mode identity`), against `fallow-health-baseline.json`. CRAP needs coverage → stays with `pnpm health`.
   - Fixers run it after every change, before the full gate.
   - Fix new findings in the source; re-save the baseline (`fallow health --complexity --max-crap inf --baseline-mode identity --save-baseline fallow-health-baseline.json`) only to drop fixed findings, never to absorb one.
-- `pnpm --dir extension architecture` (~1 s; own CI job): `fallow architecture --fail-on-issues` against `fallow-architecture-baseline.json`, which holds no cycle: a new import cycle fails. Fallow's other opt-in commands (`security`, `similar-code`, `mutation`, `flags`) are no gate: only deterministic pass/fail metrics gate.
+- `pnpm --dir extension architecture` (~1 s; own CI job): `fallow architecture --fail-on-issues` against `fallow-architecture-baseline.json`, which holds no cycle: a new import cycle fails.
+- **Every free local Fallow analysis runs in CI.**
+  - Today that also means `audit`, `flags`, `security`, `similar-code`, `mutation` (changed code vs base) and `suppressions`.
+  - A command a Fallow update adds gets its CI step in that cycle's dependency step.
+  - Deterministic pass/fail results gate, against a baseline where the command has one.
+  - Candidate or discovery output (`security`, `similar-code`, `flags`, `suppressions`) goes to the job summary without gating.
+  - `mutation` checks that tests fail without the code they test, which a delegated fixer may skip.
+    - It runs in its own job with `--time-budget 10m` (about 10 minutes is the limit; 30 is too long).
+    - It gates with `--min-score` once a measured run sets the level.
+    - A surviving mutant raises a test that only walks a branch into one that fails on a real bug in real application state. When that state is hard to reach, the function is too complex: simplify it (lower the scores, above).
+  - Prefer `parallel:` steps in one job over new jobs: 20 concurrent jobs on the Free plan.
+  - Fallow Cloud runtime coverage stays out: it is paid.
 
 ## Native QA
 

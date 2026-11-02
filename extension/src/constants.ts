@@ -283,6 +283,10 @@ export const STUDY_REFRESH_INTERVAL_MS = 250
 /** The least time between two layout requests of a saved study that waits for the hidden editor area: the reader's timer ticks every {@link STUDY_REFRESH_INTERVAL_MS}, the wait has no end, and the editor is asked once a second at most. */
 export const STUDY_EDITOR_AREA_LOOK_INTERVAL_MS = 1_000
 export const STUDY_EDITOR_GROUP_COUNT = 3
+/** How many tabs of a group the editor's numbered command (`workbench.action.openEditorAtIndex1` to `9`) can bring to the front. */
+export const EDITOR_NUMBERED_TAB_COMMAND_LIMIT = 9
+/** How many times the captured source's return shows a learner's pick again when the learner picks something newer meanwhile; it stops there and keeps the latest pick. */
+export const LEARNER_CHOICE_RESHOW_LIMIT = 3
 export const LIVE_EDITOR_GROUP_COUNT = 2
 export const LIVE_EDITOR_LAYOUT = {
   orientation: 1,
@@ -559,6 +563,23 @@ export const UNTYPED_EDITOR_TAB_INPUT_KINDS = [
   'TabInputTextMerge',
   'TabInputTextMultiDiff',
   'TabInputInteractiveWindow',
+] as const
+/**
+ * The members of a tab's input that say which resource or view the tab shows, read with `Reflect.get` by {@link sameTabTarget}: the resource of a text, custom, notebook or interactive tab (`uri`), the input box of an interactive window (`inputBoxUri`), both sides of a diff (`original`, `modified`), the files of a merge editor (`base`, `input1`, `input2`, `result`), the diffs of a multi-file diff (`textDiffs`, each compared by its own members), the kind of a webview or custom editor (`viewType`) and of a notebook (`notebookType`). A member an input does not have is skipped. The editors give every tab a new object when a group changes, and tabs of different resources can share one label (two `index.ts` of different folders), so these members, not the tab object or its label, tell the tabs apart.
+ * @example TAB_INPUT_IDENTITY_FIELDS.map((field) => Reflect.get(diffInput, field)) // => [undefined, undefined, original, modified, undefined, undefined, undefined, undefined, undefined, undefined, undefined]
+ */
+export const TAB_INPUT_IDENTITY_FIELDS = [
+  'uri',
+  'inputBoxUri',
+  'original',
+  'modified',
+  'base',
+  'input1',
+  'input2',
+  'result',
+  'textDiffs',
+  'viewType',
+  'notebookType',
 ] as const
 export const PRESENTATION_READING_LIMIT_PX = 10_000_000
 export const PRESENTATION_FOCUS_INDEX_LIMIT = 32
@@ -2238,6 +2259,12 @@ export const REFUSAL_REPORT_EVENTS = 24
 
 /** The most native effects Codebook itself issued (reveals, disposals, editor commands, shown documents) that a {@link PlacementEventLog} keeps for a placement refusal report, in effects. */
 export const REFUSAL_REPORT_EFFECTS = 48
+
+/** The most documents Codebook itself showed that the reader keeps to tell its own shown tabs from the learner's, in documents. */
+export const SHOWN_DOCUMENTS_KEPT = 32
+
+/** How recent Codebook's own native effect must be for a placement guard to take the Application's inactive report as the editor's noise, in ms: Cursor 3.27.22 reports the Application inactive moments after Codebook moved panes or focus (native C72-2 ddc14faa: the report came 13 ms after the guard armed, 20 ms before its refusal). A report outside this window of Codebook's own effects may be the learner's click into the chat, which keeps the Application's group named, and stays compared. The bound is empirical: the native record gives tens of milliseconds, the rest is margin. */
+export const OWN_EFFECT_NOISE_WINDOW_MS = 1_500
 
 /** How long a new Application group's preparation waits for the editor's own report that it activated the group, in ms; Cursor sends it after the command that made the group answered (N55-F4, row 650). It ends at the report, or here when the editor sends none. The bound is empirical, not derived: N56 on candidates `5b39b767` and `02acefaa` opened the Study workspace 13 times in Cursor 3.27.12 and the report always arrived within it, with no refusal; a report that arrives later is read by the guards as a change the learner made and refuses the open with a report naming the late activation. */
 export const LATE_GROUP_ACTIVATION_WAIT_MS = 150

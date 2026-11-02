@@ -171,13 +171,13 @@ test('a real VSIX loads outside the checkout and excludes bundled applications a
   )
   assert.ok(
     inventory.inputs.some((input) =>
-      input.path.startsWith('dependency:@modelcontextprotocol/sdk@1.30.0/'),
+      input.path.startsWith('dependency:@modelcontextprotocol/sdk@1.32.2/'),
     ),
   )
   assert.ok(
     checked.build.sourceHashes.some((input) =>
       input.startsWith(
-        'extension/patches/@modelcontextprotocol__sdk@1.30.0.patch:',
+        'extension/patches/@modelcontextprotocol__sdk@1.32.2.patch:',
       ),
     ),
   )

@@ -659,6 +659,8 @@ export async function workspaceHarness(
       group: (typeof groups)[number]
     })[] = [],
     decoratedColumns: (number | undefined)[] = [],
+    /** The start line of every range each source highlight call marked, in the order of {@link decoratedColumns} (which `clearDecorations` empties together with it). */
+    decoratedStartLines: number[][] = [],
     /** How many lines each source highlight call marked, in order; 0 is a cleared highlight. */
     decoratedRangeCounts: number[] = []
   const sourceIdentityCalls: { uri: string; ranges: readonly unknown[] }[] = []
@@ -730,6 +732,9 @@ export async function workspaceHarness(
         return
       }
       decoratedColumns.push(this.viewColumn)
+      decoratedStartLines.push(
+        ranges.map((range) => (range instanceof Range ? range.start.line : -1)),
+      )
       decoratedRangeCounts.push(ranges.length)
     },
     selections: [{ anchor: new Position(22, 0), active: new Position(22, 0) }],
@@ -1098,6 +1103,10 @@ export async function workspaceHarness(
   let removesGroupLeftByMoveLater = false
   /** Whether a pane's move is reported as its tab opening in the new group first and closing in the old group after that; see `reportsPaneMoveAsOpenThenClose`. */
   let reportsPaneMoveAsOpenThenCloseFlag = false
+  /** Whether a pane's move is reported with each tab report before the group report that names its groups, and with the old group's next tab in front before the close; see `reportsPaneMoveTabsBeforeGroups`. */
+  let reportsPaneMoveTabsBeforeGroupsFlag = false
+  /** Whether the close that ends a pane's move is reported with no group report after it; see `reportsPaneCloseWithoutGroupReport`. */
+  let reportsPaneCloseWithoutGroupReportFlag = false
   /** The removals of groups a pane's move left empty that the fake editor has not run yet; see `removeGroupLeftByPanelMoveLater`. */
   const pendingMoveRemovals: (() => void)[] = []
   let closeDisposedPanelTabsLater = false
@@ -1396,6 +1405,8 @@ export async function workspaceHarness(
   let chatRetakesKeyboardFromFirstGroup = false
   // Cursor 3.27.22: while the Agent chat part has the keyboard `workbench.action.focusFirstEditorGroup` does nothing, and a pane revealed with the focus takes the keyboard (it reports itself active) while the editor goes on naming the chat's group; see `ignoresFirstGroupFocusCommandBesideChat`.
   let ignoresFirstGroupFocusCommandBesideChatFlag = false
+  // The editor ran a numbered group focus command (second to eighth group) and left the active group where it was; see `ignoreNumberedGroupFocusCommands`.
+  let ignoresNumberedGroupFocusCommandsFlag = false
   // An editor that lists every webview tab under the main-thread view type (`mainThreadWebview-<viewType>`), Codebook's own panes included; see `reportsMainThreadWebviewViewTypes`.
   let reportsMainThreadWebviewViewTypesFlag = false
   // Cursor 3.23.12: "Navigate Down Call Stack" gives the frame's file the keyboard while the editor keeps naming the group it named before; see `keepNamingGroupAfterFrameNavigation`.
@@ -1464,6 +1475,8 @@ export async function workspaceHarness(
       replacements.get(group) ?? group
     groups.splice(0, groups.length, ...groups.map(replaced))
     activeTabGroup = replaced(activeTabGroup)
+    // The group the extension host still names active follows the rebuild too, also when no group event names the groups yet (a tab report that comes first); otherwise it would name an object that is no group of the model.
+    if (staleNamedGroup) staleNamedGroup = replaced(staleNamedGroup)
     // A text editor reported behind a webview stays reported through the rebuild (row 729).
     if (textEditorReportedBehindWebview)
       textEditorReportedBehindWebview.group = replaced(
@@ -3326,7 +3339,44 @@ export async function workspaceHarness(
               shownIndexBeforeMove,
             )
           group.activeTab = nativeTab
-          if (closesAfterOpen && homeGroup) {
+          if (
+            closesAfterOpen &&
+            homeGroup &&
+            reportsPaneMoveTabsBeforeGroupsFlag
+          ) {
+            // Cursor 3.27.22 sends each tab report with every group an object anew before the group report that names them (Cycle 0072 task 5: tabs opened and changed +2 ms, groups +3 ms, cards.tsx in front +6 ms, the pane's tab closed +7 ms): a tab listener meets groups the group observer has not named yet.
+            const reportTabsThenGroups = (
+              events: TabChanges[],
+              namesGroups = true,
+            ): void => {
+              replaceGroupObjects([], undefined, false)
+              for (const event of events)
+                for (const listener of tabChangeListeners) listener(event)
+              if (namesGroups)
+                changedGroups({ opened: [], closed: [], changed: [...groups] })
+              group = currentGroupOf(group) ?? group
+              homeGroup = currentGroupOf(homeGroup!) ?? homeGroup
+            }
+            reportTabsThenGroups([
+              { opened: [nativeTab], closed: [], changed: [] },
+              { opened: [], closed: [], changed: [nativeTab] },
+            ])
+            const nextTab = homeGroup.tabs
+              .filter((tab) => tab !== nativeTab)
+              .at(-1)
+            // The old group shows its next tab only when the pane was the tab in front.
+            if (homeGroup.activeTab === nativeTab) {
+              homeGroup.activeTab = nextTab
+              reportTabsThenGroups([
+                { opened: [], closed: [], changed: nextTab ? [nextTab] : [] },
+              ])
+            }
+            homeGroup.tabs = homeGroup.tabs.filter((tab) => tab !== nativeTab)
+            reportTabsThenGroups(
+              [{ opened: [], closed: [nativeTab], changed: [] }],
+              !reportsPaneCloseWithoutGroupReportFlag,
+            )
+          } else if (closesAfterOpen && homeGroup) {
             // The open is reported with every group an object anew, then the old group's tab closes.
             replaceGroupObjects()
             // The rebuild gave the destination a new object too; the later activation and echoes follow it.
@@ -3493,7 +3543,12 @@ export async function workspaceHarness(
             })
           }
           // A pane that moved or came to the front changed a group's tabs; a reveal of the pane already in front did not.
-          if (!wasInFront) replaceGroupObjects()
+          // The tabs-before-groups sequence above reported every step of the move, the end of it without a group report when asked: no trailing re-wrap names the groups again.
+          const reportedEveryStep =
+            closesAfterOpen &&
+            homeGroup !== undefined &&
+            reportsPaneMoveTabsBeforeGroupsFlag
+          if (!wasInFront && !reportedEveryStep) replaceGroupObjects()
           for (const listener of viewChanged) listener()
         }
       },
@@ -4428,6 +4483,20 @@ export async function workspaceHarness(
           // The group that already was the active one comes back with the sizes the rows had before the panel was maximized (VS Code 1.140.0: 344 / 343 before and after).
           if (name === 'workbench.action.focusActiveEditorGroup')
             panelMaximized = false
+          // The numbered command of the editor puts the n-th tab of the active group in front of it.
+          const openAtIndex =
+            /^workbench\.action\.openEditorAtIndex([1-9])$/.exec(name)
+          if (openAtIndex) {
+            const tab = activeTabGroup.tabs[Number(openAtIndex[1]) - 1]
+            // Only a tab that was not in front changes what the group shows; the editor reports nothing for a reselect.
+            if (tab && activeTabGroup.activeTab !== tab) {
+              activeTabGroup.activeTab = tab
+              for (const listener of tabChangeListeners) listener()
+              // The group shows another editor now: the active text editor and the visible editors follow.
+              activeTextEditorChanged(focusedSourceEditor())
+              changedVisibleEditors()
+            }
+          }
           // Every command that gives an editor group or the chat the keyboard takes it from the page body.
           if (
             name === 'workbench.action.focusActiveEditorGroup' ||
@@ -4454,7 +4523,10 @@ export async function workspaceHarness(
           )
             focusSeparatePartGroup()
           // The editor's commands for its second to eighth group give that group the keyboard focus and keep the tab it shows.
-          else if (focusedColumn > 1) {
+          else if (
+            focusedColumn > 1 &&
+            !ignoresNumberedGroupFocusCommandsFlag
+          ) {
             const mainGroups = groups.filter(
               (group) => group !== separateEditorPart?.group,
             )
@@ -6068,6 +6140,19 @@ export async function workspaceHarness(
       leaveChatForMainEditor()
       for (const panel of panels) panel.notifyViewState()
     },
+    /** Gives every group a new object now and reports the groups as changed, with no tab changed, as Cursor's group report that follows a tab report does. @example harness.rewrapGroupObjects() */
+    rewrapGroupObjects(): void {
+      // Without the model the rewrap would do nothing and a test built on it would pass without exercising anything.
+      assert.ok(
+        replacesGroupObjectsOnTabChanges,
+        'rewrapGroupObjects needs replaceGroupObjectsOnTabChanges() (or reportsPaneMoveTabsBeforeGroups()) to be called first',
+      )
+      replaceGroupObjects()
+    },
+    /** Tells the listeners that no text editor is active, as Cursor reports the active editor for a moment when a document shown into the active group comes to its front and before it reports that document (native C72-2: "active text editor none" 61 ms, then "column 2" 74 ms). Changes no group or tab. @example harness.reportNoActiveTextEditor() */
+    reportNoActiveTextEditor(): void {
+      activeTextEditorChanged(undefined)
+    },
     /** Gives every tab of the fake tab model a new Tab object now, as Cursor's extension host does when the editor sends a whole new tab model (the model of `rebuildTabObjectsAtGroupRemoval`, without a group removal); the tab listeners hear nothing, as at a removed group's rebuild. @example harness.rebuildTabObjectsNow() */
     rebuildTabObjectsNow(): void {
       rebuildTabObjects()
@@ -6228,8 +6313,11 @@ export async function workspaceHarness(
     },
     clearDecorations(): void {
       decoratedColumns.length = 0
+      decoratedStartLines.length = 0
     },
     decoratedColumns: () => [...decoratedColumns],
+    /** The start lines each source highlight call marked, paired by index with `decoratedColumns`. @example harness.decoratedStartLines().at(-1) // => [2] after the highlight of line 3 */
+    decoratedStartLines: () => decoratedStartLines.map((lines) => [...lines]),
     /** How many lines each source highlight call marked, in order; 0 is a cleared highlight. @example harness.decoratedRangeCounts().at(-1) // => 0 once the stop's highlight was cleared */
     decoratedRangeCounts: () => [...decoratedRangeCounts],
     /** Reports native source-identity annotations separately from execution highlights for source/time/gap regressions. @example harness.sourceIdentityDecorations().at(-1)?.ranges */
@@ -6268,6 +6356,35 @@ export async function workspaceHarness(
       editor.group = destination
       lastSourceEditor = movedEditor
       activeTextEditorChanged(lastSourceEditor)
+    },
+    /**
+     * Gives the keyboard to the Captured source tab the learner moved into a group of theirs, as a click on that tab does: the tab is in front of its group, the group is the active one, and the copy's text editor is reported as the active text editor. The shape of `focusMutableDraft` for the copy a draft cannot stand for (the same document and tab as `moveSource` left).
+     * @param column - The view column of the learner's group that holds the copy.
+     * @example harness.moveSource(4); harness.focusMutableDraft('data.ts', 4); harness.clickMovedSourceTab(4) // the copy is in front of group 4 again, with the keyboard
+     */
+    clickMovedSourceTab(column: number): void {
+      const sourceUri = lastSourceEditor?.document.uri.toString()
+      const group = groups.find((candidate) => candidate.viewColumn === column)
+      const tab = group?.tabs.find(
+        (candidate) =>
+          candidate.input instanceof TabInputText &&
+          candidate.input.uri.toString() === sourceUri,
+      )
+      const editor = visibleSourceEditors.find(
+        (candidate) =>
+          candidate.group.viewColumn === column &&
+          candidate.document.uri.toString() === sourceUri,
+      )
+      assert.ok(
+        group && tab && editor,
+        'The group must hold the moved Captured source tab and its editor',
+      )
+      group.activeTab = tab
+      activeTabGroup = group
+      leaveChatForMainEditor()
+      keyboardOnBody = false
+      keyboardInView = false
+      activeTextEditorChanged(editor)
     },
     editorLayout: () => structuredClone(editorLayout),
     changeEditorLayout(layout: unknown): void {
@@ -6313,6 +6430,31 @@ export async function workspaceHarness(
     reportsPaneMoveAsOpenThenClose(): void {
       reportsPaneMoveAsOpenThenCloseFlag = true
       replacesGroupObjectsOnTabChanges = true
+    },
+    /**
+     * Makes the fake editor (also asking for {@link reportsPaneMoveAsOpenThenClose}, which this ordering needs) send each tab report of a pane's move with every group an object anew BEFORE the group report that names them, and report the old group's next tab in front between the open and the close, as Cursor 3.27.22 did for the Application leaving the learner's group (Cycle 0072 task 5: tabs opened and changed +2 ms, groups +3 ms, cards.tsx in front +6 ms, the pane's tab closed +7 ms).
+     * @example
+     * harness.reportsPaneMoveAsOpenThenClose()
+     * harness.reportsPaneMoveTabsBeforeGroups()
+     */
+    reportsPaneMoveTabsBeforeGroups(): void {
+      // The ordering applies to the open-then-close report only, so asking for it asks for that report too.
+      reportsPaneMoveAsOpenThenCloseFlag = true
+      replacesGroupObjectsOnTabChanges = true
+      reportsPaneMoveTabsBeforeGroupsFlag = true
+    },
+    /**
+     * Makes the fake editor, with {@link reportsPaneMoveTabsBeforeGroups}, end a pane's move with the close of its tab and no group report after it, as Cursor 3.27.22 did in native run C72-2 (tabs closed +6 ms, nothing named the re-wrapped groups afterwards): the groups stay unnamed through the move's end.
+     * @example
+     * harness.reportsPaneMoveTabsBeforeGroups()
+     * harness.reportsPaneCloseWithoutGroupReport()
+     */
+    reportsPaneCloseWithoutGroupReport(): void {
+      assert.ok(
+        reportsPaneMoveTabsBeforeGroupsFlag,
+        'reportsPaneCloseWithoutGroupReport needs reportsPaneMoveTabsBeforeGroups() to be called first',
+      )
+      reportsPaneCloseWithoutGroupReportFlag = true
     },
     /**
      * Makes the fake editor open a text tab as a preview in place of the preview tab its group already shows, as Cursor 3.27.22 did at the debugger's stop in the Application's group (N64p2-F2): a Codebook pane that is that preview is disposed, so its tab and its webview go.
@@ -7273,6 +7415,13 @@ export async function workspaceHarness(
       replacesGroupObjectsOnTabChanges = true
     },
     /**
+     * Makes the fake editor answer the numbered focus commands of its second to eighth group (`workbench.action.focusSecondEditorGroup` and the others) without changing the active group, as an editor does that has not taken the focus when the command resolves; the commands are still logged. The numbered tab commands (`workbench.action.openEditorAtIndexN`) keep acting on the active group.
+     * @example harness.ignoreNumberedGroupFocusCommands()
+     */
+    ignoreNumberedGroupFocusCommands(): void {
+      ignoresNumberedGroupFocusCommandsFlag = true
+    },
+    /**
      * Makes the fake editor answer `workbench.action.focusFirstEditorGroup` the way Cursor 3.27.12 was seen to while its Agent chat group is the active one (Cycle 0060, N60): the first group's pane reports itself active for a moment while the editor goes on naming the chat's group, the next layout read is answered for the main editor, and the chat input has the keyboard again right after that read, while later layout reads still answer for the main editor. No text editor is reported.
      * @example
      * const chat = harness.addSeparateEditorPart()
@@ -7321,7 +7470,7 @@ export async function workspaceHarness(
     },
     /**
      * Opens a learner's file as a diff editor in front of a group and gives it the keyboard, as the Source Control view's Open Changes does: the tab's input is a `TabInputTextDiff` of the file's original and its working copy, and the active text editor is the modified side's; both sides are visible text editors, and both editors report them with no view column (C61 c61-688-diffprobe, Cycle 0046 row 709). `showTextDocument` of that document opens a plain text tab of it in front of the diff, as both editors do for a resource shown in a diff (row 688). A group of VS Code's floating window (`addFloatingEditorWindow`) takes the diff too, and the floating window is the focused one then (row 720).
-     * @param filename - The learner's file.
+     * @param filename - The learner's file, relative to the harness's folder; a path into a subfolder (`app/index.ts`) names the file of that folder, and the tab's label is the file's base name, so two diffs of `index.ts` from different folders carry one label.
      * @param column - The group's view column.
      * @returns The modified document, the diff tab and the modified side's text editor.
      * @example const diff = harness.focusDiffEditor('auth.ts', 2) // auth.ts (Working Tree) in front of column 2 with the keyboard
@@ -7339,7 +7488,7 @@ export async function workspaceHarness(
       }
       const diffTab: Tab = {
         input: new TabInputTextDiff(originalDocument.uri, opened.document.uri),
-        label: `${filename} (Working Tree)`,
+        label: `${textTabLabel(opened.document.uri)} (Working Tree)`,
         isPreview: false,
       }
       opened.group.tabs.splice(

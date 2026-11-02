@@ -13,6 +13,26 @@ export type RefusalTabView = {
   isPinned: boolean
 }
 
+/** The active text editor as a refusal report names it: its file name (sanitized) and column; `undefined` for none, no column for an editor the host reports without one. */
+export type RefusalEditorView =
+  { name: string; viewColumn: number | undefined } | undefined
+
+/**
+ * Words the active text editor for a refusal report: the file name cut to the label length and the column kept whole.
+ * @param editor - The editor, or `undefined` for none.
+ * @returns `none`, `<name>` or `<name> (column <n>)`.
+ * @example describeRefusalEditor({ name: 'cards.tsx', viewColumn: 2 }) // => 'cards.tsx (column 2)'
+ */
+function describeRefusalEditor(editor: RefusalEditorView): string {
+  if (!editor) return 'none'
+  const name = Array.from(editor.name)
+    .slice(0, REFUSAL_REPORT_LABEL_CHARS)
+    .join('')
+  return editor.viewColumn === undefined
+    ? name
+    : `${name} (column ${editor.viewColumn})`
+}
+
 /** One editor group as a refusal report names it; `activeTab` is the tab the group showed, when it showed one. */
 export type RefusalGroupView = {
   viewColumn: number
@@ -46,6 +66,11 @@ export class PlacementEventLog {
   record(atMs: number, what: string): void {
     this.events.push({ atMs, what })
     if (this.events.length > this.capacity) this.events.shift()
+  }
+
+  /** Gives the time of the newest note, `undefined` while the log holds none. @example log.latestAtMs() // => 12 after log.record(12, 'groups closed [2]') */
+  latestAtMs(): number | undefined {
+    return this.events.at(-1)?.atMs
   }
 
   /** Lists the events at or after a time. @example log.since(armedAtMs) // => [{ atMs: 12, what: 'groups closed [2]' }] */
@@ -126,7 +151,7 @@ function describeRefusalEvents(
 /**
  * Words what a refused placement guard saw, for one Output › Codebook entry that names the guard, the groups before and after and the editor's events with the milliseconds since the guard was armed; called by {@link StudyWorkspace} when one of its placement guards refuses.
  * The guard's call site, the checks that failed, each group's front tab, the focused tab at arming against the active tab at the refusal and the effects Codebook itself issued since arming are optional: a guard that does not name them prints the first lines only.
- * @param input - The guard's name, the arm time, the groups at arm time and now, and the events since arming; optionally the call site, the failed checks, the focused tab then and the active tab now, and Codebook's own effects since arming.
+ * @param input - The guard's name, the arm time, the groups at arm time and now, and the events since arming; optionally the call site, the failed checks, the focused tab then and the active tab now, the active text editor then and now (file name and column), and Codebook's own effects since arming.
  * @returns The multi-line cause text.
  * @example describePlacementRefusal({ guard: 'placement', armedAtMs: 0, nowMs: 130, before, after, events }) // => 'Guard: placement\nArmed 130 ms before the refusal\nBefore: …'
  */
@@ -142,6 +167,7 @@ export function describePlacementRefusal(input: {
     atArming: RefusalTabView | undefined
     atRefusal: RefusalTabView | undefined
   }
+  editors?: { atArming: RefusalEditorView; atRefusal: RefusalEditorView }
   events: readonly RefusalEvent[]
   effects?: readonly RefusalEvent[]
 }): string {
@@ -166,6 +192,12 @@ export function describePlacementRefusal(input: {
       ? [
           `Focused tab at arming: ${describeRefusalTab(input.focus.atArming)}`,
           `Active tab at refusal: ${describeRefusalTab(input.focus.atRefusal)}`,
+        ]
+      : []),
+    ...(input.editors
+      ? [
+          `Active text editor at arming: ${describeRefusalEditor(input.editors.atArming)}`,
+          `Active text editor at refusal: ${describeRefusalEditor(input.editors.atRefusal)}`,
         ]
       : []),
     'Events while armed:',

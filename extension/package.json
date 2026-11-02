@@ -622,11 +622,11 @@
     "../**/*": "bun fmt --ignore-unknown --ignore-path ../.gitignore --ignore-path ../.prettierignore"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.30.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "entities": "8.1.0",
     "parse5": "8.0.1",
     "ws": "8.21.3",
-    "zod": "4.6.5"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/node": "24.13.5",

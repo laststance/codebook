@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { homedir } from 'node:os'
 import { test } from 'node:test'
 
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
+import { textEditorFocusState } from '../utils/textEditorFocusState'
 
 import {
   readerSeams,
@@ -12,6 +14,7 @@ import {
   workspaceHarness,
 } from './studyWorkspaceHarness'
 import {
+  advanceClockUntil,
   advanceClockUntilSettled,
   enableFakeClock,
   resetFakeClock,
@@ -1439,6 +1442,552 @@ test('first Study entry refuses an unfocused explanation when a second editor pa
     )
     assert.equal(harness.reader.presentationState().layoutConfirmed, false)
     assert.equal(draft.document.getText(), 'Original learner draft.\n')
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Codebook: Open Study Workspace in Cursor 3.27.22 after Developer: Reload Window, where the Agent chat's group stays the active tab group while the placed Context pane holds the keyboard: the entry answers instead of ending with the error dialog "Timed out waiting for Study explanation native focus", the Context pane stays at column 3 and the chat's group stays the one the editor names; fails_when=the wait for the Context pane's native focus accepts only the pane's own group as the active tab group or a layout read that counts every tab group, while the editor's layout counts the main editor's groups only and the chat's group stands beyond them, so a pane that is placed and visible never satisfies it; why_new=Cycle 0072 task 2 (Cursor 3.27.22 exthost log codebook.openStudyWorkspace; the focus here is one the editor attributes to the chat's group); seam=addSeparateEditorPart (Cursor's chat part), focusTab, nameChatGroupWhilePaneHoldsKeyboard, the reader's open (entry of an arranged workspace); no_claim=that the native pending sentence is reproduced here (it is not: the fake editor leaves nothing pending after this refusal, so this test guards the path and does not fail on the earlier code), the real Cursor's answer (native Cursor trial)
+test('Open Study Workspace in Cursor after a reload answers while the Agent chat group stays the named active group', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
+  const chat = harness.addSeparateEditorPart()
+  harness.focusMutableDraft('learner-notes.ts', 1)
+  try {
+    await harness.reader.open()
+    chat.focusTab()
+    harness.nameChatGroupWhilePaneHoldsKeyboard('codebook.studyContext')
+    const commandsBefore = harness.commands.length
+
+    // Act
+    await harness.reader.open()
+
+    // Assert
+    assert.equal(harness.panelColumn('codebook.studyContext'), 3)
+    assert.equal(
+      harness.editor.window.tabGroups.activeTabGroup.tabs.includes(chat.tab),
+      true,
+    )
+    assert.deepEqual(
+      harness.commands
+        .slice(commandsBefore)
+        .filter((command) => /^workbench\.action\.focus.*Group/.test(command)),
+      [],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Codebook: Open Study Workspace in Cursor 3.27.22 right after Developer: Reload Window (native probe 07:54: no pane restored, column 1 empty, the learner's group at column 2, the Agent chat's group at column 3; after the arrangement the editor names the Application's group active again while the Context pane stands visible in column 3, the layout counts 3 groups and the tab model 4): the entry answers instead of ending with the error dialog "Timed out waiting for Study explanation native focus", confirms the layout and runs no focus command naming the Agent chat's group; fails_when=the wait for the Context pane's native focus accepts only the pane's own group as the active tab group or a layout count equal to every tab group, so the chat's group beyond the measured main groups keeps a visible, placed pane from ever satisfying it; why_new=Cycle 0072 task 2 (native cold-open sequence; the test above it models the pane holding the keyboard under the chat's name); seam=addSeparateEditorPart (Cursor's chat part), leaveEmptyGroup, focusMutableDraft in column 2, onNextPanel with activatePaneByHand (the editor names the Application's group after the Context reveal), the reader's cold open; no_claim=what moved the active group back to column 1 (unmodelled cause), the real Cursor's answer (native Cursor trial)
+test('Open Study Workspace in Cursor right after a reload answers although the editor names the Application group active and the Agent chat group stands beyond the main grid', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  harness.leaveEmptyGroup(1)
+  harness.focusMutableDraft('cards.tsx', 2)
+  harness.onNextPanel('codebook.studyContext', (panel) => {
+    const reveal = panel.reveal.bind(panel)
+    panel.reveal = (column, preserveFocus): void => {
+      reveal(column, preserveFocus)
+      // Cursor names the Application's group active again right after the Context pane took the focus.
+      if (!preserveFocus) harness.activatePaneByHand('codebook.scopedBrowser')
+    }
+  })
+  const commandsBefore = harness.commands.length
+  try {
+    // Act
+    await harness.reader.open()
+
+    // Assert
+    assert.equal(harness.panelColumn('codebook.studyContext'), 3)
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true)
+    assert.equal(chat.focused(), false)
+    assert.deepEqual(
+      harness.commands
+        .slice(commandsBefore)
+        .filter((command) => /^workbench\.action\.focus.*Group/.test(command)),
+      [],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the first Open Study Workspace after Developer: Reload Window in Cursor 3.27.22 with the Agent chat open (native C72-2, candidate 81c749f1, 01:14:02): the entry places its panes and confirms the layout although the editor names the Application's group active again a few milliseconds after the Study pane took the focus, with no input of the learner's and no effect of Codebook's, and a later Arrange answers; fails_when=the placement guard of the main-grid read takes that move between two of Codebook's own panes for the learner's change and refuses with "Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.", which leaves the entry's presentation transition pending so the next Arrange answers "A presentation change or reader close is pending."; why_new=Cycle 0072 task 2 follow-up (the cold-open test above forces the naming before the guard arms; here it comes while the guard waits); seam=addSeparateEditorPart, leaveEmptyGroup, focusMutableDraft in column 2, onNextPanel with a delayed activatePaneByHand, the reader's cold open and arrange; no_claim=what makes Cursor name the Application's group, the real Cursor's answer (native Cursor trial)
+test('Open Study Workspace in Cursor right after a reload is not refused when the editor names the Application group active while the main grid is read, and a later Arrange answers', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  harness.leaveEmptyGroup(1)
+  harness.focusMutableDraft('cards.tsx', 2)
+  // Cursor names the Application's group active a few milliseconds after the main-grid read armed its placement guard.
+  let waitedForFocus = false,
+    reportInjected = false
+  const retainPlacement = harness.reader['retainPresentationPlacement'].bind(
+    harness.reader,
+  )
+  harness.reader['retainPresentationPlacement'] = (
+    callSite,
+    ...rest
+  ): (() => void) => {
+    const assertRetained = retainPlacement(callSite, ...rest)
+    if (callSite === 'open/assertPlacement') waitedForFocus = true
+    if (waitedForFocus && callSite === 'readMainEditorGrid/assertInitial') {
+      waitedForFocus = false
+      queueMicrotask(() => {
+        reportInjected = true
+        harness.activatePaneByHand('codebook.scopedBrowser')
+      })
+    }
+    return assertRetained
+  }
+  try {
+    // Act
+    await harness.reader.open()
+    await harness.reader.action('arrange')
+
+    // Assert
+    // The report the test is about came; without it the entry would pass for nothing.
+    assert.equal(reportInjected, true)
+    assert.equal(harness.panelColumn('codebook.studyContext'), 3)
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true)
+    assert.equal(chat.focused(), false)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Codebook: Arrange Study Workspace after an Open Study Workspace that the learner's own click refused (native C72-2, 01:14:40 and 01:15:32: the command answered "A presentation change or reader close is pending. Read its state before another control." twice, 80 s apart, until Close and Open recovered it): a learner who clicks one of their text tabs while the entry reads the main grid keeps that focus, the entry reports the learner's change, and the next Arrange answers instead of finding a presentation change still pending; fails_when=the refused entry leaves its presentation transition or operation pending, so every later control is refused with the pending sentence; why_new=Cycle 0072 task 2 follow-up (the refusal path of the entry); seam=addSeparateEditorPart, leaveEmptyGroup, focusMutableDraft (the learner's click during the read), the wrapped placement guard, the reader's open and action; no_claim=that the native pending sentence is reproduced here (it is not: the fake editor leaves nothing pending after this refusal, so this test guards the path and does not fail on the earlier code), the real Cursor's answer (native Cursor trial)
+test('Arrange Study Workspace answers after an Open Study Workspace was refused by the learner clicking a text tab during the main-grid read', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.addSeparateEditorPart()
+  harness.leaveEmptyGroup(1)
+  harness.focusMutableDraft('cards.tsx', 2)
+  let waitedForFocus = false
+  const retainPlacement = harness.reader['retainPresentationPlacement'].bind(
+    harness.reader,
+  )
+  harness.reader['retainPresentationPlacement'] = (
+    callSite,
+    ...rest
+  ): (() => void) => {
+    const assertRetained = retainPlacement(callSite, ...rest)
+    if (callSite === 'open/assertPlacement') waitedForFocus = true
+    if (waitedForFocus && callSite === 'readMainEditorGrid/assertInitial') {
+      waitedForFocus = false
+      // The learner clicks into their own text tab right after the guard armed.
+      queueMicrotask(() => harness.focusMutableDraft('cards.tsx', 2))
+    }
+    return assertRetained
+  }
+  try {
+    await assert.rejects(
+      harness.reader.open(),
+      /Native pane, group or focus changed while presentation waited/,
+    )
+
+    harness.controller.command({
+      studyId: harness.studyId,
+      action: 'open',
+      expectedRevision: harness.controller.state().revision,
+    })
+    await harness.controller.settle()
+    // Act
+    const outcome = await harness.reader.action('arrange').then(
+      () => 'answered',
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.equal(outcome, 'answered')
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the Output diagnostic of a control refused with "A presentation change or reader close is pending." (native C72-2: Arrange refused for 80 s after a refused cold entry with nothing in the log to say what was pending): the entry names the presentation transition that is held, the method that set it and its age, and says the operation, busy, refreshing and arranging markers apart; fails_when=the refusal is thrown without a presentation:pending-refused entry, or the entry omits the held marker or its owner; why_new=Cycle 0072 task 2 diagnostic; seam=holdNextCommand on the layout read of a Restore, changePresentation, assertPresentationIdle through reader.action, the diagnostics log; no_claim=which marker the native refusal held
+test('a control refused as pending writes an Output entry naming the held presentation transition and its owner', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let release = (): void => {}
+  try {
+    await harness.reader.open()
+    const held = harness.holdNextCommand('vscode.getEditorLayout')
+    release = held.release
+    const state = harness.reader.presentationState()
+    const transfer = harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'living-book',
+      action: 'select',
+    })
+    const settled = transfer.then(
+      () => undefined,
+      () => undefined,
+    )
+    await held.started
+
+    // Act
+    const refusal = await harness.reader.action('arrange').then(
+      () => 'answered',
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.match(refusal, /A presentation change or reader close is pending/)
+    const entry = logged.find(
+      (candidate) => candidate.surface === 'presentation:pending-refused',
+    )
+    assert.match(
+      entry?.cause ?? '',
+      /^presentationTransition: set by StudyWorkspace\.\S+ \d+ ms ago/,
+    )
+    release()
+    await settled
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
+// Value: protects=the markers the pending-refusal entry tells apart: a reader close and a Live Return are named as refusing a control with the method that set them and their age, while a held presentation operation and the control, refresh and arrange markers are named as not part of the refusal (a native block of 80 s showed nothing of what held it); fails_when=the entry omits a marker that refuses, or names one that does not refuse as if it did, so the next native block is read from the wrong marker; why_new=Cycle 0072 task 2 diagnostic (the transition case above covers one marker of seven); seam=the reader's marker setters, assertPresentationIdle and the diagnostics log; no_claim=which marker a native refusal held, and a marker set by a real close or Live Return
+test('a control refused as pending names every marker that refuses and says apart those that are not part of the refusal', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  try {
+    await harness.reader.open()
+    harness.reader['closing'] = true
+    harness.reader['returningCurrent'] = 'agent'
+    harness.reader['presentationOperation'] = new Promise<never>(
+      () => undefined,
+    )
+    harness.reader['busy'] = Symbol('control')
+
+    // Act
+    const refusal = (() => {
+      try {
+        harness.reader.assertPresentationIdle()
+        return 'idle'
+      } catch (error) {
+        return String(error)
+      }
+    })()
+
+    // Assert
+    assert.match(refusal, /A presentation change or reader close is pending/)
+    const entry = logged.find(
+      (candidate) => candidate.surface === 'presentation:pending-refused',
+    )
+    assert.match(
+      entry?.cause ?? '',
+      /^closing: set by \S+ \d+ ms ago\nreturningCurrent: set by \S+ \d+ ms ago\npresentationOperation \(not part of the refusal\): set by \S+ \d+ ms ago\nbusy: set \(not part of the refusal\)$/,
+    )
+  } finally {
+    harness.reader['closing'] = false
+    harness.reader['returningCurrent'] = undefined
+    harness.reader['presentationOperation'] = undefined
+    harness.reader['busy'] = undefined
+    await harness.close()
+  }
+})
+
+// Value: protects=the pending-refusal entry keeps the Output channel's sanitized-cause contract when a marker was set from an anonymous function, whose stack frame names a file location under the home directory instead of a method; fails_when=the entry writes that location unsanitized, so a private path reaches Output › Codebook, which learners copy into public reports; why_new=Cycle 0072 /ship pass 1 (native adversarial review, finding 5); seam=the reader's closing setter called from an anonymous callback, assertPresentationIdle, the diagnostics log; no_claim=which owners real markers have (named methods today)
+test('a control refused as pending writes no home-directory path when a marker was set from an anonymous function', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  try {
+    await harness.reader.open()
+    // The callback has no name, so its stack frame is this test file's location under the home directory.
+    ;[true].forEach((isClosing) => {
+      harness.reader['closing'] = isClosing
+    })
+
+    // Act
+    assert.throws(
+      () => harness.reader.assertPresentationIdle(),
+      /A presentation change or reader close is pending/,
+    )
+
+    // Assert
+    const cause =
+      logged.find(
+        (candidate) => candidate.surface === 'presentation:pending-refused',
+      )?.cause ?? ''
+    assert.match(cause, /^closing: set by \S+ \d+ ms ago$/)
+    assert.equal(cause.includes(homedir()), false)
+  } finally {
+    harness.reader['closing'] = false
+    await harness.close()
+  }
+})
+
+// Value: protects=Codebook: Arrange Study Workspace after a presentation change that was refused while Cursor's Focus Agent gives the Agent chat its keyboard back and never answers (the audit of native C72-2: the refused change waited for that command with its presentation transition still set, so every control answered "A presentation change or reader close is pending." until Close and Open): the focus return is given up after the presentation deadline, logged as presentation:focus-return-timed-out, the transition is released and the next Arrange answers; fails_when=the failure path awaits an unanswered editor command with no deadline and keeps the transition set; why_new=Cycle 0072 task 2 (code-level hazard of the failure path); seam=recordedReaderHarness, addSeparateEditorPart and focusTab, changeEditorLayout (the layout differs from the receipt), holdNextCommand on composer.focusComposer, changePresentation, the fake clock, the diagnostics log; no_claim=that this was the native cause of the 80 s block
+test('a refused presentation change releases its transition when the chat focus return never answers, and a later Arrange answers', async (context) => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  harness.leavePaneFocusUnreportedBesideChat()
+  harness.ignoresFirstGroupFocusCommandBesideChat()
+  const held = harness.holdNextCommand('composer.focusComposer')
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.open()
+    harness.focusMutableDraft('auth.ts', 2)
+    chat.focusTab()
+    await harness.reader.readPresentationState()
+    harness.changeEditorLayout({
+      orientation: 1,
+      groups: [{ size: 0.7 }, { size: 0.3 }],
+    })
+    const state = harness.reader.presentationState()
+    enableFakeClock(context)
+    const change = harness.reader
+      .changePresentation({
+        presentationId: state.presentationId,
+        expectedRevision: state.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'restore',
+      })
+      .then(
+        () => 'restored',
+        (error: unknown) => String(error),
+      )
+    // Throws when the held focus return never starts, so a regression fails here and does not hang.
+    await advanceClockUntilSettled(context, held.started, 20_000)
+    const whileHeld = await harness.reader.action('arrange').then(
+      () => 'answered',
+      (error: unknown) => String(error),
+    )
+
+    // Act
+    const releasedAfterMs = await advanceClockUntil(
+      context,
+      () => harness.reader['presentationTransition'] === undefined,
+      6_000,
+    )
+    // `advanceClockUntil` answers undefined at its limit: a transition still set after the 5 s deadline fails here and does not hang.
+    assert.equal(releasedAfterMs !== undefined, true)
+    assert.equal(harness.reader['presentationTransition'], undefined)
+    await change
+    const afterDeadline = await harness.reader.action('arrange').then(
+      () => 'answered',
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.match(whileHeld, /A presentation change or reader close is pending/)
+    assert.equal(afterDeadline, 'answered')
+    assert.equal(
+      logged.some(
+        (entry) => entry.surface === 'presentation:focus-return-timed-out',
+      ),
+      true,
+    )
+  } finally {
+    resetFakeClock(context)
+    held.release()
+    await harness.close()
+  }
+})
+
+// Value: protects=the entry's acceptance of Cursor's own-pane focus report (the Application's group named active after the Study pane took the focus) while two Opens overlap: the Open that finishes first must not end the acceptance of the one still arranging; fails_when=the acceptance is a flag that the first finished arrangement clears, so the second Open's guard refuses Cursor's report with "Native pane, group or focus changed while presentation waited"; why_new=Cycle 0072 task 2, CodeRabbit pass 6 minor 1; seam=arrangeForEntry with the reader's arrange held, the acceptance count; no_claim=the real Cursor's answer (native Cursor trial)
+test('an entry keeps accepting the editor’s own-pane focus report while another entry’s arrangement has finished', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  const releases: (() => void)[] = []
+  const entries: Promise<unknown>[] = []
+  harness.reader['arrange'] = (): Promise<void> =>
+    new Promise<void>((resolve) => releases.push(resolve))
+  try {
+    const first = harness.reader['arrangeForEntry'](undefined, false, undefined)
+    const second = harness.reader['arrangeForEntry'](
+      undefined,
+      false,
+      undefined,
+    )
+    entries.push(first, second)
+
+    // Act
+    releases[0]!()
+    await first
+
+    // Assert
+    assert.equal(harness.reader['acceptingOwnPaneFocusReports'], 1)
+    releases[1]!()
+    await second
+    assert.equal(harness.reader['acceptingOwnPaneFocusReports'], 0)
+  } finally {
+    // Release every held arrangement, so a failed assertion cannot leave an entry pending and hang the close.
+    for (const release of releases) release()
+    await Promise.allSettled(entries)
+    await harness.close()
+  }
+})
+
+// Value: protects=a learner who moves to a Repository Wiki tab in another group while an entry arranges (text editor unchanged): that move is the learner's and is refused, not taken for Cursor's report of the Application and Study panes; fails_when=the own-pane check accepts every Codebook pane, the Repository Wiki among them, so the guard adopts the learner's move as its new focus baseline; why_new=Cycle 0072 task 2, CodeRabbit pass 6 minor 2; seam=adoptOwnPaneFocusReport with fake groups whose front tab is a Codebook webview; no_claim=the real Cursor's answer (native Cursor trial)
+test('an entry takes the editor’s move to the Application pane for its own report and a move to a Repository Wiki pane for the learner’s', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  const baseline = {
+    nativeGroup: {},
+    focusedGroup: undefined,
+    retainedFocus: {
+      editor: textEditorFocusState(
+        harness.editor.window.activeTextEditor as never,
+      ),
+      group: undefined,
+    },
+  }
+  const groupShowing = (viewType: string): never =>
+    ({
+      activeTab: { input: new harness.editor.TabInputWebview(viewType) },
+    }) as never
+  try {
+    // Act
+    const toWiki = harness.reader['adoptOwnPaneFocusReport'](
+      true,
+      groupShowing('mainThreadWebview-codebook.repositoryWiki'),
+      baseline as never,
+    )
+    const toApplication = harness.reader['adoptOwnPaneFocusReport'](
+      true,
+      groupShowing('mainThreadWebview-codebook.scopedBrowser'),
+      baseline as never,
+    )
+
+    // Assert
+    assert.equal(toWiki, baseline)
+    assert.notEqual(toApplication, baseline)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the bounded focus return telling its own deadline from any other failure of the editor's command: a command that rejects (even with a message that reads like the deadline) still throws as before, and a command that never answers ends the wait with false, logged as presentation:focus-return-timed-out with the words that the command may still complete later; fails_when=the deadline is recognised by its message, so a rejection that happens to carry it is swallowed as a timeout, or the diagnostic claims the focus was left where it is; why_new=Cycle 0072 task 2, CodeRabbit pass 7 minor; seam=runFocusReturnCommand with a stubbed executeEditorCommand, the fake clock, the diagnostics log; no_claim=the real Cursor's answer (native Cursor trial)
+test('a focus return command that rejects still throws, and one that never answers ends the wait without claiming where the focus stays', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  try {
+    harness.reader['executeEditorCommand'] = (): never =>
+      Promise.reject(
+        new Error(
+          'Timed out waiting for the focus return composer.focusComposer',
+        ),
+      ) as never
+    const rejected = await harness.reader['runFocusReturnCommand'](
+      'composer.focusComposer',
+      undefined,
+      false,
+    ).catch((error: unknown) => String(error))
+    harness.reader['executeEditorCommand'] = (): never =>
+      new Promise(() => undefined) as never
+    enableFakeClock(context)
+    const never = harness.reader['runFocusReturnCommand'](
+      'composer.focusComposer',
+      undefined,
+      false,
+    )
+
+    // Act
+    // Throws when the 5 s deadline never ends the wait, so a regression fails here and does not hang.
+    await advanceClockUntilSettled(context, never, 6_000)
+    const result = await never
+
+    // Assert
+    assert.match(String(rejected), /Timed out waiting for the focus return/)
+    assert.equal(result, false)
+    const entry = logged.find(
+      (candidate) =>
+        candidate.surface === 'presentation:focus-return-timed-out',
+    )
+    assert.match(entry?.cause ?? '', /may still complete later/)
+    assert.doesNotMatch(entry?.cause ?? '', /left where it is/)
+  } finally {
+    resetFakeClock(context)
+    await harness.close()
+  }
+})
+
+// Value: protects=a learner who clicks an Application tab that an earlier extension host left behind (the editor kept it when the entry closed leftovers) while an entry arranges: that move is the learner's and the guard's baseline does not move, while Cursor's own report of the live Application is still taken; fails_when=the own-pane check looks at the view type only, so the dead tab passes for one of this reader's panes; why_new=Cycle 0072 task 2, CodeRabbit pass 11 minor; seam=leaveDeadCodebookPane noted as inherited after the cold open, adoptOwnPaneFocusReport on the groups of the dead tab and of the live Application; no_claim=the real Cursor's answer (native Cursor trial)
+test('an entry refuses the learner’s move to a dead Application tab of an earlier host and still takes the editor’s report of the live Application', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.focusMutableDraft('cards.tsx', 1)
+  try {
+    await harness.reader.open()
+    // The earlier host's Application tab stands in the learner's group, noted as left over.
+    const deadTab = harness.leaveDeadCodebookPane('codebook.scopedBrowser', 2)
+    harness.reader['noteInheritedPaneTab'](deadTab as never)
+    const groupAt = (column: number): never =>
+      harness.editor.window.tabGroups.all.find(
+        (group) => group.viewColumn === column,
+      ) as never
+    harness.activatePaneByHand('codebook.scopedBrowser')
+    const liveColumn = harness.panelColumn('codebook.scopedBrowser')
+    assert.ok(liveColumn)
+    // The text editor state is the one both reports leave unchanged.
+    const baseline = {
+      nativeGroup: {},
+      focusedGroup: undefined,
+      retainedFocus: {
+        editor: textEditorFocusState(
+          harness.editor.window.activeTextEditor as never,
+        ),
+        group: undefined,
+      },
+    }
+
+    // Act
+    const toDead = harness.reader['adoptOwnPaneFocusReport'](
+      true,
+      groupAt(2),
+      baseline as never,
+    )
+    const toLive = harness.reader['adoptOwnPaneFocusReport'](
+      true,
+      groupAt(liveColumn),
+      baseline as never,
+    )
+
+    // Assert
+    assert.equal(toDead, baseline)
+    assert.notEqual(toLive, baseline)
   } finally {
     await harness.close()
   }
