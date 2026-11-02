@@ -467,6 +467,50 @@ test('a learner’s click into their file while the show of the captured source 
   }
 })
 
+// Value: protects=the pane sizes of a following run after Arrange returned a captured source the learner moved into the Application's group and resized the panes: the layout reads confirmed only with the sizes of the arrangement back; fails_when=the return answers confirmed from the old confirmation flag and the resized 80:20 panes stay; why_new=Cycle 0072 task 1 candidate Codex review of 81c749f1 (P2); seam=the workspace harness with a started run, moveSource into column 1 and setEditorLayout; no_claim=the native sizes of the editor, only the fake layout
+test('Arrange after the captured source moved into the Application’s group and the panes were resized confirms only with the arranged sizes back', async () => {
+  // Arrange: a following run, its captured source moved into column 1, the two panes resized.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let live: { close(): void } | undefined
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await harness.service.record(receipt).preparation
+    await harness.reader.open()
+    live = await harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    const arranged = harness.editorLayout()
+    harness.moveSource(1)
+    await harness.editor.commands.executeCommand('vscode.setEditorLayout', {
+      orientation: 0,
+      groups: [{ size: 0.8 }, { size: 0.2 }],
+    })
+    // Act
+    await harness.reader.action('arrange')
+    // Assert
+    assert.deepEqual(
+      {
+        layoutConfirmed: harness.reader.presentationState().layoutConfirmed,
+        layout: harness.editorLayout(),
+        sourceColumn: harness.sourceColumn(),
+      },
+      { layoutConfirmed: true, layout: arranged, sourceColumn: 2 },
+    )
+  } finally {
+    live?.close()
+    await harness.close()
+  }
+})
+
 // Value: protects=Close Study Workspace while Arrange is returning the captured source: Close waits for the return, so no Codebook-owned captured-source tab is left or reopened after the cleanup; fails_when=the return is not registered as the presentation operation, Close cleans up at once and the late show opens the captured source again; why_new=Cycle 0072 task 1 CodeRabbit CLI pass 4 (A); seam=the workspace harness's holdNextTextDocumentShow, the reader's arrange and close; no_claim=none beyond protects
 test('Close Study Workspace during the captured source’s return leaves no captured-source tab open once both have finished', async () => {
   // Arrange: the captured source stands in the learner's fourth group and the editor's show of it is held.

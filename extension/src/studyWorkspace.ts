@@ -3249,7 +3249,8 @@ export class StudyWorkspace {
   ): Promise<PresentationState> {
     const displaced = this.displacedCapturedSourceTab(),
       lifetime = this.lifetime
-    let confirmedByPlacement = false
+    // `undefined` while the return did not run; then the state decides, otherwise only the measured placement does.
+    let confirmedByPlacement: boolean | undefined
     if (displaced && this.sourceUri) {
       // The admission conditions of any presentation change hold now and across every native step below.
       const runtimeIdentity = this.assertPresentationAdmission()
@@ -3352,7 +3353,8 @@ export class StudyWorkspace {
       }
     }
     // The source standing in its column again can confirm the retained grid by itself; a full placement would refuse the learner groups.
-    if (confirmedByPlacement || this.presentationState().layoutConfirmed) {
+    // A mismatch of the measured placement (resized panes) goes on to the ordinary placement, which restores the sizes.
+    if (confirmedByPlacement ?? this.presentationState().layoutConfirmed) {
       this.presentationConfirmed = true
       this.capturedSourceReturnReceipt = this.layoutReceipt
       this.requestedPresentation = undefined
