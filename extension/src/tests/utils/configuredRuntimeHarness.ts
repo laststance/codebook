@@ -62,6 +62,7 @@ import { createConfiguredStudy } from './createConfiguredStudy'
 import { createManualClock } from './createManualClock'
 import { createSourceBoundWaitHold } from './createSourceBoundWaitHold'
 import { debuggerPausedEvent } from './debuggerPausedEvent'
+import { fakePageContext, type FakePageElement } from './fakePageContext'
 import {
   loadConstantsWith,
   type RuntimeConstantOverrides,
@@ -131,6 +132,8 @@ export async function configuredRuntimeHarness(
     mappings?: string
     /** Replaces the declared before conditions, so a test can make a text or attribute condition the one that fails. */
     before?: RepositoryConfiguration['action']['before']
+    /** Replaces the declared run-level after conditions, so a test can run the shape a quick start declares. */
+    after?: RepositoryConfiguration['action']['after']
     /** Opts into a source the debugger can bind on another line than declared: the executed module is then the source text itself, so generated line n is source line n + 1 under a map such as 'AAAA;AACA'. */
     fixture?: {
       /** Replaces the one-statement source; its default (`var nextTheme = "dark";`) already has an empty line 2. */
@@ -289,6 +292,7 @@ export async function configuredRuntimeHarness(
   if (options.inspections)
     reference.configuration.inspections = options.inspections
   if (options.before) reference.configuration.action.before = options.before
+  if (options.after) reference.configuration.action.after = options.after
   if (fixture?.declaredLine)
     reference.configuration.source.line = fixture.declaredLine
   if (fixture?.declaredColumn)
@@ -355,6 +359,7 @@ export async function configuredRuntimeHarness(
   if (
     additionalStops.length ||
     options.before ||
+    options.after ||
     fixture ||
     options.adapter ||
     options.sourcePath ||
@@ -552,7 +557,9 @@ export async function configuredRuntimeHarness(
     afterFailure: BeforeFailure | undefined,
     afterReadCount = 0,
     // The elements the page shows after the input, each with its text; when set, the after conditions are evaluated on them by the real page expression.
-    afterPageElements: { selector: string; textContent: string }[] | undefined,
+    afterPageElements: FakePageElement[] | undefined,
+    // What the page shows before the input; when set, the after conditions read just before the last operation are evaluated on it by the real page expression.
+    beforePageElements: FakePageElement[] | undefined,
     inputResolve = (): void => {},
     inputReject = (_error: Error): void => {},
     onClose = (): void => {},
@@ -902,6 +909,16 @@ export async function configuredRuntimeHarness(
     const operationAfterAnswer = operationAfterFailures.get(expression ?? '')
     if (operationAfterAnswer)
       return { ready: false, failure: operationAfterAnswer }
+    if (
+      expression === afterExpression &&
+      !isResultVisible() &&
+      beforePageElements
+    )
+      return JSON.parse(
+        JSON.stringify(
+          runInNewContext(afterExpression, fakePageContext(beforePageElements)),
+        ),
+      )
     if (expression === afterExpression && !isResultVisible())
       return {
         ready: false,
@@ -990,14 +1007,7 @@ export async function configuredRuntimeHarness(
             result: {
               value: JSON.parse(
                 JSON.stringify(
-                  runInNewContext(afterExpression, {
-                    document: {
-                      querySelectorAll: (selector: string) =>
-                        shown.filter(
-                          (element) => element.selector === selector,
-                        ),
-                    },
-                  }),
+                  runInNewContext(afterExpression, fakePageContext(shown)),
                 ),
               ),
             },
@@ -2184,8 +2194,12 @@ export async function configuredRuntimeHarness(
       beforeTimeoutSentence = sentence
     },
     /** Makes the page show these elements after the input, so the run's own after-condition expression reads them: each element answers the selector it is listed under, with its text. @example harness.showAfterPage([{ selector: 'label', textContent: 'Dark' }]) */
-    showAfterPage(elements: { selector: string; textContent: string }[]): void {
+    showAfterPage(elements: FakePageElement[]): void {
       afterPageElements = elements
+    },
+    /** Makes the page show these elements before the input, so the run's own after-condition expression is read on them just before the last operation: a condition they satisfy makes the run refuse the operation. @example harness.showBeforePage([{ selector: 'h1', textContent: 'Invoices' }]) */
+    showBeforePage(elements: FakePageElement[]): void {
+      beforePageElements = elements
     },
     /** Makes the after conditions answer this failure on every read after the input, as an owned page whose result never appears does. */
     failAfterWith(failure: BeforeFailure): void {
