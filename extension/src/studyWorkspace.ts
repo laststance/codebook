@@ -8803,9 +8803,15 @@ export class StudyWorkspace {
             )
             this.assertLifetime(lifetime)
             assertPlacement()
+            const count = editorLayoutGroupCount(layout)
             return (
-              editorLayoutGroupCount(layout) ===
-              vscode.window.tabGroups.all.length
+              count === vscode.window.tabGroups.all.length ||
+              // Cursor 3.27.22 after a reload keeps naming its Agent chat's group while the placed Context pane holds the keyboard: the layout counts the main editor's groups only, and every group beyond them holds just the chat.
+              (count !== undefined &&
+                panel.active &&
+                group !== undefined &&
+                group.viewColumn <= count &&
+                this.holdsOnlyChatsBeyond(count))
             )
           },
           'Study explanation native focus',

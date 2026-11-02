@@ -1444,6 +1444,40 @@ test('first Study entry refuses an unfocused explanation when a second editor pa
   }
 })
 
+// Value: protects=Open Study Workspace in Cursor 3.27.22 after Developer: Reload Window, while the Agent chat part keeps the keyboard and its group stays the active tab group: the entry answers instead of failing with "Timed out waiting for Study explanation native focus", the saved study stands in the panes and the chat keeps the keyboard; fails_when=the entry waits for the Context tab to be the active tab group or for a layout read to count every tab group, while the editor answers the layout read for the chat's own part, so a pane that is placed and visible never satisfies the wait and the learner sees an error dialog; why_new=Cycle 0072 task 2 (Cursor 3.27.22 after a reload); seam=addSeparateEditorPart (Cursor's chat part), focusTab, ignoresFirstGroupFocusCommandBesideChat, leavePaneFocusUnreportedBesideChat, the reader's open; no_claim=the real Cursor's answer (native Cursor trial)
+// Value: protects=Codebook: Open Study Workspace in Cursor 3.27.22 after Developer: Reload Window, where the Agent chat's group stays the active tab group while the placed Context pane holds the keyboard: the entry answers instead of ending with the error dialog "Timed out waiting for Study explanation native focus", the Context pane stays at column 3 and the chat's group stays the one the editor names; fails_when=the wait for the Context pane's native focus accepts only the pane's own group as the active tab group or a layout read that counts every tab group, while the editor's layout counts the main editor's groups only and the chat's group stands beyond them, so a pane that is placed and visible never satisfies it; why_new=Cycle 0072 task 2 (Cursor 3.27.22 exthost log codebook.openStudyWorkspace; the sibling test above covers a Context pane whose focus is acknowledged, this one a focus the editor attributes to the chat's group); seam=addSeparateEditorPart (Cursor's chat part), focusTab, nameChatGroupWhilePaneHoldsKeyboard, the reader's open (entry of an arranged workspace); no_claim=the real Cursor's answer (native Cursor trial)
+test('Open Study Workspace in Cursor after a reload answers while the Agent chat group stays the named active group', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
+  const chat = harness.addSeparateEditorPart()
+  harness.focusMutableDraft('learner-notes.ts', 1)
+  try {
+    await harness.reader.open()
+    chat.focusTab()
+    harness.nameChatGroupWhilePaneHoldsKeyboard('codebook.studyContext')
+    const commandsBefore = harness.commands.length
+
+    // Act
+    await harness.reader.open()
+
+    // Assert
+    assert.equal(harness.panelColumn('codebook.studyContext'), 3)
+    assert.equal(
+      harness.editor.window.tabGroups.activeTabGroup.tabs.includes(chat.tab),
+      true,
+    )
+    assert.deepEqual(
+      harness.commands
+        .slice(commandsBefore)
+        .filter((command) => /^workbench\.action\.focus.*Group/.test(command)),
+      [],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 test('first Study entry accepts its application tab registering during the initial native layout read', async () => {
   // Arrange
   const harness = await workspaceHarness(false)
