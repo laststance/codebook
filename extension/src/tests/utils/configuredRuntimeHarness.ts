@@ -170,6 +170,12 @@ export async function configuredRuntimeHarness(
     holdNavigation?: boolean
     /** The path the main frame lands on after the nth `Page.navigate` of a saved-session run (zero-based), when it differs from `navigationLandsOn`; later navigations use `navigationLandsOn`. */
     navigationLandings?: string[]
+    /** Replaces the declared inspections (default: the value of `nextTheme`), so a test can inspect a local such as a `cookies()` result. */
+    inspections?: RepositoryConfiguration['inspections']
+    /** Further locals the stand-in debugger holds at a stop beside `nextTheme`, by name, as the app's scope would (an object reads as the marker `{ type: 'object' }`, as in a real frame). */
+    inspectionScope?: Record<string, unknown>
+    /** Makes `document.readyState` read `loading` from the nth `Page.navigate` on (one-based), so the warm-up load of a saved-session run, which waits for `complete`, finishes before the armed entry load starts loading. */
+    loadingFromNavigation?: number
     /** What `document.readyState` answers from the start (default `complete`); an entry-render test starts with `loading` and calls `setDocumentReadyState('complete')` once the page may load. */
     documentReadyState?: 'loading' | 'complete'
     /** The executed module's text instead of the default one-statement module, such as a Vite module with an inlined env value. */
@@ -278,6 +284,8 @@ export async function configuredRuntimeHarness(
   if (options.adapter) reference.configuration.adapter = options.adapter
   if (additionalStops.length)
     reference.configuration.additionalStops = additionalStops
+  if (options.inspections)
+    reference.configuration.inspections = options.inspections
   if (options.before) reference.configuration.action.before = options.before
   if (fixture?.declaredLine)
     reference.configuration.source.line = fixture.declaredLine
@@ -351,6 +359,7 @@ export async function configuredRuntimeHarness(
     options.nextPages?.entryPath ||
     options.entryPath ||
     options.initialInputs ||
+    options.inspections ||
     options.participant ||
     options.operations
   )
@@ -914,6 +923,7 @@ export async function configuredRuntimeHarness(
   const evaluateInspection = (expression: string | undefined): unknown =>
     runInNewContext(expression ?? '', {
       nextTheme: requiredInspectionValue(),
+      ...options.inspectionScope,
       setTheme() {},
       enabled: false,
       selection: null,
@@ -1097,6 +1107,8 @@ export async function configuredRuntimeHarness(
       if (method === 'Page.navigate') {
         navigations.push(String(parameters?.url))
         navigateTimeouts.push(timeout)
+        if (options.loadingFromNavigation === navigations.length)
+          documentReadyState = 'loading'
         if (options.holdNavigation && options.serverRuntime) {
           const url = String(parameters?.url)
           return new Promise<object>((resolve, reject) => {
