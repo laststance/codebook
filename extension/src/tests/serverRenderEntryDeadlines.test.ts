@@ -199,3 +199,33 @@ test('no second readyState read starts while one is pending during the entry loa
     'a read after the pending one was answered',
   )
 })
+
+// Value: protects=AC 6 (a, b): the entry pause that arrives before the answer to the resume of another route's hit keeps the 300 s pause hold when that answer comes; fails_when=the late answer re-arms the 20 s active bound over the held pause and fails the run at 20 s; why_new=no deadline test combines a resumed hit with a pause held meanwhile; seam=none; no_claim=the adapter's real event order
+test('an entry pause held while the resume of another route is unanswered keeps the pause hold', async (context) => {
+  // Arrange
+  const harness = await entryRenderHarness(context)
+  const prepared = harness.run.prepare().catch((error: unknown) => error)
+  await armedEntry(harness)
+  const answer = harness.server!.holdNextContinueAnswer()
+  harness.server!.hit({ route: '/dashboard/invoices' })
+  await waitUntil(
+    () => harness.server!.continues.length >= 1,
+    'the resume of the other route',
+  )
+  harness.server!.hit({ route: '/dashboard' })
+  // Act: the resume is answered late, while the entry hit is still being classified, then the learner holds the pause for 25 s
+  answer()
+  await waitUntil(
+    () => harness.run.view().participants.server?.snapshot,
+    'the published entry pause',
+  )
+  harness.advance(25_000)
+  // Assert
+  assert.deepEqual([...harness.run.view().failures], [])
+  harness.advance(275_000)
+  await prepared
+  assert.match(
+    harness.run.view().failures[0]!,
+    /^Repository pause hold deadline exceeded/,
+  )
+})

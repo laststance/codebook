@@ -2222,6 +2222,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     await this.sendOwnedResume(participant.selected!, pause.threadId)
     // The next hit of the same render is caused by the run's own resume; the stop's bound runs on from the arming or the last continue.
     this.openCausalWindow(stop.participant)
+    // A hit that arrived before the answer to this resume was accepted meanwhile ({@link onEvent} set the flag again and held its pause): that pause's hold is no bound of this stop to replace, and the hit gives the bound back itself if it is resumed too.
+    if (this.acceptedStop) return
     this.restoreActiveBound()
   }
 
