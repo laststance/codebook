@@ -77,6 +77,8 @@ test('following the quick start call order, an entry-render pause is read as pau
     }),
   )
   const { harness, service, state } = run
+  // The service releases a completed run within 250 ms, which would read `stopping` where this test reads `completed`.
+  run.holdMaintenance()
   const configuration: Record<string, unknown> = JSON.parse(
     JSON.stringify(harness.definition.configuration),
   )

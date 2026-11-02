@@ -281,6 +281,8 @@ test('a run with an entry-render stop and an operation without a stop is saved a
     },
   })
   const { harness, service, state, receipt } = run
+  // The service releases a completed run within 250 ms, and a capture that straddles the release is discarded.
+  run.holdMaintenance()
   service.environment.confirmSavedSessionOperations = async () => true
   service.environment.noticeOperationsConfirmation = async () => undefined
   await waitUntil(

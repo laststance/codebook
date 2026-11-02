@@ -93,6 +93,8 @@ export async function serviceHostedEntryRun(
     service,
     receipt,
     harness,
+    /** Stops the service's maintenance timer, which releases a completed run within 250 ms and so changes its state from `completed` to `stopping` and `stopped` at a moment a loaded machine's test can straddle; a test that reads or captures the completed run calls it first, and the end of the test shuts the service down. @example run.holdMaintenance() */
+    holdMaintenance: (): void => clearInterval(service['maintenance']),
     /** Reads the run resource as the agent does. @example state().participants.server?.continueArguments */
     state: () => service.state(service.record(receipt)),
   }

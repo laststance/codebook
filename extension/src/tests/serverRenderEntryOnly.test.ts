@@ -24,6 +24,8 @@ async function completeEntryOnly(
   run: Awaited<ReturnType<typeof serviceHostedEntryRun>>,
 ): Promise<string> {
   const { harness, service, state } = run
+  // The service releases a completed run within 250 ms, so `completed` is a state a loaded machine's poll misses and a capture straddling the release is discarded.
+  run.holdMaintenance()
   await waitUntil(
     () => harness.server!.breakpointsAcknowledged() > 0,
     'the entry-render stop was armed',
