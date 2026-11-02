@@ -1,6 +1,8 @@
 import { ACTIVE_TIMEOUT_MS } from '../constants'
 
-/** Bounds non-cancellable DAP reads for inspectors; late responses never enter another request. @example await awaitResponse(session.customRequest('stackTrace', args), 'stack', signal) */
+import { WaitTimeoutError } from './waitTimeoutError'
+
+/** Bounds non-cancellable DAP reads for inspectors; late responses never enter another request. The deadline rejects with a {@link WaitTimeoutError}, which a caller tells from the response's own failure by type. The response is not cancelled: it may still complete after the deadline. @example await awaitResponse(session.customRequest('stackTrace', args), 'stack', signal) */
 export function awaitResponse<Value>(
   response: PromiseLike<Value>,
   description: string,
@@ -18,7 +20,7 @@ export function awaitResponse<Value>(
     }
     const timer = setTimeout(() => {
       finish()
-      reject(new Error(`Timed out waiting for ${description}`))
+      reject(new WaitTimeoutError(`Timed out waiting for ${description}`))
     }, timeoutMs)
     signal?.addEventListener('abort', aborted, { once: true })
     if (signal?.aborted) aborted()

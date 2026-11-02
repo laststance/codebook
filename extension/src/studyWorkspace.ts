@@ -4477,7 +4477,7 @@ export class StudyWorkspace {
    * @param chatEditorTab - Whether the remembered tab is VS Code's chat editor tab ({@link isChatEditorTabInput}).
    * @returns
    * - `true` once the command ran.
-   * - `false` without a command, and when the command gave no answer within {@link PRESENTATION_READY_TIMEOUT_MS} (logged as `presentation:focus-return-timed-out`; the focus stays where it is).
+   * - `false` without a command, and when the command gave no answer within {@link PRESENTATION_READY_TIMEOUT_MS} (logged as `presentation:focus-return-timed-out`; the wait ended, the command is not cancelled and may still move the focus later).
    * @throws What the editor's command rejected with.
    * @example await this.runFocusReturnCommand('workbench.action.focusThirdEditorGroup', 'leftoverProof', true) // => true, and the leftover proof's sentence is told once
    */
@@ -4487,7 +4487,7 @@ export class StudyWorkspace {
     chatEditorTab: boolean,
   ): Promise<boolean> {
     if (!command) return false
-    // An editor command that never answers must not keep a presentation marker set while the failure path waits for it: on expiry the focus stays where it is.
+    // An editor command that never answers must not keep a presentation marker set while the failure path waits for it: on expiry the wait ends, but the command is not cancelled and may still complete later.
     try {
       await awaitResponse(
         this.executeEditorCommand(command),
@@ -4496,11 +4496,10 @@ export class StudyWorkspace {
         PRESENTATION_READY_TIMEOUT_MS,
       )
     } catch (error) {
-      if (!String(error).includes('Timed out waiting for the focus return'))
-        throw error
+      if (!(error instanceof WaitTimeoutError)) throw error
       this.diagnostics?.log({
         surface: 'presentation:focus-return-timed-out',
-        cause: `${command} gave no answer within ${PRESENTATION_READY_TIMEOUT_MS} ms; the focus was left where it is.`,
+        cause: `${command} gave no answer within ${PRESENTATION_READY_TIMEOUT_MS} ms; the wait ended and the command may still complete later.`,
       })
       return false
     }

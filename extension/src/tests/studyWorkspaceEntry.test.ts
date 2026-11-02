@@ -1804,6 +1804,59 @@ test('an entry takes the editor’s move to the Application pane for its own rep
   }
 })
 
+// Value: protects=the bounded focus return telling its own deadline from any other failure of the editor's command: a command that rejects (even with a message that reads like the deadline) still throws as before, and a command that never answers ends the wait with false, logged as presentation:focus-return-timed-out with the words that the command may still complete later; fails_when=the deadline is recognised by its message, so a rejection that happens to carry it is swallowed as a timeout, or the diagnostic claims the focus was left where it is; why_new=Cycle 0072 task 2, CodeRabbit pass 7 minor; seam=runFocusReturnCommand with a stubbed executeEditorCommand, the fake clock, the diagnostics log; no_claim=the real Cursor's answer (native Cursor trial)
+test('a focus return command that rejects still throws, and one that never answers ends the wait without claiming where the focus stays', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  try {
+    harness.reader['executeEditorCommand'] = (): never =>
+      Promise.reject(
+        new Error(
+          'Timed out waiting for the focus return composer.focusComposer',
+        ),
+      ) as never
+    const rejected = await harness.reader['runFocusReturnCommand'](
+      'composer.focusComposer',
+      undefined,
+      false,
+    ).catch((error: unknown) => String(error))
+    harness.reader['executeEditorCommand'] = (): never =>
+      new Promise(() => undefined) as never
+    enableFakeClock(context)
+    let waitEnded = false
+    const never = harness.reader['runFocusReturnCommand'](
+      'composer.focusComposer',
+      undefined,
+      false,
+    ).then((result) => {
+      waitEnded = true
+      return result
+    })
+
+    // Act
+    await advanceClockUntil(context, () => waitEnded, 6_000)
+    const result = await never
+
+    // Assert
+    assert.match(String(rejected), /Timed out waiting for the focus return/)
+    assert.equal(result, false)
+    const entry = logged.find(
+      (candidate) =>
+        candidate.surface === 'presentation:focus-return-timed-out',
+    )
+    assert.match(entry?.cause ?? '', /may still complete later/)
+    assert.doesNotMatch(entry?.cause ?? '', /left where it is/)
+  } finally {
+    resetFakeClock(context)
+    await harness.close()
+  }
+})
+
 test('first Study entry accepts its application tab registering during the initial native layout read', async () => {
   // Arrange
   const harness = await workspaceHarness(false)
