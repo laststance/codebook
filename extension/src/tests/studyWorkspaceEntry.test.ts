@@ -1478,6 +1478,42 @@ test('Open Study Workspace in Cursor after a reload answers while the Agent chat
   }
 })
 
+// Value: protects=Codebook: Open Study Workspace in Cursor 3.27.22 right after Developer: Reload Window (native probe 07:54: no pane restored, column 1 empty, the learner's group at column 2, the Agent chat's group at column 3; after the arrangement the editor names the Application's group active again while the Context pane stands visible in column 3, the layout counts 3 groups and the tab model 4): the entry answers instead of ending with the error dialog "Timed out waiting for Study explanation native focus", confirms the layout and runs no focus command naming the Agent chat's group; fails_when=the wait for the Context pane's native focus accepts only the pane's own group as the active tab group or a layout count equal to every tab group, so the chat's group beyond the measured main groups keeps a visible, placed pane from ever satisfying it; why_new=Cycle 0072 task 2 (native cold-open sequence; the test below it models the pane holding the keyboard under the chat's name); seam=addSeparateEditorPart (Cursor's chat part), leaveEmptyGroup, focusMutableDraft in column 2, onNextPanel with activatePaneByHand (the editor names the Application's group after the Context reveal), the reader's cold open; no_claim=what moved the active group back to column 1 (unmodelled cause), the real Cursor's answer (native Cursor trial)
+test('Open Study Workspace in Cursor right after a reload answers although the editor names the Application group active and the Agent chat group stands beyond the main grid', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  harness.leaveEmptyGroup(1)
+  harness.focusMutableDraft('cards.tsx', 2)
+  harness.onNextPanel('codebook.studyContext', (panel) => {
+    const reveal = panel.reveal.bind(panel)
+    panel.reveal = (column, preserveFocus): void => {
+      reveal(column, preserveFocus)
+      // Cursor names the Application's group active again right after the Context pane took the focus.
+      if (!preserveFocus) harness.activatePaneByHand('codebook.scopedBrowser')
+    }
+  })
+  const commandsBefore = harness.commands.length
+  try {
+    // Act
+    await harness.reader.open()
+
+    // Assert
+    assert.equal(harness.panelColumn('codebook.studyContext'), 3)
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true)
+    assert.equal(chat.focused(), false)
+    assert.deepEqual(
+      harness.commands
+        .slice(commandsBefore)
+        .filter((command) => /^workbench\.action\.focus.*Group/.test(command)),
+      [],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 test('first Study entry accepts its application tab registering during the initial native layout read', async () => {
   // Arrange
   const harness = await workspaceHarness(false)

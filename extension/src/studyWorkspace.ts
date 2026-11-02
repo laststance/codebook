@@ -8806,9 +8806,10 @@ export class StudyWorkspace {
             const count = editorLayoutGroupCount(layout)
             return (
               count === vscode.window.tabGroups.all.length ||
-              // Cursor 3.27.22 after a reload keeps naming its Agent chat's group while the placed Context pane holds the keyboard: the layout counts the main editor's groups only, and every group beyond them holds just the chat.
+              // Cursor 3.27.22 lists its Agent chat's group after the main editor's groups while the layout read counts the main editor's only: the groups beyond the measured ones holding just the chat stand outside the comparison, as the single editor part of VS Code has none.
+              // A learner's text editor holding the focus is no such proof: the keyboard is not in a Codebook pane or the chat then.
               (count !== undefined &&
-                panel.active &&
+                !vscode.window.activeTextEditor &&
                 group !== undefined &&
                 group.viewColumn <= count &&
                 this.holdsOnlyChatsBeyond(count))
