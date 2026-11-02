@@ -76,7 +76,10 @@ export const SERVER_RENDER_SEARCH_CONFIGURATION = {
         column: 5,
       },
       anchorIndex: 1,
-      inspections: [{ path: 'data', mode: 'type', required: false }],
+      inspections: [
+        { path: 'query', mode: 'value', required: true },
+        { path: 'data', mode: 'type', required: false },
+      ],
       afterOperation: 1,
     },
   ],
