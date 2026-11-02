@@ -38,6 +38,13 @@ Read the archived docs before the work each governs (other records, prompts, ext
 
 Fix every carried defect in the next cycle; sole exception: the [ship review limit](#delivery). No planning choice, review outcome or skill default overrides this; a feature cycle starts clean.
 
+- **Dependencies first**, every cycle (both kinds), before other work.
+  - Run `pnpm --dir extension update --latest '!@types/vscode' '!@vscode/*' '!@types/node'`, then move `@types/node` to the newest version of the pinned Node major.
+  - VS Code packages, `engines` and the Node pins stay as they are: a newer VS Code API than Cursor's breaks the extension in Cursor.
+  - Keep exact pins, fix breakages, pass the checks, and commit on the cycle branch.
+  - A Fallow or c8 version change follows the [Fallow](#commands-and-checks) retake rules.
+  - Small steps keep breaking changes cheap and security fixes immediate. A high `pnpm audit` advisory found mid-cycle is a defect of that cycle.
+
 - **Defect** = a Critical or Major finding (a review marks it critical, major, high, blocking, P0 or P1) or a failed gate, CI or native check. Medium, Minor, Low and informational findings, test gaps and doc debt are no defects: fixed when cheap and in scope, else answered Skip and named once in the PR or a short later-candidate list; they never start a bug-fix cycle.
 - **Feature cycle**: an increment of the final product. Starts only with nothing carried in; planned from the final product alone (`/spec` + plan reviews, from PRODUCT_GOAL.md and the gap audit). Defects it leaves unfixed are carried.
 - **Bug-fix cycle**: follows any cycle that left a defect; fixes those, nothing else.
