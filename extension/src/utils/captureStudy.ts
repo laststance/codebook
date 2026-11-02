@@ -12,6 +12,7 @@ import type { StudyRecord, StudyService } from '../service'
 import { decodeRetainedStudy } from './decodeRetainedStudy'
 import { describeStudy } from './describeStudy'
 import { maskLearningSummaryText } from './maskLearningSummaryText'
+import { observationOfFormat } from './observationOfFormat'
 import { projectSavedOperations } from './projectSavedOperations'
 import { redactPreparedConfiguration } from './redactPreparedConfiguration'
 import { studyFormatOfConfiguration } from './studyFormatOfConfiguration'
@@ -194,12 +195,14 @@ export async function captureStudy(
     record.canonicalTextStates,
     'canonical',
   )
+  // Fixed by the sealed configuration; the runtime's format 8 pause fields are written only in format 8.
+  const studyVersion = studyFormatOfConfiguration(canonicalConfiguration)
   const configured =
     record.profile === REPOSITORY_BROWSER_PROFILE
       ? {
           // A study of ordered operations has its own format, so an older Codebook lists it as saved by a newer one instead of failing on its schema.
           // The format is a pure function of the sealed configuration, so it is the same at every checkpoint of the run.
-          version: studyFormatOfConfiguration(canonicalConfiguration),
+          version: studyVersion,
           configuration: canonicalConfiguration,
           configurationHash: sha256(JSON.stringify(canonicalConfiguration)),
           descriptor: record.definition?.descriptor,
@@ -242,7 +245,9 @@ export async function captureStudy(
           state.terminalReason ?? state.cleanupError?.message ?? '',
         ) || undefined,
       learningSummary,
-      observations,
+      observations: observations.map((observation) =>
+        observationOfFormat(observation, studyVersion),
+      ),
       captures,
       links: [],
     },

@@ -107,6 +107,24 @@ test('a browser-only version 3 run is saved as format 7 equal to the study 0.2.7
   assert.equal(written.version, 7)
 })
 
+// protects=AC 10: a browser-only run whose pause snapshots carry the format 8 fields is still written as the 0.2.72.0 format 7 study, without those fields, and passes format 7 validation; fails_when=the writer keeps execution, declaredIndex or executionIndex in a format 7 study; no_claim=a real run (the controlled runtime stands in)
+test('a browser-only version 3 run whose snapshots carry format 8 fields is saved as the format 7 golden without them', async (context) => {
+  // Arrange
+  const golden: unknown = JSON.parse(await readFile(GOLDEN_PATH, 'utf8'))
+  // Act
+  const written = await captureBrowserOnlyOperationsStudy(context, {
+    snapshotsCarryFormat8Fields: true,
+  })
+  // Assert
+  assert.deepEqual(
+    withoutRunIdsAndTimes(JSON.parse(JSON.stringify(written))),
+    withoutRunIdsAndTimes(golden),
+  )
+  assert.doesNotThrow(() =>
+    validateConfiguredStudyEvidence(written, written.workspaceKey),
+  )
+})
+
 // protects=AC 10a: the study 0.2.72.0 wrote still passes today's decoding and the semantic validation of its recording context; fails_when=format 7 validation rejects the golden study or its recording context; no_claim=playback of it
 test('the study 0.2.72.0 wrote decodes and its recording context validates', async () => {
   // Arrange

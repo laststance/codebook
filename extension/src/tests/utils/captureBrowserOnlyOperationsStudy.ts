@@ -11,11 +11,13 @@ import { ControlledOperationsRuntime } from './controlledOperationsRuntime'
  * Runs the study writer ({@link captureStudy}) on a browser-only version 3 run that paused at its one click operation, as the service saves it at a first checkpoint.
  * Used by the format 7 golden test, and once at 0.2.72.0 (commit 2f5de949) to produce `fixtures/operations-study-v0.2.72.0/browser-only-v3.study.v7.json`.
  * @param context - The running test, which owns the harness cleanup.
+ * @param options - `snapshotsCarryFormat8Fields` gives the run's snapshots `execution`, `declaredIndex` and `executionIndex`, as the pause lane does.
  * @returns The study the writer produced, before it is saved.
  * @example const study = await captureBrowserOnlyOperationsStudy(context) // study.version === 7
  */
 export async function captureBrowserOnlyOperationsStudy(
   context: TestContext,
+  options: { snapshotsCarryFormat8Fields?: boolean } = {},
 ): Promise<RetainedStudy> {
   const harness = await configuredServiceHarness(
     context,
@@ -55,6 +57,13 @@ export async function captureBrowserOnlyOperationsStudy(
     key: 'op-1',
     action: 'repository-operation',
   })
+  // The pause lane puts the format 8 fields on every snapshot of every run, browser-only runs included.
+  if (options.snapshotsCarryFormat8Fields)
+    runtime.snapshots.forEach((snapshot, position) => {
+      snapshot.execution = 'browser'
+      snapshot.declaredIndex = position
+      snapshot.executionIndex = position
+    })
   const study = await captureStudy(
     service,
     record,

@@ -6,7 +6,6 @@ import {
   OPERATIONS_CONFIG_VERSION,
   SERVER_RENDER_STUDY_VERSION,
 } from '../constants'
-import type { OperationsRepositoryConfiguration } from '../repositoryConfigSchemas'
 
 import { afterOperationOf } from './afterOperationOf'
 import { configuredStops } from './configuredStops'
@@ -23,7 +22,7 @@ type StudyWithoutImages = Omit<ConfiguredStudy, 'captures'>
  */
 function assertRecordsMatchDeclaration(
   records: readonly ConfiguredOperationRecord[],
-  declared: OperationsRepositoryConfiguration['operations'],
+  declared: readonly { kind: string; title: string }[],
 ): void {
   if (records.length !== declared.length)
     throw new Error('Configured operations differ from the declared ones.')
@@ -206,7 +205,11 @@ export function validateOperationRecords(study: StudyWithoutImages): void {
       throw new Error('Configured operations are missing from a started run.')
     return
   }
-  assertRecordsMatchDeclaration(records, configuration.operations)
+  // Read as possibly absent: a saved-session run of entry-render stops only may omit `operations`.
+  const declaredOperations:
+    readonly { kind: string; title: string }[] | undefined =
+    configuration.operations
+  assertRecordsMatchDeclaration(records, declaredOperations ?? [])
   assertRanSequentially(records)
   assertSentTimes(records)
   assertPausesFollowOperations(study, records)
