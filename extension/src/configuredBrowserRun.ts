@@ -1761,6 +1761,46 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Tells whether a pause is in React's copy of a module (`about://React/Server/`) of a run that renders server stops.
+   * Called by the pause intake and {@link admitPause} to route copy hits, also while the run waits for its first operation.
+   * @param name - The participant whose runtime paused.
+   * @param event - The paused event.
+   * @returns `true` for a server pause in a React copy script.
+   * @example this.isServerCopyPause('server', event) // true for about://React/Server/…
+   */
+  private isServerCopyPause(
+    name: Participant,
+    event: Protocol.Debugger.PausedEvent,
+  ): boolean {
+    return (
+      name === 'server' &&
+      this.rendersServerStops() &&
+      isReactServerCopyUrl(
+        this.participants.server.scriptUrls.get(
+          event.callFrames[0]?.location.scriptId ?? '',
+        ),
+      )
+    )
+  }
+
+  /**
+   * Holds a React copy pause that arrives while the run waits for its first operation's input (entry-render stops done, no operation yet), and drops every other pause as the intake always did then.
+   * Why it exists: without it the copy's `stopped` is not classified as a copy and fails the run as an extra server stop. Called by {@link onCdpPaused} when neither an operation nor an entry load is active.
+   * @param name - The participant whose runtime paused.
+   * @param event - The paused event.
+   * @param journaled - Whether the pause's observation was journaled.
+   * @example this.holdCopyPauseWhileIdle('server', event)
+   */
+  private holdCopyPauseWhileIdle(
+    name: Participant,
+    event: Protocol.Debugger.PausedEvent,
+    journaled: boolean,
+  ): void {
+    if (this.isServerCopyPause(name, event))
+      this.holdCopyPause(event, journaled)
+  }
+
+  /**
    * Keeps a React copy pause apart until its `stopped` arrives, and bounds the wait: when no `stopped` comes within {@link SERVER_RENDER_CLASSIFICATION_MS} the pause goes back to normal admission instead of waiting for the run's deadline.
    * Called by {@link admitPause} for a pause in React's copy of a declared module.
    * @param event - The paused event.
@@ -5964,7 +6004,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       participant.instrumentationPaused = true
       return
     }
-    if (!this.operation && !this.entryLoad) return
+    if (!this.operation && !this.entryLoad)
+      return this.holdCopyPauseWhileIdle(name, event, journaled)
     // js-debug may hit and auto-resume its own browser breakpoint even when this run declares only server stops.
     if (
       name === 'browser' &&
@@ -6144,19 +6185,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     isReturnedCopy = false,
   ): void {
     // A pause in React's copy of a declared module waits for its `stopped`, which decides whether it is at an owned stop's position (F1); a copy given back by {@link unexpectedHitVerdict} is not held again.
-    if (
-      !isReturnedCopy &&
-      name === 'server' &&
-      this.rendersServerStops() &&
-      isReactServerCopyUrl(
-        this.participants.server.scriptUrls.get(
-          event.callFrames[0]?.location.scriptId ?? '',
-        ),
-      )
-    ) {
+    if (!isReturnedCopy && this.isServerCopyPause(name, event)) {
       this.holdCopyPause(event, journaled)
       return
     }
+    // A copy given back while no operation or entry load is active is dropped, as every pause at that time is.
+    if (isReturnedCopy && !this.operation && !this.entryLoad) return
     // A participant pauses once at a time; a second pause before the first one's resume is nobody's declared stop.
     if (this.holdsPause(name)) {
       this.fail(`Additional ${name} stop invalidated the declared operation`)

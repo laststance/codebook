@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import {
@@ -480,4 +480,104 @@ test('inside a set of two entry-render stops the run resource says it waits for 
     state().operationStatus,
     'Page load · paused in server render (2 of 2)',
   )
+})
+
+/** Opens a mixed run (entry-render stop plus an `afterOperation: 1` stop, saved session), continues the entry pause, and waits until the run is ready for operation 1. @example const run = await readyMixedRun(context) */
+async function readyMixedRun(context: TestContext) {
+  const run = await serviceHostedEntryRun(
+    context,
+    savedSessionOptions({
+      operations: [
+        {
+          kind: 'click',
+          title: 'Create Invoice',
+          selector: 'button[type=submit]',
+        },
+      ],
+      stopOperations: [0, 1],
+      stopParticipants: ['server', 'server'],
+    }),
+    [
+      {
+        line: 1,
+        column: 7,
+        inspections: [{ path: 'nextTheme', mode: 'value', required: true }],
+      },
+    ],
+  )
+  const { harness, service, state } = run
+  service.environment.confirmSavedSessionOperations = async () => true
+  service.environment.noticeOperationsConfirmation = async () => undefined
+  await armedEntryNavigation(run, 2)
+  harness.server!.hit({ route: '/dashboard' })
+  await waitUntil(() => state().state === 'paused-server', 'the entry pause')
+  harness.setDocumentReadyState('complete')
+  await service.continue(state().participants.server!.continueArguments!)
+  await waitUntil(() => state().state === 'ready', 'ready for operation 1')
+  return run
+}
+
+// Value: protects=F1 while the run waits for its first operation: a React copy hit at the retired entry-render stop's position, arriving after the run is ready and before operation 1, is resumed and journaled breakpoint.react-copy, and operation 1 still pauses at its own stop; fails_when=the copy pause is dropped by the intake so its stopped fails the run as an unexpected or additional server stop, or the run leaves ready; no_claim=that js-debug sends this copy at this moment (native trial)
+test('a React copy hit at the entry stop while the run waits for operation 1 is resumed and operation 1 still pauses', async (context) => {
+  // Arrange
+  const run = await readyMixedRun(context)
+  const { harness, service, state, receipt } = run
+  const resumesBefore = harness.server!.continues.length
+  // Act: React's copy of the module hits the entry stop's position while the run is ready
+  harness.server!.announceReactCopy('3672', 109)
+  harness.server!.hit({
+    scriptId: '3672',
+    generated: { line: 0, column: 6 },
+    source: { line: 1, column: 7 },
+  })
+  await waitUntil(
+    () => harness.server!.continues.length === resumesBefore + 1,
+    'the copy hit resumed',
+  )
+  // Assert
+  assert.equal(
+    harness.run
+      .view()
+      .events.filter((event) => event.type === 'breakpoint.react-copy').length,
+    1,
+  )
+  assert.equal(state().state, 'ready')
+  assert.equal(harness.run.view().failures.length, 0)
+  // Act: operation 1 is sent and reaches its stop
+  await service.performAction({
+    ...receipt,
+    key: 'op-1',
+    action: 'repository-operation',
+  })
+  await waitUntil(() => harness.inputsSeen() === 1, 'operation 1 sent')
+  harness.server!.hit({
+    generated: { line: 0, column: 6 },
+    source: { line: 1, column: 7 },
+    route: '/dashboard',
+  })
+  await waitUntil(
+    () => harness.run.view().snapshots.length === 2,
+    'the second pause',
+  )
+  // Assert
+  assert.equal(harness.run.view().snapshots[1]?.attribution, 'after-operation')
+})
+
+// Value: protects=today's handling of a ready-time pause that is not a copy at an owned position: a plain server pause while the run waits for operation 1 is not resumed as a React copy and journals no breakpoint.react-copy; fails_when=the new copy intake takes any ready-time pause for a copy; no_claim=the verdict the run reaches for such a pause (unchanged by this fix)
+test('a plain server pause while the run waits for operation 1 is not resumed as a React copy', async (context) => {
+  // Arrange
+  const run = await readyMixedRun(context)
+  const { harness } = run
+  const resumesBefore = harness.server!.continues.length
+  // Act
+  harness.server!.hit({ route: '/dashboard' })
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  // Assert
+  assert.equal(
+    harness.run
+      .view()
+      .events.filter((event) => event.type === 'breakpoint.react-copy').length,
+    0,
+  )
+  assert.equal(harness.server!.continues.length, resumesBefore)
 })
