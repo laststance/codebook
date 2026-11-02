@@ -2017,6 +2017,8 @@ export const SERVER_RENDER_CLASSIFICATION_MS = 1_000
 export const SERVER_RENDER_PAUSE_POLL_MS = 5
 /** How often the entry-load phase reads whether the main frame's committed document finished loading while no server-render pause is held. */
 export const ENTRY_LOAD_POLL_MS = 100
+/** The key of the aggregate operation record a run that declares no operation keeps (entry render only): no input is dispatched for it. */
+export const ENTRY_LOAD_OPERATION_KEY = 'entry-load'
 /** The constant expression a DAP `evaluate` on the paused top frame runs to read the route Next renders: only the work store's `route` string, never the request, headers or cookies. */
 export const SERVER_RENDER_ROUTE_EXPRESSION =
   "require('next/dist/server/app-render/work-async-storage.external.js').workAsyncStorage.getStore()?.route"

@@ -176,6 +176,8 @@ export async function configuredRuntimeHarness(
     inspectionScope?: Record<string, unknown>
     /** Makes `document.readyState` read `loading` from the nth `Page.navigate` on (one-based), so the warm-up load of a saved-session run, which waits for `complete`, finishes before the armed entry load starts loading. */
     loadingFromNavigation?: number
+    /** Called whenever the stand-in page is asked for a screenshot, so a test changes what the page shows between a capture and the re-read that follows it. */
+    onScreenshot?: () => void
     /** What `document.readyState` answers from the start (default `complete`); an entry-render test starts with `loading` and calls `setDocumentReadyState('complete')` once the page may load. */
     documentReadyState?: 'loading' | 'complete'
     /** The executed module's text instead of the default one-statement module, such as a Vite module with an inlined env value. */
@@ -1212,6 +1214,7 @@ export async function configuredRuntimeHarness(
       }
       if (method === 'Page.captureScreenshot') {
         screenshotCount += 1
+        options.onScreenshot?.()
         // A held capture is answered only by the transport closing, as a lost reply is.
         if (options.holdScreenshot)
           return new Promise<never>((_resolve, reject) => {

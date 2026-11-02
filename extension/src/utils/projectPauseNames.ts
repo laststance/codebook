@@ -53,34 +53,28 @@ function lineOf(fields: PauseFields): number | undefined {
 
 /**
  * Finds the repository path of the stop an observation paused at, from the study's configuration.
- * A format 8 observation names its stop by `declaredIndex`; a format 7 one is matched by participant and declared line.
+ * A format 8 observation names its stop by `declaredIndex`; a format 7 one has none, and its position in the study is its declared position (a line match would confuse two stops on the same line of different files).
  * @param stops - The configuration's stops in declared order.
  * @param fields - The observation's fields.
+ * @param position - The observation's position in the study as saved.
  * @returns The stop's path, or `'unknown source'` when no stop matches.
  * @example pathOfStop([{ participant: 'server', source: { path: 'a.ts', line: 3 } }], { participant: 'server', source: { line: 3 } }) // => 'a.ts'
  */
 function pathOfStop(
   stops: readonly ConfiguredStopPlace[],
   fields: PauseFields,
+  position: number,
 ): string {
   const declaredIndex = numberOf(fields.declaredIndex)
-  const byIndex = declaredIndex === undefined ? undefined : stops[declaredIndex]
-  if (byIndex) return byIndex.source.path
-  const sameParticipant = stops.filter(
-    (stop) => (stop.participant ?? 'browser') === fields.participant,
-  )
-  return (
-    (
-      sameParticipant.find((stop) => stop.source.line === lineOf(fields)) ??
-      sameParticipant[0]
-    )?.source.path ?? 'unknown source'
-  )
+  // A format 7 study has no declaredIndex: there the observation's position is its declared position.
+  return stops[declaredIndex ?? position]?.source.path ?? 'unknown source'
 }
 
 /** Names the pause of one observation. @example nameOf({ participant: 'server' }, stops) // the Server action name */
 function nameOf(
   fields: PauseFields,
   stops: readonly ConfiguredStopPlace[],
+  position: number,
 ): PauseNameParts | undefined {
   const execution = EXECUTIONS.includes(String(fields.execution))
     ? (fields.execution as PauseExecution)
@@ -97,7 +91,7 @@ function nameOf(
     execution,
     attribution,
     operationIndex: numberOf(fields.operationIndex),
-    path: pathOfStop(stops, fields),
+    path: pathOfStop(stops, fields, position),
     line: lineOf(fields) ?? 1,
   })
 }
@@ -121,17 +115,19 @@ export function projectPauseNames<T extends object>(
   const isOrdered = observations.every(
     (observation) => executionIndexOf(observation) !== undefined,
   )
+  // Named by saved position first: that position is the declared position of a format 7 pause.
+  const named = observations.map((observation, position) => ({
+    observation,
+    name: nameOf(observation as PauseFields, stops, position),
+  }))
   const ordered = isOrdered
-    ? [...observations].sort(
-        (a, b) => (executionIndexOf(a) ?? 0) - (executionIndexOf(b) ?? 0),
+    ? [...named].sort(
+        (a, b) =>
+          (executionIndexOf(a.observation) ?? 0) -
+          (executionIndexOf(b.observation) ?? 0),
       )
-    : [...observations]
-  return withDeclaredPositions(
-    ordered.map((observation) => ({
-      observation,
-      name: nameOf(observation as PauseFields, stops),
-    })),
-  )
+    : named
+  return withDeclaredPositions(ordered)
 }
 
 /**

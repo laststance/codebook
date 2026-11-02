@@ -1,6 +1,7 @@
 import type { ConfiguredStudy } from '../configuredStudySchemas'
 import { SERVER_RENDER_STUDY_VERSION } from '../constants'
 
+import { afterOperationOf } from './afterOperationOf'
 import type { configuredStops } from './configuredStops'
 
 type Observation = ConfiguredStudy['observations'][number]
@@ -39,12 +40,43 @@ function assertFormat8Observation(
     throw new Error('Configured observation executionIndex is out of order.')
   if ((execution === 'browser') !== (stop.participant === 'browser'))
     throw new Error('Configured observation execution differs from its stop.')
-  const { attribution, operationIndex } = observation
+  assertAttributionFitsGroup(observation, afterOperationOf(stop) ?? 1)
+}
+
+/**
+ * Ties a format 8 observation's execution and attribution to the group of its stop: an entry-render stop (`afterOperation: 0`) is a page-load render, so only it reads `entry-load` and it carries no operation; a later stop's render is attributed to its own operation.
+ * @param observation - The observation, whose `execution`, `declaredIndex` and `executionIndex` exist.
+ * @param group - The stop's `afterOperation`.
+ * @throws When the execution, the attribution or the operation index contradicts the group.
+ * @example assertAttributionFitsGroup({ execution: 'server-render', attribution: 'entry-load' }, 0)
+ */
+function assertAttributionFitsGroup(
+  observation: Observation,
+  group: number,
+): void {
+  const { attribution, operationIndex, execution } = observation
   if (attribution !== undefined && execution !== 'server-render')
     throw new Error('Only a server render observation has an attribution.')
-  if ((operationIndex !== undefined) !== (attribution === 'after-operation'))
+  if (execution !== 'server-render') {
+    if (group === 0)
+      throw new Error('Configured entry-render observation is not a render.')
+    if (operationIndex !== undefined)
+      throw new Error(
+        'Configured observation operationIndex belongs to a server render only.',
+      )
+    return
+  }
+  if (attribution === undefined)
+    throw new Error('A server render observation needs an attribution.')
+  if (
+    (attribution === 'entry-load') !== (group === 0) &&
+    attribution !== 'unconfirmed'
+  )
+    throw new Error('Configured observation attribution differs from its stop.')
+  // The operation is the stop's own; a page-load render has none.
+  if (operationIndex !== (group === 0 ? undefined : group))
     throw new Error(
-      'Configured observation operationIndex belongs to an after-operation attribution only.',
+      'Configured observation operationIndex differs from its stop.',
     )
 }
 

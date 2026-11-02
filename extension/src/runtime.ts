@@ -420,7 +420,7 @@ export type OperationFailure = {
   reason?: SignInRequiredReason
   /** Set only for `SERVER_STOP_NOT_REACHED`: which server-render stop was not reached and which stops did pause. */
   serverRender?: ServerRenderFailure
-  /** Set only for `ENTRY_LOAD_TIMEOUT`: the entry route, the last stop that paused and the time since the last continue. */
+  /** Set only for `ENTRY_LOAD_TIMEOUT`: the entry route, the last stop that paused and the time since the entry navigation started. */
   entryLoad?: EntryLoadFailure
 }
 /** The fields `SERVER_STOP_NOT_REACHED` carries beyond the operation fields; `operationIndex` of the failure is 0 for the entry render. */

@@ -3,6 +3,7 @@ import type {
   ConfiguredStudy,
 } from '../configuredStudySchemas'
 import {
+  ENTRY_LOAD_OPERATION_KEY,
   OPERATIONS_CONFIG_VERSION,
   SERVER_RENDER_STUDY_VERSION,
 } from '../constants'
@@ -193,9 +194,14 @@ export function validateOperationRecords(study: StudyWithoutImages): void {
   if (!records) {
     // Format 8 may hold entry-render pauses (`afterOperation: 0`) before any operation record exists; nothing else may.
     const stops = configuredStops(configuration)
+    // A completed run of no operations keeps the aggregate `entry-load` record, which dispatched no input.
+    const isEntryLoadRecord =
+      !study.operation ||
+      (study.operation.key === ENTRY_LOAD_OPERATION_KEY &&
+        !study.operation.inputDispatched)
     const onlyEntryRender =
       study.version === SERVER_RENDER_STUDY_VERSION &&
-      !study.operation &&
+      isEntryLoadRecord &&
       study.observations.every(
         (_, position) =>
           afterOperationOf(

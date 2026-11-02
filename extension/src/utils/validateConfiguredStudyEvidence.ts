@@ -1,5 +1,6 @@
 import type { ConfiguredStudy } from '../configuredStudySchemas'
 import {
+  ENTRY_LOAD_OPERATION_KEY,
   OPERATIONS_CONFIG_VERSION,
   OPERATIONS_STUDY_VERSION,
   RECORDED_LOCATION_STUDY_VERSION,
@@ -20,6 +21,28 @@ import { stopOfObservation } from './stopOfObservation'
 import { studyFormatOfConfiguration } from './studyFormatOfConfiguration'
 import { validateOperationRecords } from './validateOperationRecords'
 
+/**
+ * Says whether a saved version 3 study's format is one a reader accepts for its configuration.
+ * Why it exists: 0.2.72.0 saved every version 3 study, server stops included, as format 7, so a reader accepts format 7 for any configuration format 7 can express (`operations` present, no stop with `afterOperation: 0`); {@link studyFormatOfConfiguration} fixes only the format a new save takes. Called by {@link validateConfiguredStudyEvidence}.
+ * @param version - The study's saved format.
+ * @param configuration - The study's version 3 configuration.
+ * @returns `true` when the format is the one a new save takes, or format 7 for a configuration format 7 can express.
+ * @example isReadableFormatOfVersion3(7, configurationWithServerActionStop) // => true
+ */
+function isReadableFormatOfVersion3(
+  version: number,
+  configuration: ConfiguredStudy['configuration'],
+): boolean {
+  if (version === studyFormatOfConfiguration(configuration)) return true
+  if (configuration.version !== OPERATIONS_CONFIG_VERSION) return false
+  // Format 7 cannot hold an entry-render stop or a run without operations; its observation fields stay checked by {@link assertObservationFormatFields}.
+  return (
+    version === OPERATIONS_STUDY_VERSION &&
+    configuration.operations !== undefined &&
+    configuredStops(configuration).every((stop) => afterOperationOf(stop) !== 0)
+  )
+}
+
 /** Validates sealed configured facts for archive and recording readers without requiring current files or granting runtime authority. @example validateConfiguredStudyEvidence(study, workspaceKey) // rejects altered source or pause */
 export function validateConfiguredStudyEvidence(
   study: Omit<ConfiguredStudy, 'captures'>,
@@ -29,7 +52,7 @@ export function validateConfiguredStudyEvidence(
   // A new save is the current format of its kind: format 7 or 8 for a version 3 configuration (studyFormatOfConfiguration), the recorded-location format for versions 1 and 2; an older archive keeps the format its configuration implied when it was saved.
   if (
     configuration.version === OPERATIONS_CONFIG_VERSION
-      ? study.version !== studyFormatOfConfiguration(configuration)
+      ? !isReadableFormatOfVersion3(study.version, configuration)
       : study.version === OPERATIONS_STUDY_VERSION ||
         study.version === SERVER_RENDER_STUDY_VERSION ||
         (study.version !== RECORDED_LOCATION_STUDY_VERSION &&
@@ -294,7 +317,9 @@ export function validateConfiguredStudyEvidence(
     throw new Error('Configured continuation differs from the captured pause.')
   if (
     operation?.afterVerified &&
-    (!operation.inputAcknowledged ||
+    // The aggregate record of a run of no operation dispatched no input, so it has none to acknowledge.
+    ((!operation.inputAcknowledged &&
+      operation.key !== ENTRY_LOAD_OPERATION_KEY) ||
       !operation.continuedPause ||
       study.observations.length !== stops.length ||
       observation !== study.observations.at(-1))

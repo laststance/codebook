@@ -50,6 +50,7 @@ import {
   REPOSITORY_STOP_INSTANCE_READ_MS,
   REPOSITORY_STOP_MODULE_FIRST_JOURNAL_BEYOND_LIMIT,
   REPOSITORY_STOP_MODULE_JOURNAL_LIMIT,
+  ENTRY_LOAD_OPERATION_KEY,
   ENTRY_LOAD_POLL_MS,
   SERVER_RENDER_CLASSIFICATION_MS,
   SERVER_RENDER_PAUSE_POLL_MS,
@@ -273,6 +274,7 @@ import { sameScriptUrl } from './utils/sameScriptUrl'
 import { sanitizeCause } from './utils/sanitizeCause'
 import { selfDeclaredInspectionHint } from './utils/selfDeclaredInspectionHint'
 import { serverExecutionOfScriptUrl } from './utils/serverExecutionOfScriptUrl'
+import { serverRenderAttributionOf } from './utils/serverRenderAttributionOf'
 import {
   serverRenderHitVerdictOf,
   type RenderedRoute,
@@ -1214,10 +1216,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     // The aggregate record the observation marks verified; no input is dispatched or acknowledged for it.
     this.operation ??= {
       id: randomUUID(),
-      key: 'entry-load',
+      key: ENTRY_LOAD_OPERATION_KEY,
       inputDispatched: false,
       inputAcknowledged: false,
       afterVerified: false,
+      // The entry render's continue is the continuation the saved result stands on.
+      ...(this.entryContinuedPause
+        ? { continuedPause: this.entryContinuedPause }
+        : {}),
     }
     this.status = 'resuming'
     this.progressDeadline(ACTIVE_TIMEOUT_MS, () => this.afterDeadlineReason())
@@ -1618,6 +1624,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     this.alive()
     this.entryLoad = undefined
+    // The entry page loaded: the rest of the preparation no longer runs under the entry-load bound (its text would name a pause that is over).
+    this.progressDeadline(ACTIVE_TIMEOUT_MS, () =>
+      this.setupDeadlineText(this.preparationBudgetMs),
+    )
   }
 
   /**
@@ -2200,11 +2210,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     | 'attribution'
     | 'operationIndex'
   > {
+    const group = afterOperationOf(stop)
+    // An entry-render stop (group 0) is a page-load pause whichever layer it paused in; otherwise the script's layer says what ran.
     const execution =
       stop.participant === 'browser'
         ? ('browser' as const)
-        : serverExecutionOfScriptUrl(scriptUrl)
-    const group = afterOperationOf(stop)
+        : group === 0
+          ? ('server-render' as const)
+          : serverExecutionOfScriptUrl(scriptUrl)
     const isUnconfirmed = this.unconfirmedHit
     // The attribution belongs to this pause only.
     this.unconfirmedHit = false
@@ -2212,13 +2225,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       execution,
       declaredIndex: stop.declaredIndex,
       executionIndex: this.snapshots.length,
-      ...(execution === 'server-render' && isUnconfirmed
-        ? { attribution: 'unconfirmed' as const }
-        : execution === 'server-render' && group !== undefined
-          ? group === 0
-            ? { attribution: 'entry-load' as const }
-            : { attribution: 'after-operation' as const, operationIndex: group }
-          : {}),
+      ...(execution === 'server-render' && group !== undefined
+        ? serverRenderAttributionOf(group, isUnconfirmed)
+        : {}),
     }
   }
 
@@ -6937,6 +6946,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       inputDispatched: false,
       inputAcknowledged: false,
       afterVerified: false,
+      // The entry render's continue is the evidence that its group-0 stops were continued; the saved study carries it on this record.
+      ...(this.entryContinuedPause
+        ? { continuedPause: this.entryContinuedPause }
+        : {}),
     }
     this.status = 'acting'
     // The stop this operation's input leads to opens its causal window with the input.
@@ -7466,8 +7479,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     scope: 'operation' | 'run',
   ): OperationRefusal {
     const configuration = this.operationsConfiguration!
-    const operation = declaredOperationsOf(configuration)[index - 1]!
+    const operation = declaredOperationsOf(configuration)[index - 1]
     const isRunLevel = scope === 'run'
+    // A run that declares no operation (entry render only) has no operation to name: the run-level result is what failed.
+    if (!operation)
+      return new OperationRefusal(
+        'OPERATION_AFTER_NOT_MET',
+        `The entry page loaded, but its result could not be confirmed: ${detail}`,
+        { operationIndex: 0, path: 'after', sent: 'not-sent' },
+      )
     // The page reached a sign-in path after the last operation and the after conditions did not hold there: the session asked again (D13), which is not a missing result.
     if (
       this.signInLandingAfterLast !== undefined &&

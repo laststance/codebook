@@ -16,10 +16,12 @@ import {
 import { LearningLibrary } from '../learningLibrary'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { buildRecordingContext } from '../utils/buildRecordingContext'
+import { configuredStops } from '../utils/configuredStops'
 import { decodeConfiguredStudy } from '../utils/decodeConfiguredStudy'
 import { executionOfObservation } from '../utils/executionOfObservation'
 import type * as NewerStudyArchiveModule from '../utils/newerStudyArchive'
 import type * as NewerStudyFormatMessageModule from '../utils/newerStudyFormatMessage'
+import { projectPauseNames } from '../utils/projectPauseNames'
 import { studyFormatOfConfiguration } from '../utils/studyFormatOfConfiguration'
 import { validateConfiguredStudyEvidence } from '../utils/validateConfiguredStudyEvidence'
 import { validateRecordingContext } from '../utils/validateRecordingContext'
@@ -434,4 +436,36 @@ test('the 0.2.72.0 rule lists a .study.v8.json archive as saved by a newer Codeb
     message.newerStudyFormatMessage(8),
     'This study was saved in format 8 by a newer Codebook; this Codebook reads formats up to 7. Update the extension to open it. The study is kept as it is.',
   )
+})
+
+/** The study 0.2.72.0 (commit 2f5de949) saved for a version 3 run with a server-action stop, written by that commit's createOperationsStudy. */
+const SERVER_STOP_GOLDEN_PATH = resolve(
+  __dirname,
+  '../../src/tests/fixtures/operations-study-v0.2.72.0/server-action-stop-v3.study.v7.json',
+)
+
+// protects=H1 a version 3 study with a server-action stop that 0.2.72.0 saved as format 7 still opens and its server pause reads as a server action; fails_when=the reader demands format 8 for every server stop, or names the pause a server render; no_claim=a real 0.2.72.0 file (the base writer's output stands in)
+test('a format 7 study with a server-action stop saved by 0.2.72.0 still opens and names its server pause a server action', async (context) => {
+  // Arrange
+  const golden: ConfiguredStudy = JSON.parse(
+    await readFile(SERVER_STOP_GOLDEN_PATH, 'utf8'),
+  )
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-format-7-server-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const library = new LearningLibrary(directory, golden.workspaceKey)
+  await library.saveStudy(golden)
+  // Act
+  const reopened = await library.readStudy(golden.id)
+  const serverPause = reopened.observations.find(
+    (observation) => observation.participant === 'server',
+  )!
+  const names = projectPauseNames(
+    reopened.observations,
+    configuredStops(reopened.configuration),
+  ).map((pause) => pause.name?.kind)
+  // Assert
+  assert.equal(golden.version, 7)
+  assert.equal(reopened.version, 7)
+  assert.equal(executionOfObservation(serverPause), 'server-action')
+  assert.deepEqual(names, [undefined, 'Server action', undefined])
 })

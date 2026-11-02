@@ -1,0 +1,518 @@
+{
+  "version": 7,
+  "workspaceKey": "0000000000000000000000000000000000000000000000000000000000000000",
+  "id": "11111111-1111-4111-8111-111111111111_22222222-2222-4222-8222-222222222222",
+  "instanceId": "11111111-1111-4111-8111-111111111111",
+  "runId": "22222222-2222-4222-8222-222222222222",
+  "profile": "repository-browser",
+  "createdAt": "2026-09-20T00:00:00.000Z",
+  "savedAt": "2026-09-20T00:00:10.000Z",
+  "state": "stopped",
+  "terminal": true,
+  "finalOutcome": "demonstrated",
+  "materialSignature": "40b30b4e8f0d137056ac497e859ea198c1a00db4267d1ade9c458d04024e2981",
+  "configuration": {
+    "version": 3,
+    "adapter": "next-dev-webpack",
+    "book": {
+      "bookId": "interface",
+      "revision": 1,
+      "nodeId": "theme",
+      "anchorIndex": 0
+    },
+    "source": {
+      "path": "src/theme.ts",
+      "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
+      "line": 1,
+      "column": 1
+    },
+    "participant": "browser",
+    "afterOperation": 2,
+    "before": [
+      {
+        "kind": "visible",
+        "selector": "form"
+      }
+    ],
+    "after": [
+      {
+        "kind": "visible",
+        "selector": "table"
+      }
+    ],
+    "operations": [
+      {
+        "kind": "choose",
+        "title": "Customer",
+        "selector": "#customer",
+        "value": "c1"
+      },
+      {
+        "kind": "text",
+        "title": "Amount",
+        "selector": "#amount",
+        "text": "120"
+      },
+      {
+        "kind": "click",
+        "title": "Pending",
+        "selector": "#pending"
+      },
+      {
+        "kind": "click",
+        "title": "Create Invoice",
+        "selector": "#create"
+      }
+    ],
+    "inspections": [
+      {
+        "path": "nextTheme",
+        "mode": "value",
+        "required": true
+      },
+      {
+        "path": "setTheme",
+        "mode": "type",
+        "required": true
+      },
+      {
+        "path": "enabled",
+        "mode": "value",
+        "required": false
+      },
+      {
+        "path": "selection",
+        "mode": "value",
+        "required": false
+      },
+      {
+        "path": "renderLocal",
+        "mode": "value",
+        "required": false
+      }
+    ],
+    "additionalStops": [
+      {
+        "participant": "server",
+        "source": {
+          "path": "src/mode.ts",
+          "hash": "f6d4386593d51ec67ad6d6811031238456f33ee12b3fa92a9df833159a355501",
+          "line": 1,
+          "column": 1
+        },
+        "anchorIndex": 1,
+        "inspections": [
+          {
+            "path": "mode",
+            "mode": "value",
+            "required": true
+          }
+        ],
+        "afterOperation": 4
+      },
+      {
+        "participant": "browser",
+        "source": {
+          "path": "src/theme.ts",
+          "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
+          "line": 1,
+          "column": 1
+        },
+        "anchorIndex": 0,
+        "inspections": [
+          {
+            "path": "nextTheme",
+            "mode": "value",
+            "required": true
+          },
+          {
+            "path": "setTheme",
+            "mode": "type",
+            "required": true
+          },
+          {
+            "path": "enabled",
+            "mode": "value",
+            "required": false
+          },
+          {
+            "path": "selection",
+            "mode": "value",
+            "required": false
+          },
+          {
+            "path": "renderLocal",
+            "mode": "value",
+            "required": false
+          }
+        ],
+        "afterOperation": 4
+      }
+    ],
+    "entryPath": "/dashboard/invoices/create"
+  },
+  "configurationHash": "ef96fa4ada641b8d95647b68c2411048cf723544f100378ba36daa4cc8d9140d",
+  "descriptor": {
+    "itemId": "repository/interface/theme",
+    "bookTitle": "Interface",
+    "nodeTitle": "Theme",
+    "anchors": [
+      {
+        "path": "src/theme.ts",
+        "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
+        "startLine": 1,
+        "endLine": 1
+      },
+      {
+        "path": "src/mode.ts",
+        "hash": "f6d4386593d51ec67ad6d6811031238456f33ee12b3fa92a9df833159a355501",
+        "startLine": 1,
+        "endLine": 1
+      }
+    ],
+    "citationContext": {
+      "kind": "citations",
+      "hash": "610d563bfd8797cd1e9d513afaac0a3a4ab0f48274d009544bb24d2203c52c07",
+      "anchors": [
+        {
+          "path": "src/mode.ts",
+          "hash": "f6d4386593d51ec67ad6d6811031238456f33ee12b3fa92a9df833159a355501",
+          "startLine": 1,
+          "endLine": 1
+        },
+        {
+          "path": "src/theme.ts",
+          "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
+          "startLine": 1,
+          "endLine": 1
+        }
+      ]
+    },
+    "sources": [
+      {
+        "path": "src/theme.ts",
+        "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
+        "text": "const nextTheme = \"dark\";\n",
+        "lineCount": 2
+      },
+      {
+        "path": "src/mode.ts",
+        "hash": "f6d4386593d51ec67ad6d6811031238456f33ee12b3fa92a9df833159a355501",
+        "text": "export const mode = \"display\";\n",
+        "lineCount": 2
+      }
+    ]
+  },
+  "operation": {
+    "id": "33333333-3333-4333-8333-333333333333",
+    "key": "change-theme",
+    "inputDispatched": true,
+    "inputAcknowledged": true,
+    "continuedPause": {
+      "sessionId": "browser-session",
+      "threadId": 1,
+      "generation": 2
+    },
+    "afterVerified": true
+  },
+  "observations": [
+    {
+      "id": "browser-session:1",
+      "itemId": "repository/interface/theme",
+      "actionId": "repository-click",
+      "capturePhase": "paused-browser",
+      "snapshotUri": "codebook://11111111-1111-4111-8111-111111111111/runs/22222222-2222-4222-8222-222222222222/snapshots/browser-session%3A1",
+      "participant": "browser",
+      "capturedAt": "2026-09-20T00:00:02.000Z",
+      "elapsedMs": 2000,
+      "pause": {
+        "sessionId": "browser-session",
+        "threadId": 1,
+        "generation": 1
+      },
+      "source": {
+        "text": "const nextTheme = \"dark\";\n",
+        "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
+        "line": 1,
+        "column": 1,
+        "javascriptHash": "90a211cdc7afe36a5f4d3bee6a1b67f3baad370911a63d0f50e32cd230fa9ccd",
+        "mapHash": "ea16762ea4eacb4673c3cc04fd2cbf36d41603f2f4c2fb70bd9b0eebf1996de9",
+        "scriptId": "17",
+        "scriptUrl": "webpack-internal:///(app-pages-browser)/src/theme.ts",
+        "generated": {
+          "line": 8,
+          "column": 2
+        }
+      },
+      "values": {
+        "value:nextTheme": "dark",
+        "type:setTheme": "function",
+        "value:enabled": false,
+        "value:selection": null
+      },
+      "unavailableValues": [
+        {
+          "path": "value:renderLocal",
+          "reason": "Optimized out at this frame."
+        }
+      ],
+      "interpretations": [
+        {
+          "id": "44444444-4444-4444-8444-444444444444",
+          "text": "This stop captures the selected dark theme before it is applied.",
+          "createdAt": "2026-09-20T00:00:03.000Z",
+          "facts": [
+            {
+              "path": "value:nextTheme",
+              "value": "dark"
+            }
+          ]
+        }
+      ],
+      "debugger": {
+        "version": 1,
+        "frames": [
+          {
+            "name": "browserStep",
+            "line": 1,
+            "column": 1,
+            "source": {
+              "name": "src/theme.ts",
+              "text": "const nextTheme = \"dark\";\n",
+              "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
+              "line": 1
+            },
+            "scopes": [
+              {
+                "name": "Local",
+                "variables": [0]
+              }
+            ]
+          }
+        ],
+        "variables": [
+          {
+            "name": "nextTheme",
+            "value": "dark",
+            "children": []
+          }
+        ],
+        "limitations": []
+      }
+    },
+    {
+      "id": "server-session:1",
+      "itemId": "repository/interface/theme",
+      "actionId": "repository-click",
+      "capturePhase": "paused-server",
+      "snapshotUri": "codebook://11111111-1111-4111-8111-111111111111/runs/22222222-2222-4222-8222-222222222222/snapshots/server-session%3A1",
+      "participant": "server",
+      "capturedAt": "2026-09-20T00:00:04.000Z",
+      "elapsedMs": 4000,
+      "pause": {
+        "sessionId": "server-session",
+        "generation": 1,
+        "threadId": 1
+      },
+      "source": {
+        "text": "export const mode = \"display\";\n",
+        "hash": "f6d4386593d51ec67ad6d6811031238456f33ee12b3fa92a9df833159a355501",
+        "line": 1,
+        "column": 1,
+        "javascriptHash": "90a211cdc7afe36a5f4d3bee6a1b67f3baad370911a63d0f50e32cd230fa9ccd",
+        "mapHash": "ea16762ea4eacb4673c3cc04fd2cbf36d41603f2f4c2fb70bd9b0eebf1996de9",
+        "scriptId": "18",
+        "scriptUrl": "webpack-internal:///(action-browser)/./src/mode.ts",
+        "generated": {
+          "line": 8,
+          "column": 2
+        }
+      },
+      "values": {
+        "value:mode": "display"
+      },
+      "unavailableValues": [],
+      "interpretations": [],
+      "debugger": {
+        "version": 1,
+        "frames": [
+          {
+            "name": "serverStep",
+            "line": 1,
+            "column": 1,
+            "source": {
+              "name": "src/mode.ts",
+              "text": "export const mode = \"display\";\n",
+              "hash": "f6d4386593d51ec67ad6d6811031238456f33ee12b3fa92a9df833159a355501",
+              "line": 1
+            },
+            "scopes": [
+              {
+                "name": "Local",
+                "variables": [0]
+              }
+            ]
+          }
+        ],
+        "variables": [
+          {
+            "name": "mode",
+            "value": "display",
+            "children": []
+          }
+        ],
+        "limitations": []
+      }
+    },
+    {
+      "id": "browser-session:2",
+      "itemId": "repository/interface/theme",
+      "actionId": "repository-click",
+      "capturePhase": "paused-browser",
+      "snapshotUri": "codebook://11111111-1111-4111-8111-111111111111/runs/22222222-2222-4222-8222-222222222222/snapshots/browser-session%3A2",
+      "participant": "browser",
+      "capturedAt": "2026-09-20T00:00:06.000Z",
+      "elapsedMs": 6000,
+      "pause": {
+        "sessionId": "browser-session",
+        "threadId": 1,
+        "generation": 2
+      },
+      "source": {
+        "text": "const nextTheme = \"dark\";\n",
+        "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
+        "line": 1,
+        "column": 1,
+        "javascriptHash": "90a211cdc7afe36a5f4d3bee6a1b67f3baad370911a63d0f50e32cd230fa9ccd",
+        "mapHash": "ea16762ea4eacb4673c3cc04fd2cbf36d41603f2f4c2fb70bd9b0eebf1996de9",
+        "scriptId": "17",
+        "scriptUrl": "webpack-internal:///(app-pages-browser)/src/theme.ts",
+        "generated": {
+          "line": 8,
+          "column": 2
+        }
+      },
+      "values": {
+        "value:nextTheme": "dark",
+        "type:setTheme": "function",
+        "value:enabled": false,
+        "value:selection": null
+      },
+      "unavailableValues": [
+        {
+          "path": "value:renderLocal",
+          "reason": "Optimized out at this frame."
+        }
+      ],
+      "interpretations": [],
+      "debugger": {
+        "version": 1,
+        "frames": [
+          {
+            "name": "browserStep",
+            "line": 1,
+            "column": 1,
+            "source": {
+              "name": "src/theme.ts",
+              "text": "const nextTheme = \"dark\";\n",
+              "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
+              "line": 1
+            },
+            "scopes": [
+              {
+                "name": "Local",
+                "variables": [0]
+              }
+            ]
+          }
+        ],
+        "variables": [
+          {
+            "name": "nextTheme",
+            "value": "dark",
+            "children": []
+          }
+        ],
+        "limitations": []
+      }
+    }
+  ],
+  "captures": [
+    {
+      "phase": "before",
+      "status": "captured",
+      "base64": "bGlnaHQ=",
+      "hash": "99a7026172d42714d0293e5598ec1c8e8260d7d0c4b8582ad002c1883494e216"
+    },
+    {
+      "phase": "paused-browser",
+      "status": "captured",
+      "base64": "cGF1c2Vk",
+      "hash": "a7a9dc5bcf71adb2edc202814060a5ab6fca515382e9f1133dcc47d52d9090a2",
+      "snapshotId": "browser-session:1"
+    },
+    {
+      "phase": "paused-server",
+      "status": "captured",
+      "base64": "cGF1c2Vk",
+      "hash": "a7a9dc5bcf71adb2edc202814060a5ab6fca515382e9f1133dcc47d52d9090a2",
+      "snapshotId": "server-session:1"
+    },
+    {
+      "phase": "paused-browser",
+      "status": "captured",
+      "base64": "cGF1c2Vk",
+      "hash": "a7a9dc5bcf71adb2edc202814060a5ab6fca515382e9f1133dcc47d52d9090a2",
+      "snapshotId": "browser-session:2"
+    },
+    {
+      "phase": "after",
+      "status": "captured",
+      "base64": "ZGFyaw==",
+      "hash": "e6bb5689beec52c4672bd4df92c3613d128d30cdc2b704f76953fe43d89c4ae8"
+    }
+  ],
+  "links": [],
+  "operations": [
+    {
+      "index": 1,
+      "kind": "choose",
+      "title": "Customer",
+      "atMs": 1000,
+      "state": "done",
+      "ack": "yes",
+      "valueCheck": "passed",
+      "effect": "dispatched"
+    },
+    {
+      "index": 2,
+      "kind": "text",
+      "title": "Amount",
+      "atMs": 1500,
+      "state": "done",
+      "ack": "yes",
+      "valueCheck": "passed",
+      "effect": "dispatched"
+    },
+    {
+      "index": 3,
+      "kind": "click",
+      "title": "Pending",
+      "atMs": 3500,
+      "state": "done",
+      "ack": "yes",
+      "valueCheck": "n/a",
+      "effect": "dispatched"
+    },
+    {
+      "index": 4,
+      "kind": "click",
+      "title": "Create Invoice",
+      "atMs": 3800,
+      "state": "done",
+      "ack": "yes",
+      "valueCheck": "n/a",
+      "effect": "after-verified"
+    }
+  ]
+}
