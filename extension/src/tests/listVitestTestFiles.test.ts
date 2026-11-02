@@ -10,7 +10,7 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type * as ListVitestTestFilesModule from '../utils/listVitestTestFiles'
@@ -20,10 +20,7 @@ import {
   type VitestListingReleaseFailure,
 } from '../utils/listVitestTestFiles'
 
-import {
-  endProcessesAfter,
-  readProcessIdFiles,
-} from './utils/endProcessesAfter'
+import { endProcessesAfter } from './utils/endProcessesAfter'
 import { keptListingFolderOf } from './utils/keptListingFolderOf'
 import { loadModule } from './utils/loadModule'
 
@@ -74,6 +71,53 @@ async function removeKeptListingFolder(
   const started = await vitest.started().catch(() => undefined)
   const folder = keptListingFolderOf(started?.argv ?? [], tmpdir())
   if (folder) await rm(folder, { recursive: true, force: true })
+}
+
+/** The process ids a stand-in listing writes into its start file once its helper runs. */
+type StartedListingProcesses = { launcher: number; helper: number }
+
+/**
+ * Reads the process ids a stand-in listing wrote, for the waits and clean-ups of the tests whose listing starts a helper.
+ *
+ * The stand-in writes the file with one `writeFileSync`, but a read can land between the file's creation and its content: such a read, like a missing file, names no process yet.
+ * @param path - The start file the stand-in writes (`started-helper.json` or `ready.json` in its folder).
+ * @returns
+ * - The launcher and helper ids, once the file holds them
+ * - `undefined` while the file is missing, empty or partly written
+ * @example
+ * await readStartedListingProcesses('/tmp/codebook-vitest-stub-x/started-helper.json') // => { launcher: 4242, helper: 4243 }
+ */
+async function readStartedListingProcesses(
+  path: string,
+): Promise<StartedListingProcesses | undefined> {
+  const text = await readFile(path, 'utf8').catch(() => undefined)
+  if (text === undefined) return undefined
+  try {
+    return JSON.parse(text) as StartedListingProcesses
+  } catch {
+    // Read while the stand-in was still writing it: the next read sees the whole file.
+    return undefined
+  }
+}
+
+/**
+ * Ends, after the test, the helper a stand-in listing started outside the listing's process group, also when the test failed before it read the helper's id.
+ *
+ * Such a helper holds the listing's error stream, so while it runs the test file's process cannot exit.
+ * @param context - The test whose clean-up ends the helper.
+ * @param path - The start file the stand-in writes.
+ * @example
+ * endListingHelperAfter(context, join(vitest.directory, 'started-helper.json'))
+ */
+function endListingHelperAfter(context: TestContext, path: string): void {
+  endProcessesAfter(
+    context,
+    async () => {
+      const started = await readStartedListingProcesses(path)
+      return started ? [started.helper] : []
+    },
+    { group: true },
+  )
 }
 
 test('listing runs the owned Vitest in the repository with the run environment and returns the files it would select', async () => {
@@ -564,14 +608,10 @@ writeFileSync(output, JSON.stringify([{ file: '/repo/src/a.test.ts' }]));
 writeFileSync('started-helper.json', JSON.stringify({ launcher: process.pid, helper: helper.pid }));
 `)
   // The helper's id is read from the file it wrote, when the test ends: a wait that times out under load must not leave the detached helper running.
-  endProcessesAfter(
-    context,
-    () => readProcessIdFiles([join(vitest.directory, 'started-helper.json')]),
-    { group: true },
-  )
+  endListingHelperAfter(context, join(vitest.directory, 'started-helper.json'))
   const reported: VitestListingReleaseFailure[] = []
   const cancellation = new AbortController()
-  let processes: { launcher: number; helper: number } | undefined
+  let processes: StartedListingProcesses | undefined
   try {
     const listing = listVitestTestFiles({
       node: process.execPath,
@@ -586,10 +626,9 @@ writeFileSync('started-helper.json', JSON.stringify({ launcher: process.pid, hel
       (error: unknown) => error,
     )
     processes = await waitUntil(
-      async () =>
-        readFile(join(vitest.directory, 'started-helper.json'), 'utf8').then(
-          (text) => JSON.parse(text) as { launcher: number; helper: number },
-          () => undefined,
+      () =>
+        readStartedListingProcesses(
+          join(vitest.directory, 'started-helper.json'),
         ),
       'listing helper start',
       5_000,
@@ -653,14 +692,10 @@ writeFileSync(output, JSON.stringify([{ file: '/repo/src/a.test.ts' }]));
 writeFileSync('started-helper.json', JSON.stringify({ launcher: process.pid, helper: helper.pid }));
 `)
   // The helper's id is read from the file it wrote, when the test ends: a wait that times out under load must not leave the detached helper running.
-  endProcessesAfter(
-    context,
-    () => readProcessIdFiles([join(vitest.directory, 'started-helper.json')]),
-    { group: true },
-  )
+  endListingHelperAfter(context, join(vitest.directory, 'started-helper.json'))
   const retries: RetryVitestListingRelease[] = []
   const cancellation = new AbortController()
-  let processes: { launcher: number; helper: number } | undefined
+  let processes: StartedListingProcesses | undefined
   try {
     const listing = listVitestTestFiles({
       node: process.execPath,
@@ -675,10 +710,9 @@ writeFileSync('started-helper.json', JSON.stringify({ launcher: process.pid, hel
       (error: unknown) => error,
     )
     processes = await waitUntil(
-      async () =>
-        readFile(join(vitest.directory, 'started-helper.json'), 'utf8').then(
-          (text) => JSON.parse(text) as { launcher: number; helper: number },
-          () => undefined,
+      () =>
+        readStartedListingProcesses(
+          join(vitest.directory, 'started-helper.json'),
         ),
       'listing helper start',
       5_000,
@@ -802,7 +836,7 @@ helper.stdout.once('data', () => writeFileSync('ready.json', JSON.stringify({ la
 setInterval(() => {}, 1000);
 `)
   const cancellation = new AbortController()
-  let processes: { launcher: number; helper: number } | undefined
+  let processes: StartedListingProcesses | undefined
   try {
     // Act
     const listing = listVitestTestFiles({
@@ -815,11 +849,7 @@ setInterval(() => {}, 1000);
     })
     const rejected = assert.rejects(listing, /run cancelled/)
     processes = await waitUntil(
-      async () =>
-        readFile(join(vitest.directory, 'ready.json'), 'utf8').then(
-          (text) => JSON.parse(text) as { launcher: number; helper: number },
-          () => undefined,
-        ),
+      () => readStartedListingProcesses(join(vitest.directory, 'ready.json')),
       'listing helper readiness',
       5_000,
     )
