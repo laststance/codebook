@@ -7,6 +7,7 @@ import type {
   OperationRecord,
   RuntimeAction,
 } from '../../runtime'
+import { declaredOperationsOf } from '../../utils/declaredOperationsOf'
 
 import { ControlledConfiguredRuntime } from './configuredServiceHarness'
 
@@ -42,7 +43,7 @@ export class ControlledOperationsRuntime extends ControlledConfiguredRuntime {
     const configuration = definition.configuration
     this.records =
       configuration.version === 3
-        ? configuration.operations.map((operation, index) => ({
+        ? declaredOperationsOf(configuration).map((operation, index) => ({
             index: index + 1,
             kind: operation.kind,
             title: operation.title,

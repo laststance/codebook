@@ -96,6 +96,7 @@ import {
   type ConfiguredDomFailure,
   type OperationsRepositoryConfiguration,
   type RepositoryCondition,
+  type RepositoryOperation,
 } from './repositoryConfigSchemas'
 import { RepositorySourceService } from './repositorySource'
 import type {
@@ -181,6 +182,7 @@ import { deadlineText } from './utils/deadlineText'
 import { declarationStatementEndLine } from './utils/declarationStatementEndLine'
 import { declaredAndArmedPlace } from './utils/declaredAndArmedPlace'
 import { declaredInspectionBindings } from './utils/declaredInspectionBindings'
+import { declaredOperationsOf } from './utils/declaredOperationsOf'
 import { describeCdpPause } from './utils/describeCdpPause'
 import type { NextEntryResponse } from './utils/describeNextEntryResponse'
 import { describeNextLaunchFailure } from './utils/describeNextLaunchFailure'
@@ -840,7 +842,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const configuration = this.definition.configuration
     if (configuration.version === OPERATIONS_CONFIG_VERSION) {
       this.operationsConfiguration = configuration
-      for (const [index, operation] of configuration.operations.entries())
+      for (const [index, operation] of declaredOperationsOf(
+        configuration,
+      ).entries())
         this.operationRecords.push({
           index: index + 1,
           kind: operation.kind,
@@ -1525,7 +1529,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
       return false
     const sent = this.operationsDispatched
-    const total = this.operationsConfiguration!.operations.length
+    const total = declaredOperationsOf(this.operationsConfiguration!).length
     if (sent >= total) {
       // A sign-out flow ends on its sign-in page: the run-level after decides (D13).
       this.signInLandingAfterLast = landedOn
@@ -5896,13 +5900,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const index = this.operationsAccepted + 1
     if (
       action !== REPOSITORY_OPERATION_ACTION ||
-      index > configuration.operations.length ||
+      index > declaredOperationsOf(configuration).length ||
       this.cleaning ||
       this.status !== 'ready'
     )
       throw new Error('conflict: wrong, repeated or unavailable input')
     this.alive()
-    const operation = configuration.operations[index - 1]!
+    const operation = declaredOperationsOf(configuration)[index - 1]!
     const isAskLearner = operation.kind === 'text' && operation.secret
     if (isAskLearner && learnerSecret === undefined)
       throw new Error('conflict: the learner secret was not supplied')
@@ -5977,8 +5981,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     learnerSecret: string | undefined,
   ): Promise<void> {
     const configuration = this.operationsConfiguration!
-    const total = configuration.operations.length
-    const operation = configuration.operations[index - 1]!
+    const total = declaredOperationsOf(configuration).length
+    const operation = declaredOperationsOf(configuration)[index - 1]!
     const record = this.operationRecords[index - 1]!
     this.moveForward(record, { state: 'sending' })
     await this.verifySources()
@@ -6177,10 +6181,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @returns The hooks the engine calls.
    * @example await prepared.send(this.operationHooks(1, operation))
    */
-  private operationHooks(
-    index: number,
-    operation: OperationsRepositoryConfiguration['operations'][number],
-  ) {
+  private operationHooks(index: number, operation: RepositoryOperation) {
     const record = this.operationRecords[index - 1]!
     return {
       beforeInput: (): void => {
@@ -6319,9 +6320,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    */
   private async completeOperation(index: number): Promise<void> {
     const configuration = this.operationsConfiguration!
-    const operation = configuration.operations[index - 1]!
+    const operation = declaredOperationsOf(configuration)[index - 1]!
     const record = this.operationRecords[index - 1]!
-    const isLast = index === configuration.operations.length
+    const isLast = index === declaredOperationsOf(configuration).length
     // Which wait the run's deadline, armed before both and ending first, interrupts: it words that wait's failure.
     let waiting: OperationWait = 'pauses'
     this.lastOperationAfterFailure = undefined
@@ -6411,12 +6412,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     scope: 'operation' | 'run',
   ): OperationRefusal {
     const configuration = this.operationsConfiguration!
-    const operation = configuration.operations[index - 1]!
+    const operation = declaredOperationsOf(configuration)[index - 1]!
     const isRunLevel = scope === 'run'
     // The page reached a sign-in path after the last operation and the after conditions did not hold there: the session asked again (D13), which is not a missing result.
     if (
       this.signInLandingAfterLast !== undefined &&
-      index === configuration.operations.length
+      index === declaredOperationsOf(configuration).length
     )
       return this.signInRefusal(
         this.signInReasonOfLanding(),
@@ -6473,7 +6474,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     index: number,
     cause: string,
   ): OperationRefusal {
-    const operation = this.operationsConfiguration!.operations[index - 1]!
+    const operation = declaredOperationsOf(this.operationsConfiguration!)[
+      index - 1
+    ]!
     this.logOperation(index, 'error', `unexpected failure: ${cause}`)
     return new OperationRefusal(
       'RUN_FAILED_UNEXPECTEDLY',
@@ -6553,7 +6556,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     level: 'info' | 'error',
     text: string,
   ): void {
-    const total = this.operationsConfiguration?.operations.length ?? 0
+    const total = this.operationsConfiguration
+      ? declaredOperationsOf(this.operationsConfiguration).length
+      : 0
     try {
       this.options.control?.outputLog?.({
         level,
@@ -6576,7 +6581,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.firstNavigationSeen = true
       return
     }
-    const total = this.operationsConfiguration!.operations.length
+    const total = declaredOperationsOf(this.operationsConfiguration!).length
     const sent = this.operationsDispatched
     if (sent === 0) return
     if (sent >= total) {
@@ -8537,7 +8542,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       if (this.operationsConfiguration)
         this.failOperation(
           this.afterNotMet(
-            this.operationsConfiguration.operations.length,
+            declaredOperationsOf(this.operationsConfiguration).length,
             this.changedAfterCaptureReason(afterCapture.failure),
             'run',
           ),
@@ -9149,7 +9154,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       return Promise.resolve([])
     return readOperationConfirmationFacts(
       this.operationPort(),
-      this.operationsConfiguration.operations,
+      declaredOperationsOf(this.operationsConfiguration),
     )
   }
   /** Exposes bounded descriptors and immutable references; service signatures never serialize full modules or maps. @example run.view().participants.browser.pause */

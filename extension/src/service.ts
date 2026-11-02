@@ -151,6 +151,7 @@ import { createChromeExtensionJournal } from './utils/createChromeExtensionJourn
 import { createNodeServerJournal } from './utils/createNodeServerJournal'
 import { cutCauseForDisplay } from './utils/cutCauseForDisplay'
 import { cutTextToFit } from './utils/cutTextToFit'
+import { declaredOperationsOf } from './utils/declaredOperationsOf'
 import { declaredStopOfSnapshot } from './utils/declaredStopOfSnapshot'
 import { describeBoundPlace, type BoundPlace } from './utils/describeBoundPlace'
 import { describeMissingBookNode } from './utils/describeMissingBookNode'
@@ -5744,7 +5745,10 @@ export class StudyService {
       runId: record.id,
       repository: basename(this.environment.workspace),
       entryPath: configuration.entryPath ?? '/',
-      operations: listSavedSessionOperations(configuration.operations, facts),
+      operations: listSavedSessionOperations(
+        declaredOperationsOf(configuration),
+        facts,
+      ),
     }
   }
 
@@ -5953,7 +5957,7 @@ export class StudyService {
     const index =
       (view.operations ?? []).filter((entry) => entry.state !== 'not-run')
         .length + 1
-    const operation = configuration.operations[index - 1]
+    const operation = declaredOperationsOf(configuration)[index - 1]
     return operation?.kind === 'text' && operation.secret
       ? { index, title: operation.title }
       : undefined

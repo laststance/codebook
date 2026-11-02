@@ -80,7 +80,7 @@ test('a version 3 configuration of four ordered operations with stops declared a
     operationsRepositoryConfigSchema.parse(input)
   // Assert
   assert.deepEqual(
-    parsed.operations.map((operation) => operation.kind),
+    parsed.operations!.map((operation) => operation.kind),
     ['choose', 'text', 'click', 'click'],
   )
   assert.equal(parsed.afterOperation, 2)

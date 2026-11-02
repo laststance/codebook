@@ -320,11 +320,11 @@ const repositoryOperationSchema = z.discriminatedUnion('kind', [
     ...operationAfterSchema,
   }),
 ])
-/** The stop-to-operation link every stop of a version 3 run declares: the 1-based operation after whose input the stop is armed. */
+/** The stop-to-operation link every stop of a version 3 run declares: the 1-based operation after whose input the stop is armed, or 0 for the entry render (server stops only; {@link validateOperations} refuses 0 on a browser stop). */
 const afterOperationSchema = z
   .number()
   .int()
-  .min(1)
+  .min(0)
   .max(REPOSITORY_OPERATION_LIMIT)
 
 /**
@@ -340,10 +340,15 @@ const operationsConfigurationShape = z.strictObject({
   afterOperation: afterOperationSchema,
   before: conditionsSchema,
   after: conditionsSchema,
+  // Omitted only when every stop is an entry-render stop (`afterOperation: 0`); an empty list is refused so the two spellings never mean the same.
   operations: z
     .array(repositoryOperationSchema)
-    .min(1)
-    .max(REPOSITORY_OPERATION_LIMIT),
+    .min(
+      1,
+      'configuration.operations is empty: omit the field for a run with no operation, or declare 1 to 8 operations.',
+    )
+    .max(REPOSITORY_OPERATION_LIMIT)
+    .optional(),
   inspections: stopInspectionsSchema,
   additionalStops: z
     .array(
@@ -417,7 +422,7 @@ function validateOperations(
   context: z.RefinementCtx,
 ): void {
   const titles = new Set<string>()
-  for (const [index, operation] of configuration.operations.entries()) {
+  for (const [index, operation] of (configuration.operations ?? []).entries()) {
     // A repeated title makes two operations indistinguishable in the run resource and the replay.
     if (titles.has(operation.title))
       context.addIssue({
@@ -428,27 +433,58 @@ function validateOperations(
     titles.add(operation.title)
   }
   validateSignInPaths(configuration, context)
+  validateStopAfterOperations(configuration, context)
+}
+
+/**
+ * Refuses the `afterOperation` rules of a version 3 configuration: 0 (the entry render) only on a server stop, a value no greater than the declared operation count, omitted `operations` only when every stop is 0, and a value that never decreases along the declared stop order.
+ * Called by {@link validateOperations}.
+ * @param configuration - A parsed version 3 configuration.
+ * @param context - The refinement context that receives one issue per violation, each naming its field.
+ * @example validateStopAfterOperations({ participant: 'browser', afterOperation: 0, … }, context) // adds an issue at ['afterOperation']
+ */
+function validateStopAfterOperations(
+  configuration: z.infer<typeof operationsConfigurationShape>,
+  context: z.RefinementCtx,
+): void {
   const declared = [
-    { path: ['afterOperation'], value: configuration.afterOperation },
+    {
+      path: ['afterOperation'],
+      value: configuration.afterOperation,
+      participant: configuration.participant,
+    },
     ...(configuration.additionalStops ?? []).map((stop, index) => ({
       path: ['additionalStops', index, 'afterOperation'],
       value: stop.afterOperation,
+      participant: stop.participant,
     })),
   ]
+  const operationCount = configuration.operations?.length ?? 0
   let previous = 0
-  for (const { path, value } of declared) {
-    if (value > configuration.operations.length)
+  for (const { path, value, participant } of declared) {
+    const field = `configuration.${path.join('.')}`
+    // The entry render is a server render: a browser stop has no pause to wait for before the page loads.
+    if (value === 0 && participant !== 'server')
       context.addIssue({
         code: 'custom',
         path,
-        message: `afterOperation ${value} is declared at configuration.${path.join('.')}, but the run declares ${configuration.operations.length} operations.`,
+        message: `afterOperation 0 (the entry render) is declared at ${field}, but only a server stop can pause the entry render; declare afterOperation 1 or more for a browser stop.`,
+      })
+    else if (value > operationCount)
+      context.addIssue({
+        code: 'custom',
+        path,
+        message:
+          configuration.operations === undefined
+            ? `afterOperation ${value} is declared at ${field}, but operations is omitted; declare the operations, or use afterOperation 0 on every server stop.`
+            : `afterOperation ${value} is declared at ${field}, but the run declares ${operationCount} operations.`,
       })
     // A later stop cannot belong to an earlier operation than the stop before it: the stops are taken in declared order.
     if (value < previous)
       context.addIssue({
         code: 'custom',
         path,
-        message: `afterOperation ${value} at configuration.${path.join('.')} is lower than the ${previous} of the stop before it; declare the stops in the order of their operations.`,
+        message: `afterOperation ${value} at ${field} is lower than the ${previous} of the stop before it; declare the stops in the order of their operations.`,
       })
     previous = Math.max(previous, value)
   }

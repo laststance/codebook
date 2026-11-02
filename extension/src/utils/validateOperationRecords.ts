@@ -9,6 +9,7 @@ import {
 
 import { afterOperationOf } from './afterOperationOf'
 import { configuredStops } from './configuredStops'
+import { declaredOperationsOf } from './declaredOperationsOf'
 import { stopOfObservation } from './stopOfObservation'
 
 type StudyWithoutImages = Omit<ConfiguredStudy, 'captures'>
@@ -18,7 +19,7 @@ type StudyWithoutImages = Omit<ConfiguredStudy, 'captures'>
  * @param records - The study's operation records.
  * @param declared - The sealed version 3 configuration's operations.
  * @throws When the count, an index, a kind or a title differs.
- * @example assertRecordsMatchDeclaration(records, configuration.operations)
+ * @example assertRecordsMatchDeclaration(records, declaredOperationsOf(configuration))
  */
 function assertRecordsMatchDeclaration(
   records: readonly ConfiguredOperationRecord[],
@@ -205,11 +206,7 @@ export function validateOperationRecords(study: StudyWithoutImages): void {
       throw new Error('Configured operations are missing from a started run.')
     return
   }
-  // Read as possibly absent: a saved-session run of entry-render stops only may omit `operations`.
-  const declaredOperations:
-    readonly { kind: string; title: string }[] | undefined =
-    configuration.operations
-  assertRecordsMatchDeclaration(records, declaredOperations ?? [])
+  assertRecordsMatchDeclaration(records, declaredOperationsOf(configuration))
   assertRanSequentially(records)
   assertSentTimes(records)
   assertPausesFollowOperations(study, records)
