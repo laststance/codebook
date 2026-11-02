@@ -3452,6 +3452,15 @@ export class StudyWorkspace {
               'The presentation changed while the captured source was returned. Read its state before another control.',
             )
         }
+        /** Whether this return still owns the presentation, for a step that must send nothing once the return gave up ({@link reactivateNonTextTab} after the step deadline). */
+        const isReturnCurrent = (): boolean => {
+          try {
+            assertOwned()
+            return true
+          } catch {
+            return false
+          }
+        }
         const sourceColumn = STUDY_PRESENTATIONS['study-workspace'].sourceColumn
         const sourceUri = this.sourceUri?.toString()
         /**
@@ -3548,7 +3557,7 @@ export class StudyWorkspace {
                 )
               } else
                 choiceBack = await this.awaitReturnStep(
-                  this.reactivateNonTextTab(choice),
+                  this.reactivateNonTextTab(choice, isReturnCurrent),
                   'the focus command that brings your choice back',
                 )
               assertOwned()
@@ -3796,14 +3805,19 @@ export class StudyWorkspace {
    * Brings a tab that is no text file to the front of its group again and focuses that group, so a learner's choice a late show covered is back; called by {@link returnDisplacedCapturedSourceThenAdmit}.
    * The tab is looked up again in its group, since the editor may have replaced its objects: the same object first, then the tab that shows the same thing ({@link sameTabTarget}: kind of input, label and the resource or view it names, so another tab of the same label is not taken for it). The editor's numbered command (first nine tabs of the active group) reveals it.
    * Nothing is run for a group that is gone or that the editor's numbered commands do not count: Cursor's focus commands count the groups of the main editor only and open a new empty group for the column after its last one ({@link placeOfRememberedGroup}). After the focus command the group must be the active one, else the numbered command would switch the front tab of whatever group is active.
+   * The return waits for this at most {@link PRESENTATION_READY_TIMEOUT_MS} and then stops without cancelling it, so each native step is sent only while the return still owns the presentation: a late answer of an earlier step sends nothing more after the return gave up, a Close or the next Restore.
    * @param choice - The group's column and the tab the learner chose.
-   * @returns `true` when the tab is in front of its group and the group is focused; `false` when the group is gone, lies outside the main editor or is not known to lie in it, the editor has no focus command for it (a column beyond its eighth), the focus command did not make it the active group, or the tab cannot be revealed by number.
-   * @example await this.reactivateNonTextTab({ column: 2, tab }) // => true
+   * @param isReturnCurrent - Whether the return that asked still owns the presentation; read before each editor command.
+   * @returns `true` when the tab is in front of its group and the group is focused; `false` when the return no longer owns the presentation, the group is gone, lies outside the main editor or is not known to lie in it, the editor has no focus command for it (a column beyond its eighth), the focus command did not make it the active group, or the tab cannot be revealed by number.
+   * @example await this.reactivateNonTextTab({ column: 2, tab }, () => true) // => true
    */
-  private async reactivateNonTextTab(choice: {
-    column: number
-    tab?: vscode.Tab
-  }): Promise<boolean> {
+  private async reactivateNonTextTab(
+    choice: {
+      column: number
+      tab?: vscode.Tab
+    },
+    isReturnCurrent: () => boolean,
+  ): Promise<boolean> {
     const focusCommand = focusEditorGroupCommand(choice.column)
     const groupAtColumn = (): vscode.TabGroup | undefined =>
       vscode.window.tabGroups.all.find(
@@ -3815,24 +3829,33 @@ export class StudyWorkspace {
       !focusCommand ||
       !choice.tab ||
       !groupBefore ||
-      (await this.placeOfRememberedGroup(groupBefore)) !== choice.column
+      (await this.placeOfRememberedGroup(groupBefore)) !== choice.column ||
+      // The layout read may answer after the return gave up: nothing more is sent then.
+      !isReturnCurrent()
     )
       return false
     await this.executeEditorCommand(focusCommand)
-    // The numbered tab command acts on the active group: only a group the focus command made active may get it.
-    if (vscode.window.tabGroups.activeTabGroup.viewColumn !== choice.column)
+    // The numbered tab command acts on the active group: only a group the focus command made active may get it, and only while the return still owns the presentation.
+    if (
+      !isReturnCurrent() ||
+      vscode.window.tabGroups.activeTabGroup.viewColumn !== choice.column
+    )
       return false
     const group = groupAtColumn()
     if (!group) return false
-    if (sameTabTarget(group.activeTab, choice.tab)) return true
-    // The very tab first, then the one that shows the same thing.
-    const sameObjectIndex = group.tabs.indexOf(choice.tab)
-    const index =
-      sameObjectIndex >= 0
-        ? sameObjectIndex
-        : group.tabs.findIndex((candidate) =>
-            sameTabTarget(candidate, choice.tab),
-          )
+    // The very tab while the editor still lists it, so another tab that shows the same thing in front is not taken for it; the tab that shows the same thing only once the editor replaced its objects.
+    const isListed = group.tabs.includes(choice.tab)
+    if (
+      isListed
+        ? group.activeTab === choice.tab
+        : sameTabTarget(group.activeTab, choice.tab)
+    )
+      return true
+    const index = isListed
+      ? group.tabs.indexOf(choice.tab)
+      : group.tabs.findIndex((candidate) =>
+          sameTabTarget(candidate, choice.tab),
+        )
     // The editor numbers the first nine tabs of a group only; a tab is counted from 1.
     const tabNumber = index + 1
     if (tabNumber < 1 || tabNumber > EDITOR_NUMBERED_TAB_COMMAND_LIMIT)

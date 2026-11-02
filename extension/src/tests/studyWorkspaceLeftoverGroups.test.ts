@@ -1579,6 +1579,66 @@ test('a learner’s tab whose group the focus command did not make active is not
   }
 })
 
+// Value: protects=the learner's editor after the return gave up on a step: the editor's answer to the focus command of the learner's group arrives after the step deadline, the Restore has already answered its timeout, and the late answer sends no numbered tab command that would switch a front tab under the learner, a Close or the next Restore; fails_when=the abandoned reactivation goes on with its next editor command once the late answer arrives; why_new=Cycle 0072 /ship pass 2 (native adversarial rerun 2, Red Team 1); seam=restoreWithLearnerDuringSecondShow, holdNextCommand on the fourth group's focus command released after the deadline, the fake clock, the harness's command log; no_claim=the late completion of the editor's own command (the focus still moves; the editor may finish it)
+test('a learner’s tab whose group focus the editor answers after the return gave up gets no numbered tab command', async (context) => {
+  // Arrange: the moved copy has the keyboard in the fourth group; the editor holds its answer to the fourth group's focus command.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  const heldFocus = harness.holdNextCommand(
+    'workbench.action.focusFourthEditorGroup',
+  )
+  try {
+    await openRetainedStudy(harness)
+    const learnerGroup = await addLearnerGroup(harness)
+    harness.moveSource(4)
+    const commandsBefore = harness.commands.length
+    // Act: the learner opens the chat tab in the fourth group and a change without an event puts a file in front of it; after the second show the return waits for the held focus command past its step deadline, and the editor answers only then.
+    const answer = await restoreWithLearnerDuringSecondShow(
+      harness,
+      () => {
+        harness.focusChatEditorTab(learnerGroup.viewColumn)
+        const group = harness.groups.find(
+          (candidate) => candidate.viewColumn === learnerGroup.viewColumn,
+        )!
+        group.activeTab = group.tabs[0]
+      },
+      async (answering) => {
+        // Faked before the return's next step arms its deadline.
+        enableFakeClock(context)
+        await advanceClockUntilSettled(context, heldFocus.started, 2_000)
+        await advanceClockUntilSettled(
+          context,
+          answering,
+          PRESENTATION_READY_TIMEOUT_MS + 1_000,
+        )
+        resetFakeClock(context)
+        heldFocus.release()
+        // The abandoned reactivation resumes on the next turns once the editor answered.
+        for (let turn = 0; turn < 5; turn++)
+          await new Promise((resolve) => setImmediate(resolve))
+      },
+    )
+    // Assert
+    assert.deepEqual(
+      {
+        answer,
+        numberedTabCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) => /openEditorAtIndex/.test(command)),
+      },
+      {
+        answer:
+          'Error: The editor gave no answer to the focus command that brings your choice back within 5 seconds, so Codebook stopped returning the captured source; the editor may still finish that step. Choose Restore Study workspace layout again.',
+        numberedTabCommands: [],
+      },
+    )
+  } finally {
+    resetFakeClock(context)
+    heldFocus.release()
+    await harness.close()
+  }
+})
+
 // Value: protects=the Study grid when the learner's pick stands in a group of another editor part (Cursor's Agent chat group beyond the main editor's groups): the return runs neither the numbered focus command of its column, which Cursor answers with a new empty group in the main editor, nor a numbered tab command; fails_when=the return runs the focus command of any column the main editor does not have, so the Study grid gains an empty group; why_new=Cycle 0072 /ship pass 1 (Red Team, same function); seam=restoreWithLearnerDuringSecondShow, addSeparateEditorPart with the chat's focusTab as the learner's pick, and the harness's command log and groups; no_claim=Cursor's chat stands for any group the main editor does not count
 test('a learner’s pick of Cursor’s chat group beyond the main editor is not focused by a numbered group command that would open a new group', async () => {
   // Arrange: the moved copy has the keyboard in the fourth group; Cursor's Agent chat part stands behind the main editor's four groups.
