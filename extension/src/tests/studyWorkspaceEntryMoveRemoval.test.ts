@@ -1565,41 +1565,47 @@ test('a stop file already open in another group is not shown again beside the Ap
 async function applicationSharingLearnerGroupBesideChat() {
   const harness = await recordedReaderHarness()
   const refusals: CodebookDiagnostic[] = []
-  harness.reader.diagnostics = {
-    log: (entry): void => {
-      if (entry.surface === 'presentation:placement-refused')
-        refusals.push(entry)
-    },
-    show: () => undefined,
+  // A setup failure closes the harness before it rethrows, so no temp repository or fake-editor timer outlives the test.
+  try {
+    harness.reader.diagnostics = {
+      log: (entry): void => {
+        if (entry.surface === 'presentation:placement-refused')
+          refusals.push(entry)
+      },
+      show: () => undefined,
+    }
+    harness.useNativeLayout({
+      orientation: 1,
+      groups: [{ size: 229 }, { size: 349 }, { size: 109 }],
+    })
+    const chat = harness.addSeparateEditorPart()
+    harness.replaceGroupObjectsOnTabChanges()
+    harness.rebuildTabObjectsAtGroupRemoval()
+    harness.closeEmptyGroupsAfterPanelMove()
+    harness.leavePaneFocusUnreportedBesideChat()
+    harness.ignoresFirstGroupFocusCommandBesideChat()
+    harness.reportsMainThreadWebviewViewTypes()
+    harness.reportsPaneMoveTabsBeforeGroups()
+    harness.keepTextEditorReportAfterNewGroup()
+    harness.reactivatePreviousGroupAfterInsertion()
+    harness.leaveEmptyLockedGroup(1)
+    harness.focusMutableDraft('data.ts', 2)
+    harness.focusMutableDraft('cards.tsx', 2)
+    harness.focusMutableDraft('auth.ts', 3)
+    chat.focusTab()
+    await harness.reader.open()
+    // The reload left no pane and the entry opened the Application in the learner's group; the captured source stands apart from it.
+    harness.movePanel('codebook.scopedBrowser', 2)
+    await harness.controller.settle()
+    const capturedTab = harness.groups
+      .flatMap((group) => group.tabs)
+      .find((tab) => tab.label === 'Captured-theme.ts')
+    if (capturedTab) harness.closeTabByHand(capturedTab)
+    return { harness, refusals }
+  } catch (error) {
+    await harness.close()
+    throw error
   }
-  harness.useNativeLayout({
-    orientation: 1,
-    groups: [{ size: 229 }, { size: 349 }, { size: 109 }],
-  })
-  const chat = harness.addSeparateEditorPart()
-  harness.replaceGroupObjectsOnTabChanges()
-  harness.rebuildTabObjectsAtGroupRemoval()
-  harness.closeEmptyGroupsAfterPanelMove()
-  harness.leavePaneFocusUnreportedBesideChat()
-  harness.ignoresFirstGroupFocusCommandBesideChat()
-  harness.reportsMainThreadWebviewViewTypes()
-  harness.reportsPaneMoveTabsBeforeGroups()
-  harness.keepTextEditorReportAfterNewGroup()
-  harness.reactivatePreviousGroupAfterInsertion()
-  harness.leaveEmptyLockedGroup(1)
-  harness.focusMutableDraft('data.ts', 2)
-  harness.focusMutableDraft('cards.tsx', 2)
-  harness.focusMutableDraft('auth.ts', 3)
-  chat.focusTab()
-  await harness.reader.open()
-  // The reload left no pane and the entry opened the Application in the learner's group; the captured source stands apart from it.
-  harness.movePanel('codebook.scopedBrowser', 2)
-  await harness.controller.settle()
-  const capturedTab = harness.groups
-    .flatMap((group) => group.tabs)
-    .find((tab) => tab.label === 'Captured-theme.ts')
-  if (capturedTab) harness.closeTabByHand(capturedTab)
-  return { harness, refusals }
 }
 
 // Value: protects=the Study pane's Recording button after a reload beside Cursor's Agent chat, where the Application pane shares the learner's group with data.ts and cards.tsx: the recording opens at the first press, with the Application in its own group at column 1 and the learner's two files kept in front of their group; fails_when=the move watch reads a group it has no identity for yet as a group the learner changed (Cursor reports each tab change with every group an object anew before the group report that names them, so the learner's group, which keeps cards.tsx in front once the Application leaves it, looks like a new group holding two learner tabs) and refuses with "Native pane, group or focus changed while presentation waited; the learner arrangement was preserved." (Cursor 3.27.22 native, Cycle 0072 task 5: the Recording button failed twice, a retry from the Learning summary succeeded); why_new=Cycle 0072 task 5; seam=recordedReaderHarness, addSeparateEditorPart, reportsPaneMoveAsOpenThenClose with reportsPaneMoveTabsBeforeGroups, keepTextEditorReportAfterNewGroup, reactivatePreviousGroupAfterInsertion, movePanel (the entry's Application in the learner's group), the reader's openRecording and the revealPane wrapper that reports the learner's front file as the active text editor (the editor's report 18 ms after the move); no_claim=the real Cursor's event timing (native Cursor trial) and the entry's own placement of the Application in the learner's group
