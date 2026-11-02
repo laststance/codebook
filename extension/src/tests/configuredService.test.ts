@@ -4848,7 +4848,6 @@ test('API 1.8 discovery exposes the bounded configured profile and its executabl
         'afterOperation',
         'before',
         'after',
-        'operations',
         'inspections',
       ],
     ],

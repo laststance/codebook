@@ -50,6 +50,7 @@ import {
   REPOSITORY_STOP_INSTANCE_READ_MS,
   REPOSITORY_STOP_MODULE_FIRST_JOURNAL_BEYOND_LIMIT,
   REPOSITORY_STOP_MODULE_JOURNAL_LIMIT,
+  ENTRY_LOAD_POLL_MS,
   REPOSITORY_RUN_TIMEOUT_MS,
   REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT,
   SECRET_FRAME_SOURCE_URL,
@@ -416,6 +417,22 @@ interface ConfiguredBrowserOptions {
   /** Called once per run refused with `SIGN_IN_REQUIRED`, so the editor shows its notice. */
   onSignInRequired?(notice: { reason: SignInRequiredReason }): void
 }
+/** The state of the entry-load phase ({@link ConfiguredBrowserRun.loadEntryWithRenderStops}). */
+type EntryLoadState = {
+  /** Settles when the entry page loaded after the last entry-render stop was continued. */
+  done: { promise: Promise<void>; resolve: () => void }
+  /** Whether the last entry-render stop was continued, so a finished load ends the phase. */
+  finishing: boolean
+  /** The loader of the main frame's committed document; unset until the commit event. */
+  loaderId: string | undefined
+  /** When the entry navigation started, on the run's monotonic clock. */
+  startedAtMs: number
+  /** The entry-render stops that paused and were continued, as `path:line`. */
+  pausedStops: string[]
+  /** The poll that reads the document state. */
+  timer?: ReturnType<typeof setInterval>
+}
+
 /** One script a runtime parsed for a declared stop's module: the sealed one, or the same module loaded for another webpack layer ({@link PreparedStop.instances}), each with the map that places its own generated code. */
 type StopModule = {
   bundle: BundleSource
@@ -654,6 +671,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private continuation?: Continuation
   private acceptedStop = false
   private stopIndex = 0
+  /** The entry-load phase of a run that declares entry-render stops (X14); set from the arming of the stops until the entry page loaded after the last continue. */
+  private entryLoad?: EntryLoadState
+  /** The continuation receipt of the last entry-render pause, shown while no operation exists to hold it. */
+  private entryContinuedPause?: PauseIdentity
   private readonly snapshots: ConfiguredRuntimeSnapshot[] = []
   /** The bundle each committed snapshot ran in, by snapshot id: the sealed module's, or another layer's instance whose generated code and map differ ({@link source}, F565). */
   private readonly snapshotBundles = new Map<string, BundleSource>()
@@ -1050,7 +1071,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       })
       this.alive()
     }
-    await this.navigateToEntry(cdp)
+    await this.loadEntryPage(cdp)
     await this.waitForDom('before')
     this.alive()
     // The before conditions held, but the page may sit on a sign-in path: that is the refusal, whatever else the page shows.
@@ -1102,11 +1123,22 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.evidence.record('inputs.prepared', { count: inputs.length })
     // Every declared input is written: a deadline from here names arming the first stop, not an input.
     this.nextSetupStep = NEXT_SETUP_STEPS.armingFirstStop
+    await this.openPreparedRun()
+  }
+
+  /**
+   * Arms the first stop still ahead, shows the entry page and opens the run: `ready` for its first operation, or the observation of its result when it declares no operation.
+   * Called last by {@link prepareOwned}.
+   * @example await this.openPreparedRun()
+   */
+  private async openPreparedRun(): Promise<void> {
     // Only the next expected stop is armed: a later stop's line may run before its turn and must not pause then. {@link continue} arms each later stop.
     // A version 3 stop is armed in its operation's turn: a first stop declared after a later operation waits for that operation's dispatch.
-    if (this.isStopDueBy(this.stops[0]!, 1)) {
-      await this.armStop(this.stops[0]!)
-      this.armedStops.add(this.stops[0]!)
+    // After an entry load the stops of group 0 were continued: the first stop still ahead is the one armed here.
+    const firstAhead = this.stops[this.stopIndex]
+    if (firstAhead && this.isStopDueBy(firstAhead, 1)) {
+      await this.armStop(firstAhead)
+      this.armedStops.add(firstAhead)
     }
     // A later browser stop is armed only in its turn, but a module that is already loaded can be compared with its sealed bundle now, before any application effect.
     for (const laterStop of this.stops.slice(1))
@@ -1119,6 +1151,31 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     clearTimeout(this.progressTimer)
     this.status = 'ready'
     await this.persist()
+    // A run that declares no operation sends no input: the entry page, its pauses and the run-level after conditions are the whole run.
+    if (
+      this.operationsConfiguration &&
+      declaredOperationsOf(this.operationsConfiguration).length === 0
+    )
+      this.completeEntryOnlyRun()
+  }
+
+  /**
+   * Starts the observation of the run-level `after` conditions for a run that declares no operation, once its entry page loaded and its entry-render stops were continued.
+   * Why it exists: such a run has no operation whose completion would observe the result; it completes by the same wait the last operation uses. Called by {@link prepareOwned}.
+   * @example this.completeEntryOnlyRun() // status resuming, then completed once the after conditions held
+   */
+  private completeEntryOnlyRun(): void {
+    // The aggregate record the observation marks verified; no input is dispatched or acknowledged for it.
+    this.operation ??= {
+      id: randomUUID(),
+      key: 'entry-load',
+      inputDispatched: false,
+      inputAcknowledged: false,
+      afterVerified: false,
+    }
+    this.status = 'resuming'
+    this.progressDeadline(ACTIVE_TIMEOUT_MS, () => this.afterDeadlineReason())
+    this.track(this.observeAfter(undefined))
   }
 
   /**
@@ -1422,14 +1479,255 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @param cdp - The selected page's channel.
    * @example await this.navigateToEntry(cdp) // the page loads http://localhost:3000/dashboard
    */
-  private async navigateToEntry(cdp: Cdp): Promise<void> {
+  private async navigateToEntry(
+    cdp: Cdp,
+    options: { answerMayBeHeld?: boolean } = {},
+  ): Promise<void> {
     this.setupStep = VITE_SETUP_STEPS.loadingEntryPage
     this.nextSetupStep = NEXT_SETUP_STEPS.loadingEntryPage
     this.navigationRequested = true
-    await cdp.request('Page.navigate', {
-      url: `${this.origin}${this.definition.configuration.entryPath ?? '/'}`,
-    })
+    const navigation = cdp.request(
+      'Page.navigate',
+      {
+        url: `${this.origin}${this.definition.configuration.entryPath ?? '/'}`,
+      },
+      // A pause before the shell flush holds the answer until the last continue: the entry-load rules, not the request's own timer, bound the wait (X17).
+      options.answerMayBeHeld ? REPOSITORY_RUN_TIMEOUT_MS : undefined,
+    )
+    if (options.answerMayBeHeld) this.track(navigation)
+    else await navigation
     this.alive()
+  }
+
+  /**
+   * Loads the entry page: through the entry-load phase when the run declares entry-render stops, else by the plain navigation.
+   * Called by {@link prepareOwned}.
+   * @param cdp - The page's channel.
+   * @example await this.loadEntryPage(cdp)
+   */
+  private async loadEntryPage(cdp: Cdp): Promise<void> {
+    if (this.entryRenderStops().length) await this.loadEntryWithRenderStops(cdp)
+    else await this.navigateToEntry(cdp)
+  }
+
+  /**
+   * Lists the stops of the entry render (group 0): the server stops a version 3 configuration declares with `afterOperation: 0`, in declared order. They come first, because `afterOperation` never decreases along the declared order.
+   * Called by {@link prepareOwned} to choose the entry-load phase and by {@link loadEntryWithRenderStops}.
+   * @returns The sealed entry-render stops; empty for versions 1 and 2 and for a version 3 run without one.
+   * @example this.entryRenderStops().length // 1 for a run declaring a server stop afterOperation 0
+   */
+  private entryRenderStops(): PreparedStop[] {
+    return this.stops.filter((stop) => afterOperationOf(stop) === 0)
+  }
+
+  /**
+   * Runs the entry-load phase of a version 3 run that declares entry-render stops (X14): arms them all, drives the entry navigation and returns once the entry page has loaded after the last entry-render stop was continued.
+   *
+   * Why it exists: a server render stop pauses the response of the entry page, so the page cannot load before the learner continues; the phase is its own, not an operation 0. The stops are armed and acknowledged before the navigation starts, the first load is the armed render, and `Page.navigate`'s answer, which a pause before the shell flush holds, is awaited under the run's deadlines (X17). The pause pipeline publishes each pause as for a server action; {@link finishEntryRenderStops} ends the phase's pauses and a poll of the main frame's document ends the phase itself. Called once by {@link prepareOwned}.
+   * @param cdp - The page's channel.
+   * @throws The run's failure (via {@link alive}) when a stop is not hit, the page loads without it, or the page does not load after the last continue.
+   * @example await this.loadEntryWithRenderStops(cdp)
+   */
+  private async loadEntryWithRenderStops(cdp: Cdp): Promise<void> {
+    let resolveDone = (): void => undefined
+    const entry: EntryLoadState = {
+      done: {
+        promise: new Promise<void>((resolve) => {
+          resolveDone = resolve
+        }),
+        resolve: () => resolveDone(),
+      },
+      finishing: false,
+      loaderId: undefined,
+      startedAtMs: performance.now(),
+      pausedStops: [],
+    }
+    this.entryLoad = entry
+    // Every stop of the entry render is armed and acknowledged before the page is asked to load (X14).
+    for (const stop of this.entryRenderStops()) {
+      await this.armStop(stop)
+      this.armedStops.add(stop)
+      this.alive()
+    }
+    // The setup budget ends here; the 20 s bound of the first entry-render pause starts (task 2).
+    this.progressDeadline(ACTIVE_TIMEOUT_MS, () =>
+      this.entryRenderNotReachedText('not-hit'),
+    )
+    this.openCausalWindowOfStop(this.stopIndex)
+    await this.navigateToEntry(cdp, { answerMayBeHeld: true })
+    entry.timer = setInterval(
+      () => this.track(this.pollEntryLoad(entry)),
+      ENTRY_LOAD_POLL_MS,
+    )
+    try {
+      await entry.done.promise
+    } finally {
+      clearInterval(entry.timer)
+    }
+    this.alive()
+    this.entryLoad = undefined
+  }
+
+  /**
+   * Reads, while no server-render pause is held, whether the main frame's committed document finished loading, for the entry-load phase.
+   * The load counts only for the document the main frame committed after the navigation: an old document's `complete` (the blank page before the commit) and a child frame's load do not, because the read asks the main frame for its own `document.readyState` and waits for the commit event of its loader first (X17).
+   * @param entry - The phase's state.
+   * @example this.track(this.pollEntryLoad(entry))
+   */
+  private async pollEntryLoad(entry: EntryLoadState): Promise<void> {
+    if (
+      this.cleaning ||
+      this.entryLoad !== entry ||
+      entry.loaderId === undefined ||
+      this.status.startsWith('paused-')
+    )
+      return
+    const read = await this.requireCdp().requestQuietly('Runtime.evaluate', {
+      expression: 'document.readyState',
+      returnByValue: true,
+    })
+    if (this.entryLoad !== entry || this.status.startsWith('paused-')) return
+    if (read.result.value !== 'complete') return
+    const remaining = this.stops
+      .slice(this.stopIndex)
+      .filter((stop) => afterOperationOf(stop) === 0)
+    // The page loaded while an entry-render stop was never hit.
+    if (remaining.length) {
+      this.fail(this.entryRenderNotReachedText('load-first'))
+      return
+    }
+    if (entry.finishing) entry.done.resolve()
+  }
+
+  /**
+   * Records the receipt of a continuation where the run keeps it: on the operation, or, for an entry-render pause that has no operation, on the entry-load phase.
+   * Called by {@link beginAfter}.
+   * @param pause - The continued pause.
+   * @example this.recordContinuedPause(continuation.pause)
+   */
+  private recordContinuedPause(pause: PauseIdentity): void {
+    if (this.operation) this.operation.continuedPause = pause
+    else this.entryContinuedPause = pause
+  }
+
+  /**
+   * Says whether a continued stop is the last stop of the entry render, which ends the entry-load phase's pauses.
+   * @param continuedStop - The stop just continued.
+   * @param advancesToNextStop - Whether another stop of the same group follows.
+   * @returns `true` for a version 3 entry-render stop with no entry-render stop after it.
+   * @example this.isLastEntryRenderStop(stop, false) // true for the only afterOperation 0 stop
+   */
+  private isLastEntryRenderStop(
+    continuedStop: PreparedStop,
+    advancesToNextStop: boolean,
+  ): boolean {
+    return (
+      Boolean(this.operationsConfiguration) &&
+      !advancesToNextStop &&
+      afterOperationOf(continuedStop) === 0
+    )
+  }
+
+  /**
+   * Words the failure of the next stop of a continuation that was not hit: the coded entry-render failure for a stop of the entry render, today's sentence for any other.
+   * @param nextStop - The stop armed inside the continuation.
+   * @returns The failure text, read when the active bound expires.
+   * @example this.nextStopNotReachedText(stop)
+   */
+  private nextStopNotReachedText(nextStop: PreparedStop): string {
+    return afterOperationOf(nextStop) === 0
+      ? this.entryRenderNotReachedText('not-hit')
+      : this.unreachedNextStopReason(nextStop)
+  }
+
+  /**
+   * Ends the pauses of the entry render once its last stop was continued: the run waits for the page to load, bounded by the active bound from this continue (X12), else it fails with `ENTRY_LOAD_TIMEOUT`.
+   * Called by {@link beginAfter} for the last continuation of group 0.
+   * @param continuedStop - The last entry-render stop, now continued.
+   * @example this.finishEntryRenderStops(this.stops[0]!)
+   */
+  private finishEntryRenderStops(continuedStop: PreparedStop): void {
+    const entry = this.entryLoad
+    // A pause queued during this continuation belongs to no declared stop of the entry render.
+    const queuedStop = this.pendingCdpStop ?? this.pendingDapStop
+    if (queuedStop) {
+      this.pendingCdpStop = undefined
+      this.pendingDapStop = undefined
+      this.fail(
+        `Unexpected or additional ${queuedStop.participant} stop invalidated the declared operation`,
+      )
+      return
+    }
+    entry?.pausedStops.push(this.declaredAt(continuedStop))
+    this.stopIndex++
+    this.acceptedStop = false
+    this.snapshotReady = false
+    this.continuation = undefined
+    this.status = 'preparing'
+    if (entry) entry.finishing = true
+    this.progressDeadline(ACTIVE_TIMEOUT_MS, () => this.entryLoadTimeoutText())
+  }
+
+  /**
+   * Words and records the failure of an entry-render stop that was not reached: the page loaded without it, or it was not hit within the active bound.
+   * Records the failure fields the run resource and the error carry (`SERVER_STOP_NOT_REACHED`, phase `entry-render`; no input was sent, so no side effects).
+   * @param how - `load-first` when the page finished loading before the stop was hit; `not-hit` when the bound expired first.
+   * @returns The coded failure text.
+   * @example this.entryRenderNotReachedText('load-first') // 'SERVER_STOP_NOT_REACHED: The page finished without reaching declared stop app/lib/data.ts:91. …'
+   */
+  private entryRenderNotReachedText(how: 'load-first' | 'not-hit'): string {
+    const remaining = this.stops
+        .slice(this.stopIndex)
+        .filter((stop) => afterOperationOf(stop) === 0),
+      stop = remaining[0] ?? this.stops[this.stopIndex]!,
+      place = this.declaredAt(stop)
+    this.operationFailure ??= {
+      code: 'SERVER_STOP_NOT_REACHED',
+      operationIndex: 0,
+      sent: 'not-sent',
+      sideEffects: 'none',
+      logId: `${this.options.control?.runId ?? this.id}#start`,
+      serverRender: {
+        phase: 'entry-render',
+        stop: place,
+        pausedStops: [...(this.entryLoad?.pausedStops ?? [])],
+        notReachedStops: remaining.map((other) => this.declaredAt(other)),
+      },
+    }
+    return formatRefusalFailure(
+      'SERVER_STOP_NOT_REACHED',
+      how === 'load-first'
+        ? `The page finished without reaching declared stop ${place}. It may have run only while Codebook prepared the page (code at module scope, or a cached result), or this render did not reach it. Declare the stop inside the component or function that runs on every render, then start a new run.`
+        : `The page did not reach declared stop ${place} within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s of the entry navigation. It may have run only while Codebook prepared the page (code at module scope, or a cached result), or this render did not reach it. Declare the stop inside the component or function that runs on every render, then start a new run.`,
+    )
+  }
+
+  /**
+   * Words and records `ENTRY_LOAD_TIMEOUT`: the entry page did not load within the active bound after the last entry-render stop was continued.
+   * @returns The coded failure text.
+   * @example this.entryLoadTimeoutText() // 'ENTRY_LOAD_TIMEOUT: The entry page did not finish loading within 20 s after its last server-render pause. …'
+   */
+  private entryLoadTimeoutText(): string {
+    const entry = this.entryLoad
+    const lastPausedStop = entry?.pausedStops.at(-1) ?? ''
+    this.operationFailure ??= {
+      code: 'ENTRY_LOAD_TIMEOUT',
+      operationIndex: 0,
+      sent: 'not-sent',
+      sideEffects: 'none',
+      logId: `${this.options.control?.runId ?? this.id}#start`,
+      entryLoad: {
+        entryRoute: this.maskRunText(
+          this.definition.configuration.entryPath ?? '/',
+        ),
+        lastPausedStop,
+        elapsedMs: Math.round(performance.now() - (entry?.startedAtMs ?? 0)),
+      },
+    }
+    return formatRefusalFailure(
+      'ENTRY_LOAD_TIMEOUT',
+      `The entry page did not finish loading within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s after its last server-render pause. Start a new run; if it repeats, check the app's own output.`,
+    )
   }
 
   /**
@@ -1881,6 +2179,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       return
     this.lastNavigationAtMs = performance.now()
     this.mainFrameId ??= event.frame.id
+    // The entry load counts only the document the main frame commits for this navigation (X17).
+    if (this.entryLoad) this.entryLoad.loaderId = event.frame.loaderId
     // A landing on a declared sign-in path is judged before any navigation rule, so it is never reported as another refusal (E4).
     if (this.onSignInLanding(event.frame.url)) return
     // A Next version 3 run follows client-side navigation, but a full document load before its last operation ends it; Vite keeps its own rule below.
@@ -4995,7 +5295,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       participant.instrumentationPaused = true
       return
     }
-    if (!this.operation) return
+    if (!this.operation && !this.entryLoad) return
     // js-debug may hit and auto-resume its own browser breakpoint even when this run declares only server stops.
     if (
       name === 'browser' &&
@@ -8419,7 +8719,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
       return
     continuation.afterStarted = true
-    this.operation!.continuedPause = continuation.pause
+    this.recordContinuedPause(continuation.pause)
     const continuedStop = this.stops[this.stopIndex]
     const followingStop = this.stops[this.stopIndex + 1]
     // A version 3 run advances within an operation only to a stop declared for the same operation; otherwise the operation is done with its stops.
@@ -8428,6 +8728,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         afterOperationOf(followingStop) === afterOperationOf(continuedStop!)
       : this.stopIndex + 1 <
         configuredStops(this.definition.configuration).length
+    // The last stop of the entry render ends the entry-load phase's pauses; the page still has to load.
+    if (this.isLastEntryRenderStop(continuedStop!, advancesToNextStop)) {
+      this.finishEntryRenderStops(continuedStop!)
+      return
+    }
     if (this.operationsConfiguration && !advancesToNextStop) {
       // A pause queued during this continuation belongs to no declared stop of this operation (an undeclared or learner breakpoint); versions 1 and 2 fail such a pause, and so does this branch before the operation settles.
       const queuedStop = this.pendingCdpStop ?? this.pendingDapStop
@@ -8460,8 +8765,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.status = 'acting'
       // A later stop is armed only inside the preceding continuation, so its line pauses as that stop only after it; a pause on that line before its turn is held as unannounced and never adopted ({@link pauseHeldForStop}). Say which stop and why.
       const nextStop = this.stops[this.stopIndex]!
+      this.entryLoad?.pausedStops.push(this.declaredAt(continuedStop!))
       this.progressDeadline(ACTIVE_TIMEOUT_MS, () =>
-        this.unreachedNextStopReason(nextStop),
+        this.nextStopNotReachedText(nextStop),
       )
       const cdpStop = this.pendingCdpStop,
         dapStop = this.pendingDapStop
@@ -8504,7 +8810,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       // A version 3 run waits for the acknowledgement of the operation in flight, which its own record keeps.
       () =>
         this.operationsConfiguration
-          ? this.operationRecords[this.operationsAccepted - 1]?.ack === 'yes'
+          ? this.operationRecords.length === 0 ||
+            this.operationRecords[this.operationsAccepted - 1]?.ack === 'yes'
           : this.operation?.inputAcknowledged,
       'single input acknowledgement',
       ACTIVE_TIMEOUT_MS,
@@ -9246,7 +9553,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     name: Participant,
   ): ConfiguredRuntimeView['participants']['browser'] {
     const participant = this.participants[name],
-      continued = this.operation?.continuedPause
+      continued = this.operation?.continuedPause ?? this.entryContinuedPause
     return {
       sessionId: participant.selected?.id,
       pause: participant.gate.current,

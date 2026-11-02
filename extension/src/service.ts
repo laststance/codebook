@@ -3796,7 +3796,8 @@ export class StudyService {
           ? 'stopping'
           : terminalReason
             ? 'failed'
-            : !record.prepared
+            : // An entry-render pause is published before preparation ends (X14): the learner continues it, then the run reads ready.
+              !record.prepared && runtime?.status !== 'paused-server'
               ? 'preparing'
               : (runtime?.status ?? record.nodePhase ?? 'preparing'),
       runtimeState: runtime?.status ?? record.nodePhase,
@@ -5632,8 +5633,14 @@ export class StudyService {
     const isOff =
       session === 'saved' &&
       this.environment.savedSessionConfirmationEnabled?.() === false
+    // A run that declares no operation sends no input, so there is nothing to confirm.
+    const sendsInput =
+      declaredOperationsOf(record.definition.configuration).length > 0
     record.operationsConfirmation = {
-      state: session === 'saved' && !isOff ? 'awaiting-learner' : 'not-needed',
+      state:
+        session === 'saved' && !isOff && sendsInput
+          ? 'awaiting-learner'
+          : 'not-needed',
       ...(isOff ? { setting: 'off' as const } : {}),
       isAsking: false,
       isNoticeShown: false,
