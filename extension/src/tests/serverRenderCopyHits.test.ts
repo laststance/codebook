@@ -256,7 +256,7 @@ test('the run says what the render waits for while an entry-render pause is held
   // Assert
   assert.equal(
     harness.run.view().renderMessage,
-    'The server render of the entry page is paused; the page finishes loading after you continue.',
+    'The server render of the entry page is paused; the page finishes loading after you continue. Stop it with codebook_stop if you do not continue.',
   )
   // Act
   await harness.run.continue('server', stopA.pause)

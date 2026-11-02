@@ -35,14 +35,16 @@ export function entryControl(
  * @param context - The test.
  * @param extra - Harness options that replace the defaults (`operations` replaces the zero-operation list).
  * @param control - The run's control.
+ * @param additionalStops - Further stops of the configuration (the first stop of the harness is the entry-render stop).
  * @example const harness = await entryRenderHarness(context, { holdNavigation: true })
  */
 export async function entryRenderHarness(
   context: TestContext,
   extra: Partial<Parameters<typeof configuredRuntimeHarness>[3]> = {},
   control: RuntimeControl = entryControl(context),
+  additionalStops: Parameters<typeof configuredRuntimeHarness>[2] = [],
 ) {
-  return configuredRuntimeHarness(context, control, [], {
+  return configuredRuntimeHarness(context, control, additionalStops, {
     participant: 'server',
     serverSeal: 'rsc',
     serverRuntime: { route: '/dashboard' },

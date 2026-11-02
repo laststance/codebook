@@ -2214,7 +2214,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.acceptedStop = false
     this.snapshotReady = false
     this.continuation = undefined
-    this.status = 'preparing'
+    // The page finishes loading: the status item reads `Page load · finishing` for this state.
+    this.status = 'resuming'
     if (entry) entry.finishing = true
     this.progressDeadline(ACTIVE_TIMEOUT_MS, () => this.entryLoadTimeoutText())
   }
@@ -2268,8 +2269,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       sideEffects: 'none',
       logId: `${this.options.control?.runId ?? this.id}#start`,
       entryLoad: {
+        // The route passes the URL query redaction and the run's secret masking before any sink holds it (D15).
         entryRoute: this.maskRunText(
-          this.definition.configuration.entryPath ?? '/',
+          redactNextEntryPath(this.definition.configuration.entryPath ?? '/'),
         ),
         lastPausedStop,
         elapsedMs: Math.round(performance.now() - (entry?.startedAtMs ?? 0)),

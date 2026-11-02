@@ -222,8 +222,8 @@ export async function captureStudy(
             runtime?.profile === REPOSITORY_BROWSER_PROFILE
               ? runtime.operation
               : undefined,
-          // Every declared operation with the state it reached, as the run resource lists it when this checkpoint is taken.
-          ...(runtime?.operations
+          // Every declared operation with the state it reached, as the run resource lists it when this checkpoint is taken; a run that declares none (entry render only) saves no list.
+          ...(runtime?.operations?.length
             ? {
                 operations: projectSavedOperations(
                   runtime.operations,

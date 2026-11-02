@@ -3786,6 +3786,7 @@ export class StudyService {
       projectPageLoadStatus(runtime),
     )
     const confirmation = this.operationsConfirmationOf(record)
+    // The words of an entry render under way, for the chat (task 3a).
     const material = {
       instanceId: this.instanceId,
       runId: record.id,
@@ -4989,8 +4990,10 @@ export class StudyService {
         ? undefined
         : refusalFailureOf(runtimeFailure)
     if (refusal && !(error instanceof StudyError))
-      // A sign-in refusal carries the reason and the profile the run used; every other refusal keeps its words and recovery as before.
-      return refusal.code === 'SIGN_IN_REQUIRED'
+      // A sign-in refusal carries the reason and the profile the run used, and the two entry-load failures carry their stop and route fields; every other refusal keeps its words and recovery as before.
+      return refusal.code === 'SIGN_IN_REQUIRED' ||
+        refusal.code === 'SERVER_STOP_NOT_REACHED' ||
+        refusal.code === 'ENTRY_LOAD_TIMEOUT'
         ? this.runtimeFailureError(
             runtimeFailure!,
             runtime?.operationFailure,
