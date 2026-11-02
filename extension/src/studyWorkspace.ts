@@ -3502,8 +3502,27 @@ export class StudyWorkspace {
           )
         }
         /** A learner's own change of focus during the return wins. The return itself takes no keyboard, so any change of the place since its start is the learner's. */
+        /** Whether the Study pane's own tab is in front of the active group after a press in a pane: the press puts the keyboard there as part of the request, and the editor can report that after the return began (native C72-1r: VS Code 1.144.0 reports the Study pane's group after the webview's message). */
+        const isPressFocusOnStudyPane = (
+          tab: vscode.Tab | undefined,
+        ): boolean =>
+          fromPane &&
+          tab !== undefined &&
+          this.isCodebookPaneInput(tab.input, 'codebook.studyContext') &&
+          this.isOwnPaneOrSourceTab(tab)
         const assertLearnerKept = (): void => {
-          if (keyboardPlace() !== expectedPlace) abortForLearner()
+          const place = keyboardPlace()
+          if (place === expectedPlace) return
+          // The press's own focus on the Study pane is the request's, not a choice of the learner's: the return expects the keyboard there from now on.
+          if (
+            isPressFocusOnStudyPane(
+              vscode.window.tabGroups.activeTabGroup.activeTab,
+            )
+          ) {
+            expectedPlace = place
+            return
+          }
+          abortForLearner()
         }
         /** Finds the Codebook-owned copy as the editor lists it now: tab and group objects may be new since the return began. */
         const currentCopy = ():
@@ -3533,7 +3552,11 @@ export class StudyWorkspace {
           show: () => Thenable<vscode.TextEditor>,
           windowSwitchEndsReturn: boolean,
         ): Promise<vscode.TextEditor> => {
-          const watch = this.watchLearnersChoice(sourceUri, sourceColumn)
+          const watch = this.watchLearnersChoice(
+            sourceUri,
+            sourceColumn,
+            isPressFocusOnStudyPane,
+          )
           try {
             const shown = await this.awaitReturnStep(
               show(),
@@ -3646,7 +3669,12 @@ export class StudyWorkspace {
           await carryReadingState()
           // A file the learner picked while the reading position was restored keeps the keyboard.
           assertLearnerKept()
-          if (copyHasKeyboard) {
+          // The copy hands the keyboard over only while it still has it: after a press in the Study pane the keyboard is in the Study pane, and closing the copy moves nothing.
+          if (
+            copyHasKeyboard &&
+            vscode.window.tabGroups.activeTabGroup.activeTab ===
+              currentCopy()?.tab
+          ) {
             // The copy that had the keyboard hands it to the source before it closes, so the close hands it to no tab behind the copy.
             await showWatchingLearnersPicks(
               () =>
@@ -3736,12 +3764,14 @@ export class StudyWorkspace {
    * The captured source's activation in the source column is Codebook's own show and no choice; the same document in any other column is a pick (the learner chose the moved copy). The tab in front of the active group when the watch starts is no pick either, as the editor reports it again (Cursor does) or its tab events fire while the source opens, until a different pick has been recorded: then choosing it again is one.
    * @param sourceUri - The captured source's URI.
    * @param sourceColumn - The Study source column, where the return itself shows the source.
+   * @param isRequestsOwnFocus - Whether a tab in front is the request's own focus and no pick (the Study pane after a press in it); none by default.
    * @returns The picks in order, the window-switch latch, the own-effect filter and the disposal of the listeners.
    * @example const watch = this.watchLearnersChoice(sourceUri, 2); try { await show() } finally { watch.dispose() }
    */
   private watchLearnersChoice(
     sourceUri: string | undefined,
     sourceColumn: number,
+    isRequestsOwnFocus: (tab: vscode.Tab | undefined) => boolean = () => false,
   ): {
     choices: LearnersChoice[]
     windowLeft: () => boolean
@@ -3769,6 +3799,8 @@ export class StudyWorkspace {
     }
     const note = (choice: LearnersChoice): void => {
       if (ownEffect && sameLearnersChoiceTarget(ownEffect, choice)) return
+      // The request's own focus (a press's Study pane) is no choice of the learner's.
+      if (isRequestsOwnFocus(choice.tab)) return
       // Until a different pick is recorded, the tab in front at arming is the place the learner already was in.
       if (choices.length === 0 && isArmedFront(choice)) return
       choices.push(choice)

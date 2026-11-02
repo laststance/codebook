@@ -1579,6 +1579,53 @@ test('a learner’s tab whose group the focus command did not make active is not
   }
 })
 
+// Value: protects=Restore Study workspace layout pressed in the Study pane after the learner moved the Captured source into a group of their own (the moved copy has the keyboard): the press puts the keyboard into the Study pane, the editor reports that after the request began, and the return takes it as the press's own focus, so the source is back in its column, the copy closes and the layout is confirmed; fails_when=the return reads the press's own focus on the Study pane as the learner's change and stops with "your choice was kept", leaving the copy open (native C72-1r on 008dac90, VS Code 1.144.0); why_new=Cycle 0072 native recheck C72-1r step 2; seam=moveSource (the copy in front of the learner's fourth group with the keyboard), changePresentation as the learner's press, activatePaneByHand on the Study pane after the request began; no_claim=the native order of the webview's message and its group activation (the native trial shows it)
+test('a Restore pressed in the Study pane while the moved copy has the keyboard returns the source and closes the copy', async () => {
+  // Arrange: the moved Captured source copy is in front of the learner's fourth group with the keyboard.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await openRetainedStudy(harness)
+    const learnerGroup = await addLearnerGroup(harness)
+    harness.moveSource(learnerGroup.viewColumn)
+    const before = harness.reader.presentationState()
+    // Act: the learner presses Restore in the Study pane; the editor reports the press's focus on the Study pane after the request began.
+    const restoring = harness.reader
+      .changePresentation(
+        {
+          presentationId: before.presentationId,
+          expectedRevision: before.presentationControlRevision,
+          mode: 'study-workspace',
+          action: 'restore',
+        },
+        'learner',
+      )
+      .then(
+        () => 'answered',
+        (error: unknown) => String(error),
+      )
+    harness.activatePaneByHand('codebook.studyContext')
+    const answer = await restoring
+    // Assert
+    const learnerGroupNow = harness.groups.find(
+      (group) => group.viewColumn === learnerGroup.viewColumn,
+    )
+    assert.deepEqual(
+      {
+        answer,
+        layoutConfirmed: harness.reader.presentationState().layoutConfirmed,
+        copiesInLearnerGroup:
+          learnerGroupNow?.tabs.filter((tab) =>
+            tab.label.startsWith('Captured-'),
+          ).length ?? 0,
+      },
+      { answer: 'answered', layoutConfirmed: true, copiesInLearnerGroup: 0 },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's switch between two diffs of one label in the source column while the return opens the captured source: the switch is the learner's change of focus, so the return stops, keeps the newer diff in front and answers that the choice was kept; fails_when=the keyboard's place names a tab that is no text file by its label alone, so the switch reads as no change and the Restore answers success with the source over the diff the learner just picked; why_new=Cycle 0072 candidate fe103b13 Codex review (P2 3); seam=focusDiffEditor on app/index.ts and lib/index.ts in the source column, the learner's switch made before the return's first await ends (the open of the captured source); no_claim=the diffs stand for any two non-text tabs of one label
 test('a learner’s switch to another diff of the same label while the return opens the source stops the Restore and keeps that diff', async () => {
   // Arrange: the captured source stands in the learner's fourth group; the diff of app/index.ts has the keyboard in the source column.
