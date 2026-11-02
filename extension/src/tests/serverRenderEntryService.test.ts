@@ -573,7 +573,11 @@ test('a plain server pause while the run waits for operation 1 is not resumed as
   const resumesBefore = harness.server!.continues.length
   // Act
   harness.server!.hit({ route: '/dashboard' })
-  await new Promise((resolve) => setTimeout(resolve, 300))
+  // The run settles the pause by resuming it once; the assertions read what that resume left.
+  await waitUntil(
+    () => harness.server!.continues.length > resumesBefore,
+    'the ready-time pause was resumed',
+  )
   // Assert
   assert.equal(
     harness.run
