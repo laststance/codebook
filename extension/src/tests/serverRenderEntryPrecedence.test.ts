@@ -34,6 +34,26 @@ test('a redirect during the entry render ends the run as NEXT_ENTRY_REDIRECTED n
   assert.match(failure, /entry path \/dashboard for \/dashboard\/other/)
 })
 
+// Value: protects=X22 (AC 19) with the render classification: the shared layout of a redirect target holds the armed stop, its hit is another route's and is resumed without a pause, and the entry rule NEXT_ENTRY_REDIRECTED still decides when the browser commits the target; fails_when=the hit pauses the learner in a render that is not the entry's, or the run ends with another code; no_claim=Next's real redirect response; needs the render hit classification (route read) of the pause intake
+test('a redirect during the entry render resumes the target layout hit as another route before NEXT_ENTRY_REDIRECTED ends the run', async (context) => {
+  // Arrange
+  const harness = await entryRenderHarness(context, { holdNavigation: true })
+  const prepared = harness.run.prepare()
+  await armedEntry(harness)
+  // Act: the layout of /dashboard/other runs for the redirect target, then the browser commits it
+  harness.server!.hit({ route: '/dashboard/other' })
+  await waitUntil(
+    () => harness.server!.continues.length === 1,
+    'the other route hit was resumed',
+  )
+  harness.commitMainFrame('/dashboard/other')
+  // Assert
+  await assert.rejects(prepared)
+  const view = harness.run.view()
+  assert.match(view.failures[0]!, /^NEXT_ENTRY_REDIRECTED: /)
+  assert.equal(view.snapshots.length, 0)
+})
+
 // Value: protects=X22 and AC 19: on the saved-session second entry load a SIGN_IN_REQUIRED landing wins over the armed entry-render stop, the run has no operation to excuse it, and the armed stop is released; fails_when=a zero-operation run treats the sign-in page as its result, the run waits for the stop, or the stop stays armed; no_claim=real cookies (the stand-in lands the second load on /login)
 test('a saved session whose second entry load lands on sign-in ends the zero-operation run as SIGN_IN_REQUIRED and releases the armed stop', async (context) => {
   // Arrange
