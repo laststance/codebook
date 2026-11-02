@@ -263,10 +263,10 @@
         "count": 13
       },
       "crap_high": {
-        "count": 10
+        "count": 8
       },
       "crap_moderate": {
-        "count": 6
+        "count": 8
       }
     },
     "src/ui/repositoryHtml.ts": {
@@ -294,7 +294,7 @@
         "count": 7
       },
       "crap_moderate": {
-        "count": 3
+        "count": 2
       }
     },
     "src/utils/answerDeepWikiQuestion.ts": {
@@ -452,11 +452,6 @@
         "count": 1
       }
     },
-    "src/utils/resolveNextClientManifest.ts": {
-      "complexity_high": {
-        "count": 1
-      }
-    },
     "src/utils/validateConfiguredStudyEvidence.ts": {
       "complexity_critical": {
         "count": 1
@@ -485,40 +480,41 @@
   "runtime_coverage_findings": [],
   "target_keys": [
     "src/studyModel.ts:dead code",
-    "src/utils/captureStudy.ts:complexity",
-    "src/utils/decodeConfiguredStudy.ts:high impact",
     "src/utils/validateRecordingContext.ts:high impact",
+    "src/utils/decodeConfiguredStudy.ts:high impact",
     "src/utils/validateConfiguredStudyEvidence.ts:complexity",
-    "src/service.ts:complexity",
     "src/ui/studyHtml.ts:complexity",
-    "src/utils/projectConfiguredStudy.ts:complexity",
+    "src/utils/captureStudy.ts:complexity",
+    "src/service.ts:complexity",
     "src/resources.ts:complexity",
+    "src/utils/projectConfiguredStudy.ts:complexity",
+    "src/utils/assertStudyCheckpoint.ts:high impact",
     "src/recordingStore.ts:complexity",
+    "src/learningLibrary.ts:hidden coupling",
+    "src/utils/readDevelopmentBundle.ts:complexity",
     "src/ownedNodeTestRun.ts:complexity",
     "src/recordingSchemas.ts:dead code",
+    "src/playbackController.ts:complexity",
     "src/utils/projectRecording.ts:high impact",
     "src/utils/answerDeepWikiQuestion.ts:complexity",
+    "src/utils/configuredDomExpression.ts:complexity",
     "skills/codebook/render-wiki.mjs:complexity",
-    "src/playbackController.ts:complexity",
+    "src/utils/projectLearningSummary.ts:high impact",
     "src/runtimeSupport/utils/installWebviewFocus.ts:high impact",
     "src/studyWorkspace.ts:complexity",
-    "src/utils/readRecordingResource.ts:complexity",
     "src/extension.ts:complexity",
-    "src/utils/readDevelopmentBundle.ts:complexity",
+    "src/utils/readRecordingResource.ts:complexity",
     "src/repositoryReader.ts:complexity",
-    "src/utils/validateRepositoryBook.ts:complexity",
     "skills/codebook/publish-wiki.mjs:high impact",
-    "src/runtimeSupport/hostBrowser.ts:complexity",
-    "src/utils/configuredDomExpression.ts:complexity",
-    "src/cursorSkillDeployment.ts:complexity",
+    "src/utils/validateRepositoryBook.ts:complexity",
     "src/configuredBrowserRun.ts:complexity",
+    "src/runtimeSupport/hostBrowser.ts:complexity",
+    "src/cursorSkillDeployment.ts:complexity",
     "src/utils/projectHistoricalTimeline.ts:high impact",
     "skills/codebook/render-wiki-diagrams.mjs:complexity",
     "src/ui/repositoryHtml.ts:high impact",
-    "src/utils/resolveNextClientManifest.ts:complexity",
     "src/ownedRepositoryBreakpoint.ts:complexity",
     "src/replayDebugger.ts:hidden coupling",
-    "src/constants.ts:hidden coupling",
     "src/replayDebugAdapter.ts:complexity"
   ]
 }
