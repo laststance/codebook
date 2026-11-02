@@ -1,0 +1,11 @@
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   sharedLabel: () => (/* binding */ sharedLabel)
+/* harmony export */ });
+function sharedLabel(source) {
+    const label = `shared:${source}`;
+    return label;
+}
+//# sourceURL=[module]
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiKHJzYykvLi9hcHAvbGliL3NoYXJlZC1oZWxwZXIudHMiLCJtYXBwaW5ncyI6Ijs7OztBQUFPLFNBQVNBLFlBQVlDLE1BQWM7SUFDeEMsTUFBTUMsUUFBUSxDQUFDLE9BQU8sRUFBRUQsUUFBUTtJQUNoQyxPQUFPQztBQUNUIiwic291cmNlcyI6WyIvVXNlcnMvbHVtZS9xYS9jNzEtc3Bpa2UvbmV4dGpzLWRhc2hib2FyZC9hcHAvbGliL3NoYXJlZC1oZWxwZXIudHMiXSwic291cmNlc0NvbnRlbnQiOlsiZXhwb3J0IGZ1bmN0aW9uIHNoYXJlZExhYmVsKHNvdXJjZTogc3RyaW5nKTogc3RyaW5nIHtcbiAgY29uc3QgbGFiZWwgPSBgc2hhcmVkOiR7c291cmNlfWBcbiAgcmV0dXJuIGxhYmVsXG59XG4iXSwibmFtZXMiOlsic2hhcmVkTGFiZWwiLCJzb3VyY2UiLCJsYWJlbCJdLCJpZ25vcmVMaXN0IjpbXSwic291cmNlUm9vdCI6IiJ9
+//# sourceURL=webpack-internal:///(rsc)/./app/lib/shared-helper.ts

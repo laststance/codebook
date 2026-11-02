@@ -230,7 +230,10 @@ import { placeAfterDeclaringLine } from './utils/placeAfterDeclaringLine'
 import { preparedInputsOf } from './utils/preparedInputsOf'
 import { prepareRepositoryInputs } from './utils/prepareRepositoryInputs'
 import { readDeclaredDevelopmentPort } from './utils/readDeclaredDevelopmentPort'
-import { readDevelopmentBundle } from './utils/readDevelopmentBundle'
+import {
+  readDevelopmentBundle,
+  type DevelopmentServerLayer,
+} from './utils/readDevelopmentBundle'
 import {
   readNextPagesState,
   type NextPagesState,
@@ -427,6 +430,8 @@ type PreparedStop = ReturnType<typeof configuredStops>[number] & {
   instances: Map<string, StopInstance>
   /** The scripts of the stop's module for other layers that are not usable (yet), by script id: the text is still being read, or the instance was refused with the reason. A pause held in one fails with a sentence that names it ({@link ConfiguredBrowserRun.unusableInstanceFailure}). A newer script of the same address replaces the entry. */
   unusableInstances: Map<string, { url: string; reason: string }>
+  /** The webpack layer a Next server stop was sealed from: `action-browser` when the entry route's server chunk holds the file as its executable action module, else `rsc`. Absent for a browser stop and for a Vite run. Read by the pause handling to tell a server action from a server render. */
+  sealedLayer?: DevelopmentServerLayer
   breakpoint?: OwnedRepositoryBreakpoint
   /** The one scan of the stop's sealed map, from its declared line to the end of its citation; {@link resolveArmedPlace}, {@link createBindingLineRule} and the preparation refusal read it instead of the map. */
   scan: MappedPositionsScan
@@ -1714,7 +1719,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       bindingRefusal: bindingRule.refusal,
       instances: new Map(),
       unusableInstances: new Map(),
+      ...(acquired.layer ? { sealedLayer: acquired.layer } : {}),
     }
+    // Only the first seal journals the layer: a renewal reaches the same layer again.
+    if (isFirstSeal && acquired.layer)
+      this.evidence.record('seal.layer', {
+        stop: `${prepared.source.path}:${prepared.source.line}`,
+        layer: acquired.layer,
+      })
     // A renewal keeps the first seal's files, so each journal entry names the bytes of its own files.
     const fileStem = isFirstSeal
       ? `sealed-${index}`

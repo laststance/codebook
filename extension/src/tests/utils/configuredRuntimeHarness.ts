@@ -37,6 +37,7 @@ import { sha256 } from '../../runtimeSupport/utils/sha256'
 import { WaitTimeoutError } from '../../runtimeSupport/utils/waitTimeoutError'
 import { waitUntil } from '../../runtimeSupport/utils/waitUntil'
 import { citationContext } from '../../utils/citationContext'
+import { clientComponentRefusal } from '../../utils/clientComponentRefusal'
 import { configuredDomExpression } from '../../utils/configuredDomExpression'
 import { configuredScrollExpression } from '../../utils/configuredScrollExpression'
 import { createBundleVerifier } from '../../utils/createBundleVerifier'
@@ -151,6 +152,8 @@ export async function configuredRuntimeHarness(
     sealFailure?: string
     /** Makes the stand-in seal (the Vite served-module read, or the Next `.next/dev` read) never finish, as a server that stops answering does while a stop is sealed. */
     sealHangs?: boolean
+    /** Makes the stand-in server seal answer as {@link readDevelopmentBundle} does for a Next server stop: the layer it sealed (`action-browser` or `rsc`), or the client-component refusal of a `'use client'` file's reference stub. */
+    serverSeal?: 'action-browser' | 'rsc' | 'client-component'
     /** The executed module's text instead of the default one-statement module, such as a Vite module with an inlined env value. */
     moduleJavascript?: string
     /** Makes the Vite stand-in report these values as the ones it masks in kept module text, as the launcher's env-file values are. */
@@ -167,7 +170,7 @@ export async function configuredRuntimeHarness(
     nextPages?: NextPagesHarnessOptions
     /** Moves the first cited source, and the stop declared in it, to this workspace-relative path (such as a file under `src/pages`). */
     sourcePath?: string
-    /** Declares the first stop for this participant in a version 2 (cross-runtime) configuration, as a start that names `participant` does; only without additional stops, whose version 2 form differs. */
+    /** Declares the first stop for this participant in a version 2 (cross-runtime) configuration, as a start that names `participant` does, or in a version 3 configuration when `operations` is given; only without additional stops in the version 2 form, whose form differs. */
     participant?: 'browser' | 'server'
     /** The configuration's initial inputs; the stand-in page has one editable control for each selector. */
     initialInputs?: RepositoryConfiguration['initialInputs']
@@ -272,7 +275,7 @@ export async function configuredRuntimeHarness(
         adapter: reference.configuration.adapter,
         book: reference.configuration.book,
         source: reference.configuration.source,
-        participant: 'browser' as const,
+        participant: options.participant ?? ('browser' as const),
         afterOperation: options.operations.stopOperations[0]!,
         before: reference.configuration.action.before,
         after: reference.configuration.action.after,
@@ -1441,7 +1444,7 @@ export async function configuredRuntimeHarness(
       './utils/readDevelopmentBundle': {
         readDevelopmentBundle: async (
           _workspace: string,
-          _source: unknown,
+          source: Parameters<typeof clientComponentRefusal>[0],
           signal: AbortSignal,
         ) => {
           // A hung `.next/dev` read ends only when the run is cancelled.
@@ -1449,7 +1452,13 @@ export async function configuredRuntimeHarness(
             await new Promise<never>((_resolve, reject) =>
               signal.addEventListener('abort', () => reject(signal.reason)),
             )
-          return { bundle, discovery: {} }
+          if (options.serverSeal === 'client-component')
+            throw clientComponentRefusal(source)
+          return {
+            bundle,
+            discovery: {},
+            ...(options.serverSeal ? { layer: options.serverSeal } : {}),
+          }
         },
       },
       // The real Pages seal over the written build, with every request and its cache's bytes recorded.
