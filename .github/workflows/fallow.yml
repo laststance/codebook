@@ -108,10 +108,13 @@ jobs:
       - parallel:
           # Gates: a dead-code, complexity or duplication finding the change introduces fails the job; inherited ones are listed.
           - name: Run fallow audit
+            # An explicit bash runs with pipefail, so audit's exit status survives the pipe to tee and the step gates.
+            shell: bash
+            # CRAP needs coverage, which the measured health job owns; without it audit would score a static estimate, as health:static avoids with the same option.
             run: >-
               pnpm --dir extension exec fallow audit --dead-code-baseline fallow-dead-code-baseline.json
               --dupes-baseline fallow-dupes-baseline.json --health-baseline fallow-health-baseline.json
-              --format markdown | tee -a "$GITHUB_STEP_SUMMARY"
+              --max-crap inf --format markdown | tee -a "$GITHUB_STEP_SUMMARY"
 
           - name: Report fallow flags
             run: |

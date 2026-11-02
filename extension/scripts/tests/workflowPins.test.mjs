@@ -1894,7 +1894,7 @@ test('the Fallow workflow runs measured health, dupes, dead-code and architectur
     assert.match(job, /uses: \.\/\.github\/actions\/prepare\n/)
 })
 
-// Value: protects=the owner's rule that every free local Fallow analysis runs in CI: audit gates the change against its base with the committed baselines, and flags, security, similar-code and suppressions run beside it in one job's parallel steps and only report; fails_when=an analysis leaves the workflow, audit stops gating (a fallback after it) or loses its base or baselines, a reporting analysis can fail the job, or the analyses move into jobs of their own; why_new=Cycle 0073 dependency step (owner rule of 2026-11-02); seam=the text of .github/workflows/fallow.yml; no_claim=that GitHub runs the parallel group, that the similar-code model downloads on the runner, or what each analysis finds (CI shows those)
+// Value: protects=the owner's rule that every free local Fallow analysis runs in CI: audit gates the change against its base with the committed baselines, and flags, security, similar-code and suppressions run beside it in one job's parallel steps and only report; fails_when=an analysis leaves the workflow, audit stops gating (a fallback after it, or a pipe to tee without the pipefail of an explicit bash shell) or loses its base or baselines, a reporting analysis can fail the job, or the analyses move into jobs of their own; why_new=Cycle 0073 dependency step (owner rule of 2026-11-02); seam=the text of .github/workflows/fallow.yml; no_claim=that GitHub runs the parallel group, that the similar-code model downloads on the runner, or what each analysis finds (CI shows those)
 test('the Fallow workflow runs audit as a gate and flags, security, similar-code and suppressions as reports, in parallel steps of one job', async () => {
   // Arrange
   const workflow = await repositoryText('.github/workflows/fallow.yml')
@@ -1935,6 +1935,9 @@ test('the Fallow workflow runs audit as a gate and flags, security, similar-code
     /fallow audit --dead-code-baseline fallow-dead-code-baseline\.json\s+--dupes-baseline fallow-dupes-baseline\.json --health-baseline fallow-health-baseline\.json/,
   )
   assert.doesNotMatch(steps['Run fallow audit'], /\|\|/)
+  // A pipe to tee without pipefail would end with tee's status, so the gate needs the explicit bash shell.
+  assert.match(steps['Run fallow audit'], /^ {12}shell: bash$/m)
+  assert.match(steps['Run fallow audit'], /--max-crap inf/)
   assert.match(steps['Report fallow flags'], /fallow flags[^\n]*\|\|/)
   assert.match(
     steps['Report fallow security candidates'],
