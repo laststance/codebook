@@ -18508,9 +18508,10 @@ export class StudyWorkspace {
     )
     const noEditor = textEditorFocusState(undefined)
     let editorBefore = textEditorFocusState(vscode.window.activeTextEditor)
+    // A group unnamed when the watch began is kept apart by its column, so several of them do not collapse into one entry.
     const groupsBefore = new Map(
       vscode.window.tabGroups.all.map((group) => [
-        this.editorGroupIdentities.get(group),
+        this.groupKeyOf(group),
         this.learnerViewOfGroup(group),
       ]),
     )
@@ -18524,14 +18525,13 @@ export class StudyWorkspace {
         editor &&
         group &&
         editorBefore === noEditor &&
-        groupsBefore.get(this.editorGroupIdentities.get(group))?.front ===
-          undefined &&
+        groupsBefore.get(this.groupKeyOf(group))?.front === undefined &&
         this.learnerViewOfGroup(group).front === editor.document.uri.toString(),
       )
     }
     let changed = false
     /** Latches a change of the active text editor, or of a learner group's tabs or of the learner's tab in front of it. */
-    const check = (): void => {
+    const check = (isFinal = false): void => {
       const editorNow = textEditorFocusState(vscode.window.activeTextEditor)
       // The file the move uncovered in the active group is the active text editor from then on, and later changes to it are the learner's; the report of a text editor the new group kept ends with the pane in front of it (row 710).
       if (
@@ -18542,16 +18542,16 @@ export class StudyWorkspace {
         editorBefore = editorNow
       changed ||=
         editorNow !== editorBefore ||
-        this.hasLearnerGroupChangedSince(groupsBefore)
+        this.hasLearnerGroupChangedSince(groupsBefore, isFinal)
     }
     const subscriptions = [
-      vscode.window.tabGroups.onDidChangeTabs(check),
-      vscode.window.tabGroups.onDidChangeTabGroups(check),
-      vscode.window.onDidChangeActiveTextEditor(check),
+      vscode.window.tabGroups.onDidChangeTabs(() => check()),
+      vscode.window.tabGroups.onDidChangeTabGroups(() => check()),
+      vscode.window.onDidChangeActiveTextEditor(() => check()),
     ]
     return {
       assertUnchanged: (): void => {
-        check()
+        check(true)
         if (changed) throw this.refusePlacement(armed)
       },
       dispose: (): void => {
@@ -18575,23 +18575,36 @@ export class StudyWorkspace {
   }
 
   /**
+   * Names a group for the before-state of {@link watchLearnerViewDuringApplicationMove}: its identity, or its column while the editor's group report has not named it.
+   * @param group - An editor group.
+   * @returns The group's identity, else `column:<n>`.
+   * @example this.groupKeyOf(group) // => 'column:2' for a group {@link observeEditorGroups} has not named
+   */
+  private groupKeyOf(group: vscode.TabGroup): symbol | string {
+    return this.editorGroupIdentities.get(group) ?? `column:${group.viewColumn}`
+  }
+
+  /**
    * Says whether a group's learner tabs, or the learner's tab in front of it, changed since {@link watchLearnerViewDuringApplicationMove} began; asked by that watch at every reported change (row 670).
-   * @param groupsBefore - Each group's {@link learnerViewOfGroup} when the watch began, by the group's identity. A group {@link observeEditorGroups} has not named yet (Cursor sends a tab report with every group an object anew before the group report) is left out until it is named.
+   * @param groupsBefore - Each group's {@link learnerViewOfGroup} when the watch began, by the group's identity. A group {@link observeEditorGroups} has not named yet (Cursor sends a tab report with every group an object anew before the group report) is left out until it is named, or compared by its column at the final assertion.
+   * @param isFinal - `true` for the watch's final assertion.
    * @returns `true` once a group holds other learner tabs than it held (also a group that had none), or shows another learner's tab in front than the one it showed; `false` otherwise.
    * @example this.hasLearnerGroupChangedSince(groupsBefore) // => true after the learner brought Release notes to the front of auth.ts's group
    */
   private hasLearnerGroupChangedSince(
     groupsBefore: ReadonlyMap<
-      symbol | undefined,
+      symbol | string,
       ReturnType<StudyWorkspace['learnerViewOfGroup']>
     >,
+    isFinal = false,
   ): boolean {
     for (const group of vscode.window.tabGroups.all) {
       const identity = this.editorGroupIdentities.get(group)
       // Cursor sends a tab report with every group an object anew before the group report that names them ({@link observeEditorGroups} runs on that one): a group not named yet is compared at the report that names it, and at the watch's final assertion, not read as a new group the learner opened.
-      if (identity === undefined) continue
+      // At the final assertion no report is awaited any more: a group still unnamed then is compared by its column, so a group the learner opened is seen.
+      if (identity === undefined && !isFinal) continue
       const now = this.learnerViewOfGroup(group),
-        before = groupsBefore.get(identity)
+        before = groupsBefore.get(this.groupKeyOf(group))
       // A group whose front was a Codebook tab or none is compared by its learner tabs alone: the move can uncover a learner's tab there.
       if (
         (before?.tabs ?? '') !== now.tabs ||

@@ -1583,7 +1583,6 @@ async function applicationSharingLearnerGroupBesideChat() {
   harness.leavePaneFocusUnreportedBesideChat()
   harness.ignoresFirstGroupFocusCommandBesideChat()
   harness.reportsMainThreadWebviewViewTypes()
-  harness.reportsPaneMoveAsOpenThenClose()
   harness.reportsPaneMoveTabsBeforeGroups()
   harness.keepTextEditorReportAfterNewGroup()
   harness.reactivatePreviousGroupAfterInsertion()
@@ -1667,6 +1666,38 @@ test("in Cursor, a learner's click into another group's file while the Applicati
     assert.equal(refusals.length, 1)
     assert.match(
       harness.reader.presentationState().reason ?? '',
+      /Native pane, group or focus changed while presentation waited; the learner arrangement was preserved\./,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's own new group during the Application's move beside Cursor's Agent chat: a group the learner opened with their file in it, whose group report has not reached the observer when the watch ends, is a change of the learner's groups and refuses the move; fails_when=the final assertion skips every group the observer has not named yet, so a group the learner opened is never compared and the recording arranges over it; why_new=Cycle 0072 task 5 review (OCR M3); seam=applicationSharingLearnerGroupBesideChat, the reader's watchLearnerViewDuringApplicationMove, an observeEditorGroups that has not heard the new group yet, focusMutableDraft (the learner's file in a group of their own); no_claim=the real Cursor's event timing (native Cursor trial)
+test("in Cursor, a group the learner opened during the Application's move and the observer has not named yet refuses at the watch's final assertion", async () => {
+  // Arrange
+  const { harness } = await applicationSharingLearnerGroupBesideChat()
+  try {
+    const watch = harness.reader['watchLearnerViewDuringApplicationMove']()
+    harness.reader['observeEditorGroups'] = (): void => undefined
+    // The learner opens notes.ts in a group of their own; its group report is still on the way.
+    harness.focusEmptyGroup(3)
+    harness.focusMutableDraft('notes.ts', 3)
+
+    // Act
+    const outcome = (() => {
+      try {
+        watch.assertUnchanged()
+        return 'unchanged'
+      } catch (error) {
+        return String(error)
+      }
+    })()
+    watch.dispose()
+
+    // Assert
+    assert.match(
+      outcome,
       /Native pane, group or focus changed while presentation waited; the learner arrangement was preserved\./,
     )
   } finally {

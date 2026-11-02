@@ -3349,10 +3349,13 @@ export async function workspaceHarness(
             const nextTab = homeGroup.tabs
               .filter((tab) => tab !== nativeTab)
               .at(-1)
-            homeGroup.activeTab = nextTab
-            reportTabsThenGroups([
-              { opened: [], closed: [], changed: nextTab ? [nextTab] : [] },
-            ])
+            // The old group shows its next tab only when the pane was the tab in front.
+            if (homeGroup.activeTab === nativeTab) {
+              homeGroup.activeTab = nextTab
+              reportTabsThenGroups([
+                { opened: [], closed: [], changed: nextTab ? [nextTab] : [] },
+              ])
+            }
             homeGroup.tabs = homeGroup.tabs.filter((tab) => tab !== nativeTab)
             reportTabsThenGroups([
               { opened: [], closed: [nativeTab], changed: [] },
@@ -6346,12 +6349,15 @@ export async function workspaceHarness(
       replacesGroupObjectsOnTabChanges = true
     },
     /**
-     * Makes the fake editor, with {@link reportsPaneMoveAsOpenThenClose}, send each tab report of a pane's move with every group an object anew BEFORE the group report that names them, and report the old group's next tab in front between the open and the close, as Cursor 3.27.22 did for the Application leaving the learner's group (Cycle 0072 task 5: tabs opened and changed +2 ms, groups +3 ms, cards.tsx in front +6 ms, the pane's tab closed +7 ms).
+     * Makes the fake editor (also asking for {@link reportsPaneMoveAsOpenThenClose}, which this ordering needs) send each tab report of a pane's move with every group an object anew BEFORE the group report that names them, and report the old group's next tab in front between the open and the close, as Cursor 3.27.22 did for the Application leaving the learner's group (Cycle 0072 task 5: tabs opened and changed +2 ms, groups +3 ms, cards.tsx in front +6 ms, the pane's tab closed +7 ms).
      * @example
      * harness.reportsPaneMoveAsOpenThenClose()
      * harness.reportsPaneMoveTabsBeforeGroups()
      */
     reportsPaneMoveTabsBeforeGroups(): void {
+      // The ordering applies to the open-then-close report only, so asking for it asks for that report too.
+      reportsPaneMoveAsOpenThenCloseFlag = true
+      replacesGroupObjectsOnTabChanges = true
       reportsPaneMoveTabsBeforeGroupsFlag = true
     },
     /**
