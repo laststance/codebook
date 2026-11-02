@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.73.1] - 2026-11-03 (development candidate)
+
+Cycle 0072 ([Issue #181](https://github.com/laststance/codebook/issues/181)), a bug-fix cycle: the Study workspace comes back with the public commands after a failed run beside editor groups of your own, and after a window reload with Cursor's Agent chat open, with no Close All Editors and no Reload Window.
+
+**Arrange and Restore beside your own editor groups.** With the Study's three panes in place and editor groups of your own beside them, **Restore Study workspace layout**, **Codebook: Arrange Study Workspace** and an agent's `restore` now confirm the layout and leave your groups and tabs open, instead of answering "The Study panes changed during Restore" or "The application or source pane is no longer in its Study destination…". A Captured source tab you moved into a group of your own comes back to the source position with your selections and reading position; Codebook closes that copy only when it is not pinned and its group holds another tab. A focus change of yours while the source returns keeps your choice, and the return stops and says so, also for a choice made while the source is first shown and for a pick of the moved Captured source in your own group made after another choice; after three newer choices in a row it says it could not bring your latest one back. A step of the return the editor never answers ends it with an error after five seconds, so the next **Restore Study workspace layout** or Close is accepted.
+
+**Cursor after a window reload with the Agent chat open.** **Codebook: Open Study Workspace** opens the Study without "Timed out waiting for Study explanation native focus", and **Recording** in the Study pane opens the replay at the saved playhead at the first press, instead of "Native pane, group or focus changed while presentation waited…". A control refused because an earlier presentation change is still pending writes one `presentation:pending-refused` entry to `Output › Codebook` that names what is pending and since when.
+
+Native evidence (development, no final-row credit): `nextjs-dashboard` on macOS 26 in the Cua Space; VS Code 1.144.0 (Copilot Chat, GPT-6.1 Terra): Arrange beside a group of yours with `layoutConfirmed: true` and a start accepted, and a moved Captured source returned; Cursor 3.27.22 (Agent, Grok 4.6 High Fast): eight reloads with the chat open on the last three development candidates, each Open Study Workspace without an error and Recording at the saved playhead at the first press (baseline 0.2.73.0: the timeout, and Recording refused 2 of 2).
+
+**Security updates.** The MCP SDK bundled in the extension moves to 1.32.2 and zod to 4.6.7, past published security advisories in them and in the packages under the SDK (hono, body-parser, fast-uri, ip-address); `pnpm audit --prod` reports none left.
+
+**Compatibility.** No MCP API, bundled skill or study format change (MCP API 1.16, skill 1.0.65).
+
 ## [0.2.73.0] - 2026-11-02 (development candidate)
 
 Cycle 0071 ([Issue #179](https://github.com/laststance/codebook/issues/179)), a feature cycle: a web app run of a Next.js App Router page can now **pause the page's server render**, so the chat can show how the server fetches and shapes the data a page displays, with the values in the native debugger.
