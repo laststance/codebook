@@ -21,11 +21,16 @@ import {
 import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
 
 import { isInsideFolder } from './isInsideFolder'
-import { isSecretName } from './isSecretName'
+import { maskSavedDebugSnapshot } from './maskSavedDebugSnapshot'
 import { redactSecretText } from './redactSecretText'
-import { redactValuePreview } from './redactValuePreview'
+import {
+  previewShowsCredentialShape,
+  redactValuePreview,
+} from './redactValuePreview'
+import { classNameOf, findSecretSiblingIndexes } from './secretShapes'
 import { shouldCaptureReplayScope } from './shouldCaptureReplayScope'
 import { stripTerminalControls } from './stripTerminalControls'
+import { withheldVariableValue } from './withheldVariableValue'
 
 const scopeResponse = z.object({
   scopes: z.array(
@@ -75,6 +80,8 @@ type PendingExpansion = {
   index: number
   variable: z.infer<typeof variableResponse>['variables'][number]
   scopeHandle: number
+  /** Whether a neighbour in its scope names it secret ({@link findSecretSiblingIndexes}), so its children are never read. */
+  isMaskedSibling: boolean
 }
 
 /**
@@ -232,6 +239,7 @@ export async function captureReplayDebugSnapshot(
     handle: number,
     depth: number,
     ancestors: Set<number>,
+    parentName?: string,
   ): Promise<{ variables: number[]; unavailable?: string }> => {
     if (handle === 0) return { variables: [] }
     if (ancestors.has(handle))
@@ -259,15 +267,21 @@ export async function captureReplayDebugSnapshot(
       )
       const variables: number[] = [],
         nextAncestors = new Set(ancestors).add(handle)
-      for (const variable of response.variables) {
+      // A member a neighbour names secret (`value` beside a secret `name`, the element after `Cookie`) is masked, and its children are never read.
+      const maskedSiblings = findSecretSiblingIndexes(response.variables)
+      for (const [position, variable] of response.variables.entries()) {
         if (snapshot.variables.length >= maxVariables)
           return {
             variables,
             unavailable: 'Historical variable count limit reached.',
           }
-        const index = saveVariable(variable)
+        const isMaskedSibling = maskedSiblings.has(position)
+        const index = saveVariable(variable, parentName, isMaskedSibling)
         variables.push(index)
-        await expandVariable(index, variable, depth + 1, nextAncestors)
+        await expandVariable(index, variable, depth + 1, nextAncestors, {
+          parentName,
+          isMaskedSibling,
+        })
       }
       return { variables }
     } catch (error) {
@@ -275,30 +289,52 @@ export async function captureReplayDebugSnapshot(
     }
   }
   /** Saves one adapter variable without its children and returns its index. */
-  const saveVariable = (variable: PendingExpansion['variable']): number => {
-    // Redaction contract: a secret-named variable keeps its name and type but reads [masked], and its subtree is neither read nor saved; any other value is masked where a secret-named member shows in its preview or where it looks like a credential. Masking comes before shortening.
+  const saveVariable = (
+    variable: PendingExpansion['variable'],
+    parentName: string | undefined,
+    isMaskedSibling: boolean,
+  ): number => {
+    // Redaction contract: a secret-named variable, or one a neighbour names secret, keeps its name and type but reads [masked]; a cookie or header store, a socket, a response and process.env keep their class name; their subtree is neither read nor saved. A parent whose preview shows a credential shape keeps only its class name; any other value is masked where a secret-named member shows in its preview or where it looks like a credential. Masking comes before shortening.
+    const withheld = withheldVariableValue(
+      variable,
+      parentName,
+      isMaskedSibling,
+    )
+    const value =
+      withheld ??
+      (variable.variablesReference > 0 &&
+      previewShowsCredentialShape(variable.value)
+        ? classNameOf(variable)
+        : redactValuePreview(variable.value))
     snapshot.variables.push({
       name: shorten(variable.name),
-      value: isSecretName(variable.name)
-        ? REDACTION_MASK
-        : shorten(redactValuePreview(variable.value)),
+      value: withheld === REDACTION_MASK ? withheld : shorten(value),
       type: variable.type && shorten(variable.type),
       children: [],
     })
     return snapshot.variables.length - 1
   }
-  /** Reads a saved variable's children into it; a secret-named variable's subtree is never read. */
+  /** Reads a saved variable's children into it; the subtree of a variable the capture withholds is never read. */
   const expandVariable = async (
     index: number,
     variable: PendingExpansion['variable'],
     depth: number,
     ancestors: Set<number>,
+    context: { parentName: string | undefined; isMaskedSibling: boolean },
   ): Promise<void> => {
-    if (isSecretName(variable.name)) return
+    if (
+      withheldVariableValue(
+        variable,
+        context.parentName,
+        context.isMaskedSibling,
+      ) !== undefined
+    )
+      return
     const nested = await captureVariables(
       variable.variablesReference,
       depth,
       ancestors,
+      variable.name,
     )
     const saved = snapshot.variables[index]!
     saved.children = nested.variables
@@ -330,16 +366,23 @@ export async function captureReplayDebugSnapshot(
           count: maxVariables + 1,
         }),
       )
-      for (const variable of response.variables) {
+      const maskedSiblings = findSecretSiblingIndexes(response.variables)
+      for (const [position, variable] of response.variables.entries()) {
         if (snapshot.variables.length >= maxVariables)
           return {
             variables,
             pending,
             unavailable: 'Historical variable count limit reached.',
           }
-        const index = saveVariable(variable)
+        const isMaskedSibling = maskedSiblings.has(position)
+        const index = saveVariable(variable, undefined, isMaskedSibling)
         variables.push(index)
-        pending.push({ index, variable, scopeHandle: handle })
+        pending.push({
+          index,
+          variable,
+          scopeHandle: handle,
+          isMaskedSibling,
+        })
       }
       return { variables, pending }
     } catch (error) {
@@ -409,6 +452,7 @@ export async function captureReplayDebugSnapshot(
           entry.variable,
           1,
           new Set([entry.scopeHandle]),
+          { parentName: undefined, isMaskedSibling: entry.isMaskedSibling },
         )
     } catch (error) {
       saved.unavailable = unavailable(error)
@@ -416,5 +460,6 @@ export async function captureReplayDebugSnapshot(
   }
   input.assertCurrent()
   input.signal?.throwIfAborted()
-  return replayDebugSnapshotSchema.parse(snapshot)
+  // The saved-history rule runs once more over the whole tree, so the capture and every later reader mask the same shapes.
+  return replayDebugSnapshotSchema.parse(maskSavedDebugSnapshot(snapshot))
 }

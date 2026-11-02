@@ -2288,6 +2288,20 @@ export const SUMMARY_CHOICE_DROPPED_NOTICE_PREFIX =
 /** The text that replaces a secret value or a secret-named value in every captured fact, variable, snapshot, output and cause ({@link redactSecretText}). */
 export const REDACTION_MASK = '[masked]'
 
+/** The fewest characters of a credential token an Authorization-shaped string needs ({@link isAuthorizationShape}): a shorter word after `Basic`, `Token` or `Negotiate` reads as prose (`Token expired`, `Basic usage`), not as a credential. */
+export const AUTHORIZATION_CREDENTIAL_MIN_CHARS = 8
+
+/** The class names the replay capture saves as their class name only, never their members: the cookie and header stores (`RequestCookies`, `ReadonlyRequestCookies`, `ResponseCookies`, `Headers`) and the sockets and responses that hold a request's raw credentials (`Socket`, `TLSSocket`, `ServerResponse`) ({@link isCollapsedClassName}). */
+export const COLLAPSED_CLASS_NAMES: ReadonlySet<string> = new Set([
+  'RequestCookies',
+  'ReadonlyRequestCookies',
+  'ResponseCookies',
+  'Headers',
+  'Socket',
+  'TLSSocket',
+  'ServerResponse',
+])
+
 /** What the run resource shows for a prepared text whose control is not yet resolved; a view state only, never stored or hashed ({@link redactPreparedTexts}). */
 export const PREPARED_TEXT_PENDING_MARK = '[pending]'
 
