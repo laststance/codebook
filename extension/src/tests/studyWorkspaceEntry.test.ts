@@ -12,6 +12,7 @@ import {
   workspaceHarness,
 } from './studyWorkspaceHarness'
 import {
+  advanceClockUntil,
   advanceClockUntilSettled,
   enableFakeClock,
   resetFakeClock,
@@ -1652,6 +1653,84 @@ test('a control refused as pending writes an Output entry naming the held presen
     await settled
   } finally {
     release()
+    await harness.close()
+  }
+})
+
+// Value: protects=Codebook: Arrange Study Workspace after a presentation change that was refused while Cursor's Focus Agent gives the Agent chat its keyboard back and never answers (the audit of native C72-2: the refused change waited for that command with its presentation transition still set, so every control answered "A presentation change or reader close is pending." until Close and Open): the focus return is given up after the presentation deadline, logged as presentation:focus-return-timed-out, the transition is released and the next Arrange answers; fails_when=the failure path awaits an unanswered editor command with no deadline and keeps the transition set; why_new=Cycle 0072 task 2 (code-level hazard of the failure path); seam=recordedReaderHarness, addSeparateEditorPart and focusTab, changeEditorLayout (the layout differs from the receipt), holdNextCommand on composer.focusComposer, changePresentation, the fake clock, the diagnostics log; no_claim=that this was the native cause of the 80 s block
+test('a refused presentation change releases its transition when the chat focus return never answers, and a later Arrange answers', async (context) => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  harness.leavePaneFocusUnreportedBesideChat()
+  harness.ignoresFirstGroupFocusCommandBesideChat()
+  const held = harness.holdNextCommand('composer.focusComposer')
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.open()
+    harness.focusMutableDraft('auth.ts', 2)
+    chat.focusTab()
+    await harness.reader.readPresentationState()
+    harness.changeEditorLayout({
+      orientation: 1,
+      groups: [{ size: 0.7 }, { size: 0.3 }],
+    })
+    const state = harness.reader.presentationState()
+    enableFakeClock(context)
+    let focusReturnStarted = false
+    void held.started.then(() => {
+      focusReturnStarted = true
+    })
+    const change = harness.reader
+      .changePresentation({
+        presentationId: state.presentationId,
+        expectedRevision: state.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'restore',
+      })
+      .then(
+        () => 'restored',
+        (error: unknown) => String(error),
+      )
+    await advanceClockUntil(context, () => focusReturnStarted, 20_000)
+    const whileHeld = await harness.reader.action('arrange').then(
+      () => 'answered',
+      (error: unknown) => String(error),
+    )
+
+    // Act
+    await advanceClockUntil(
+      context,
+      () => harness.reader['presentationTransition'] === undefined,
+      6_000,
+    )
+    assert.equal(harness.reader['presentationTransition'], undefined)
+    await change
+    const afterDeadline = await harness.reader.action('arrange').then(
+      () => 'answered',
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.match(whileHeld, /A presentation change or reader close is pending/)
+    assert.doesNotMatch(afterDeadline, /pending/)
+    assert.equal(
+      logged.some(
+        (entry) => entry.surface === 'presentation:focus-return-timed-out',
+      ),
+      true,
+    )
+  } finally {
+    resetFakeClock(context)
+    held.release()
     await harness.close()
   }
 })

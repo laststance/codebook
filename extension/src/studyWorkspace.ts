@@ -4399,7 +4399,7 @@ export class StudyWorkspace {
    * @param chatEditorTab - Whether the remembered tab is VS Code's chat editor tab ({@link isChatEditorTabInput}).
    * @returns
    * - `true` once the command ran.
-   * - `false` without a command.
+   * - `false` without a command, and when the command gave no answer within {@link PRESENTATION_READY_TIMEOUT_MS} (logged as `presentation:focus-return-timed-out`; the focus stays where it is).
    * @throws What the editor's command rejected with.
    * @example await this.runFocusReturnCommand('workbench.action.focusThirdEditorGroup', 'leftoverProof', true) // => true, and the leftover proof's sentence is told once
    */
@@ -4409,7 +4409,23 @@ export class StudyWorkspace {
     chatEditorTab: boolean,
   ): Promise<boolean> {
     if (!command) return false
-    await this.executeEditorCommand(command)
+    // An editor command that never answers must not keep a presentation marker set while the failure path waits for it: on expiry the focus stays where it is.
+    try {
+      await awaitResponse(
+        this.executeEditorCommand(command),
+        `the focus return ${command}`,
+        undefined,
+        PRESENTATION_READY_TIMEOUT_MS,
+      )
+    } catch (error) {
+      if (!String(error).includes('Timed out waiting for the focus return'))
+        throw error
+      this.diagnostics?.log({
+        surface: 'presentation:focus-return-timed-out',
+        cause: `${command} gave no answer within ${PRESENTATION_READY_TIMEOUT_MS} ms; the focus was left where it is.`,
+      })
+      return false
+    }
     // Only a chat is told about; a learner's page of the main editor that got its group's focus back is not.
     if (toldCause && (chatEditorTab || command === CURSOR_FOCUS_AGENT_COMMAND))
       this.tellChatKeyboardReturned(toldCause)
