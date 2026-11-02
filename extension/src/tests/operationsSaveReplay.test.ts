@@ -86,7 +86,7 @@ test('a saved four-operation study decodes with each operation, its sent time an
   // Act
   const decoded = decodeConfiguredStudy(study, study.workspaceKey)
   // Assert
-  assert.equal(decoded.version, 7)
+  assert.equal(decoded.version, 8)
   assert.deepEqual(statesOf(decoded), ['1:done', '2:done', '3:done', '4:done'])
   assert.deepEqual(
     decoded.operations?.map((record) => record.atMs),
@@ -319,8 +319,8 @@ test('the saved operation records take their time from the dispatch receipt of t
   )
 })
 
-// protects=the library writes a four-operation study to its own format 7 file and reopens it with every mark; fails_when=the study is written as format 6, or the reopened records differ; no_claim=another window's lock
-test('a four-operation study is saved as .study.v7.json and reopens with four operations', async (context) => {
+// protects=the library writes a four-operation study with a server stop to its own format 8 file and reopens it with every mark; fails_when=the study is written as format 7, or the reopened records differ; no_claim=another window's lock
+test('a four-operation study with a server stop is saved as .study.v8.json and reopens with four operations', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-operations-study-'))
   context.after(() => rm(directory, { recursive: true, force: true }))
@@ -332,25 +332,25 @@ test('a four-operation study is saved as .study.v7.json and reopens with four op
   const listed = await library.list()
   // Assert
   const archive: { version: number } = JSON.parse(
-    await readFile(join(directory, `${study.id}.study.v7.json`), 'utf8'),
+    await readFile(join(directory, `${study.id}.study.v8.json`), 'utf8'),
   )
-  assert.equal(archive.version, 7)
+  assert.equal(archive.version, 8)
   assert.deepEqual(reopened.operations, study.operations)
   assert.deepEqual(
     listed.map((entry) => entry.format),
-    ['v7'],
+    ['v8'],
   )
 })
 
-// protects=an older Codebook (reads up to 7 here, as 0.2.70.0 reads up to 6) lists a study of a format one above, refuses to open it with its reason and keeps its bytes; fails_when=the listing skips the file, the read ends in a schema error, or the file changes; no_claim=the 0.2.70.0 binary itself (this code stands in for it with a format one above)
+// protects=an older Codebook (reads up to 8 here, as 0.2.72.0 reads up to 7) lists a study of a format one above, refuses to open it with its reason and keeps its bytes; fails_when=the listing skips the file, the read ends in a schema error, or the file changes; no_claim=the 0.2.72.0 binary itself (this code stands in for it with a format one above)
 test('a study saved in a format one above the readable one is listed, refused with its reason and kept untouched', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-future-study-'))
   context.after(() => rm(directory, { recursive: true, force: true }))
   const study = createOperationsStudy()
   const library = new LearningLibrary(directory, study.workspaceKey)
-  const futurePath = join(directory, `${study.id}.study.v8.json`)
-  const futureBytes = JSON.stringify({ ...study, version: 8 })
+  const futurePath = join(directory, `${study.id}.study.v9.json`)
+  const futureBytes = JSON.stringify({ ...study, version: 9 })
   await writeFile(futurePath, futureBytes)
   // Act
   const listed = await library.list()
@@ -360,11 +360,11 @@ test('a study saved in a format one above the readable one is listed, refused wi
   assert.equal(listed[0]?.format, 'newer')
   assert.equal(
     listed[0]?.reason,
-    'This study was saved in format 8 by a newer Codebook; this Codebook reads formats up to 7. Update the extension to open it. The study is kept as it is.',
+    'This study was saved in format 9 by a newer Codebook; this Codebook reads formats up to 8. Update the extension to open it. The study is kept as it is.',
   )
   await assert.rejects(read, {
     message:
-      'This study was saved in format 8 by a newer Codebook; this Codebook reads formats up to 7. Update the extension to open it. The study is kept as it is.',
+      'This study was saved in format 9 by a newer Codebook; this Codebook reads formats up to 8. Update the extension to open it. The study is kept as it is.',
   })
   assert.equal(await readFile(futurePath, 'utf8'), futureBytes)
 })
@@ -377,7 +377,7 @@ test('a saved study whose operation carries an unknown future field is refused w
   const study = createOperationsStudy()
   const library = new LearningLibrary(directory, study.workspaceKey)
   await library.saveStudy(study)
-  const path = join(directory, `${study.id}.study.v7.json`)
+  const path = join(directory, `${study.id}.study.v8.json`)
   const archive = JSON.parse(await readFile(path, 'utf8'))
   archive.operations[1].futureField = 'x'
   await writeFile(path, JSON.stringify(archive))

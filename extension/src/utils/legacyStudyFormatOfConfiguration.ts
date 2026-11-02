@@ -10,7 +10,7 @@ import type { RetainedRepositoryConfiguration } from '../repositoryConfigSchemas
 
 /**
  * Gives the study format an archive saved before format 6 holds for a configuration: the one place that keeps the old configuration-to-format mapping.
- * Called by {@link validateConfiguredStudyEvidence} so a v3, v4 or v5 archive still reads; new saves of versions 1 and 2 take {@link RECORDED_LOCATION_STUDY_VERSION} instead, and a save of a version 3 (operations) configuration takes {@link OPERATIONS_STUDY_VERSION}.
+ * Called by {@link validateConfiguredStudyEvidence} so a v3, v4 or v5 archive still reads; {@link studyFormatOfConfiguration} gives the format of a new save, including format 8; new saves of versions 1 and 2 take {@link RECORDED_LOCATION_STUDY_VERSION} instead, and a save of a version 3 (operations) configuration takes {@link OPERATIONS_STUDY_VERSION}.
  * @param configuration - The sealed configuration of the study.
  * @returns 7 for an operations configuration (version 3) of any adapter, 5 for a `vite-dev` configuration of version 1 or 2, else 3 for a Next configuration of version 1 and 4 for version 2 (cross-runtime).
  * @example

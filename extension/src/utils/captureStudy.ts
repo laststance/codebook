@@ -1,8 +1,5 @@
 import { configuredObservationSchema } from '../configuredStudySchemas'
 import {
-  OPERATIONS_CONFIG_VERSION,
-  OPERATIONS_STUDY_VERSION,
-  RECORDED_LOCATION_STUDY_VERSION,
   REPOSITORY_BROWSER_ACTION,
   REPOSITORY_BROWSER_PROFILE,
 } from '../constants'
@@ -17,6 +14,7 @@ import { describeStudy } from './describeStudy'
 import { maskLearningSummaryText } from './maskLearningSummaryText'
 import { projectSavedOperations } from './projectSavedOperations'
 import { redactPreparedConfiguration } from './redactPreparedConfiguration'
+import { studyFormatOfConfiguration } from './studyFormatOfConfiguration'
 
 /** Copies only committed canonical evidence for {@link StudyWorkspace}; a changed read is discarded. @example await captureStudy(service, record, workspaceKey) */
 export async function captureStudy(
@@ -200,10 +198,8 @@ export async function captureStudy(
     record.profile === REPOSITORY_BROWSER_PROFILE
       ? {
           // A study of ordered operations has its own format, so an older Codebook lists it as saved by a newer one instead of failing on its schema.
-          version:
-            canonicalConfiguration.version === OPERATIONS_CONFIG_VERSION
-              ? OPERATIONS_STUDY_VERSION
-              : RECORDED_LOCATION_STUDY_VERSION,
+          // The format is a pure function of the sealed configuration, so it is the same at every checkpoint of the run.
+          version: studyFormatOfConfiguration(canonicalConfiguration),
           configuration: canonicalConfiguration,
           configurationHash: sha256(JSON.stringify(canonicalConfiguration)),
           descriptor: record.definition?.descriptor,

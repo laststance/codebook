@@ -4,15 +4,20 @@ import {
   OPERATIONS_STUDY_VERSION,
   RECORDED_LOCATION_STUDY_VERSION,
   REPOSITORY_CAPTURED_TYPES,
+  SERVER_RENDER_STUDY_VERSION,
 } from '../constants'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 
+import { afterOperationOf } from './afterOperationOf'
 import { assertConfiguredDescriptor } from './assertConfiguredDescriptor'
+import { assertObservationFormatFields } from './assertObservationFormatFields'
 import { configuredStops } from './configuredStops'
 import { isCrossRuntimeStudy } from './isCrossRuntimeStudy'
 import { isSavedBindingReceiptAtStop } from './isSavedBindingReceiptAtStop'
 import { isSavedSourceAtStop } from './isSavedSourceAtStop'
 import { legacyStudyFormatOfConfiguration } from './legacyStudyFormatOfConfiguration'
+import { stopOfObservation } from './stopOfObservation'
+import { studyFormatOfConfiguration } from './studyFormatOfConfiguration'
 import { validateOperationRecords } from './validateOperationRecords'
 
 /** Validates sealed configured facts for archive and recording readers without requiring current files or granting runtime authority. @example validateConfiguredStudyEvidence(study, workspaceKey) // rejects altered source or pause */
@@ -21,11 +26,12 @@ export function validateConfiguredStudyEvidence(
   workspaceKey: string,
 ): void {
   const configuration = study.configuration
-  // A new save is the current format of its kind: the operations format for a version 3 configuration, the recorded-location format for versions 1 and 2; an older archive keeps the format its configuration implied when it was saved.
+  // A new save is the current format of its kind: format 7 or 8 for a version 3 configuration (studyFormatOfConfiguration), the recorded-location format for versions 1 and 2; an older archive keeps the format its configuration implied when it was saved.
   if (
     configuration.version === OPERATIONS_CONFIG_VERSION
-      ? study.version !== OPERATIONS_STUDY_VERSION
+      ? study.version !== studyFormatOfConfiguration(configuration)
       : study.version === OPERATIONS_STUDY_VERSION ||
+        study.version === SERVER_RENDER_STUDY_VERSION ||
         (study.version !== RECORDED_LOCATION_STUDY_VERSION &&
           study.version !== legacyStudyFormatOfConfiguration(configuration))
   )
@@ -50,6 +56,8 @@ export function validateConfiguredStudyEvidence(
   const stops = configuredStops(configuration)
   if (study.observations.length > stops.length)
     throw new Error('Configured observations exceed the declared stops.')
+  // Format 8 matches observations to stops by `declaredIndex`; format 7 and earlier by position and carry no execution fields.
+  assertObservationFormatFields(study, stops)
   // A version 3 study keeps one record per declared operation; every operation's pauses and result are checked against it.
   validateOperationRecords(study)
   const continuedIndex = study.observations.findIndex(
@@ -65,7 +73,7 @@ export function validateConfiguredStudyEvidence(
     (observation) => observation.source.binding !== undefined,
   )
   for (const [index, observation] of study.observations.entries()) {
-    const stop = stops[index]!,
+    const stop = stopOfObservation(study.observations, stops, index)!,
       previous = study.observations[index - 1]
     if (
       observation.participant !== stop.participant ||
@@ -95,7 +103,11 @@ export function validateConfiguredStudyEvidence(
     sessionOwners.set(session, participant)
     participantSessions.set(participant, session)
     generations.set(session, observation.pause.generation)
-    if (!study.operation?.inputDispatched)
+    // A format 8 stop with `afterOperation: 0` pauses the entry load, before any operation is sent.
+    const isEntryRenderStop =
+      study.version === SERVER_RENDER_STUDY_VERSION &&
+      afterOperationOf(stop) === 0
+    if (!study.operation?.inputDispatched && !isEntryRenderStop)
       throw new Error('Configured observation has no dispatched operation.')
     if (
       observation.itemId !== descriptor?.itemId ||

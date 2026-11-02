@@ -1647,8 +1647,10 @@ export const VITE_STUDY_VERSION = 5
 export const RECORDED_LOCATION_STUDY_VERSION = 6
 /** The format of a study saved from a version 3 (ordered operations) configuration: it stores `operations[]`; an older Codebook lists it as saved by a newer one and keeps it. Studies of versions 1 and 2 keep the earlier format. */
 export const OPERATIONS_STUDY_VERSION = 7
+/** The format of a study saved from a version 3 configuration that declares a server stop, a stop with `afterOperation: 0` or no `operations`: its observations carry `execution`, `declaredIndex` and `executionIndex`. A version 3 configuration of browser stops only keeps {@link OPERATIONS_STUDY_VERSION}. The suffix `.study.v8.json` makes 0.2.72.0 list such a study as saved by a newer Codebook and keep it. */
+export const SERVER_RENDER_STUDY_VERSION = 8
 /** The highest study format this Codebook reads; a saved study above it is listed as saved by a newer Codebook. */
-export const READABLE_STUDY_VERSION = OPERATIONS_STUDY_VERSION
+export const READABLE_STUDY_VERSION = SERVER_RENDER_STUDY_VERSION
 /** The replay's operation marks closer than this many pixels stack vertically instead of overlapping. */
 export const OPERATION_MARK_STACK_PX = 24
 /** Below this webview width in pixels the operation marks show their numbers only. */
@@ -1660,6 +1662,12 @@ export const CONFIGURED_STUDY_METADATA_SUFFIX = '.study.meta.v3.json'
 // Highest existing version owns a logical study, including when its bytes are corrupt.
 // A change of the saved study format that an older Codebook cannot read takes the next format number and its own `.study.v<n>.json` suffix in this table; an older Codebook then lists such a study as saved by a newer one and keeps it, instead of failing on its schema.
 export const STUDY_STORAGE_FORMATS = [
+  {
+    version: SERVER_RENDER_STUDY_VERSION,
+    format: 'v8',
+    archiveSuffix: '.study.v8.json',
+    metadataSuffix: '.study.meta.v8.json',
+  },
   {
     version: OPERATIONS_STUDY_VERSION,
     format: 'v7',
