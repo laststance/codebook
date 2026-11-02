@@ -23,6 +23,9 @@ const CODED_FAILURE_CODES = [
   'SECRET_BECAME_VISIBLE',
   // The page asked for sign-in; the variant names why (SIGN_IN_REQUIRED_REASONS).
   'SIGN_IN_REQUIRED',
+  // A server-render stop the page never reached, and an entry page that did not load after the last pause (Cycle 0071).
+  'SERVER_STOP_NOT_REACHED',
+  'ENTRY_LOAD_TIMEOUT',
 ] as const satisfies readonly ErrorCode[]
 
 /** A code a run's failure text can lead with, so the service restores it as a coded error. */

@@ -165,6 +165,7 @@ import {
 import { describeNodeTestResult } from './utils/describeNodeTestResult'
 import { describeOperationFailureDetails } from './utils/describeOperationFailureDetails'
 import { describeOperationStatus } from './utils/describeOperationStatus'
+import { describeServerRenderFailureDetails } from './utils/describeServerRenderFailureDetails'
 import {
   describeSignInRequiredDetails,
   type SignInRunFacts,
@@ -3452,6 +3453,22 @@ export class StudyService {
           runUri,
           logId: operationFailure?.logId ?? `${run?.runId ?? 'run'}#start`,
         }),
+      )
+    // The two server-render failures carry the stop and entry fields beside the retry fields; an entry-render failure names no operation.
+    if (
+      refusal &&
+      operationFailure &&
+      operationFailure.code === refusal.code &&
+      (refusal.code === 'SERVER_STOP_NOT_REACHED' ||
+        refusal.code === 'ENTRY_LOAD_TIMEOUT')
+    )
+      return new StudyError(
+        refusal.code,
+        refusal.message,
+        refusal.message,
+        refusal.recoveryOverride,
+        undefined,
+        describeServerRenderFailureDetails(operationFailure, runUri),
       )
     // An operation's refusal carries the fields that decide a retry (DX-5), and its static recovery names the operation (OPERATION_AFTER_NOT_MET).
     if (refusal && operationFailure && operationFailure.code === refusal.code)

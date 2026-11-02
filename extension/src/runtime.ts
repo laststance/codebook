@@ -407,6 +407,24 @@ export type OperationFailure = {
   logId: string
   /** Set only for `SIGN_IN_REQUIRED`: why the page asked for sign-in. */
   reason?: SignInRequiredReason
+  /** Set only for `SERVER_STOP_NOT_REACHED`: which server-render stop was not reached and which stops did pause. */
+  serverRender?: ServerRenderFailure
+  /** Set only for `ENTRY_LOAD_TIMEOUT`: the entry route, the last stop that paused and the time since the last continue. */
+  entryLoad?: EntryLoadFailure
+}
+/** The fields `SERVER_STOP_NOT_REACHED` carries beyond the operation fields; `operationIndex` of the failure is 0 for the entry render. */
+export type ServerRenderFailure = {
+  phase: 'entry-render' | 'after-operation'
+  /** `<path>:<line>` of the stop that was not reached. */
+  stop: string
+  pausedStops: string[]
+  notReachedStops: string[]
+}
+/** The fields `ENTRY_LOAD_TIMEOUT` carries. */
+export type EntryLoadFailure = {
+  entryRoute: string
+  lastPausedStop: string
+  elapsedMs: number
 }
 export type RuntimeDefinition = ConfiguredDefinition
 export type RuntimeControl = Readonly<{

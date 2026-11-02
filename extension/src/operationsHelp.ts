@@ -32,6 +32,8 @@ export const OPERATIONS_ERROR_CODES = [
   'SIGN_IN_PROFILE_IN_USE',
   'SIGN_IN_PROFILE_UNUSABLE',
   'SIGN_IN_ORIGIN_REFUSED',
+  'SERVER_STOP_NOT_REACHED',
+  'ENTRY_LOAD_TIMEOUT',
 ] as const satisfies readonly ErrorCode[]
 
 /** One code of {@link OPERATIONS_ERROR_CODES}. */
