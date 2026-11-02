@@ -243,3 +243,114 @@ test('a pre-attach script whose text is not answered stays unknown and its pause
   assert.equal(harness.run.view().participants.server?.snapshot, undefined)
   assert.equal(journaled(harness, 'script.discovered').length, 0)
 })
+
+// Value: protects=F1 when the script read outlasts the classification window: the DAP stopped comes before the CDP pause of a pre-attach React copy and the copy's text answer is slow; fails_when=the stopped is settled unclassified after the 1 s window, so the copy is taken as the owned stop or fails the run as an additional stop; no_claim=the real length of a js-debug read
+test('a pre-attach React copy whose text answers after the classification window is still resumed as a copy', async (context) => {
+  // Arrange
+  const harness = await afterOperationRun(context, 1)
+  const releaseRead = harness.server!.holdScriptRead('3672')
+  // Act: the stopped comes first, the copy's text is answered 1.2 s later
+  harness.server!.hit(
+    {
+      scriptId: '3672',
+      route: '/dashboard/invoices',
+      unannounced: { reactCopy: 109 },
+    },
+    'dap-first',
+  )
+  await new Promise<void>((resolve) => setTimeout(resolve, 1_200))
+  releaseRead()
+  await waitUntil(
+    () => harness.server!.continues.length >= 1,
+    'the copy hit was resumed',
+  )
+  harness.server!.hit({ route: '/dashboard/invoices', unannounced: {} })
+  const pause = await nextPause(harness)
+  // Assert
+  assert.deepEqual(journaled(harness, 'breakpoint.react-copy'), [{}])
+  assert.equal(pause.source.scriptId, 'server')
+  assert.equal(harness.run.view().failures.length, 0)
+})
+
+// Value: protects=a discovery whose binding throws ends the run with a clear reason and no unhandled rejection; fails_when=the rejection of the discovery is unhandled, the pause stays held or the run keeps waiting without a reason; no_claim=which binding error a real script could cause
+test('a pre-attach discovery whose binding throws fails the run with a reason and no unhandled rejection', async (context) => {
+  // Arrange
+  const harness = await afterOperationRun(context, 1)
+  const unhandled: unknown[] = []
+  const onUnhandled = (reason: unknown): void => {
+    unhandled.push(reason)
+  }
+  process.on('unhandledRejection', onUnhandled)
+  context.after(() => process.off('unhandledRejection', onUnhandled))
+  Object.assign(harness.run, {
+    bindParsedScript: (): void => {
+      throw new Error('binding exploded')
+    },
+  })
+  // Act
+  harness.server!.hit({ route: '/dashboard/invoices', unannounced: {} })
+  await waitUntil(
+    () => harness.run.view().failures.length > 0,
+    'the run failed',
+  )
+  await new Promise<void>((resolve) => setTimeout(resolve, 100))
+  // Assert
+  assert.match(
+    harness.run.view().failures[0] ?? '',
+    /Reading the script behind a server pause failed: binding exploded/,
+  )
+  assert.deepEqual(unhandled, [])
+})
+
+// Value: protects=a Pages run keeps today's handling of a pause in an unknown script (no discovery, no new SOURCE_CHANGED path); fails_when=the Pages run reads the script text and journals script.discovered; no_claim=the Pages failure wording
+test('a Pages run does not discover a script it never saw parsed', async (context) => {
+  // Arrange
+  const harness = await afterOperationRun(context, 1)
+  Object.assign(harness.run, { pagesRun: { route: '/dashboard/invoices' } })
+  // Act
+  harness.server!.hit({ route: '/dashboard/invoices', unannounced: {} })
+  await new Promise<void>((resolve) => setTimeout(resolve, 300))
+  // Assert
+  assert.equal(journaled(harness, 'script.discovered').length, 0)
+  assert.equal(harness.run.view().participants.server?.snapshot, undefined)
+})
+
+// Value: protects=the journal bound: script.discovered is listed only up to the diagnostic cap and the rest are counted; fails_when=every discovered script is journaled; no_claim=the cap's value for a real run
+test('script.discovered entries stop at the diagnostic cap', async (context) => {
+  // Arrange
+  const harness = await afterOperationRun(context, 1)
+  // Act
+  for (let index = 0; index < 205; index++) {
+    const scriptId = `bulk-${index}`
+    harness.server!.setScriptText(
+      scriptId,
+      `var a = 1;\n//# sourceURL=webpack-internal:///(rsc)/./app/bulk-${index}.tsx`,
+    )
+    await harness.run['discoverUnannouncedScript']('server', scriptId)
+  }
+  // Assert
+  assert.equal(journaled(harness, 'script.discovered').length, 200)
+})
+
+// Value: protects=journal hygiene: a discovered address is cut to a bound and a data: URL body is never journaled; fails_when=a long address or the body of a data: URL reaches the journal; no_claim=masking of secrets in an address
+test('a long or data: source address is cut or reduced before it is journaled', async (context) => {
+  // Arrange
+  const harness = await afterOperationRun(context, 1)
+  harness.server!.setScriptText(
+    'long',
+    `var a = 1;\n//# sourceURL=webpack-internal:///${'x'.repeat(2_000)}`,
+  )
+  harness.server!.setScriptText(
+    'data',
+    'var a = 1;\n//# sourceURL=data:text/javascript;base64,SECRETBODY',
+  )
+  // Act
+  await harness.run['discoverUnannouncedScript']('server', 'long')
+  await harness.run['discoverUnannouncedScript']('server', 'data')
+  // Assert
+  const urls = journaled(harness, 'script.discovered').map(
+    (detail) => (detail as { url: string }).url,
+  )
+  assert.equal(urls[0]!.length <= 300, true)
+  assert.equal(urls[1], 'data:')
+})

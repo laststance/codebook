@@ -759,6 +759,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private idleContinuedCount = 0
   /** How many pauses, resumes of pauses that were only counted and idle `continued` events past their caps were left out of the journal; cleanup journals the count. */
   private unjournaledAdapterEvents = 0
+  /** The `script.discovered` entries journaled so far, under {@link REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT}. */
+  private discoveredScriptJournalCount = 0
   /** How many `stop.module-parsed`, `stop.instance-sealed` and `stop.instance-refused` entries were journaled, by type, against {@link REPOSITORY_STOP_MODULE_JOURNAL_LIMIT}. */
   private readonly stopModuleJournaled = new Map<string, number>()
   /** The entries ({@link ConfiguredBrowserRun.journalStopModule}) already journaled once for an entry type, stop and script address, so the first of each is journaled past the cap. */
@@ -1749,24 +1751,28 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     event: DebugProtocol.Event,
   ): Promise<void> {
     const participant = this.participants.server
-    // A pause whose script's address is still being read reaches admission when the read ends.
-    await participant.discovering?.done
-    try {
-      // The pause of this stop may arrive after its `stopped`: wait for the first kind of pause there is, within the classification bound.
-      await waitUntil(
-        () =>
-          participant.copyPause ||
-          participant.stopped ||
-          participant.unannouncedPause ||
-          this.pendingCdpStop,
-        'the pause behind a server stop',
-        SERVER_RENDER_CLASSIFICATION_MS,
-        this.abort.signal,
-        SERVER_RENDER_PAUSE_POLL_MS,
-      )
-    } catch (error) {
-      if (this.abort.signal.aborted) return
-      if (!(error instanceof WaitTimeoutError)) throw error
+    // A script's address read in flight ends the wait early: the pause behind it reaches admission only when the read ends, so the classification window starts again after each discovery. No deadline is lengthened: every read has its own bound.
+    for (;;) {
+      await participant.discovering?.done
+      try {
+        // The pause of this stop may arrive after its `stopped`: wait for the first kind of pause there is, within the classification bound.
+        await waitUntil(
+          () =>
+            participant.copyPause ||
+            participant.stopped ||
+            participant.unannouncedPause ||
+            this.pendingCdpStop ||
+            participant.discovering,
+          'the pause behind a server stop',
+          SERVER_RENDER_CLASSIFICATION_MS,
+          this.abort.signal,
+          SERVER_RENDER_PAUSE_POLL_MS,
+        )
+      } catch (error) {
+        if (this.abort.signal.aborted) return
+        if (!(error instanceof WaitTimeoutError)) throw error
+      }
+      if (!participant.discovering) break
     }
     if (this.cleaning) return
     const verdict = await this.unexpectedHitVerdict(session, event)
@@ -1815,8 +1821,30 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     event: Protocol.Debugger.PausedEvent,
     journaled: boolean,
   ): void {
-    if (this.isServerCopyPause(name, event))
+    if (this.isServerCopyPause(name, event)) {
       this.holdCopyPause(event, journaled)
+      return
+    }
+    // A render hit of a stop that already paused is kept for its `stopped`, which resumes it as a repeat hit without consuming a stop (the participant is `ready` with nothing active, so the pause is nobody's). One no `stopped` claims within the classification bound is dropped as every idle pause always was.
+    const participant = this.participants[name]
+    if (
+      name !== 'server' ||
+      !this.rendersServerStops() ||
+      participant.unannouncedPause ||
+      !this.isRepeatOfPausedStop(event, this.stops.slice(0, this.stopIndex))
+    )
+      return
+    const held: NonNullable<DebugParticipant['unannouncedPause']> = {
+      event,
+      expectedStop: this.expectedStop(name),
+      heldAtMs: performance.now(),
+      journaled,
+    }
+    participant.unannouncedPause = held
+    setTimeout(() => {
+      if (participant.unannouncedPause === held && !this.operation)
+        participant.unannouncedPause = undefined
+    }, SERVER_RENDER_CLASSIFICATION_MS)
   }
 
   /**
@@ -1893,17 +1921,36 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       0,
       this.stopIndex + (this.continuation ? 1 : 0),
     )
-    const location = held.event.callFrames[0]?.location
-    const isRepeat =
-      location !== undefined &&
-      isRscScriptUrl(participant.scriptUrls.get(location.scriptId)) &&
-      alreadyPaused.some(
-        (stop) =>
-          stop.participant === 'server' && this.isPauseOfStop(held.event, stop),
-      )
-    return isRepeat
+    // Only a breakpoint hit is a repeat of a stop; an exception, a step or a manual pause at the same place keeps today's handling.
+    return event.body?.reason === 'breakpoint' &&
+      this.isRepeatOfPausedStop(held.event, alreadyPaused)
       ? { action: 'resume', event: 'breakpoint.repeat-hit' }
       : undefined
+  }
+
+  /**
+   * Tells whether a server pause is a render of a stop that already paused: in an `(rsc)` script, at the place of one of the given stops.
+   * Called by {@link unexpectedHitVerdict} for the held pause and by {@link holdCopyPauseWhileIdle} to keep such a pause while the run waits for its first operation.
+   * @param event - The paused event.
+   * @param alreadyPaused - The stops that paused before now.
+   * @returns `true` for a repeat render hit.
+   * @example this.isRepeatOfPausedStop(event, this.stops.slice(0, 1)) // true for a second render of stop 1
+   */
+  private isRepeatOfPausedStop(
+    event: Protocol.Debugger.PausedEvent,
+    alreadyPaused: readonly PreparedStop[],
+  ): boolean {
+    const location = event.callFrames[0]?.location
+    return (
+      location !== undefined &&
+      isRscScriptUrl(
+        this.participants.server.scriptUrls.get(location.scriptId),
+      ) &&
+      alreadyPaused.some(
+        (stop) =>
+          stop.participant === 'server' && this.isPauseOfStop(event, stop),
+      )
+    )
   }
 
   /**
@@ -5852,6 +5899,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
   }
 
+  /** Words a discovered script address for the journal: a `data:` URL is reduced to its scheme, any other address loses private paths ({@link sanitizeCause}) and is cut ({@link cutCauseForDisplay}). @example this.journalScriptUrlOf('data:text/javascript;base64,AAAA') // 'data:' */
+  private journalScriptUrlOf(url: string): string {
+    if (/^data:/i.test(url)) return 'data:'
+    return cutCauseForDisplay(
+      sanitizeCause(
+        url,
+        causeRootsFor([this.options.directory], this.options.workspace),
+      ),
+    )
+  }
+
   /** Words a thrown cause for the journal and for a failure sentence: its message without private paths ({@link sanitizeCause}), cut to what a surface shows ({@link cutCauseForDisplay}). @example this.journalCauseOf(new Error('ENOENT /Users/ada/repo/a.ts')) // 'ENOENT <workspace>/a.ts' */
   private journalCauseOf(error: unknown): string {
     return cutCauseForDisplay(
@@ -6048,6 +6106,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       participant.scriptUrls.has(scriptId) ||
       participant.discoveredScriptIds?.has(scriptId) ||
       participant.discovering ||
+      // A Pages run keeps its own handling of an unknown script.
+      this.pagesRun ||
       !this.stops.some((stop) => stop.participant === 'server')
     ) {
       this.onCdpPaused(name, event)
@@ -6067,6 +6127,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         this.onCdpPaused(name, event)
       },
     )
+    // A discovery or admission that throws must not leave the pause held or the rejection unhandled: the run fails with the cause.
+    discovering.done = discovering.done.catch((error: unknown) => {
+      if (participant.discovering === discovering)
+        participant.discovering = undefined
+      this.fail(
+        `Reading the script behind a server pause failed: ${this.journalCauseOf(error)}`,
+      )
+    })
     participant.discovering = discovering
   }
 
@@ -6094,11 +6162,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (!url || participant.scriptUrls.has(scriptId) || !this.isRunOpen())
       return
     participant.scriptUrls.set(scriptId, url)
-    this.evidence.record('script.discovered', {
-      participant: name,
-      scriptId,
-      url,
-    })
+    // Like `script.observed`, only the first discoveries are listed; the address is app text, so it is masked and cut before it is journaled.
+    if (
+      this.discoveredScriptJournalCount++ < REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT
+    )
+      this.evidence.record('script.discovered', {
+        participant: name,
+        scriptId,
+        url: this.journalScriptUrlOf(url),
+      })
+    else this.unjournaledAdapterEvents++
     this.bindParsedScript(name, {
       scriptId,
       url,

@@ -563,7 +563,7 @@ test('a React copy hit at the entry stop while the run waits for operation 1 is 
   assert.equal(harness.run.view().snapshots[1]?.attribution, 'after-operation')
 })
 
-// Value: protects=today's handling of a ready-time pause that is not a copy at an owned position: a plain server pause while the run waits for operation 1 is not resumed as a React copy and journals no breakpoint.react-copy; fails_when=the new copy intake takes any ready-time pause for a copy; no_claim=the verdict the run reaches for such a pause (unchanged by this fix)
+// Value: protects=today's handling of a ready-time pause that is not a copy at an owned position: a plain server pause while the run waits for operation 1 is resumed as a repeat hit, not as a React copy and journals no breakpoint.react-copy; fails_when=the new copy intake takes any ready-time pause for a copy; no_claim=the verdict the run reaches for such a pause (unchanged by this fix)
 test('a plain server pause while the run waits for operation 1 is not resumed as a React copy', async (context) => {
   // Arrange
   const run = await readyMixedRun(context)
@@ -579,5 +579,12 @@ test('a plain server pause while the run waits for operation 1 is not resumed as
       .events.filter((event) => event.type === 'breakpoint.react-copy').length,
     0,
   )
-  assert.equal(harness.server!.continues.length, resumesBefore)
+  // A render hit of the entry stop that already paused is a repeat hit, resumed once and journaled as such (never as a copy)
+  assert.equal(harness.server!.continues.length, resumesBefore + 1)
+  assert.equal(
+    harness.run
+      .view()
+      .events.filter((event) => event.type === 'breakpoint.repeat-hit').length,
+    1,
+  )
 })

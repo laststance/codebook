@@ -274,3 +274,77 @@ test('the run says what the render waits for while an entry-render pause is held
   // Assert
   assert.equal(harness.run.view().renderMessage, undefined)
 })
+
+/**
+ * Opens a run with an entry-render stop A and an after-operation stop B, takes A's pause and continues it, and returns once the run is ready and has not accepted its operation (nothing active).
+ * @example const harness = await idleAfterEntryRun(context)
+ */
+async function idleAfterEntryRun(context: TestContext) {
+  const harness = await configuredRuntimeHarness(
+    context,
+    controlOf(context),
+    [{ line: 3, column: 1, inspections: [...ENABLED_STOP] }],
+    {
+      participant: 'server',
+      serverSeal: 'rsc',
+      serverRuntime: { route: '/dashboard/invoices' },
+      entryPath: '/dashboard/invoices',
+      documentReadyState: 'loading',
+      mappings: COMPONENT_MAP,
+      fixture: { source: COMPONENT_SOURCE, citationEndLine: 3 },
+      operations: {
+        operations: [
+          {
+            kind: 'click',
+            title: 'Create Invoice',
+            selector: 'button[type=submit]',
+          },
+        ],
+        stopOperations: [0, 1],
+        stopParticipants: ['server', 'server'],
+      },
+    },
+  )
+  const prepared = harness.run.prepare()
+  prepared.catch(() => undefined)
+  await waitUntil(
+    () => harness.navigations.length === 1,
+    'the entry navigation started',
+  )
+  harness.server!.hit({})
+  const stopA = await nextPause(harness)
+  harness.setDocumentReadyState('complete')
+  await harness.run.continue('server', stopA.pause)
+  await prepared
+  await resumesReceived(harness, 1)
+  return harness
+}
+
+// Value: protects=X15 in the waiting state: a render hit of the entry stop that arrives after the entry load ended and before the first operation is resumed as a repeat hit; fails_when=the pause is dropped, its stopped finds nothing to judge and the run fails as an unexpected server stop; no_claim=what makes the render run again
+test('a repeat hit of an entry-render stop while the run waits for its first operation is resumed', async (context) => {
+  // Arrange
+  const harness = await idleAfterEntryRun(context)
+  // Act
+  harness.server!.hit({})
+  await resumesReceived(harness, 2)
+  await new Promise<void>((resolve) => setTimeout(resolve, 200))
+  // Assert
+  assert.deepEqual(journaled(harness, 'breakpoint.repeat-hit'), [{}])
+  assert.equal(harness.run.view().failures.length, 0)
+})
+
+// Value: protects=repeat hits are only breakpoint hits: an exception at an already recorded stop's position is never auto-continued as a repeat; fails_when=an exception, step or manual pause at that position is resumed and journaled as breakpoint.repeat-hit; no_claim=how the run then ends
+test('an exception at the position of a stop that already paused is not resumed as a repeat hit', async (context) => {
+  // Arrange
+  const { harness } = await twoStopEntryRun(context)
+  harness.server!.hit({})
+  const stopA = await nextPause(harness)
+  await harness.run.continue('server', stopA.pause)
+  await resumesReceived(harness, 1)
+  // Act: A's position throws while B is still awaited
+  harness.server!.hit({ stopReason: 'exception' })
+  await new Promise<void>((resolve) => setTimeout(resolve, 1_500))
+  // Assert
+  assert.deepEqual(journaled(harness, 'breakpoint.repeat-hit'), [])
+  assert.equal(harness.server!.continues.length, 1)
+})
