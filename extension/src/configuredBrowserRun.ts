@@ -168,7 +168,10 @@ import { configuredStopFields } from './utils/configuredStopFields'
 import { configuredStops } from './utils/configuredStops'
 import { continuationReceipts } from './utils/continuationReceipts'
 import { createBindingLineRule } from './utils/createBindingLineRule'
-import { createBundleVerifier } from './utils/createBundleVerifier'
+import {
+  createBundleVerifier,
+  isChangedOriginalError,
+} from './utils/createBundleVerifier'
 import {
   createNextPagesDiscoveryCache,
   type NextPagesDiscoveryCache,
@@ -416,6 +419,8 @@ type StopModule = {
   bundle: BundleSource
   verifier: ReturnType<typeof createBundleVerifier>
   script?: Protocol.Debugger.ScriptParsedEvent
+  /** Set for a script of a server stop's module announced again at the sealed address under a new script id ({@link ConfiguredBrowserRun.adoptInstance}): it lives for the whole run beside the sealed script and every other such script, and the stop's binding judgement is kept for it alone ({@link PreparedStop.judgedBinding}). */
+  coexisting?: true
 }
 /** An accepted instance of a declared stop's module for another webpack layer: its own bundle and map, and the column its map puts the stop's bound statement at, found once per binding ({@link ConfiguredBrowserRun.boundColumnIn}). */
 type StopInstance = StopModule & {
@@ -452,6 +457,8 @@ type PreparedStop = ReturnType<typeof configuredStops>[number] & {
     line: number
     column: number
     generated?: GeneratedPosition
+    /** The script id of the coexisting instance the judgement was taken in ({@link StopInstance.coexisting}); absent for the sealed script and every other-layer instance. A pause in another script is judged again. */
+    scriptId?: string
   }
 }
 /**
@@ -3639,21 +3646,21 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     pausedAt?: Protocol.Debugger.Location,
   ): Promise<boolean> {
     const pausedThere = this.pausedOnLine(stop, bound.line, pausedAt)
-    if (this.acceptsAsJudged(stop, bound.line, pausedThere)) return true
+    const module = this.moduleOf(stop, pausedAt?.scriptId)
+    if (this.acceptsAsJudged(stop, bound.line, pausedThere, module)) return true
     const citation = this.definition.descriptor.anchors[stop.anchorIndex]!
     if (
       this.keepsMapRuleUnasked(stop, bound.line, citation) ||
-      this.isRefusalJudged(stop, bound, pausedThere)
+      this.isRefusalJudged(stop, bound, pausedThere, module)
     )
       return false
     // The break locations are read for the script that paused, and mapped and measured by its own map.
-    const module = this.moduleOf(stop, pausedAt?.scriptId),
-      places = await this.mappedBreakLocations(
-        stop,
-        undefined,
-        undefined,
-        module,
-      )
+    const places = await this.mappedBreakLocations(
+      stop,
+      undefined,
+      undefined,
+      module,
+    )
     return this.acceptsUnderBreakLocations(
       stop,
       bound,
@@ -3721,9 +3728,33 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     stop: PreparedStop,
     line: number,
     pausedThere: GeneratedPosition | undefined,
+    module: StopModule = stop,
   ): boolean {
     if (!stop.acceptsBoundLine(line)) return false
-    return !pausedThere || this.isRuleBuiltForPlace(stop, line, pausedThere)
+    return (
+      !pausedThere ||
+      (this.isJudgedInScript(stop, module) &&
+        this.isRuleBuiltForPlace(stop, line, pausedThere))
+    )
+  }
+
+  /**
+   * Says whether a stop's kept judgement may be applied to a pause in a script, as a check of {@link acceptsAsJudged} and {@link isRefusalJudged}: a coexisting instance's generated code can differ from the sealed script's and from every other instance's, so a judgement taken in one of them is never reused for another.
+   * @param stop - The stop whose binding is judged.
+   * @param module - The script of the stop's module that paused.
+   * @returns `true` when the stop has no kept judgement, or it was taken in this script; for any script that is no coexisting instance, a judgement taken in no coexisting instance (today's rule).
+   * @example
+   * ```ts
+   * this.isJudgedInScript(stop, this.moduleOf(stop, '5036')) // false while the kept judgement was taken in the coexisting instance '3794'
+   * ```
+   */
+  private isJudgedInScript(stop: PreparedStop, module: StopModule): boolean {
+    const judged = stop.judgedBinding
+    return (
+      !judged ||
+      judged.scriptId ===
+        (module.coexisting ? module.script?.scriptId : undefined)
+    )
   }
 
   /**
@@ -3764,9 +3795,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     stop: PreparedStop,
     bound: { line: number; column: number },
     pausedThere: GeneratedPosition | undefined,
+    module: StopModule = stop,
   ): boolean {
     const judged = this.judgementOf(stop, bound)
     if (!judged || stop.acceptsBoundLine(bound.line)) return false
+    // A refusal taken in another coexisting instance says nothing about this script's code.
+    if (pausedThere && !this.isJudgedInScript(stop, module)) return false
     return (
       !pausedThere || isSameGeneratedPosition(judged.generated, pausedThere)
     )
@@ -3828,8 +3862,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): boolean {
     if (!places) return stop.acceptsBoundLine(bound.line)
     // Another judgement of the same stop finished while the debugger answered: its rule stands, also when it refused this binding.
-    if (this.acceptsAsJudged(stop, bound.line, pausedThere)) return true
-    if (this.isRefusalJudged(stop, bound, pausedThere)) return false
+    if (this.acceptsAsJudged(stop, bound.line, pausedThere, module)) return true
+    if (this.isRefusalJudged(stop, bound, pausedThere, module)) return false
     this.rebuildRuleFromBreakLocations(
       stop,
       bound,
@@ -3889,6 +3923,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       line: bound.line,
       column: bound.column,
       generated: onTheWay?.boundAt,
+      ...(module.coexisting && { scriptId: module.script?.scriptId }),
     }
     this.journalRuleFromBreakLocations(
       stop,
@@ -4441,6 +4476,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       if (this.isModuleInAnotherLayerOfStop(stop, name, event))
         this.track(this.adoptInstance(stop, name, event))
       if (!this.isModuleOfStop(stop, name, event)) continue
+      if (
+        this.isSealedAsAnotherScript(stop, event) &&
+        this.isCoexistingModule(stop, name)
+      ) {
+        // A server module parsed again under a new script id (a route's first compile) lives beside the sealed script for the whole run.
+        this.track(this.adoptInstance(stop, name, event, true))
+        continue
+      }
       if (this.isSealedAsAnotherScript(stop, event)) {
         // A Pages run names the changed file with SOURCE_CHANGED; every other run keeps its text.
         this.fail(
@@ -4476,6 +4519,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (session) this.track(this.retakeNewsByBreakLocations(stop, session))
   }
 
+  /** Tells {@link bindParsedScript} whether a server stop's module announced again under a new script id is a coexisting instance and no change of the sealed module: a stop of a server participant in a run that is no Pages run (browser stops and Pages runs keep failing). @example this.isCoexistingModule(stop, 'server') // true for a server stop of an App Router run */
+  private isCoexistingModule(stop: PreparedStop, name: Participant): boolean {
+    return stop.participant === 'server' && name === 'server' && !this.pagesRun
+  }
+
   /** Tells {@link bindParsedScript} whether a stop's module was already announced under another script id than the one announced now. @example this.isSealedAsAnotherScript(stop, event) // false for the module's first announcement */
   private isSealedAsAnotherScript(
     stop: PreparedStop,
@@ -4504,6 +4552,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @param stop - The declared server stop.
    * @param name - The participant whose runtime announced the script.
    * @param event - The announced script.
+   * @param coexisting - `true` for the stop's own module announced again at the sealed address under a new script id (a route's first compile): it replaces no older script and no newer script replaces it, it is accepted only when its map names the frozen original with identical text and journaled as `stop.instance-coexisting`, and a differing original ends the run with `SOURCE_CHANGED` at once ({@link sourceChangedText}); a read timeout or an invalid map is still a refused instance.
    * @example
    * ```ts
    * await this.adoptInstance(stop, 'server', event) // journals stop.instance-sealed for (middleware)/./auth.config.ts
@@ -4513,21 +4562,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     stop: PreparedStop,
     name: Participant,
     event: Protocol.Debugger.ScriptParsedEvent,
+    coexisting = false,
   ): Promise<void> {
     if (!this.participants[name].cdp || !this.isRunOpen()) return
     const order = this.announceScript(name, event.scriptId)
-    // A newer script of the same address replaces the older one that is still being read or was refused, unless a pause is held or captured in the older one (F460).
-    this.forgetSupersededScripts(
-      stop.unusableInstances.entries(),
-      name,
-      event.url,
-      order,
-      (scriptId) => {
-        stop.unusableInstances.delete(scriptId)
-        this.releaseScriptAnnouncement(name, scriptId)
-      },
-      (other) => other.url,
-    )
+    // A newer script of the same address replaces the older one that is still being read or was refused, unless a pause is held or captured in the older one (F460); a coexisting instance replaces none.
+    if (!coexisting) this.forgetSupersededUnusable(stop, name, event.url, order)
     stop.unusableInstances.set(event.scriptId, {
       url: event.url,
       reason: 'its text had not been read yet',
@@ -4559,17 +4599,81 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     } catch (error) {
       if (!this.isRunOpen() || !stop.unusableInstances.has(event.scriptId))
         return
-      const reason = this.journalCauseOf(error)
-      stop.unusableInstances.set(event.scriptId, { url: event.url, reason })
-      this.journalStopModule('stop.instance-refused', { ...journaled, reason })
+      this.refuseInstance(stop, event, error, coexisting, journaled)
       return
     }
     stop.unusableInstances.delete(event.scriptId)
     // Only the scripts announced before this one are replaced: a newer script of the address may have been accepted while this older one was read (F476).
+    if (!coexisting)
+      this.forgetSupersededInstances(stop, name, event.url, order)
+    stop.instances.set(
+      event.scriptId,
+      coexisting ? { ...instance, coexisting: true } : instance,
+    )
+    this.journalStopModule(
+      coexisting ? 'stop.instance-coexisting' : 'stop.instance-sealed',
+      { ...journaled, hashes: instance.verifier.hashes },
+    )
+    this.readmitHeldPause(stop, name, event.scriptId)
+  }
+
+  /**
+   * Handles an instance whose text could not be turned into a verified bundle, for {@link adoptInstance}: a coexisting instance whose map holds another original text ends the run with `SOURCE_CHANGED` at once; every other cause (read failure or timeout, invalid map, another address) is journaled as a refused instance.
+   * @param stop - The declared server stop.
+   * @param event - The announced script.
+   * @param error - What the read or the verification threw.
+   * @param coexisting - Whether the script is a coexisting instance of the sealed module.
+   * @param journaled - The journal fields of the script.
+   * @example this.refuseInstance(stop, event, error, true, journaled)
+   */
+  private refuseInstance(
+    stop: PreparedStop,
+    event: Protocol.Debugger.ScriptParsedEvent,
+    error: unknown,
+    coexisting: boolean,
+    journaled: Record<string, unknown>,
+  ): void {
+    // The module at its own address holds another original than the frozen one: the source changed, which needs no hit to be known.
+    if (coexisting && isChangedOriginalError(error)) {
+      this.fail(this.sourceChangedText(stop))
+      return
+    }
+    const reason = this.journalCauseOf(error)
+    stop.unusableInstances.set(event.scriptId, { url: event.url, reason })
+    this.journalStopModule('stop.instance-refused', { ...journaled, reason })
+  }
+
+  /** Forgets the older unusable entries (text unread or refused) of a stop at the address a newer script replaces, for {@link adoptInstance}; a pause held in one keeps it ({@link forgetSupersededScripts}). @example this.forgetSupersededUnusable(stop, 'server', event.url, order) */
+  private forgetSupersededUnusable(
+    stop: PreparedStop,
+    name: Participant,
+    url: string,
+    order: number,
+  ): void {
+    this.forgetSupersededScripts(
+      stop.unusableInstances.entries(),
+      name,
+      url,
+      order,
+      (scriptId) => {
+        stop.unusableInstances.delete(scriptId)
+        this.releaseScriptAnnouncement(name, scriptId)
+      },
+      (other) => other.url,
+    )
+  }
+
+  /** Forgets the older accepted instances of a stop at the address a newer script replaces, for {@link adoptInstance}; a pause held in one keeps it ({@link forgetSupersededScripts}). @example this.forgetSupersededInstances(stop, 'server', event.url, order) */
+  private forgetSupersededInstances(
+    stop: PreparedStop,
+    name: Participant,
+    url: string,
+    order: number,
+  ): void {
     this.forgetSupersededScripts(
       stop.instances.entries(),
       name,
-      event.url,
+      url,
       order,
       (scriptId) => {
         stop.instances.delete(scriptId)
@@ -4577,12 +4681,6 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       },
       (other) => other.script.url,
     )
-    stop.instances.set(event.scriptId, instance)
-    this.journalStopModule('stop.instance-sealed', {
-      ...journaled,
-      hashes: instance.verifier.hashes,
-    })
-    this.readmitHeldPause(stop, name, event.scriptId)
   }
 
   /**
@@ -4741,7 +4839,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    */
   private journalStopModule(
     type:
-      'stop.module-parsed' | 'stop.instance-sealed' | 'stop.instance-refused',
+      | 'stop.module-parsed'
+      | 'stop.instance-sealed'
+      | 'stop.instance-coexisting'
+      | 'stop.instance-refused',
     payload: Record<string, unknown>,
   ): void {
     const journaled = this.stopModuleJournaled.get(type) ?? 0
