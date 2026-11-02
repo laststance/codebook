@@ -298,7 +298,14 @@ Formatting: `pnpm --dir extension format` / `format:check` and the lint-staged h
 - `pnpm --dir extension health:static` (~2 s; in `check` after `lint`, before tests): same cyclomatic/cognitive limits without coverage, per function (`--baseline-mode identity`), against `fallow-health-baseline.json`. CRAP needs coverage → stays with `pnpm health`.
   - Fixers run it after every change, before the full gate.
   - Fix new findings in the source; re-save the baseline (`fallow health --complexity --max-crap inf --baseline-mode identity --save-baseline fallow-health-baseline.json`) only to drop fixed findings, never to absorb one.
-- `pnpm --dir extension architecture` (~1 s; own CI job): `fallow architecture --fail-on-issues` against `fallow-architecture-baseline.json`, which holds no cycle: a new import cycle fails. Fallow's other opt-in commands (`security`, `similar-code`, `mutation`, `flags`) are no gate: only deterministic pass/fail metrics gate.
+- `pnpm --dir extension architecture` (~1 s; own CI job): `fallow architecture --fail-on-issues` against `fallow-architecture-baseline.json`, which holds no cycle: a new import cycle fails.
+- **Every free local Fallow analysis runs in CI.**
+  - Today that also means `audit`, `flags`, `security`, `similar-code`, `mutation` (changed code vs base) and `suppressions`.
+  - A command a Fallow update adds gets its CI step in that cycle's dependency step.
+  - Deterministic pass/fail results gate, against a baseline where the command has one.
+  - Candidate or discovery output (`security`, `similar-code`, `flags`, `suppressions`) goes to the job summary without gating.
+  - Prefer `parallel:` steps in one job over new jobs: 20 concurrent jobs on the Free plan.
+  - Fallow Cloud runtime coverage stays out: it is paid.
 
 ## Native QA
 
