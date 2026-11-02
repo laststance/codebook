@@ -5880,6 +5880,26 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Waits for the read of the text of the script a participant's held pause is in, so that {@link readmitHeldPause} has judged the pause (and matched the whole stop set) before {@link inspect} chooses the stop to inspect; the wait has the read's own bound ({@link REPOSITORY_STOP_INSTANCE_READ_MS}) because the read does.
+   * @param name - The participant whose held pause is asked.
+   * @example
+   * ```ts
+   * await this.settleHeldInstanceRead('server') // returns at once when no pause is held in an unread script
+   * ```
+   */
+  private async settleHeldInstanceRead(name: Participant): Promise<void> {
+    const scriptId =
+        this.participants[name].unannouncedPause?.event.callFrames[0]?.location
+          .scriptId,
+      read =
+        scriptId === undefined
+          ? undefined
+          : this.instanceTexts.get(`${name}:${scriptId}`)
+    // A failed or timed-out read is a refused instance: the pause then fails with the unusable-instance sentence as before.
+    await read?.catch(() => undefined)
+  }
+
+  /**
    * Judges again a pause that was held in a script of a declared stop's module before that script was accepted as an instance of it, for {@link adoptInstance}: the pause arrived while the instance's text was still being read, when no map placed it.
    * @param stop - The declared stop whose instance was just accepted.
    * @param name - The participant whose runtime paused.
@@ -5898,9 +5918,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       held = participant.unannouncedPause
     if (
       !held ||
-      held.expectedStop !== stop ||
-      this.expectedStop(name) !== stop ||
+      !held.expectedStop ||
+      this.expectedStop(name) !== held.expectedStop ||
       held.event.callFrames[0]?.location.scriptId !== scriptId
+    )
+      return
+    // The pause may belong to another member of the expected stop's set (D15): it is judged again whenever any stop of the module accepted the instance, and expectedStopFor then matches the whole set.
+    if (
+      held.expectedStop !== stop &&
+      !this.stopSetFrom(this.stops.indexOf(held.expectedStop)).includes(stop)
     )
       return
     participant.unannouncedPause = undefined
@@ -9198,6 +9224,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * ```
    */
   private async inspect(pause: PauseIdentity): Promise<void> {
+    // A pause held in an instance whose text is still being read is matched to the set's stops once the instance is accepted, before the stop to inspect is chosen.
+    // A stop that is alone in its set has no other member the pause could belong to, so it waits as before.
+    if (this.stopSetFrom(this.stopIndex).length > 1)
+      await this.settleHeldInstanceRead(this.stops[this.stopIndex]!.participant)
     const stop = this.stops[this.stopIndex]!,
       participant = this.participants[stop.participant],
       phase = stop.participant === 'server' ? 'paused-server' : 'paused-browser'

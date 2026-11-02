@@ -315,3 +315,37 @@ test('a text operation is followed by two render pauses observed after operation
     ],
   )
 })
+
+// Value: protects=D15 with H2: when the second declared stop of a set is hit in a new (rsc) instance whose text is still being read, the pause waits for the read and is then matched to the second declared stop, so the set pauses in the order the render ran it; fails_when=the pause is judged before the instance is accepted, the first declared stop is expected, and the run fails with "DAP frame differs from the bound configured source position"; no_claim=the length of a real script read
+test('a hit of the second set stop in an instance still being read is matched to that stop once the instance is accepted', async (context) => {
+  // Arrange: a set sealed in action-browser, the rsc instance announced with its text read held back
+  const harness = await twoStopSet(context, 'action-browser')
+  const releaseRead = harness.server!.holdScriptRead('rsc-1')
+  harness.server!.announceInstance('rsc-1', 'rsc', `;${TWO_LINE_MAP}`)
+  // Act: the second declared stop runs first, in the instance nobody has read yet
+  harness.server!.hit({
+    scriptId: 'rsc-1',
+    generated: SECOND_STOP_IN_INSTANCE,
+    source: SECOND_STOP_SOURCE,
+  })
+  await new Promise<void>((resolve) => setTimeout(resolve, 100))
+  releaseRead()
+  const first = await nextPause(harness)
+  // Assert
+  assert.equal(first.execution, 'server-render')
+  assert.equal(first.source.scriptId, 'rsc-1')
+  assert.equal(first.declaredIndex, 1)
+  assert.equal(first.executionIndex, 0)
+  assert.equal(harness.run.view().failures.length, 0)
+  // Act: continue it, then the first declared stop runs in the same instance
+  await harness.run.continue('server', first.pause)
+  await waitUntil(() => harness.server!.continues.length === 1, 'resumed')
+  harness.server!.hit({
+    scriptId: 'rsc-1',
+    generated: FIRST_STOP_IN_INSTANCE,
+  })
+  const second = await nextPause(harness, first.id)
+  // Assert
+  assert.deepEqual([second.declaredIndex, second.executionIndex], [0, 1])
+  assert.equal(harness.run.view().failures.length, 0)
+})
