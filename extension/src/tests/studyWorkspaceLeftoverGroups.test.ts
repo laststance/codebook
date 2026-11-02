@@ -5,7 +5,11 @@ import { test } from 'node:test'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
-import { workspaceHarness, openRetainedStudy } from './studyWorkspaceHarness'
+import {
+  openRetainedStudy,
+  recordedReaderHarness,
+  workspaceHarness,
+} from './studyWorkspaceHarness'
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 
 type Harness = Awaited<ReturnType<typeof workspaceHarness>>
@@ -1819,6 +1823,183 @@ test('a learner’s pick of the same file in another group while the return show
         activeColumn: harness.editor.window.tabGroups.activeTabGroup.viewColumn,
       },
       { answer: FOCUS_KEPT_ANSWER, activeFile: 'data.ts', activeColumn: 5 },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+for (const [positionMs, moment, expectedLabel, expectedStopLines] of [
+  [
+    100,
+    'an observed moment',
+    '  Recorded: src/theme.ts:1 · 0.10 s · declared 1',
+    [0],
+  ],
+  [20, 'a gap', '  Recorded source · Not recorded at this moment', []],
+] as const)
+  // Value: protects=the source label and stopped line of a recording's returned source: the editor the return opens in the Study source column gets the label and the stop of the selected moment like the ordinary placement draws them (the observed moment's "Recorded:" label and stopped line, a gap's "Not recorded" label and no stop), since decorations belong to one editor and the moved copy kept the earlier ones; fails_when=the return decorates nothing on the live source view, or draws a stop in a gap, so the returned source shows no label or another moment's stop after Arrange; why_new=Cycle 0072 task 1, test gap (the stopped-line test uses a repository source, which has no label, and the CRLF test calls the label builder alone); seam=recordedReaderHarness with an open recording and a seek, a learner group, moveSource, the reader's arrange action, sourceIdentityDecorations and decoratedStartLines; no_claim=how the editor lays out the label
+  test(`Arrange draws the label and the stop of ${moment} on the recording’s source it returns to the Study column from the learner’s group`, async () => {
+    // Arrange: a saved recording is open at the moment and its source tab was moved into the learner's group.
+    const harness = await recordedReaderHarness(true, true)
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    try {
+      await harness.reader.openRecording(harness.studyId)
+      await harness.controller.settle()
+      harness.controller.command({
+        action: 'seek',
+        studyId: harness.studyId,
+        expectedRevision: harness.controller.state().revision,
+        positionMs,
+      })
+      await harness.controller.settle()
+      harness.moveSource((await addLearnerGroup(harness)).viewColumn)
+      const sourceUri = harness.reader.inspect().sourceUri
+      assert.equal(
+        harness.reader.presentationState().layoutConfirmed,
+        false,
+        'the setup must start from the refused state',
+      )
+      const labelsBefore = harness.sourceIdentityDecorations().length
+      harness.clearDecorations()
+      // Act
+      await harness.reader.action('arrange')
+      // Assert
+      const labelled = harness
+        .sourceIdentityDecorations()
+        .slice(labelsBefore)
+        .at(-1)
+      assert.deepEqual(
+        {
+          uri: labelled?.uri,
+          labels: JSON.parse(JSON.stringify(labelled?.ranges ?? [])).map(
+            (decoration: {
+              renderOptions: { after: { contentText: string } }
+            }) => decoration.renderOptions.after.contentText,
+          ),
+          stopLines:
+            harness.decoratedStartLines()[
+              harness.decoratedColumns().lastIndexOf(2)
+            ],
+        },
+        {
+          uri: sourceUri,
+          labels: [expectedLabel],
+          stopLines: expectedStopLines,
+        },
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
+const NO_FOCUS_COMMAND_ANSWER =
+  'Error: The editor focus changed while the captured source was returned, and your tab is in a group the editor has no focus command for, so Codebook could not bring it back. Choose Restore Study workspace layout again.'
+
+for (const [position, revealedByNumber] of [
+  [9, true],
+  [10, false],
+] as const)
+  // Value: protects=the editor's numbered tab command (it has openEditorAtIndex1 to 9 only): a learner's chat tab that the late show of the source covered is brought back by its number up to the ninth tab of its group, and the tenth is left alone with no command run on a number the editor does not have; fails_when=the limit is dropped or off by one, so the tenth tab runs openEditorAtIndex10 on the active group, or the ninth is given up and the answer claims the choice was kept; why_new=Cycle 0072 task 1, test gap (EDITOR_NUMBERED_TAB_COMMAND_LIMIT was never reached: the other cases stand at the first positions or in the ninth group, which has no focus command at all); seam=restoreWithLearnerDuringSecondShow, a source column filled with files, focusChatEditorTab, the late show covering the chat tab and the harness's command log; no_claim=the chat tab stands for any non-text tab
+  test(`a learner’s chat tab at position ${position} of the source column that the late show covered ${revealedByNumber ? 'is brought to the front by its number' : 'is not revealed by a numbered command the editor does not have'}`, async () => {
+    // Arrange: the moved copy has the keyboard in the fourth group; the Study source column holds files, and the first show adds the source tab before the chat tab.
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    try {
+      await openRetainedStudy(harness)
+      await addLearnerGroup(harness)
+      // The first show puts the source tab in this column before the learner's chat tab: the chat tab stands at the given position.
+      for (let index = 1; index < position - 1; index++)
+        harness.focusMutableDraft(`late${index}.ts`, 2)
+      harness.moveSource(4)
+      const commandsBefore = harness.commands.length
+      // Act: the learner opens the chat tab in the source column while the second show is pending; the show then covers it.
+      const answer = await restoreWithLearnerDuringSecondShow(harness, () => {
+        harness.focusChatEditorTab(2)
+      })
+      // Assert
+      const sourceColumn = harness.groups.find(
+        (group) => group.viewColumn === 2,
+      )!
+      assert.deepEqual(
+        {
+          answer,
+          chatPosition:
+            sourceColumn.tabs.findIndex((tab) => tab.label === 'Chat') + 1,
+          frontOfSourceColumn: sourceColumn.activeTab?.label,
+          numberedTabCommands: harness.commands
+            .slice(commandsBefore)
+            .filter((command) => /openEditorAtIndex/.test(command)),
+        },
+        revealedByNumber
+          ? {
+              answer: FOCUS_KEPT_ANSWER,
+              chatPosition: 9,
+              frontOfSourceColumn: 'Chat',
+              numberedTabCommands: ['workbench.action.openEditorAtIndex9'],
+            }
+          : {
+              answer: NO_FOCUS_COMMAND_ANSWER,
+              chatPosition: 10,
+              frontOfSourceColumn: 'Captured-theme.ts',
+              numberedTabCommands: [],
+            },
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=the bound of the return's corrective re-shows (LEARNER_CHOICE_RESHOW_LIMIT, 3): a learner who picks another file at every re-show is shown their pick again three times and no more, so the return ends instead of following the learner for good; fails_when=the loop has no bound or a larger one, so a fourth re-show of the learner's latest pick follows, or a smaller one stops the learner's picks before the third; why_new=Cycle 0072 task 1, test gap (the newer-pick test ends after two re-shows and never reaches the bound); seam=restoreWithLearnerDuringSecondShow, holdNextTextDocumentShow held for each re-show, focusMutableDraft as the learner's picks and the harness's list of shown documents; no_claim=which file the learner ends in: a pick made while the third re-show waits is covered by it
+test('a learner who picks another file at every corrective re-show is shown their pick again three times and the return then ends', async () => {
+  // Arrange: the moved copy has the keyboard in the fourth group, which also holds data.ts and search.tsx.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await openRetainedStudy(harness)
+    harness.moveSource((await addLearnerGroup(harness)).viewColumn)
+    const showsBefore = harness.textDocumentShows().length
+    // Act: the learner picks data.ts while the second show is pending, and a different file of the group at each of the three re-shows that wait.
+    const answer = await restoreWithLearnerDuringSecondShow(
+      harness,
+      () => {
+        harness.focusMutableDraft('data.ts', 4)
+      },
+      async () => {
+        for (const file of ['search.tsx', 'data.ts', 'search.tsx']) {
+          const reshow = harness.holdNextTextDocumentShow()
+          // A bound lower than three ends the return before this re-show starts: fail then, not wait for ever.
+          let giveUp: NodeJS.Timeout | undefined
+          const started = await Promise.race([
+            reshow.started.then(() => true),
+            new Promise<boolean>((resolve) => {
+              giveUp = setTimeout(resolve, 1_000, false)
+            }),
+          ])
+          clearTimeout(giveUp)
+          assert.ok(
+            started,
+            `the re-show before the pick of ${file} never began`,
+          )
+          harness.focusMutableDraft(file, 4)
+          reshow.release()
+        }
+      },
+    )
+    // Assert
+    assert.deepEqual(
+      {
+        answer,
+        reshownPicks: harness
+          .textDocumentShows()
+          .slice(showsBefore)
+          .map((shown) => shown.name)
+          .filter((name) => name === 'data.ts' || name === 'search.tsx'),
+      },
+      {
+        answer: FOCUS_KEPT_ANSWER,
+        reshownPicks: ['data.ts', 'search.tsx', 'data.ts'],
+      },
     )
   } finally {
     await harness.close()

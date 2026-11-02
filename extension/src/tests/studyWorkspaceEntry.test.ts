@@ -1661,6 +1661,52 @@ test('a control refused as pending writes an Output entry naming the held presen
   }
 })
 
+// Value: protects=the markers the pending-refusal entry tells apart: a reader close and a Live Return are named as refusing a control with the method that set them and their age, while a held presentation operation and the control, refresh and arrange markers are named as not part of the refusal (a native block of 80 s showed nothing of what held it); fails_when=the entry omits a marker that refuses, or names one that does not refuse as if it did, so the next native block is read from the wrong marker; why_new=Cycle 0072 task 2 diagnostic (the transition case above covers one marker of seven); seam=the reader's marker setters, assertPresentationIdle and the diagnostics log; no_claim=which marker a native refusal held, and a marker set by a real close or Live Return
+test('a control refused as pending names every marker that refuses and says apart those that are not part of the refusal', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  try {
+    await harness.reader.open()
+    harness.reader['closing'] = true
+    harness.reader['returningCurrent'] = 'agent'
+    harness.reader['presentationOperation'] = new Promise<never>(
+      () => undefined,
+    )
+    harness.reader['busy'] = Symbol('control')
+
+    // Act
+    const refusal = (() => {
+      try {
+        harness.reader.assertPresentationIdle()
+        return 'idle'
+      } catch (error) {
+        return String(error)
+      }
+    })()
+
+    // Assert
+    assert.match(refusal, /A presentation change or reader close is pending/)
+    const entry = logged.find(
+      (candidate) => candidate.surface === 'presentation:pending-refused',
+    )
+    assert.match(
+      entry?.cause ?? '',
+      /^closing: set by \S+ \d+ ms ago\nreturningCurrent: set by \S+ \d+ ms ago\npresentationOperation \(not part of the refusal\): set by \S+ \d+ ms ago\nbusy: set \(not part of the refusal\)$/,
+    )
+  } finally {
+    harness.reader['closing'] = false
+    harness.reader['returningCurrent'] = undefined
+    harness.reader['presentationOperation'] = undefined
+    harness.reader['busy'] = undefined
+    await harness.close()
+  }
+})
+
 // Value: protects=Codebook: Arrange Study Workspace after a presentation change that was refused while Cursor's Focus Agent gives the Agent chat its keyboard back and never answers (the audit of native C72-2: the refused change waited for that command with its presentation transition still set, so every control answered "A presentation change or reader close is pending." until Close and Open): the focus return is given up after the presentation deadline, logged as presentation:focus-return-timed-out, the transition is released and the next Arrange answers; fails_when=the failure path awaits an unanswered editor command with no deadline and keeps the transition set; why_new=Cycle 0072 task 2 (code-level hazard of the failure path); seam=recordedReaderHarness, addSeparateEditorPart and focusTab, changeEditorLayout (the layout differs from the receipt), holdNextCommand on composer.focusComposer, changePresentation, the fake clock, the diagnostics log; no_claim=that this was the native cause of the 80 s block
 test('a refused presentation change releases its transition when the chat focus return never answers, and a later Arrange answers', async (context) => {
   // Arrange
