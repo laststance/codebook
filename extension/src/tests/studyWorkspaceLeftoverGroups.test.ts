@@ -845,6 +845,104 @@ test('a learner’s click while the show that hands the copy’s keyboard to the
   }
 })
 
+// Value: protects=a learner's switch to a tab that is no text file (a Settings page, here the harness's chat tab) in the copy's group while the second show is pending: that group keeps the keyboard, the copy stays open and the Restore is not answered as confirmed; fails_when=only text-editor changes are watched, the late show takes the keyboard back and the Restore answers success with the captured source active; why_new=Cycle 0072 task 1 candidate Codex review of f46f65c4 (P2 1); seam=the workspace harness's holdNextTextDocumentShow held twice and focusChatEditorTab as the learner's switch; no_claim=the harness's chat tab stands for any non-text tab
+test('a learner’s switch to a non-text tab while the show that hands the copy’s keyboard to the source is pending keeps that group focused', async () => {
+  // Arrange: the moved copy has the keyboard in the fourth group; the first show runs, the second one is held.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let release = (): void => {}
+  try {
+    await openRetainedStudy(harness)
+    const learnerGroup = await addLearnerGroup(harness)
+    harness.moveSource(learnerGroup.viewColumn)
+    const before = harness.reader.presentationState()
+    const sourceUri = harness.reader.inspect().sourceUri!
+    const first = harness.holdNextTextDocumentShow({ uri: sourceUri })
+    const restoring = harness.reader
+      .changePresentation(
+        {
+          presentationId: before.presentationId,
+          expectedRevision: before.presentationControlRevision,
+          mode: 'study-workspace',
+          action: 'restore',
+        },
+        'agent',
+      )
+      .then(
+        () => 'answered',
+        (error: unknown) => String(error),
+      )
+    await first.started
+    first.release()
+    const second = harness.holdNextTextDocumentShow({ uri: sourceUri })
+    release = second.release
+    await second.started
+    // Act: the learner switches to a tab that is no text file, then the second show finishes.
+    harness.focusChatEditorTab(learnerGroup.viewColumn)
+    second.release()
+    const answer = await restoring
+    // Assert
+    assert.deepEqual(
+      {
+        answer,
+        activeColumn: harness.editor.window.tabGroups.activeTabGroup.viewColumn,
+        copyStillOpen: learnerGroup.tabs.some(
+          (tab) => tab.label === 'Captured-theme.ts',
+        ),
+      },
+      {
+        answer:
+          'Error: The editor focus changed while the captured source was returned; your choice was kept. Choose Restore Study workspace layout again.',
+        activeColumn: 4,
+        copyStillOpen: true,
+      },
+    )
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
+// Value: protects=a selection the learner changes in the moved copy while the first show is pending: the new selection travels to the returned editor; fails_when=the selections are read before the waits, so the stale ones are applied and the copy closes with the learner's change lost; why_new=Cycle 0072 task 1 candidate Codex review of f46f65c4 (P2 2); seam=the workspace harness's holdNextTextDocumentShow and the moved editor's selections; no_claim=the visible range
+test('a selection the learner changes in the moved copy while the first show is pending travels to the returned editor', async () => {
+  // Arrange: the first show of the source is held while the moved copy has its selection at line 22.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let release = (): void => {}
+  try {
+    await openRetainedStudy(harness)
+    const learnerGroup = await addLearnerGroup(harness)
+    harness.moveSource(learnerGroup.viewColumn)
+    const sourceUri = harness.reader.inspect().sourceUri
+    const copyEditor = harness.editor.window.visibleTextEditors.find(
+      (editor) =>
+        editor.viewColumn === learnerGroup.viewColumn &&
+        editor.document.uri.toString() === sourceUri,
+    )!
+    const held = harness.holdNextTextDocumentShow({ uri: sourceUri! })
+    release = held.release
+    const arranging = harness.reader.action('arrange')
+    await held.started
+    // Act: the learner moves the selection of the copy to line 7, then the show finishes.
+    const at = new harness.editor.Position(7, 0)
+    Reflect.set(copyEditor, 'selections', [{ anchor: at, active: at }])
+    held.release()
+    await arranging
+    // Assert
+    const returned = harness.editor.window.visibleTextEditors.find(
+      (editor) =>
+        editor.viewColumn === 2 && editor.document.uri.toString() === sourceUri,
+    )
+    assert.deepEqual(
+      returned?.selections.map((selection) => selection.active.line),
+      [7],
+    )
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
 // Value: protects=the reading state of the moved copy: two selections the learner made in it travel to the editor the return opens in the Study source column; fails_when=the return opens the new editor at the stopped line only, so the learner's selections are lost when the copy closes; why_new=Cycle 0072 task 1 candidate Codex review of 2dea5111 (P2 2); seam=the workspace harness's source editors and their selections; no_claim=the visible range, which the harness reports as one fixed range
 test('Arrange keeps two selections the learner made in the moved copy of the captured source', async () => {
   // Arrange: the moved copy in the fourth group carries two selections.

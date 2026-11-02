@@ -3480,11 +3480,25 @@ export class StudyWorkspace {
       const takeKeyboardWithSource = async (
         document: vscode.TextDocument,
       ): Promise<void> => {
-        const chosen: vscode.TextEditor[] = []
-        const listener = vscode.window.onDidChangeActiveTextEditor((editor) => {
-          if (editor && editor.document.uri.toString() !== sourceUri)
-            chosen.push(editor)
-        })
+        // What the learner chose meanwhile: a text file (the active text editor changes) or a tab that is no text file (a Settings page), seen as the front tab of the active group.
+        const chosen: { column: number; document?: vscode.TextDocument }[] = []
+        const listeners = [
+          vscode.window.onDidChangeActiveTextEditor((editor) => {
+            if (editor && editor.document.uri.toString() !== sourceUri)
+              chosen.push({
+                column: editor.viewColumn ?? sourceColumn,
+                document: editor.document,
+              })
+          }),
+          vscode.window.tabGroups.onDidChangeTabs(() => {
+            const group = vscode.window.tabGroups.activeTabGroup
+            if (
+              group.activeTab &&
+              this.textTabUri(group.activeTab) === undefined
+            )
+              chosen.push({ column: group.viewColumn })
+          }),
+        ]
         try {
           await this.showTextDocumentNoted(document, {
             viewColumn: sourceColumn,
@@ -3492,16 +3506,22 @@ export class StudyWorkspace {
             preview: false,
           })
         } finally {
-          listener.dispose()
+          for (const listener of listeners) listener.dispose()
         }
         assertOwned()
-        const learnersFile = chosen.at(-1)
-        if (!learnersFile) return
-        await this.showTextDocumentNoted(learnersFile.document, {
-          viewColumn: learnersFile.viewColumn,
-          preserveFocus: false,
-          preview: false,
-        })
+        const learnersChoice = chosen.at(-1)
+        if (!learnersChoice) return
+        // The learner's target gets the keyboard back: a file is shown again, any other tab through the focus command of its group.
+        if (learnersChoice.document)
+          await this.showTextDocumentNoted(learnersChoice.document, {
+            viewColumn: learnersChoice.column,
+            preserveFocus: false,
+            preview: false,
+          })
+        else {
+          const focusCommand = focusEditorGroupCommand(learnersChoice.column)
+          if (focusCommand) await this.executeEditorCommand(focusCommand)
+        }
         abortForLearner()
       }
       /** Closes the Codebook-owned copy where the rules above allow it, and keeps a learner's choice of focus made meanwhile. */
@@ -3527,8 +3547,6 @@ export class StudyWorkspace {
               candidate.viewColumn === displaced.group.viewColumn &&
               candidate.document.uri.toString() === sourceUri,
           )
-          const copySelections = copyEditor?.selections
-          const restoreReading = retainEditorReadingPosition(copyEditor)
           const editor = await this.showTextDocumentNoted(document, {
             viewColumn: sourceColumn,
             preserveFocus: true,
@@ -3537,8 +3555,17 @@ export class StudyWorkspace {
           })
           assertOwned()
           assertLearnerKept()
-          if (copySelections) editor.selections = copySelections
-          await restoreReading(editor, transition.cancellation.signal)
+          // Read after the waits above, so a selection the learner changed meanwhile travels, not the one from before.
+          const copyNow = vscode.window.visibleTextEditors.find(
+            (candidate) =>
+              candidate.viewColumn === displaced.group.viewColumn &&
+              candidate.document.uri.toString() === sourceUri,
+          )
+          if (copyNow) editor.selections = copyNow.selections
+          await retainEditorReadingPosition(copyNow)(
+            editor,
+            transition.cancellation.signal,
+          )
           assertOwned()
           if (copyHasKeyboard) {
             await takeKeyboardWithSource(document)
