@@ -2513,3 +2513,147 @@ test("the fake editor's stale name of the active group follows a rebuild that co
     await harness.close()
   }
 })
+
+// Value: protects=the Recording after a reload beside Cursor's Agent chat, where the learner's group is active with cards.tsx in front: Codebook's own showTextDocument of the observation's captured source into that group comes to its front, and Cursor reports no active text editor and then that source; none of it is the learner's input, so the source-group retirement goes on and the entry opens (native C72-2 candidate f97da11b: "Guard: retireSourceDerivedGroup, Failed checks: learner input", "+61 ms active text editor none, +74 ms active text editor column 2", Codebook's own effect "+0 ms showTextDocument column 2 preserveFocus true"; it passed natively on d3204739 and f46f65c4); fails_when=a document Codebook itself showed is read as the learner's pick unless it is the retiring source, or a captured source in front of the active group counts as the learner's when no text editor is active, so the entry stops with "Native input changed during source-group retirement; the newer choice was preserved."; why_new=Cycle 0072 task 5 native C72-2 f97da11b (7de22238 narrowed the own-focus reading to the retiring source and dropped the captured-source tab in front); seam=articleRecordingLayoutHarness, addSeparateEditorPart (the chat group outside the grid), a held showTextDocument (the native copy), focusExistingSource and reportNoActiveTextEditor (Cursor's reports), the Output entry; no_claim=the real Cursor's event timing (native Cursor trial) and a run through the Study pane's Recording button (this is the Wiki recording re-entry, which runs the same retirement)
+test("in Cursor, the source-group retirement accepts no active text editor and then the source Codebook itself showed in front of the learner's group", async () => {
+  // Arrange
+  const harness = await articleRecordingLayoutHarness(true, true)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.replaceGroupObjectsOnTabChanges()
+  const learnerFile = harness.focusMutableDraft('cards.tsx', 1)
+  const chat = harness.addSeparateEditorPart()
+  const entries: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry): void => {
+      entries.push(entry)
+    },
+    show: () => undefined,
+  }
+  const show = harness.editor.window.showTextDocument
+  let release = (): void => {},
+    entered = (): void => {},
+    opening: Promise<string> | undefined,
+    copy: Awaited<ReturnType<typeof show>> | undefined
+  const held = new Promise<void>((resolve) => {
+      release = resolve
+    }),
+    started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+  try {
+    await harness.reader.openRepositoryEvidence(
+      harness.binding,
+      false,
+      undefined,
+      harness.origin,
+    )
+    chat.focusTab()
+    const sourceUri = harness.reader.inspect().sourceUri,
+      commandsBeforeRecording = harness.commands.length
+    harness.editor.window.showTextDocument = async (document, options) => {
+      const shown = await show(document, options)
+      if (
+        shown.document.uri.toString() === sourceUri &&
+        options?.viewColumn === 2 &&
+        harness.commands
+          .slice(commandsBeforeRecording)
+          .includes('workbench.action.newGroupAbove')
+      ) {
+        copy = shown
+        entered()
+        await held
+      }
+      return shown
+    }
+    // The learner's group has the keyboard with cards.tsx in front when the retirement begins, as in the native run.
+    const retireSourceDerivedGroup = harness.reader[
+      'retireSourceDerivedGroup'
+    ].bind(harness.reader)
+    harness.reader['retireSourceDerivedGroup'] = (...input) => {
+      learnerFile.focus()
+      return retireSourceDerivedGroup(...input)
+    }
+    opening = harness.reader
+      .openRepositoryEvidence(harness.binding, true, undefined, harness.origin)
+      .then(
+        () => 'opened',
+        (error: unknown) => String(error),
+      )
+    assert.equal(
+      await Promise.race([
+        started.then(() => 'copy reached'),
+        opening.then(String),
+      ]),
+      'copy reached',
+    )
+
+    // Act: the copy comes to the front of the active group; Cursor reports no active text editor, then the source.
+    harness.focusExistingSource(copy!)
+    harness.reportNoActiveTextEditor()
+    harness.focusExistingSource(copy!)
+    release()
+    const result = await opening
+    await harness.controller.settle()
+
+    // Assert
+    assert.deepEqual(
+      {
+        result,
+        retirementRefusals: entries
+          .map((entry) => String(Reflect.get(entry, 'cause')))
+          .filter((cause) => cause.includes('Guard: retireSourceDerivedGroup'))
+          .map((cause) => cause.split('\n').slice(0, 2).join(' | ')),
+        readiness: harness.controller.state().readiness,
+        draft: learnerFile.document.getText(),
+      },
+      {
+        result: 'opened',
+        retirementRefusals: [],
+        readiness: 'ready',
+        draft: 'Original learner draft.\n',
+      },
+    )
+  } finally {
+    release()
+    await opening
+    harness.editor.window.showTextDocument = show
+    await harness.close()
+  }
+})
+
+// Value: protects=the no-editor reading of a text tab in front of the active group in the source-group retirement: a captured source counts as Codebook's only when Codebook itself showed that document since the guard armed, so a captured source the learner picked (nothing of Codebook's showed it in this guard's window) and a learner's file still refuse; fails_when=every captured source tab counts as Codebook's, or none does, so the learner's pick of another observation's source goes unseen or Codebook's own shown source is read as the learner's (native C72-2 candidate f97da11b); why_new=Cycle 0072 task 5 native C72-2 f97da11b (keeps the review finding behind 7de22238); seam=recordedReaderHarness, the reader's open (it showed the captured source), focusExistingSource (the source in front of the active group), focusMutableDraft (the learner's file), the reader's isCodebookOwnFocus with and without a guard window; no_claim=the real Cursor's event timing
+test("the source-group retirement reads a text tab in front with no editor active as Codebook's only when Codebook showed that document since the guard armed", async () => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.open()
+    const capturedEditor = harness.editor.window.visibleTextEditors.find(
+      (editor) => editor.document.uri.path.endsWith('/Captured-theme.ts'),
+    )!
+    harness.focusExistingSource(capturedEditor)
+    const ownFocusWithNoEditor = (shownSinceMs?: number): unknown =>
+      Reflect.apply(harness.reader['isCodebookOwnFocus'], harness.reader, [
+        undefined,
+        shownSinceMs,
+      ])
+
+    // Act
+    const shownBeforeTheGuard = ownFocusWithNoEditor()
+    const shownInTheGuardWindow = ownFocusWithNoEditor(0)
+    harness.focusMutableDraft('notes.ts', 1)
+    const learnersFileInFront = ownFocusWithNoEditor(0)
+
+    // Assert
+    assert.deepEqual(
+      { shownBeforeTheGuard, shownInTheGuardWindow, learnersFileInFront },
+      {
+        shownBeforeTheGuard: false,
+        shownInTheGuardWindow: true,
+        learnersFileInFront: false,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})

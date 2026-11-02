@@ -6144,6 +6144,10 @@ export async function workspaceHarness(
       )
       replaceGroupObjects()
     },
+    /** Tells the listeners that no text editor is active, as Cursor reports the active editor for a moment when a document shown into the active group comes to its front and before it reports that document (native C72-2: "active text editor none" 61 ms, then "column 2" 74 ms). Changes no group or tab. @example harness.reportNoActiveTextEditor() */
+    reportNoActiveTextEditor(): void {
+      activeTextEditorChanged(undefined)
+    },
     /** Gives every tab of the fake tab model a new Tab object now, as Cursor's extension host does when the editor sends a whole new tab model (the model of `rebuildTabObjectsAtGroupRemoval`, without a group removal); the tab listeners hear nothing, as at a removed group's rebuild. @example harness.rebuildTabObjectsNow() */
     rebuildTabObjectsNow(): void {
       rebuildTabObjects()

@@ -2243,6 +2243,9 @@ export const REFUSAL_REPORT_EVENTS = 24
 /** The most native effects Codebook itself issued (reveals, disposals, editor commands, shown documents) that a {@link PlacementEventLog} keeps for a placement refusal report, in effects. */
 export const REFUSAL_REPORT_EFFECTS = 48
 
+/** The most documents Codebook itself showed that the reader keeps to tell its own shown tabs from the learner's, in documents. */
+export const SHOWN_DOCUMENTS_KEPT = 32
+
 /** How recent Codebook's own native effect must be for a placement guard to take the Application's inactive report as the editor's noise, in ms: Cursor 3.27.22 reports the Application inactive moments after Codebook moved panes or focus (native C72-2 ddc14faa: the report came 13 ms after the guard armed, 20 ms before its refusal). A report outside this window of Codebook's own effects may be the learner's click into the chat, which keeps the Application's group named, and stays compared. The bound is empirical: the native record gives tens of milliseconds, the rest is margin. */
 export const OWN_EFFECT_NOISE_WINDOW_MS = 1_500
 

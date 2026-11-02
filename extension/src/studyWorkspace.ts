@@ -111,6 +111,7 @@ import {
   LATE_GROUP_ACTIVATION_WAIT_MS,
   OWN_EFFECT_NOISE_WINDOW_MS,
   REFUSAL_REPORT_EFFECTS,
+  SHOWN_DOCUMENTS_KEPT,
   REFUSAL_REPORT_GROUP_TABS,
   SUMMARY_BESIDE_CHAT_MOVE_ARGUMENT,
   SUMMARY_BESIDE_CHAT_MOVED_KEY,
@@ -1166,6 +1167,9 @@ export class StudyWorkspace {
   private nodeHistoryEntriesInProgress = 0
   /** The editor's recent group and active text editor changes, for {@link refusePlacement}'s report (F382). */
   private readonly placementEvents = new PlacementEventLog()
+  /** The documents this host itself showed with `showTextDocument`, newest last and bounded, so a guard can tell a text editor or tab that Codebook's own step put in front from the learner's pick ({@link isCodebookOwnFocus}, Cycle 0072 native C72-2). */
+  private readonly documentsShownByCodebook: { atMs: number; uri: string }[] =
+    []
   /** The native effects this host itself issued (reveals, disposals, editor commands, shown documents), for {@link refusePlacement}'s report (N55-F4). */
   private readonly placementEffects = new PlacementEventLog(
     REFUSAL_REPORT_EFFECTS,
@@ -20315,7 +20319,7 @@ export class StudyWorkspace {
         if (
           editor !== initialEditor &&
           !isIssuedCopy(editor) &&
-          !this.isCodebookOwnFocus(editor)
+          !this.isCodebookOwnFocus(editor, armed.armedAtMs)
         )
           inputChanged = true
       }),
@@ -20434,7 +20438,7 @@ export class StudyWorkspace {
       ...(vscode.window.state.focused ? [] : ['window focus']),
       ...(keepsInitialInput ||
       copiedInput ||
-      this.isCodebookOwnFocus(vscode.window.activeTextEditor)
+      this.isCodebookOwnFocus(vscode.window.activeTextEditor, armed.armedAtMs)
         ? []
         : ['active input']),
       ...(source.document.version === version ? [] : ['source version']),
@@ -20443,19 +20447,34 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether the keyboard stands on something Codebook placed itself in the step being retired: the captured source being retired, or the Application or Study pane; asked by {@link retireSourceDerivedGroup} so a focus or active-editor report of Codebook's own steps is not read as a learner's input.
-   * Cursor 3.27.22 reports the active group and the active text editor moving between Codebook's own panes and the retiring captured source while the source group is retired (Cycle 0072 native C72-2). A captured source of another observation is the learner's choice. A learner's click into the Application or Study pane raises no selection event and cannot be told from Cursor's own report of the pane, so the pane case stays Codebook's.
+   * Says whether the keyboard stands on something Codebook placed itself in the step being retired: the captured source being retired, a document Codebook itself showed since the guard armed, or the Application or Study pane; asked by {@link retireSourceDerivedGroup} so a focus or active-editor report of Codebook's own steps is not read as a learner's input.
+   * Cursor 3.27.22 reports the active group and the active text editor moving between Codebook's own panes and the captured source while the source group is retired (Cycle 0072 native C72-2): a document Codebook shows with `showTextDocument` comes to the front of the active group, and the editor reports no active text editor before it reports that document. A captured source of another observation that Codebook did not show in this window is the learner's choice. A learner's click into the Application or Study pane raises no selection event and cannot be told from Cursor's own report of the pane, so the pane case stays Codebook's.
    * @param editor - The active text editor, or `undefined` for none.
-   * @returns `true` for the editor of the captured source being retired ({@link editorShowsDocument}), or when no editor is active and the active group's front tab is the Application or Study pane of this reader; `false` otherwise.
-   * @example this.isCodebookOwnFocus(vscode.window.activeTextEditor) // => true while the Application pane has the keyboard
+   * @param shownSinceMs - The time the guard armed ({@link armPlacementReport}); documents shown before it are not Codebook's step of this guard. The default counts none.
+   * @returns `true` for the editor of the captured source being retired ({@link editorShowsDocument}) or of a document Codebook showed since `shownSinceMs`; with no editor active, `true` when the active group's front tab is the Application or Study pane of this reader or a text tab of a document Codebook showed since `shownSinceMs`; `false` otherwise.
+   * @example this.isCodebookOwnFocus(vscode.window.activeTextEditor, armed.armedAtMs) // => true right after Codebook showed the retiring source's copy
    */
-  private isCodebookOwnFocus(editor: vscode.TextEditor | undefined): boolean {
-    if (editor) return editorShowsDocument(editor, this.sourceUri)
+  private isCodebookOwnFocus(
+    editor: vscode.TextEditor | undefined,
+    shownSinceMs = Number.POSITIVE_INFINITY,
+  ): boolean {
+    const shownByCodebook = (uri: string | undefined): boolean =>
+      uri !== undefined &&
+      this.documentsShownByCodebook.some(
+        (shown) => shown.atMs >= shownSinceMs && shown.uri === uri,
+      )
+    if (editor)
+      return (
+        editorShowsDocument(editor, this.sourceUri) ||
+        shownByCodebook(editor.document.uri.toString())
+      )
     const front = vscode.window.tabGroups.activeTabGroup.activeTab
-    return Boolean(
-      front &&
-      this.isOwnPaneOrSourceTab(front) &&
-      !this.ownsCapturedSourceTab(front),
+    if (!front) return false
+    // A text tab at the front is Codebook's only when Codebook's own step showed that document in this guard's window.
+    if (front.input instanceof vscode.TabInputText)
+      return shownByCodebook(this.textTabUri(front))
+    return (
+      this.isOwnPaneOrSourceTab(front) && !this.ownsCapturedSourceTab(front)
     )
   }
 
@@ -25535,6 +25554,12 @@ export class StudyWorkspace {
     this.noteNativeEffect(
       `showTextDocument column ${options?.viewColumn ?? 'active'} preserveFocus ${options?.preserveFocus ?? false}`,
     )
+    this.documentsShownByCodebook.push({
+      atMs: performance.now(),
+      uri: ('uri' in target ? target.uri : target).toString(),
+    })
+    if (this.documentsShownByCodebook.length > SHOWN_DOCUMENTS_KEPT)
+      this.documentsShownByCodebook.shift()
     // The editor's API takes a document or its uri in one call; its typings declare them as two overloads, which a union does not match.
     return vscode.window.showTextDocument(
       target as vscode.TextDocument,
