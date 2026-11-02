@@ -7968,6 +7968,20 @@ export class StudyWorkspace {
     const acceptsOwnPaneReport =
       this.acceptingOwnPaneFocusReports > 0 &&
       this.isCodebookPaneInput(focusedTab?.input, ...STUDY_PANE_KINDS)
+    // The cold app may clear its covered text receipt after registration, while the same native Wiki survives this passive read.
+    const isSameSource = (): boolean =>
+      source === focusedSource() ||
+      (coveredBackgroundSource &&
+        registeringApp === this.app &&
+        focusedSource() === undefined)
+    // Retire only this operation's focus ownership; an older passive read cannot suppress a newer transition's recovery.
+    const yieldIfCurrent = (): void => {
+      if (
+        transition === this.presentationTransition &&
+        lifetime === this.lifetime
+      )
+        this.yieldFocusToLearner()
+    }
     return (): void => {
       const active = vscode.window.tabGroups.activeTabGroup
       // Cursor 3.27.22 names the Application's group active again moments after the Study pane took the focus; the entry's arrangement takes that report as no change of the learner's.
@@ -8003,31 +8017,12 @@ export class StudyWorkspace {
           () => this.ownsRepositoryWikiPane(),
         ),
       )
-      const sameWebviewTab =
-        active.activeTab === focusedTab ||
-        Boolean(
-          active !== nativeGroup &&
-          focusedGroup &&
-          focusedGroup === this.editorGroupIdentities.get(active) &&
-          active.activeTab?.input instanceof vscode.TabInputWebview &&
-          active.activeTab.input.viewType === focusedWebview &&
-          nativeGroup.tabs.filter(
-            (tab) =>
-              tab.input instanceof vscode.TabInputWebview &&
-              tab.input.viewType === focusedWebview,
-          ).length === 1 &&
-          active.tabs.filter(
-            (tab) =>
-              tab.input instanceof vscode.TabInputWebview &&
-              tab.input.viewType === focusedWebview,
-          ).length === 1,
-        )
-      // The cold app may clear its covered text receipt after registration, while the same native Wiki survives this passive read.
-      const sameSource =
-        source === focusedSource() ||
-        (coveredBackgroundSource &&
-          registeringApp === this.app &&
-          focusedSource() === undefined)
+      const sameWebviewTab = this.isSameWebviewTab(active, {
+        nativeGroup,
+        focusedTab,
+        focusedGroup,
+        focusedWebview,
+      })
       // Each comparison is kept apart, so a refusal's report names the ones that failed.
       const failedChecks = failedPlacementChecks(
         {
@@ -8043,7 +8038,7 @@ export class StudyWorkspace {
             focusedWebview === undefined ||
             focusedWebviewCloseRevision ===
               this.webviewCloseRevisions.get(focusedWebview),
-          source: sameSource,
+          source: isSameSource(),
           appActive:
             appActive === this.app?.active ||
             this.isApplicationInactiveReportNoise(appActive),
@@ -8052,14 +8047,48 @@ export class StudyWorkspace {
         retainFocus,
       )
       if (!failedChecks.length) return
-      // Retire only this operation's focus ownership; an older passive read cannot suppress a newer transition's recovery.
-      if (
-        transition === this.presentationTransition &&
-        lifetime === this.lifetime
-      )
-        this.yieldFocusToLearner()
+      yieldIfCurrent()
       throw this.refusePlacement(armed, failedChecks)
     }
+  }
+
+  /**
+   * Says whether the webview tab a placement guard noted is still the one in front, also when the editor moved it to a new group object of the same group; asked by the guard of {@link retainPresentationPlacement} for its `webviewTab` comparison.
+   * The same tab object is the same tab. Otherwise the active group must be another object of the noted group, show a webview of the noted kind in front, and both the noted and the active group must hold exactly one webview of that kind, so a second pane of the kind is never taken for it.
+   * @param active - The active tab group now.
+   * @param noted - The group, its identity, the front tab and the webview kind the guard noted.
+   * @returns `true` when the noted webview tab is still in front; `false` otherwise.
+   * @example this.isSameWebviewTab(vscode.window.tabGroups.activeTabGroup, { nativeGroup, focusedTab, focusedGroup, focusedWebview: 'codebook.studyContext' }) // => true for the Study pane in front of a re-created group
+   */
+  private isSameWebviewTab(
+    active: vscode.TabGroup,
+    noted: {
+      nativeGroup: vscode.TabGroup
+      focusedTab: vscode.Tab | undefined
+      focusedGroup: unknown
+      focusedWebview: string | undefined
+    },
+  ): boolean {
+    if (active.activeTab === noted.focusedTab) return true
+    const input = active.activeTab?.input
+    // Only another object of the noted group, with a webview of the noted kind in front, can be the same tab.
+    if (
+      active === noted.nativeGroup ||
+      !noted.focusedGroup ||
+      noted.focusedGroup !== this.editorGroupIdentities.get(active) ||
+      !(input instanceof vscode.TabInputWebview) ||
+      input.viewType !== noted.focusedWebview
+    )
+      return false
+    const webviewsOfKind = (group: vscode.TabGroup): number =>
+      group.tabs.filter(
+        (tab) =>
+          tab.input instanceof vscode.TabInputWebview &&
+          tab.input.viewType === noted.focusedWebview,
+      ).length
+    return (
+      webviewsOfKind(noted.nativeGroup) === 1 && webviewsOfKind(active) === 1
+    )
   }
 
   /** Creates pinned final-column panes for {@link placePresentation}, adopts drained leases, then retires only their predecessors. @example await this.replacePresentationPanels(mode, signal, assertCurrent, viewports) */
