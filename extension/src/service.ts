@@ -3418,6 +3418,52 @@ export class StudyService {
   }
 
   /**
+   * Makes the error of a coded refusal that an operation (or the entry render) raised, with the fields that decide a retry.
+   *
+   * Called by {@link StudyService.runtimeFailureError}; split out so that method stays within the complexity limit.
+   * @param refusal - The refusal restored from the run's failure text, if any.
+   * @param operationFailure - The run's first operation failure, if any.
+   * @param runUri - The run's resource address, when the caller has it.
+   * @returns The error for a refusal whose code equals the operation failure's code; `undefined` otherwise.
+   * @example this.operationRefusalError(refusalFailureOf('OPERATION_AFTER_NOT_MET: …'), failure, uri)?.code // => 'OPERATION_AFTER_NOT_MET'
+   */
+  private operationRefusalError(
+    refusal: ReturnType<typeof refusalFailureOf>,
+    operationFailure: OperationFailure | undefined,
+    runUri: string | undefined,
+  ): StudyError | undefined {
+    if (!refusal || !operationFailure || operationFailure.code !== refusal.code)
+      return undefined
+    // The two server-render failures carry the stop and entry fields beside the retry fields; an entry-render failure names no operation.
+    if (
+      refusal.code === 'SERVER_STOP_NOT_REACHED' ||
+      refusal.code === 'ENTRY_LOAD_TIMEOUT'
+    )
+      return new StudyError(
+        refusal.code,
+        refusal.message,
+        refusal.message,
+        refusal.recoveryOverride,
+        undefined,
+        describeServerRenderFailureDetails(operationFailure, runUri),
+      )
+    // An operation's refusal carries the fields that decide a retry (DX-5), and its static recovery names the operation (OPERATION_AFTER_NOT_MET).
+    return new StudyError(
+      refusal.code,
+      refusal.message,
+      refusal.message,
+      refusal.code === 'OPERATION_AFTER_NOT_MET'
+        ? ERROR_RECOVERY.OPERATION_AFTER_NOT_MET.replace(
+            '<n>',
+            String(operationFailure.operationIndex),
+          )
+        : refusal.recoveryOverride,
+      undefined,
+      describeOperationFailureDetails(operationFailure, runUri),
+    )
+  }
+
+  /**
    * Makes the run resource's error object for a failure the runtime recorded after its preparation.
    *
    * A run's timer and event failures (a Vite reload after the click, a Vite or Next setup deadline, a Fast Refresh of a sealed Next module) lead with their refusal code, so the agent reads the stable code, its recovery and help anchor and not only a text prefix ({@link refusalFailureOf}). Called by {@link StudyService.state}.
@@ -3454,37 +3500,12 @@ export class StudyService {
           logId: operationFailure?.logId ?? `${run?.runId ?? 'run'}#start`,
         }),
       )
-    // The two server-render failures carry the stop and entry fields beside the retry fields; an entry-render failure names no operation.
-    if (
-      refusal &&
-      operationFailure &&
-      operationFailure.code === refusal.code &&
-      (refusal.code === 'SERVER_STOP_NOT_REACHED' ||
-        refusal.code === 'ENTRY_LOAD_TIMEOUT')
+    const operationError = this.operationRefusalError(
+      refusal,
+      operationFailure,
+      runUri,
     )
-      return new StudyError(
-        refusal.code,
-        refusal.message,
-        refusal.message,
-        refusal.recoveryOverride,
-        undefined,
-        describeServerRenderFailureDetails(operationFailure, runUri),
-      )
-    // An operation's refusal carries the fields that decide a retry (DX-5), and its static recovery names the operation (OPERATION_AFTER_NOT_MET).
-    if (refusal && operationFailure && operationFailure.code === refusal.code)
-      return new StudyError(
-        refusal.code,
-        refusal.message,
-        refusal.message,
-        refusal.code === 'OPERATION_AFTER_NOT_MET'
-          ? ERROR_RECOVERY.OPERATION_AFTER_NOT_MET.replace(
-              '<n>',
-              String(operationFailure.operationIndex),
-            )
-          : refusal.recoveryOverride,
-        undefined,
-        describeOperationFailureDetails(operationFailure, runUri),
-      )
+    if (operationError) return operationError
     if (refusal)
       return new StudyError(
         refusal.code,
