@@ -24,6 +24,7 @@ import {
   APPLICATION_PANE_TITLE,
   EDITOR_GROUPS_PRESERVED_MESSAGE,
   EDITOR_NUMBERED_TAB_COMMAND_LIMIT,
+  LEARNER_CHOICE_RESHOW_LIMIT,
   CHAT_KEYBOARD_RETURNED_MESSAGES,
   CHOICE_RETIRED_ERROR_KINDS,
   CLOSE_GROUP_SETTLE_MS,
@@ -438,6 +439,10 @@ import {
 } from './utils/replayRefusals'
 import { retainEditorReadingPosition } from './utils/retainEditorReadingPosition'
 import { runStopFilePaths } from './utils/runStopFilePaths'
+import {
+  type LearnersChoice,
+  sameLearnersChoiceTarget,
+} from './utils/sameLearnersChoiceTarget'
 import { type CauseRoots, sanitizeCause } from './utils/sanitizeCause'
 import { sanitizedStack } from './utils/sanitizedStack'
 import { sanitizeNodeTestHistory } from './utils/sanitizeNodeTestHistory'
@@ -3488,58 +3493,39 @@ export class StudyWorkspace {
         const takeKeyboardWithSource = async (
           document: vscode.TextDocument,
         ): Promise<void> => {
-          // What the learner chose meanwhile: a text file (the active text editor changes) or a tab that is no text file (a Settings page), seen as the front tab of the active group.
-          const chosen: {
-            column: number
-            document?: vscode.TextDocument
-            tab?: vscode.Tab
-          }[] = []
-          // A switch to a tab that is no text file shows as the front tab of the active group, whether the learner opened it (tab events) or moved to a group that already showed it (group events only).
-          const noteNonTextFront = (): void => {
-            const group = vscode.window.tabGroups.activeTabGroup
-            if (
-              group.activeTab &&
-              this.textTabUri(group.activeTab) === undefined
-            )
-              chosen.push({ column: group.viewColumn, tab: group.activeTab })
-          }
-          const listeners = [
-            vscode.window.onDidChangeActiveTextEditor((editor) => {
-              if (!editor || editor.document.uri.toString() === sourceUri)
-                return
-              // A diff side reports no view column: its file is not shown again (that would duplicate it in the source column); its group and front tab are the learner's choice.
-              if (editor.viewColumn === undefined) noteNonTextFront()
-              else
-                chosen.push({
-                  column: editor.viewColumn,
-                  document: editor.document,
-                })
-            }),
-            vscode.window.tabGroups.onDidChangeTabs(noteNonTextFront),
-            vscode.window.tabGroups.onDidChangeTabGroups(noteNonTextFront),
-          ]
+          const watch = this.watchLearnersChoice(sourceUri)
           try {
             await this.showTextDocumentNoted(document, {
               viewColumn: sourceColumn,
               preserveFocus: false,
               preview: false,
             })
+            assertOwned()
+            // A switch to another window during the hand-off ends the return, also when the learner came back.
+            if (watch.windowLeft() || !vscode.window.state.focused)
+              abortForLearner()
+            if (watch.choices.length === 0) return
+            // The learner's target gets the keyboard back: a file is shown again; any other tab is brought to the front of its group again (the late show may have covered it) and its group is focused. The watch goes on while that is done, so a newer pick wins over the one being shown again.
+            let choiceKept = true
+            for (let round = 0; round < LEARNER_CHOICE_RESHOW_LIMIT; round++) {
+              const choice = watch.choices.at(-1)!
+              const seen = watch.choices.length
+              watch.ignoreOwnEffectOf(choice)
+              if (choice.document) {
+                await this.showTextDocumentNoted(choice.document, {
+                  viewColumn: choice.column,
+                  preserveFocus: false,
+                  preview: false,
+                })
+                choiceKept = true
+              } else choiceKept = await this.reactivateNonTextTab(choice)
+              assertOwned()
+              if (watch.choices.length === seen) break
+            }
+            abortForLearner(choiceKept)
           } finally {
-            for (const listener of listeners) listener.dispose()
+            watch.dispose()
           }
-          assertOwned()
-          const learnersChoice = chosen.at(-1)
-          if (!learnersChoice) return
-          // The learner's target gets the keyboard back: a file is shown again; any other tab is brought to the front of its group again (the late show may have covered it) and its group is focused.
-          let choiceKept = true
-          if (learnersChoice.document)
-            await this.showTextDocumentNoted(learnersChoice.document, {
-              viewColumn: learnersChoice.column,
-              preserveFocus: false,
-              preview: false,
-            })
-          else choiceKept = await this.reactivateNonTextTab(learnersChoice)
-          abortForLearner(choiceKept)
         }
         /** Closes the Codebook-owned copy where the rules above allow it, and keeps a learner's choice of focus made meanwhile. */
         const closeMovedCopy = async (): Promise<void> => {
@@ -3563,7 +3549,7 @@ export class StudyWorkspace {
               candidate.viewColumn === displaced.group.viewColumn &&
               candidate.document.uri.toString() === sourceUri,
           )
-          const editor = await this.showTextDocumentNoted(document, {
+          let editor = await this.showTextDocumentNoted(document, {
             viewColumn: sourceColumn,
             preserveFocus: true,
             preview: false,
@@ -3572,22 +3558,35 @@ export class StudyWorkspace {
           assertOwned()
           assertLearnerKept()
           // Read after the waits above, so a selection the learner changed meanwhile travels, not the one from before.
-          const copyNow = vscode.window.visibleTextEditors.find(
-            (candidate) =>
-              candidate.viewColumn === displaced.group.viewColumn &&
-              candidate.document.uri.toString() === sourceUri,
-          )
-          if (copyNow) editor.selections = copyNow.selections
-          await retainEditorReadingPosition(copyNow)(
-            editor,
-            transition.cancellation.signal,
-          )
-          assertOwned()
+          const carryReadingState = async (): Promise<void> => {
+            // The editor may have replaced the returned editor with a new object when the second show took the keyboard: the one listed in the source column now is the target.
+            editor =
+              vscode.window.visibleTextEditors.find(
+                (candidate) =>
+                  candidate.viewColumn === sourceColumn &&
+                  candidate.document.uri.toString() === sourceUri,
+              ) ?? editor
+            const copyNow = vscode.window.visibleTextEditors.find(
+              (candidate) =>
+                candidate.viewColumn === displaced.group.viewColumn &&
+                candidate.document.uri.toString() === sourceUri,
+            )
+            if (copyNow) editor.selections = copyNow.selections
+            await retainEditorReadingPosition(copyNow)(
+              editor,
+              transition.cancellation.signal,
+            )
+            assertOwned()
+          }
+          await carryReadingState()
           // A file the learner picked while the reading position was restored keeps the keyboard.
           assertLearnerKept()
           if (copyHasKeyboard) {
             await takeKeyboardWithSource(document)
             expectedPlace = keyboardPlace()
+            // The learner may have moved the caret in the original tab while the hand-off was pending; the latest position is taken just before that tab closes.
+            await carryReadingState()
+            assertLearnerKept()
           }
           this.sourceGroup = vscode.window.tabGroups.all.find(
             (group) => group.viewColumn === sourceColumn,
@@ -3620,6 +3619,55 @@ export class StudyWorkspace {
       requester,
       fromPane,
     )
+  }
+
+  /**
+   * Starts watching what the learner chooses while the return hands the moved copy's keyboard to the source: a text file (the active text editor changes), a tab that is no text file (a Settings page, seen as the front tab of the active group, also when only the group changed), and a switch away from the window. Called by {@link returnDisplacedCapturedSourceThenAdmit}.
+   * A diff side reports no view column: its file is not shown again (that would duplicate it in the source column); its group and front tab are the choice. The effects of showing a choice again are the return's own and are not recorded as new picks ({@link ignoreOwnEffectOf}), so a newer pick made while the choice is shown again is the only one that follows it.
+   * @param sourceUri - The captured source's URI; its own activation is no choice.
+   * @returns The picks in order, the window-switch latch, the own-effect filter and the disposal of the listeners.
+   * @example const watch = this.watchLearnersChoice(sourceUri); try { await show() } finally { watch.dispose() }
+   */
+  private watchLearnersChoice(sourceUri: string | undefined): {
+    choices: LearnersChoice[]
+    windowLeft: () => boolean
+    ignoreOwnEffectOf: (choice: LearnersChoice) => void
+    dispose: () => void
+  } {
+    const choices: LearnersChoice[] = []
+    let ownEffect: LearnersChoice | undefined,
+      windowLeft = false
+    const note = (choice: LearnersChoice): void => {
+      if (!ownEffect || !sameLearnersChoiceTarget(ownEffect, choice))
+        choices.push(choice)
+    }
+    const noteNonTextFront = (): void => {
+      const group = vscode.window.tabGroups.activeTabGroup
+      if (group.activeTab && this.textTabUri(group.activeTab) === undefined)
+        note({ column: group.viewColumn, tab: group.activeTab })
+    }
+    const listeners = [
+      vscode.window.onDidChangeActiveTextEditor((editor) => {
+        if (!editor || editor.document.uri.toString() === sourceUri) return
+        if (editor.viewColumn === undefined) noteNonTextFront()
+        else note({ column: editor.viewColumn, document: editor.document })
+      }),
+      vscode.window.tabGroups.onDidChangeTabs(noteNonTextFront),
+      vscode.window.tabGroups.onDidChangeTabGroups(noteNonTextFront),
+      vscode.window.onDidChangeWindowState((state) => {
+        if (!state.focused) windowLeft = true
+      }),
+    ]
+    return {
+      choices,
+      windowLeft: () => windowLeft,
+      ignoreOwnEffectOf: (choice): void => {
+        ownEffect = choice
+      },
+      dispose: (): void => {
+        for (const listener of listeners) listener.dispose()
+      },
+    }
   }
 
   /**

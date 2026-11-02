@@ -285,6 +285,8 @@ export const STUDY_EDITOR_AREA_LOOK_INTERVAL_MS = 1_000
 export const STUDY_EDITOR_GROUP_COUNT = 3
 /** How many tabs of a group the editor's numbered command (`workbench.action.openEditorAtIndex1` to `9`) can bring to the front. */
 export const EDITOR_NUMBERED_TAB_COMMAND_LIMIT = 9
+/** How many times the captured source's return shows a learner's pick again when the learner picks something newer meanwhile; it stops there and keeps the latest pick. */
+export const LEARNER_CHOICE_RESHOW_LIMIT = 3
 export const LIVE_EDITOR_GROUP_COUNT = 2
 export const LIVE_EDITOR_LAYOUT = {
   orientation: 1,

@@ -951,12 +951,14 @@ test('a learner’s switch to a non-text tab while the show that hands the copy�
  * Runs an agent's Restore of the Study whose captured source stands in the learner's fourth group with the keyboard, holds its second show and lets the test act while that show is pending.
  * @param harness - The reader and the fake editor.
  * @param whileSecondShowPends - The learner's action.
+ * @param afterSecondShowReleased - A step run in the same turn as the release of that show, before the return goes on (to hold the next show, for example).
  * @returns The Restore's outcome text.
  * @example const answer = await restoreWithLearnerDuringSecondShow(harness, () => harness.focusChatEditorTab(2))
  */
 async function restoreWithLearnerDuringSecondShow(
   harness: Harness,
   whileSecondShowPends: () => void,
+  afterSecondShowReleased?: () => Promise<void>,
 ): Promise<string> {
   const before = harness.reader.presentationState()
   const sourceUri = harness.reader.inspect().sourceUri!
@@ -981,6 +983,7 @@ async function restoreWithLearnerDuringSecondShow(
   await second.started
   whileSecondShowPends()
   second.release()
+  await afterSecondShowReleased?.()
   return restoring
 }
 
@@ -1553,3 +1556,110 @@ test('a diff editor the learner activates while the second show is pending is no
     await harness.close()
   }
 })
+
+// Value: protects=a learner's second pick while the return shows their first pick again: the watch goes on until that re-show is done, and the newer pick wins; fails_when=the listeners are disposed before the corrective re-show, so a pick made while it waits is pulled back to the first file and the answer still says the choice was kept; why_new=Cycle 0072 task 1 candidate Codex review of f97da11b (P2-1); seam=restoreWithLearnerDuringSecondShow, holdNextTextDocumentShow held for the corrective re-show and focusMutableDraft as the learner's picks; no_claim=the picks are the harness's focus of drafts
+test('a learner’s newer pick while the return shows their first pick again keeps the newer file', async () => {
+  // Arrange: the moved copy has the keyboard in the fourth group, which also holds data.ts and search.tsx.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await openRetainedStudy(harness)
+    harness.moveSource((await addLearnerGroup(harness)).viewColumn)
+    // Act: the learner picks data.ts while the second show is pending; the return shows data.ts again, and the learner picks search.tsx while that waits.
+    const answer = await restoreWithLearnerDuringSecondShow(
+      harness,
+      () => {
+        harness.focusMutableDraft('data.ts', 4)
+      },
+      async () => {
+        const reshow = harness.holdNextTextDocumentShow()
+        await reshow.started
+        harness.focusMutableDraft('search.tsx', 4)
+        reshow.release()
+      },
+    )
+    // Assert
+    assert.deepEqual(
+      {
+        answer,
+        activeFile: harness.editor.window.activeTextEditor?.document.uri.fsPath
+          .split('/')
+          .pop(),
+      },
+      { answer: FOCUS_KEPT_ANSWER, activeFile: 'search.tsx' },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the latest caret of the moved copy: a caret the learner moves in the original tab while the keyboard hand-off is pending travels to the returned editor before the original closes (the README promises the commands show the source again with the learner's selections and reading position in it); fails_when=the selections are copied once, before the hand-off, so the original closes with the new caret lost and the restored copy keeps the old one; why_new=Cycle 0072 task 1 candidate Codex review of f97da11b (P2-2); seam=restoreWithLearnerDuringSecondShow and the moved editor's selections; no_claim=the visible range, which the harness reports as one fixed range
+test('a caret the learner moves in the original tab while the keyboard hand-off is pending travels to the returned editor', async () => {
+  // Arrange: the moved copy has the keyboard in the fourth group.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await openRetainedStudy(harness)
+    const learnerGroup = await addLearnerGroup(harness)
+    harness.moveSource(learnerGroup.viewColumn)
+    const sourceUri = harness.reader.inspect().sourceUri
+    const copyEditor = harness.editor.window.visibleTextEditors.find(
+      (editor) =>
+        editor.viewColumn === learnerGroup.viewColumn &&
+        editor.document.uri.toString() === sourceUri,
+    )!
+    // Act: the learner moves the caret of the original tab to line 9, column 1 while the second show is pending.
+    const answer = await restoreWithLearnerDuringSecondShow(harness, () => {
+      const at = new harness.editor.Position(9, 1)
+      Reflect.set(copyEditor, 'selections', [{ anchor: at, active: at }])
+    })
+    // Assert
+    const returned = harness.editor.window.visibleTextEditors.find(
+      (editor) =>
+        editor.viewColumn === 2 && editor.document.uri.toString() === sourceUri,
+    )
+    assert.deepEqual(
+      {
+        answer,
+        caret: {
+          line: returned?.selections[0]?.active.line,
+          character: returned?.selections[0]?.active.character,
+        },
+      },
+      { answer: 'answered', caret: { line: 9, character: 1 } },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+for (const comesBack of [false, true])
+  // Value: protects=a switch to another window while the keyboard hand-off is pending, also when the learner comes back before it ends: the return stops with the focus-change sentence and leaves the original tab open; fails_when=no window-state listener is active during the hand-off, so the left-window state becomes the new baseline, the original tab closes and the answer is success; why_new=Cycle 0072 task 1 candidate Codex review of f97da11b (P2-3); seam=restoreWithLearnerDuringSecondShow and changeWindowFocus; no_claim=the window switch is the harness's window state
+  test(`a switch to another window while the keyboard hand-off is pending${comesBack ? ' (the learner comes back)' : ''} stops the return and keeps the original tab`, async () => {
+    // Arrange: the moved copy has the keyboard in the fourth group.
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    try {
+      await openRetainedStudy(harness)
+      const learnerGroup = await addLearnerGroup(harness)
+      harness.moveSource(learnerGroup.viewColumn)
+      // Act
+      const answer = await restoreWithLearnerDuringSecondShow(harness, () => {
+        harness.changeWindowFocus(false)
+        if (comesBack) harness.changeWindowFocus(true)
+      })
+      // Assert
+      assert.deepEqual(
+        {
+          answer,
+          originalStillOpen: learnerGroup.tabs.some(
+            (tab) => tab.label === 'Captured-theme.ts',
+          ),
+        },
+        { answer: FOCUS_KEPT_ANSWER, originalStillOpen: true },
+      )
+    } finally {
+      harness.changeWindowFocus(true)
+      await harness.close()
+    }
+  })
