@@ -119,7 +119,7 @@ export function nextHelp() {
   return {
     nextQuickStart: {
       summary:
-        'For a Next 16 app, App Router or Pages Router: configure adapter "next-dev-webpack" and use the tools in this order. Use it when codebook_status reports profiles[].prerequisites.adapters["next-dev-webpack"].ready true; its routerKind names the routers the workspace holds.',
+        'For a Next 16 app, App Router or Pages Router: configure adapter "next-dev-webpack" and use the tools in this order. Use it when codebook_status reports profiles[].prerequisites.adapters["next-dev-webpack"].ready true; its routerKind names the routers the workspace holds. For a question about code that runs while the server renders an App Router page, read serverRenderQuickStart in this help (API 1.16 or later) instead of this configuration.',
       prerequisites: [
         "Stop your own next dev for this workspace first: Codebook starts its own, and a .next/dev/lock another process holds refuses the start with PREREQUISITE_MISSING (Codebook never removes another process's lock).",
         'The dependencies are installed (node_modules/next); Codebook installs nothing.',
@@ -149,7 +149,7 @@ export function nextHelp() {
       notStoppable: [
         "Server-side code of a Pages page: getServerSideProps, getStaticProps, API routes (pages/api) and _document. A stop there is refused with NEXT_SERVER_ONLY_STOP when Codebook establishes that it runs only on the server (the file is _document or under pages/api, or the line maps in the page's server compile and in none of its client chunks, also when client code follows the line, which the stop is never moved to), otherwise with NEXT_STOP_NOT_SEALED. A server stop (participant server) in a Pages run is refused with NEXT_SERVER_ONLY_STOP before the browser opens.",
         'A module loaded later, for example through next/dynamic: it is not in the chunks Codebook seals before the browser opens (NEXT_STOP_NOT_SEALED).',
-        'Server components of the App Router: they run only on the server.',
+        'Server components and server-side code outside the supported App Router server components of the entry route (API 1.16, serverRenderQuickStart): Pages server-side code, other routes, route handlers (route.ts), middleware or proxy. A server component of the entry route is supported when the stop is in code that runs on every render; a stop in a client component is refused with NEXT_STOP_NOT_SEALED (details.reason client-component).',
       ],
       compatibility: NEXT_WEBPACK_COMPATIBILITY_SENTENCE,
       preparation:

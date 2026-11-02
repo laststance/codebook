@@ -45,6 +45,7 @@ import { retainedRepositoryConfigSchema } from './repositoryConfigSchemas'
 import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { savedSessionHelp } from './savedSessionHelp'
+import { serverRenderHelp } from './serverRenderHelp'
 import type { StudyService } from './service'
 import { describeStudy } from './utils/describeStudy'
 import { omittedDetail } from './utils/omittedDetail'
@@ -271,6 +272,8 @@ export async function readResource(
       ...nextHelp(),
       // The version 3 quick start, the operations and secrets sections and the error table (API 1.14).
       ...operationsHelp(),
+      // The server-render quick start, migration table and error anchors (API 1.16).
+      ...serverRenderHelp(),
       // The saved-session section: what it keeps, where it lives, how to remove it and how the chat waits (API 1.15).
       ...savedSessionHelp(),
       profile: CONFIGURED_PROFILE,

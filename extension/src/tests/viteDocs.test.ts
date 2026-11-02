@@ -72,7 +72,7 @@ test('the Vite quick start gives the call order, the copy sources and the limits
     'codebook_sources, then codebook_source',
     'codebook_publish_book',
     'codebook_start',
-    'Poll the run resource it names until the run reads ready (or an error)',
+    'Poll the run resource it names until the run reads ready, paused (read inspectionUri and sourceUri, then codebook_continue) or an error',
     'codebook_action repository-click',
     'At each pause read inspectionUri and sourceUri, explain the values in the chat, then codebook_continue with the continueArguments of the current run resource.',
   ])
