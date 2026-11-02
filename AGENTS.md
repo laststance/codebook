@@ -77,9 +77,10 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 
 - One bounded cycle at a time toward the complete product; after each merge `/spec` (+ the plan reviews the scope needs) writes the next cycle's Issue.
 - Work on a `codex/` branch; keep existing edits; reuse a fitting checkout.
-- Per cycle: local CodeRabbit CLI + `open-code-review-delegate` → `/ship` as PR → required CI → separate exact-HEAD gate → merge as its own step with `--match-head-commit`.
+- Per cycle: one review round (4 local CodeRabbit CLI passes + 4 `open-code-review-delegate` reviews, all in parallel) → its fixes → `/ship` as PR → required CI → separate exact-HEAD gate → merge as its own step with `--match-head-commit`.
+- One round only: after that round's fixes go straight to `/ship`; no second CodeRabbit/OCR round to recheck the fixes (the `/ship` review catches what they break).
 - Parallel reviews: start every review that reads no other review's result at the same time, never one after another.
-  - Examples: local CodeRabbit CLI with `open-code-review-delegate`; `/ship` pass 1's reviews (Codex structured review, red team, specialists); a plan-review phase's native and outside voices (outside one in a background shell, then the native agent).
+  - Examples: the 4 CodeRabbit CLI passes (one worktree each, within the included hourly reviews, never `--use-credits`) with the 4 OCR delegates (split by review lens when few files qualify); `/ship` pass 1's reviews (Codex structured review, red team, specialists); a plan-review phase's native and outside voices (outside one in a background shell, then the native agent).
   - A review waits only for a result or tree it reads: `/autoplan` phases stay in order (each reviews the previous phase's amendments); a fix-check waits for its fix.
 - Parallel fixers: choose the fixer count and item split that finishes soonest, cost no object.
   - Independent items needing no knowledge of each other → one subagent each (100 such items → 100 subagents, each in its own worktree from the branch head); only items sharing a file region or depending on another's result share a subagent or run in order.
@@ -119,7 +120,7 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
   - overrides no-carry for those recorded defects only.
 - The limit is `/ship`'s alone (one round is long; full convergence would stall delivery); it records defects of `/ship` rounds the PR cannot close (e.g. a Major finding whose fix/proof needs an unknown root cause or a native check).
 - A Critical finding never merges open: one the PR cannot close holds the merge until fixed (cycle + delivery rules).
-- Local CodeRabbit CLI and OCR delegate: Critical/Major findings follow the cycle rule, as do gate, CI and native-check failures; below Major per the defect rule. CodeRabbit CLI: once on the PR's final range; more only after a fix it must recheck.
+- Local CodeRabbit CLI and OCR delegate: Critical/Major findings follow the cycle rule, as do gate, CI and native-check failures; below Major per the defect rule. CodeRabbit CLI: the one parallel round on the cycle's final range before `/ship`.
 
 **Skills** (read each installed SKILL.md at invocation; this map guides, copies no workflow):
 
