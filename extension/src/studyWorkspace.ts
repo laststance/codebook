@@ -3443,7 +3443,8 @@ export class StudyWorkspace {
           vscode.window.tabGroups.activeTabGroup.activeTab?.label,
           vscode.window.state.focused,
         ])
-      const placeAtStart = keyboardPlace()
+      // The place the return expects the keyboard at; it moves only where the return itself takes the keyboard.
+      let expectedPlace = keyboardPlace()
       /** Stops the return and keeps the learner's own choice of focus. */
       const abortForLearner = (): never => {
         this.yieldFocusToLearner()
@@ -3454,7 +3455,7 @@ export class StudyWorkspace {
       }
       /** A learner's own change of focus during the return wins. The return itself takes no keyboard, so any change of the place since its start is the learner's. */
       const assertLearnerKept = (): void => {
-        if (keyboardPlace() !== placeAtStart) abortForLearner()
+        if (keyboardPlace() !== expectedPlace) abortForLearner()
       }
       /** Finds the Codebook-owned copy as the editor lists it now: tab and group objects may be new since the return began. */
       const currentCopy = ():
@@ -3473,29 +3474,13 @@ export class StudyWorkspace {
       const copyHasKeyboard =
         vscode.window.tabGroups.activeTabGroup.activeTab === currentCopy()?.tab
       /** Closes the Codebook-owned copy where the rules above allow it, and keeps a learner's choice of focus made meanwhile. */
-      const closeMovedCopy = async (
-        document: vscode.TextDocument,
-      ): Promise<void> => {
+      const closeMovedCopy = async (): Promise<void> => {
         const copy = currentCopy()
         if (!copy || copy.tab.isPinned || copy.group.tabs.length <= 1) return
         await vscode.window.tabGroups.close([copy.tab], true)
         assertOwned()
-        if (!copyHasKeyboard) assertLearnerKept()
-        else {
-          // Closing the copy that had the keyboard hands it to the learner's tab behind it; a learner who chose another group meanwhile keeps that choice.
-          if (
-            vscode.window.tabGroups.activeTabGroup.viewColumn !==
-            copy.group.viewColumn
-          )
-            abortForLearner()
-          // The source takes the keyboard, in the place the copy stood.
-          await this.showTextDocumentNoted(document, {
-            viewColumn: STUDY_PRESENTATIONS['study-workspace'].sourceColumn,
-            preserveFocus: false,
-            preview: false,
-          })
-        }
-        assertOwned()
+        // The copy no longer has the keyboard (the source has it, or the request's place does), so the close moves nothing: any change since is the learner's, also a front tab of the copy's own group.
+        assertLearnerKept()
       }
       try {
         if (displaced && this.sourceUri) {
@@ -3514,13 +3499,23 @@ export class StudyWorkspace {
           })
           assertOwned()
           assertLearnerKept()
+          if (copyHasKeyboard) {
+            // The copy that had the keyboard hands it to the source before it closes, so the close hands it to no tab behind the copy; only while the keyboard is still where the copy had it.
+            await this.showTextDocumentNoted(document, {
+              viewColumn: sourceColumn,
+              preserveFocus: false,
+              preview: false,
+            })
+            assertOwned()
+            expectedPlace = keyboardPlace()
+          }
           this.sourceGroup = vscode.window.tabGroups.all.find(
             (group) => group.viewColumn === sourceColumn,
           )
           // The returned editor is a new one: it gets the stopped line and the source annotation the ordinary placement draws.
           this.decorateReturnedSource(editor)
           // The Codebook-owned copy closes only after the new show succeeded, never when the learner pinned it (as {@link retireMovedSourceCopies} keeps pinned copies), and never as the last tab of a learner group, which would leave the editor to close that group; such a copy stays beside the source, which the placement accepts.
-          await closeMovedCopy(document)
+          await closeMovedCopy()
         }
         // Decided from the measured placement, not from the confirmation flag a status read may have retired for a benign change (a learner group beside the Study). Measured first: beside a chat part the layout read answers for the focused part, so the keyboard goes back to the chat only afterwards.
         confirmedByPlacement = await this.placementHoldsAfterReturn()
@@ -3534,7 +3529,7 @@ export class StudyWorkspace {
     // The source standing in its column again can confirm the retained grid by itself; a full placement would refuse the learner groups.
     // A mismatch of the measured placement (resized panes) goes on to the ordinary placement, which restores the sizes.
     if (confirmedByPlacement ?? this.presentationState().layoutConfirmed) {
-      return this.confirmReturnedLayout(input, releaseTransition)
+      return this.confirmReturnedLayout(input, releaseTransition, lifetime)
     }
     releaseTransition()
     return this.admitPresentation(
@@ -3549,12 +3544,15 @@ export class StudyWorkspace {
    * Answers a Restore whose layout the return confirmed: the flags of a confirmed arrangement, a new control revision (a second control holding the old one is refused as stale), the saved preference with the transition still held, and the completed state published only once the transition is released.
    * @param input - The Restore or selection being answered.
    * @param releaseTransition - Releases the return's transition.
+   * @param lifetime - The reader lifetime the Restore was admitted in.
    * @returns The confirmed state, `'open'`.
-   * @example return this.confirmReturnedLayout(input, releaseTransition)
+   * @throws When the workspace closed during the save.
+   * @example return this.confirmReturnedLayout(input, releaseTransition, lifetime)
    */
   private async confirmReturnedLayout(
     input: PresentationIntent,
     releaseTransition: () => void,
+    lifetime: number,
   ): Promise<PresentationState> {
     this.presentationConfirmed = true
     this.capturedSourceReturnReceipt = this.layoutReceipt
@@ -3568,6 +3566,8 @@ export class StudyWorkspace {
     } finally {
       releaseTransition()
     }
+    // A workspace that closed during the save answers the closed result, not a confirmed state.
+    this.assertLifetime(lifetime)
     this.publish()
     return { ...this.presentationState(), state: 'open' as const }
   }

@@ -784,6 +784,75 @@ for (const [recovery, run] of [
       }
     })
 
+// Value: protects=a learner's selection of another tab inside the group of the moved copy while the editor closes that copy: the learner's tab stays focused and the source is not shown over it; fails_when=only a change of group is noticed, so the front-tab change inside the same group is lost to the return's re-show; why_new=Cycle 0072 task 1 candidate Codex review of 787050d4 (P2 1); seam=the workspace harness's holdNextTabCloseResponse and focusMutableDraft in the copy's own group; no_claim=the click is the harness's focus of a draft
+test('a learner’s selection of another tab in the moved copy’s own group while it closes keeps that file focused', async () => {
+  // Arrange: the moved copy has the keyboard in the learner's fourth group and the editor's answer to its close is held.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let release = (): void => {}
+  try {
+    await openRetainedStudy(harness)
+    harness.moveSource((await addLearnerGroup(harness)).viewColumn)
+    const before = harness.reader.presentationState()
+    const held = harness.holdNextTabCloseResponse()
+    release = held.release
+    const restoring = harness.reader
+      .changePresentation(
+        {
+          presentationId: before.presentationId,
+          expectedRevision: before.presentationControlRevision,
+          mode: 'study-workspace',
+          action: 'restore',
+        },
+        'agent',
+      )
+      .catch(() => undefined)
+    await held.started
+    // Act: the learner selects data.ts in the same group, then the close answers.
+    harness.focusMutableDraft('data.ts', 4)
+    held.release()
+    await restoring
+    // Assert
+    assert.equal(
+      harness.editor.window.activeTextEditor?.document.uri.fsPath
+        .split('/')
+        .pop(),
+      'data.ts',
+    )
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
+// Value: protects=the answer of a Restore whose workspace closed during the preference save: it answers the closed result and not a confirmed state; fails_when=the confirmed answer is built after the save without looking at the reader's lifetime; why_new=Cycle 0072 task 1 candidate Codex review of 787050d4 (P2 3); seam=the workspace harness's holdPresentationPreference, the reader's arrange and close; no_claim=none beyond protects
+test('an Arrange whose workspace closed during the preference save answers the closed result', async () => {
+  // Arrange: the captured source stands in the learner's fourth group and the preference write is held.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let release = (): void => {}
+  try {
+    await openRetainedStudy(harness)
+    harness.moveSource((await addLearnerGroup(harness)).viewColumn)
+    const held = harness.holdPresentationPreference()
+    release = held.release
+    const outcome = harness.reader.action('arrange').then(
+      () => 'answered',
+      (error: unknown) => String(error),
+    )
+    await held.started
+    // Act: the workspace closes while the save is pending, then the save finishes.
+    const closing = harness.reader.close()
+    held.release()
+    // Assert
+    assert.match(await outcome, /The study workspace was closed/)
+    await closing
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
 // Value: protects=Close Study Workspace while Arrange is returning the captured source: Close waits for the return, so no Codebook-owned captured-source tab is left or reopened after the cleanup; fails_when=the return is not registered as the presentation operation, Close cleans up at once and the late show opens the captured source again; why_new=Cycle 0072 task 1 CodeRabbit CLI pass 4 (A); seam=the workspace harness's holdNextTextDocumentShow, the reader's arrange and close; no_claim=none beyond protects
 test('Close Study Workspace during the captured source’s return leaves no captured-source tab open once both have finished', async () => {
   // Arrange: the captured source stands in the learner's fourth group and the editor's show of it is held.
