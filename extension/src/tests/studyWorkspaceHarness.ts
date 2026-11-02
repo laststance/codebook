@@ -6104,6 +6104,11 @@ export async function workspaceHarness(
     },
     /** Gives every group a new object now and reports the groups as changed, with no tab changed, as Cursor's group report that follows a tab report does. @example harness.rewrapGroupObjects() */
     rewrapGroupObjects(): void {
+      // Without the model the rewrap would do nothing and a test built on it would pass without exercising anything.
+      assert.ok(
+        replacesGroupObjectsOnTabChanges,
+        'rewrapGroupObjects needs replaceGroupObjectsOnTabChanges() (or reportsPaneMoveTabsBeforeGroups()) to be called first',
+      )
       replaceGroupObjects()
     },
     /** Gives every tab of the fake tab model a new Tab object now, as Cursor's extension host does when the editor sends a whole new tab model (the model of `rebuildTabObjectsAtGroupRemoval`, without a group removal); the tab listeners hear nothing, as at a removed group's rebuild. @example harness.rebuildTabObjectsNow() */
