@@ -190,12 +190,14 @@ function endOfLiteral(text: string, start: number): number {
  * Called by {@link maskShapedLiterals}.
  * @param literal - The element with its quotes.
  * @param isValueOfHeaderName - Whether the element directly follows a quoted secret header name.
+ * @param mask - What replaces a masked element.
  * @returns The replacement for the whole element, or `undefined` to keep it.
  * @example maskedLiteral("'sid=abc; theme=dark'", false) // => '[masked]'
  */
 function maskedLiteral(
   literal: string,
   isValueOfHeaderName: boolean,
+  mask: string,
 ): string | undefined {
   const inner = literal.slice(1, -1)
   if (
@@ -203,7 +205,7 @@ function maskedLiteral(
     isCookieHeaderShape(inner) ||
     (isAuthorizationShape(inner) && !BEARER_CREDENTIAL.test(inner.trim()))
   )
-    return REDACTION_MASK
+    return mask
   const withoutSecretQueries = maskSecretUrlQueries(inner)
   const quote = literal.charAt(0)
   return withoutSecretQueries === inner
@@ -216,6 +218,7 @@ function maskedLiteral(
  * Why: one rule for a debugger's value preview and for a development server's output, so a credential reads the same masked wherever the capture, the history or the log shows it. Called by {@link redactValuePreview} and the output masking.
  * @param text - A preview or a text of one or more lines.
  * @param afterHeaderName - Whether the text before this one ended right after a quoted secret header name, so a stream split into chunks keeps the pairing.
+ * @param mask - What replaces a masked element; the capture's {@link REDACTION_MASK} unless a caller keeps another marker.
  * @returns The masked text and whether it ends right after a quoted secret header name. A whole credential element becomes {@link REDACTION_MASK} with its quotes; a URL keeps everything but its secret values.
  * @example
  * maskShapedLiterals("['Host', 'x', 'Cookie', 'sid=abc']").text // => "['Host', 'x', 'Cookie', [masked]]"
@@ -224,6 +227,7 @@ function maskedLiteral(
 export function maskShapedLiterals(
   text: string,
   afterHeaderName = false,
+  mask: string = REDACTION_MASK,
 ): ShapedLiteralsResult {
   let masked = '',
     copiedUntil = 0,
@@ -238,6 +242,7 @@ export function maskShapedLiterals(
     const replacement = maskedLiteral(
       literal,
       awaitingValue && DIRECTLY_FOLLOWS.test(text.slice(previousEnd, index)),
+      mask,
     )
     if (replacement !== undefined) {
       masked += text.slice(copiedUntil, index) + replacement

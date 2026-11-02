@@ -6,6 +6,7 @@ import {
   REDACTION_MASK,
 } from '../constants'
 
+import { maskSecretShapesInOutput } from './maskSecretShapesInOutput'
 import { redactSecretText } from './redactSecretText'
 
 /** One channel's streaming redactor: feed chunks to `write`, call `end` once at the stream's end. */
@@ -58,6 +59,10 @@ const SECRET_START_MARKERS = [
 ]
 /** A trailing scheme (`postgres:`, `https:/`) whose `//user:password@` may come with the next chunk; a scheme is at most 32 characters, which also keeps the search linear on a long run. */
 const TRAILING_SCHEME = /[A-Za-z][A-Za-z0-9+.-]{0,31}:\/{0,2}$/
+/** What a trailing line without its break may still become once the rest of it arrives: a Cookie or Authorization value (an `=`, a `;`, a quote that opens a printed list element, the words themselves). Such a line waits for its break, so a pair or an element split over writes is judged whole. */
+const PARTIAL_LINE_MAY_BE_SHAPED =
+  /['"`=;]|authoriz|cookie|^\s*(?:basic|negotiate|ntlm|token|digest)\b/i
+
 /** A line no private-key body can be: it holds a character outside base64 and whitespace. */
 const NOT_KEY_BODY = /[^A-Za-z0-9+/=\s]/
 
@@ -91,6 +96,13 @@ function mayBecomeSecret(run: string): boolean {
  */
 function holdStart(text: string): number {
   let start = text.length
+  // A trailing line that may become a Cookie or Authorization value waits for its line break (at most the hold limit, see `release`).
+  const lineStart = text.lastIndexOf('\n') + 1
+  if (
+    lineStart < text.length &&
+    PARTIAL_LINE_MAY_BE_SHAPED.test(text.slice(lineStart))
+  )
+    start = lineStart
   // A trailing run without whitespace waits only if it may still become a secret.
   // Scanned backwards by hand: a regular expression would rescan a long run from every start.
   let runStart = text.length
@@ -233,9 +245,23 @@ function maskHeldStart(held: string): string {
  */
 export function createOutputRedactor(): OutputRedactor {
   let held = ''
+  // Whether the text released so far ended right after a quoted secret header name (a printed `rawHeaders` list), so the next element is its value.
+  let afterHeaderName = false
   // Set after an overflow: the rest of the oversized token (until whitespace) or private-key block is dropped; `held` stays empty meanwhile.
   let dropping: 'token' | 'block' | undefined
   const block: DroppedBlock = { droppedChars: 0, tail: '', atLineStart: false }
+
+  /**
+   * Masks the Cookie, Authorization and header-list shapes of released lines, then the credential patterns of {@link redactSecretText}.
+   * @param text - Text safe to release.
+   * @returns The text with every such credential masked.
+   * @example shapeAndRedact('sid=abc; theme=dark\n') // => '[masked]\n'
+   */
+  const shapeAndRedact = (text: string): string => {
+    const shaped = maskSecretShapesInOutput(text, afterHeaderName)
+    afterHeaderName = shaped.afterHeaderName
+    return redactSecretText(shaped.text)
+  }
 
   /**
    * Releases what can be released of `text`, holding a possible secret and failing closed past the hold limit.
@@ -248,18 +274,18 @@ export function createOutputRedactor(): OutputRedactor {
     const released = text.slice(0, split)
     held = text.slice(split)
     if (held.length <= OUTPUT_REDACTION_HOLD_LIMIT_CHARS)
-      return redactSecretText(released)
+      return shapeAndRedact(released)
     // No secret start in the run: release it, keeping a short carry so a start cut by the release is still seen whole.
     if (!SECRET_START.test(held)) {
       const run = held
       const cut = carryStart(run)
       held = run.slice(cut)
-      return redactSecretText(released + run.slice(0, cut))
+      return shapeAndRedact(released + run.slice(0, cut))
     }
     // Fail closed: a possible secret outgrew the hold, so mask it and drop the rest of that token or block.
     const overflow = held
     held = ''
-    const masked = redactSecretText(released) + REDACTION_MASK
+    const masked = shapeAndRedact(released) + REDACTION_MASK
     // Only a private-key header (or one not yet closed) opens a block; any other run is a token, dropped to the next whitespace.
     if (
       !PRIVATE_KEY_BEGIN.test(overflow) &&
@@ -301,7 +327,7 @@ export function createOutputRedactor(): OutputRedactor {
     const rest = dropping === undefined ? held : ''
     held = ''
     dropping = undefined
-    return maskHeldStart(rest)
+    return maskHeldStart(maskSecretShapesInOutput(rest, afterHeaderName).text)
   }
 
   return { write, end }

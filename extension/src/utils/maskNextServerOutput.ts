@@ -1,6 +1,7 @@
 import { NEXT_REDACTED_VALUE } from '../constants'
 
 import { isSecretName } from './isSecretName'
+import { maskSecretShapesInOutput } from './maskSecretShapesInOutput'
 import { redactedPairsOf } from './redactedPairsOf'
 
 /** A credential header and the rest of its line: `Set-Cookie:`, `Cookie:`, `Authorization:`, `Proxy-Authorization:`, also as a logged key (`'set-cookie': …`). */
@@ -79,7 +80,7 @@ function splitTrailingClosers(pairs: string): [string, string] {
 }
 
 /**
- * Masks the values the shared redactor leaves in Next development-server output before a Pages refusal quotes it: credential header lines, query values in logged URLs (a bare query part such as `/reset?3f9ac0…` whole, {@link redactedPairsOf}), and assignments whose name is a secret's ({@link isSecretName}, e.g. `API_KEY=`).
+ * Masks the values the shared redactor leaves in Next development-server output before a Pages refusal quotes it: the Cookie, Authorization and flat-header-array shapes the replay capture masks ({@link maskSecretShapesInOutput}), credential header lines, query values in logged URLs (a bare query part such as `/reset?3f9ac0…` whole, {@link redactedPairsOf}), and assignments whose name is a secret's ({@link isSecretName}, e.g. `API_KEY=`).
  *
  * Why it exists: {@link redactSecretText} masks Bearer tokens, JWTs, provider keys, URL passwords and PEM blocks, but no cookie value, no query value and no `NAME=value` pair, and a dev server prints all three. Called by the Pages run on the masked `outputTail()` it quotes in `NEXT_ROUTE_NOT_COMPILED`, and by the Next launcher on the output it journals for a workspace with a Pages folder. Only values are replaced; names stay so the learner can read what was printed. Every pattern runs in linear time, since the output is the server's and can hold any text.
  * @param text - Development-server output, already redacted by the shared redactor.
@@ -91,8 +92,10 @@ function splitTrailingClosers(pairs: string): [string, string] {
  * maskNextServerOutput('{"url":"/verify?dG9rZW4="}')  // => '{"url":"/verify?<redacted>"}'
  */
 export function maskNextServerOutput(text: string): string {
+  // The Cookie, Authorization and header-list shapes the replay capture masks come first, while quoted elements are whole.
+  const shaped = maskSecretShapesInOutput(text, false, NEXT_REDACTED_VALUE).text
   return maskSecretAssignments(
-    text
+    shaped
       .replace(CREDENTIAL_HEADER, `$1${NEXT_REDACTED_VALUE}`)
       .replace(URL_QUERY, (_query, beforeQuery: string, query: string) => {
         const [pairs, trailingClosers] = splitTrailingClosers(query)
