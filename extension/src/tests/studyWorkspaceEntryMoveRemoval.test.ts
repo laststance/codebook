@@ -1590,7 +1590,7 @@ async function applicationSharingLearnerGroupBesideChat() {
     harness.reactivatePreviousGroupAfterInsertion()
     harness.leaveEmptyLockedGroup(1)
     const dataDraft = harness.focusMutableDraft('data.ts', 2)
-    harness.focusMutableDraft('cards.tsx', 2)
+    const cardsDraft = harness.focusMutableDraft('cards.tsx', 2)
     harness.focusMutableDraft('auth.ts', 3)
     chat.focusTab()
     await harness.reader.open()
@@ -1601,7 +1601,7 @@ async function applicationSharingLearnerGroupBesideChat() {
       .flatMap((group) => group.tabs)
       .find((tab) => tab.label === 'Captured-theme.ts')
     if (capturedTab) harness.closeTabByHand(capturedTab)
-    return { harness, refusals, dataDraft }
+    return { harness, refusals, dataDraft, cardsDraft }
   } catch (error) {
     await harness.close()
     throw error
@@ -2148,6 +2148,42 @@ test('in Cursor, the move watch accepts a second report of the same uncovered fi
 
     // Assert
     assert.equal(outcome, 'unchanged')
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's own edit of the file the Application's move uncovered: typing in cards.tsx after it was reported as the active editor changes its document version and is the learner's input, while the re-report of the unedited file stays the move's; fails_when=a same-file report is accepted whatever its document version, so an edit during the move is taken as the move's effect and the recording arranges over it; why_new=Cycle 0072 task 5 Codex review of f46f65c4 (P2); seam=armWatchWithStaleEditor, focusExistingSource (the uncovered file), the draft's replaceContent (the learner's edit), the reader's watchLearnerViewDuringApplicationMove; no_claim=the real Cursor's event timing
+test('in Cursor, the move watch refuses an edit of the uncovered file made during the move', async () => {
+  // Arrange
+  const { harness, cardsDraft } =
+    await applicationSharingLearnerGroupBesideChat()
+  try {
+    const { watch, endStaleReport } = await armWatchWithStaleEditor(harness)
+    endStaleReport()
+    const uncovered = harness.editor.window.visibleTextEditors.find((editor) =>
+      editor.document.uri.path.endsWith('/cards.tsx'),
+    )!
+    harness.focusExistingSource(uncovered)
+
+    // Act
+    cardsDraft.replaceContent('The learner typed.\n')
+    harness.focusExistingSource(uncovered)
+    const outcome = (() => {
+      try {
+        watch.assertUnchanged()
+        return 'unchanged'
+      } catch (error) {
+        return String(error)
+      }
+    })()
+    watch.dispose()
+
+    // Assert
+    assert.match(
+      outcome,
+      /Native pane, group or focus changed while presentation waited; the learner arrangement was preserved\./,
+    )
   } finally {
     await harness.close()
   }

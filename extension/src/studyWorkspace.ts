@@ -18988,9 +18988,12 @@ export class StudyWorkspace {
           ),
         ),
     )
-    // The file the watch has taken as the move's effect, by group: the move uncovers one file per group. The editor may report that same file again with another column, selection or version while the move settles (Cursor 3.27.22, native C72-2); another file there is the learner's.
-    const uncoveredFileOfGroup = new Map<symbol | string, string>()
-    /** Names the group whose uncovered learner file is the active text editor: the file that was behind the Application (whatever the editor reported at arming), or the front file of a group that showed none while no text editor was active; later reports of that same file in that group count too, no other file does. */
+    // The file the watch has taken as the move's effect, by group: the move uncovers one file per group. The editor may report that same file again with another column or selection while the move settles (Cursor 3.27.22, native C72-2); another file there, or an edit of it (a new document version or dirty state), is the learner's.
+    const uncoveredFileOfGroup = new Map<
+      symbol | string,
+      { file: string; version: number; isDirty: boolean }
+    >()
+    /** Names the group whose uncovered learner file is the active text editor: the file that was behind the Application (whatever the editor reported at arming), or the front file of a group that showed none while no text editor was active; later reports of that same file in that group count too while its content is unchanged, no other file or edit does. */
     const findGroupUncoveredByMove = ():
       { group: vscode.TabGroup; file: string } | undefined => {
       const editor = vscode.window.activeTextEditor
@@ -19004,7 +19007,9 @@ export class StudyWorkspace {
         .map((key) => uncoveredFileOfGroup.get(key))
         .find((file) => file !== undefined)
       if (uncoveredFile !== undefined)
-        return uncoveredFile === editorFile
+        return uncoveredFile.file === editorFile &&
+          uncoveredFile.version === editor.document.version &&
+          uncoveredFile.isDirty === editor.document.isDirty
           ? { group, file: editorFile }
           : undefined
       return isEditorUncoveredByMove({
@@ -19027,9 +19032,14 @@ export class StudyWorkspace {
       // The file the move uncovered in the active group is the active text editor from then on, and its later reports stay the move's; another file there is the learner's; the report of a text editor the new group kept ends with the pane in front of it (row 710).
       if (editorNow !== editorBefore) {
         const uncovered = findGroupUncoveredByMove()
-        if (uncovered) {
+        const document = vscode.window.activeTextEditor?.document
+        if (uncovered && document) {
           for (const key of this.groupKeysOf(uncovered.group))
-            uncoveredFileOfGroup.set(key, uncovered.file)
+            uncoveredFileOfGroup.set(key, {
+              file: uncovered.file,
+              version: document.version,
+              isDirty: document.isDirty,
+            })
           editorBefore = editorNow
         } else if (
           editorNow === noEditor &&
