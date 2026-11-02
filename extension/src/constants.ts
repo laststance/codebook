@@ -2010,6 +2010,15 @@ export const REPOSITORY_STOP_MODULE_JOURNAL_LIMIT = 100
 export const REPOSITORY_STOP_MODULE_FIRST_JOURNAL_BEYOND_LIMIT = 50
 /** The longest the run waits for the text of a script that may be another webpack layer's instance of a declared server stop's module (`Debugger.getScriptSource`); past it the instance is refused with that reason, and a pause held in it fails with a sentence naming it. It is shorter than the wait for a stop's own pause, so the sentence is ready when that wait ends. */
 export const REPOSITORY_STOP_INSTANCE_READ_MS = 2_000
+/** The longest the run classifies a hit of an armed server stop in an `(rsc)` instance, counted from the first of its CDP pause and DAP `stopped` to the answer of the route read (the binding check, one `stackTrace` and one `evaluate`); past it the route counts as unreadable. Measured on the spike: median 60 ms, at most 102 ms warm, 214 ms and 257 ms for the first stops of a cold process. */
+export const SERVER_RENDER_CLASSIFICATION_MS = 1_000
+/** The constant expression a DAP `evaluate` on the paused top frame runs to read the route Next renders: only the work store's `route` string, never the request, headers or cookies. */
+export const SERVER_RENDER_ROUTE_EXPRESSION =
+  "require('next/dist/server/app-render/work-async-storage.external.js').workAsyncStorage.getStore()?.route"
+/** The address prefix of the fabricated copies React's development server parses of server modules; a hit in one at an armed stop's position is never a stop's pause. */
+export const REACT_SERVER_COPY_URL_PREFIX = 'about://React/Server/'
+/** How many resumed hits (`breakpoint.other-route`, `breakpoint.unattributed-resumed`, `breakpoint.repeat-hit`, `breakpoint.react-copy`) one run journals, each event type up to it; past it only their count is kept. */
+export const SERVER_RENDER_RESUMED_HIT_JOURNAL_LIMIT = 100
 /** The longest a pause no debugger stop announced may last for its resume to count as the debug adapter's own; the adapter resumes its pauses within milliseconds, and a pause that outlasts the wait for a stop's own pause is taken as announced, so this bound is that wait's bound ({@link CAPTURE_TIMEOUT_MS}) and follows it. */
 export const REPOSITORY_ADAPTER_PAUSE_LIMIT_MS = CAPTURE_TIMEOUT_MS
 /** The longest a page pause may last in a run that declares no browser stop before the run ends as "Unowned browser stop remained paused": the debug adapter resumes a pause of its own within milliseconds, and nobody else may pause the page of such a run. A pause in the page's stub of a declared server stop's module has {@link REPOSITORY_ADAPTER_PAUSE_LIMIT_MS} instead, because the adapter first reports that pause as a stop, which the run then resumes itself. */
