@@ -3244,13 +3244,7 @@ export class StudyWorkspace {
       (input.action === 'restore' || input.action === 'select') &&
       input.mode === 'study-workspace' &&
       input.mode === state.mode &&
-      // A displaced source is returned while the layout is unconfirmed; a layout this return confirmed (its receipt is still the current one) stays accepted by a later Restore, which the full placement would refuse beside the learner's groups.
-      (this.displacedCapturedSourceTab() !== undefined
-        ? !state.layoutConfirmed
-        : state.layoutConfirmed &&
-          !this.enlargedLayoutReceipt &&
-          this.layoutReceipt !== undefined &&
-          this.layoutReceipt === this.capturedSourceReturnReceipt) &&
+      this.needsMeasuredRestore(state) &&
       // A selected or opening test replay restores its own slots; the article's source stays where it is (F413).
       !this.testReplayHoldsComposition() &&
       input.presentationId === this.presentationId &&
@@ -3263,6 +3257,39 @@ export class StudyWorkspace {
       !this.closing &&
       this.isPresentationAdmissionOpen() &&
       vscode.window.state.focused
+    )
+  }
+
+  /**
+   * Tells whether a Restore of the Study workspace is answered from the measured placement because the full placement would refuse the learner's groups; asked by {@link restoresDisplacedCapturedSource}.
+   * That holds for a displaced captured source while the layout is unconfirmed; for a layout this return confirmed (its receipt is still the current one), which a later Restore keeps; and for the Study's three panes standing in their columns beside a group of the learner's, confirmed or not, which the full placement refuses with more than three groups.
+   * @param state - The presentation state at admission.
+   * @returns `true` when the return path owns the request.
+   * @example if (this.needsMeasuredRestore(this.presentationState())) …
+   */
+  private needsMeasuredRestore(state: PresentationState): boolean {
+    if (this.displacedCapturedSourceTab() !== undefined)
+      return !state.layoutConfirmed
+    if (this.enlargedLayoutReceipt || !this.layoutReceipt) return false
+    if (
+      state.layoutConfirmed &&
+      this.layoutReceipt === this.capturedSourceReturnReceipt
+    )
+      return true
+    return (
+      !this.liveComposition &&
+      !this.summaryComposition &&
+      this.hasStudyPaneColumns() &&
+      // Only a group with a text file of the learner's counts: Cursor's chat part is a group beyond the Study's too, and its Restore keeps the ordinary path.
+      vscode.window.tabGroups.all.some(
+        (group) =>
+          group.viewColumn > STUDY_EDITOR_GROUP_COUNT &&
+          group.tabs.some(
+            (tab) =>
+              tab.input instanceof vscode.TabInputText &&
+              !this.ownsCapturedSourceTab(tab),
+          ),
+      )
     )
   }
 

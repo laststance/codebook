@@ -724,6 +724,66 @@ test('a status read after the captured source returned beside a learner group st
   }
 })
 
+for (const [recovery, run] of [
+  [
+    'Arrange Study Workspace',
+    async (harness: Harness): Promise<void> => {
+      await harness.reader.action('arrange')
+    },
+  ],
+  [
+    'the presentation restore the chat calls',
+    async (harness: Harness): Promise<void> => {
+      const state = harness.reader.presentationState()
+      await harness.reader.changePresentation(
+        {
+          presentationId: state.presentationId,
+          expectedRevision: state.presentationControlRevision,
+          mode: 'study-workspace',
+          action: 'restore',
+        },
+        'agent',
+      )
+    },
+  ],
+] as const)
+  for (const statusRead of [false, true])
+    // Value: protects=the plain form of N71's defect: the Study's three panes stand in their columns, the learner opened data.ts and search.tsx in a new fourth group (so the grid has other sizes), and the public recovery confirms the layout, keeps that group in place and a second recovery keeps it, also when a status read retired the confirmation in between; fails_when=Restore answers "The Study panes changed during Restore" or "More than three editor groups are open" and nothing recovers short of closing the learner's group; why_new=Cycle 0072 task 1, native C72-1 on c6bd53f0 (no displaced source at all); seam=the workspace harness, a fourth editor group, readPresentationState as the chat's status read and the reader's arrange and changePresentation; no_claim=the native sizes of the editor
+    test(`${recovery} confirms the Study beside a fourth learner group${statusRead ? ' after a status read' : ''} and a second one keeps it`, async () => {
+      // Arrange: a confirmed Study, then the learner's fourth group with two files.
+      const harness = await workspaceHarness(false)
+      harness.useNativeLayout({ orientation: 0, groups: [{}] })
+      try {
+        await openRetainedStudy(harness)
+        const learnerGroup = await addLearnerGroup(harness)
+        if (statusRead) await harness.reader.readPresentationState()
+        // Act
+        await run(harness)
+        const afterFirst = harness.reader.presentationState()
+        await run(harness)
+        // Assert
+        const afterSecond = harness.reader.presentationState()
+        assert.deepEqual(
+          {
+            first: [afterFirst.layoutConfirmed, afterFirst.reason],
+            second: [afterSecond.layoutConfirmed, afterSecond.reason],
+            learnerGroup: learnerGroupAfter(harness, learnerGroup),
+          },
+          {
+            first: [true, undefined],
+            second: [true, undefined],
+            learnerGroup: {
+              open: true,
+              column: 4,
+              files: ['data.ts', 'search.tsx'],
+            },
+          },
+        )
+      } finally {
+        await harness.close()
+      }
+    })
+
 // Value: protects=Close Study Workspace while Arrange is returning the captured source: Close waits for the return, so no Codebook-owned captured-source tab is left or reopened after the cleanup; fails_when=the return is not registered as the presentation operation, Close cleans up at once and the late show opens the captured source again; why_new=Cycle 0072 task 1 CodeRabbit CLI pass 4 (A); seam=the workspace harness's holdNextTextDocumentShow, the reader's arrange and close; no_claim=none beyond protects
 test('Close Study Workspace during the captured source’s return leaves no captured-source tab open once both have finished', async () => {
   // Arrange: the captured source stands in the learner's fourth group and the editor's show of it is held.
