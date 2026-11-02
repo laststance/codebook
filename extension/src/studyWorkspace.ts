@@ -23,6 +23,7 @@ import {
   APPLICATION_PANE_CLOSED_MESSAGE,
   APPLICATION_PANE_TITLE,
   EDITOR_GROUPS_PRESERVED_MESSAGE,
+  EDITOR_NUMBERED_TAB_COMMAND_LIMIT,
   CHAT_KEYBOARD_RETURNED_MESSAGES,
   CHOICE_RETIRED_ERROR_KINDS,
   CLOSE_GROUP_SETTLE_MS,
@@ -3184,7 +3185,7 @@ export class StudyWorkspace {
         : 'Recorded source · Not recorded at this moment'
     const endOfLine = new vscode.Position(
       position.line,
-      source.text.split('\n')[position.line]?.length ?? 0,
+      source.text.split(/\r?\n/)[position.line]?.length ?? 0,
     )
     return {
       range: new vscode.Range(endOfLine, endOfLine),
@@ -3422,120 +3423,132 @@ export class StudyWorkspace {
         if (this.presentationTransition === transition)
           this.presentationTransition = undefined
       }
-      const assertOwned = (): void => {
-        this.assertLifetime(lifetime)
-        if (
-          this.presentationTransition !== transition ||
-          transition.id !== this.presentationId ||
-          input.expectedRevision !== this.presentationControlRevision ||
-          transition.cancellation.signal.aborted ||
-          runtimeIdentity !== this.assertPresentationAdmission()
-        )
+      // Everything after the transition is owned runs inside the try, so a throw in any helper releases it.
+      try {
+        const assertOwned = (): void => {
+          this.assertLifetime(lifetime)
+          if (
+            this.presentationTransition !== transition ||
+            transition.id !== this.presentationId ||
+            input.expectedRevision !== this.presentationControlRevision ||
+            transition.cancellation.signal.aborted ||
+            runtimeIdentity !== this.assertPresentationAdmission()
+          )
+            throw new StudyError(
+              'PRESENTATION_UNAVAILABLE',
+              'The presentation changed while the captured source was returned. Read its state before another control.',
+            )
+        }
+        const sourceColumn = STUDY_PRESENTATIONS['study-workspace'].sourceColumn
+        const sourceUri = this.sourceUri?.toString()
+        /** Names the front tab of the active group by its document (two files of one name in different folders differ) and the window focus: what a learner's click or leaving the window changes. */
+        const keyboardPlace = (): string => {
+          const front = vscode.window.tabGroups.activeTabGroup.activeTab
+          return JSON.stringify([
+            vscode.window.tabGroups.activeTabGroup.viewColumn,
+            this.textTabUri(front) ?? front?.label,
+            vscode.window.state.focused,
+          ])
+        }
+        // The place the return expects the keyboard at; it moves only where the return itself takes the keyboard.
+        let expectedPlace = keyboardPlace()
+        /** Stops the return and keeps the learner's own choice of focus. */
+        const abortForLearner = (choiceKept = true): never => {
+          this.yieldFocusToLearner()
           throw new StudyError(
             'PRESENTATION_UNAVAILABLE',
-            'The presentation changed while the captured source was returned. Read its state before another control.',
+            choiceKept
+              ? 'The editor focus changed while the captured source was returned; your choice was kept. Choose Restore Study workspace layout again.'
+              : 'The editor focus changed while the captured source was returned, and your tab is in a group the editor has no focus command for, so Codebook could not bring it back. Choose Restore Study workspace layout again.',
           )
-      }
-      const sourceColumn = STUDY_PRESENTATIONS['study-workspace'].sourceColumn
-      const sourceUri = this.sourceUri?.toString()
-      /** Names the front tab of the active group by its document (two files of one name in different folders differ) and the window focus: what a learner's click or leaving the window changes. */
-      const keyboardPlace = (): string => {
-        const front = vscode.window.tabGroups.activeTabGroup.activeTab
-        return JSON.stringify([
-          vscode.window.tabGroups.activeTabGroup.viewColumn,
-          this.textTabUri(front) ?? front?.label,
-          vscode.window.state.focused,
-        ])
-      }
-      // The place the return expects the keyboard at; it moves only where the return itself takes the keyboard.
-      let expectedPlace = keyboardPlace()
-      /** Stops the return and keeps the learner's own choice of focus. */
-      const abortForLearner = (): never => {
-        this.yieldFocusToLearner()
-        throw new StudyError(
-          'PRESENTATION_UNAVAILABLE',
-          'The editor focus changed while the captured source was returned; your choice was kept. Choose Restore Study workspace layout again.',
-        )
-      }
-      /** A learner's own change of focus during the return wins. The return itself takes no keyboard, so any change of the place since its start is the learner's. */
-      const assertLearnerKept = (): void => {
-        if (keyboardPlace() !== expectedPlace) abortForLearner()
-      }
-      /** Finds the Codebook-owned copy as the editor lists it now: tab and group objects may be new since the return began. */
-      const currentCopy = ():
-        { group: vscode.TabGroup; tab: vscode.Tab } | undefined => {
-        const group = vscode.window.tabGroups.all.find(
-          (candidate) => candidate.viewColumn === displaced?.group.viewColumn,
-        )
-        const tab = group?.tabs.find(
-          (candidate) =>
-            this.ownsCapturedSourceTab(candidate) &&
-            this.textTabUri(candidate) === sourceUri,
-        )
-        return group && tab ? { group, tab } : undefined
-      }
-      // The copy in front of the learner's keyboard hands that keyboard to the source when it goes.
-      const copyHasKeyboard =
-        vscode.window.tabGroups.activeTabGroup.activeTab === currentCopy()?.tab
-      /** The copy that had the keyboard hands it to the source before it closes, so the close hands it to no tab behind the copy. A learner who chose another file while this show is pending keeps it: the file is shown again and the return stops, with the copy left open. */
-      const takeKeyboardWithSource = async (
-        document: vscode.TextDocument,
-      ): Promise<void> => {
-        // What the learner chose meanwhile: a text file (the active text editor changes) or a tab that is no text file (a Settings page), seen as the front tab of the active group.
-        const chosen: {
-          column: number
-          document?: vscode.TextDocument
-          tab?: vscode.Tab
-        }[] = []
-        // A switch to a tab that is no text file shows as the front tab of the active group, whether the learner opened it (tab events) or moved to a group that already showed it (group events only).
-        const noteNonTextFront = (): void => {
-          const group = vscode.window.tabGroups.activeTabGroup
-          if (group.activeTab && this.textTabUri(group.activeTab) === undefined)
-            chosen.push({ column: group.viewColumn, tab: group.activeTab })
         }
-        const listeners = [
-          vscode.window.onDidChangeActiveTextEditor((editor) => {
-            if (editor && editor.document.uri.toString() !== sourceUri)
-              chosen.push({
-                column: editor.viewColumn ?? sourceColumn,
-                document: editor.document,
-              })
-          }),
-          vscode.window.tabGroups.onDidChangeTabs(noteNonTextFront),
-          vscode.window.tabGroups.onDidChangeTabGroups(noteNonTextFront),
-        ]
-        try {
-          await this.showTextDocumentNoted(document, {
-            viewColumn: sourceColumn,
-            preserveFocus: false,
-            preview: false,
-          })
-        } finally {
-          for (const listener of listeners) listener.dispose()
+        /** A learner's own change of focus during the return wins. The return itself takes no keyboard, so any change of the place since its start is the learner's. */
+        const assertLearnerKept = (): void => {
+          if (keyboardPlace() !== expectedPlace) abortForLearner()
         }
-        assertOwned()
-        const learnersChoice = chosen.at(-1)
-        if (!learnersChoice) return
-        // The learner's target gets the keyboard back: a file is shown again; any other tab is brought to the front of its group again (the late show may have covered it) and its group is focused.
-        if (learnersChoice.document)
-          await this.showTextDocumentNoted(learnersChoice.document, {
-            viewColumn: learnersChoice.column,
-            preserveFocus: false,
-            preview: false,
-          })
-        else await this.reactivateNonTextTab(learnersChoice)
-        abortForLearner()
-      }
-      /** Closes the Codebook-owned copy where the rules above allow it, and keeps a learner's choice of focus made meanwhile. */
-      const closeMovedCopy = async (): Promise<void> => {
-        const copy = currentCopy()
-        if (!copy || copy.tab.isPinned || copy.group.tabs.length <= 1) return
-        await vscode.window.tabGroups.close([copy.tab], true)
-        assertOwned()
-        // The copy no longer has the keyboard (the source has it, or the request's place does), so the close moves nothing: any change since is the learner's, also a front tab of the copy's own group.
-        assertLearnerKept()
-      }
-      try {
+        /** Finds the Codebook-owned copy as the editor lists it now: tab and group objects may be new since the return began. */
+        const currentCopy = ():
+          { group: vscode.TabGroup; tab: vscode.Tab } | undefined => {
+          const group = vscode.window.tabGroups.all.find(
+            (candidate) => candidate.viewColumn === displaced?.group.viewColumn,
+          )
+          const tab = group?.tabs.find(
+            (candidate) =>
+              this.ownsCapturedSourceTab(candidate) &&
+              this.textTabUri(candidate) === sourceUri,
+          )
+          return group && tab ? { group, tab } : undefined
+        }
+        // The copy in front of the learner's keyboard hands that keyboard to the source when it goes.
+        const copyHasKeyboard =
+          vscode.window.tabGroups.activeTabGroup.activeTab ===
+          currentCopy()?.tab
+        /** The copy that had the keyboard hands it to the source before it closes, so the close hands it to no tab behind the copy. A learner who chose another file while this show is pending keeps it: the file is shown again and the return stops, with the copy left open. */
+        const takeKeyboardWithSource = async (
+          document: vscode.TextDocument,
+        ): Promise<void> => {
+          // What the learner chose meanwhile: a text file (the active text editor changes) or a tab that is no text file (a Settings page), seen as the front tab of the active group.
+          const chosen: {
+            column: number
+            document?: vscode.TextDocument
+            tab?: vscode.Tab
+          }[] = []
+          // A switch to a tab that is no text file shows as the front tab of the active group, whether the learner opened it (tab events) or moved to a group that already showed it (group events only).
+          const noteNonTextFront = (): void => {
+            const group = vscode.window.tabGroups.activeTabGroup
+            if (
+              group.activeTab &&
+              this.textTabUri(group.activeTab) === undefined
+            )
+              chosen.push({ column: group.viewColumn, tab: group.activeTab })
+          }
+          const listeners = [
+            vscode.window.onDidChangeActiveTextEditor((editor) => {
+              if (!editor || editor.document.uri.toString() === sourceUri)
+                return
+              // A diff side reports no view column: its file is not shown again (that would duplicate it in the source column); its group and front tab are the learner's choice.
+              if (editor.viewColumn === undefined) noteNonTextFront()
+              else
+                chosen.push({
+                  column: editor.viewColumn,
+                  document: editor.document,
+                })
+            }),
+            vscode.window.tabGroups.onDidChangeTabs(noteNonTextFront),
+            vscode.window.tabGroups.onDidChangeTabGroups(noteNonTextFront),
+          ]
+          try {
+            await this.showTextDocumentNoted(document, {
+              viewColumn: sourceColumn,
+              preserveFocus: false,
+              preview: false,
+            })
+          } finally {
+            for (const listener of listeners) listener.dispose()
+          }
+          assertOwned()
+          const learnersChoice = chosen.at(-1)
+          if (!learnersChoice) return
+          // The learner's target gets the keyboard back: a file is shown again; any other tab is brought to the front of its group again (the late show may have covered it) and its group is focused.
+          let choiceKept = true
+          if (learnersChoice.document)
+            await this.showTextDocumentNoted(learnersChoice.document, {
+              viewColumn: learnersChoice.column,
+              preserveFocus: false,
+              preview: false,
+            })
+          else choiceKept = await this.reactivateNonTextTab(learnersChoice)
+          abortForLearner(choiceKept)
+        }
+        /** Closes the Codebook-owned copy where the rules above allow it, and keeps a learner's choice of focus made meanwhile. */
+        const closeMovedCopy = async (): Promise<void> => {
+          const copy = currentCopy()
+          if (!copy || copy.tab.isPinned || copy.group.tabs.length <= 1) return
+          await vscode.window.tabGroups.close([copy.tab], true)
+          assertOwned()
+          // The copy no longer has the keyboard (the source has it, or the request's place does), so the close moves nothing: any change since is the learner's, also a front tab of the copy's own group.
+          assertLearnerKept()
+        }
         if (displaced && this.sourceUri) {
           const document = await vscode.workspace.openTextDocument(
             this.sourceUri,
@@ -3612,32 +3625,34 @@ export class StudyWorkspace {
    * Brings a tab that is no text file to the front of its group again and focuses that group, so a learner's choice a late show covered is back; called by {@link returnDisplacedCapturedSourceThenAdmit}.
    * The tab is looked up again by its kind of input and label, since the editor may have replaced its objects; the editor's numbered command (first nine tabs of the active group) reveals it.
    * @param choice - The group's column and the tab the learner chose.
-   * @example await this.reactivateNonTextTab({ column: 2, tab })
+   * @returns `true` when the tab is in front of its group and the group is focused; `false` when the editor has no focus command for the group (a column beyond its eighth: the numbered tab command would then act on whatever group is active, so nothing is run) or the tab cannot be revealed by number.
+   * @example await this.reactivateNonTextTab({ column: 2, tab }) // => true
    */
   private async reactivateNonTextTab(choice: {
     column: number
     tab?: vscode.Tab
-  }): Promise<void> {
+  }): Promise<boolean> {
     const focusCommand = focusEditorGroupCommand(choice.column)
-    if (focusCommand) await this.executeEditorCommand(focusCommand)
+    if (!focusCommand) return false
+    await this.executeEditorCommand(focusCommand)
     const group = vscode.window.tabGroups.all.find(
       (candidate) => candidate.viewColumn === choice.column,
     )
+    if (group?.activeTab?.label === choice.tab?.label) return true
     const index = group?.tabs.findIndex(
       (candidate) =>
         candidate === choice.tab ||
         (candidate.label === choice.tab?.label &&
           candidate.input?.constructor === choice.tab?.input?.constructor),
     )
-    if (
-      group?.activeTab?.label !== choice.tab?.label &&
-      index !== undefined &&
-      index >= 0 &&
-      index < 9
+    // The editor numbers the first nine tabs of a group only; a tab is counted from 1.
+    const tabNumber = index === undefined ? 0 : index + 1
+    if (tabNumber < 1 || tabNumber > EDITOR_NUMBERED_TAB_COMMAND_LIMIT)
+      return false
+    await this.executeEditorCommand(
+      `workbench.action.openEditorAtIndex${tabNumber}`,
     )
-      await this.executeEditorCommand(
-        `workbench.action.openEditorAtIndex${index + 1}`,
-      )
+    return true
   }
 
   /**

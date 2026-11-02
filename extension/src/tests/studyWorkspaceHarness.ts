@@ -659,6 +659,8 @@ export async function workspaceHarness(
       group: (typeof groups)[number]
     })[] = [],
     decoratedColumns: (number | undefined)[] = [],
+    /** The start line of every range each source highlight call marked, in the order of {@link decoratedColumns} (which `clearDecorations` empties together with it). */
+    decoratedStartLines: number[][] = [],
     /** How many lines each source highlight call marked, in order; 0 is a cleared highlight. */
     decoratedRangeCounts: number[] = []
   const sourceIdentityCalls: { uri: string; ranges: readonly unknown[] }[] = []
@@ -730,6 +732,9 @@ export async function workspaceHarness(
         return
       }
       decoratedColumns.push(this.viewColumn)
+      decoratedStartLines.push(
+        ranges.map((range) => (range instanceof Range ? range.start.line : -1)),
+      )
       decoratedRangeCounts.push(ranges.length)
     },
     selections: [{ anchor: new Position(22, 0), active: new Position(22, 0) }],
@@ -6293,8 +6298,11 @@ export async function workspaceHarness(
     },
     clearDecorations(): void {
       decoratedColumns.length = 0
+      decoratedStartLines.length = 0
     },
     decoratedColumns: () => [...decoratedColumns],
+    /** The start lines each source highlight call marked, paired by index with `decoratedColumns`. @example harness.decoratedStartLines().at(-1) // => [2] after the highlight of line 3 */
+    decoratedStartLines: () => decoratedStartLines.map((lines) => [...lines]),
     /** How many lines each source highlight call marked, in order; 0 is a cleared highlight. @example harness.decoratedRangeCounts().at(-1) // => 0 once the stop's highlight was cleared */
     decoratedRangeCounts: () => [...decoratedRangeCounts],
     /** Reports native source-identity annotations separately from execution highlights for source/time/gap regressions. @example harness.sourceIdentityDecorations().at(-1)?.ranges */

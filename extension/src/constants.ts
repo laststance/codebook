@@ -283,6 +283,8 @@ export const STUDY_REFRESH_INTERVAL_MS = 250
 /** The least time between two layout requests of a saved study that waits for the hidden editor area: the reader's timer ticks every {@link STUDY_REFRESH_INTERVAL_MS}, the wait has no end, and the editor is asked once a second at most. */
 export const STUDY_EDITOR_AREA_LOOK_INTERVAL_MS = 1_000
 export const STUDY_EDITOR_GROUP_COUNT = 3
+/** How many tabs of a group the editor's numbered command (`workbench.action.openEditorAtIndex1` to `9`) can bring to the front. */
+export const EDITOR_NUMBERED_TAB_COMMAND_LIMIT = 9
 export const LIVE_EDITOR_GROUP_COUNT = 2
 export const LIVE_EDITOR_LAYOUT = {
   orientation: 1,

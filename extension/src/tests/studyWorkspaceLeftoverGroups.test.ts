@@ -2,7 +2,11 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 
+import { sha256 } from '../runtimeSupport/utils/sha256'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+
 import { workspaceHarness, openRetainedStudy } from './studyWorkspaceHarness'
+import { createConfiguredStudy } from './utils/createConfiguredStudy'
 
 type Harness = Awaited<ReturnType<typeof workspaceHarness>>
 
@@ -23,6 +27,46 @@ async function addLearnerGroup(
   harness.focusMutableDraft('data.ts', column)
   harness.focusMutableDraft('search.tsx', column)
   return harness.groups.find((group) => group.viewColumn === column)!
+}
+
+/**
+ * Opens a saved study whose stop is on line 3 of a four-line captured source, so a caret or highlight on the stopped line is told from the first line.
+ * @param harness - The reader and the fake editor.
+ * @returns The zero-based stopped line, 2.
+ * @example const stoppedLine = await openRetainedStudyStoppedAtLineThree(harness)
+ */
+async function openRetainedStudyStoppedAtLineThree(
+  harness: Harness,
+): Promise<number> {
+  const library = await harness.reader.learningStorage()
+  const base = createConfiguredStudy('first\nsecond\nthird\nfourth\n', 4)
+  // The stop is declared on line 3 and observed there, so the study stays sealed.
+  const configuration = {
+    ...base.configuration,
+    source: { ...base.configuration.source, line: 3 },
+  }
+  const study = {
+    ...base,
+    workspaceKey: library.workspaceKey,
+    configuration,
+    configurationHash: sha256(JSON.stringify(configuration)),
+  }
+  study.observations[0]!.source.line = 3
+  await library.saveStudy(study)
+  await harness.reader.open()
+  harness.receive({
+    type: 'history',
+    revision: harness.reader.inspect().view!.revision,
+    studyId: study.id,
+  })
+  await waitUntil(
+    () =>
+      harness.reader.inspect().view!.model.selection.studyId === study.id &&
+      !harness.reader.inspect().view!.loading,
+    'retained repository source stopped on line 3',
+    1_000,
+  )
+  return harness.reader.inspect().view!.model.source.line - 1
 }
 
 /**
@@ -1255,19 +1299,20 @@ test('Close Study Workspace during the captured source’s return leaves no capt
   }
 })
 
-// Value: protects=the returned source's stopped line and annotation: the editor the return opens in the Study source column is decorated like the ordinary placement decorates it; fails_when=the new editor gets no decoration, so the stopped line is not marked after Arrange; why_new=Cycle 0072 task 1 candidate Codex review P2 (3); seam=the workspace harness's decoratedColumns of the source highlight; no_claim=the Recorded annotation of a live source view is not asserted here
+// Value: protects=the returned source's stopped line and annotation: the editor the return opens in the Study source column is decorated like the ordinary placement decorates it, on the stopped line (line 3 here, not the first); fails_when=the new editor gets no decoration, or one on another line, so the stopped line is not marked after Arrange; why_new=Cycle 0072 task 1 candidate Codex review P2 (3), line check added after the review round's test-gap finding; seam=the workspace harness's decoratedColumns and decoratedStartLines of the source highlight; no_claim=the Recorded annotation of a live source view is not asserted here
 test('Arrange marks the stopped line in the editor it returns the captured source to', async () => {
-  // Arrange: the captured source stands in the learner's fourth group; earlier decoration calls are forgotten.
+  // Arrange: the captured source, stopped on line 3, stands in the learner's fourth group; earlier decoration calls are forgotten.
   const harness = await workspaceHarness(false)
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
   try {
-    await openRetainedStudy(harness)
+    await openRetainedStudyStoppedAtLineThree(harness)
     harness.moveSource((await addLearnerGroup(harness)).viewColumn)
     harness.clearDecorations()
     // Act
     await harness.reader.action('arrange')
     // Assert
-    assert.equal(harness.decoratedColumns().includes(2), true)
+    const lastInSourceColumn = harness.decoratedColumns().lastIndexOf(2)
+    assert.deepEqual(harness.decoratedStartLines()[lastInSourceColumn], [2])
   } finally {
     await harness.close()
   }
@@ -1314,6 +1359,195 @@ test('Arrange keeps the learner’s group open when it holds only the moved copy
         layoutConfirmed: state.layoutConfirmed,
       },
       { groupOpen: true, layoutConfirmed: true },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the stopped line of a returned captured source whose moved copy is not a visible editor (a learner file stands in front of it): the new editor's caret stands on the stopped line, line 3 here; fails_when=the return passes no stopped line as the selection when the copy has no editor of its own, so the caret stays on the first line and the stop is off screen in a long file; why_new=Cycle 0072 task 1 review round, test gap (the fallback of the selection was never reached: every moved copy was a visible editor on the first line); seam=the workspace harness with a learner file in front of the moved copy; no_claim=the native scroll position, only the selection that reveals it
+test('Arrange puts the caret on the stopped line when the moved copy has no visible editor of its own', async () => {
+  // Arrange: the source, stopped on line 3, was moved to the fourth group, and the learner's data.ts is in front of it.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    const stoppedLine = await openRetainedStudyStoppedAtLineThree(harness)
+    const learnerGroup = await addLearnerGroup(harness)
+    harness.moveSource(learnerGroup.viewColumn)
+    harness.focusMutableDraft('data.ts', learnerGroup.viewColumn)
+    const sourceUri = harness.reader.inspect().sourceUri
+    const copyIsVisible = harness.editor.window.visibleTextEditors.some(
+      (editor) =>
+        editor.viewColumn === learnerGroup.viewColumn &&
+        editor.document.uri.toString() === sourceUri,
+    )
+    // Act
+    await harness.reader.action('arrange')
+    // Assert
+    const returned = harness.editor.window.visibleTextEditors.find(
+      (editor) =>
+        editor.viewColumn === 2 && editor.document.uri.toString() === sourceUri,
+    )
+    assert.deepEqual(
+      {
+        copyIsVisible,
+        stoppedLine,
+        caretLine: returned?.selections[0]?.active.line,
+      },
+      { copyIsVisible: false, stoppedLine: 2, caretLine: 2 },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the decoration of the label at the end of a CRLF source's stopped line: the annotation stands at the real line end and not after the carriage return; fails_when=the line length counts the \r, so the label is one column too far on every line of a CRLF source (F201, here for the live source view's annotation); why_new=Cycle 0072 task 1 review round (CodeRabbit, CRLF); seam=the reader's sourceIdentityDecoration called directly with a CRLF source; no_claim=how the editor lays out the label
+test('the annotation of a CRLF source stands at the end of its line, not after the carriage return', async () => {
+  // Arrange: a saved study is open; the annotation is built for a two-line CRLF source.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await openRetainedStudy(harness)
+    const model = harness.reader.inspect().view!.model
+    // Act
+    // The harness's Position is a light stand-in for the editor's, so the private method is applied without its parameter types.
+    const decoration: {
+      range: { start: { line: number; character: number } }
+    } = Reflect.apply(
+      harness.reader['sourceIdentityDecoration'],
+      harness.reader,
+      [
+        model,
+        { ...model.source, text: 'const a = 1;\r\nconst b = 22;\r\n', line: 2 },
+        undefined,
+        new harness.editor.Position(1, 0),
+      ],
+    )
+    // Assert
+    assert.deepEqual(
+      {
+        line: decoration.range.start.line,
+        column: decoration.range.start.character,
+      },
+      { line: 1, column: 13 },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a group the editor has no focus command for (a ninth group): when the learner's tab there is not in front and the return could not bring it back, the numbered tab command is not run on whatever group is active, and the answer does not say the choice was kept; fails_when=the return runs openEditorAtIndexN on the active group and still claims the choice was kept; why_new=Cycle 0072 task 1 review round (OCR lens C L1, lens A L2); seam=restoreWithLearnerDuringSecondShow, nine groups, a chat tab in the ninth group that a silent change put behind a file, and the harness's command log; no_claim=the chat tab stands for any non-text tab
+test('a learner’s tab in a group the editor cannot focus is not touched by a numbered tab command and the answer does not claim it was kept', async () => {
+  // Arrange: nine groups; the moved copy has the keyboard in the fourth; the ninth holds a file and a chat tab.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await openRetainedStudy(harness)
+    await addLearnerGroup(harness)
+    await harness.editor.commands.executeCommand('vscode.setEditorLayout', {
+      orientation: 0,
+      groups: Array.from({ length: 9 }, () => ({})),
+    })
+    harness.moveSource(4)
+    const commandsBefore = harness.commands.length
+    // Act: the learner opens the chat tab in the ninth group, and a change without an event puts the file in front of it again.
+    const answer = await restoreWithLearnerDuringSecondShow(harness, () => {
+      harness.focusMutableDraft('late.ts', 9)
+      harness.focusChatEditorTab(9)
+      const ninth = harness.groups.find((group) => group.viewColumn === 9)!
+      ninth.activeTab = ninth.tabs[0]
+    })
+    // Assert
+    assert.deepEqual(
+      {
+        answer,
+        numberedTabCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) => /openEditorAtIndex/.test(command)),
+      },
+      {
+        answer:
+          'Error: The editor focus changed while the captured source was returned, and your tab is in a group the editor has no focus command for, so Codebook could not bring it back. Choose Restore Study workspace layout again.',
+        numberedTabCommands: [],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the presentation transition when a helper of the return throws right after the transition was taken: the transition is released, so the next control is not refused as pending for good; fails_when=the try block starts later than the transition, a throw in the keyboard-place read leaves the transition owned and every later control is refused; why_new=Cycle 0072 task 1 review round (OCR lens A L4); seam=the reader's tab groups getter made to throw while the transition is owned; no_claim=which production helper throws
+test('a throw right after the return took the presentation transition releases it', async () => {
+  // Arrange: the captured source stands in the learner's fourth group; reading the active group throws once the transition is owned.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  const tabGroups = harness.editor.window.tabGroups
+  const original = Object.getOwnPropertyDescriptor(tabGroups, 'activeTabGroup')
+  try {
+    await openRetainedStudy(harness)
+    harness.moveSource((await addLearnerGroup(harness)).viewColumn)
+    const before = harness.reader.presentationState()
+    Object.defineProperty(tabGroups, 'activeTabGroup', {
+      configurable: true,
+      get() {
+        if (harness.reader['presentationTransition'])
+          throw new Error('the editor failed while the return was starting')
+        return original?.get?.call(tabGroups)
+      },
+    })
+    // Act
+    const answer = await harness.reader
+      .changePresentation({
+        presentationId: before.presentationId,
+        expectedRevision: before.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'restore',
+      })
+      .then(
+        () => 'answered',
+        (error: unknown) => String(error),
+      )
+    // Assert
+    assert.deepEqual(
+      {
+        answer,
+        transitionOwned: harness.reader['presentationTransition'] !== undefined,
+      },
+      {
+        answer: 'Error: the editor failed while the return was starting',
+        transitionOwned: false,
+      },
+    )
+  } finally {
+    if (original) Object.defineProperty(tabGroups, 'activeTabGroup', original)
+    await harness.close()
+  }
+})
+
+// Value: protects=a diff editor the learner activates while the second show is pending: it reports no view column, so the return does not show its file again in the source column (that would duplicate it there); its group keeps the keyboard; fails_when=the missing column falls back to the source column and the file is shown there with the keyboard, while the answer says the choice was kept; why_new=Cycle 0072 task 1 review round (OCR lens A L1); seam=restoreWithLearnerDuringSecondShow, focusDiffEditor and the harness's text document shows; no_claim=the diff is the harness's, not the Source Control view's
+test('a diff editor the learner activates while the second show is pending is not shown again in the source column', async () => {
+  // Arrange: the moved copy has the keyboard in the fourth group.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await openRetainedStudy(harness)
+    harness.moveSource((await addLearnerGroup(harness)).viewColumn)
+    const showsBefore = harness.textDocumentShows().length
+    // Act: the learner opens a diff of diff.ts in the fourth group while the second show is pending.
+    const answer = await restoreWithLearnerDuringSecondShow(harness, () => {
+      harness.focusDiffEditor('diff.ts', 4)
+    })
+    // Assert
+    assert.deepEqual(
+      {
+        answer,
+        diffShownAgain: harness
+          .textDocumentShows()
+          .slice(showsBefore)
+          .some((shown) => shown.name === 'diff.ts'),
+        activeColumn: harness.editor.window.tabGroups.activeTabGroup.viewColumn,
+      },
+      { answer: FOCUS_KEPT_ANSWER, diffShownAgain: false, activeColumn: 4 },
     )
   } finally {
     await harness.close()
