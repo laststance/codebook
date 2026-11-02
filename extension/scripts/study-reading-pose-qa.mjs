@@ -1143,9 +1143,23 @@ async function check(page, options, collected) {
   // The note stays visible when the Learning summary is collapsed or open, and one announcement per stop change.
   await page.setViewportSize({ width: 960, height: 640 })
   await render(serverRenderReplay(0))
+  // Count every write into the announcement so a rewrite of the same sentence fails.
+  await page.evaluate(() => {
+    window.announcementWrites = 0
+    new MutationObserver((records) => {
+      window.announcementWrites += records.length
+    }).observe(document.getElementById('pause-announcement'), {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    })
+  })
   await publish(serverRenderReplay(1, { presentedMs: 1000 }))
   const announcements = await page.evaluate(
     () => document.getElementById('pause-announcement').textContent,
+  )
+  const announcementWrites = await page.evaluate(
+    () => window.announcementWrites,
   )
   const summaryOpen = await page.evaluate(() => {
     document.getElementById('learning-material').hidden = false
@@ -1161,11 +1175,18 @@ async function check(page, options, collected) {
   )
   cases.push({
     name: 'the first-execution note stays visible with the Learning summary open or collapsed, opens its details, and a repeated message does not announce the stop again',
-    actual: { announcements, summaryOpen, summaryCollapsed, detailsOpen },
+    actual: {
+      announcements,
+      announcementWrites,
+      summaryOpen,
+      summaryCollapsed,
+      detailsOpen,
+    },
     passed:
       summaryOpen &&
       summaryCollapsed &&
       detailsOpen &&
+      announcementWrites === 0 &&
       announcements ===
         'Selected stop: Page load · Server render · app/lib/data.ts:23',
   })

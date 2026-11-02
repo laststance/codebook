@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
+import { ERROR_RECOVERY } from '../errors'
 import { operationsRepositoryConfigSchema } from '../repositoryConfigSchemas'
 import { readResource } from '../resources'
 import {
@@ -63,6 +64,23 @@ test('the packaged help states afterOperation 0, omitted operations, not-needed 
   ])
     assert.ok(help.includes(phrase), phrase)
   assert.doesNotMatch(help, /caused by operation/i)
+})
+
+// protects=D13 (no packaged text says an operation caused a render); fails_when=any ERROR_RECOVERY text says an operation was observed to cause, or caused, a render; no_claim=wording quality
+test('no error recovery text says an operation caused a render', () => {
+  // Arrange
+  const recoveryTexts = Object.values(ERROR_RECOVERY)
+  // Act / Assert
+  for (const recoveryText of recoveryTexts) {
+    assert.doesNotMatch(recoveryText, /observed to cause/i)
+    assert.doesNotMatch(recoveryText, /caused by operation/i)
+    assert.doesNotMatch(recoveryText, /the operation caused/i)
+  }
+  assert.ok(
+    ERROR_RECOVERY.SERVER_STOP_NOT_REACHED.includes(
+      'a render observed after operation details.operationIndex',
+    ),
+  )
 })
 
 // protects=AC 11 (the packaged skill carries the server-render rules); fails_when=a rule leaves the skill or its version is not 1.0.65; no_claim=how a chat follows the rules
