@@ -1605,6 +1605,57 @@ test('Arrange Study Workspace answers after an Open Study Workspace was refused 
   }
 })
 
+// Value: protects=the Output diagnostic of a control refused with "A presentation change or reader close is pending." (native C72-2: Arrange refused for 80 s after a refused cold entry with nothing in the log to say what was pending): the entry names the presentation transition that is held, the method that set it and its age, and says the operation, busy, refreshing and arranging markers apart; fails_when=the refusal is thrown without a presentation:pending-refused entry, or the entry omits the held marker or its owner; why_new=Cycle 0072 task 2 diagnostic; seam=holdNextCommand on the layout read of a Restore, changePresentation, assertPresentationIdle through reader.action, the diagnostics log; no_claim=which marker the native refusal held
+test('a control refused as pending writes an Output entry naming the held presentation transition and its owner', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let release = (): void => {}
+  try {
+    await harness.reader.open()
+    const held = harness.holdNextCommand('vscode.getEditorLayout')
+    release = held.release
+    const state = harness.reader.presentationState()
+    const transfer = harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'living-book',
+      action: 'select',
+    })
+    const settled = transfer.then(
+      () => undefined,
+      () => undefined,
+    )
+    await held.started
+
+    // Act
+    const refusal = await harness.reader.action('arrange').then(
+      () => 'answered',
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.match(refusal, /A presentation change or reader close is pending/)
+    const entry = logged.find(
+      (candidate) => candidate.surface === 'presentation:pending-refused',
+    )
+    assert.match(
+      entry?.cause ?? '',
+      /^presentationTransition: set by StudyWorkspace\.\S+ \d+ ms ago/,
+    )
+    release()
+    await settled
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
 test('first Study entry accepts its application tab registering during the initial native layout read', async () => {
   // Arrange
   const harness = await workspaceHarness(false)

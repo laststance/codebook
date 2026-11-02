@@ -1236,7 +1236,7 @@ export class StudyWorkspace {
     release(): void
     released: Promise<void>
   }
-  private closing = false
+  private closingValue = false
   private closingPromise?: Promise<void>
   private arranging?: Promise<unknown>
   /** Whether a Read ({@link readStudyPane}) maximized an editor group and no command of the reader has left that maximization since; {@link close} then ends it, so a closed workspace leaves no maximized group behind. */
@@ -1392,7 +1392,7 @@ export class StudyWorkspace {
   private presentationControlRevision = 0
   private readerSelectionRevision = 0
   /** Who asked for the Live Return that is running ({@link returnCurrentSelection}): `'agent'` for codebook_return_current, `'learner'` for the Study pane's control; `undefined` while none runs. */
-  private returningCurrent: PresentationRequester | undefined
+  private returningCurrentValue: PresentationRequester | undefined
   /** The sentence an agent's Live Return owes when its end gives the remembered tab nothing back ({@link owePreparationNotice}): `true` for {@link APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE}, `false` for {@link APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE}, `undefined` when none is owed. */
   private preparationNoticeOwed: boolean | undefined
   /** Whether the last Application preparation that left the keyboard in its new group focused an editor group itself, kept while its sentence stayed untold because it was told once in the session already ({@link tellPreparedApplicationKeyboard}); an agent's Study selection that entered a replay or a live run tells its own sentence then ({@link tellUntoldSelectionKeyboard}, row 640). `undefined` when no such preparation is untold. */
@@ -1407,14 +1407,106 @@ export class StudyWorkspace {
   /** `true` while {@link open} arranges the panes of an entry: the placement guards then take the editor's report of another own pane as the active one for no change of the learner's (Cursor 3.27.22 after a reload). */
   private acceptingOwnPaneFocusReport = false
 
-  private presentationTransition?: {
+  private presentationTransitionValue?: {
     id: string
     cancellation: AbortController
     runtimeIdentity?: string
   }
-  private presentationOperation?: Promise<PresentationState>
   /** The layout receipt that {@link returnDisplacedCapturedSourceThenAdmit} confirmed; while it is the current one, a later Restore keeps that confirmation. */
   private capturedSourceReturnReceipt?: StudyWorkspace['layoutReceipt']
+  private presentationOperationValue?: Promise<PresentationState>
+  /** When and by which method each marker that refuses a control was set ({@link noteMarker}), for the diagnostic of {@link assertPresentationIdle}. */
+  private readonly markerSetAt = new Map<
+    string,
+    { atMs: number; owner: string }
+  >()
+
+  private get closing(): boolean {
+    return this.closingValue
+  }
+  private set closing(value: boolean) {
+    this.noteMarker('closing', value)
+    this.closingValue = value
+  }
+  private get returningCurrent(): PresentationRequester | undefined {
+    return this.returningCurrentValue
+  }
+  private set returningCurrent(value: PresentationRequester | undefined) {
+    this.noteMarker('returningCurrent', value !== undefined)
+    this.returningCurrentValue = value
+  }
+  private get presentationTransition(): StudyWorkspace['presentationTransitionValue'] {
+    return this.presentationTransitionValue
+  }
+  private set presentationTransition(
+    value: StudyWorkspace['presentationTransitionValue'],
+  ) {
+    this.noteMarker('presentationTransition', value !== undefined)
+    this.presentationTransitionValue = value
+  }
+  private get presentationOperation(): Promise<PresentationState> | undefined {
+    return this.presentationOperationValue
+  }
+  private set presentationOperation(
+    value: Promise<PresentationState> | undefined,
+  ) {
+    this.noteMarker('presentationOperation', value !== undefined)
+    this.presentationOperationValue = value
+  }
+
+  /**
+   * Remembers when and by which method a control-refusing marker was set, and forgets it when it is cleared; called by the setters of {@link closing}, {@link returningCurrent}, {@link presentationTransition} and {@link presentationOperation}.
+   * @param name - The marker's field name.
+   * @param isSet - Whether the assignment sets the marker (`true`) or clears it (`false`).
+   * @example this.noteMarker('presentationTransition', true)
+   */
+  private noteMarker(name: string, isSet: boolean): void {
+    if (!isSet) {
+      this.markerSetAt.delete(name)
+      return
+    }
+    // Frames: Error, noteMarker, the setter, then the method that assigned.
+    const frame = new Error().stack?.split('\n')[3] ?? ''
+    this.markerSetAt.set(name, {
+      atMs: performance.now(),
+      owner: /at (?:async )?(\S+)/.exec(frame)?.[1] ?? 'unknown',
+    })
+  }
+
+  /**
+   * Writes the Output diagnostic that names every marker which refuses a control, with its owner and age; called by {@link assertPresentationIdle} just before it throws the pending sentence.
+   * @example this.logPendingRefusal()
+   */
+  private logPendingRefusal(): void {
+    const nowMs = performance.now()
+    const describe = (name: string, isSet: boolean, refuses: boolean) => {
+      const since = this.markerSetAt.get(name)
+      return isSet
+        ? `${name}${refuses ? '' : ' (not part of the refusal)'}: set by ${since?.owner ?? 'unknown'} ${since ? Math.round(nowMs - since.atMs) : '?'} ms ago`
+        : undefined
+    }
+    const lines = [
+      describe(
+        'presentationTransition',
+        Boolean(this.presentationTransition),
+        true,
+      ),
+      describe('closing', this.closing, true),
+      describe('returningCurrent', this.returningCurrent !== undefined, true),
+      describe(
+        'presentationOperation',
+        Boolean(this.presentationOperation),
+        false,
+      ),
+      this.busy ? 'busy: set (not part of the refusal)' : undefined,
+      this.refreshing ? 'refreshing: set (not part of the refusal)' : undefined,
+      this.arranging ? 'arranging: set (not part of the refusal)' : undefined,
+    ].filter((line): line is string => line !== undefined)
+    this.diagnostics?.log({
+      surface: 'presentation:pending-refused',
+      cause: lines.join('\n'),
+    })
+  }
   /** Set from the start of a recording load until its first ready position, which retires a replay control's reported failure. */
   private replayLoadAwaitingReady = false
   /** The ledger write {@link saveShownRecordingSelection} started for the recording shown last; the playback controller's position save waits for it, so an unbounded {@link PlaybackController.settle} (tests, {@link PlaybackController.dispose}) ends after it, and {@link openLearningReplay} awaits it after its bounded one. It never rejects. */
@@ -1744,11 +1836,13 @@ export class StudyWorkspace {
 
   /** Rejects competing input/navigation before effects while preserving Stop/Close/read access. @example workspace.assertPresentationIdle() */
   assertPresentationIdle(): void {
-    if (this.presentationTransition || this.returningCurrent || this.closing)
+    if (this.presentationTransition || this.returningCurrent || this.closing) {
+      this.logPendingRefusal()
       throw new StudyError(
         'PRESENTATION_UNAVAILABLE',
         'A presentation change or reader close is pending. Read its state before another control.',
       )
+    }
   }
 
   /**
