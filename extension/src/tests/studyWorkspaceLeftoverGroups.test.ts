@@ -1663,3 +1663,125 @@ for (const comesBack of [false, true])
       await harness.close()
     }
   })
+
+/**
+ * Asks an agent's Restore of the Study workspace, as the chat's presentation control does, and reports how it ended.
+ * @param harness - The reader and the fake editor.
+ * @returns `'answered'` for a Restore the reader answered, otherwise the refusal's text.
+ * @example const answer = await agentRestoreOutcome(harness) // => 'answered'
+ */
+function agentRestoreOutcome(harness: Harness): Promise<string> {
+  const before = harness.reader.presentationState()
+  return harness.reader
+    .changePresentation(
+      {
+        presentationId: before.presentationId,
+        expectedRevision: before.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'restore',
+      },
+      'agent',
+    )
+    .then(
+      () => 'answered',
+      (error: unknown) => String(error),
+    )
+}
+
+// Value: protects=an agent's Restore of a learner who has their own file in front of the Study source column with the keyboard while the Captured source tab stands in their fourth group: the return shows the source in its column, confirms the layout and keeps the file open behind it; fails_when=the return reads its own switch of that column's front tab as the learner's input and refuses "your choice was kept" with the layout unconfirmed and the source still in the fourth group; why_new=Cycle 0072 task 1 candidate Codex review of af968024 (P2 1); seam=the workspace harness with a fourth editor group, moveSource, focusMutableDraft in the source column and the reader's changePresentation as an agent; no_claim=the fake editor's show with preserveFocus, not the native one
+test('an agent’s Restore shows the captured source over the learner’s file in the source column and confirms the layout instead of reading its own tab switch as the learner’s input', async () => {
+  // Arrange: the captured source stands in the learner's fourth group; notes.ts is in front of the Study source column and has the keyboard.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await openRetainedStudy(harness)
+    const learnerGroup = await addLearnerGroup(harness)
+    harness.moveSource(learnerGroup.viewColumn)
+    harness.focusMutableDraft('notes.ts', 2)
+    const revisionBefore =
+      harness.reader.presentationState().presentationControlRevision
+    // Act
+    const answer = await agentRestoreOutcome(harness)
+    // Assert
+    const sourceColumnGroup = harness.groups.find(
+      (group) => group.viewColumn === 2,
+    )
+    assert.deepEqual(
+      {
+        answer,
+        layoutConfirmed: harness.reader.presentationState().layoutConfirmed,
+        revisionAdvanced:
+          harness.reader.presentationState().presentationControlRevision >
+          revisionBefore,
+        sourceColumn: harness.sourceColumn(),
+        frontOfSourceColumn: sourceColumnGroup?.activeTab?.label,
+        learnerFileStillOpen: sourceColumnGroup?.tabs.some(
+          (tab) => tab.label === 'notes.ts',
+        ),
+        learnerGroup: learnerGroupAfter(harness, learnerGroup),
+      },
+      {
+        answer: 'answered',
+        layoutConfirmed: true,
+        revisionAdvanced: true,
+        sourceColumn: 2,
+        frontOfSourceColumn: 'Captured-theme.ts',
+        learnerFileStillOpen: true,
+        learnerGroup: {
+          open: true,
+          column: 4,
+          files: ['data.ts', 'search.tsx'],
+        },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a learner's click into a file of another group while the show of the captured source over their file in the Study source column is pending: the click is the learner's input, so the return stops with the choice kept and the Restore is not confirmed; fails_when=the return expects the source in front of the source column and accepts every change of the keyboard's place, so the learner's click is overwritten and the Restore answers success; why_new=Cycle 0072 task 1 candidate Codex review of af968024 (P2 1); seam=the workspace harness's holdNextTextDocumentShow on the captured source, focusMutableDraft in the source column and in the fourth group; no_claim=the click is the harness's focus of a draft
+test('a learner’s click into another group while the captured source is shown over their file in the source column keeps that click and refuses the Restore', async () => {
+  // Arrange: notes.ts is in front of the source column with the keyboard, and the editor's show of the captured source is held.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let release = (): void => {}
+  try {
+    await openRetainedStudy(harness)
+    harness.moveSource((await addLearnerGroup(harness)).viewColumn)
+    harness.focusMutableDraft('notes.ts', 2)
+    const revisionBefore =
+      harness.reader.presentationState().presentationControlRevision
+    const held = harness.holdNextTextDocumentShow({
+      uri: harness.reader.inspect().sourceUri!,
+    })
+    release = held.release
+    const restoring = agentRestoreOutcome(harness)
+    await held.started
+    // Act: the learner clicks data.ts in their fourth group, then the show finishes.
+    harness.focusMutableDraft('data.ts', 4)
+    held.release()
+    const answer = await restoring
+    // Assert
+    assert.deepEqual(
+      {
+        answer,
+        activeFile: harness.editor.window.activeTextEditor?.document.uri.fsPath
+          .split('/')
+          .pop(),
+        activeColumn: harness.editor.window.tabGroups.activeTabGroup.viewColumn,
+        revisionAdvanced:
+          harness.reader.presentationState().presentationControlRevision >
+          revisionBefore,
+      },
+      {
+        answer: FOCUS_KEPT_ANSWER,
+        activeFile: 'data.ts',
+        activeColumn: 4,
+        revisionAdvanced: false,
+      },
+    )
+  } finally {
+    release()
+    await harness.close()
+  }
+})

@@ -3451,15 +3451,25 @@ export class StudyWorkspace {
         }
         const sourceColumn = STUDY_PRESENTATIONS['study-workspace'].sourceColumn
         const sourceUri = this.sourceUri?.toString()
-        /** Names the front tab of the active group by its document (two files of one name in different folders differ) and the window focus: what a learner's click or leaving the window changes. */
-        const keyboardPlace = (): string => {
+        /**
+         * Names the front tab of the active group by its document (two files of one name in different folders differ) and the window focus: what a learner's click or leaving the window changes.
+         * @param frontDocument - The document to name as the front tab instead of the one in front now, to tell the place the return's own show leaves from the one a learner's input does.
+         */
+        const keyboardPlace = (frontDocument?: string): string => {
           const front = vscode.window.tabGroups.activeTabGroup.activeTab
           return JSON.stringify([
             vscode.window.tabGroups.activeTabGroup.viewColumn,
-            this.textTabUri(front) ?? front?.label,
+            frontDocument ?? this.textTabUri(front) ?? front?.label,
             vscode.window.state.focused,
           ])
         }
+        /** The place the keyboard names once the show of the source has put it in front of its column: when the keyboard's group is that column, the source replaces the front tab the keyboard names; in any other group nothing changes. */
+        const placeWithSourceShown = (): string =>
+          keyboardPlace(
+            vscode.window.tabGroups.activeTabGroup.viewColumn === sourceColumn
+              ? sourceUri
+              : undefined,
+          )
         // The place the return expects the keyboard at; it moves only where the return itself takes the keyboard.
         let expectedPlace = keyboardPlace()
         /** Stops the return and keeps the learner's own choice of focus. */
@@ -3553,6 +3563,7 @@ export class StudyWorkspace {
               candidate.viewColumn === displaced.group.viewColumn &&
               candidate.document.uri.toString() === sourceUri,
           )
+          const placeOnceSourceShown = placeWithSourceShown()
           let editor = await this.showTextDocumentNoted(document, {
             viewColumn: sourceColumn,
             preserveFocus: true,
@@ -3560,6 +3571,9 @@ export class StudyWorkspace {
             selection: copyEditor ? undefined : this.returnedSourceStop(),
           })
           assertOwned()
+          // The show puts the source in front of its column, and the front tab of the keyboard's group changes with it when that group is the source column (the learner's file there stays open behind it): that is this return's own switch, not input. Anything else that moved the place is the learner's.
+          if (keyboardPlace() === placeOnceSourceShown)
+            expectedPlace = placeOnceSourceShown
           assertLearnerKept()
           // Read after the waits above, so a selection the learner changed meanwhile travels, not the one from before.
           const carryReadingState = async (): Promise<void> => {
