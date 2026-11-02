@@ -152,3 +152,39 @@ test('the fake workspace state answers a stored null and the default only for a 
     await harness.close()
   }
 })
+
+// Value: protects=the fake editor's numbered tab command reporting what the editor reports: a tab that was not in front comes to the front with the active text editor and the visible editors following, and a reselect of the tab in front reports nothing; fails_when=the command changes the front tab with no active-editor or visible-editors report, or reports a reselect, so a test of the reader's reaction to Cursor's own tab switch sees a state the editor never produces; why_new=Cycle 0072 task 5 review round (CodeRabbit r12 and r13c); seam=the harness's fake window.onDidChangeActiveTextEditor, window.onDidChangeVisibleTextEditors and the openEditorAtIndex command; no_claim=the extension host's delivery delay
+test('the fake editor reports the active and visible editors when a numbered tab command changes the front tab and nothing for a reselect', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  try {
+    harness.focusMutableDraft('first.ts', 1)
+    harness.focusMutableDraft('second.ts', 1)
+    const reports: string[] = []
+    const active = harness.editor.window.onDidChangeActiveTextEditor(
+      (editor) => {
+        reports.push(`active ${editor?.document.uri.path.split('/').at(-1)}`)
+      },
+    )
+    const visible = harness.editor.window.onDidChangeVisibleTextEditors(() => {
+      reports.push('visible')
+    })
+
+    // Act
+    await harness.editor.commands.executeCommand(
+      'workbench.action.openEditorAtIndex1',
+    )
+    const afterSwitch = [...reports]
+    await harness.editor.commands.executeCommand(
+      'workbench.action.openEditorAtIndex1',
+    )
+    active.dispose()
+    visible.dispose()
+
+    // Assert
+    assert.deepEqual(afterSwitch, ['active first.ts', 'visible'])
+    assert.deepEqual(reports, afterSwitch)
+  } finally {
+    await harness.close()
+  }
+})

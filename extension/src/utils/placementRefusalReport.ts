@@ -13,6 +13,26 @@ export type RefusalTabView = {
   isPinned: boolean
 }
 
+/** The active text editor as a refusal report names it: its file name (sanitized) and column; `undefined` for none, no column for an editor the host reports without one. */
+export type RefusalEditorView =
+  { name: string; viewColumn: number | undefined } | undefined
+
+/**
+ * Words the active text editor for a refusal report: the file name cut to the label length and the column kept whole.
+ * @param editor - The editor, or `undefined` for none.
+ * @returns `none`, `<name>` or `<name> (column <n>)`.
+ * @example describeRefusalEditor({ name: 'cards.tsx', viewColumn: 2 }) // => 'cards.tsx (column 2)'
+ */
+export function describeRefusalEditor(editor: RefusalEditorView): string {
+  if (!editor) return 'none'
+  const name = Array.from(editor.name)
+    .slice(0, REFUSAL_REPORT_LABEL_CHARS)
+    .join('')
+  return editor.viewColumn === undefined
+    ? name
+    : `${name} (column ${editor.viewColumn})`
+}
+
 /** One editor group as a refusal report names it; `activeTab` is the tab the group showed, when it showed one. */
 export type RefusalGroupView = {
   viewColumn: number
@@ -147,7 +167,7 @@ export function describePlacementRefusal(input: {
     atArming: RefusalTabView | undefined
     atRefusal: RefusalTabView | undefined
   }
-  editors?: { atArming: string; atRefusal: string }
+  editors?: { atArming: RefusalEditorView; atRefusal: RefusalEditorView }
   events: readonly RefusalEvent[]
   effects?: readonly RefusalEvent[]
 }): string {
@@ -176,8 +196,8 @@ export function describePlacementRefusal(input: {
       : []),
     ...(input.editors
       ? [
-          `Active text editor at arming: ${input.editors.atArming}`,
-          `Active text editor at refusal: ${input.editors.atRefusal}`,
+          `Active text editor at arming: ${describeRefusalEditor(input.editors.atArming)}`,
+          `Active text editor at refusal: ${describeRefusalEditor(input.editors.atRefusal)}`,
         ]
       : []),
     'Events while armed:',

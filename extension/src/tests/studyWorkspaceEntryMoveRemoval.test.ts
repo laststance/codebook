@@ -9,6 +9,7 @@ import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
 
 import {
+  articleRecordingLayoutHarness,
   recordedReaderHarness,
   workspaceHarness,
 } from './studyWorkspaceHarness'
@@ -1591,7 +1592,7 @@ async function applicationSharingLearnerGroupBesideChat() {
     harness.leaveEmptyLockedGroup(1)
     const dataDraft = harness.focusMutableDraft('data.ts', 2)
     const cardsDraft = harness.focusMutableDraft('cards.tsx', 2)
-    harness.focusMutableDraft('auth.ts', 3)
+    const authDraft = harness.focusMutableDraft('auth.ts', 3)
     chat.focusTab()
     await harness.reader.open()
     // The reload left no pane and the entry opened the Application in the learner's group; the captured source stands apart from it.
@@ -1601,7 +1602,7 @@ async function applicationSharingLearnerGroupBesideChat() {
       .flatMap((group) => group.tabs)
       .find((tab) => tab.label === 'Captured-theme.ts')
     if (capturedTab) harness.closeTabByHand(capturedTab)
-    return { harness, refusals, dataDraft, cardsDraft }
+    return { harness, refusals, dataDraft, cardsDraft, authDraft }
   } catch (error) {
     await harness.close()
     throw error
@@ -1768,7 +1769,7 @@ test('in Cursor, a learner group named when the move watch began and re-wrapped 
   }
 })
 
-// Value: protects=the move watch's final assertion when Cursor ends the Application's move with the close of its tab and no group report afterwards (native C72-2 candidate 787050d4: groups +2 ms, cards.tsx in front +6 ms, the pane's tab closed +6 ms, the active text editor 17 ms after the move): the groups stay unnamed through the move's end, and the uncovered cards.tsx is no learner change; fails_when=a group left unnamed at the end is read as a group the learner opened, or the file the move uncovers as a learner's choice, so the watch refuses with "Native pane, group or focus changed while presentation waited; the learner arrangement was preserved."; why_new=Cycle 0072 task 5 native C72-2 (regression guard: it passes without the uncovered-file rule too, because the editor reported none at arming here); seam=applicationSharingLearnerGroupBesideChat, reportsPaneCloseWithoutGroupReport, movePanel (the Application leaves), focusExistingSource (the uncovered file becomes active), the reader's watchLearnerViewDuringApplicationMove; no_claim=the later checks of a full Recording after groups that no report named (the full flow needs the editor's later group reports) and the real Cursor's event timing (native Cursor trial)
+// Value: protects=the move watch's final assertion when Cursor ends the Application's move with the close of its tab and no group report afterwards (native C72-2 candidate 787050d4: groups +2 ms, cards.tsx in front +6 ms, the pane's tab closed +6 ms, the active text editor 17 ms after the move): the groups stay unnamed through the move's end, and the uncovered cards.tsx is no learner change; fails_when=the before-state holds the learner's group by its identity alone, so the group the close left unnamed is not found at the final assertion and is read as a group the learner opened (the mutation that keeps one key per group fails this test and the two pass 4 tests), so the watch refuses with "Native pane, group or focus changed while presentation waited; the learner arrangement was preserved."; why_new=Cycle 0072 task 5 native C72-2; seam=applicationSharingLearnerGroupBesideChat, reportsPaneCloseWithoutGroupReport, movePanel (the Application leaves), focusExistingSource (the uncovered file becomes active), the reader's watchLearnerViewDuringApplicationMove; no_claim=that the uncovered-file rule is needed here (it passes without it, because the editor reported none at arming), the later checks of a full Recording after groups that no report named (the full flow needs the editor's later group reports) and the real Cursor's event timing (native Cursor trial)
 test("in Cursor, the move watch accepts the uncovered file when the move ends with the close of the Application's tab and no group report", async () => {
   // Arrange
   const { harness } = await applicationSharingLearnerGroupBesideChat()
@@ -1805,8 +1806,9 @@ test("in Cursor, the move watch accepts the uncovered file when the move ends wi
 })
 
 /**
- * Arms the move watch while the editor reports cards.tsx as the active text editor although the Application covers it, then lets the Application leave the learner's group: the state the native run C72-2 refused although Codebook's own move caused it.
+ * Arms the move watch while the editor reports another file (data.ts of the learner's group by default) as the active text editor although the Application covers the group, then lets the Application leave the learner's group: the state the native run C72-2 refused although Codebook's own move caused it.
  * @param harness - The harness from {@link applicationSharingLearnerGroupBesideChat}.
+ * @param reportedFile - The file name of the editor the host reports at arming.
  * @returns The armed watch, with the Application already moved out of the learner's group, the learner group's column, and `endStaleReport`, which ends the stale report.
  * @example const watch = await armWatchWithStaleEditor(harness)
  */
@@ -1814,11 +1816,14 @@ async function armWatchWithStaleEditor(
   harness: Awaited<
     ReturnType<typeof applicationSharingLearnerGroupBesideChat>
   >['harness'],
+  reportedFile = 'data.ts',
 ) {
-  const staleTab = harness.groups
-    .flatMap((group) => group.tabs)
-    .find((tab) => tab.label === 'data.ts')!
+  const tabs = harness.groups.flatMap((group) => group.tabs)
+  const staleTab = tabs.find((tab) => tab.label === reportedFile)!
   const learnerColumn = harness.groups.find((group) =>
+    group.tabs.some((tab) => tab.label === 'cards.tsx'),
+  )!.viewColumn
+  const reportedColumn = harness.groups.find((group) =>
     group.tabs.includes(staleTab),
   )!.viewColumn
   const windowApi = harness.editor.window
@@ -1826,13 +1831,13 @@ async function armWatchWithStaleEditor(
     windowApi,
     'activeTextEditor',
   )!
-  // Cursor kept reporting data.ts, another file of the learner's group, as the active text editor while the Application covered the group.
+  // Cursor kept reporting another file as the active text editor while the Application covered the learner's group.
   Object.defineProperty(windowApi, 'activeTextEditor', {
     configurable: true,
     get: () => ({
       document: { uri: Reflect.get(staleTab.input, 'uri'), version: 1 },
       selections: [],
-      viewColumn: learnerColumn,
+      viewColumn: reportedColumn,
     }),
   })
   const watch = harness.reader['watchLearnerViewDuringApplicationMove']()
@@ -2264,6 +2269,246 @@ test('in Cursor, the move watch refuses an edit of the uncovered file made durin
       outcome,
       /Native pane, group or focus changed while presentation waited; the learner arrangement was preserved\./,
     )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's pick of another file that the Application's group held behind the pane when the editor was armed on a file elsewhere and the move uncovered cards.tsx with no active-editor event (review round: CodeRabbit r13a, OCR lens B medium 1, lens C L2): the pick of data.ts, also held behind the pane, is the learner's choice and refuses the move; fails_when=every file held behind the pane counts as uncovered, so the click on the group's other tab is taken as the move's effect and the recording arranges over it; why_new=Cycle 0072 task 5 review round; seam=armWatchWithStaleEditor (armed on auth.ts of another group), movePanel (the Application leaves, cards.tsx comes to front), dataDraft.focus (the learner's pick), the reader's watchLearnerViewDuringApplicationMove; no_claim=the real Cursor's event timing
+test("in Cursor, the move watch refuses the learner's pick of another file held behind the Application when the move itself raised no editor event", async () => {
+  // Arrange
+  const { harness, dataDraft } =
+    await applicationSharingLearnerGroupBesideChat()
+  try {
+    const { watch, endStaleReport } = await armWatchWithStaleEditor(
+      harness,
+      'auth.ts',
+    )
+    endStaleReport()
+
+    // Act
+    dataDraft.focus()
+    const outcome = (() => {
+      try {
+        watch.assertUnchanged()
+        return 'unchanged'
+      } catch (error) {
+        return String(error)
+      }
+    })()
+    watch.dispose()
+
+    // Assert
+    assert.match(
+      outcome,
+      /Native pane, group or focus changed while presentation waited; the learner arrangement was preserved\./,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the watch's reading of what the learner had at arming: armed with a text editor active, the Application coming to front ends the editor's report with none, and the learner's later pick of a file in a group that showed no learner file at arming is the learner's choice; fails_when=the arming fact is read from the baseline that the watch moves to none with the Application's report, so the learner's pick is taken for the move's uncovered file and the recording arranges over it; why_new=Cycle 0072 task 5 review round (CodeRabbit r13c); seam=an activeTextEditor reported at arming, rewrapGroupObjects (a report that lets the watch see the Application in front), authDraft.focus (the learner brings auth.ts to front in the Study group), the reader's watchLearnerViewDuringApplicationMove; no_claim=the real Cursor's event timing
+test('in Cursor, the move watch still refuses a learner pick in a group that showed no learner file once the Application ended the arming editor report', async () => {
+  // Arrange
+  const { harness, authDraft } =
+    await applicationSharingLearnerGroupBesideChat()
+  try {
+    const dataTab = harness.groups
+      .flatMap((group) => group.tabs)
+      .find((tab) => tab.label === 'data.ts')!
+    const windowApi = harness.editor.window
+    const realEditor = Object.getOwnPropertyDescriptor(
+      windowApi,
+      'activeTextEditor',
+    )!
+    // The editor reports data.ts as the active text editor at arming although the Application stands in front of its group.
+    Object.defineProperty(windowApi, 'activeTextEditor', {
+      configurable: true,
+      get: () => ({
+        document: { uri: Reflect.get(dataTab.input, 'uri'), version: 1 },
+        selections: [],
+        viewColumn: 1,
+      }),
+    })
+    const watch = harness.reader['watchLearnerViewDuringApplicationMove']()
+    Object.defineProperty(windowApi, 'activeTextEditor', realEditor)
+    // A report with the Application in front of the active group ends the arming editor's report with none.
+    harness.rewrapGroupObjects()
+
+    // Act
+    authDraft.focus()
+    const outcome = (() => {
+      try {
+        watch.assertUnchanged()
+        return 'unchanged'
+      } catch (error) {
+        return String(error)
+      }
+    })()
+    watch.dispose()
+
+    // Assert
+    assert.match(
+      outcome,
+      /Native pane, group or focus changed while presentation waited; the learner arrangement was preserved\./,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the source-group retirement of a Recording's re-entry through the public path: while the native copy of the captured source waits, the editor reports Codebook's own steps (the retiring captured source taking the keyboard, which raises an active-editor report) and none of it is the learner's input, so the entry still opens, retires the reader-created source group and keeps the learner's draft (native C72-2 candidate ddc14faa attempt 1: "Native input changed during source-group retirement; the newer choice was preserved."); fails_when=the listener reads every active-editor change but the issued copy as the learner's (the `isCodebookOwnFocus` clause of onDidChangeActiveTextEditor), or the check after the copy reads a keyboard on the retiring source or on the Application as another input (the `active input` clause), so the entry stops with that sentence; the no-editor branch (a Codebook pane in front) has no public-path scenario in this harness, because the flow ends with the Application as the initial keyboard holder, and is read directly by the next test; why_new=Cycle 0072 task 5 review round (OCR lens D); seam=articleRecordingLayoutHarness, openRepositoryEvidence with the recording twice, a held showTextDocument (the native copy), focusExistingSource (Cursor's own report), the Output entry; no_claim=the real Cursor's event timing (native Cursor trial)
+test('the source-group retirement accepts the retiring captured source taking the keyboard while its native copy waits', async () => {
+  // Arrange
+  const harness = await articleRecordingLayoutHarness(true, true)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.replaceGroupObjectsOnTabChanges()
+  const original = harness.focusMutableDraft('auth.ts', 1)
+  const entries: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry): void => {
+      entries.push(entry)
+    },
+    show: () => undefined,
+  }
+  const show = harness.editor.window.showTextDocument
+  let release = (): void => {},
+    entered = (): void => {},
+    opening: Promise<string> | undefined
+  const held = new Promise<void>((resolve) => {
+      release = resolve
+    }),
+    started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+  try {
+    await harness.reader.openRepositoryEvidence(
+      harness.binding,
+      false,
+      undefined,
+      harness.origin,
+    )
+    const sourceUri = harness.reader.inspect().sourceUri,
+      commandsBeforeRecording = harness.commands.length
+    harness.editor.window.showTextDocument = async (document, options) => {
+      const shown = await show(document, options)
+      if (
+        shown.document.uri.toString() === sourceUri &&
+        options?.viewColumn === 2 &&
+        harness.commands
+          .slice(commandsBeforeRecording)
+          .includes('workbench.action.newGroupAbove')
+      ) {
+        entered()
+        await held
+      }
+      return shown
+    }
+    opening = harness.reader
+      .openRepositoryEvidence(harness.binding, true, undefined, harness.origin)
+      .then(
+        () => 'opened',
+        (error: unknown) => String(error),
+      )
+    assert.equal(
+      await Promise.race([
+        started.then(() => 'copy reached'),
+        opening.then(String),
+      ]),
+      'copy reached',
+    )
+
+    // Act: Cursor reports the retiring captured source as the active editor while the copy waits.
+    harness.focusExistingSource(
+      harness.editor.window.visibleTextEditors.find(
+        (editor) => editor.document.uri.toString() === sourceUri,
+      )!,
+    )
+    release()
+    const result = await opening
+    await harness.controller.settle()
+
+    // Assert
+    assert.deepEqual(
+      {
+        result,
+        retirementEntries: entries.filter((entry) =>
+          String(Reflect.get(entry, 'cause')).includes(
+            'Guard: retireSourceDerivedGroup',
+          ),
+        ).length,
+        readiness: harness.controller.state().readiness,
+        draft: original.document.getText(),
+      },
+      {
+        result: 'opened',
+        retirementEntries: 0,
+        readiness: 'ready',
+        draft: 'Original learner draft.\n',
+      },
+    )
+  } finally {
+    release()
+    await opening
+    harness.editor.window.showTextDocument = show
+    await harness.close()
+  }
+})
+
+// Value: protects=the no-editor reading of Codebook's own focus in the source-group retirement: with no text editor active, the Application in front of the active group is Codebook's own step, while a learner's file in front of it, or a captured source, is not; fails_when=the reading takes any front tab of the active group, or none, as Codebook's, so the learner's move onto a file or another source goes unseen and the retirement goes on; why_new=Cycle 0072 task 5 review round (OCR lens D); seam=applicationSharingLearnerGroupBesideChat (the Application in front of the learner's group), cardsDraft.focus (the learner's file in front), the reader's isCodebookOwnFocus; no_claim=a public-path run of this branch (the article harness has no second Codebook pane)
+test("the source-group retirement reads the Application in front of the active group as Codebook's focus and a learner's file in front of it as the learner's", async () => {
+  // Arrange
+  const { harness, cardsDraft } =
+    await applicationSharingLearnerGroupBesideChat()
+  try {
+    const ownFocusWithNoEditor = (): unknown =>
+      Reflect.apply(harness.reader['isCodebookOwnFocus'], harness.reader, [
+        undefined,
+      ])
+
+    // Act
+    const applicationInFront = ownFocusWithNoEditor()
+    cardsDraft.focus()
+    const learnersFileInFront = ownFocusWithNoEditor()
+
+    // Assert
+    assert.deepEqual(
+      { applicationInFront, learnersFileInFront },
+      { applicationInFront: true, learnersFileInFront: false },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the fake editor's name of the active group staying a group of its model through a rebuild that comes with a tab report before the group report: while Cursor still names the chat's group active, the group the extension reads from `tabGroups.activeTabGroup` at that tab report is one of `tabGroups.all`; fails_when=the rebuild leaves the stale name on the chat group's old object, so a tab listener reads an active group that is no group of the model and a test of the reader's reaction sees a state the editor never produces; why_new=Cycle 0072 task 5 review round (CodeRabbit r13b); seam=applicationSharingLearnerGroupBesideChat, nameChatGroupWhilePaneHoldsKeyboard, reportsPaneMoveTabsBeforeGroups (the tab reports with their rebuild), a window.tabGroups.onDidChangeTabs listener; no_claim=the extension host's delivery delay
+test("the fake editor's stale name of the active group follows a rebuild that comes with a tab report before the group report", async () => {
+  // Arrange
+  const { harness } = await applicationSharingLearnerGroupBesideChat()
+  try {
+    const learnerColumn = harness.groups.find((group) =>
+      group.tabs.some((tab) => tab.label === 'cards.tsx'),
+    )!.viewColumn
+    harness.nameChatGroupWhilePaneHoldsKeyboard('codebook.scopedBrowser')
+    const { tabGroups } = harness.editor.window
+    const namedGroupIsInTheModel: boolean[] = []
+    const listener = tabGroups.onDidChangeTabs(() => {
+      namedGroupIsInTheModel.push(
+        tabGroups.all.includes(tabGroups.activeTabGroup),
+      )
+    })
+
+    // Act
+    harness.movePanel('codebook.scopedBrowser', learnerColumn + 1)
+    listener.dispose()
+
+    // Assert
+    assert.deepEqual(
+      namedGroupIsInTheModel.filter((isInModel) => !isInModel),
+      [],
+    )
+    assert.ok(namedGroupIsInTheModel.length > 0)
   } finally {
     await harness.close()
   }

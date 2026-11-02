@@ -380,6 +380,7 @@ import { parseRecordedStudyGroups } from './utils/parseRecordedStudyGroups'
 import {
   describePlacementRefusal,
   PlacementEventLog,
+  type RefusalEditorView,
   type RefusalEvent,
   type RefusalGroupView,
   type RefusalTabView,
@@ -19056,6 +19057,8 @@ export class StudyWorkspace {
     )
     const noEditor = textEditorFocusState(undefined)
     let editorBefore = textEditorFocusState(vscode.window.activeTextEditor)
+    // Read once: `editorBefore` follows the move's own reports, so it says nothing about what the learner had at arming.
+    const wasNoEditorAtArming = editorBefore === noEditor
     // Each group is kept under its identity and under its column: a group unnamed now and named later, or named now and re-wrapped unnamed later, is still found.
     const groupsBefore = new Map(
       vscode.window.tabGroups.all.flatMap((group) => {
@@ -19063,11 +19066,11 @@ export class StudyWorkspace {
         return this.groupKeysOf(group).map((key) => [key, view] as const)
       }),
     )
-    const editorAtArming = this.describeActiveEditor(
-      vscode.window.activeTextEditor,
-    )
-    // The learner files each group held behind the Application pane when the pane was the group's front tab: the files the move can uncover there.
-    const heldBehindPane = new Map<symbol | string, string[]>(
+    const editorAtArming = {
+      view: this.describeActiveEditor(vscode.window.activeTextEditor),
+    }
+    // The groups whose front tab was the Application pane at arming, by identity and column: the groups the move can uncover a file in.
+    const groupsCoveredByPane = new Set<symbol | string>(
       vscode.window.tabGroups.all
         .filter(
           (group) =>
@@ -19078,18 +19081,33 @@ export class StudyWorkspace {
             ) &&
             this.isOwnPaneOrSourceTab(group.activeTab),
         )
-        .flatMap((group) =>
-          this.groupKeysOf(group).map(
-            (key) => [key, this.learnersTabKeysOf(group)] as const,
-          ),
-        ),
+        .flatMap((group) => this.groupKeysOf(group)),
     )
+    // The learner file in front of each covered group since the pane left it: the one file the move uncovered there, noted at the first report that shows the pane no longer in front.
+    const frontSincePaneLeft = new Map<symbol | string, string>()
+    /** Notes the file in front of every covered group once its front is no longer the Application pane; called first by every check. */
+    const noteFrontsSincePaneLeft = (): void => {
+      for (const group of vscode.window.tabGroups.all) {
+        const keys = this.groupKeysOf(group)
+        const front = group.activeTab
+        if (
+          !keys.some((key) => groupsCoveredByPane.has(key)) ||
+          keys.some((key) => frontSincePaneLeft.has(key)) ||
+          !front ||
+          this.isCodebookPaneInput(front.input, 'codebook.scopedBrowser')
+        )
+          continue
+        const learnerFront = this.learnerViewOfGroup(group).front
+        if (learnerFront !== undefined)
+          for (const key of keys) frontSincePaneLeft.set(key, learnerFront)
+      }
+    }
     // The file the watch has taken as the move's effect, by group: the move uncovers one file per group. The editor may report that same file again with another column or selection while the move settles (Cursor 3.27.22, native C72-2); another file there, or an edit of it (a new document version or dirty state), is the learner's.
     const uncoveredFileOfGroup = new Map<
       symbol | string,
       { file: string; version: number; isDirty: boolean }
     >()
-    /** Names the group whose uncovered learner file is the active text editor: the file that was behind the Application (whatever the editor reported at arming), or the front file of a group that showed none while no text editor was active; later reports of that same file in that group count too while its content is unchanged, no other file or edit does. */
+    /** Names the group whose uncovered learner file is the active text editor: the file in front of the Application's group since the pane left it (whatever the editor reported at arming), or the front file of another group that showed none while no text editor was active; later reports of that same file in that group count too while its content is unchanged, no other file or edit does. */
     const findGroupUncoveredByMove = ():
       { group: vscode.TabGroup; file: string } | undefined => {
       const editor = vscode.window.activeTextEditor
@@ -19111,10 +19129,11 @@ export class StudyWorkspace {
       return isEditorUncoveredByMove({
         editorFile,
         frontNow: this.learnerViewOfGroup(group).front,
-        heldBehindPane: keys
-          .map((key) => heldBehindPane.get(key))
-          .find((held) => held !== undefined),
-        wasNoEditorAtArming: editorBefore === noEditor,
+        wasCoveredByPane: keys.some((key) => groupsCoveredByPane.has(key)),
+        uncoveredFile: keys
+          .map((key) => frontSincePaneLeft.get(key))
+          .find((file) => file !== undefined),
+        wasNoEditorAtArming,
         hadLearnerFrontAtArming:
           this.learnerViewBefore(groupsBefore, group)?.front !== undefined,
       })
@@ -19124,6 +19143,7 @@ export class StudyWorkspace {
     let changed: string | undefined
     /** Latches the first change of the active text editor, or of a learner group's tabs or of the learner's tab in front of it, by the comparison's name. */
     const check = (isFinal = false): void => {
+      noteFrontsSincePaneLeft()
       const editorNow = textEditorFocusState(vscode.window.activeTextEditor)
       // The file the move uncovered in the active group is the active text editor from then on, and its later reports stay the move's; another file there is the learner's; the report of a text editor the new group kept ends with the pane in front of it (row 710).
       if (editorNow !== editorBefore) {
@@ -19244,15 +19264,20 @@ export class StudyWorkspace {
   }
 
   /**
-   * Words the active text editor for a refusal report: its file name and column, sanitized, or `none`; called by {@link watchLearnerViewDuringApplicationMove} and {@link refusePlacement}.
+   * Describes the active text editor for a refusal report: its file name (sanitized) and column, or none; called by {@link watchLearnerViewDuringApplicationMove} and {@link refusePlacement}.
    * @param editor - The active text editor, if any.
-   * @returns `<file name> (column <n>)`, or `none`.
-   * @example this.describeActiveEditor(vscode.window.activeTextEditor) // => 'cards.tsx (column 2)'
+   * @returns The view, or `undefined` for none; {@link describeRefusalEditor} words it and cuts a long name.
+   * @example this.describeActiveEditor(vscode.window.activeTextEditor) // => { name: 'cards.tsx', viewColumn: 2 }
    */
-  private describeActiveEditor(editor: vscode.TextEditor | undefined): string {
-    if (!editor) return 'none'
+  private describeActiveEditor(
+    editor: vscode.TextEditor | undefined,
+  ): RefusalEditorView {
+    if (!editor) return undefined
     const name = editor.document.uri.path.split('/').at(-1) ?? ''
-    return `${sanitizeCause(name, this.privateRoots())} (column ${editor.viewColumn})`
+    return {
+      name: sanitizeCause(name, this.privateRoots()),
+      viewColumn: editor.viewColumn,
+    }
   }
 
   /**
@@ -25290,7 +25315,7 @@ export class StudyWorkspace {
    * The sentence the learner reads is unchanged; the entry carries the guard's call site and failed checks when it names them, the groups before and after with each group's front tab, the focused tab at arming against the active tab now, the editor's events since the guard was armed (group changes, tab operations, pane view-state changes, the active text editor) and the native effects Codebook itself issued since then (N55-F4, Cycle 0056 task 17).
    * @param armed - What {@link armPlacementReport} noted.
    * @param failedChecks - The comparisons that failed, when the guard keeps them apart.
-   * @param editorAtArming - The active text editor at arming ({@link describeActiveEditor}); the entry then also names the one at the refusal.
+   * @param editorAtArming - The active text editor at arming, wrapped ({@link describeActiveEditor}); the entry then also names the one at the refusal.
    * @returns A {@link PlacementRefusalError} with the refusal sentence; the presentation boundary words it with {@link PLACEMENT_REFUSED_RECOVERY}.
    * @example throw this.refusePlacement(armed, ['focus group'])
    */
@@ -25305,7 +25330,7 @@ export class StudyWorkspace {
       focusedTab?: RefusalTabView | undefined
     },
     failedChecks?: readonly string[],
-    editorAtArming?: string,
+    editorAtArming?: { view: RefusalEditorView },
   ): Error {
     this.writePlacementRefusal(armed, failedChecks, editorAtArming)
     // A marked error, so the presentation boundary words it with the recovery that names real controls.
@@ -25318,13 +25343,13 @@ export class StudyWorkspace {
    * Writes the Output › Codebook entry of a refused placement guard (`presentation:placement-refused`); called by {@link refusePlacement} and by guards that keep their own refusal sentence ({@link assertRetirementInput}).
    * @param armed - What {@link armPlacementReport} noted.
    * @param failedChecks - The comparisons that failed, when the guard keeps them apart.
-   * @param editorAtArming - The active text editor at arming ({@link describeActiveEditor}), when the guard notes it.
+   * @param editorAtArming - The active text editor at arming, wrapped ({@link describeActiveEditor}), when the guard notes it.
    * @example this.writePlacementRefusal(armed, ['learner input'])
    */
   private writePlacementRefusal(
     armed: Parameters<StudyWorkspace['refusePlacement']>[0],
     failedChecks?: readonly string[],
-    editorAtArming?: string,
+    editorAtArming?: { view: RefusalEditorView },
   ): void {
     const nowMs = performance.now()
     const cause = describePlacementRefusal({
@@ -25351,7 +25376,7 @@ export class StudyWorkspace {
         ? {}
         : {
             editors: {
-              atArming: editorAtArming,
+              atArming: editorAtArming.view,
               atRefusal: this.describeActiveEditor(
                 vscode.window.activeTextEditor,
               ),

@@ -1473,6 +1473,8 @@ export async function workspaceHarness(
       replacements.get(group) ?? group
     groups.splice(0, groups.length, ...groups.map(replaced))
     activeTabGroup = replaced(activeTabGroup)
+    // The group the extension host still names active follows the rebuild too, also when no group event names the groups yet (a tab report that comes first); otherwise it would name an object that is no group of the model.
+    if (staleNamedGroup) staleNamedGroup = replaced(staleNamedGroup)
     // A text editor reported behind a webview stays reported through the rebuild (row 729).
     if (textEditorReportedBehindWebview)
       textEditorReportedBehindWebview.group = replaced(
@@ -4484,9 +4486,13 @@ export async function workspaceHarness(
             /^workbench\.action\.openEditorAtIndex([1-9])$/.exec(name)
           if (openAtIndex) {
             const tab = activeTabGroup.tabs[Number(openAtIndex[1]) - 1]
-            if (tab) {
+            // Only a tab that was not in front changes what the group shows; the editor reports nothing for a reselect.
+            if (tab && activeTabGroup.activeTab !== tab) {
               activeTabGroup.activeTab = tab
               for (const listener of tabChangeListeners) listener()
+              // The group shows another editor now: the active text editor and the visible editors follow.
+              activeTextEditorChanged(focusedSourceEditor())
+              changedVisibleEditors()
             }
           }
           // Every command that gives an editor group or the chat the keyboard takes it from the page body.
