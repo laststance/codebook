@@ -2374,7 +2374,13 @@ export class StudyWorkspace {
     }
     const state = this.presentationState()
     // An Enlarge's Restore, and a test replay's (which has no article source for the placement below), are answered by the retained layout itself (F413).
-    const retainedRestore = this.restoreRetainedLayout(input, state, requester)
+    const retainedRestore = this.restoreRetainedLayout(
+      input,
+      state,
+      requester,
+      leftoverTabs,
+      fromPane,
+    )
     if (retainedRestore) return retainedRestore
     // Selecting the current arrangement repairs geometry without replacing panes or touching foreign previews.
     if (
@@ -2457,14 +2463,26 @@ export class StudyWorkspace {
    * @param input - The requested change.
    * @param state - The current presentation state.
    * @param requester - Who asked.
+   * @param leftoverTabs - Passed on when a displaced captured source is returned first ({@link returnDisplacedCapturedSourceThenAdmit}).
+   * @param fromPane - Passed on with it.
    * @returns The pending answer, or `undefined` when the article's placement applies.
-   * @example const retained = this.restoreRetainedLayout(input, state, 'agent')
+   * @example const retained = this.restoreRetainedLayout(input, state, 'agent', 'pending', false)
    */
   private restoreRetainedLayout(
     input: PresentationIntent,
     state: PresentationState,
     requester: PresentationRequester,
+    leftoverTabs: 'pending' | LeftoverTabClose,
+    fromPane: boolean,
   ): Promise<PresentationState> | undefined {
+    // A window that holds learner groups beyond the three Study columns refuses a full placement, so a Codebook-owned captured source left in such a group goes back to its Study column first and the Restore then repairs the retained grid.
+    if (this.restoresDisplacedCapturedSource(input, state))
+      return this.returnDisplacedCapturedSourceThenAdmit(
+        input,
+        leftoverTabs,
+        requester,
+        fromPane,
+      )
     if (
       input.action === 'restore' &&
       input.mode === state.mode &&
@@ -3027,6 +3045,114 @@ export class StudyWorkspace {
     this.presentationOperation = checking
     this.publish()
     return checking
+  }
+
+  /**
+   * Tells whether a Restore or selection of the unconfirmed Study workspace must first bring a displaced captured source back; asked by {@link admitPresentation}.
+   * @param input - The admitted Restore or selection.
+   * @param state - The presentation state at admission.
+   * @returns `true` when {@link displacedCapturedSourceTab} finds a tab to return.
+   * @example this.restoresDisplacedCapturedSource(input, this.presentationState())
+   */
+  private restoresDisplacedCapturedSource(
+    input: PresentationIntent,
+    state: PresentationState,
+  ): boolean {
+    return (
+      (input.action === 'restore' || input.action === 'select') &&
+      input.mode === 'study-workspace' &&
+      input.mode === state.mode &&
+      !state.layoutConfirmed &&
+      this.displacedCapturedSourceTab() !== undefined
+    )
+  }
+
+  /**
+   * Finds the Codebook-owned captured-source tab that stands outside the Study source column while both evidence panes hold their columns and a learner group exists beyond the three Study columns; asked by {@link admitPresentation} before a Restore of the Study workspace.
+   * @returns The displaced tab with its group, otherwise `undefined` (including every window with at most three groups, which the full placement handles).
+   * @example const displaced = this.displacedCapturedSourceTab() // => { group, tab } after the learner dragged Captured source into a fourth group
+   */
+  private displacedCapturedSourceTab():
+    { group: vscode.TabGroup; tab: vscode.Tab } | undefined {
+    const descriptor = STUDY_PRESENTATIONS['study-workspace'],
+      panes = this.studyPanePositions()
+    if (
+      !panes.app ||
+      !panes.context ||
+      !this.sourceUri ||
+      panes.appColumn !== descriptor.appColumn ||
+      panes.contextColumn !== descriptor.contextColumn ||
+      panes.sourceColumn === descriptor.sourceColumn ||
+      !vscode.window.tabGroups.all.some(
+        (group) => group.viewColumn > STUDY_EDITOR_GROUP_COUNT,
+      )
+    )
+      return undefined
+    const sourceUri = this.sourceUri.toString()
+    for (const group of vscode.window.tabGroups.all)
+      for (const tab of group.tabs)
+        if (
+          group.viewColumn !== descriptor.sourceColumn &&
+          this.ownsCapturedSourceTab(tab) &&
+          tab.input instanceof vscode.TabInputText &&
+          tab.input.uri.toString() === sourceUri
+        )
+          return { group, tab }
+    return undefined
+  }
+
+  /**
+   * Shows the captured source in its Study column again, closes the Codebook-owned duplicate left in a learner group, and admits the Restore once more; the learner's own tabs are never closed or moved.
+   * @param input - The Restore or selection being admitted.
+   * @param leftoverTabs - Passed through to {@link admitPresentation}.
+   * @param requester - Passed through to {@link admitPresentation}.
+   * @param fromPane - Passed through to {@link admitPresentation}.
+   * @returns The state the repeated admission answers.
+   * @example return this.returnDisplacedCapturedSourceThenAdmit(input, 'pending', 'learner', true)
+   */
+  private async returnDisplacedCapturedSourceThenAdmit(
+    input: PresentationIntent,
+    leftoverTabs: 'pending' | LeftoverTabClose,
+    requester: PresentationRequester,
+    fromPane: boolean,
+  ): Promise<PresentationState> {
+    const displaced = this.displacedCapturedSourceTab(),
+      lifetime = this.lifetime
+    if (displaced && this.sourceUri) {
+      const document = await vscode.workspace.openTextDocument(this.sourceUri)
+      this.assertLifetime(lifetime)
+      // Only the Codebook-owned tab closes, and only while it still stands in its group; closing it first lets the source's own display below end with the keyboard in the source column.
+      if (displaced.group.tabs.includes(displaced.tab))
+        await vscode.window.tabGroups.close([displaced.tab], true)
+      this.assertLifetime(lifetime)
+      await this.showTextDocumentNoted(document, {
+        viewColumn: STUDY_PRESENTATIONS['study-workspace'].sourceColumn,
+        preserveFocus: false,
+        preview: false,
+      })
+      this.assertLifetime(lifetime)
+      this.sourceGroup = vscode.window.tabGroups.all.find(
+        (group) =>
+          group.viewColumn ===
+          STUDY_PRESENTATIONS['study-workspace'].sourceColumn,
+      )
+    }
+    // The source standing in its column again can confirm the retained grid by itself; a full placement would refuse the learner groups.
+    if (this.presentationState().layoutConfirmed) {
+      this.presentationConfirmed = true
+      this.requestedPresentation = undefined
+      this.presentationReason = undefined
+      this.errors.delete('presentation')
+      this.errors.delete('layout')
+      this.publish()
+      return { ...this.presentationState(), state: 'open' as const }
+    }
+    return this.admitPresentation(
+      { ...input, expectedRevision: this.presentationControlRevision },
+      leftoverTabs,
+      requester,
+      fromPane,
+    )
   }
 
   /**
