@@ -1249,6 +1249,34 @@ async function check(page, options, collected) {
       disabledNext.title === 'Next recorded stop',
   })
   await page.screenshot({ path: `${options.output}/server-render-replay.png` })
+  // The bottom panel owns the transport, so this pane shows none: its stop announcement must stay empty while the panel announces the stop.
+  await publish({
+    ...serverRenderReplay(5, { presentedMs: 1000 }),
+    playbackPanelVisible: true,
+  })
+  await waitUntilRendered(revisionAt(5))
+  const coveredAnnouncement = await page.evaluate(() => ({
+    announcement: document.getElementById('pause-announcement').textContent,
+    noteVisible: document
+      .getElementById('first-execution-note')
+      .checkVisibility(),
+  }))
+  // The panel closing hands the transport back, so this pane announces the stop again.
+  await publish(serverRenderReplay(6, { presentedMs: 1000 }))
+  await waitUntilRendered(revisionAt(6))
+  const returnedAnnouncement = await page.evaluate(
+    () => document.getElementById('pause-announcement').textContent,
+  )
+  // protects=with the bottom panel open only the panel announces the selected stop, so two live regions never read the same stop; fails_when=a pane that shows no transport writes or keeps the stop announcement, or the summary stays silent after the panel closes; no_claim=native screen reader speech (stand-ins: the Study message the host posts)
+  cases.push({
+    name: 'a pane without the transport leaves its selected stop announcement empty and announces again when the transport returns',
+    actual: { coveredAnnouncement, returnedAnnouncement },
+    passed:
+      coveredAnnouncement.announcement === '' &&
+      !coveredAnnouncement.noteVisible &&
+      returnedAnnouncement ===
+        'Selected stop: Page load · Server render · app/lib/data.ts:23',
+  })
 }
 
 const report = {

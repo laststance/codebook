@@ -183,7 +183,6 @@ export const STUDY_UI_OPTIONS = {
   /** The words of both transports' coverage strips. */
   coverage: TIMELINE_COVERAGE_TEXT,
   sequence: STUDY_SEQUENCE_LAYOUT,
-  /** The replay's operation row (Cycle 0070): numbered marks above the playhead, Previous and Next operation, and the caption of a seek to a mark. */
   /** The words of a replay with server-render pauses (Cycle 0071, task 3a): the run-level note beside the playhead and the details that open from it. */
   pauses: {
     firstExecutionNote:
@@ -192,6 +191,7 @@ export const STUDY_UI_OPTIONS = {
     firstExecutionDetails:
       'Codebook starts the app and loads the page once before it records, so code that runs only once (at module scope) or a result the server cached ran during that load and could not be paused. A stop in the render that follows is recorded; a stop in that first run is not.',
   },
+  /** The replay's operation row (Cycle 0070): numbered marks above the playhead, Previous and Next operation, and the caption of a seek to a mark. */
   operations: {
     groupName: 'Operations',
     previous: 'Previous operation',
@@ -349,8 +349,8 @@ body.moments-only #recording-transport{display:flex;flex-wrap:wrap;align-items:c
 #node-history-learning{padding:0;border:0}body[data-replay-family=test] #node-history{padding-top:0}#node-learning-title{margin-top:0}body[data-replay-family=test] .learning-header{display:flex;flex-wrap:wrap;align-items:start;gap:0 8px}body[data-replay-family=test] #reader-kind{flex-basis:100%}body[data-replay-family=test] .learning-header h1{flex:1}body[data-replay-family=test] .learning-header [data-shortcut-help]{flex:none}body[data-replay-family=test] #study-content{display:flex;flex-direction:column}body[data-replay-family=test] #study-content>div:has(>#content-tabs){order:1}
 /* The shared transport's event group wraps as one: it takes its own line before the slider shrinks below its minimum width (DS-C); the 5A button ends the status row, apart from the move controls. */
 .playback-events{display:inline-flex;gap:6px;flex:none}
-/* The replay's operation row (Cycle 0070): numbered marks directly above the playhead, apart from the history-coverage strip. A done mark is filled, a failed one carries a cross and its word, a pending one is outlined with a question mark: shape and text, never colour alone. Marks closer than ${OPERATION_MARK_STACK_PX} px stack on further lines. */
 .first-execution-note{margin:2px 8px;font-size:.9em;display:flex;flex-wrap:wrap;gap:4px 8px;align-items:baseline}.first-execution-note details{display:inline}.first-execution-note summary{cursor:pointer;display:inline}.moments button.pause-moment{display:flex;flex-wrap:wrap;align-items:baseline;min-width:0;max-width:100%;overflow:hidden;white-space:nowrap;text-align:left}.pause-moment .pause-state,.pause-moment .pause-attribution,.pause-moment .pause-declared,.pause-moment .pause-time{flex:none}.pause-moment .pause-kind{flex:0 100 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}.pause-moment .pause-path{display:flex;flex:0 1000 auto;min-width:6em;max-width:100%;overflow:hidden}.pause-moment .pause-path-head{flex:0 1000 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}.pause-moment .pause-path-tail{flex:0 100 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}.pause-moment .pause-attribution{font-weight:600}
+/* The replay's operation row (Cycle 0070): numbered marks directly above the playhead, apart from the history-coverage strip. A done mark is filled, a failed one carries a cross and its word, a pending one is outlined with a question mark: shape and text, never colour alone. Marks closer than ${OPERATION_MARK_STACK_PX} px stack on further lines. */
 .timeline-track .operation-row{position:relative;margin:0 8px 2px}.operation-row .operation-mark{position:absolute;transform:translateX(-50%);min-height:${OPERATION_MARK_STACK_PX}px;min-width:${OPERATION_MARK_STACK_PX}px;padding:0 6px;font-size:12px;line-height:1;white-space:nowrap;border:1px solid var(--vscode-button-background,#0e639c);border-radius:12px;background:transparent;color:var(--vscode-foreground,#ddd)}.operation-row .operation-mark[data-state=done]{background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff)}.operation-row .operation-mark[data-state=pending]{border-style:dashed}.operation-row .operation-mark[aria-current=true]{outline:2px solid var(--vscode-focusBorder,#007fd4);outline-offset:1px}.operation-row .operation-mark:focus-visible{outline:2px solid var(--vscode-focusBorder,#007fd4);outline-offset:2px}#operation-caption{margin:4px 0 0;font-size:12px}#operation-caption[hidden]{display:none}
 @media(max-width:${OPERATION_MARK_LABELS_MIN_WIDTH_PX - 1}px){.operation-row .operation-mark-label{display:none}}.playback-status-row #show-learning-summary{flex:none;margin-left:auto;min-height:32px;padding:4px 8px}
 /* A test replay's Application pane: the header and footer stay pinned and the output region is the only scroller (DS4); a standard-error line starts with a mark in the terminal's red, and the mark, never the color alone, says so. */

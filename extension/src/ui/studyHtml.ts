@@ -1040,10 +1040,15 @@ function studyClient(
   /**
    * Announces the selected pause once per change: the status region says its name and time, nothing again for the same stop.
    * @param message - The Study message.
-   * @example announceSelectedPause(message)
+   * @param isTransportShown - Whether this pane shows the transport; a pane without it announces nothing and clears its region, so two open panes never announce the same stop.
+   * @example announceSelectedPause(message, true)
    */
-  const announceSelectedPause = (message: StudyViewMessage): void => {
-    const name = selectedPauseName(message)
+  const announceSelectedPause = (
+    message: StudyViewMessage,
+    isTransportShown: boolean,
+  ): void => {
+    // Only the pane that shows the transport owns the live region.
+    const name = isTransportShown ? selectedPauseName(message) : undefined
     const key = name ? `${message.model.observation?.id}` : undefined
     if (key === announcedPauseKey) return
     announcedPauseKey = key
@@ -4535,7 +4540,7 @@ function studyClient(
           control.title = label
         }
       }
-      announceSelectedPause(message)
+      announceSelectedPause(message, isTransportShown)
       const start = document.querySelector<HTMLButtonElement>(
         '[data-playback="start"]',
       )
