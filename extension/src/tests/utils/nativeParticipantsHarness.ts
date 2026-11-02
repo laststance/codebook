@@ -1233,10 +1233,17 @@ export async function nativeParticipantsHarness(
       layer: string,
       mappings: string,
       retainedOriginal?: string,
-      shape: { modulePlaceholder?: boolean; sourceUrl?: string } = {},
+      shape: {
+        modulePlaceholder?: boolean
+        sourceUrl?: string
+        /** Announces the script at the sealed address itself, as a runtime parses a shared module again at a route's first compile; `layer` is then ignored. */
+        sameAddress?: boolean
+      } = {},
     ): void {
       const sealed = bundle(name),
-        url = sealed.scriptUrl.replace(/\([^)/]+\)/, `(${layer})`),
+        url = shape.sameAddress
+          ? sealed.scriptUrl
+          : sealed.scriptUrl.replace(/\([^)/]+\)/, `(${layer})`),
         map = {
           ...JSON.parse(sealed.sourceMap),
           mappings,
@@ -1244,7 +1251,7 @@ export async function nativeParticipantsHarness(
             ? {}
             : { sourcesContent: [retainedOriginal] }),
         }
-      if (url === sealed.scriptUrl)
+      if (url === sealed.scriptUrl && !shape.sameAddress)
         throw new Error(
           `The layer ${layer} derives the sealed address ${url}; announce another layer`,
         )
@@ -1257,6 +1264,25 @@ export async function nativeParticipantsHarness(
         url,
         executionContextId: 1,
       })
+    },
+    /**
+     * Announces a participant's stop module again at the sealed address under a new script id, as the runtime does for a shared server module at the first compile of another route: the generated code differs from the sealed script's by the extra leading line, with its own inline source map.
+     * @example harness.announceModuleAgain('server', 'second', ';AAAA')
+     */
+    announceModuleAgain(
+      name: Participant,
+      scriptId: string,
+      mappings: string,
+      retainedOriginal?: string,
+    ): void {
+      this.announceModuleInAnotherLayer(
+        name,
+        scriptId,
+        '',
+        mappings,
+        retainedOriginal,
+        { sameAddress: true },
+      )
     },
     /** Every `Debugger.getScriptSource` the run sent, in order, with the participant and script it asked about. */
     scriptSourceReads,

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import type { ExtensionHistorySummary } from '../chromeExtensionHistoryTypes'
+import { STUDY_RESTORE_CONTROL_LABEL } from '../constants'
 import type { NodeServerHistorySummary } from '../nodeServerHistoryTypes'
 import type {
   NodeTestHistoryIndex,
@@ -18,6 +19,7 @@ import type { RetainedStudy } from '../retainedStudySchemas'
 import { installWebviewFocus } from '../runtimeSupport/utils/installWebviewFocus'
 import type { LiveStudy, projectStudy } from '../studyModel'
 import type { StudyCatalogEntry } from '../studySchemas'
+import type { PauseNameParts } from '../utils/describePauseName'
 import type { StudyDescriptor } from '../utils/describeStudy'
 import { installPaneFocusMemory } from '../utils/installPaneFocusMemory'
 import { installShortcutHelp } from '../utils/installShortcutHelp'
@@ -100,6 +102,8 @@ export interface StudyViewMessage {
     id: string
     itemId: string
     title: string
+    /** A server pause's name in the pieces the pane lays out by priority (task 3a); absent for a browser pause. */
+    pauseName?: PauseNameParts
     at: string
     elapsedMs?: number
   }[]
@@ -233,12 +237,12 @@ export function studyHtml(kind: 'context' | 'moments'): string {
 <section><div class="row"><button class="link" data-action="source">Captured / source-derived document</button><button class="link" data-action="current-file">Open current file</button></div><p id="source-version" class="muted"></p><p id="source-drift" class="error"></p><label><input id="understood" type="checkbox" aria-describedby="understanding-description"><span><span id="understanding-label">I understand this source revision</span><span id="save-state" class="muted"></span></span></label><p id="understanding-description" class="muted" hidden>Applies to this article and every captured citation shown here.</p><p id="progress" class="muted"></p></section></div>
 <section id="source-flow"><h2>Source-linked flow</h2><div id="flow"></div><p id="correspondence" class="muted"></p></section>
 <details id="study-controls"><summary>Study controls</summary><div id="next-scenario"><div class="row"><button class="primary" data-action="connect">Connect your editor agent</button><button data-action="click">Perform configured action once</button></div><p class="muted" id="profile-description">Ask your editor agent to explain a code path in the open repository.</p></div></details>
-<section><h2>Workspace panes</h2><div class="row"><button data-action="focus-app">Focus application</button><button data-action="source">Focus source</button><button data-action="focus-context">Focus explanation</button><button data-action="outline">Show learning outline</button><button data-action="arrange">Restore Study arrangement</button></div></section></div>
+<section><h2>Workspace panes</h2><div class="row"><button data-action="focus-app">Focus application</button><button data-action="source">Focus source</button><button data-action="focus-context">Focus explanation</button><button data-action="outline">Show learning outline</button><button data-action="arrange">${STUDY_RESTORE_CONTROL_LABEL}</button></div></section></div>
 <p id="recording-save-state" class="status" role="status" aria-live="polite"></p><details id="evidence-details" hidden><summary id="evidence-summary">Evidence status</summary><p id="study-state" class="status" hidden></p></details>
 <section id="node-history"><h2 id="node-history-heading">${STUDY_UI_OPTIONS.testReplay.heading}</h2><section id="node-history-learning" hidden><h3 id="node-learning-title"></h3></section><p id="node-history-status" class="status" role="status"></p><div class="clamped-text"><p id="node-history-capture-reason" class="muted clamp"></p><button type="button" class="link show-more" data-show-more="node-history-capture-reason" aria-controls="node-history-capture-reason" aria-expanded="false" hidden>${STUDY_UI_OPTIONS.testReplay.showMore}</button></div><div id="node-history-material" hidden><div class="clamped-text"><p id="node-learning-question" class="muted clamp"></p><button type="button" class="link show-more" data-show-more="node-learning-question" aria-controls="node-learning-question" aria-expanded="false" hidden>${STUDY_UI_OPTIONS.testReplay.showMore}</button></div><div class="clamped-text"><p id="node-learning-summary" class="clamp"></p><button type="button" class="link show-more" data-show-more="node-learning-summary" aria-controls="node-learning-summary" aria-expanded="false" hidden>${STUDY_UI_OPTIONS.testReplay.showMore}</button></div><div id="node-learning-sequence" aria-label="Test replay learning sequence"></div><details id="node-learning-steps-details"><summary id="node-learning-steps-summary">${STUDY_UI_OPTIONS.testReplay.stepDetails}</summary><div id="node-learning-steps"></div></details></div><p id="node-history-no-material" class="muted" hidden>${STUDY_UI_OPTIONS.testReplay.noMaterial}</p><div id="node-history-moment" role="status" aria-live="polite"><h3 id="node-history-step-heading" tabindex="-1" data-focus-fallback hidden></h3><p id="node-history-position" class="status"></p><p id="node-history-explanation"></p></div><p id="node-history-not-recorded" class="muted"></p><p id="node-history-unverified" class="muted"></p><p id="node-history-pointer" class="muted"></p><div id="node-history-closed" class="row" hidden><button type="button" data-action="focus-app">${STUDY_UI_OPTIONS.testReplay.showRecordedOutput}</button></div><p id="node-history-hint" class="muted" role="status" aria-live="polite"></p><button id="node-history-show-variables" type="button" data-action="show-variables" hidden>Show Variables</button><button id="node-history-inspect" type="button" hidden>Inspect in native debugger</button><label><input id="node-history-understood" type="checkbox"><span><span id="node-history-understanding-label">${STUDY_UI_OPTIONS.testReplay.understanding}</span> <span id="node-history-understanding-state" class="muted"></span></span></label><details id="node-history-events-details"><summary id="node-history-events-summary">Events</summary><div class="row"><span id="node-history-page" class="muted"></span><button id="node-history-previous" type="button">Previous page</button><button id="node-history-next" type="button">Next page</button></div><div id="node-history-events"></div></details></section>
 <section id="observed-moments"><h2>Observed moments</h2><p class="muted" id="moments-caption">Select a captured observation or open Recording to follow its time.</p><div id="moments" class="moments"></div></section>
 <section id="saved-studies"><h2>Saved studies</h2><select id="studies" aria-label="Saved study"><option value="">No saved study yet</option></select><p id="study-unopenable" class="muted" hidden></p><p id="study-newer" class="muted" hidden></p><p id="study-repairable" class="muted" hidden></p><div id="delete-study-row" class="row" hidden><button id="repair-study" class="primary" type="button" data-action="retry" aria-describedby="study-repairable" hidden>Repair saved study</button><button id="delete-study" type="button" aria-describedby="delete-study-reason delete-study-status">Delete saved study…</button></div><p id="delete-study-reason" class="muted" hidden></p><p id="delete-study-status" role="status" aria-live="polite"></p><details id="study-files" hidden><summary>Remove by hand</summary><p id="study-files-note" role="status" aria-live="polite"></p><ul id="study-files-list" class="muted" aria-label="Files of the chosen saved study"></ul><div class="row"><button id="copy-study-files" type="button">Copy paths</button><button type="button" data-action="retry">Retry storage / refresh</button></div><p id="copy-study-files-status" role="status" aria-live="polite"></p></details></section>
-<section id="recording-transport">${markupOnlyIn(kind, 'context', valuesHint)}<div class="playback-row"><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">?</button><button data-playback="start" title="Replay from start" aria-label="Replay from start">↤</button><button id="previous-moment" data-playback="previous" title="Previous recorded stop" aria-label="Previous recorded stop">◀|</button><button class="primary" id="playback-toggle" data-playback="play">Play</button><button id="next-moment" data-playback="next" title="Next recorded stop" aria-label="Next recorded stop">|▶</button><label for="playhead" class="visually-hidden">Recorded position</label><div class="timeline-track"><div id="operation-row" class="operation-row" role="group" aria-label="${STUDY_UI_OPTIONS.operations.groupName}" hidden></div><input id="playhead" type="range" min="0" max="0" step="1" value="0"><div id="history-coverage" role="img" aria-label="${STUDY_UI_OPTIONS.coverage.unknownName}" hidden></div><span id="history-coverage-label" class="muted">History coverage unknown</span></div><span id="playback-position"></span><span id="playback-events" class="playback-events" role="group" aria-label="${STUDY_UI_OPTIONS.testReplay.eventsGroup}" hidden><button id="previous-event" type="button" title="${STUDY_UI_OPTIONS.testReplay.previousEvent}" disabled>${STUDY_UI_OPTIONS.testReplay.previousEvent}</button><button id="next-event" type="button" title="${STUDY_UI_OPTIONS.testReplay.nextEvent}" disabled>${STUDY_UI_OPTIONS.testReplay.nextEvent}</button><button id="previous-operation" type="button" title="${STUDY_UI_OPTIONS.operations.previous}" hidden disabled>${STUDY_UI_OPTIONS.operations.previous}</button><button id="next-operation" type="button" title="${STUDY_UI_OPTIONS.operations.next}" hidden disabled>${STUDY_UI_OPTIONS.operations.next}</button></span></div><p id="operation-caption" class="muted" hidden></p><span id="operation-status" class="visually-hidden" role="status" aria-live="polite"></span><div class="playback-status-row"><span id="recording-status" role="status" aria-live="polite"></span><span id="application-covered-remedy" class="${markupOnlyIn(kind, 'context', 'visually-hidden')}${markupOnlyIn(kind, 'moments', 'muted')}" role="status" aria-live="polite"></span><details id="playback-options"><summary>Playback details</summary><button data-action="reload-recording">Reload saved recording</button><p>Recorded history only. Playback does not run application code or mark understanding.</p><details id="playback-diagnostics" hidden><summary>Recording error details</summary><p id="playback-diagnostic" class="error"></p></details></details>${markupOnlyIn(kind, 'moments', learningSummaryButton)}</div><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p>${markupOnlyIn(kind, 'moments', valuesHint)}</section>
+<section id="recording-transport">${markupOnlyIn(kind, 'context', valuesHint)}<div class="playback-row"><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">?</button><button data-playback="start" title="Replay from start" aria-label="Replay from start">↤</button><button id="previous-moment" data-playback="previous" title="Previous recorded stop" aria-label="Previous recorded stop">◀|</button><button class="primary" id="playback-toggle" data-playback="play">Play</button><button id="next-moment" data-playback="next" title="Next recorded stop" aria-label="Next recorded stop">|▶</button><label for="playhead" class="visually-hidden">Recorded position</label><div class="timeline-track"><div id="operation-row" class="operation-row" role="group" aria-label="${STUDY_UI_OPTIONS.operations.groupName}" hidden></div><input id="playhead" type="range" min="0" max="0" step="1" value="0"><div id="history-coverage" role="img" aria-label="${STUDY_UI_OPTIONS.coverage.unknownName}" hidden></div><span id="history-coverage-label" class="muted">History coverage unknown</span></div><span id="playback-position"></span><span id="playback-events" class="playback-events" role="group" aria-label="${STUDY_UI_OPTIONS.testReplay.eventsGroup}" hidden><button id="previous-event" type="button" title="${STUDY_UI_OPTIONS.testReplay.previousEvent}" disabled>${STUDY_UI_OPTIONS.testReplay.previousEvent}</button><button id="next-event" type="button" title="${STUDY_UI_OPTIONS.testReplay.nextEvent}" disabled>${STUDY_UI_OPTIONS.testReplay.nextEvent}</button><button id="previous-operation" type="button" title="${STUDY_UI_OPTIONS.operations.previous}" hidden disabled>${STUDY_UI_OPTIONS.operations.previous}</button><button id="next-operation" type="button" title="${STUDY_UI_OPTIONS.operations.next}" hidden disabled>${STUDY_UI_OPTIONS.operations.next}</button></span></div><p id="operation-caption" class="muted" hidden></p><div id="first-execution-note" class="first-execution-note" hidden><span id="first-execution-text">${STUDY_UI_OPTIONS.pauses.firstExecutionNote}</span> <details id="first-execution-details"><summary>${STUDY_UI_OPTIONS.pauses.firstExecutionDetailsSummary}</summary><p>${STUDY_UI_OPTIONS.pauses.firstExecutionDetails}</p></details></div><span id="pause-announcement" class="visually-hidden" role="status" aria-live="polite"></span><span id="operation-status" class="visually-hidden" role="status" aria-live="polite"></span><div class="playback-status-row"><span id="recording-status" role="status" aria-live="polite"></span><span id="application-covered-remedy" class="${markupOnlyIn(kind, 'context', 'visually-hidden')}${markupOnlyIn(kind, 'moments', 'muted')}" role="status" aria-live="polite"></span><details id="playback-options"><summary>Playback details</summary><button data-action="reload-recording">Reload saved recording</button><p>Recorded history only. Playback does not run application code or mark understanding.</p><details id="playback-diagnostics" hidden><summary>Recording error details</summary><p id="playback-diagnostic" class="error"></p></details></details>${markupOnlyIn(kind, 'moments', learningSummaryButton)}</div><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p>${markupOnlyIn(kind, 'moments', valuesHint)}</section>
 </main>
 <script nonce="${nonce}">(${installShortcutHelp.toString()})(${JSON.stringify(STUDY_SHORTCUTS)}, '#study-content');(${studyClient.toString()})(${JSON.stringify(STUDY_UI_OPTIONS)}, ${kind === 'context' ? installWebviewFocus.toString() : 'undefined'}, ${savedStudyLabel.toString()}, ${savedLaterNote.toString()}, ${installPaneFocusMemory.toString()})</script></body></html>`
 }
@@ -986,6 +990,69 @@ function studyClient(
         action,
         ...(positionMs === undefined ? {} : { positionMs }),
       })
+  }
+  /**
+   * The name of the pause the replay presents now, read by the selected-stop label, the announcement and the Previous and Next labels.
+   * @param message - The Study message.
+   * @returns The server pause's name pieces, or `undefined` for a browser pause or no selection.
+   * @example selectedPauseName(message)?.text // => 'Page load · Server render · app/page.tsx:12'
+   */
+  const selectedPauseName = (
+    message: StudyViewMessage,
+  ): PauseNameParts | undefined =>
+    message.moments.find(
+      (moment) => moment.id === message.model.observation?.id,
+    )?.pauseName
+  /**
+   * Builds the pieces of a pause name as spans the stylesheet shrinks by priority when the pane is narrow: the state and the attribution never shrink, the name shrinks late, the path first, cut in the middle so the file and line stay.
+   * @param name - The pause's name pieces.
+   * @returns The spans; their text content is the whole name ({@link PauseNameParts.text}).
+   * @example control.append(...pauseNameNodes(moment.pauseName))
+   */
+  const pauseNameNodes = (name: PauseNameParts): HTMLElement[] => {
+    const piece = (className: string, value: string): HTMLElement => {
+      const node = document.createElement('span')
+      node.className = className
+      node.textContent = value
+      return node
+    }
+    const location = `${name.path}:${name.line}`
+    const cut = location.lastIndexOf('/') + 1
+    const path = piece('pause-path', '')
+    path.append(
+      piece('pause-path-head', location.slice(0, cut)),
+      piece('pause-path-tail', location.slice(cut)),
+    )
+    return [
+      ...(name.state ? [piece('pause-state', `${name.state} · `)] : []),
+      piece('pause-kind', `${name.kind} · `),
+      path,
+      ...(name.attribution
+        ? [piece('pause-attribution', ` · ${name.attribution}`)]
+        : []),
+      ...(name.declared !== undefined
+        ? [piece('pause-declared', ` (declared ${name.declared})`)]
+        : []),
+    ]
+  }
+  // The pause last announced, so a state change is announced once and a repeated message says nothing.
+  let announcedPauseKey: string | undefined
+  /**
+   * Announces the selected pause once per change: the status region says its name and time, nothing again for the same stop.
+   * @param message - The Study message.
+   * @param isTransportShown - Whether this pane shows the transport; a pane without it announces nothing and clears its region, so two open panes never announce the same stop.
+   * @example announceSelectedPause(message, true)
+   */
+  const announceSelectedPause = (
+    message: StudyViewMessage,
+    isTransportShown: boolean,
+  ): void => {
+    // Only the pane that shows the transport owns the live region.
+    const name = isTransportShown ? selectedPauseName(message) : undefined
+    const key = name ? `${message.model.observation?.id}` : undefined
+    if (key === announcedPauseKey) return
+    announcedPauseKey = key
+    text('pause-announcement', name ? `Selected stop: ${name.text}` : '')
   }
   /** Finds a real captured stop for toolbar stepping; never synthesizes runtime state between observations. @example recordedStep('next') */
   const recordedStep = (direction: 'previous' | 'next'): number | undefined => {
@@ -4366,6 +4433,10 @@ function studyClient(
     const isTransportShown = showsTransport(message)
     offerTransport(isTransportShown)
     renderFamilyTransport(message, isTransportShown)
+    // The run-level note shows once, in the transport, whether the Learning summary is open or collapsed.
+    element('first-execution-note').hidden = !(
+      isTransportShown && recording?.firstExecutionNote
+    )
     if (recording) {
       const range = recording.range,
         pending = recording.cleared && recording.readiness === 'loading'
@@ -4454,9 +4525,22 @@ function studyClient(
       }
       for (const direction of ['previous', 'next'] as const) {
         const control = element(`${direction}-moment`)
-        if (control instanceof HTMLButtonElement)
-          control.disabled = recordedStep(direction) === undefined
+        if (control instanceof HTMLButtonElement) {
+          const step = recordedStep(direction)
+          control.disabled = step === undefined
+          // A server stop's name is part of the control's name, so the learner hears where the move goes; a disabled control has no target and keeps its plain label.
+          const target =
+            step === undefined
+              ? undefined
+              : current?.moments.find((moment) => moment.elapsedMs === step)
+                  ?.pauseName
+          const base = `${direction === 'previous' ? 'Previous' : 'Next'} recorded stop`
+          const label = target ? `${base}: ${target.text}` : base
+          control.setAttribute('aria-label', label)
+          control.title = label
+        }
       }
+      announceSelectedPause(message, isTransportShown)
       const start = document.querySelector<HTMLButtonElement>(
         '[data-playback="start"]',
       )
@@ -4492,6 +4576,11 @@ function studyClient(
         browserCoverageLegend(marks),
       )
       renderOperationRow(recording, isTransportShown, selectedHistoryGap)
+    }
+    // Leaving the replay clears the stop announcement, so a screen reader reads no stale stop and reopening the same replay announces it again.
+    if (!recording && announcedPauseKey !== undefined) {
+      announcedPauseKey = undefined
+      text('pause-announcement', '')
     }
     // Outside a replay, the last browser replay's operation row must not stay, nor its cached input.
     clearOperationRowOutsideReplay(recording, replayFamily)
@@ -4642,7 +4731,7 @@ function studyClient(
       'observation',
       recording
         ? model.observation
-          ? `Recorded observation · ${seconds(model.observation.elapsedMs)}${recording.pauseConfirmed ? ' · pause verified' : ''}${recording.rendererConfirmed ? ' · original renderer receipt available' : ''}`
+          ? `${selectedPauseName(message)?.text ? `${selectedPauseName(message)?.text} · ` : ''}Recorded observation · ${seconds(model.observation.elapsedMs)}${recording.pauseConfirmed ? ' · pause verified' : ''}${recording.rendererConfirmed ? ' · original renderer receipt available' : ''}`
           : 'No source or values were observed by this recorded position.'
         : !model.observation && !model.currentSourceAvailable
           ? 'Current source unavailable — read a captured observation or retry.'
@@ -4809,7 +4898,20 @@ function studyClient(
           const control = document.createElement('button')
           control.dataset.item = moment.itemId
           control.dataset.observation = moment.id
-          control.textContent = `${moment.title} · ${recording && moment.elapsedMs !== undefined ? seconds(moment.elapsedMs) : new Date(moment.at).toLocaleTimeString()}`
+          const momentTime = `${recording && moment.elapsedMs !== undefined ? seconds(moment.elapsedMs) : new Date(moment.at).toLocaleTimeString()}`
+          if (moment.pauseName) {
+            control.className = 'pause-moment'
+            control.append(...pauseNameNodes(moment.pauseName))
+            const time = document.createElement('span')
+            time.className = 'pause-time'
+            time.textContent = ` · ${momentTime}`
+            control.append(time)
+            // Kind and attribution are in the accessible name as words, never colour alone.
+            control.setAttribute(
+              'aria-label',
+              `${moment.pauseName.text} · ${momentTime}`,
+            )
+          } else control.textContent = `${moment.title} · ${momentTime}`
           control.setAttribute(
             'aria-current',
             String(moment.id === model.observation?.id),

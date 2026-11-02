@@ -52,12 +52,12 @@ import {
 import { causeRootsFor } from './utils/causeRootsFor'
 import { checkNodeTestFiles } from './utils/checkNodeTestFiles'
 import { chromeExtensionPrerequisiteGaps } from './utils/chromeExtensionPrerequisiteGaps'
-import { configuredStops } from './utils/configuredStops'
 import { createChromeExecutableLookup } from './utils/createChromeExecutableLookup'
 import { createLearnerSecretAsker } from './utils/createLearnerSecretAsker'
 import { createMemoryOrphanStore } from './utils/createMemoryOrphanStore'
 import { createNodeServerRunUtilities } from './utils/createNodeServerRunUtilities'
 import { createSavedSessionOperationsAsker } from './utils/createSavedSessionOperationsAsker'
+import { declaredStopOfSnapshot } from './utils/declaredStopOfSnapshot'
 import { describeOperationsConfirmationNotice } from './utils/describeOperationsConfirmationNotice'
 import { listVitestForRootClaim } from './utils/listVitestForRootClaim'
 import { nodeServerMachineGaps } from './utils/nodeServerMachineGaps'
@@ -558,10 +558,12 @@ export async function createEnvironment(
         savedSession: savedSessionPortOf(context.savedSessions, workspace),
         onSignInRequired: ({ reason }) => context.showSignInRequired?.(reason),
         revealSource: async (snapshot) => {
-          const index = run
-            .view()
-            .snapshots.findIndex((candidate) => candidate.id === snapshot.id)
-          const stop = configuredStops(profile.configuration)[index]
+          // A render may pause its stops out of declared order, so the snapshot's declared stop is looked up by its declaredIndex.
+          const stop = declaredStopOfSnapshot(
+            profile.configuration,
+            run.view().snapshots,
+            snapshot.id,
+          )?.stop
           if (!stop)
             throw new StudyError(
               'EVIDENCE_UNAVAILABLE',

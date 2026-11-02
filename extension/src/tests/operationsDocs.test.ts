@@ -198,7 +198,7 @@ test('the Error codes table has one anchored row per version 3 code with the aud
   assert.equal(rows.OPTION_NOT_AVAILABLE?.audience, 'chat')
 })
 
-// protects=DX-11: the packaged skill carries each pt1 safety rule, and (CodeRabbit 2 of pt2) its two answers to OPERATIONS_NOT_CONFIRMED name the details.question each is for; fails_when=a sentence leaves the skill, its version is not 1.0.64, or an answer to OPERATIONS_NOT_CONFIRMED applies to both questions; no_claim=how a chat follows the rules
+// protects=DX-11: the packaged skill carries each pt1 safety rule, and (CodeRabbit 2 of pt2) its two answers to OPERATIONS_NOT_CONFIRMED name the details.question each is for; fails_when=a sentence leaves the skill, its version is not 1.0.65, or an answer to OPERATIONS_NOT_CONFIRMED applies to both questions; no_claim=how a chat follows the rules
 test('the bundled skill declares flows as operations, keeps secrets with the learner, claims only shown progress and never repeats unasked', async () => {
   // Arrange
   const skill = await readPackaged('skills', 'codebook', 'SKILL.md')
@@ -210,7 +210,7 @@ test('the bundled skill declares flows as operations, keeps secrets with the lea
         part.startsWith('**Operations (configuration version 3).**'),
       ) ?? ''
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.64"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.65"\n'))
   assert.ok(paragraph.includes('ordered v3 `operations`'))
   assert.ok(paragraph.includes('`afterOperation`'))
   assert.ok(paragraph.includes('always `secret: "ask-learner"`'))
@@ -247,7 +247,7 @@ test('the README names operations, ask-learner, the masking behavior change and 
   assert.ok(section.includes('`[pending]`'))
   assert.ok(section.includes('`isError: true`'))
   assert.ok(section.includes('`NAVIGATION_NOT_SETTLED`'))
-  assert.ok(readme.includes('**MCP API 1.15**'))
+  assert.ok(readme.includes('**MCP API 1.16**'))
 })
 
 // protects=DX-11/DES-4: the help says when a saved-session run asks, what a decline does, how Review again works, the confirmation values, the learner-only setting and why a fresh run shows no dialog; fails_when=a rule leaves the section; no_claim=the wording's quality

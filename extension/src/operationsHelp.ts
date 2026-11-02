@@ -32,6 +32,8 @@ export const OPERATIONS_ERROR_CODES = [
   'SIGN_IN_PROFILE_IN_USE',
   'SIGN_IN_PROFILE_UNUSABLE',
   'SIGN_IN_ORIGIN_REFUSED',
+  'SERVER_STOP_NOT_REACHED',
+  'ENTRY_LOAD_TIMEOUT',
 ] as const satisfies readonly ErrorCode[]
 
 /** One code of {@link OPERATIONS_ERROR_CODES}. */
@@ -175,7 +177,7 @@ export function operationsHelp() {
         'codebook_sources, then codebook_source: read the file each stop is in; copy its path, full SHA-256 and the line and column from numberedText.',
         'codebook_publish_book: publish a source-only article whose node cites that file; copy bookId, revision and nodeId.',
         'codebook_start: profile repository-browser, the configuration above with the copied values and a stable key; the answer is a receipt with a run id, not success.',
-        'Poll the run resource it names until the run reads ready, or a failed state with an error code; read nextActions: it offers repository-operation while an operation is left.',
+        'Poll the run resource it names while it reads preparing, until it reads ready, paused (read inspectionUri and sourceUri, then codebook_continue) or a failed state with an error code; read nextActions: it offers repository-operation while an operation is left.',
         `codebook_action ${REPOSITORY_OPERATION_ACTION}: one call per operation, each with a new key; the run takes the next declared operation in order, so a call names no index.`,
         'Read the run resource after every call; its operations[i] tell what the run did.',
         'At each pause read inspectionUri and sourceUri, explain the values in the chat, then codebook_continue with the continueArguments of the current run resource. Send the next operation only when the run reads ready again.',

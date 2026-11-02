@@ -13,6 +13,24 @@ import { sourceMapGeneratedRange } from './sourceMapGeneratedRange'
 import { sourceMapMappedPositions } from './sourceMapMappedPositions'
 import { walkSourceMapSegments } from './walkSourceMapSegments'
 
+/** The message {@link createBundleVerifier} refuses a map with whose original text is not the frozen one; {@link isChangedOriginalError} reads it. */
+const CHANGED_ORIGINAL_MESSAGE = 'Map original differs from frozen source'
+
+/**
+ * Tells whether {@link createBundleVerifier} refused a bundle because its map holds another original text than the frozen one, as against a map that is invalid or unreadable.
+ * Called by {@link ConfiguredBrowserRun}'s `adoptInstance` for a server module announced again under a new script id, where a changed original is a changed source and not a refused instance.
+ * @param error - What the verifier or the text read threw.
+ * @returns `true` only for the changed-original refusal.
+ * @example
+ * ```ts
+ * isChangedOriginalError(new Error('Map original differs from frozen source')) // true
+ * isChangedOriginalError(new Error('Missing or ambiguous map source')) // false
+ * ```
+ */
+export function isChangedOriginalError(error: unknown): boolean {
+  return error instanceof Error && error.message === CHANGED_ORIGINAL_MESSAGE
+}
+
 /** Seals one parsed map for {@link ConfiguredBrowserRun} before input, rejecting ambiguous originals without changing legacy verification. @example createBundleVerifier(bundle).hashes.sourceMap.length // 64 */
 export function createBundleVerifier(input: BundleSource) {
   const bundle = bundleSchema.parse(input),
@@ -28,7 +46,7 @@ export function createBundleVerifier(input: BundleSource) {
   )
     throw new Error('Missing or ambiguous map source')
   if (payload.sourcesContent[matches[0]!] !== bundle.source)
-    throw new Error('Map original differs from frozen source')
+    throw new Error(CHANGED_ORIGINAL_MESSAGE)
   if (canonicalSource(bundle.sourcePath) !== originalPath)
     throw new Error('Map original differs from native source path')
   const sourceMap = new SourceMap(payload)

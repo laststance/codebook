@@ -1,8 +1,9 @@
-import { join, resolve } from 'node:path'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { dirname, join, resolve } from 'node:path'
 import type { TestContext } from 'node:test'
 import { runInNewContext } from 'node:vm'
 
-import type { DebugSession } from 'vscode'
+import type { DebugSession, DebugSessionOptions } from 'vscode'
 
 import type { ConfiguredBrowserRun } from '../../configuredBrowserRun'
 import type * as ConfiguredBrowserRunModule from '../../configuredBrowserRun'
@@ -19,7 +20,7 @@ import type {
   RepositoryConfiguration,
   RepositoryOperation,
 } from '../../repositoryConfigSchemas'
-import type { RuntimeControl } from '../../runtime'
+import type { Participant, RuntimeControl } from '../../runtime'
 import type { ViewportRecordingObserver } from '../../runtimeSupport/browserViewport'
 import type { ProfileLeft } from '../../runtimeSupport/hostBrowser'
 import type {
@@ -37,9 +38,13 @@ import { sha256 } from '../../runtimeSupport/utils/sha256'
 import { WaitTimeoutError } from '../../runtimeSupport/utils/waitTimeoutError'
 import { waitUntil } from '../../runtimeSupport/utils/waitUntil'
 import { citationContext } from '../../utils/citationContext'
+import { clientComponentRefusal } from '../../utils/clientComponentRefusal'
 import { configuredDomExpression } from '../../utils/configuredDomExpression'
 import { configuredScrollExpression } from '../../utils/configuredScrollExpression'
-import { createBundleVerifier } from '../../utils/createBundleVerifier'
+import {
+  createBundleVerifier,
+  isChangedOriginalError,
+} from '../../utils/createBundleVerifier'
 import type { NextPagesDiscoveryCache } from '../../utils/createNextPagesDiscoveryCache'
 import {
   describeNextEntryResponse,
@@ -60,6 +65,7 @@ import { createConfiguredStudy } from './createConfiguredStudy'
 import { createManualClock } from './createManualClock'
 import { createSourceBoundWaitHold } from './createSourceBoundWaitHold'
 import { debuggerPausedEvent } from './debuggerPausedEvent'
+import { fakePageContext, type FakePageElement } from './fakePageContext'
 import {
   loadConstantsWith,
   type RuntimeConstantOverrides,
@@ -71,6 +77,7 @@ import {
   type NextPagesPageState,
 } from './nextPagesWorkspace'
 import { repositoryHarness } from './repositoryHarness'
+import { createServerParticipant } from './serverRenderParticipant'
 import { sourceBreakpointRequest } from './sourceBreakpointRequest'
 
 /** What the owned page reports for a condition that does not hold; `textDifference` is left open so a test can send a value the run must refuse. */
@@ -128,6 +135,8 @@ export async function configuredRuntimeHarness(
     mappings?: string
     /** Replaces the declared before conditions, so a test can make a text or attribute condition the one that fails. */
     before?: RepositoryConfiguration['action']['before']
+    /** Replaces the declared run-level after conditions, so a test can run the shape a quick start declares. */
+    after?: RepositoryConfiguration['action']['after']
     /** Opts into a source the debugger can bind on another line than declared: the executed module is then the source text itself, so generated line n is source line n + 1 under a map such as 'AAAA;AACA'. */
     fixture?: {
       /** Replaces the one-statement source; its default (`var nextTheme = "dark";`) already has an empty line 2. */
@@ -151,8 +160,36 @@ export async function configuredRuntimeHarness(
     sealFailure?: string
     /** Makes the stand-in seal (the Vite served-module read, or the Next `.next/dev` read) never finish, as a server that stops answering does while a stop is sealed. */
     sealHangs?: boolean
+    /** Makes the stand-in server seal answer as {@link readDevelopmentBundle} does for a Next server stop: the layer it sealed (`action-browser` or `rsc`), or the client-component refusal of a `'use client'` file's reference stub. */
+    serverSeal?: 'action-browser' | 'rsc' | 'client-component'
+    /**
+     * Gives a version 3 run its scripted Node participant (`harness.server`, see {@link createServerParticipant}): the stand-in server offers an inspector, the run attaches a `pwa-node` session and a second CDP channel, acknowledges the server stops' registrations, and a test sends the server's hits itself. Server stops are sealed at `(<serverSeal ?? 'action-browser'>)/./<path>`; `route` is the route the work store answers by default (`null`: unreadable). Without it a server stop's preparation ends after the seal, as before.
+     */
+    serverRuntime?: {
+      route?: string | null
+      /** The App paths manifest written to `.next/dev/server/app-paths-manifest.json` (manifest key to compiled page); by default one page for the entry path, such as `/dashboard/page`. */
+      appPaths?: Record<string, string>
+    }
+    /**
+     * Keeps the answer of every `Page.navigate` back, and the main frame's commit with it, until a test calls {@link answerNavigation}, as a pause before the response headers does (spike s05-preshell: answer and commit came after the continue). Only for a run opened with `serverRuntime`.
+     */
+    holdNavigation?: boolean
+    /** The path the main frame lands on after the nth `Page.navigate` of a saved-session run (zero-based), when it differs from `navigationLandsOn`; later navigations use `navigationLandsOn`. */
+    navigationLandings?: string[]
+    /** Replaces the declared inspections (default: the value of `nextTheme`), so a test can inspect a local such as a `cookies()` result. */
+    inspections?: RepositoryConfiguration['inspections']
+    /** Further locals the stand-in debugger holds at a stop beside `nextTheme`, by name, as the app's scope would (an object reads as the marker `{ type: 'object' }`, as in a real frame). */
+    inspectionScope?: Record<string, unknown>
+    /** Makes `document.readyState` read `loading` from the nth `Page.navigate` on (one-based), so the warm-up load of a saved-session run, which waits for `complete`, finishes before the armed entry load starts loading. */
+    loadingFromNavigation?: number
+    /** Called whenever the stand-in page is asked for a screenshot, so a test changes what the page shows between a capture and the re-read that follows it. */
+    onScreenshot?: () => void
+    /** What `document.readyState` answers from the start (default `complete`); an entry-render test starts with `loading` and calls `setDocumentReadyState('complete')` once the page may load. */
+    documentReadyState?: 'loading' | 'complete'
     /** The executed module's text instead of the default one-statement module, such as a Vite module with an inlined env value. */
     moduleJavascript?: string
+    /** Ends the executed server module's text with the `//# sourceURL=` comment webpack gives an evaluated module, so a script the run never saw parsed can be recognised by it at its first pause. */
+    serverModuleSourceUrl?: boolean
     /** Makes the Vite stand-in report these values as the ones it masks in kept module text, as the launcher's env-file values are. */
     maskedValues?: string[]
     /** Names the executed module's source map lists (its `names`), such as an env value an inlined constant carries. */
@@ -167,7 +204,7 @@ export async function configuredRuntimeHarness(
     nextPages?: NextPagesHarnessOptions
     /** Moves the first cited source, and the stop declared in it, to this workspace-relative path (such as a file under `src/pages`). */
     sourcePath?: string
-    /** Declares the first stop for this participant in a version 2 (cross-runtime) configuration, as a start that names `participant` does; only without additional stops, whose version 2 form differs. */
+    /** Declares the first stop for this participant in a version 2 (cross-runtime) configuration, as a start that names `participant` does, or in a version 3 configuration when `operations` is given; only without additional stops in the version 2 form, whose form differs. */
     participant?: 'browser' | 'server'
     /** The configuration's initial inputs; the stand-in page has one editable control for each selector. */
     initialInputs?: RepositoryConfiguration['initialInputs']
@@ -214,8 +251,11 @@ export async function configuredRuntimeHarness(
      * Runs a version 3 configuration of ordered operations instead of the single action: the first stop and each of `additionalStops` follow the operation `stopOperations` names (the first stop first). A stop's pause is reported inside the input of its operation, which the page answers only once the operation's last stop was continued, as a handler paused in the debugger does.
      */
     operations?: {
+      /** The operations; an empty list omits the field from the configuration (allowed when every stop declares `afterOperation: 0`). */
       operations: RepositoryOperation[]
       stopOperations: number[]
+      /** The participant of each stop, the first stop first; by default the first is `options.participant ?? 'browser'` and every other stop is a browser stop. */
+      stopParticipants?: Participant[]
       /** The controls the stand-in page reports, by selector. */
       controls?: Record<string, FakeControl>
       /** Selectors whose text the page reads back differently after the insert, as a control that rewrites its value does. */
@@ -254,7 +294,10 @@ export async function configuredRuntimeHarness(
   if (options.adapter) reference.configuration.adapter = options.adapter
   if (additionalStops.length)
     reference.configuration.additionalStops = additionalStops
+  if (options.inspections)
+    reference.configuration.inspections = options.inspections
   if (options.before) reference.configuration.action.before = options.before
+  if (options.after) reference.configuration.action.after = options.after
   if (fixture?.declaredLine)
     reference.configuration.source.line = fixture.declaredLine
   if (fixture?.declaredColumn)
@@ -272,14 +315,21 @@ export async function configuredRuntimeHarness(
         adapter: reference.configuration.adapter,
         book: reference.configuration.book,
         source: reference.configuration.source,
-        participant: 'browser' as const,
+        participant:
+          options.operations.stopParticipants?.[0] ??
+          options.participant ??
+          ('browser' as const),
         afterOperation: options.operations.stopOperations[0]!,
         before: reference.configuration.action.before,
         after: reference.configuration.action.after,
-        operations: options.operations.operations,
+        ...(options.operations.operations.length
+          ? { operations: options.operations.operations }
+          : {}),
         inspections: reference.configuration.inspections,
         additionalStops: additionalStops.map((stop, index) => ({
-          participant: 'browser' as const,
+          participant:
+            options.operations!.stopParticipants?.[index + 1] ??
+            ('browser' as const),
           source: {
             ...reference.configuration.source,
             line: stop.line,
@@ -314,12 +364,14 @@ export async function configuredRuntimeHarness(
   if (
     additionalStops.length ||
     options.before ||
+    options.after ||
     fixture ||
     options.adapter ||
     options.sourcePath ||
     options.nextPages?.entryPath ||
     options.entryPath ||
     options.initialInputs ||
+    options.inspections ||
     options.participant ||
     options.operations
   )
@@ -352,10 +404,13 @@ export async function configuredRuntimeHarness(
     ),
     source = reference.descriptor!.sources[0]!.text,
     // With a fixture the executed module mirrors the source line for line, so a pause can be placed on any of its lines; a Pages page executes the eval module of its chunk.
-    javascript =
+    baseJavascript =
       options.moduleJavascript ??
       pagesBuild?.moduleJavascript ??
-      (fixture ? source : 'const nextTheme = "dark";')
+      (fixture ? source : 'const nextTheme = "dark";'),
+    javascript = options.serverModuleSourceUrl
+      ? `${baseJavascript}\n//# sourceURL=webpack-internal:///(${options.serverSeal === 'rsc' ? 'rsc' : 'action-browser'})/./${definition.configuration.source.path}`
+      : baseJavascript
   const bundle: BundleSource = {
     sourcePath,
     source,
@@ -440,6 +495,21 @@ export async function configuredRuntimeHarness(
   const signInNotices: SignInRequiredReason[] = []
   // The pathname the stand-in page reports; a landing replaces it.
   let pagePathname = options.entryPath ?? '/'
+  // How many `document.readyState` reads the run started, whether the next one rejects, and the promise a held read waits on.
+  let readyStateReadsStarted = 0
+  let rejectNextReadyStateRead = false
+  let readyStateHold: Promise<void> | undefined
+  let documentReadyState: 'loading' | 'complete' =
+    options.documentReadyState ?? 'complete'
+  let navigationCount = 0
+  /** The `Page.navigate` requests whose answer is held, oldest first ({@link holdNavigation}). */
+  const heldNavigations: {
+    url: string
+    answer: () => void
+    reject: (error: Error) => void
+  }[] = []
+  /** The timeout each `Page.navigate` request asked for (`undefined`: the channel's own default). */
+  const navigateTimeouts: (number | undefined)[] = []
   let closeAttempts = 0
   const serverOrigin = options.serverOrigin ?? 'http://127.0.0.1:4321'
   const savedLease: SavedSessionRunLease = {
@@ -499,7 +569,9 @@ export async function configuredRuntimeHarness(
     afterFailure: BeforeFailure | undefined,
     afterReadCount = 0,
     // The elements the page shows after the input, each with its text; when set, the after conditions are evaluated on them by the real page expression.
-    afterPageElements: { selector: string; textContent: string }[] | undefined,
+    afterPageElements: FakePageElement[] | undefined,
+    // What the page shows before the input; when set, the after conditions read just before the last operation are evaluated on it by the real page expression.
+    beforePageElements: FakePageElement[] | undefined,
     inputResolve = (): void => {},
     inputReject = (_error: Error): void => {},
     onClose = (): void => {},
@@ -738,6 +810,9 @@ export async function configuredRuntimeHarness(
   const operationsOption = options.operations
   /** Tells whether the result of the action is visible: the single input was sent, or the last operation of a version 3 run was acknowledged. */
   const isResultVisible = (): boolean => {
+    // A run with no operation shows its result once the entry page loaded: there is no input to wait for.
+    if (operationsOption && operationsOption.operations.length === 0)
+      return true
     const view = run.view()
     return view.operations
       ? view.operations.at(-1)?.ack === 'yes'
@@ -745,8 +820,19 @@ export async function configuredRuntimeHarness(
   }
   /** Tells whether a declared stop follows the operation the page just received an input for and pauses its handler; after {@link suppressInputPause} the input runs past that stop's line and is answered at once. */
   const stopPausesLatestInput = (): boolean =>
-    emitInputPause &&
-    (operationsOption?.stopOperations.includes(inputsSeen) ?? false)
+    emitInputPause && indexOfFirstBrowserStopOf(inputsSeen) >= 0
+  /** Finds the first browser stop that follows an operation: a server stop never pauses the page's handler, the server renders on its own. */
+  function indexOfFirstBrowserStopOf(operationIndex: number): number {
+    return (
+      operationsOption?.stopOperations.findIndex(
+        (stopOperation, index) =>
+          stopOperation === operationIndex &&
+          (operationsOption.stopParticipants?.[index] ??
+            (index === 0 ? (options.participant ?? 'browser') : 'browser')) ===
+            'browser',
+      ) ?? -1
+    )
+  }
   /** Keeps the page's answer to an input open until the last stop of its operation was continued. */
   const holdInputUntilContinued = (): Promise<void> =>
     new Promise<void>((resolve, reject) => {
@@ -755,7 +841,7 @@ export async function configuredRuntimeHarness(
     })
   /** Reports the first stop that follows the operation the page just received an input for. */
   const emitFirstStopOfLatestInput = (): void => {
-    const index = operationsOption!.stopOperations.indexOf(inputsSeen)
+    const index = indexOfFirstBrowserStopOf(inputsSeen)
     emitPause(
       index === 0 ? 1 : additionalStops[index - 1]!.column,
       index === 0 ? 1 : additionalStops[index - 1]!.line,
@@ -823,7 +909,7 @@ export async function configuredRuntimeHarness(
   /** Answers what the page evaluates: its location, and the configured DOM conditions, of which the after conditions hold only once the input was sent. */
   const pageEvaluation = (expression: string | undefined): unknown => {
     if (expression === NEXT_PAGES_STATE_EXPRESSION) return nextPagesState()
-    if (expression === 'document.readyState') return 'complete'
+    if (expression === 'document.readyState') return documentReadyState
     if (expression === 'location.href') return 'about:blank'
     if (expression === 'location.pathname') return pagePathname
     if (expression === '[location.origin,location.pathname]')
@@ -835,6 +921,16 @@ export async function configuredRuntimeHarness(
     const operationAfterAnswer = operationAfterFailures.get(expression ?? '')
     if (operationAfterAnswer)
       return { ready: false, failure: operationAfterAnswer }
+    if (
+      expression === afterExpression &&
+      !isResultVisible() &&
+      beforePageElements
+    )
+      return JSON.parse(
+        JSON.stringify(
+          runInNewContext(afterExpression, fakePageContext(beforePageElements)),
+        ),
+      )
     if (expression === afterExpression && !isResultVisible())
       return {
         ready: false,
@@ -854,6 +950,15 @@ export async function configuredRuntimeHarness(
       ? undefined
       : (options.capturedValue ?? 'dark')
   }
+  /** Evaluates a declared inspection's expression against the scope the stand-in debugger shows at a pause (page and server alike). */
+  const evaluateInspection = (expression: string | undefined): unknown =>
+    runInNewContext(expression ?? '', {
+      nextTheme: requiredInspectionValue(),
+      ...options.inspectionScope,
+      setTheme() {},
+      enabled: false,
+      selection: null,
+    })
   const proxy = {
     closed: false,
     get onClose() {
@@ -875,6 +980,9 @@ export async function configuredRuntimeHarness(
       rejectHeldInsert(new Error('CDP disconnected'))
       rejectHeldScreenshot(new Error('CDP disconnected'))
       rejectContinuation(new Error('DAP disconnected'))
+      // A request the channel never answered fails with it, as the real channel's pending requests do.
+      for (const held of heldNavigations.splice(0))
+        held.reject(new Error('CDP disconnected'))
       onClose()
     },
     async request(
@@ -911,14 +1019,7 @@ export async function configuredRuntimeHarness(
             result: {
               value: JSON.parse(
                 JSON.stringify(
-                  runInNewContext(afterExpression, {
-                    document: {
-                      querySelectorAll: (selector: string) =>
-                        shown.filter(
-                          (element) => element.selector === selector,
-                        ),
-                    },
-                  }),
+                  runInNewContext(afterExpression, fakePageContext(shown)),
                 ),
               ),
             },
@@ -1025,14 +1126,52 @@ export async function configuredRuntimeHarness(
           },
         }
       }
+      if (
+        method === 'Runtime.evaluate' &&
+        parameters?.expression === 'document.readyState'
+      ) {
+        readyStateReadsStarted++
+        if (rejectNextReadyStateRead) {
+          rejectNextReadyStateRead = false
+          throw new Error('Execution context was destroyed.')
+        }
+        // A held read answers only after the test releases it, as a read does while the page's JS is paused.
+        if (readyStateHold) {
+          await readyStateHold
+          return { result: { value: pageEvaluation(parameters.expression) } }
+        }
+      }
       if (method === 'Runtime.evaluate')
         return { result: { value: pageEvaluation(parameters?.expression) } }
       if (method === 'Page.navigate') {
         navigations.push(String(parameters?.url))
+        navigateTimeouts.push(timeout)
+        if (options.loadingFromNavigation === navigations.length)
+          documentReadyState = 'loading'
+        if (options.holdNavigation && options.serverRuntime) {
+          const url = String(parameters?.url)
+          return new Promise<object>((resolve, reject) => {
+            heldNavigations.push({
+              url,
+              reject,
+              answer: () => {
+                listeners.get('Page.frameNavigated')?.({
+                  frame: {
+                    id: 'main',
+                    url,
+                    loaderId: `loader-${++navigationCount}`,
+                  },
+                })
+                resolve({})
+              },
+            })
+          })
+        }
         // A saved-session run's page reports the document it commits: the path asked for, or the one a test chose it lands on.
         if (options.savedSession) {
           // The landing may carry a query, as a redirect to sign-in carries its callback; the page's pathname has none.
           const landing =
+            options.navigationLandings?.[navigations.length - 1] ??
             options.navigationLandsOn ??
             new URL(String(parameters?.url)).pathname
           pagePathname = landing.split('?')[0]!
@@ -1040,9 +1179,19 @@ export async function configuredRuntimeHarness(
             frame: {
               id: 'main',
               url: `http://localhost:4321${landing}`,
+              loaderId: `loader-${++navigationCount}`,
             },
           })
         }
+        // A run with a scripted server commits the entry document for the main frame's loader, as the entry-load phase waits for.
+        else if (options.serverRuntime)
+          listeners.get('Page.frameNavigated')?.({
+            frame: {
+              id: 'main',
+              url: String(parameters?.url),
+              loaderId: `loader-${++navigationCount}`,
+            },
+          })
         if (options.adapter)
           listeners.get('Page.frameNavigated')?.({
             frame: { id: 'main', url: String(parameters?.url) },
@@ -1086,14 +1235,7 @@ export async function configuredRuntimeHarness(
       if (method === 'Debugger.evaluateOnCallFrame') {
         try {
           return {
-            result: {
-              value: runInNewContext(parameters?.expression ?? '', {
-                nextTheme: requiredInspectionValue(),
-                setTheme() {},
-                enabled: false,
-                selection: null,
-              }),
-            },
+            result: { value: evaluateInspection(parameters?.expression) },
           }
         } catch {
           return {
@@ -1109,6 +1251,7 @@ export async function configuredRuntimeHarness(
       }
       if (method === 'Page.captureScreenshot') {
         screenshotCount += 1
+        options.onScreenshot?.()
         // A held capture is answered only by the transport closing, as a lost reply is.
         if (options.holdScreenshot)
           return new Promise<never>((_resolve, reject) => {
@@ -1199,12 +1342,63 @@ export async function configuredRuntimeHarness(
       },
     },
   ]
+  // The scripted Node participant of a run that declares server stops (opt in with `serverRuntime`).
+  const serverScriptUrl = `webpack-internal:///(${options.serverSeal === 'rsc' ? 'rsc' : 'action-browser'})/./${definition.configuration.source.path}`
+  const serverParticipant = options.serverRuntime
+    ? createServerParticipant({
+        run: () => run,
+        sourcePath,
+        javascript,
+        scriptUrl: serverScriptUrl,
+        sourceMap: bundle.sourceMap,
+        workspace: repository.directory,
+        defaultRoute: options.serverRuntime.route ?? null,
+        evaluateOnCallFrame: evaluateInspection,
+        breakpoints,
+        released: (name) => releases.push(name),
+      })
+    : undefined
+  const serverLaunches: DebugSession['configuration'][] = []
+  // The compiled App paths manifest the run reads to know the entry route's pattern.
+  if (options.serverRuntime) {
+    const entryPathname = (options.entryPath ?? '/').split(/[?#]/)[0]!
+    const stem = entryPathname === '/' ? '' : entryPathname.replace(/\/$/, '')
+    const manifestPath = join(
+      repository.directory,
+      '.next/dev/server/app-paths-manifest.json',
+    )
+    await mkdir(dirname(manifestPath), { recursive: true })
+    await writeFile(
+      manifestPath,
+      JSON.stringify(
+        options.serverRuntime.appPaths ?? {
+          [`${stem}/page`]: `app${stem}/page.js`,
+        },
+      ),
+    )
+  }
   const vscode = {
-    workspace: { textDocuments: documents },
+    workspace: {
+      textDocuments: documents,
+      getWorkspaceFolder: () => undefined,
+    },
     debug: {
       breakpoints,
       addBreakpoints(added: TestBreakpoint[]): void {
         breakpoints.push(...added)
+        if (serverParticipant)
+          queueMicrotask(() => serverParticipant.acknowledgeBreakpoints())
+      },
+      async startDebugging(
+        _folder: unknown,
+        config: DebugSession['configuration'],
+        _startOptions?: DebugSessionOptions,
+      ): Promise<boolean> {
+        if (!serverParticipant) throw new Error('No server participant')
+        serverLaunches.push(config)
+        Object.assign(serverParticipant.session.configuration, config)
+        run.addSession(serverParticipant.session)
+        return true
       },
       removeBreakpoints(removed: TestBreakpoint[]): void {
         for (const breakpoint of removed) {
@@ -1226,6 +1420,8 @@ export async function configuredRuntimeHarness(
             ),
           },
         })
+        if (serverParticipant)
+          queueMicrotask(() => serverParticipant.acknowledgeBreakpoints())
         if (removedAck)
           queueMicrotask(() =>
             run.onResponse(selected, {
@@ -1247,6 +1443,7 @@ export async function configuredRuntimeHarness(
         releases.push('debugger')
         run.terminated(root)
         run.terminated(selected)
+        if (serverParticipant) run.terminated(serverParticipant.session)
       },
     },
     Uri: { file: (path: string) => ({ scheme: 'file', fsPath: path }) },
@@ -1323,6 +1520,7 @@ export async function configuredRuntimeHarness(
         )
     },
     outputTail: () => options.nextPages?.outputTail ?? '',
+    ...serverParticipant?.application,
     close: async (): Promise<void> => {
       releases.push('application')
     },
@@ -1424,8 +1622,16 @@ export async function configuredRuntimeHarness(
           }
         },
       },
-      './runtimeSupport/cdp': { Cdp: { connect: async () => proxy } },
+      './runtimeSupport/cdp': {
+        Cdp: {
+          connect: async (url: string) =>
+            serverParticipant && url.endsWith('/server')
+              ? serverParticipant.proxy
+              : proxy,
+        },
+      },
       './utils/createBundleVerifier': {
+        isChangedOriginalError,
         // The real verifier, with every scan of its sealed map recorded.
         createBundleVerifier: (sealed: BundleSource) => {
           const verifier = createBundleVerifier(sealed)
@@ -1441,15 +1647,32 @@ export async function configuredRuntimeHarness(
       './utils/readDevelopmentBundle': {
         readDevelopmentBundle: async (
           _workspace: string,
-          _source: unknown,
+          source: Parameters<typeof clientComponentRefusal>[0],
           signal: AbortSignal,
+          _entryPath?: string,
+          execution?: string,
         ) => {
           // A hung `.next/dev` read ends only when the run is cancelled.
           if (options.sealHangs)
             await new Promise<never>((_resolve, reject) =>
               signal.addEventListener('abort', () => reject(signal.reason)),
             )
-          return { bundle, discovery: {} }
+          if (options.serverSeal === 'client-component')
+            throw clientComponentRefusal(source)
+          // A server stop of a run with a scripted server is sealed at the address of the layer it is sealed from.
+          const isServerStop =
+            serverParticipant && execution === 'server-action'
+          return {
+            bundle: isServerStop
+              ? { ...bundle, scriptUrl: serverScriptUrl }
+              : bundle,
+            discovery: {},
+            ...(serverParticipant
+              ? { layer: options.serverSeal ?? 'action-browser' }
+              : options.serverSeal
+                ? { layer: options.serverSeal }
+                : {}),
+          }
         },
       },
       // The real Pages seal over the written build, with every request and its cache's bytes recorded.
@@ -1657,6 +1880,31 @@ export async function configuredRuntimeHarness(
     releases,
     emitPause,
     emitCdpPause,
+    /** The scripted Node participant of a run opened with `serverRuntime` (see {@link createServerParticipant}); `undefined` otherwise. */
+    server: serverParticipant?.api,
+    /** The configuration of each server debug session the run started, in order. */
+    serverLaunches,
+    /** Changes what `document.readyState` answers from now on, so a test lets the entry page finish loading once its server stops were continued. @example harness.setDocumentReadyState('complete') */
+    setDocumentReadyState(state: 'loading' | 'complete'): void {
+      documentReadyState = state
+    },
+    /** How many `document.readyState` reads the run started so far. @example harness.readyStateReads() */
+    readyStateReads: (): number => readyStateReadsStarted,
+    /** Makes the next `document.readyState` read reject, as one does when the execution context is gone in a commit. @example harness.rejectNextReadyStateRead() */
+    rejectNextReadyStateRead(): void {
+      rejectNextReadyStateRead = true
+    },
+    /** Holds every later `document.readyState` read unanswered until the returned function is called, as a paused page does. @returns The release. @example const release = harness.holdReadyStateReads() */
+    holdReadyStateReads(): () => void {
+      let release = (): void => {}
+      readyStateHold = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return (): void => {
+        readyStateHold = undefined
+        release()
+      }
+    },
     /** How many operation inputs the stand-in page received (version 3 runs). */
     inputsSeen: (): number => inputsSeen,
     /** How many owned stop breakpoints the run has requested so far (a retired one still counts), so a test sees whether a stop was armed yet. */
@@ -1779,6 +2027,29 @@ export async function configuredRuntimeHarness(
       listeners.get('Page.frameNavigated')?.({
         frame: { id: 'main', url: 'http://localhost:4321/' },
       })
+    },
+    /** The timeout each `Page.navigate` request asked for, in order (`undefined`: the channel's own default). */
+    navigateTimeouts,
+    /** How many `Page.navigate` requests are still unanswered ({@link holdNavigation}). */
+    heldNavigationCount: (): number => heldNavigations.length,
+    /** Answers the oldest held `Page.navigate` and commits the main frame's document for it, as the browser does once the response headers arrive. @example harness.answerNavigation() */
+    answerNavigation(): void {
+      heldNavigations.shift()?.answer()
+    },
+    /** Commits another main-frame document with a new loader, as a redirect or a script's `location.replace` does, and says the page is now on this path. @example harness.commitMainFrame('/login') */
+    commitMainFrame(path: string): void {
+      pagePathname = path.split('?')[0]!
+      listeners.get('Page.frameNavigated')?.({
+        frame: {
+          id: 'main',
+          url: `http://localhost:4321${path}`,
+          loaderId: `loader-${++navigationCount}`,
+        },
+      })
+    },
+    /** Reports the page's inspector channel as lost, as Chrome crashing or closing does. */
+    disconnectPage(): void {
+      proxy.close()
     },
     /** Reports a page load inside a frame other than the main one. */
     loadSubframe(): void {
@@ -1968,8 +2239,12 @@ export async function configuredRuntimeHarness(
       beforeTimeoutSentence = sentence
     },
     /** Makes the page show these elements after the input, so the run's own after-condition expression reads them: each element answers the selector it is listed under, with its text. @example harness.showAfterPage([{ selector: 'label', textContent: 'Dark' }]) */
-    showAfterPage(elements: { selector: string; textContent: string }[]): void {
+    showAfterPage(elements: FakePageElement[]): void {
       afterPageElements = elements
+    },
+    /** Makes the page show these elements before the input, so the run's own after-condition expression is read on them just before the last operation: a condition they satisfy makes the run refuse the operation. @example harness.showBeforePage([{ selector: 'h1', textContent: 'Invoices' }]) */
+    showBeforePage(elements: FakePageElement[]): void {
+      beforePageElements = elements
     },
     /** Makes the after conditions answer this failure on every read after the input, as an owned page whose result never appears does. */
     failAfterWith(failure: BeforeFailure): void {

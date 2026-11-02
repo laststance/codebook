@@ -280,6 +280,7 @@ import { capturedSourceUriPath } from './utils/capturedSourceUriPath'
 import { captureStudy } from './utils/captureStudy'
 import { causeRootsFor } from './utils/causeRootsFor'
 import { configuredObservationPosition } from './utils/configuredObservationPosition'
+import { configuredStops } from './utils/configuredStops'
 import { coveredSourceObstacle } from './utils/coveredSourceObstacle'
 import { createRecordingObserver } from './utils/createRecordingObserver'
 import { describeChromeExtensionViewStatus } from './utils/describeChromeExtensionStatus'
@@ -406,6 +407,8 @@ import {
   projectNodeTestSection,
   type NodeTestSectionInput,
 } from './utils/projectNodeTestSection'
+import { projectPageLoadStatus } from './utils/projectPageLoadStatus'
+import { projectPauseNames } from './utils/projectPauseNames'
 import { projectPlaybackStudy } from './utils/projectPlaybackStudy'
 import { projectServerReplayViews } from './utils/projectServerReplayViews'
 import { pruneClosedTabRecord } from './utils/pruneClosedTabRecord'
@@ -12258,6 +12261,7 @@ export class StudyWorkspace {
             runView.operations,
             record.stopped ? 'stopped' : runView.status,
             runView.operationFailure,
+            projectPageLoadStatus(runView),
           )
         : undefined
     const text = operationStatus ? `${saveText} · ${operationStatus}` : saveText
@@ -15130,12 +15134,21 @@ export class StudyWorkspace {
       canRun:
         (!record || record.stopped) &&
         this.selection.profile !== REPOSITORY_BROWSER_PROFILE,
-      moments: (study?.observations ?? []).map((observation) => ({
+      // A server pause is named by what it paused (task 3a) and listed in the order the run paused it; a browser pause keeps its item title.
+      moments: projectPauseNames(
+        study?.observations ?? [],
+        study && 'configuration' in study
+          ? configuredStops(study.configuration)
+          : [],
+      ).map(({ observation, name }) => ({
         id: observation.id,
         itemId: observation.itemId,
         title:
+          name?.text ??
           descriptor.items.find((item) => item.id === observation.itemId)
-            ?.title ?? 'Captured observation',
+            ?.title ??
+          'Captured observation',
+        ...(name && { pauseName: name }),
         at: observation.capturedAt,
         elapsedMs: observation.elapsedMs,
       })),

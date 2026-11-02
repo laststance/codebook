@@ -7,12 +7,14 @@ export function configuredObservationPosition(
   study: ConfiguredStudy,
   snapshotId?: string,
 ) {
-  const index =
+  const position =
     snapshotId === undefined
       ? 0
       : study.observations.findIndex(
           (observation) => observation.id === snapshotId,
         )
+  // A format 8 observation names its declared stop; earlier ones follow the declared order by position.
+  const index = study.observations[position]?.declaredIndex ?? position
   const stop = configuredStops(study.configuration)[index]
   if (!stop)
     throw new Error('Selected observation has no declared source position')

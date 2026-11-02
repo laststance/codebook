@@ -1,10 +1,8 @@
 import { configuredObservationSchema } from '../configuredStudySchemas'
 import {
-  OPERATIONS_CONFIG_VERSION,
-  OPERATIONS_STUDY_VERSION,
-  RECORDED_LOCATION_STUDY_VERSION,
   REPOSITORY_BROWSER_ACTION,
   REPOSITORY_BROWSER_PROFILE,
+  SERVER_RENDER_STUDY_VERSION,
 } from '../constants'
 import { EvidenceIntegrityError, StudyError } from '../errors'
 import { readResource } from '../resources'
@@ -15,8 +13,10 @@ import type { StudyRecord, StudyService } from '../service'
 import { decodeRetainedStudy } from './decodeRetainedStudy'
 import { describeStudy } from './describeStudy'
 import { maskLearningSummaryText } from './maskLearningSummaryText'
+import { observationOfFormat } from './observationOfFormat'
 import { projectSavedOperations } from './projectSavedOperations'
 import { redactPreparedConfiguration } from './redactPreparedConfiguration'
+import { studyFormatOfConfiguration } from './studyFormatOfConfiguration'
 
 /** Copies only committed canonical evidence for {@link StudyWorkspace}; a changed read is discarded. @example await captureStudy(service, record, workspaceKey) */
 export async function captureStudy(
@@ -86,6 +86,7 @@ export async function captureStudy(
         throw new Error(
           'Configured snapshot differs from its committed source/receipt.',
         )
+      // The format 8 pause fields are kept or dropped once, by observationOfFormat, when the study is assembled below.
       observations.push(
         configuredObservationSchema.parse({
           ...snapshot,
@@ -196,14 +197,14 @@ export async function captureStudy(
     record.canonicalTextStates,
     'canonical',
   )
+  // Fixed by the sealed configuration; the runtime's format 8 pause fields are written only in format 8.
+  const studyVersion = studyFormatOfConfiguration(canonicalConfiguration)
   const configured =
     record.profile === REPOSITORY_BROWSER_PROFILE
       ? {
           // A study of ordered operations has its own format, so an older Codebook lists it as saved by a newer one instead of failing on its schema.
-          version:
-            canonicalConfiguration.version === OPERATIONS_CONFIG_VERSION
-              ? OPERATIONS_STUDY_VERSION
-              : RECORDED_LOCATION_STUDY_VERSION,
+          // The format is a pure function of the sealed configuration, so it is the same at every checkpoint of the run.
+          version: studyVersion,
           configuration: canonicalConfiguration,
           configurationHash: sha256(JSON.stringify(canonicalConfiguration)),
           descriptor: record.definition?.descriptor,
@@ -212,12 +213,17 @@ export async function captureStudy(
           runtime.viteVersion
             ? { viteVersion: runtime.viteVersion }
             : {}),
+          // A format 8 study says the first execution of the page was not observed.
+          ...(studyVersion === SERVER_RENDER_STUDY_VERSION &&
+          runtime?.firstExecutionObserved === false
+            ? { firstExecutionObserved: false as const }
+            : {}),
           operation:
             runtime?.profile === REPOSITORY_BROWSER_PROFILE
               ? runtime.operation
               : undefined,
-          // Every declared operation with the state it reached, as the run resource lists it when this checkpoint is taken.
-          ...(runtime?.operations
+          // Every declared operation with the state it reached, as the run resource lists it when this checkpoint is taken; a run that declares none (entry render only) saves no list.
+          ...(runtime?.operations?.length
             ? {
                 operations: projectSavedOperations(
                   runtime.operations,
@@ -246,7 +252,9 @@ export async function captureStudy(
           state.terminalReason ?? state.cleanupError?.message ?? '',
         ) || undefined,
       learningSummary,
-      observations,
+      observations: observations.map((observation) =>
+        observationOfFormat(observation, studyVersion),
+      ),
       captures,
       links: [],
     },

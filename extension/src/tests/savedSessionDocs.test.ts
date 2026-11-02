@@ -103,7 +103,7 @@ test('the README and the bundled skill name both commands, forbid typing a passw
     'Saved session needed',
   ])
     assert.ok(readme.includes(text), text)
-  assert.ok(skill.includes('metadata:\n  version: "1.0.64"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.65"\n'))
   assert.ok(skill.includes('never type, ask for or accept a password'))
   assert.ok(
     skill.includes('only when `codebook_status` reports `savedSession`'),

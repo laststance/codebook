@@ -1,0 +1,212 @@
+{
+  "version": 7,
+  "workspaceKey": "0000000000000000000000000000000000000000000000000000000000000000",
+  "id": "f2a18977-32d8-4d65-9f08-e3601d2ed21a_b006b144-5f73-448b-9caa-4a33c6e9a7a2",
+  "instanceId": "f2a18977-32d8-4d65-9f08-e3601d2ed21a",
+  "runId": "b006b144-5f73-448b-9caa-4a33c6e9a7a2",
+  "profile": "repository-browser",
+  "createdAt": "2026-11-02T00:07:16.547Z",
+  "savedAt": "2026-11-02T00:07:16.566Z",
+  "state": "paused-browser",
+  "terminal": false,
+  "finalOutcome": "pending-teardown",
+  "materialSignature": "aaf206413b171e4300f1ad193bdd662c409304b3bf0956a2cae4930164f69e28",
+  "configuration": {
+    "version": 3,
+    "adapter": "next-dev-webpack",
+    "book": {
+      "bookId": "interface",
+      "revision": 1,
+      "nodeId": "theme",
+      "anchorIndex": 0
+    },
+    "source": {
+      "path": "src/theme.ts",
+      "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
+      "line": 1,
+      "column": 1
+    },
+    "participant": "browser",
+    "afterOperation": 1,
+    "before": [
+      {
+        "kind": "visible",
+        "selector": "button"
+      }
+    ],
+    "after": [
+      {
+        "kind": "text",
+        "selector": "label",
+        "equals": "Dark"
+      }
+    ],
+    "operations": [
+      {
+        "kind": "click",
+        "title": "Create Invoice",
+        "selector": "#submit"
+      }
+    ],
+    "inspections": [
+      {
+        "path": "nextTheme",
+        "mode": "value",
+        "required": true
+      },
+      {
+        "path": "setTheme",
+        "mode": "type",
+        "required": true
+      },
+      {
+        "path": "enabled",
+        "mode": "value",
+        "required": false
+      },
+      {
+        "path": "selection",
+        "mode": "value",
+        "required": false
+      },
+      {
+        "path": "renderLocal",
+        "mode": "value",
+        "required": false
+      }
+    ]
+  },
+  "configurationHash": "69da041b9e11b2185dfb929b06261d563d05552bdab133b97b1892c7be667a28",
+  "descriptor": {
+    "itemId": "repository/interface/theme",
+    "bookTitle": "Interface",
+    "nodeTitle": "Theme",
+    "anchors": [
+      {
+        "path": "src/theme.ts",
+        "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
+        "startLine": 1,
+        "endLine": 1
+      },
+      {
+        "path": "src/mode.ts",
+        "hash": "f6d4386593d51ec67ad6d6811031238456f33ee12b3fa92a9df833159a355501",
+        "startLine": 1,
+        "endLine": 1
+      }
+    ],
+    "citationContext": {
+      "kind": "citations",
+      "hash": "610d563bfd8797cd1e9d513afaac0a3a4ab0f48274d009544bb24d2203c52c07",
+      "anchors": [
+        {
+          "path": "src/mode.ts",
+          "hash": "f6d4386593d51ec67ad6d6811031238456f33ee12b3fa92a9df833159a355501",
+          "startLine": 1,
+          "endLine": 1
+        },
+        {
+          "path": "src/theme.ts",
+          "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
+          "startLine": 1,
+          "endLine": 1
+        }
+      ]
+    },
+    "sources": [
+      {
+        "path": "src/theme.ts",
+        "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
+        "text": "const nextTheme = \"dark\";\n",
+        "lineCount": 2
+      },
+      {
+        "path": "src/mode.ts",
+        "hash": "f6d4386593d51ec67ad6d6811031238456f33ee12b3fa92a9df833159a355501",
+        "text": "export const mode = \"display\";\n",
+        "lineCount": 2
+      }
+    ]
+  },
+  "operation": {
+    "id": "516fa259-7919-48fc-8881-048e02027a79",
+    "key": "op-1",
+    "inputDispatched": true,
+    "inputAcknowledged": true,
+    "afterVerified": false
+  },
+  "operations": [
+    {
+      "index": 1,
+      "kind": "click",
+      "title": "Create Invoice",
+      "atMs": 0.436541,
+      "state": "paused",
+      "ack": "pending",
+      "valueCheck": "n/a",
+      "effect": "pending"
+    }
+  ],
+  "observations": [
+    {
+      "id": "browser-session:1",
+      "itemId": "repository/interface/theme",
+      "actionId": "repository-click",
+      "capturePhase": "paused-browser",
+      "snapshotUri": "codebook://f2a18977-32d8-4d65-9f08-e3601d2ed21a/runs/b006b144-5f73-448b-9caa-4a33c6e9a7a2/snapshots/browser-session%3A1",
+      "participant": "browser",
+      "capturedAt": "2026-11-02T00:07:16.564Z",
+      "elapsedMs": 0.966125,
+      "pause": {
+        "sessionId": "browser-session",
+        "threadId": 1,
+        "generation": 1
+      },
+      "source": {
+        "text": "const nextTheme = \"dark\";\n",
+        "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
+        "line": 1,
+        "column": 1,
+        "javascriptHash": "90a211cdc7afe36a5f4d3bee6a1b67f3baad370911a63d0f50e32cd230fa9ccd",
+        "mapHash": "ea16762ea4eacb4673c3cc04fd2cbf36d41603f2f4c2fb70bd9b0eebf1996de9",
+        "scriptId": "17",
+        "scriptUrl": "webpack-internal:///(app-pages-browser)/src/theme.ts",
+        "generated": {
+          "line": 8,
+          "column": 2
+        }
+      },
+      "values": {
+        "value:nextTheme": "dark",
+        "type:setTheme": "function",
+        "value:enabled": false,
+        "value:selection": null
+      },
+      "unavailableValues": [
+        {
+          "path": "value:renderLocal",
+          "reason": "Optimized out at this frame."
+        }
+      ],
+      "interpretations": []
+    }
+  ],
+  "captures": [
+    {
+      "phase": "before",
+      "status": "absent",
+      "reason": "No confirmed image for this phase."
+    },
+    {
+      "phase": "paused-browser",
+      "status": "absent",
+      "reason": "No confirmed image for this phase."
+    },
+    {
+      "phase": "after",
+      "status": "absent",
+      "reason": "No confirmed image for this phase."
+    }
+  ],
+  "links": []
+}

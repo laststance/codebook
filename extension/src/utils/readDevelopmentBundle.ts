@@ -17,11 +17,20 @@ import type { RepositoryConfiguration } from '../repositoryConfigSchemas'
 import { repositoryEntryPathSchema } from '../repositoryConfigSchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 
+import { clientComponentRefusal } from './clientComponentRefusal'
 import { createBundleVerifier } from './createBundleVerifier'
 import { DiscoveryBudgetError } from './discoveryBudgetError'
-import { extractDevelopmentModule } from './extractDevelopmentModule'
+import {
+  evaluatedModuleTexts,
+  extractDevelopmentModule,
+  selectEvaluatedModule,
+} from './extractDevelopmentModule'
+import { findNextClientReferenceStub } from './findNextClientReferenceStub'
 import { readRepositoryBuildText } from './readRepositoryBuildText'
 import { resolveNextClientManifest } from './resolveNextClientManifest'
+
+/** Which webpack layer of the entry route's server chunk a server stop was sealed from. */
+export type DevelopmentServerLayer = 'action-browser' | 'rsc'
 
 const clientManifestSchema = z.object({
   clientModules: z.record(
@@ -30,7 +39,7 @@ const clientManifestSchema = z.object({
   ),
 })
 
-/** Seals selected-route source for runtime preparation; server actions use their executable layer rather than SSR references. @example await readDevelopmentBundle(workspace, selected, signal, '/login', 'server-action') */
+/** Seals selected-route source for runtime preparation; a server stop uses its `(action-browser)` module, else the `(rsc)` module of the same route chunk, and reports which layer it sealed (a client component's reference stub is refused), rather than an SSR reference. @example await readDevelopmentBundle(workspace, selected, signal, '/login', 'server-action') */
 export async function readDevelopmentBundle(
   workspace: string,
   selected: RepositoryConfiguration['source'],
@@ -88,15 +97,35 @@ export async function readDevelopmentBundle(
     const candidate = `server/${routes![route.key]!}`,
       chunkPath = resolve(root, '.next/dev', candidate)
     const chunk = await read(chunkPath, REPOSITORY_CHUNK_LIMIT_BYTES)
-    const scriptUrl = `webpack-internal:///(action-browser)/./${selected.path}`
-    const bundle = extractDevelopmentModule(
-      chunk,
-      sourcePath,
-      source,
-      chunkPath,
-      scriptUrl,
+    // Decode the chunk once; both server layers are searched in the same modules.
+    const moduleTexts = [...evaluatedModuleTexts(chunk, deadline)],
+      identity = {
+        sourcePath,
+        source,
+        chunkPath,
+        chunkHash: sha256(chunk),
+      }
+    // The executable action layer first, as before; the `(rsc)` module of the same chunk only when that layer lacks the file.
+    let layer: DevelopmentServerLayer = 'action-browser'
+    let bundle = selectEvaluatedModule(
+      moduleTexts,
+      identity,
+      `webpack-internal:///(action-browser)/./${selected.path}`,
       deadline,
     )
+    if (!bundle) {
+      const rscScriptUrl = `webpack-internal:///(rsc)/./${selected.path}`
+      // A client component's `(rsc)` module is a reference stub: its code runs only in the browser.
+      if (findNextClientReferenceStub(moduleTexts, rscScriptUrl))
+        throw clientComponentRefusal(selected)
+      layer = 'rsc'
+      bundle = selectEvaluatedModule(
+        moduleTexts,
+        identity,
+        rscScriptUrl,
+        deadline,
+      )
+    }
     if (!bundle)
       throw new Error(
         'Selected server action is absent from the selected route executable modules; an SSR reference is not a server implementation',
@@ -106,6 +135,7 @@ export async function readDevelopmentBundle(
     signal?.throwIfAborted()
     return {
       bundle,
+      layer,
       discovery: {
         readBytes,
         durationMs: performance.now() - started,

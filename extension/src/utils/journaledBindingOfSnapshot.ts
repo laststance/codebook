@@ -12,6 +12,8 @@ const journaledPlaceSchema = z.object({
 const bindingEntrySchema = z.object({ armed: journaledPlaceSchema.optional() })
 const registrationEntrySchema = z.object({
   status: z.enum(['pending', 'bound']),
+  /** The declared stop the registration answers; absent in a journal written before the stops of a set were armed together. */
+  declaredIndex: z.number().int().nonnegative().optional(),
 })
 const slideEntrySchema = z.object({
   declared: journaledPlaceSchema,
@@ -100,37 +102,57 @@ function armedPlaceOf(
 
 /**
  * Says whether a server stop's registration was acknowledged as bound while the stop was armed; called by {@link acknowledgementOf} for a binding that was not journaled as `breakpoint.bound`.
+ * The stops of a set are armed together, so a registration answer lies anywhere before the stop's commit and is matched by the declared stop it names; an entry that names none (an older journal) is read only inside the stop's own interval.
  * @param ownEntries - The stop's journal entries.
- * @returns Whether the last `breakpoint.registered` entry has the status `bound`; `false` without such an entry.
+ * @param earlierEntries - Every journal entry before the stop's commit.
+ * @param declaredIndex - The declared position of the stop.
+ * @returns Whether the stop's last `breakpoint.registered` entry has the status `bound`; `false` without such an entry.
  * @example
- * wasRegisteredAsBound([{ type: 'breakpoint.registered', detail: { status: 'pending' }, ... }]) // => false
+ * wasRegisteredAsBound([], [{ type: 'breakpoint.registered', detail: { status: 'pending', declaredIndex: 1 }, ... }], 1) // => false
  */
-function wasRegisteredAsBound(ownEntries: readonly RecordedEvent[]): boolean {
-  const registration = ownEntries.findLast(
-    (event) => event.type === 'breakpoint.registered',
-  )
-  return (
-    registrationEntrySchema.safeParse(registration?.detail).data?.status ===
-    'bound'
-  )
+function wasRegisteredAsBound(
+  ownEntries: readonly RecordedEvent[],
+  earlierEntries: readonly RecordedEvent[],
+  declaredIndex: number,
+): boolean {
+  const registrations = (entries: readonly RecordedEvent[]) =>
+    entries
+      .filter((event) => event.type === 'breakpoint.registered')
+      .flatMap((event) => {
+        const parsed = registrationEntrySchema.safeParse(event.detail)
+        return parsed.success ? [parsed.data] : []
+      })
+  const named = registrations(earlierEntries).filter(
+      (entry) => entry.declaredIndex === declaredIndex,
+    ),
+    // Only an entry that names no stop is read by interval, as before sets were armed together.
+    unnamed = registrations(ownEntries).filter(
+      (entry) => entry.declaredIndex === undefined,
+    )
+  return (named.at(-1) ?? unnamed.at(-1))?.status === 'bound'
 }
 
 /**
  * Says when the run first knew where the debugger bound a stop; called by {@link journaledBindingOfSnapshot} with the stop's binding entry.
  * @param binding - The stop's last binding entry (`breakpoint.bound` or `breakpoint.pause-binding`).
  * @param ownEntries - The stop's journal entries.
+ * @param earlierEntries - Every journal entry before the stop's commit.
+ * @param declaredIndex - The declared position of the stop.
  * @returns
  * - `'before-pause'` for a browser stop (`breakpoint.bound`) and for a server stop whose registration was acknowledged as bound while it was armed
  * - `'at-pause'` for a server stop whose registration was still pending then
  * @example
- * acknowledgementOf({ type: 'breakpoint.bound', ... }, ownEntries) // => 'before-pause'
+ * acknowledgementOf({ type: 'breakpoint.bound', ... }, ownEntries, events, 0) // => 'before-pause'
  */
 function acknowledgementOf(
   binding: RecordedEvent,
   ownEntries: readonly RecordedEvent[],
+  earlierEntries: readonly RecordedEvent[],
+  declaredIndex: number,
 ): BindingAcknowledgement {
   const wasAcknowledgedWhileArmed =
-    binding.type === 'breakpoint.bound' || wasRegisteredAsBound(ownEntries)
+    binding.type === 'breakpoint.bound' ||
+    wasRegisteredAsBound(ownEntries, earlierEntries, declaredIndex)
   return wasAcknowledgedWhileArmed ? 'before-pause' : 'at-pause'
 }
 
@@ -176,7 +198,7 @@ function pausablePlaceOf(
  */
 export function journaledBindingOfSnapshot(
   events: readonly RecordedEvent[],
-  committedSnapshots: readonly { id: string }[],
+  committedSnapshots: readonly { id: string; declaredIndex?: number }[],
   snapshotId: string,
 ): {
   armed?: z.infer<typeof journaledPlaceSchema>
@@ -194,11 +216,23 @@ export function journaledBindingOfSnapshot(
         event.type === 'breakpoint.pause-binding',
     )
   if (!binding) return {}
+  const position = committedSnapshots.findIndex(
+      (committed) => committed.id === snapshotId,
+    ),
+    // A format 8 snapshot names its declared stop; earlier ones follow the declared order by position.
+    declaredIndex = committedSnapshots[position]?.declaredIndex ?? position,
+    ownCommit = commitSequenceOf(events, snapshotId) ?? 0,
+    earlierEntries = events.filter((event) => event.sequence < ownCommit)
   const armed = armedPlaceOf(binding),
     pausable = pausablePlaceOf(ownEntries)
   return {
     ...(armed && { armed }),
-    acknowledged: acknowledgementOf(binding, ownEntries),
+    acknowledged: acknowledgementOf(
+      binding,
+      ownEntries,
+      earlierEntries,
+      declaredIndex,
+    ),
     ...(pausable && { pausable }),
   }
 }

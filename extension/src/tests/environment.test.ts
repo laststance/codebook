@@ -24,6 +24,7 @@ import type { NodeTestConfiguration } from '../nodeTestConfigSchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
+import { createCrossRuntimeStudy } from './utils/createCrossRuntimeStudy'
 import { loadModule } from './utils/loadModule'
 
 test('untrusted, remote and virtual workspaces reject execution before creating any runtime', async () => {
@@ -761,10 +762,13 @@ test('the configured environment routes only owned DAP responses and reveals imm
     cleaning = false
   let factory: DebugAdapterTrackerFactory | undefined,
     revealed = false
+  const revealedPaths: string[] = []
   class SelectedRun {
     readonly id = 'configured-run'
     readonly activeSessions = new Set<string>()
     readonly evidence = { record(): void {} }
+    snapshots: readonly { id: string; declaredIndex?: number }[] =
+      createConfiguredStudy().observations
     constructor(
       readonly options: ConstructorParameters<typeof ConfiguredBrowserRun>[0],
     ) {
@@ -789,7 +793,7 @@ test('the configured environment routes only owned DAP responses and reveals imm
       return {
         status: runStatus,
         cleaned: false,
-        snapshots: createConfiguredStudy().observations,
+        snapshots: this.snapshots,
       }
     }
     terminated(): void {}
@@ -861,7 +865,10 @@ test('the configured environment routes only owned DAP responses and reveals imm
       createViewport: () => {
         throw new Error('No renderer acquisition in a factory test')
       },
-      revealSource: async () => revealed,
+      revealSource: async (_snapshot: unknown, path: string) => {
+        revealedPaths.push(path)
+        return revealed
+      },
     },
   )
   context.after(() => environment.dispose())
@@ -1013,6 +1020,41 @@ test('the configured environment routes only owned DAP responses and reveals imm
     /abort/i,
   )
   assert.equal(instances.length, 1)
+  // Cycle 0071 (H2): a render that paused declared stop B before declared stop A opens B's file for B's pause.
+  // protects=Open source on a live pause names the file of the paused stop; fails_when=the declared stop is taken from the snapshot's commit position; no_claim=native editor reveal
+  // Arrange
+  const crossRuntime = createCrossRuntimeStudy()
+  const outOfOrder = configuredDefinitionSchema.parse({
+    configuration: crossRuntime.configuration,
+    configurationHash: crossRuntime.configurationHash,
+    descriptor: crossRuntime.descriptor,
+  })
+  const secondRun = await environment.createRuntime(
+    join(directory, 'out-of-order'),
+    outOfOrder,
+    {
+      signal: new AbortController().signal,
+      deadlineAt: 600000,
+      preparationDeadlineAt: 90000,
+    },
+  )
+  assert.equal(secondRun.id, 'configured-run')
+  const outOfOrderRun = instances[1]!
+  const [declaredA, declaredB] = crossRuntime.observations
+  outOfOrderRun.snapshots = [
+    { id: declaredB!.id, declaredIndex: 1 },
+    { id: declaredA!.id, declaredIndex: 0 },
+  ]
+  revealedPaths.length = 0
+  revealed = true
+  // Act
+  await outOfOrderRun.options.revealSource(declaredB!)
+  await outOfOrderRun.options.revealSource(declaredA!)
+  // Assert
+  assert.deepEqual(revealedPaths, [
+    join(directory, 'src/mode.ts'),
+    join(directory, 'src/theme.ts'),
+  ])
 })
 
 // Cycle 0044 (0042-SR1): red while a finished run stayed in the environment's run map for the window's life, with its journal and script maps.

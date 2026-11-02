@@ -2,11 +2,16 @@ import type {
   ConfiguredOperationRecord,
   ConfiguredStudy,
 } from '../configuredStudySchemas'
-import { OPERATIONS_CONFIG_VERSION } from '../constants'
-import type { OperationsRepositoryConfiguration } from '../repositoryConfigSchemas'
+import {
+  ENTRY_LOAD_OPERATION_KEY,
+  OPERATIONS_CONFIG_VERSION,
+  SERVER_RENDER_STUDY_VERSION,
+} from '../constants'
 
 import { afterOperationOf } from './afterOperationOf'
 import { configuredStops } from './configuredStops'
+import { declaredOperationsOf } from './declaredOperationsOf'
+import { stopOfObservation } from './stopOfObservation'
 
 type StudyWithoutImages = Omit<ConfiguredStudy, 'captures'>
 
@@ -15,11 +20,11 @@ type StudyWithoutImages = Omit<ConfiguredStudy, 'captures'>
  * @param records - The study's operation records.
  * @param declared - The sealed version 3 configuration's operations.
  * @throws When the count, an index, a kind or a title differs.
- * @example assertRecordsMatchDeclaration(records, configuration.operations)
+ * @example assertRecordsMatchDeclaration(records, declaredOperationsOf(configuration))
  */
 function assertRecordsMatchDeclaration(
   records: readonly ConfiguredOperationRecord[],
-  declared: OperationsRepositoryConfiguration['operations'],
+  declared: readonly { kind: string; title: string }[],
 ): void {
   if (records.length !== declared.length)
     throw new Error('Configured operations differ from the declared ones.')
@@ -77,6 +82,66 @@ function assertSentTimes(records: readonly ConfiguredOperationRecord[]): void {
 }
 
 /**
+ * Says whether every stop declared up to an operation was reached and its pause continued.
+ * Format 7 reads it by position (the stops pause in declared order); format 8 by `declaredIndex`, because a set of server renders pauses in the order the page runs.
+ * @param study - The saved study.
+ * @param stops - The declared stops.
+ * @param operationIndex - The 1-based operation reported done.
+ * @returns `true` when no stop is declared up to the operation or each one was observed at or before the continued pause.
+ * @example areStopsContinuedUpTo(study, stops, 2) // => true
+ */
+function areStopsContinuedUpTo(
+  study: StudyWithoutImages,
+  stops: ReturnType<typeof configuredStops>,
+  operationIndex: number,
+): boolean {
+  const continuedPosition = study.observations.findIndex(
+    (observation) =>
+      JSON.stringify(observation.pause) ===
+      JSON.stringify(study.operation?.continuedPause),
+  )
+  const required = stops.flatMap((stop, declared) =>
+    (afterOperationOf(stop) ?? 1) <= operationIndex ? [declared] : [],
+  )
+  return required.every((declared) => {
+    const position = study.observations.findIndex(
+      (observation, index) => (observation.declaredIndex ?? index) === declared,
+    )
+    return position >= 0 && continuedPosition >= position
+  })
+}
+
+/**
+ * Checks that one pause comes after the input of the operation its stop follows; a format 8 entry-render stop (`afterOperation: 0`) pauses the page load instead, so it must come before operation mark 1.
+ * @param observation - The pause.
+ * @param afterOperation - The operation its stop follows, 0 for an entry-render stop.
+ * @param records - The study's operation records.
+ * @param isFormat8 - Whether the study is of format 8, the only format that has entry-render stops.
+ * @throws When the pause is on the wrong side of its operation's input.
+ * @example assertPauseTime(observation, 2, records, true)
+ */
+function assertPauseTime(
+  observation: StudyWithoutImages['observations'][number],
+  afterOperation: number,
+  records: readonly ConfiguredOperationRecord[],
+  isFormat8: boolean,
+): void {
+  if (isFormat8 && afterOperation === 0) {
+    const firstSentMs = records[0]?.atMs
+    if (firstSentMs !== undefined && observation.elapsedMs > firstSentMs)
+      throw new Error(
+        'Configured entry-render observation comes after the first operation.',
+      )
+    return
+  }
+  const record = records[afterOperation - 1]
+  if (record?.atMs === undefined || observation.elapsedMs < record.atMs)
+    throw new Error(
+      'Configured observation precedes the input of its operation.',
+    )
+}
+
+/**
  * Checks that every pause belongs to an operation already sent, and that every operation reported done had each stop declared up to it reached and continued.
  * @param study - The saved study.
  * @param records - Its operation records.
@@ -88,27 +153,20 @@ function assertPausesFollowOperations(
   records: readonly ConfiguredOperationRecord[],
 ): void {
   const stops = configuredStops(study.configuration)
-  const continuedIndex = study.observations.findIndex(
-    (observation) =>
-      JSON.stringify(observation.pause) ===
-      JSON.stringify(study.operation?.continuedPause),
-  )
+  const isFormat8 = study.version === SERVER_RENDER_STUDY_VERSION
   // A pause belongs to the operation its stop follows, and cannot come before that operation's input.
-  for (const [index, observation] of study.observations.entries()) {
-    const record = records[(afterOperationOf(stops[index]!) ?? 1) - 1]
-    if (record?.atMs === undefined || observation.elapsedMs < record.atMs)
-      throw new Error(
-        'Configured observation precedes the input of its operation.',
-      )
+  for (const [position, observation] of study.observations.entries()) {
+    const stop = stopOfObservation(study.observations, stops, position)!
+    assertPauseTime(
+      observation,
+      afterOperationOf(stop) ?? 1,
+      records,
+      isFormat8,
+    )
   }
   for (const record of records) {
     if (record.state !== 'done') continue
-    const lastStop = stops.findLastIndex(
-      (stop) => (afterOperationOf(stop) ?? 1) <= record.index,
-    )
-    const isContinued =
-      study.observations.length > lastStop && continuedIndex >= lastStop
-    if (lastStop >= 0 && !isContinued)
+    if (!areStopsContinuedUpTo(study, stops, record.index))
       throw new Error(
         `Operation ${record.index} is done without its declared pauses continued.`,
       )
@@ -134,11 +192,27 @@ export function validateOperationRecords(study: StudyWithoutImages): void {
   }
   // A run that never prepared its page has no records yet, and then nothing else of the run either.
   if (!records) {
-    if (study.operation || study.observations.length)
+    // Format 8 may hold entry-render pauses (`afterOperation: 0`) before any operation record exists; nothing else may.
+    const stops = configuredStops(configuration)
+    // A completed run of no operations keeps the aggregate `entry-load` record, which dispatched no input.
+    const isEntryLoadRecord =
+      !study.operation ||
+      (study.operation.key === ENTRY_LOAD_OPERATION_KEY &&
+        !study.operation.inputDispatched)
+    const onlyEntryRender =
+      study.version === SERVER_RENDER_STUDY_VERSION &&
+      isEntryLoadRecord &&
+      study.observations.every(
+        (_, position) =>
+          afterOperationOf(
+            stopOfObservation(study.observations, stops, position) ?? {},
+          ) === 0,
+      )
+    if (!onlyEntryRender && (study.operation || study.observations.length))
       throw new Error('Configured operations are missing from a started run.')
     return
   }
-  assertRecordsMatchDeclaration(records, configuration.operations)
+  assertRecordsMatchDeclaration(records, declaredOperationsOf(configuration))
   assertRanSequentially(records)
   assertSentTimes(records)
   assertPausesFollowOperations(study, records)

@@ -82,7 +82,7 @@ export function viteHelp() {
         'codebook_sources, then codebook_source: read the file the stop is in; copy its path, full SHA-256 and the line and column from numberedText.',
         'codebook_publish_book: publish a source-only article whose node cites that file; copy bookId, revision and nodeId.',
         'codebook_start: profile repository-browser, the configuration above with the copied values and a stable key; the answer is a receipt with a run id.',
-        'Poll the run resource it names until the run reads ready (or an error): preparation starts Vite, seals the stops and opens the app.',
+        'Poll the run resource it names until the run reads ready, paused (read inspectionUri and sourceUri, then codebook_continue) or an error: preparation starts Vite, seals the stops and opens the app.',
         'codebook_action repository-click: copy the run id and revision from the run resource (its nextActions), send it once with a stable action key.',
         'At each pause read inspectionUri and sourceUri, explain the values in the chat, then codebook_continue with the continueArguments of the current run resource.',
       ],

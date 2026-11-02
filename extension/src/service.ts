@@ -151,6 +151,7 @@ import { createChromeExtensionJournal } from './utils/createChromeExtensionJourn
 import { createNodeServerJournal } from './utils/createNodeServerJournal'
 import { cutCauseForDisplay } from './utils/cutCauseForDisplay'
 import { cutTextToFit } from './utils/cutTextToFit'
+import { declaredOperationsOf } from './utils/declaredOperationsOf'
 import { declaredStopOfSnapshot } from './utils/declaredStopOfSnapshot'
 import { describeBoundPlace, type BoundPlace } from './utils/describeBoundPlace'
 import { describeMissingBookNode } from './utils/describeMissingBookNode'
@@ -164,6 +165,7 @@ import {
 import { describeNodeTestResult } from './utils/describeNodeTestResult'
 import { describeOperationFailureDetails } from './utils/describeOperationFailureDetails'
 import { describeOperationStatus } from './utils/describeOperationStatus'
+import { describeServerRenderFailureDetails } from './utils/describeServerRenderFailureDetails'
 import {
   describeSignInRequiredDetails,
   type SignInRunFacts,
@@ -177,6 +179,7 @@ import {
   fullLibraryMessage,
   type StudyRemovalAvailability,
 } from './utils/fullLibraryMessage'
+import { hasObservedOperationResult } from './utils/hasObservedOperationResult'
 import { historyExclusionReason } from './utils/historyExclusionReason'
 import { historyExclusionState } from './utils/historyExclusionState'
 import { initialStudyRemovalAvailability } from './utils/initialStudyRemovalAvailability'
@@ -201,6 +204,7 @@ import { nextNodeServerState } from './utils/nextNodeServerState'
 import { nodeTestResultKind } from './utils/nodeTestResultKind'
 import { numberSourceLines } from './utils/numberSourceLines'
 import { parseChromeExtensionConfiguration } from './utils/parseChromeExtensionConfiguration'
+import { pauseLabelOf } from './utils/pauseLabelOf'
 import type { NodeTestExecutionPlan } from './utils/planNodeTestExecution'
 import { prepareNodeServerStudy } from './utils/prepareNodeServerStudy'
 import { prepareNodeTestStudy } from './utils/prepareNodeTestStudy'
@@ -213,6 +217,7 @@ import {
   projectNodeTestOutcome,
   type NodeTestHistoryState,
 } from './utils/projectNodeTestOutcome'
+import { projectPageLoadStatus } from './utils/projectPageLoadStatus'
 import { readerNotFollowingRunRefusal } from './utils/readerNotFollowingRunRefusal'
 import type { RepositoryAdapterReadiness } from './utils/readRepositoryAdapterReadiness'
 import { redactExtensionInputs } from './utils/redactExtensionInputs'
@@ -2509,8 +2514,7 @@ export class StudyService {
         step.evidence !== 'observed' ||
         !record.stopped ||
         runtime?.finalOutcome !== 'demonstrated' ||
-        !runtime.operation?.afterVerified ||
-        !runtime.operation.inputAcknowledged ||
+        !hasObservedOperationResult(runtime.operation) ||
         !record.definition ||
         step.reference.configurationHash !==
           this.canonicalConfigurationHash(record, record.definition) ||
@@ -3416,6 +3420,52 @@ export class StudyService {
   }
 
   /**
+   * Makes the error of a coded refusal that an operation (or the entry render) raised, with the fields that decide a retry.
+   *
+   * Called by {@link StudyService.runtimeFailureError}; split out so that method stays within the complexity limit.
+   * @param refusal - The refusal restored from the run's failure text, if any.
+   * @param operationFailure - The run's first operation failure, if any.
+   * @param runUri - The run's resource address, when the caller has it.
+   * @returns The error for a refusal whose code equals the operation failure's code; `undefined` otherwise.
+   * @example this.operationRefusalError(refusalFailureOf('OPERATION_AFTER_NOT_MET: …'), failure, uri)?.code // => 'OPERATION_AFTER_NOT_MET'
+   */
+  private operationRefusalError(
+    refusal: ReturnType<typeof refusalFailureOf>,
+    operationFailure: OperationFailure | undefined,
+    runUri: string | undefined,
+  ): StudyError | undefined {
+    if (!refusal || !operationFailure || operationFailure.code !== refusal.code)
+      return undefined
+    // The two server-render failures carry the stop and entry fields beside the retry fields; an entry-render failure names no operation.
+    if (
+      refusal.code === 'SERVER_STOP_NOT_REACHED' ||
+      refusal.code === 'ENTRY_LOAD_TIMEOUT'
+    )
+      return new StudyError(
+        refusal.code,
+        refusal.message,
+        refusal.message,
+        refusal.recoveryOverride,
+        undefined,
+        describeServerRenderFailureDetails(operationFailure, runUri),
+      )
+    // An operation's refusal carries the fields that decide a retry (DX-5), and its static recovery names the operation (OPERATION_AFTER_NOT_MET).
+    return new StudyError(
+      refusal.code,
+      refusal.message,
+      refusal.message,
+      refusal.code === 'OPERATION_AFTER_NOT_MET'
+        ? ERROR_RECOVERY.OPERATION_AFTER_NOT_MET.replace(
+            '<n>',
+            String(operationFailure.operationIndex),
+          )
+        : refusal.recoveryOverride,
+      undefined,
+      describeOperationFailureDetails(operationFailure, runUri),
+    )
+  }
+
+  /**
    * Makes the run resource's error object for a failure the runtime recorded after its preparation.
    *
    * A run's timer and event failures (a Vite reload after the click, a Vite or Next setup deadline, a Fast Refresh of a sealed Next module) lead with their refusal code, so the agent reads the stable code, its recovery and help anchor and not only a text prefix ({@link refusalFailureOf}). Called by {@link StudyService.state}.
@@ -3452,21 +3502,12 @@ export class StudyService {
           logId: operationFailure?.logId ?? `${run?.runId ?? 'run'}#start`,
         }),
       )
-    // An operation's refusal carries the fields that decide a retry (DX-5), and its static recovery names the operation (OPERATION_AFTER_NOT_MET).
-    if (refusal && operationFailure && operationFailure.code === refusal.code)
-      return new StudyError(
-        refusal.code,
-        refusal.message,
-        refusal.message,
-        refusal.code === 'OPERATION_AFTER_NOT_MET'
-          ? ERROR_RECOVERY.OPERATION_AFTER_NOT_MET.replace(
-              '<n>',
-              String(operationFailure.operationIndex),
-            )
-          : refusal.recoveryOverride,
-        undefined,
-        describeOperationFailureDetails(operationFailure, runUri),
-      )
+    const operationError = this.operationRefusalError(
+      refusal,
+      operationFailure,
+      runUri,
+    )
+    if (operationError) return operationError
     if (refusal)
       return new StudyError(
         refusal.code,
@@ -3743,8 +3784,10 @@ export class StudyService {
       runtime?.operations,
       record.stopped ? 'stopped' : terminalReason ? 'failed' : runtime?.status,
       runtime?.operationFailure,
+      projectPageLoadStatus(runtime),
     )
     const confirmation = this.operationsConfirmationOf(record)
+    // The words of an entry render under way, for the chat (task 3a).
     const material = {
       instanceId: this.instanceId,
       runId: record.id,
@@ -3757,7 +3800,8 @@ export class StudyService {
           ? 'stopping'
           : terminalReason
             ? 'failed'
-            : !record.prepared
+            : // An entry-render pause is published before preparation ends (X14): the learner continues it, then the run reads ready.
+              !record.prepared && runtime?.status !== 'paused-server'
               ? 'preparing'
               : (runtime?.status ?? record.nodePhase ?? 'preparing'),
       runtimeState: runtime?.status ?? record.nodePhase,
@@ -3778,6 +3822,11 @@ export class StudyService {
         runtime?.operations ??
         [...record.actions.values()].map((action) => action.receipt),
       ...(operationStatus ? { operationStatus } : {}),
+      // A server render in progress says what it waits for, and that its first execution was not observed.
+      ...(runtime?.renderMessage ? { message: runtime.renderMessage } : {}),
+      ...(runtime?.firstExecutionObserved === false
+        ? { firstExecutionObserved: false as const }
+        : {}),
       ...(confirmation
         ? {
             confirmation: confirmation.state,
@@ -3875,6 +3924,8 @@ export class StudyService {
           actionId: snapshot.actionId,
           participant: snapshot.participant,
           capturePhase: snapshot.capturePhase,
+          // Only the labels the snapshot carries (a server-render pause); browser-only runs gain no key.
+          ...pauseLabelOf(snapshot),
           // Present only for a stop the debugger bound on another line than declared: the sentence that names the paused line.
           place: this.boundPlace(record, snapshot, false)?.place,
           snapshotUri: this.uri(
@@ -3943,8 +3994,7 @@ export class StudyService {
       terminalReference:
         record.stopped &&
         runtime?.finalOutcome === 'demonstrated' &&
-        runtime.operation?.afterVerified &&
-        runtime.operation.inputAcknowledged &&
+        hasObservedOperationResult(runtime.operation) &&
         runtime.captures.after?.status === 'captured' &&
         runtime.captures.after.renderer?.hash &&
         record.definition
@@ -4942,8 +4992,10 @@ export class StudyService {
         ? undefined
         : refusalFailureOf(runtimeFailure)
     if (refusal && !(error instanceof StudyError))
-      // A sign-in refusal carries the reason and the profile the run used; every other refusal keeps its words and recovery as before.
-      return refusal.code === 'SIGN_IN_REQUIRED'
+      // A sign-in refusal carries the reason and the profile the run used, and the two entry-load failures carry their stop and route fields; every other refusal keeps its words and recovery as before.
+      return refusal.code === 'SIGN_IN_REQUIRED' ||
+        refusal.code === 'SERVER_STOP_NOT_REACHED' ||
+        refusal.code === 'ENTRY_LOAD_TIMEOUT'
         ? this.runtimeFailureError(
             runtimeFailure!,
             runtime?.operationFailure,
@@ -5593,8 +5645,14 @@ export class StudyService {
     const isOff =
       session === 'saved' &&
       this.environment.savedSessionConfirmationEnabled?.() === false
+    // A run that declares no operation sends no input, so there is nothing to confirm.
+    const sendsInput =
+      declaredOperationsOf(record.definition.configuration).length > 0
     record.operationsConfirmation = {
-      state: session === 'saved' && !isOff ? 'awaiting-learner' : 'not-needed',
+      state:
+        session === 'saved' && !isOff && sendsInput
+          ? 'awaiting-learner'
+          : 'not-needed',
       ...(isOff ? { setting: 'off' as const } : {}),
       isAsking: false,
       isNoticeShown: false,
@@ -5744,7 +5802,10 @@ export class StudyService {
       runId: record.id,
       repository: basename(this.environment.workspace),
       entryPath: configuration.entryPath ?? '/',
-      operations: listSavedSessionOperations(configuration.operations, facts),
+      operations: listSavedSessionOperations(
+        declaredOperationsOf(configuration),
+        facts,
+      ),
     }
   }
 
@@ -5953,7 +6014,7 @@ export class StudyService {
     const index =
       (view.operations ?? []).filter((entry) => entry.state !== 'not-run')
         .length + 1
-    const operation = configuration.operations[index - 1]
+    const operation = declaredOperationsOf(configuration)[index - 1]
     return operation?.kind === 'text' && operation.secret
       ? { index, title: operation.title }
       : undefined

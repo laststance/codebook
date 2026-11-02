@@ -38,6 +38,7 @@ function stoppedText(
  * @param operations - The run's operation records in declared order; none for a run of versions 1 and 2.
  * @param runState - The run's state word (`failed`, `stopped`, `completed`, or a live one).
  * @param failure - The run's first operation failure, if any.
+ * @param pageLoad - The entry-load words from {@link describePageLoadStatus}, shown instead of the operation words while they apply.
  * @returns
  * - `Operation <k>/<m> · <title> · sending` or `… · paused in code` for the operation in flight
  * - `<m>/<m> sent · checking result` once the last input was acknowledged and its value checked
@@ -52,7 +53,11 @@ export function describeOperationStatus(
   operations: readonly OperationRecord[] | undefined,
   runState: string | undefined,
   failure: Pick<OperationFailure, 'code' | 'operationIndex'> | undefined,
+  pageLoad?: string,
 ): string | undefined {
+  // The entry-load words (task 3a) come before today's texts, never over a failure or a stop.
+  if (pageLoad && !failure && runState !== 'failed' && runState !== 'stopped')
+    return pageLoad
   if (!operations?.length) return undefined
   const total = operations.length
   const unfinished = operations.find((operation) => operation.state !== 'done')
@@ -63,6 +68,23 @@ export function describeOperationStatus(
     return `Done · ${total} ${total === 1 ? 'operation' : 'operations'}`
   // A run stopped before its end names where it stopped.
   if (runState === 'stopped') return stoppedText(failure, unfinished.index)
+  return inFlightText(unfinished, total, runState)
+}
+
+/**
+ * Words the operation in flight: everything sent and being checked, or the operation sending or paused in code.
+ * Called by {@link describeOperationStatus} once the run is neither failed, stopped nor done.
+ * @param unfinished - The first operation that is not done.
+ * @param total - How many operations the run declared.
+ * @param runState - The run's state word.
+ * @returns The text, or `undefined` between two operations.
+ * @example inFlightText(record, 4, 'acting') // => 'Operation 2/4 · Enter amount · sending'
+ */
+function inFlightText(
+  unfinished: OperationRecord,
+  total: number,
+  runState: string | undefined,
+): string | undefined {
   const isLast = unfinished.index === total
   // Everything was sent and acknowledged; only the page's result is still being checked.
   if (

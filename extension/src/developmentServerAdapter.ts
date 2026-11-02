@@ -6,6 +6,7 @@ import type { DevelopmentLockIdentity } from './utils/assertDevelopmentWorkspace
 import type { NextPagesDiscoveryCache } from './utils/createNextPagesDiscoveryCache'
 import type { launchDevelopmentServer } from './utils/launchDevelopmentServer'
 import type { DeclaredDevelopmentPort } from './utils/readDeclaredDevelopmentPort'
+import type { DevelopmentServerLayer } from './utils/readDevelopmentBundle'
 
 /** The name a repository-browser configuration gives its development server (`adapter`), the one key of {@link DevelopmentServerAdapter}. */
 export type DevelopmentServerAdapterName = RepositoryConfiguration['adapter']
@@ -48,7 +49,7 @@ export type DevelopmentBundleRequest = {
   source: RepositoryConfiguration['source']
   signal: AbortSignal
   entryPath: string
-  /** `server-action` is a Next server stop; a browser stop is sealed from the code the page loads. */
+  /** `server-action` is a Next server stop (sealed as the `(action-browser)` module, else the `(rsc)` module of the entry route's server chunk); a browser stop is sealed from the code the page loads. */
   execution: 'browser' | 'server-action'
   /** The owned origin the ready server reported (`http://127.0.0.1:<port>`). */
   ownedOrigin: string
@@ -62,6 +63,8 @@ export type DevelopmentBundleRequest = {
 export type DevelopmentBundle = {
   bundle: BundleSource
   discovery: unknown
+  /** The webpack layer a Next server stop was sealed from (`action-browser` first, else `rsc`); absent for a browser stop and for a Vite run. */
+  layer?: DevelopmentServerLayer
 }
 
 /** The js-debug launch fields that depend on how the development server serves its modules. */

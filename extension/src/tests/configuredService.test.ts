@@ -2348,6 +2348,10 @@ test('an observation committed on the line the debugger moved its stop to report
   assert.equal(JSON.stringify(facts.requestedSource), '{"line":1,"column":1}')
   assert.equal(facts.source.line, 2)
   assert.equal(facts.source.column, 1)
+  // A browser-only stop carries no pause label: neither resource gains a key for it.
+  assert.equal('attribution' in observation, false)
+  assert.equal('execution' in observation, false)
+  assert.equal('attribution' in facts, false)
 })
 
 /**
@@ -2736,7 +2740,7 @@ test('configured help names the declared, the requested and the bound place, say
     .parse(JSON.parse(help.text))
   assert.equal(
     contract.entry,
-    'API 1.15, extension 0.2.0 or later. Read actual workspace source and publish an immutable source-only article first. Use its default repository/<bookId>/<nodeId> identity, exact revision, selected citation, path/hash and one-based source line/column. Leave learningItemId absent to preserve the article identity.',
+    'API 1.16, extension 0.2.0 or later. Read actual workspace source and publish an immutable source-only article first. Use its default repository/<bookId>/<nodeId> identity, exact revision, selected citation, path/hash and one-based source line/column. Leave learningItemId absent to preserve the article identity.',
   )
   assert.equal(
     (contract.sequence[2] ?? '').includes(
@@ -4785,7 +4789,7 @@ test('API 1.8 discovery exposes the bounded configured profile and its executabl
     ),
     help = await readResource(service, 'codebook://help/repository-browser')
   // Assert
-  assert.equal(status.apiVersion, '1.15')
+  assert.equal(status.apiVersion, '1.16')
   assert.ok(profile && 'requiresConfiguration' in profile)
   assert.equal(profile.requiresConfiguration, true)
   assert.equal(profile.minimumExtensionVersion, '0.2.0')
@@ -4848,7 +4852,6 @@ test('API 1.8 discovery exposes the bounded configured profile and its executabl
         'afterOperation',
         'before',
         'after',
-        'operations',
         'inspections',
       ],
     ],

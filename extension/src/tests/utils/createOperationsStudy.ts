@@ -10,7 +10,7 @@ export const OPERATION_TIMES_MS = [1000, 1500, 3500, 3800] as const
 /**
  * Supplies inert saved history of a version 3 run of four ordered operations (choose, text, click, click) with a browser stop after operation 2 and a server and a browser stop after operation 4, never an application or native verification.
  * @param how - `complete` for a demonstrated run (four operations done); `failed-at-3` for a run that stopped: operation 1 and 2 done, 3 failed, 4 not run, with only the stop after operation 2 reached.
- * @returns A decodable format 7 study.
+ * @returns A decodable format 8 study: its configuration has a server stop, so its observations carry `execution`, `declaredIndex` and `executionIndex`.
  * @example
  * createOperationsStudy().operations?.map((record) => record.state) // => ['done', 'done', 'done', 'done']
  * createOperationsStudy('failed-at-3').operations?.map((record) => record.state) // => ['done', 'done', 'failed', 'not-run']
@@ -111,11 +111,19 @@ export function createOperationsStudy(
           effect: 'pending',
         },
   ]
-  const reached = isComplete ? [browser!, server!, finalBrowser!] : [browser!]
+  const executions = ['browser', 'server-action', 'browser'] as const
+  const reached = (
+    isComplete ? [browser!, server!, finalBrowser!] : [browser!]
+  ).map((observation, position) => ({
+    ...observation,
+    execution: executions[position]!,
+    declaredIndex: position,
+    executionIndex: position,
+  }))
   const lastPause = reached.at(-1)!.pause
   return {
     ...crossRuntime,
-    version: 7,
+    version: 8,
     configuration,
     configurationHash: sha256(JSON.stringify(configuration)),
     finalOutcome: isComplete ? 'demonstrated' : 'not-demonstrated',
@@ -124,6 +132,7 @@ export function createOperationsStudy(
       continuedPause: lastPause,
       afterVerified: isComplete,
     },
+    firstExecutionObserved: false,
     operations,
     observations: reached,
     captures: crossRuntime.captures.filter(

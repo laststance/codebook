@@ -13,7 +13,7 @@ export interface DeclaredStopOfSnapshot {
 }
 
 /**
- * Finds the stop a committed snapshot answers, because committed snapshots follow the declared stop order; the live inspection resource and {@link StudyService.explain} (through {@link StudyService.boundPlace}), the saved learning resource ({@link readRecordingResource}) and the Study pane's label share this one lookup.
+ * Finds the stop a committed snapshot answers, because committed snapshots follow the declared stop order, except in format 8, where a snapshot's `declaredIndex` names its stop; the live inspection resource and {@link StudyService.explain} (through {@link StudyService.boundPlace}), the saved learning resource ({@link readRecordingResource}) and the Study pane's label share this one lookup.
  * @param configuration - The run's frozen configuration, of either version.
  * @param committedSnapshots - The run's committed snapshots (or a saved study's observations) in commit order.
  * @param snapshotId - The snapshot whose declared stop is asked for.
@@ -27,13 +27,18 @@ export interface DeclaredStopOfSnapshot {
  */
 export function declaredStopOfSnapshot(
   configuration: RetainedRepositoryConfiguration,
-  committedSnapshots: readonly { id: string }[],
+  committedSnapshots: readonly { id: string; declaredIndex?: number }[],
   snapshotId: string,
 ): DeclaredStopOfSnapshot | undefined {
-  const index = committedSnapshots.findIndex(
-      (committed) => committed.id === snapshotId,
-    ),
-    stop = configuredStops(configuration)[index]
+  const position = committedSnapshots.findIndex(
+    (committed) => committed.id === snapshotId,
+  )
+  // A format 8 snapshot names its declared stop; earlier snapshots follow the declared order by position.
+  const index =
+    position < 0
+      ? -1
+      : (committedSnapshots[position]?.declaredIndex ?? position)
+  const stop = configuredStops(configuration)[index]
   if (!stop) return undefined
   return {
     stop,

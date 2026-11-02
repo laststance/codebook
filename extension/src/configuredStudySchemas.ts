@@ -13,6 +13,7 @@ import {
   KEY_LENGTH_LIMIT,
   MAX_EXPLANATIONS,
   OPERATIONS_STUDY_VERSION,
+  SERVER_RENDER_STUDY_VERSION,
   REPOSITORY_OPERATION_LIMIT,
   MAX_UI_TEXT_CHARS,
   REFERENCE_LENGTH_LIMIT,
@@ -75,6 +76,19 @@ export const configuredObservationSchema = z.strictObject({
   capturePhase: z.enum(['paused-browser', 'paused-server']),
   snapshotUri: shortText,
   participant: z.enum(['browser', 'server']),
+  // Format 8 only (checked by validateConfiguredStudyEvidence, which refuses them in format 7 and requires `execution`, `declaredIndex` and `executionIndex` in format 8): where the paused code runs, why a server render ran, and the stop's place in the declared list and in the order the run paused.
+  execution: z.enum(['browser', 'server-action', 'server-render']).optional(),
+  attribution: z
+    .enum(['entry-load', 'after-operation', 'unconfirmed'])
+    .optional(),
+  operationIndex: z
+    .number()
+    .int()
+    .min(1)
+    .max(REPOSITORY_OPERATION_LIMIT)
+    .optional(),
+  declaredIndex: z.number().int().nonnegative().optional(),
+  executionIndex: z.number().int().nonnegative().optional(),
   capturedAt: z.iso.datetime(),
   elapsedMs: z.number().finite().nonnegative(),
   pause: configuredPauseSchema,
@@ -162,6 +176,7 @@ export const configuredStudySchema = z.strictObject({
     z.literal(VITE_STUDY_VERSION),
     z.literal(RECORDED_LOCATION_STUDY_VERSION),
     z.literal(OPERATIONS_STUDY_VERSION),
+    z.literal(SERVER_RENDER_STUDY_VERSION),
   ]),
   workspaceKey: repositoryHashSchema,
   id: studyIdSchema,
@@ -202,6 +217,8 @@ export const configuredStudySchema = z.strictObject({
     .max(REPOSITORY_OPERATION_LIMIT)
     .optional(),
   learningSummary: savedLearningSummarySchema.optional(),
+  // Format 8 only: present (and false) when the configuration has a server stop, so the replay can say the first execution of the page was not observed.
+  firstExecutionObserved: z.literal(false).optional(),
   observations: z
     .array(configuredObservationSchema)
     .max(CONFIGURED_OBSERVATION_LIMIT),

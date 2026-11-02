@@ -5,6 +5,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 /**
  * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ * 1.16 is additive: Next App Router server-render stops (`participant: "server"` with `afterOperation: 0`, `operations` omitted), run pauses reporting `execution`, `attribution`, `operationIndex`, `declaredIndex` and `executionIndex`, `firstExecutionObserved`, and the codes `SERVER_STOP_NOT_REACHED` and `ENTRY_LOAD_TIMEOUT`; `NEXT_STOP_NOT_SEALED` also answers a server stop in a client component.
  * 1.15 is additive: saved-session web app runs, their confirmation and withheld images. Lane A: `codebook_status.savedSession` is `{ available, state, setupAt? }`, with `state` one of `none`, `setup-open`, `saved`, `unconfirmed` or `unusable`; the codes `SIGN_IN_REQUIRED`, `SIGN_IN_IN_PROGRESS`, `SIGN_IN_PROFILE_IN_USE` and `SIGN_IN_PROFILE_UNUSABLE` and `BUSY` with reason `profile-in-use` are added, and `BUSY` details carry `heldBy`.
  * 1.15, lane B: version 3 configurations accept `signInPaths` (1 to 4 paths) and `session: "fresh"`; the run resource of a version 3 run reports `session`, `appState` and `savedSession`; `SIGN_IN_REQUIRED` carries `details.reason`; the run-start refusals gain `runUri`, `sideEffects`, `retry` and `logId`; `SIGN_IN_ORIGIN_REFUSED` is new.
  * 1.15, lane C: the run resource's `confirmation` (`not-needed`, `awaiting-learner`, `declined`, `confirmed`) and `confirmationSetting` (`off`) for a version 3 run; `OPERATIONS_NOT_CONFIRMED` also answers a declined saved-session confirmation, and its details gain `question` (`secret` or `saved-session-operations`) and `confirmation`; `BUSY` with reason `awaiting-confirmation` also answers another key while that dialog is open.
@@ -17,8 +18,8 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.9 is additive: a node-server run is saved as a Server replay. `codebook_explain_node_history` accepts a server history's material (steps citing the request, a stop, output, the response or the request failure), the server run resource gains `nodeServer.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing` and `captureMissing`, `nextActions` offers `save-node-learning`, and `codebook://help/node-server` has a save section.
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
-export const API_VERSION = '1.15'
-export const EXTENSION_VERSION = '0.2.72'
+export const API_VERSION = '1.16'
+export const EXTENSION_VERSION = '0.2.73'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -695,6 +696,11 @@ export const STUDY_PRESENTATIONS = {
     },
   },
 } as const
+/**
+ * The name of the Study pane's button that restores the Study layout; the pane writes the same words ({@link STUDY_PRESENTATIONS} title) when it shows the mode, and every agent-facing recovery sentence ({@link PLACEMENT_REFUSED_RECOVERY}) must name exactly this control.
+ * @example `Choose ${STUDY_RESTORE_CONTROL_LABEL} in the Study pane`
+ */
+export const STUDY_RESTORE_CONTROL_LABEL = `Restore ${STUDY_PRESENTATIONS['study-workspace'].title} layout`
 // Allow native pixel rounding, not learner-selected split ratios.
 export const EDITOR_LAYOUT_ROUNDING_FRACTION = 0.005
 export const MAX_UI_TEXT_CHARS = 8_192
@@ -1647,8 +1653,10 @@ export const VITE_STUDY_VERSION = 5
 export const RECORDED_LOCATION_STUDY_VERSION = 6
 /** The format of a study saved from a version 3 (ordered operations) configuration: it stores `operations[]`; an older Codebook lists it as saved by a newer one and keeps it. Studies of versions 1 and 2 keep the earlier format. */
 export const OPERATIONS_STUDY_VERSION = 7
+/** The format of a study saved from a version 3 configuration that declares a server stop, a stop with `afterOperation: 0` or no `operations`: its observations carry `execution`, `declaredIndex` and `executionIndex`. A version 3 configuration of browser stops only keeps {@link OPERATIONS_STUDY_VERSION}. The suffix `.study.v8.json` makes 0.2.72.0 list such a study as saved by a newer Codebook and keep it. */
+export const SERVER_RENDER_STUDY_VERSION = 8
 /** The highest study format this Codebook reads; a saved study above it is listed as saved by a newer Codebook. */
-export const READABLE_STUDY_VERSION = OPERATIONS_STUDY_VERSION
+export const READABLE_STUDY_VERSION = SERVER_RENDER_STUDY_VERSION
 /** The replay's operation marks closer than this many pixels stack vertically instead of overlapping. */
 export const OPERATION_MARK_STACK_PX = 24
 /** Below this webview width in pixels the operation marks show their numbers only. */
@@ -1660,6 +1668,12 @@ export const CONFIGURED_STUDY_METADATA_SUFFIX = '.study.meta.v3.json'
 // Highest existing version owns a logical study, including when its bytes are corrupt.
 // A change of the saved study format that an older Codebook cannot read takes the next format number and its own `.study.v<n>.json` suffix in this table; an older Codebook then lists such a study as saved by a newer one and keeps it, instead of failing on its schema.
 export const STUDY_STORAGE_FORMATS = [
+  {
+    version: SERVER_RENDER_STUDY_VERSION,
+    format: 'v8',
+    archiveSuffix: '.study.v8.json',
+    metadataSuffix: '.study.meta.v8.json',
+  },
   {
     version: OPERATIONS_STUDY_VERSION,
     format: 'v7',
@@ -2002,6 +2016,23 @@ export const REPOSITORY_STOP_MODULE_JOURNAL_LIMIT = 100
 export const REPOSITORY_STOP_MODULE_FIRST_JOURNAL_BEYOND_LIMIT = 50
 /** The longest the run waits for the text of a script that may be another webpack layer's instance of a declared server stop's module (`Debugger.getScriptSource`); past it the instance is refused with that reason, and a pause held in it fails with a sentence naming it. It is shorter than the wait for a stop's own pause, so the sentence is ready when that wait ends. */
 export const REPOSITORY_STOP_INSTANCE_READ_MS = 2_000
+/** The longest the run classifies a hit of an armed server stop in an `(rsc)` instance, counted from the first of its CDP pause and DAP `stopped` to the answer of the route read (the binding check, one `stackTrace` and one `evaluate`); past it the route counts as unreadable. Measured on the spike: median 60 ms, at most 102 ms warm, 214 ms and 257 ms for the first stops of a cold process. */
+export const SERVER_RENDER_CLASSIFICATION_MS = 1_000
+/** The longest route string a render hit's route read accepts; a real Next route pattern is far shorter, so a longer answer is unreadable and never journaled. */
+export const SERVER_RENDER_ROUTE_MAX_CHARS = 2_048
+/** How often the run looks for the pause behind a server `stopped` while the pause has not arrived yet; the two channels of one pause arrive within milliseconds of each other. */
+export const SERVER_RENDER_PAUSE_POLL_MS = 5
+/** How often the entry-load phase reads whether the main frame's committed document finished loading while no server-render pause is held. */
+export const ENTRY_LOAD_POLL_MS = 100
+/** The key of the aggregate operation record a run that declares no operation keeps (entry render only): no input is dispatched for it. */
+export const ENTRY_LOAD_OPERATION_KEY = 'entry-load'
+/** The constant expression a DAP `evaluate` on the paused top frame runs to read the route Next renders: only the work store's `route` string, never the request, headers or cookies. */
+export const SERVER_RENDER_ROUTE_EXPRESSION =
+  "require('next/dist/server/app-render/work-async-storage.external.js').workAsyncStorage.getStore()?.route"
+/** The address prefix of the fabricated copies React's development server parses of server modules; a hit in one at an armed stop's position is never a stop's pause. */
+export const REACT_SERVER_COPY_URL_PREFIX = 'about://React/Server/'
+/** How many resumed hits (`breakpoint.other-route`, `breakpoint.unattributed-resumed`, `breakpoint.repeat-hit`, `breakpoint.react-copy`) one run journals, each event type up to it; past it only their count is kept. */
+export const SERVER_RENDER_RESUMED_HIT_JOURNAL_LIMIT = 100
 /** The longest a pause no debugger stop announced may last for its resume to count as the debug adapter's own; the adapter resumes its pauses within milliseconds, and a pause that outlasts the wait for a stop's own pause is taken as announced, so this bound is that wait's bound ({@link CAPTURE_TIMEOUT_MS}) and follows it. */
 export const REPOSITORY_ADAPTER_PAUSE_LIMIT_MS = CAPTURE_TIMEOUT_MS
 /** The longest a page pause may last in a run that declares no browser stop before the run ends as "Unowned browser stop remained paused": the debug adapter resumes a pause of its own within milliseconds, and nobody else may pause the page of such a run. A pause in the page's stub of a declared server stop's module has {@link REPOSITORY_ADAPTER_PAUSE_LIMIT_MS} instead, because the adapter first reports that pause as a stop, which the run then resumes itself. */
@@ -2713,5 +2744,4 @@ export const VITE_LAUNCHER_MESSAGES = {
  * What an agent reads as the recovery when the Study placement guard refuses a presentation or an arrangement because the editor changed a group, a tab or the focus while Codebook arranged the Study.
  * Set as the {@link StudyError.recoveryOverride} by {@link StudyWorkspace.refusePlacement}; names the two real controls (the Study pane's Restore button, the Open Study Workspace command), what was not done, and that the learner's arrangement stays as it is.
  */
-export const PLACEMENT_REFUSED_RECOVERY =
-  'The editor changed the layout (a group, a tab or the focus) while Codebook arranged the Study, so Codebook stopped; no run was started, no application input was sent, and the learner\u2019s own tabs and groups were left as they are. Do not invent a command. Ask the learner to choose Restore Study arrangement in the Study pane, or to run Codebook: Open Study Workspace from the Command Palette, then call codebook_presentation once more with fresh identities from codebook_status. Never start or continue a run to repair the layout.'
+export const PLACEMENT_REFUSED_RECOVERY = `The editor changed the layout (a group, a tab or the focus) while Codebook arranged the Study, so Codebook stopped; no run was started, no application input was sent, and the learner\u2019s own tabs and groups were left as they are. Do not invent a command. Ask the learner to choose ${STUDY_RESTORE_CONTROL_LABEL} in the Study pane, or to run Codebook: Open Study Workspace from the Command Palette, then call codebook_presentation once more with fresh identities from codebook_status. Never start or continue a run to repair the layout.`

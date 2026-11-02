@@ -7,6 +7,7 @@ import type { RecordingContext, RecordingIndex } from './recordingSchemas'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { leavesStopForNoStop } from './utils/leavesStopForNoStop'
 import { projectHistoricalTimeline } from './utils/projectHistoricalTimeline'
+import { hasServerRenderPause } from './utils/projectPauseNames'
 import { projectRecording } from './utils/projectRecording'
 import { projectReplayOperations } from './utils/projectReplayOperations'
 import { snapSeekToRecordedStop } from './utils/snapSeekToRecordedStop'
@@ -241,6 +242,10 @@ export class PlaybackController {
       ),
       // The operation row of a version 3 replay: its marks come from the same saved context as the history-coverage strip.
       operations: projectReplayOperations(this.data?.context, this.range()),
+      // The run-level note of a replay with server-render pauses: Codebook loaded the page once before recording (task 3a).
+      firstExecutionNote: hasServerRenderPause(
+        this.data?.context?.study.observations ?? [],
+      ),
       recordingStatus: this.data?.index.status,
       recordingReason: this.data?.index.reason,
       cleared: this.cleared,
