@@ -48,11 +48,6 @@ export async function captureStudy(
     }
   }
   const observations: RetainedStudy['observations'][number][] = []
-  const keepsExecutionFields =
-    record.profile === REPOSITORY_BROWSER_PROFILE &&
-    record.definition !== undefined &&
-    studyFormatOfConfiguration(record.definition.configuration) ===
-      SERVER_RENDER_STUDY_VERSION
   const captures: RetainedStudy['captures'][number][] = []
   for (const reference of state.observations) {
     const snapshotUri = reference.snapshotUri
@@ -91,18 +86,10 @@ export async function captureStudy(
         throw new Error(
           'Configured snapshot differs from its committed source/receipt.',
         )
-      // Only a format 8 study keeps the execution fields; an older format is written exactly as before.
-      const {
-        execution: _execution,
-        declaredIndex: _declaredIndex,
-        executionIndex: _executionIndex,
-        attribution: _attribution,
-        operationIndex: _operationIndex,
-        ...olderSnapshot
-      } = snapshot
+      // The format 8 pause fields are kept or dropped once, by observationOfFormat, when the study is assembled below.
       observations.push(
         configuredObservationSchema.parse({
-          ...(keepsExecutionFields ? snapshot : olderSnapshot),
+          ...snapshot,
           snapshotUri,
           interpretations,
         }),
@@ -227,7 +214,8 @@ export async function captureStudy(
             ? { viteVersion: runtime.viteVersion }
             : {}),
           // A format 8 study says the first execution of the page was not observed.
-          ...(keepsExecutionFields && runtime?.firstExecutionObserved === false
+          ...(studyVersion === SERVER_RENDER_STUDY_VERSION &&
+          runtime?.firstExecutionObserved === false
             ? { firstExecutionObserved: false as const }
             : {}),
           operation:
