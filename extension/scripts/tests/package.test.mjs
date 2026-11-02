@@ -245,7 +245,7 @@ test('the packaged tool inventory records actual pnpm and resolved compiler vers
     esbuild: '0.28.2',
     bundleTarget: 'node20.19',
     vsce: '4.0.0',
-    typescript: '5.9.3',
+    typescript: '6.0.3',
   })
 })
 
@@ -492,12 +492,12 @@ test('an unexpected connection descriptor is rejected even when the other packag
 test('a missing dependency license is rejected instead of silently dropping its notice', async () => {
   // Arrange
   const entries = new Map(original)
-  entries.delete('extension/notices/ws8.21.3/LICENSE')
+  entries.delete('extension/notices/ws8.22.1/LICENSE')
   const path = await writeArchive(entries, 'missing-notice')
   // Act / Assert
   await assert.rejects(
     verifyPackageContent(await readVsixEntries(path)),
-    /Missing package file: notices\/ws8.21.3\/LICENSE/,
+    /Missing package file: notices\/ws8.22.1\/LICENSE/,
   )
 })
 
