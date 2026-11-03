@@ -8,7 +8,7 @@ const PARENT_SEGMENT_PLACEHOLDER = '%00PARENT%00'
  * `(pages-dir-node)`, so a library module reached as `../../packages/q/a.js`
  * and `../../../packages/q/a.js`, or in the node and browser layers, looked
  * identical. `webpack-internal` URLs keep the layer and the module path as
- * written (only leading `./` is dropped); every other URL keeps `href`.
+ * written (only leading `./` is dropped) together with their query and hash; every other URL keeps `href`.
  *
  * @param url - Emitted or CDP script URL.
  * @returns Comparable identity string, or undefined when the URL is invalid.
@@ -27,11 +27,13 @@ function scriptIdentity(url: string): string | undefined {
       )
       .join('/')
     // Reuse URL percent-encoding so encoded and raw spellings stay equal
-    const encoded = new URL(`webpack-internal:///${protectedPath}`).pathname
+    const parsed = new URL(`webpack-internal:///${protectedPath}`)
+    const encoded = parsed.pathname
       .slice(1)
       .split(PARENT_SEGMENT_PLACEHOLDER)
       .join('..')
-    return `webpack-internal:///${layer}${encoded}`
+    // Keep query and hash: `?x=1` and `?x=2` are different modules
+    return `webpack-internal:///${layer}${encoded}${parsed.search}${parsed.hash}`
   } catch {
     return undefined
   }

@@ -630,3 +630,18 @@ test('library module URLs differing in webpack layer or ../ depth are different 
     true,
   )
 })
+
+test('webpack-internal URLs differing only in query or hash are different scripts', () => {
+  // value card: protects=a stop never binds to a module spelled with another ?query or #hash; fails_when=identity drops search or hash; no_claim=runtime pause matching end to end
+  // Arrange
+  const base = 'webpack-internal:///(ssr)/./a.js'
+  // Act / Assert
+  assert.equal(sameScriptUrl(`${base}?x=1`, `${base}?x=2`), false)
+  assert.equal(sameScriptUrl(`${base}#h1`, `${base}#h2`), false)
+  assert.equal(sameScriptUrl(`${base}?x=1`, base), false)
+  assert.equal(sameScriptUrl(`${base}?x=1#h`, `${base}?x=1#h`), true)
+  assert.equal(
+    sameScriptUrl(`${base}?x=1`, 'webpack-internal:///(ssr)/a.js?x=1'),
+    true,
+  )
+})
