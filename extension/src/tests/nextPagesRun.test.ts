@@ -1052,6 +1052,60 @@ test('a server stop in an API route or _document is refused before any developme
   assert.deepEqual(refused, [notStarted, notStarted])
 })
 
+// Value: protects=a server stop in a Pages API route of a workspace that also holds an App folder is refused before the development server starts without claiming a Pages run: no router in the details, and neither the message nor the recovery points at getServerSideProps or getStaticProps, which an App entry does not have; fails_when=the early refusal carries router pages or the data-function pointer, or the development server is launched; why_new=Cycle 0073 red-team finding (the lexical refusal ran before the entry route is resolved); seam=withAppFolder gives the workspace both routers; no_claim=a Pages entry in a workspace with both routers (it gets the same neutral refusal; the entry route is resolved only after the server starts)
+test('a server stop in pages/api of a workspace with both routers is refused before the server starts without claiming a Pages run', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    sourcePath: 'src/pages/api/hello.ts',
+    operations: SERVER_STOP_AT_ENTRY_LOAD,
+    nextPages: { withAppFolder: true },
+  })
+  // Act
+  const failure = await preparationFailure(harness)
+  // Assert
+  assert.ok(failure instanceof StudyError, String(failure))
+  assert.equal(failure.code, 'NEXT_SERVER_ONLY_STOP')
+  assert.equal(
+    failure.message,
+    'Declared stop src/pages/api/hello.ts:1 is a server stop in an API route under the Pages folder, which runs only on the server. API routes are not supported in this version.',
+  )
+  assert.deepEqual(failure.details, { sideEffects: 'none' })
+  assert.doesNotMatch(
+    `${failure.message} ${failure.recoveryOverride ?? ''}`,
+    /getServerSideProps|getStaticProps/,
+  )
+  assert.match(failure.recoveryOverride ?? '', /Nothing was started/)
+  assert.equal(harness.developmentServerLaunches(), 0)
+  assert.equal(harness.entryChecks.length, 0)
+  assert.equal(harness.launchConfigurations.length, 0)
+})
+
+// Value: protects=a server stop in _document of a workspace that also holds an App folder is refused before the development server starts without claiming a Pages run: no router in the details and no data-function pointer; fails_when=the early refusal carries router pages, or the development server is launched; why_new=Cycle 0073 red-team finding (the lexical refusal ran before the entry route is resolved); seam=withAppFolder gives the workspace both routers; no_claim=the API route wording (the test above)
+test('a server stop in _document of a workspace with both routers is refused before the server starts without claiming a Pages run', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    sourcePath: 'src/pages/_document.tsx',
+    operations: SERVER_STOP_AT_ENTRY_LOAD,
+    nextPages: { withAppFolder: true },
+  })
+  // Act
+  const failure = await preparationFailure(harness)
+  // Assert
+  assert.ok(failure instanceof StudyError, String(failure))
+  assert.equal(failure.code, 'NEXT_SERVER_ONLY_STOP')
+  assert.equal(
+    failure.message,
+    'Declared stop src/pages/_document.tsx:1 is a server stop in the Pages _document file, which runs only on the server. _document is not supported in this version.',
+  )
+  assert.deepEqual(failure.details, { sideEffects: 'none' })
+  assert.doesNotMatch(
+    `${failure.message} ${failure.recoveryOverride ?? ''}`,
+    /getServerSideProps|getStaticProps/,
+  )
+  assert.equal(harness.developmentServerLaunches(), 0)
+  assert.equal(harness.entryChecks.length, 0)
+})
+
 // Value: protects=a server stop on a page component line is refused as client-component with a Pages message (the line also runs in the page's server render and in the browser, where Codebook observes it: declare participant "browser"), router pages and sideEffects unknown, not the App Router text; fails_when=the stop is accepted, the App Router wording "runs only in the browser" is given, or the details lack router; no_claim=a real client compile (the browser module is written by the harness)
 test('a server stop on a page component line is refused as client-component with the Pages wording', async (context) => {
   // Arrange

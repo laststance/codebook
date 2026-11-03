@@ -3934,7 +3934,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /**
    * Refuses a server stop in `_document` or under the Pages folder's `api/` before the development server starts: no server stop is valid there in either router, so nothing needs to run to know it, and the refusal reports `details.sideEffects` `none`.
    * Called by {@link prepareOwned} for a Next run in a workspace with a Pages folder, before {@link DevelopmentServerAdapter.start}. A browser stop in these files is refused later, after the route resolved ({@link refuseServerOnlyPagesStop}).
-   * @throws `NEXT_SERVER_ONLY_STOP` saying API routes and `_document` are not supported in this version (an API route adds the pointer to the page's data function), with `details.router` `pages` and `details.sideEffects` `none`.
+   * Only a workspace with no App folder (router kind `pages`, {@link readNextRouterKind}) is known to run a Pages route before the start; with both routers the entry route is resolved only after the server compiled, so the refusal claims no router and points at no data function.
+   * @throws `NEXT_SERVER_ONLY_STOP` saying API routes and `_document` are not supported in this version. In a workspace with a Pages folder and no App folder it carries `details.router` `pages` and `details.sideEffects` `none`, and an API route adds the pointer to the page's data function; with both routers it carries `details.sideEffects` `none` alone and no pointer.
    * @example
    * await this.refuseLexicalPagesServerStops() // throws for a server stop in src/pages/api/hello.ts
    */
@@ -3942,6 +3943,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const folder = await findNextRouteFolder(this.options.workspace, 'pages')
     this.alive()
     if (!folder) return
+    // With an App folder beside the Pages folder the entry may be an App route, which has no Pages data function to point at.
+    const pagesRun =
+      (await readNextRouterKind(this.options.workspace)) === 'pages'
+    this.alive()
     for (const stop of configuredStops(this.definition.configuration)) {
       if (stop.participant !== 'server') continue
       const reason = nextServerOnlyFileReason(stop.source.path, folder)
@@ -3950,6 +3955,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           kind: 'lexical',
           place: `${stop.source.path}:${stop.source.line}`,
           reason,
+          pagesRun,
         })
     }
   }
