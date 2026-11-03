@@ -3246,11 +3246,11 @@ test('an Update that meets a marker nobody owns while another window holds the c
   }
 })
 
-/** Waits until a change of the window's own marker has given this answer, polling as {@link waitForEnd} does; it returns at the limit either way, so the test's assertion names what was missing. */
+/** Waits until a change of the window's own marker has given this answer, polling as {@link waitForEnd} does; it returns at the limit either way, so the test's assertion names what was missing; the limit is a safety net far above the attempt's own bound (20 claim attempts, each stretched by a slow disk), the wait ends on the recorded answer. */
 async function waitForMarkerAnswer(
   window: { markerChanges: Array<{ answer?: boolean | 'threw' }> },
   answer: boolean,
-  limitMs = 6_000,
+  limitMs = 120_000,
 ): Promise<void> {
   const deadline = Date.now() + limitMs
   while (
@@ -3417,7 +3417,7 @@ test('Update pressed again in the same window while its earlier update’s marke
   }
 })
 
-// Value: protects=other editor windows after a window closes while the removal of its marker waits for its next attempt; fails_when=the closing window leaves that attempt to a timer that never runs, so its marker stays on disk as a running update and refuses every other window until the run's bound has passed; why_new=Cycle 0046 second ship, red team RT3; seam=the delay before the next attempt, set longer than the test
+// Value: protects=other editor windows after a window closes while the removal of its marker waits for its next attempt; fails_when=the closing window leaves that attempt to a timer that never runs, so its marker stays on disk as a running update and refuses every other window until the run's bound has passed; why_new=Cycle 0046 second ship, red team RT3; seam=the delay before the next attempt, set longer than the test; no_claim=the claim attempts of the first removal are bounded by the product (20 attempts), which a slow disk stretches but this test no longer races
 test('a window that closes while the removal of its marker waits for its next attempt makes that attempt as it closes, and the marker leaves the disk with the window', async () => {
   // Arrange: a claim on the marker held by a window of another machine, and an update whose end could not remove its marker.
   const wiki = await openWikiWindow({
@@ -3432,7 +3432,13 @@ test('a window that closes while the removal of its marker waits for its next at
     wiki.setFreshness(CURRENT)
     await wiki.publish('b'.repeat(64))
     await waitForEnd(wiki.status)
+    // The first attempt gives up after its claim attempts, however slow each disk call is; the wait ends on that recorded answer, the long limit being only a safety net.
     await waitForMarkerAnswer(wiki, false)
+    assert.equal(
+      wiki.markerChanges[0]?.answer,
+      false,
+      'the first removal attempt must have failed on the held claim before the claim is freed',
+    )
     await rm(claimDirectory, { recursive: true })
 
     // Act
@@ -4143,7 +4149,7 @@ test('a window that closes within a stopped watch’s bound keeps that watch’s
   }
 })
 
-// Value: protects=other windows and this window's later presses after a stopped watch's bound, on every output the learner updated; fails_when=the claim of a run on another output clears the timer of the first output's reservation, so this window never removes that reservation from the disk at the watch bound; why_new=Cycle 0046 /ship red team finding R7; seam=the watch bound, 3 seconds instead of 15 minutes
+// Value: protects=other windows and this window's later presses after a stopped watch's bound, on every output the learner updated; fails_when=the claim of a run on another output clears the timer of the first output's reservation, so this window never removes that reservation from the disk at the watch bound; why_new=Cycle 0046 /ship red team finding R7; seam=the watch bound, 3 seconds instead of 15 minutes; no_claim=how long after the bound the removal takes on a slow disk
 test('the reservation a stopped watch left on one Wiki output leaves the disk at its watch bound, also after an update of another output began in the meantime', async () => {
   // Arrange: the watch bound is 3 seconds; a watch on the first output is stopped, then the setting names a second output, whose update begins and is stopped too.
   const progress: CancellableProgress[] = []
@@ -4173,10 +4179,17 @@ test('the reservation a stopped watch left on one Wiki output leaves the disk at
       `${wiki.outputDirectory}.update-run.json`,
     )
 
-    // Act: the watch bound of both stopped watches passes, the second one's half a second ago.
+    // Act: the watch bound of both stopped watches passes; the removals then run on the real disk, so the test waits until both reservations have left it (the limit is only a safety net), never for a fixed time after the bound.
     await new Promise((resolveWait) =>
-      setTimeout(resolveWait, secondEndedAtMs + 3_500 - Date.now()),
+      setTimeout(resolveWait, secondEndedAtMs + 3_000 - Date.now()),
     )
+    const waitLimitAtMs = Date.now() + 30_000
+    while (
+      Date.now() < waitLimitAtMs &&
+      ((await isOnDisk(`${wiki.outputDirectory}.update-run.json`)) ||
+        (await isOnDisk(`${secondOutput}.update-run.json`)))
+    )
+      await new Promise((resolveWait) => setTimeout(resolveWait, 20))
 
     // Assert
     assert.deepEqual(
