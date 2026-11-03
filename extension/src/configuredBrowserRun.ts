@@ -1331,6 +1331,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.options.workspace,
       nextPackage,
       stop.source.path,
+      this.abort.signal,
     )
     if (!library) return false
     // Only a Pages app runs a Pages route, so only there is a library build frozen; an App Router app (or one with no route folder) keeps the outside-package refusal before anything starts. An app with both routers is refused too: its entry route is known only after the server started.

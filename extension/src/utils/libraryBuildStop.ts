@@ -1,5 +1,5 @@
 import { constants, type Dirent } from 'node:fs'
-import { open, opendir, readFile, realpath, stat } from 'node:fs/promises'
+import { open, opendir, realpath } from 'node:fs/promises'
 import { SourceMap } from 'node:module'
 import {
   basename,
@@ -166,16 +166,28 @@ function isInside(root: string, path: string): boolean {
 }
 
 /**
- * Reads the `name` of a folder's `package.json`.
+ * Reads the `name` of a folder's `package.json` without ever blocking on a non-regular file.
+ *
+ * Why it exists: detection runs before the freeze's deadline exists, so a `package.json` that is a FIFO must not hang the read. Called by {@link libraryOfFile} for each ancestor folder of the stop file.
  * @param folder - An absolute folder.
- * @returns The valid npm name, or `undefined` for a missing, unreadable, oversized or nameless `package.json`.
+ * @returns The valid npm name, or `undefined` for a missing, unreadable, non-regular, oversized or nameless `package.json`.
+ * @example
+ * await readPackageName('/repo/packages/core') // => '@scope/core'
  */
 async function readPackageName(folder: string): Promise<string | undefined> {
   const file = join(folder, 'package.json')
+  let handle: Awaited<ReturnType<typeof open>> | undefined
   try {
-    if ((await stat(file)).size > LIBRARY_PACKAGE_JSON_LIMIT_BYTES)
+    // O_NONBLOCK makes opening a FIFO return at once instead of waiting for a writer.
+    handle = await open(file, constants.O_RDONLY | constants.O_NONBLOCK)
+    const info = await handle.stat()
+    if (!info.isFile() || info.size > LIBRARY_PACKAGE_JSON_LIMIT_BYTES)
       return undefined
-    const parsed: unknown = JSON.parse(await readFile(file, 'utf8'))
+    // Read from the same handle, one byte past the limit to notice growth after the stat.
+    const buffer = Buffer.alloc(LIBRARY_PACKAGE_JSON_LIMIT_BYTES + 1)
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
+    if (bytesRead > LIBRARY_PACKAGE_JSON_LIMIT_BYTES) return undefined
+    const parsed: unknown = JSON.parse(buffer.toString('utf8', 0, bytesRead))
     const name =
       typeof parsed === 'object' && parsed !== null && 'name' in parsed
         ? parsed.name
@@ -185,6 +197,8 @@ async function readPackageName(folder: string): Promise<string | undefined> {
       : undefined
   } catch {
     return undefined
+  } finally {
+    await handle?.close()
   }
 }
 
@@ -208,6 +222,7 @@ async function linksTo(
  * @param repositoryRoot - The opened repository's root.
  * @param nextPackage - The resolved Next app.
  * @param stopPath - The repository-relative stop file.
+ * @param signal - The run's abort signal, checked between ancestor folders.
  * @returns The library when the file lies outside the app, inside the repository both lexically and by real path, inside a folder with a named `package.json` that the app folder's or the repository root's `node_modules/<name>` resolves to by real path; `undefined` otherwise (the caller keeps the `outside-package` refusal).
  * @example
  * const library = await detectLibraryPackage(root, nextPackage, 'packages/core/src/a.ts')
@@ -217,6 +232,7 @@ export async function detectLibraryPackage(
   repositoryRoot: string,
   nextPackage: LibraryAppFolder,
   stopPath: string,
+  signal?: AbortSignal,
 ): Promise<LibraryPackage | undefined> {
   // A path that is absolute or climbs is no repository path.
   if (isAbsolute(stopPath) || normalize(stopPath).split(sep)[0] === '..')
@@ -236,7 +252,7 @@ export async function detectLibraryPackage(
       toPosix(relative(root, realFile)) !== toPosix(normalize(stopPath))
     )
       return undefined
-    return await libraryOfFile(root, nextPackage, realFile)
+    return await libraryOfFile(root, nextPackage, realFile, signal)
   } catch {
     return undefined
   }
@@ -247,10 +263,13 @@ async function libraryOfFile(
   root: string,
   nextPackage: LibraryAppFolder,
   realFile: string,
+  signal?: AbortSignal,
 ): Promise<LibraryPackage | undefined> {
   let folder = dirname(realFile)
   // The walk ends at the repository root, which is the last folder tried.
   while (isInside(root, folder)) {
+    // A stopped run leaves the walk (caught by the caller as no library).
+    signal?.throwIfAborted()
     const name = await readPackageName(folder)
     if (name !== undefined) {
       const linked =
