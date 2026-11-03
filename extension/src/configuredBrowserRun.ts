@@ -172,7 +172,10 @@ import {
   type BreakLocationsOnTheWay,
   type MappedBreakLocation,
 } from './utils/breakLocationLinesOnTheWay'
-import { canonicalDefinition } from './utils/canonicalDefinition'
+import {
+  canonicalDefinition,
+  withCanonicalPackageRoot,
+} from './utils/canonicalDefinition'
 import { captureReplayDebugSnapshot } from './utils/captureReplayDebugSnapshot'
 import { causeRootsFor } from './utils/causeRootsFor'
 import {
@@ -11157,7 +11160,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
   }
   /**
-   * The definition the run resource and `runtime.json` show: prepared texts as `[pending]`, masked or plain, with the canonical hash.
+   * The definition the run resource and `runtime.json` show: prepared texts as `[pending]`, masked or plain, and the canonical `packageRoot` ({@link withCanonicalPackageRoot}), with the canonical hash.
    * `[pending]` is a view state only; it is in no hashed form.
    * @example
    * this.servedDefinition().configuration.initialInputs?.[0]?.text // => '[pending]' before the control is resolved
@@ -11172,10 +11175,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       return this.definition
     return {
       ...this.definition,
-      configuration: redactPreparedConfiguration(
-        this.definition.configuration,
-        this.preparedStates,
-        'view',
+      // The served packageRoot is the canonical folder the hash covers, so an alias run's configuration and configurationHash agree.
+      configuration: withCanonicalPackageRoot(
+        redactPreparedConfiguration(
+          this.definition.configuration,
+          this.preparedStates,
+          'view',
+        ),
+        this.nextPackageView().nextPackageRoot,
       ),
       configurationHash: canonical.hash,
     }

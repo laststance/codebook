@@ -125,6 +125,59 @@ test('a getStaticProps stop of a Pages app below the repository root saves as fo
   assert.deepEqual(replayedAfter.variables, replayedBefore.variables)
 })
 
+// protects=help step "verify the manifest's configurationHash and accepted configuration before input" for an aliased packageRoot: the run resource serves the canonical folder, so its configuration hashes to configurationHash and the manifest body to its hash; fails_when=the served configuration keeps the declared alias while configurationHash covers the target path (an agent that verifies them refuses a valid run); no_claim=configurations with prepared texts, whose served form shows view marks by design
+test('a symlinked alias packageRoot run serves the target folder, so the served configuration and manifest match their hashes', async (context) => {
+  // Arrange
+  const options = nestedPagesOptions({
+    decoyRoot: true,
+    declared: 'links/web',
+  })
+  // Act
+  const { run } = await capturePagesServerRun(
+    context,
+    options,
+    'getStaticProps',
+  )
+  const view = run.service.record(run.receipt).runtime!.view()
+  const { hash: manifestHash, ...manifestBody } = view.manifest!
+  // Assert
+  assert.equal(
+    'packageRoot' in view.definition.configuration &&
+      view.definition.configuration.packageRoot,
+    'examples/react/nextjs',
+  )
+  assert.equal(
+    sha256(JSON.stringify(view.definition.configuration)),
+    view.definition.configurationHash,
+  )
+  assert.equal(sha256(JSON.stringify(manifestBody)), manifestHash)
+})
+
+// protects=the same agreement for an alias of the repository root, which is a root run: the served configuration carries no packageRoot, as its hash and the saved format 8 study; fails_when=the served configuration keeps the alias while the hash covers the configuration without the field; no_claim=nested aliases (test above)
+test('a packageRoot that links to the repository root serves no packageRoot, so the served configuration and manifest match their hashes', async (context) => {
+  // Arrange
+  const options: PagesServerRunOptions = {
+    packageRoot: '.',
+    packageApp: { declared: 'links/root' },
+    sourcePath: PAGES_SERVER_PAGE_PATH,
+  }
+  // Act
+  const { run } = await capturePagesServerRun(
+    context,
+    options,
+    'getServerSideProps',
+  )
+  const view = run.service.record(run.receipt).runtime!.view()
+  const { hash: manifestHash, ...manifestBody } = view.manifest!
+  // Assert
+  assert.equal('packageRoot' in view.definition.configuration, false)
+  assert.equal(
+    sha256(JSON.stringify(view.definition.configuration)),
+    view.definition.configurationHash,
+  )
+  assert.equal(sha256(JSON.stringify(manifestBody)), manifestHash)
+})
+
 // protects=AC 3/E10: a packageRoot that is a symlinked alias inside the repository runs and the study saves the target's canonical path; fails_when=the alias is refused, the stop is judged outside the package, or the alias is saved; no_claim=an alias that leaves the repository (resolver tests)
 test('a symlinked alias packageRoot runs the target app and saves the target path in format 9', async (context) => {
   // Arrange
