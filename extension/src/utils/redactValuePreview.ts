@@ -257,8 +257,9 @@ function readPreviewMembers(preview: string): PreviewMember[] {
     const enclosing = enclosingQuotedText(match.index)
     if (enclosing !== undefined && match[1] !== undefined) continue
     const valueStart = match.index + match[0].length
+    const memberKey = match[1] ?? match[2] ?? match[3] ?? ''
     members.push({
-      key: match[1] ?? match[2] ?? match[3] ?? '',
+      key: memberKey,
       index: match.index,
       valueStart,
       // A value inside a string never runs past the string's closing quote.

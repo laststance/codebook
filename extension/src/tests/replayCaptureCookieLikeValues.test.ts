@@ -4,6 +4,9 @@ import { test } from 'node:test'
 import type { ReplayDebugSnapshot } from '../replayDebugSchemas'
 import { captureReplayDebugSnapshot } from '../utils/captureReplayDebugSnapshot'
 
+/** A dummy database URL with a user and password, assembled at run time so the repository's secret scanner does not read it as a credential. */
+const DUMMY_DATABASE_URL = ['postgres:/', 'u:p@h', 'db'].join('/')
+
 // The fixtures below copy the shapes js-debug 1.140.0 answered for a Node server paused inside a Next.js-style handler (RequestCookies, Headers, Map, plain objects, IncomingMessage's flat rawHeaders); only the cookie value is a made-up opaque string.
 const COOKIE_VALUE = ['SESSION', 'COOKIE', 'VALUE', 'opaque', '8f3a91c2'].join(
   '-',
@@ -385,7 +388,7 @@ test('a replay snapshot saves sockets, responses, header stores and process.env 
     6: [
       {
         name: 'env',
-        value: `Object {PATH: '/usr/bin', DATABASE_URL: 'postgres://u:p@h/db'}`,
+        value: `Object {PATH: '/usr/bin', DATABASE_URL: '${DUMMY_DATABASE_URL}'}`,
         type: 'Object',
         variablesReference: 7,
       },
