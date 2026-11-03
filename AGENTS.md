@@ -1,6 +1,6 @@
 # codebook agent instructions
 
-Single entry point for every coding agent; Codex and Claude Code (v2.1.281+) load it as project instructions. Agent instructions live here: `CLAUDE.md`, `.claude/CLAUDE.md` or `CLAUDE.local.md` in repo or any directory above would replace this file for Claude Code.
+Single entry point for every coding agent; Codex and Claude Code (v2.1.281+) load it as project instructions. Keep agent instructions here: a `CLAUDE.md`, `.claude/CLAUDE.md` or `CLAUDE.local.md` in the repo or any directory above makes Claude Code read that file instead.
 
 ## Mandatory entry
 
@@ -22,7 +22,7 @@ PNG = product to build:
   - Tasks: numbered checklist, one line each (source, defect, what closes it); close with "fixed in <sha>" or "evidence: <one line>". Finding during bug-fix cycle = one more task.
   - Near GitHub's 65,536-character limit: continue list in one pinned comment.
 - **PR** = results (gate, CI, native QA summary) + Issue reference.
-- **Issue closing comment** = outcome + every carried defect; next bug-fix Issue, written before other work, copies that list. Bug-fix cycle states nothing carried (`/spec` starts feature cycle); defects ship review limit records are named, next cycle is bug-fix.
+- **Issue closing comment** = outcome + every carried defect; next bug-fix Issue copies that list and comes before other work. Bug-fix cycle states nothing carried (`/spec` starts feature cycle); defects ship review limit records are named, next cycle is bug-fix.
 - **CHANGELOG.md** = what each version changes for users.
 - **Tag `docs-archive-2026-10-20`** = every record and document removed here.
 
@@ -42,7 +42,7 @@ Fix every carried defect in next cycle; sole exception: [ship review limit](#del
   - Run `pnpm --dir extension update --latest '!@types/vscode' '!@vscode/*' '!@types/node' '!typescript'`, then move `@types/node` to newest version of pinned Node major and `typescript` to newest 6.x.
   - No TypeScript 7: native port has no JS API for ESLint.
   - Fallow always follows latest release, majors included: catching up later costs more than scoring small step.
-  - VS Code packages, `engines` and Node pins stay: newer VS Code API than Cursor's breaks extension in Cursor.
+  - VS Code packages, `engines` and Node pins stay as they are: newer VS Code API than Cursor's breaks extension in Cursor.
   - Keep exact pins, fix breakages, pass checks, commit on cycle branch.
   - Fallow or c8 version change follows [Fallow](#commands-and-checks) retake rules.
   - Small steps keep breaking changes cheap, security fixes immediate. High `pnpm audit` advisory found mid-cycle = defect of that cycle.
@@ -107,17 +107,17 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 
 **Background work.**
 
-- `node extension/scripts/watch-background.mjs` (from Claude Code's start directory, else `--project <it>`) lists this session's (`CLAUDE_CODE_SESSION_ID`) background tasks and subagents with last-output time; marks silent > 20 min, never finished/stopped subagents; shell's row stays marked after end (task notification authoritative).
+- `node extension/scripts/watch-background.mjs` (from Claude Code's start directory, else `--project <it>`) lists this session's (`CLAUDE_CODE_SESSION_ID`) background tasks and subagents with last-output time; marks silent > 20 min, never marks finished/stopped subagents; shell's row stays marked after end (task notification authoritative).
 - Review subagent silent 20 min → stop, redispatch on narrower scope.
 - Subagent stopped by API safety filter → redispatch at once, same brief, fallback model.
 - Waiting more than few minutes → tell owner what awaited and since when.
 
 **Ship review limit.**
 
-- Installed `/ship`: max three fixing cycles; no fourth, no counter reset after handoff, no round relabeled repair. Limit is `/ship`'s alone (one round long; full convergence would stall delivery).
+- Installed `/ship`: max three fixing cycles; no fourth, no counter reset after handoff, no round relabeled repair. Limit is `/ship`'s alone (one round is long; full convergence would stall delivery).
 - Third cycle still has findings (`converged:false`) → feature and bug-fix cycles alike, per defect rule:
-  - fix every last-round Critical/Major finding and cheap in-scope lower ones; Critical never merges open (one PR cannot close holds merge until fixed); answer rest Skip, named once in PR;
-  - record only still-open Critical/Major defects in GitHub Issue (next cycle's tasks): defects of `/ship` rounds PR cannot close (e.g. Major finding whose fix/proof needs unknown root cause or native check); overrides no-carry for those only;
+  - fix every last-round Critical/Major finding and cheap in-scope lower ones; Critical never merges open (one the PR cannot close holds the merge until fixed); answer rest Skip, named once in PR;
+  - record only still-open Critical/Major defects in GitHub Issue (next cycle's tasks): defects of `/ship` rounds the PR cannot close (e.g. Major finding whose fix/proof needs unknown root cause or native check); overrides no-carry for those only;
   - merge after required CI + exact-HEAD gate, reporting `converged:false` in PR.
 
 **Skills** (read each installed SKILL.md at invocation; map guides, copies no workflow):
@@ -136,7 +136,7 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 - Changed public behavior → `/document-release`.
 - Pause/handoff → `/context-save`, then `/context-restore`, reconciled with repo and Issue.
 - Ordinary coding = agent's work; docs-only changes need only applicable reviews; failed experiment may inform next cycle before release.
-- Browser QA (Reader DOM included) proves no native pixels, DAP targeting, MCP integration or installed VSIX behavior; missing tool → report as missing coverage.
+- Browser QA alone (Reader DOM included) proves no native behavior, e.g. pixels, DAP targeting, MCP integration, installed VSIX behavior; missing tool → report as missing coverage.
 
 **Skills under the cycle rule** (each runs as installed):
 
@@ -212,7 +212,7 @@ No decision log; delivery chain and ship limit: [Delivery](#delivery).
 
 ## Authority and completion
 
-- PRODUCT_GOAL.md owns outcomes, its contracts details, its [Design target](PRODUCT_GOAL.md#design-target) visual target; cycle Issue = gaps, cycle decisions, plan, next action; PR = results. Later explicit owner direction wins.
+- PRODUCT_GOAL.md owns outcomes, its contracts the details, its [Design target](PRODUCT_GOAL.md#design-target) the visual target; cycle Issue = gaps, cycle decisions, plan, next action; PR = results. Later explicit owner direction wins.
 - Write owner rule as rule itself into required read it governs.
 - PRODUCT_GOAL.md changes only on explicit owner direction, with evidence and concrete alternative; then raise goal version, say why. Route within goal = agent's.
 - Keep all active goals while selecting one increment. Change accepted behavior only on explicit owner direction. Routine choices in authorized phase need no repeated permission; open gap doesn't authorize leaving it.
@@ -250,7 +250,7 @@ Delivery commands (`--help` prints usage, exit codes, `E_…` codes; refusal's f
 | `node extension/scripts/post-trial-evidence.mjs <run-log.md> --manifest artifacts/<cycle>/<host>-<run>` | after native check |
 | `node extension/scripts/merge-pr.mjs <n>` (`--dry-run`) | merge, after CI and exact-HEAD gate |
 
-Formatting: `pnpm --dir extension format` / `format:check` and lint-staged hook run `bun fmt` (Bun of `.bun-version` on `PATH`, installed by `format.yml`, checked by gate; gives Prettier 3.9.8 result on this tree). Never format README with it: hand-edit README sentences.
+Formatting: `pnpm --dir extension format` / `format:check` and lint-staged hook run `bun fmt` (Bun of `.bun-version` on `PATH`, installed by `format.yml`, checked by gate; reads `.prettierrc.json` and `.prettierignore`; gives Prettier 3.9.8 result on this tree). Never format README with it: hand-edit README sentences.
 
 **Gate and focused runs.**
 
@@ -284,7 +284,7 @@ Formatting: `pnpm --dir extension format` / `format:check` and lint-staged hook 
 
 **Windows job** (`storage-locks-windows.yml`).
 
-- One test file at a time (`--test-concurrency=1`; product bounds PowerShell process-start reads at 3 s); new test of kind job runs joins its run command, path filter and `workflowPins.test.mjs` pin (script tests as `scripts/<name>`).
+- One test file at a time (`--test-concurrency=1`; product bounds PowerShell process-start reads at 3 s); new test of a kind the job runs joins its run command, path filter and `workflowPins.test.mjs` pin (script tests as `scripts/<name>`).
 - Path filter omits `extension/src/constants.ts` and `extension/src/runtimeSupport/constants.ts` on purpose; weekly run (Mondays 05:17 UTC, default branch) and manual runs cover them.
 
 **Reader DOM** (`reader-dom.yml`).
@@ -486,6 +486,7 @@ Single-context: one root `GLOSSARY.md`, created lazily. Product outcomes live in
 - Command (`.codex/restore-product-context.mjs`; Node, Git, POSIX shell) prints ≤ 10,000 characters: re-entry rule first ([Mandatory entry](#mandatory-entry) 2), scope and pause sentence, then this file's `## Mandatory entry` and `## Standing directions` verbatim. Why: Claude Code injects longer hook context only as 2,000-character preview + file path.
   - Sections outgrowing limit → prints rule, points to AGENTS.md.
   - Missing or renamed section (CRLF line ends, trailing spaces after heading tolerated) → rule still printed; names what's missing on stderr; exit 0.
+  - Restores no editing gate or Stop continuation.
 - Collaborators: each enables hooks, trusts project, reviews hook in Codex [`/hooks`](https://learn.chatgpt.com/docs/hooks) after every definition change (may disable it alone there), checks fresh `/compact` shows `CODEBOOK: RESTORE PRODUCT CONTEXT AFTER COMPACTION` (proves delivery, not reading or understanding).
 - Files alone establish no activation; repo changes no global Codex setting; Codex observation verifies no Claude Code delivery.
-- Test: `node --test .codex/restore-product-context.test.mjs` (CI too): rule within first 2,000 characters, whole output ≤ 10,000 (~1,500 tokens, under Codex's `additionalContextLimit` of 4,000), both sections verbatim; any other failure (e.g. unreadable AGENTS.md, malformed hook input) exits nonzero with stderr, no fail-closed guarantee.
+- Test: `node --test .codex/restore-product-context.test.mjs` (CI too): rule within first 2,000 characters, whole output ≤ 10,000 (~1,500 tokens, under Codex's `additionalContextLimit` of 4,000), both sections verbatim; missing/renamed section = no error (exit 0, above); any other failure (e.g. unreadable AGENTS.md, malformed hook input) exits nonzero with stderr, no fail-closed guarantee.
