@@ -575,9 +575,47 @@ function jsonEscaped(name: string): string {
   return JSON.stringify(name).slice(1, -1)
 }
 
-/** Tells whether a map's raw text mentions the stop file's name, as a cheap check before the strict parse. */
+/**
+ * Lists the spellings a map's raw text may use for the stop file's name.
+ *
+ * Why it exists: the strict parse resolves a `sources` entry written percent-encoded (`my%20core.ts`) or with `\uXXXX` escapes for non-ASCII characters, so the cheap raw-text check before it must look for those spellings too, or the map is skipped as unrelated.
+ * Called by {@link mentionsFile} and {@link oversizedMapMentions}.
+ * @param name - The stop file's plain base name.
+ * @returns Distinct needles: plain, JSON-escaped, `encodeURI`, `encodeURIComponent`, and the lowercase and uppercase `\uXXXX` forms.
+ * @example
+ * ```ts
+ * nameSpellings('café.ts') // includes 'caf\\u00e9.ts' and 'caf%C3%A9.ts'
+ * ```
+ */
+function nameSpellings(name: string): string[] {
+  const escapeUnits = (upper: boolean): string => {
+    let out = ''
+    // Walk UTF-16 units (not code points): a JSON writer escapes each surrogate separately.
+    for (let i = 0; i < name.length; i++) {
+      const unit = name.charCodeAt(i)
+      if (unit <= 0x7f) {
+        out += name[i]
+        continue
+      }
+      const hex = unit.toString(16).padStart(4, '0')
+      out += `\\u${upper ? hex.toUpperCase() : hex}`
+    }
+    return out
+  }
+  const spellings = [
+    name,
+    jsonEscaped(name),
+    encodeURI(name),
+    encodeURIComponent(name),
+    escapeUnits(false),
+    escapeUnits(true),
+  ]
+  return [...new Set(spellings)]
+}
+
+/** Tells whether a map's raw text mentions the stop file's name in any spelling of {@link nameSpellings}, as a cheap check before the strict parse. */
 function mentionsFile(text: string, name: string): boolean {
-  return text.includes(name) || text.includes(jsonEscaped(name))
+  return nameSpellings(name).some((needle) => text.includes(needle))
 }
 
 /**
@@ -592,7 +630,8 @@ async function oversizedMapMentions(
   signal: AbortSignal,
   spend: Spend,
 ): Promise<boolean> {
-  const needles = [Buffer.from(name), Buffer.from(jsonEscaped(name))]
+  // The chunk overlap below covers the longest spelling.
+  const needles = nameSpellings(name).map((spelling) => Buffer.from(spelling))
   const overlap = Math.max(...needles.map((needle) => needle.length)) - 1
   const handle = await open(
     join(await realpath(root), relative(root, mapPath)),
