@@ -296,3 +296,148 @@ test('the Pages server entry-load fixture below a decoy root yields the root run
   // Assert
   assert.deepEqual(nested, atRoot)
 })
+
+/** The evidence a pause carries that must not depend on where the app lives. @example pauseEvidence(view.snapshots[0]) */
+function pauseEvidence(pause: {
+  participant: string
+  execution?: string
+  attribution?: string
+  declaredIndex?: number
+  executionIndex?: number
+  values: Record<string, unknown>
+  source: { scriptUrl: string; line: number }
+}) {
+  return plain({
+    participant: pause.participant,
+    execution: pause.execution,
+    attribution: pause.attribution,
+    declaredIndex: pause.declaredIndex,
+    executionIndex: pause.executionIndex,
+    values: pause.values,
+    scriptUrl: pause.source.scriptUrl,
+    line: pause.source.line,
+  })
+}
+
+/** Options that place a harness app at the repository root or below a decoy root. */
+function placement(nested: boolean) {
+  return nested
+    ? { packageRoot: PACKAGE_ROOT, packageApp: { decoyRoot: true } }
+    : {}
+}
+
+/**
+ * Runs the App server entry-render fixture at the root or below a decoy root and reads its pause evidence.
+ * @example await appServerEvidence(context, true)
+ */
+async function appServerEvidence(context: TestContext, nested: boolean) {
+  const harness = await entryRenderHarness(context, placement(nested))
+  const prepared = harness.run.prepare()
+  await armedEntry(harness)
+  harness.server!.hit({ route: '/dashboard' })
+  const pause = await waitUntil(
+    () => harness.run.view().participants.server?.snapshot,
+    'the published entry-render pause',
+  )
+  const evidence = pauseEvidence(pause)
+  harness.setDocumentReadyState('complete')
+  await harness.run.continue('server', pause.pause)
+  await prepared
+  return evidence
+}
+
+/**
+ * Runs a browser stop reached by a click on the App stand-in, at the root or below a decoy root, and reads its pause evidence.
+ * @example await appBrowserStopEvidence(context, true)
+ */
+async function appBrowserStopEvidence(context: TestContext, nested: boolean) {
+  const harness = await configuredRuntimeHarness(context, undefined, [], {
+    ...placement(nested),
+    operations: { operations: [CLICK], stopOperations: [1] },
+  })
+  await harness.run.prepare()
+  harness.run.action('op-1', OPERATION_ACTION)
+  const stop = await waitUntil(() => {
+    const view = harness.run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.participants.browser.snapshot
+  }, 'the browser stop')
+  const evidence = pauseEvidence(stop)
+  await harness.run.continue('browser', stop.pause)
+  return evidence
+}
+
+/**
+ * Runs the Pages run of a server stop at the entry load and a browser stop in the page component after a click (the fixture of nextPagesServerRun.test.ts), at the root or below a decoy root, and reads the browser pause evidence.
+ * @example await pagesBrowserStopEvidence(context, true)
+ */
+async function pagesBrowserStopEvidence(context: TestContext, nested: boolean) {
+  const click: RepositoryOperation = {
+    kind: 'click',
+    title: 'Next page',
+    selector: 'a[href="/?page=2"]',
+  }
+  const harness = await pagesServerRun(context, {
+    ...placement(nested),
+    additionalStops: [
+      {
+        line: 2,
+        column: 1,
+        inspections: [{ path: 'count', mode: 'value', required: true }],
+      },
+    ],
+    operations: {
+      operations: [click],
+      stopOperations: [0, 1],
+      stopParticipants: ['server', 'browser'],
+    },
+  })
+  const prepared = harness.run.prepare()
+  await armedEntry(harness)
+  harness.server!.hit(
+    hitOnLine(PAGES_SERVER_RETURN_LINE, {
+      fixture: 'get-server-side-props-before-await',
+    }),
+  )
+  const serverPause = await waitUntil(
+    () => harness.run.view().participants.server?.snapshot,
+    'the server pause',
+  )
+  harness.setDocumentReadyState('complete')
+  await harness.run.continue('server', serverPause.pause)
+  await prepared
+  harness.run.action('op-1', OPERATION_ACTION)
+  const stop = await waitUntil(() => {
+    const view = harness.run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.participants.browser?.snapshot
+  }, 'the browser pause')
+  return pauseEvidence(stop)
+}
+
+// protects=E17: the App server entry-render fixture below a decoy root yields the root run evidence apart from the path prefix; fails_when=a reader takes the decoy root or the module id keeps the prefix; no_claim=the Pages fixtures
+test('the App server entry-render fixture below a decoy root yields the root run evidence apart from the path prefix', async (context) => {
+  // Arrange / Act
+  const atRoot = await appServerEvidence(context, false)
+  const nested = await appServerEvidence(context, true)
+  // Assert
+  assert.deepEqual(nested, atRoot)
+})
+
+// protects=E17: the App browser stop reached by a click below a decoy root yields the root run evidence apart from the path prefix; fails_when=a reader takes the decoy root or the module id keeps the prefix; no_claim=the Pages fixtures
+test('the App browser stop reached by an operation below a decoy root yields the root run evidence apart from the path prefix', async (context) => {
+  // Arrange / Act
+  const atRoot = await appBrowserStopEvidence(context, false)
+  const nested = await appBrowserStopEvidence(context, true)
+  // Assert
+  assert.deepEqual(nested, atRoot)
+})
+
+// protects=E17: the Pages browser stop in the page component below a decoy root yields the root run evidence apart from the path prefix; fails_when=a reader takes the decoy root or the module id keeps the prefix; no_claim=the Pages server fixture
+test('the Pages browser stop reached by an operation below a decoy root yields the root run evidence apart from the path prefix', async (context) => {
+  // Arrange / Act
+  const atRoot = await pagesBrowserStopEvidence(context, false)
+  const nested = await pagesBrowserStopEvidence(context, true)
+  // Assert
+  assert.deepEqual(nested, atRoot)
+})
