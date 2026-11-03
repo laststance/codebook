@@ -194,11 +194,17 @@ export async function captureStudy(
   // The saved study carries the canonical redacted configuration (secret and unresolved prepared texts masked), never the declared texts.
   // The states are frozen at the first capture: a text still unresolved then stays masked in every later checkpoint, so the saved configuration and its hash never change (ENG-3).
   record.canonicalTextStates ??= [...(runtime?.preparedTextStates ?? [])]
-  const canonicalConfiguration = redactPreparedConfiguration(
+  const redactedConfiguration = redactPreparedConfiguration(
     record.configuration,
     record.canonicalTextStates,
     'canonical',
   )
+  // E10: a nested run saves the canonical repository-relative real path of its folder (a symlinked alias saves its target); the declared value stays in the run's evidence journal.
+  const canonicalConfiguration =
+    runtime?.nextPackageRoot !== undefined &&
+    redactedConfiguration.version === 3
+      ? { ...redactedConfiguration, packageRoot: runtime.nextPackageRoot }
+      : redactedConfiguration
   // Fixed by the sealed configuration; the runtime's format 8 pause fields are written only in format 8.
   const studyVersion = studyFormatOfConfiguration(canonicalConfiguration)
   const configured =

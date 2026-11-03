@@ -1135,6 +1135,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Gives the canonical folder of a Next app below the repository root for the run view, so the study writer saves it as `packageRoot` (E10).
+   * Called by the run view; a root run (or a run without Next) contributes nothing.
+   * @returns `{ nextPackageRoot }`, or an empty object for a root run.
+   * @example this.nextPackageView() // => { nextPackageRoot: 'examples/react/nextjs' }
+   */
+  private nextPackageView(): { nextPackageRoot?: string } {
+    return this.nextPackage && !this.nextPackage.isRoot
+      ? { nextPackageRoot: this.nextPackage.packageRootRelative }
+      : {}
+  }
+
+  /**
    * Resolves the Next app once, then refuses stop files outside it, both before any process starts.
    * Called at the start of preparation for a `next-dev-webpack` run; the refusal order is the real path, the Next installation, then stops outside the package.
    * @returns The resolved package.
@@ -11499,6 +11511,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       profile: REPOSITORY_BROWSER_PROFILE,
       definition: this.servedDefinition(),
       preparedTextStates: [...this.preparedStates],
+      ...this.nextPackageView(),
       manifest: this.currentManifest(),
       applicationOrigin: this.origin,
       applicationPortSource: this.portSource,
