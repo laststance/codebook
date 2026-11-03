@@ -2,11 +2,19 @@ import {
   OUTPUT_REDACTION_BLOCK_DROP_LIMIT_CHARS,
   OUTPUT_REDACTION_CARRY_CHARS,
   OUTPUT_REDACTION_END_MARKER_TAIL_CHARS,
+  OUTPUT_REDACTION_FIRST_WORD_HOLD_CHARS,
   OUTPUT_REDACTION_HOLD_LIMIT_CHARS,
+  OUTPUT_REDACTION_PREFIX_HOLD_MIN_CHARS,
   REDACTION_MASK,
 } from '../constants'
 
+import { isSecretName } from './isSecretName'
+import {
+  maskSecretShapesInOutput,
+  startsWithCredential,
+} from './maskSecretShapesInOutput'
 import { redactSecretText } from './redactSecretText'
+import { maskShapedLiterals, type ShapedLiteralsCarry } from './secretShapes'
 
 /** One channel's streaming redactor: feed chunks to `write`, call `end` once at the stream's end. */
 export type OutputRedactor = {
@@ -56,25 +64,186 @@ const SECRET_START_MARKERS = [
   'ASIA',
   '-----BEGIN',
 ]
+/** The marks of a URL's query and fragment: the secret name and value that follow one may come with the next chunk, and a query holds no blank, so the run ends where the query does. */
+const QUERY_OR_FRAGMENT_MARK = /[?#]/
+
+/** The bracket that closes a prompt's choices (`(y/n)`, `[Y/n]`) right before its question mark. */
+const CLOSING_BRACKET = /[)\]]/
+
 /** A trailing scheme (`postgres:`, `https:/`) whose `//user:password@` may come with the next chunk; a scheme is at most 32 characters, which also keeps the search linear on a long run. */
 const TRAILING_SCHEME = /[A-Za-z][A-Za-z0-9+.-]{0,31}:\/{0,2}$/
+/** What a trailing line without its break may still become once the rest of it arrives: a Cookie or Authorization value (an `=`, a `;`, a quote that opens a printed list element, the words themselves). Such a line waits for its break, so a pair or an element split over writes is judged whole. */
+const PARTIAL_LINE_MAY_BE_SHAPED =
+  /['"`=;]|authoriz|cookie|^\s*(?:basic|negotiate|ntlm|token|digest)\b/i
+
+/** The Cookie and Authorization words that mark a line as a credential header, wherever they stand in it. */
+const CREDENTIAL_LABEL_WORD = /cookie|authoriz/i
+
+/** The header labels whose first letters a chunk boundary can cut (`Coo` + `kie:`), in lowercase; matched at a word start, which a hyphen also is (`X-Cookie`). */
+const CREDENTIAL_LABEL_WORDS: readonly string[] = [
+  'cookie',
+  'set-cookie',
+  'authorization',
+  'proxy-authorization',
+]
+
+/** The Authorization schemes that start a line which is a credential by itself, in lowercase. `Bearer` is left out: its first characters are held by {@link SECRET_START_MARKERS}. */
+const CREDENTIAL_SCHEME_WORDS: readonly string[] = [
+  'basic',
+  'negotiate',
+  'ntlm',
+  'token',
+  'digest',
+]
+
+/** A line's trailing letters and hyphens are read back no further than the longest label. */
+const LONGEST_LABEL_CHARS = Math.max(
+  ...CREDENTIAL_LABEL_WORDS.map((label) => label.length),
+)
+
 /** A line no private-key body can be: it holds a character outside base64 and whitespace. */
 const NOT_KEY_BODY = /[^A-Za-z0-9+/=\s]/
 
 /**
- * Says whether a trailing run without whitespace may still become a secret: it contains a secret start, ends in the first characters of one, or ends in a URL scheme.
+ * Finds where the last line of a text starts: right after its last line break, a newline or a lone carriage return (a progress line rewrites itself with one and is complete at it).
+ * @param text - The text seen so far.
+ * @returns The index of the last line's first character; `0` without a break, `text.length` when the text ends in one.
+ * @example
+ * lastLineStart('a=1\nb=2') // => 4
+ * lastLineStart('[==>  ] 40%\r') // => 12
+ */
+function lastLineStart(text: string): number {
+  return Math.max(text.lastIndexOf('\n'), text.lastIndexOf('\r')) + 1
+}
+
+/**
+ * Says whether a text is the first letters, or all, of one of the words.
+ * Called by {@link endsInLabelStart} and {@link mayBecomeShapedLine}.
+ * @param words - Lowercase words.
+ * @param candidate - A text in lowercase.
+ * @returns `true` for a non-empty text that is a prefix of one of the words.
+ * @example startsAnyWord(['cookie'], 'coo') // => true
+ */
+function startsAnyWord(words: readonly string[], candidate: string): boolean {
+  return candidate !== '' && words.some((word) => word.startsWith(candidate))
+}
+
+/**
+ * Says whether a line ends in the first letters of a Cookie or Authorization label, so the next chunk may complete it.
+ * Why: `[info] Coo` + `kie: sid=…` is one header; the line shows no quote, `=`, `;` or label word yet, so nothing else holds it. A single trailing letter holds the line only when it can begin a label (`c`, `a`, `s` or `p`, so `request headers -> C` waits and a leak of `ookie: sid=…` is closed, at the cost of a prompt such as `Option C` waiting for the next write); a letter that begins no label (`Type X`) is released at once. Called by {@link mayBecomeShapedLine}.
+ * @param line - The text after the last line break.
+ * @returns `true` when its trailing letters and hyphens, or what follows a hyphen in them, begin `cookie`, `set-cookie`, `authorization` or `proxy-authorization` in any letter case.
+ * @example
+ * endsInLabelStart('request headers -> C') // => true
+ * endsInLabelStart('x-api-Authori') // => true
+ * endsInLabelStart('Type X') // => false
+ * endsInLabelStart('compiled 12 modules') // => false
+ */
+function endsInLabelStart(line: string): boolean {
+  let runStart = line.length
+  // Read back over the trailing letters and hyphens by hand, no further than the longest label: a long word is not rescanned from every letter.
+  while (
+    runStart > 0 &&
+    line.length - runStart < LONGEST_LABEL_CHARS &&
+    /[A-Za-z-]/.test(line.charAt(runStart - 1))
+  )
+    runStart--
+  const words = line.slice(runStart).toLowerCase().split('-')
+  // A label starts the run or follows a hyphen in it.
+  return words.some((_word, position) =>
+    startsAnyWord(CREDENTIAL_LABEL_WORDS, words.slice(position).join('-')),
+  )
+}
+
+/**
+ * Says whether a text is one word of at most {@link OUTPUT_REDACTION_FIRST_WORD_HOLD_CHARS} characters, with or without indentation.
+ * Called by {@link mayBecomeShapedLine} and {@link createOutputRedactor}.
+ * @param partialLine - The text after the last line break.
+ * @returns `true` for a short run of non-blank characters that nothing follows.
+ * @example
+ * isOneShortWord('  loading') // => true
+ * isOneShortWord('server ready') // => false
+ */
+function isOneShortWord(partialLine: string): boolean {
+  const word = partialLine.trimStart()
+  return (
+    word !== '' &&
+    partialLine.length <= OUTPUT_REDACTION_FIRST_WORD_HOLD_CHARS &&
+    !/\s/.test(word)
+  )
+}
+
+/**
+ * Says whether an unfinished line may still become a Cookie or Authorization line once the rest of it arrives.
+ * Why: such a line waits for its break, so a pair, a label or an element split over writes is judged whole; called by {@link holdStart}. A line of plain words, or one plain word, is not held: it is released at once, so output keeps its order around a debugger stop.
+ * @param partialLine - The text after the last line break.
+ * @returns `true` when it holds a quote, `=` or `;`, a Cookie or Authorization word or scheme ({@link PARTIAL_LINE_MAY_BE_SHAPED}), when it ends in the first letters of a header label ({@link endsInLabelStart}), or when its only word begins an Authorization scheme or is a secret cookie name that an `=` may follow.
+ * @example
+ * mayBecomeShapedLine('port=3000') // => true
+ * mayBecomeShapedLine('[info] Coo') // => true
+ * mayBecomeShapedLine('Bas') // => true
+ * mayBecomeShapedLine('sid') // => true
+ * mayBecomeShapedLine('loading') // => false
+ * mayBecomeShapedLine('server ready') // => false
+ */
+function mayBecomeShapedLine(partialLine: string): boolean {
+  if (PARTIAL_LINE_MAY_BE_SHAPED.test(partialLine)) return true
+  if (endsInLabelStart(partialLine)) return true
+  if (!isOneShortWord(partialLine)) return false
+  const word = partialLine.trimStart()
+  return (
+    startsAnyWord(CREDENTIAL_SCHEME_WORDS, word.toLowerCase()) ||
+    isSecretName(word)
+  )
+}
+
+/**
+ * Says whether a trailing run may be cut inside the name of a query or fragment parameter, or just before it.
+ * Why: the `code=…` or `token=…` after a `?` or `#` may come with the next chunk, and a name cut in two (`?to` + `ken=…`) is not a secret name in either half. A run that starts with the mark, or holds characters after one (`app.html?tok`, `#access_to`), is held whether or not a `/` comes before it. A run that ends in a bare mark is held only when it reads like a path or a URL (a `/` before the mark): a word such as `Ready?` or `C#` is no URL, and a prompt such as `(y/n)?` or `[Y/n]?` closes with a bracket, so holding either would move it behind later output. The marks are found by one linear search, so a long run is never rescanned from every start. Called by {@link mayBecomeSecret}.
+ * @param run - The trailing run without whitespace.
+ * @returns `true` when the run starts with a `?` or `#`, holds one that more characters follow, or ends in one that a `/` (and no closing bracket right before it) precedes.
+ * @example
+ * mayBeCutInQuery('?to') // => true
+ * mayBeCutInQuery('app.html?tok') // => true
+ * mayBeCutInQuery('/cb?') // => true
+ * mayBeCutInQuery('Ready?') // => false
+ * mayBeCutInQuery('(y/n)?') // => false
+ */
+function mayBeCutInQuery(run: string): boolean {
+  const mark = run.search(QUERY_OR_FRAGMENT_MARK)
+  if (mark === -1) return false
+  // The mark starts the run or more characters follow it: the parameter name may end anywhere in them.
+  if (mark === 0 || mark < run.length - 1) return true
+  // A bare mark ends the run: a prompt closes with a bracket before it, and a word has no slash.
+  return !CLOSING_BRACKET.test(run.charAt(mark - 1)) && run.includes('/')
+}
+
+/**
+ * Says whether a trailing run without whitespace may still become a secret: it contains a secret start, ends in the first characters of one (at least {@link OUTPUT_REDACTION_PREFIX_HOLD_MIN_CHARS} of them), ends in a URL scheme, or holds the `?` or `#` of a query or fragment whose `code=…` or `token=…` may follow ({@link mayBeCutInQuery}).
  * Why: only such a run waits for the next chunk; any other text is released at once, so output keeps its arrival order and time around a debugger stop.
  * @param run - The trailing run of the text seen so far.
  * @returns `true` when the run must wait for more text.
  * @example
  * mayBecomeSecret('listening') // => false
+ * mayBecomeSecret('Ready?')    // => false
  * mayBecomeSecret('tokenghp')  // => true
+ * mayBecomeSecret('/cb?co')    // => true
+ * mayBecomeSecret('?to')       // => true
  */
 function mayBecomeSecret(run: string): boolean {
-  if (SECRET_START.test(run) || TRAILING_SCHEME.test(run)) return true
+  if (
+    SECRET_START.test(run) ||
+    TRAILING_SCHEME.test(run) ||
+    mayBeCutInQuery(run)
+  )
+    return true
   // A chunk boundary inside a start leaves its first characters at the run's end.
   return SECRET_START_MARKERS.some((marker) => {
-    for (let length = 2; length < marker.length; length++)
+    for (
+      let length = OUTPUT_REDACTION_PREFIX_HOLD_MIN_CHARS;
+      length < marker.length;
+      length++
+    )
       if (run.endsWith(marker.slice(0, length))) return true
     return false
   })
@@ -91,12 +260,17 @@ function mayBecomeSecret(run: string): boolean {
  */
 function holdStart(text: string): number {
   let start = text.length
+  // A trailing line that may become a Cookie or Authorization value waits for its line break (at most the hold limit, see `release`).
+  const lineStart = lastLineStart(text)
+  if (lineStart < text.length && mayBecomeShapedLine(text.slice(lineStart)))
+    start = lineStart
   // A trailing run without whitespace waits only if it may still become a secret.
   // Scanned backwards by hand: a regular expression would rescan a long run from every start.
   let runStart = text.length
   while (runStart > 0 && !/\s/.test(text.charAt(runStart - 1))) runStart--
+  // The line's earlier part waits too, so a line is judged whole, not in two halves.
   if (runStart < text.length && mayBecomeSecret(text.slice(runStart)))
-    start = runStart
+    start = Math.min(start, runStart)
   // `Bearer` and its token may arrive in separate chunks.
   const bearer = /\bBearer(?:[ \t]+\S*)?$/i.exec(text)
   if (bearer) start = Math.min(start, bearer.index)
@@ -223,8 +397,32 @@ function maskHeldStart(held: string): string {
 }
 
 /**
+ * Removes from the output of a judged text the start that an earlier write already released.
+ * Called by {@link createOutputRedactor} when a line that began with a word released earlier is judged again with the rest of its line.
+ * @param output - The text the judgement of the first characters of the text released.
+ * @param releasedHead - The characters at the start of that text that were already released, or `''`.
+ * @param coveredChars - How many characters at the start of the text the output stands for.
+ * @returns `''` when the output stands for no more than the released start; the output without that start when it begins with it; the output as it is when a mask replaced the start (what was released cannot be taken back).
+ * @example
+ * withoutReleasedHead('port=3000\n', 'port', 10) // => '=3000\n'
+ * withoutReleasedHead('[masked]\n', 'theme', 24) // => '[masked]\n'
+ * withoutReleasedHead('the', 'theme', 3) // => ''
+ */
+function withoutReleasedHead(
+  output: string,
+  releasedHead: string,
+  coveredChars: number,
+): string {
+  if (releasedHead === '') return output
+  if (coveredChars <= releasedHead.length) return ''
+  return output.startsWith(releasedHead)
+    ? output.slice(releasedHead.length)
+    : output
+}
+
+/**
  * Makes the stateful redactor of one output channel (stdout or stderr), so a secret split over chunks is still masked before the output is cut, split or saved.
- * Only a trailing run that may still become a secret waits for the next chunk (at most {@link OUTPUT_REDACTION_HOLD_LIMIT_CHARS}); past that, a run holding a secret start fails closed (released as {@link REDACTION_MASK}, the rest of that token or private-key block dropped) and any other run is released with a short carry. Called by {@link captureProcessOutput} and the development server launcher for each channel, before any truncation or event split.
+ * Only a trailing run that may still become a secret waits for the next chunk (at most {@link OUTPUT_REDACTION_HOLD_LIMIT_CHARS}); past that, a run holding a secret start, or a line that still looks like a credential, fails closed (released as {@link REDACTION_MASK}, the rest of that token, line or private-key block dropped) and any other run is released with a short carry. A one-word partial line that may not become a secret is released at once and kept as context, so the rest of its line is judged with it. Called by {@link captureProcessOutput} and the development server launcher for each channel, before any truncation or event split.
  * @returns A fresh {@link OutputRedactor}; one per channel, never shared.
  * @example
  * const redactor = createOutputRedactor()
@@ -233,39 +431,120 @@ function maskHeldStart(held: string): string {
  */
 export function createOutputRedactor(): OutputRedactor {
   let held = ''
-  // Set after an overflow: the rest of the oversized token (until whitespace) or private-key block is dropped; `held` stays empty meanwhile.
-  let dropping: 'token' | 'block' | undefined
+  // What the shape rules carry between two released runs: whether the output ended right after a quoted secret header name (a printed `rawHeaders` list), how many `[` of a header value's array are still open, and the position the next element takes in its list.
+  let carry: ShapedLiteralsCarry = {
+    afterHeaderName: false,
+    headerArrayDepth: 0,
+    listIndex: undefined,
+  }
+  // The characters at the start of `held` that were already released as an unfinished one-word line (`theme` before `=dark; sid=…`): the line is judged whole, and what it releases leaves them out.
+  let releasedHead = ''
+  // Set after an overflow: the rest of the oversized token (until whitespace), line (until its break) or private-key block is dropped; `held` stays empty meanwhile.
+  let dropping: 'token' | 'line' | 'block' | undefined
   const block: DroppedBlock = { droppedChars: 0, tail: '', atLineStart: false }
 
   /**
+   * Masks the Cookie, Authorization and header-list shapes of released lines, then the credential patterns of {@link redactSecretText}.
+   * @param text - Text safe to release.
+   * @returns The text with every such credential masked.
+   * @example shapeAndRedact('sid=abc; theme=dark\n') // => '[masked]\n'
+   */
+  const shapeAndRedact = (text: string): string => {
+    const shaped = maskSecretShapesInOutput(
+      text,
+      carry.afterHeaderName,
+      REDACTION_MASK,
+      carry.headerArrayDepth,
+      carry.listIndex,
+    )
+    carry = {
+      afterHeaderName: shaped.afterHeaderName,
+      headerArrayDepth: shaped.headerArrayDepth,
+      listIndex: shaped.listIndex,
+    }
+    return redactSecretText(shaped.text)
+  }
+
+  /**
+   * Says whether an unfinished line outgrew the hold while it still looks like a credential: it names a Cookie or Authorization header, starts with a cookie pair or an Authorization scheme and its credential, or sits where the value of a secret header name is expected.
+   * Why: such a line cannot be released in pieces, since a value cut by a release escapes both halves; any other long line (a JSON document with quotes) is released with a short carry.
+   * @param line - The text after the last line break.
+   * @param atLineStart - What the shape rules carried where the line starts.
+   * @returns `true` when the line must fail closed.
+   * @example looksLikeCredential('Cookie: sid=abc', { afterHeaderName: false, headerArrayDepth: 0, listIndex: undefined }) // => true
+   */
+  const looksLikeCredential = (
+    line: string,
+    atLineStart: ShapedLiteralsCarry,
+  ): boolean =>
+    CREDENTIAL_LABEL_WORD.test(line) ||
+    startsWithCredential(line.trimStart()) ||
+    atLineStart.afterHeaderName ||
+    maskShapedLiterals(
+      line,
+      atLineStart.afterHeaderName,
+      REDACTION_MASK,
+      atLineStart.headerArrayDepth,
+      atLineStart.listIndex,
+    ).afterHeaderName
+
+  /**
    * Releases what can be released of `text`, holding a possible secret and failing closed past the hold limit.
-   * @param text - Held text plus new text, outside any drop.
+   * @param text - Held text plus new text, outside any drop; it may start with the already released {@link releasedHead}.
    * @returns The redacted text safe to release now.
    * @example release('ok ghp_abc') // => 'ok ' (the token is held)
    */
   const release = (text: string): string => {
+    const emittedHead = releasedHead
+    releasedHead = ''
     const split = holdStart(text)
     const released = text.slice(0, split)
     held = text.slice(split)
-    if (held.length <= OUTPUT_REDACTION_HOLD_LIMIT_CHARS)
-      return redactSecretText(released)
+    /** Masks a start of `text` that is judged now, leaving out the characters an earlier write released. */
+    const emit = (covered: string): string =>
+      withoutReleasedHead(shapeAndRedact(covered), emittedHead, covered.length)
+    if (held.length <= OUTPUT_REDACTION_HOLD_LIMIT_CHARS) {
+      const partialLine = text.slice(lastLineStart(text))
+      // A one-word unfinished line is released now; it stays as context, so `=dark; sid=…` that follows is judged with its first name.
+      if (split === text.length && isOneShortWord(partialLine)) {
+        held = partialLine
+        releasedHead = partialLine
+      } else if (split < emittedHead.length) {
+        // The hold starts inside the characters released earlier, which stay the start of what is held.
+        releasedHead = emittedHead.slice(split)
+      }
+      return emit(released)
+    }
+    // A line that may be a Cookie or Authorization line cannot be judged in pieces: a value cut by a release escapes both halves.
+    const isCredentialLine = looksLikeCredential(
+      text.slice(lastLineStart(text)),
+      maskShapedLiterals(
+        released,
+        carry.afterHeaderName,
+        REDACTION_MASK,
+        carry.headerArrayDepth,
+        carry.listIndex,
+      ),
+    )
     // No secret start in the run: release it, keeping a short carry so a start cut by the release is still seen whole.
-    if (!SECRET_START.test(held)) {
+    if (!isCredentialLine && !SECRET_START.test(held)) {
       const run = held
       const cut = carryStart(run)
       held = run.slice(cut)
-      return redactSecretText(released + run.slice(0, cut))
+      return emit(released + run.slice(0, cut))
     }
-    // Fail closed: a possible secret outgrew the hold, so mask it and drop the rest of that token or block.
+    // Fail closed: a possible secret outgrew the hold, so mask it and drop the rest of that token, line or block.
     const overflow = held
     held = ''
-    const masked = redactSecretText(released) + REDACTION_MASK
-    // Only a private-key header (or one not yet closed) opens a block; any other run is a token, dropped to the next whitespace.
+    const masked = emit(released) + REDACTION_MASK
+    // The dropped text may have held elements of a list, so the position of the next one is no longer known; reset after the release, whose own scan sets the position again.
+    carry = { ...carry, listIndex: undefined }
+    // Only a private-key header (or one not yet closed) opens a block; a credential line is dropped to its break, any other run is a token dropped to the next whitespace.
     if (
       !PRIVATE_KEY_BEGIN.test(overflow) &&
       !UNFINISHED_BEGIN_AT_START.test(overflow)
     ) {
-      dropping = 'token'
+      dropping = isCredentialLine ? 'line' : 'token'
       return masked
     }
     dropping = 'block'
@@ -294,14 +573,34 @@ export function createOutputRedactor(): OutputRedactor {
       dropping = undefined
       return release(after)
     }
+    if (dropping === 'line') {
+      // The line's break is released with the text after it.
+      const lineEnd = text.search(/[\r\n]/)
+      if (lineEnd === -1) return ''
+      dropping = undefined
+      return release(text.slice(lineEnd))
+    }
     return release(held + text)
   }
 
   const end = (): string => {
+    const emittedHead = releasedHead
+    releasedHead = ''
     const rest = dropping === undefined ? held : ''
     held = ''
     dropping = undefined
-    return maskHeldStart(rest)
+    const shaped = maskSecretShapesInOutput(
+      rest,
+      carry.afterHeaderName,
+      REDACTION_MASK,
+      carry.headerArrayDepth,
+      carry.listIndex,
+    )
+    return withoutReleasedHead(
+      maskHeldStart(shaped.text),
+      emittedHead,
+      rest.length,
+    )
   }
 
   return { write, end }

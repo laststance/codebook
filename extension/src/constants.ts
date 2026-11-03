@@ -2182,7 +2182,7 @@ export const PANE_RETURN_PRESS_WINDOW_MS = 300
 /** A seek less than this far before a recorded stop presents that stop: recorded stops sit at fractional receipt milliseconds (122,822.02), and a driver that rounds down must not land in the gap before it. */
 export const PLAYBACK_SEEK_STOP_SNAP_MS = 1
 
-/** Insertion mode identifiers of pinned parse5 8.0.1; used by {@link readHtmlStartTags} for current select rules and proven absent-end handling. */
+/** Insertion mode identifiers of pinned parse5 8.1.0; used by {@link readHtmlStartTags} for current select rules and proven absent-end handling. */
 export const HTML_PARSER_IN_BODY_MODE = 6
 export const HTML_PARSER_IN_TABLE_MODE = 8
 export const HTML_PARSER_IN_CAPTION_MODE = 10
@@ -2217,7 +2217,7 @@ export const HTML_PARSER_ABSENT_END_MODE_TABLE_NAMES = new Map<
 ])
 /** Ends the body rules act on although no element of their name is open, so {@link readHtmlStartTags} never skips them: `</p>` inserts an empty p and `</br>` a br, and in foreign content each first leaves it. */
 export const HTML_PARSER_ABSENT_END_BODY_NAMES = new Set(['br', 'p'])
-/** The names of the HTML standard's svg case table (37 names, as Chrome 151 adjusts them) that pinned parse5 8.0.1's table (36) lacks, each with its svg case; {@link readHtmlStartTags} writes a start or end tag of one in svg case in svg content, as parse5 does for the others. */
+/** The names of the HTML standard's svg case table (37 names, as Chrome 151 adjusts them) that pinned parse5 8.1.0's table (36) lacks, each with its svg case; {@link readHtmlStartTags} writes a start or end tag of one in svg case in svg content, as parse5 does for the others. */
 export const HTML_PARSER_SVG_CASE_NAMES_PARSE5_LACKS = new Map([
   ['fedropshadow', 'feDropShadow'],
 ])
@@ -2288,6 +2288,26 @@ export const SUMMARY_CHOICE_DROPPED_NOTICE_PREFIX =
 /** The text that replaces a secret value or a secret-named value in every captured fact, variable, snapshot, output and cause ({@link redactSecretText}). */
 export const REDACTION_MASK = '[masked]'
 
+/** The fewest characters of a credential token an Authorization-shaped string needs ({@link isAuthorizationShape}): a shorter word after `Basic`, `Token` or `Negotiate` reads as prose (`Token expired`, `Basic usage`), not as a credential; a longer plain word (`Basic information`) reads as prose too, unless the token has a digit, a symbol or both letter cases. */
+export const AUTHORIZATION_CREDENTIAL_MIN_CHARS = 8
+
+/** The class names the replay capture saves as their class name only, never their members: the cookie and header stores (`RequestCookies`, `ReadonlyRequestCookies`, `ResponseCookies`, `Headers`) and the sockets and responses that hold a request's raw credentials (`Socket`, `TLSSocket`, `ServerResponse`) ({@link isCollapsedClassName}). */
+export const COLLAPSED_CLASS_NAMES: ReadonlySet<string> = new Set([
+  'RequestCookies',
+  'ReadonlyRequestCookies',
+  'ResponseCookies',
+  'Headers',
+  'Socket',
+  'TLSSocket',
+  'ServerResponse',
+])
+
+/** The longest text the credential-shape scanners read in one piece ({@link redactValuePreview}, {@link maskShapedLiterals}): four times {@link REPLAY_DEBUG_TEXT_LIMIT_CHARS}, so every text the capture saves fits whole, and equal to Node's default limit for all request headers together, so no Cookie or Authorization header is longer. The debugger capture saves a longer raw value as its class name and never scans it; a quoted element longer than this is not read, so it is masked whole. */
+export const SECRET_SHAPE_SCAN_LIMIT_CHARS = 4 * REPLAY_DEBUG_TEXT_LIMIT_CHARS
+
+/** The longest class name the capture and the saved-snapshot mask read from the start of a value preview when the debugger reported no type (`Socket {…}`, `Array(4) […]`): a longer identifier-like run is the value's own text, not a class, and the variable is saved as `Object`. */
+export const PREVIEW_CLASS_NAME_MAX_CHARS = 64
+
 /** What the run resource shows for a prepared text whose control is not yet resolved; a view state only, never stored or hashed ({@link redactPreparedTexts}). */
 export const PREPARED_TEXT_PENDING_MARK = '[pending]'
 
@@ -2340,11 +2360,17 @@ export const SECRET_FRAME_OBSERVER_INTERVALS_MAX = 100
 /** The `sourceURL` the run marks the secret frame gate's own page expressions with, so the script journal leaves them out. */
 export const SECRET_FRAME_SOURCE_URL = 'codebook-secret-frame-gate'
 
-/** The most characters of an incomplete trailing token or private-key block an output redactor holds back; past it the held part is released masked ({@link createOutputRedactor}). 8 KiB. */
+/** The most characters of an incomplete trailing token, private-key block or line an output redactor holds back; past it the held part is released masked when it holds a secret start or a line that still looks like a credential, and with a short carry otherwise ({@link createOutputRedactor}). 8 KiB. */
 export const OUTPUT_REDACTION_HOLD_LIMIT_CHARS = 8_192
 
 /** The characters kept back when an over-long run shows no secret shape is released, so a secret marker cut by the release is still seen whole ({@link createOutputRedactor}). */
 export const OUTPUT_REDACTION_CARRY_CHARS = 16
+
+/** The fewest characters of a secret start (`gh`, `Bea`) that a trailing run must already show before an output redactor holds it for the next write; one letter is far more often a word, and holding it moves a prompt behind later output or a debugger stop ({@link createOutputRedactor}). A Cookie or Authorization label is held from its first letter, since only four letters begin one. */
+export const OUTPUT_REDACTION_PREFIX_HOLD_MIN_CHARS = 2
+
+/** The longest single word of an unfinished output line that an output redactor holds back while it may be the start of an Authorization scheme or a secret cookie name before its `=`, and keeps as context once it is released, so the rest of its line is judged with it ({@link createOutputRedactor}); a cookie name is shorter than this. */
+export const OUTPUT_REDACTION_FIRST_WORD_HOLD_CHARS = 64
 
 /** The characters of a dropped private-key body kept to find an END marker split across chunks ({@link createOutputRedactor}); longer than the longest END marker its bounded label allows (about 106 characters). */
 export const OUTPUT_REDACTION_END_MARKER_TAIL_CHARS = 128

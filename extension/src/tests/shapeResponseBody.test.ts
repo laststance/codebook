@@ -176,3 +176,26 @@ test('a sanitizer that lengthens the body still reports the remaining bytes of t
   assert.ok(shown.endsWith(' … 35808 more bytes'))
   assert.equal(shown.length, 8_192 + ' … 35808 more bytes'.length)
 })
+
+// protects=a redirect the run shows relays no callback code or token from its Location; fails_when=describeRedirectLocation redacts credential prefixes only, so `?code=` and `?token=` values reach the chat and the saved history; no_claim=a credential in a path segment, which has no name
+test('a same-origin redirect shows its path with the code and token values masked and the other values readable', () => {
+  // Arrange
+  const callback = '/login/callback?code=callback-code-8e1b3a65&state=xyz'
+  const reset =
+    // eslint-disable-next-line browser-security/no-credentials-in-query-params -- a seeded test secret that must stay out of every served text.
+    'http://localhost:4100/welcome?token=opaque-token-4f9c2d71&page=2'
+
+  // Act
+  const maskedCallback = describeRedirectLocation(callback, 4100)
+  const maskedReset = describeRedirectLocation(reset, 4100)
+
+  // Assert
+  assert.deepEqual(
+    [maskedCallback, maskedReset],
+    [
+      '/login/callback?code=[masked]&state=xyz',
+      // eslint-disable-next-line browser-security/no-credentials-in-query-params -- a seeded test secret that must stay out of every served text.
+      '/welcome?token=[masked]&page=2',
+    ],
+  )
+})

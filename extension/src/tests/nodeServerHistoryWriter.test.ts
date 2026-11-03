@@ -3,7 +3,10 @@ import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { before, test } from 'node:test'
 
-import { nodeServerHistoryEntrySchema } from '../nodeServerHistorySchemas'
+import {
+  nodeServerHistoryEntrySchema,
+  type NodeServerHistoryEntry,
+} from '../nodeServerHistorySchemas'
 import type { NodeServerHistoryWriter } from '../nodeServerHistoryWriter'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { rehydrateNodeServerEntries } from '../utils/rehydrateServerStopSnapshot'
@@ -16,6 +19,9 @@ import {
   serverStopCapture,
 } from './utils/nodeServerHistoryFixture'
 import { realProcessStart } from './utils/realProcessStart'
+
+/** The mask placeholder, kept out of `label: [masked]` literals so the repository's secret scanner does not read them as credential assignments. */
+const MASK = '[masked]'
 
 // Every start of a history takes the storage lock, which names this process's own start.
 before(async () => {
@@ -518,4 +524,111 @@ test('a source entry whose text does not hash to its name is refused by the sche
 
   // Assert
   assert.equal(parsed.success, false)
+})
+
+// protects=a request path and a redirect location that the callback code mask lengthens past the 2,048-character bound are cut after the mask, so the entry still passes its schema and the history seals complete; fails_when=the writer cuts before it masks (the masked text then exceeds the bound and the entry is refused, failing the history); no_claim=where the cut falls inside the mask placeholder
+test('a request path and a redirect location that the code mask lengthens past 2,048 characters are stored at 2,048 and seal complete', async (context) => {
+  // Arrange
+  const { writer, store, header } = await startServerHistory(context, 1)
+  // 2,047 characters, so the mask of `ab` (to `[masked]`, six characters longer) crosses the bound.
+  const longPath = `/${'b'.repeat(2_038)}?code=ab`
+
+  // Act
+  await writer.appendRequest({
+    elapsedMs: 1,
+    attempt: 1,
+    method: 'GET',
+    path: longPath,
+    bodyBytes: 0,
+  })
+  await writer.appendRequestSent({ elapsedMs: 2, attempt: 1 })
+  // The declared stop is reached, so the capture is complete and only the bound can make the seal partial.
+  await writer.appendStop(
+    serverStopCapture({ declaredStopIndex: 0, hit: 1, line: 2, elapsedMs: 3 }),
+  )
+  await writer.appendResponse({
+    elapsedMs: 4,
+    status: 302,
+    contentType: null,
+    body: '',
+    bodyBytes: 0,
+    readCut: false,
+    location: longPath,
+    requestDurationMs: 2,
+  })
+  await writer.seal({ elapsedMs: 5, reason: 'stopped' })
+  const opened = await store.read(header.studyId)
+  const request = opened.entries.find((entry) => entry.type === 'request')
+  const response = opened.entries.find((entry) => entry.type === 'response')
+
+  // Assert
+  const expectedStored = `/${'b'.repeat(2_038)}?code=[ma`
+  assert.equal(request?.type === 'request' ? request.path : '', expectedStored)
+  assert.equal(
+    response?.type === 'response' ? response.location : '',
+    expectedStored,
+  )
+  assert.equal(writer.appendFailure, undefined)
+  assert.equal(opened.status, 'complete')
+})
+
+// protects=a stop whose top-frame source entry is missing is served with its saved cookie record masked, not as stored; fails_when=the rehydration returns an unrestored snapshot without the saved-history mask; no_claim=the restored branch (the tests above) and the recorded source text
+test('a stop whose source entry is missing still serves its saved cookie record masked', () => {
+  // Arrange
+  const cookieValue = ['opaque', 'session', 'value', '4f9c2d71'].join('-')
+  const text = HANDLER_SOURCE_TEXT
+  const hash = sha256(text)
+  const stop: NodeServerHistoryEntry = {
+    type: 'stop',
+    sequence: 1,
+    elapsedMs: 10,
+    declaredStopIndex: 0,
+    hit: 1,
+    generation: 1,
+    source: { path: 'src/handler.ts', hash, line: 2, column: 1 },
+    frame: { name: 'handler' },
+    facts: {},
+    unavailable: [],
+    debuggerSnapshot: {
+      version: 1,
+      frames: [
+        {
+          name: 'handler',
+          line: 2,
+          column: 1,
+          source: { name: 'src/handler.ts', text: '', hash, line: 2 },
+          scopes: [{ name: 'Local', variables: [0] }],
+        },
+      ],
+      variables: [
+        {
+          name: 'entry',
+          value: `{name: 'sid', value: '${cookieValue}'}`,
+          type: 'Object',
+          children: [1, 2],
+        },
+        { name: 'name', value: "'sid'", type: 'string', children: [] },
+        {
+          name: 'value',
+          value: `'${cookieValue}'`,
+          type: 'string',
+          children: [],
+        },
+      ],
+      limitations: [],
+    },
+  }
+
+  // Act
+  const [served] = rehydrateNodeServerEntries([stop])
+
+  // Assert
+  assert.equal(served?.type, 'stop')
+  assert.equal(JSON.stringify(served).includes(cookieValue), false)
+  const variables =
+    served?.type === 'stop' ? served.debuggerSnapshot.variables : []
+  assert.equal(
+    variables.find((variable) => variable.name === 'value')?.value,
+    MASK,
+  )
 })

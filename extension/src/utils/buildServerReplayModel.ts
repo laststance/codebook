@@ -5,6 +5,7 @@ import type {
 } from '../nodeServerHistorySchemas'
 import type { NodeServerHistorySummary } from '../nodeServerHistoryTypes'
 
+import { maskSavedServerHeader } from './maskSavedServerHeader'
 import { rehydrateNodeServerEntries } from './rehydrateServerStopSnapshot'
 
 /** The entries of a server journal a learner moves through: the request attempt and its withdrawal, output, a stop hit, the response and the request failure. `source` is storage only and `end` ends the timeline, so neither is an event. */
@@ -77,7 +78,8 @@ export function buildServerReplayModel(
   const end = entries.find((entry) => entry.type === 'end')
   return {
     studyId: history.header.studyId,
-    header: history.header,
+    // The header's declared request path is masked again: a history saved before `code` was masked kept the callback code in it, and the Application title reads it.
+    header: maskSavedServerHeader(history.header),
     status: history.status,
     events,
     indexBySequence: new Map(

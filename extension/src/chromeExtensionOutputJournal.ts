@@ -2,13 +2,16 @@ import type { ExtensionStopContext } from './chromeExtensionContracts'
 import {
   EXTENSION_OUTPUT_EVENT_LIMIT,
   PROCESS_OUTPUT_EVENT_LIMIT_CHARS,
+  REDACTION_MASK,
 } from './constants'
+import { maskSecretShapesInOutput } from './utils/maskSecretShapesInOutput'
 import { redactSecretText } from './utils/redactSecretText'
 import { hidePrivateRoots, type CauseRoots } from './utils/sanitizeCause'
+import type { ShapedLiteralsCarry } from './utils/secretShapes'
 
 /**
  * Journals the console output of an extension run's page and service worker as `chrome-extension.output` events, bounded by count and size (C3, ER10).
- * Created by the extension debugger; fed by the DAP `output` events its tracker sees. The text is masked, private roots are hidden, then it is cut, so a secret split by the cut cannot survive; after {@link EXTENSION_OUTPUT_EVENT_LIMIT} events one `chrome-extension.output-dropped` event carries the count of the rest.
+ * Created by the extension debugger; fed by the DAP `output` events its tracker sees. The text is masked (the Cookie, Authorization and header-list shapes first, as in a server's output, so `console.log(document.cookie)` is masked; then the credential patterns), private roots are hidden, then it is cut, so a secret split by the cut cannot survive; after {@link EXTENSION_OUTPUT_EVENT_LIMIT} events one `chrome-extension.output-dropped` event carries the count of the rest.
  *
  * @example
  * const journal = new ExtensionOutputJournal(record, roots)
@@ -18,6 +21,11 @@ import { hidePrivateRoots, type CauseRoots } from './utils/sanitizeCause'
 export class ExtensionOutputJournal {
   private journaled = 0
   private dropped = 0
+  /** Per context: whether its last journaled text ended right after a quoted secret header name or inside its array, how deep that array is and which position the next element of its list takes, so a header list printed over several events keeps its pairing. */
+  private readonly headerListCarry = new Map<
+    ExtensionStopContext,
+    ShapedLiteralsCarry
+  >()
 
   constructor(
     private readonly record: (type: string, detail?: unknown) => unknown,
@@ -36,7 +44,20 @@ export class ExtensionOutputJournal {
       return
     }
     this.journaled += 1
-    const hidden = hidePrivateRoots(redactSecretText(text), this.roots)
+    const carry = this.headerListCarry.get(context)
+    const shaped = maskSecretShapesInOutput(
+      text,
+      carry?.afterHeaderName ?? false,
+      REDACTION_MASK,
+      carry?.headerArrayDepth ?? 0,
+      carry?.listIndex,
+    )
+    this.headerListCarry.set(context, {
+      afterHeaderName: shaped.afterHeaderName,
+      headerArrayDepth: shaped.headerArrayDepth,
+      listIndex: shaped.listIndex,
+    })
+    const hidden = hidePrivateRoots(redactSecretText(shaped.text), this.roots)
     this.record('chrome-extension.output', {
       context,
       text: hidden.slice(0, PROCESS_OUTPUT_EVENT_LIMIT_CHARS),

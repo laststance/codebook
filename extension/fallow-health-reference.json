@@ -1,10 +1,10 @@
 {
   "mode": "measured-istanbul",
   "description": "Budget of the measured health gate (scripts/checkHealth.mjs): the Fallow health findings of the source at sourceRevision, scored with that source's own complete c8 coverage. The checker never writes it; retake it only as AGENTS.md describes.",
-  "sourceRevision": "0cfaf4c065f5a461ebe66d2b9fd242381873d65d",
+  "sourceRevision": "11bf083310833d80cdcca5853dbcdb9420896c3d",
   "baseline": {
     "file": "fallow-health-measured-baseline.json",
-    "sha256": "a09a31d5040e893a13c4ed4c682debb11c9e808fcbf22f6fd7f9f55ccbd8adfc"
+    "sha256": "01a7e1a31f23609bf39411e34f9c405392bdae5e9511a62c10307d1615f6cf00"
   },
   "limits": {
     "maxCyclomatic": 20,
@@ -15,7 +15,7 @@
     "node": "24.22.1",
     "c8": "12.0.0",
     "v8ToIstanbul": "9.3.0",
-    "fallow": "3.37.0"
+    "fallow": "3.38.1"
   },
   "settings": {
     ".node-version": "d9f318747a126ce2247661af67852b185def7789492eabfad7bba322be087c33",
@@ -23,16 +23,16 @@
     "extension/.fallowrc.json": "0540870c2d03e4314d34143f98dc1196537b2d541fb60319a4ae013b5794c5cb"
   },
   "referenceRun": {
-    "recordedOn": "2026-10-30",
-    "tests": 8999,
-    "passed": 8989,
+    "recordedOn": "2026-11-03",
+    "tests": 10565,
+    "passed": 10555,
     "failed": 0,
     "cancelled": 0,
     "skipped": 10,
     "todo": 0,
-    "coverageFiles": 848,
-    "coverageSha256": "9bc43feeb1b44f1291aae2f3acb01cb5cb23815383660f5fd818a776ad410088",
-    "suiteLogSha256": "7f6a10586fc44efb427a2d11990d992a12901b9e231c42c5f47459ceba852aae",
-    "baselineEntries": 216
+    "coverageFiles": 1052,
+    "coverageSha256": "0f61cf863b7e796bee7dd72f5646d8dc12fea80a8a7a237e24bf0cfee81625cd",
+    "suiteLogSha256": "6e655148bf7e279019166c13633bbb6794696dc3b82fa24600176e7834a75421",
+    "baselineEntries": 214
   }
 }

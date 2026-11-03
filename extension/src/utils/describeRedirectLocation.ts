@@ -1,4 +1,4 @@
-import { redactSecretText } from './redactSecretText'
+import { maskSecretQueryValues } from './maskSecretQueryValues'
 
 /** What a redirect to another origin shows instead of its address. */
 const ANOTHER_ORIGIN = '(another origin)'
@@ -8,9 +8,10 @@ const ANOTHER_ORIGIN = '(another origin)'
  * Called by {@link sendDeclaredRequest} for a response that carries `Location`; redirects are never followed.
  * @param location - The `Location` header value.
  * @param port - The declared port; the server's origin is `localhost`, `127.0.0.1` or `[::1]` on it.
- * @returns The path with query and fragment (redacted) for a relative or same-origin location; `(another origin)` otherwise or when unparsable.
+ * @returns The path with query and fragment for a relative or same-origin location, the values of secret query parameters and of `code` masked ({@link maskSecretQueryValues}); `(another origin)` otherwise or when unparsable.
  * @example
  * describeRedirectLocation('http://localhost:4100/login?next=/a', 4100) // => '/login?next=/a'
+ * describeRedirectLocation('/login/callback?code=abc&state=xyz', 4100)  // => '/login/callback?code=[masked]&state=xyz'
  * describeRedirectLocation('https://example.com/', 4100)                // => '(another origin)'
  */
 export function describeRedirectLocation(
@@ -28,6 +29,6 @@ export function describeRedirectLocation(
     Number(target.port || 80) === port &&
     ['localhost', '127.0.0.1', '[::1]'].includes(target.hostname)
   return sameOrigin
-    ? redactSecretText(`${target.pathname}${target.search}${target.hash}`)
+    ? maskSecretQueryValues(`${target.pathname}${target.search}${target.hash}`)
     : ANOTHER_ORIGIN
 }

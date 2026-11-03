@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.2.73.2] - 2026-11-03 (development candidate)
+
+Cycle 0073 ([Issue #188](https://github.com/laststance/codebook/issues/188)), part 1: a security fix. Cookie, session and Authorization values no longer reach a saved replay, the chat or the captured output in plain text, also when a plainly named variable holds them.
+
+**Masked in debugger values, when saved and whenever served.** When Codebook saves a run's debugger values, and again whenever it serves a saved history to the chat or to the replay, it masks these shapes:
+- a `{ name, value }` record whose name is a session cookie name (`sid`, `session`, `JSESSIONID`, `PHPSESSID`, `csrftoken`);
+- a string shaped like a Cookie or `Set-Cookie` header;
+- a string shaped like an Authorization header, and everything after an `Authorization` or `Proxy-Authorization` label whatever its scheme;
+- the value after `Cookie`, `Authorization` or another credential header name in a printed header list such as a request's `rawHeaders`;
+- the value of a secret query parameter or of an OAuth `code` in a URL.
+
+Cookie and header stores, sockets, responses and `process.env` are saved as their class name only. A parent's preview never shows a value its masked child hides. A long string keeps its readable start, with only a credential shape in it masked.
+
+**Masked in output.** The development server's log, test output and Chrome extension output mask the same Cookie, Authorization and header-list shapes, printed cookie records and secret URL values. This also holds when a line arrives split across writes. Only text that may still become a credential waits for the rest of its line; other output is released at once, so it keeps its order around a debugger stop.
+
+**Studies saved earlier.** Studies and histories saved before 0.2.73.2 are masked when Codebook serves them, but their files on disk are not rewritten. To remove a browser study or an Extension replay saved earlier, choose it in **Saved studies** and press **Delete saved study…**. Test replays and Server replays cannot be deleted there yet, so one saved earlier keeps its values on disk, masked whenever Codebook serves it. A saved stop whose value masking makes longer than the saved-text limit is cut at that limit and still replays. A Node server run whose declared request path or body a mask lengthens still records its history.
+
+**Limits.** Codebook recognises the shapes above and nothing else. An opaque secret in a plainly named variable with no secret shape and no secret-named sibling, or printed as ordinary text, stays visible. The editor's native debugger still shows the real values.
+
+**Compatibility.** No MCP API, bundled skill or study format change (MCP API 1.16, skill 1.0.65). Dependencies are updated to their latest compatible versions, with no change you can see.
+
 ## [0.2.73.1] - 2026-11-03 (development candidate)
 
 Cycle 0072 ([Issue #181](https://github.com/laststance/codebook/issues/181)), a bug-fix cycle: the Study workspace comes back with the public commands after a failed run beside editor groups of your own, and after a window reload with Cursor's Agent chat open, with no Close All Editors and no Reload Window.

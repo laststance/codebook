@@ -15,6 +15,7 @@ import {
   type ReplayDebugSnapshot,
 } from './replayDebugSchemas'
 import { sha256 } from './runtimeSupport/utils/sha256'
+import { maskSavedDebugSnapshot } from './utils/maskSavedDebugSnapshot'
 import { stripTerminalControls } from './utils/stripTerminalControls'
 
 const requestSchema = z.object({
@@ -317,10 +318,13 @@ export class ReplayDebugAdapter {
           throw new Error(
             'Historical source must use the owned read-only document provider.',
           )
-        const snapshot = replayDebugSnapshotSchema.parse(value)
-        for (const frame of snapshot.frames)
+        const parsed = replayDebugSnapshotSchema.parse(value)
+        // The recorded source text is checked as it was recorded; the mask never touches it.
+        for (const frame of parsed.frames)
           if (frame.source && sha256(frame.source.text) !== frame.source.hash)
             throw new Error('Recorded debugger source hash mismatch.')
+        // A study saved before the shape rules still holds cookie and credential values: the session serves them masked.
+        const snapshot = maskSavedDebugSnapshot(parsed)
         this.snapshot = snapshot
         this.label = label
         this.sourceDocument = sourceDocument

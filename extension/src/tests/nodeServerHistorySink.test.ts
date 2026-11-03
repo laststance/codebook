@@ -285,6 +285,59 @@ test('a redaction canary in location, failure message, frame name and fact key r
   assert.doesNotMatch(files, /canarycanary123456/)
 })
 
+// protects=a stop's declared string facts reach the history masked by the shape rules even when the capture handed them over unmasked, and a request path and a redirect location keep no callback code; fails_when=the sink stores a Cookie-shaped or Basic-shaped fact display as it came, or the `code` of the request path or the location as it came; no_claim=the debugger snapshot of the stop (savedDebugHistoryMasking tests)
+test('a Cookie-shaped fact, a Basic fact and the code of a request path and a redirect location reach no file of the history', async (context) => {
+  // Arrange
+  const { sink, writer, folder } = await startSink(context)
+  const cookieValue = 'opaque-session-value-4f9c2d71'
+  const basicCredential = 'dXNlcjpwYXNzd29yZHZhbHVl'
+  const callbackCode = 'callback-code-8e1b3a65'
+
+  // Act
+  sink.openRequest(10, {
+    method: 'GET',
+    path: `/login/callback?code=${callbackCode}&state=xyz`,
+    bodyBytes: 0,
+  })
+  sink.markRequestSent(11)
+  sink.stop(
+    12,
+    { declaredStopIndex: 0 },
+    1,
+    debuggerCapture({
+      facts: [
+        {
+          path: 'cookieHeader',
+          mode: 'value',
+          display: `'sid=${cookieValue}; theme=dark'`,
+        },
+        {
+          path: 'basicHeader',
+          mode: 'value',
+          display: `'Basic ${basicCredential}'`,
+        },
+        { path: 'theme', mode: 'value', display: "'theme=dark'" },
+      ],
+    }),
+  )
+  sink.response(20, {
+    ...RESPONSE,
+    status: 302,
+    location: `/welcome?code=${callbackCode}&page=2`,
+  })
+  await writer.seal({ elapsedMs: 30, reason: 'stopped' })
+  const files = await readHistoryFolderText(folder)
+
+  // Assert
+  assert.equal(files.includes(cookieValue), false)
+  assert.equal(files.includes(basicCredential), false)
+  assert.equal(files.includes(callbackCode), false)
+  assert.match(files, /"value:cookieHeader":"\[masked\]"/)
+  assert.match(files, /"value:theme":"'theme=dark'"/)
+  assert.match(files, /\/login\/callback\?code=\[masked\]&state=xyz/)
+  assert.match(files, /\/welcome\?code=\[masked\]&page=2/)
+})
+
 // protects=the end of a history carries the largest accepted time, so a queued later entry never makes the seal partial for time moving backward; fails_when=end takes the time of durable entries only; no_claim=none
 test('a seal asked with an earlier time than a queued entry still ends the history complete', async (context) => {
   // Arrange
@@ -769,4 +822,56 @@ test('a stop hides a whole root and a cut root fragment with the same frozen sna
   assert.doesNotMatch(files, /\/srv\/proj/)
   assert.ok(files.includes('at <workspace>/a.ts'))
   assert.ok(files.includes('at <workspace>… [truncated]'))
+})
+
+// protects=a stop's snapshot reaches the history masked by the saved-history rule even when the capture handed over an unmasked cookie record and Cookie header string; fails_when=the sink stores the captured variables with only the secret-text and private-root passes, so the cookie record's value or the Cookie header's value reaches a file; no_claim=the capture's own masks (captureReplayDebugSnapshot tests) and the facts, which the test above covers
+test('a cookie record and a Cookie header string in a stop’s snapshot reach no file of the history', async (context) => {
+  // Arrange
+  const { sink, writer, folder } = await startSink(context)
+  const cookieValue = ['opaque', 'session', 'value', '4f9c2d71'].join('-')
+  const base = debuggerCapture({ line: 2 })
+  const capture = {
+    ...base,
+    snapshot: {
+      ...base.snapshot,
+      frames: base.snapshot.frames.map((frame) => ({
+        ...frame,
+        scopes: [{ name: 'Local', variables: [0, 3] }],
+      })),
+      variables: [
+        {
+          name: 'entry',
+          value: `{name: 'sid', value: '${cookieValue}'}`,
+          type: 'Object',
+          children: [1, 2],
+        },
+        { name: 'name', value: "'sid'", type: 'string', children: [] },
+        {
+          name: 'value',
+          value: `'${cookieValue}'`,
+          type: 'string',
+          children: [],
+        },
+        {
+          name: 'cookieHeader',
+          value: `'sid=${cookieValue}; theme=dark'`,
+          type: 'string',
+          children: [],
+        },
+      ],
+    },
+  }
+
+  // Act
+  sink.openRequest(10, { method: 'GET', path: '/api/x', bodyBytes: 0 })
+  sink.markRequestSent(11)
+  sink.stop(12, { declaredStopIndex: 0 }, 1, capture)
+  sink.response(20, RESPONSE)
+  await writer.seal({ elapsedMs: 30, reason: 'stopped' })
+  const files = await readHistoryFolderText(folder)
+
+  // Assert
+  assert.equal(files.includes(cookieValue), false)
+  assert.match(files, /"name":"cookieHeader","value":"\[masked\]"/)
+  assert.match(files, /"name":"value","value":"\[masked\]"/)
 })

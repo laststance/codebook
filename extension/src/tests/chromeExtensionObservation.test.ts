@@ -349,6 +349,38 @@ test('masks secret-like members, hides private roots and cuts long values at 4,0
   assert.deepEqual(cut, { value: 'y'.repeat(4_096), truncated: true })
 })
 
+// protects=an observed value that is a Cookie header, an Authorization value or a URL with a callback code is masked in the baseline and the after read; fails_when=maskExtensionObservedRead masks secret keys and credential prefixes only, so `sid=…; theme=dark` and `?code=` stay readable in the run resource and the saved history; no_claim=the settings a non-secret pair like `theme=dark` holds, which stay readable
+test('masks an observed Cookie-shaped string, a Basic credential and a callback code while a plain pair stays readable', () => {
+  // Arrange
+  const roots = { storage: [] }
+  const cookieHeader = 'sid=opaque-session-value-4f9c2d71; theme=dark'
+
+  // Act
+  const cookie = maskExtensionObservedRead({ value: cookieHeader }, roots)
+  const members = maskExtensionObservedRead(
+    {
+      value: {
+        authorization: 'Basic dXNlcjpwYXNzd29yZHZhbHVl',
+        header: 'Basic dXNlcjpwYXNzd29yZHZhbHVl',
+        callback: 'https://shop.example/cb?code=callback-code-8e1b3a65&page=2',
+        preference: 'theme=dark',
+      },
+    },
+    roots,
+  )
+
+  // Assert
+  assert.deepEqual(cookie, { value: '[masked]' })
+  assert.deepEqual(members, {
+    value: {
+      authorization: '[masked]',
+      header: '[masked]',
+      callback: 'https://shop.example/cb?code=[masked]&page=2',
+      preference: 'theme=dark',
+    },
+  })
+})
+
 // Value: protects=ER23, DXR7: changed is decided on the unmasked values, so two different secrets read changed although both report masked; fails_when=changed compares the masked reports; no_claim=the secret values themselves
 test('decides changed on unmasked values while reporting masked ones', () => {
   // Arrange

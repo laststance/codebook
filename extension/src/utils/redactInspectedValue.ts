@@ -3,8 +3,7 @@ import { REDACTION_MASK } from '../constants'
 import type { RepositoryInspection } from '../repositoryConfigSchemas'
 
 import { isSecretPath } from './isSecretPath'
-import { redactSecretText } from './redactSecretText'
-import { redactValuePreview } from './redactValuePreview'
+import { maskFactString } from './maskFactString'
 
 /**
  * Applies the redaction contract to one inspected value before it is saved as a fact.
@@ -14,7 +13,7 @@ import { redactValuePreview } from './redactValuePreview'
  * @returns
  * - a type inspection, `null` and `{ type }` markers: unchanged
  * - a primitive under a secret-named step: {@link REDACTION_MASK}
- * - any other string: the string with secret-named members of a preview ({@link redactValuePreview}) and credential-shaped parts ({@link redactSecretText}) masked
+ * - any other string: a Cookie-shaped or Authorization-shaped string whole, the secret query values of a URL, and the secret-named members and credential-shaped parts of a preview masked ({@link maskFactString})
  * @example
  * redactInspectedValue({ path: 'form.password', mode: 'value' }, 'hunter2') // => '[masked]'
  */
@@ -28,7 +27,5 @@ export function redactInspectedValue<
   if (inspection.mode !== 'value' || data === null || typeof data === 'object')
     return data
   if (isSecretPath(inspection.path)) return REDACTION_MASK
-  return typeof data === 'string'
-    ? redactSecretText(redactValuePreview(data))
-    : data
+  return typeof data === 'string' ? maskFactString(data) : data
 }

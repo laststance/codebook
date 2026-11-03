@@ -5,13 +5,58 @@ import { StudyError } from '../errors'
 import type { NodeHistoryStore } from '../nodeTestHistoryStore'
 import type { ResourceContent } from '../resources'
 
+import { maskSavedDebugSnapshot } from './maskSavedDebugSnapshot'
+import { maskSavedFacts } from './maskSavedFacts'
 import { readHistoryResourceTail } from './readHistoryResourceTail'
 import { readJsonPage } from './readJsonPage'
 import { withKnownNodeHistory } from './withKnownNodeHistory'
 
 /**
+ * Masks again the observed values and the cause a result entry holds ({@link maskSavedFacts}), so a history saved before the shape rules serves no Cookie, Authorization or secret URL query value an observed storage key, cookie or page value held.
+ * Called by {@link leanExtensionEvent} and {@link readEntryDetail} for a `result` entry.
+ * @param entry - A result entry as stored.
+ * @returns The entry with its `before`, `after` and `cause` masked; a member the entry does not hold stays absent.
+ * @example maskExtensionResult(resultEntry).after // => { value: '[masked]' } for a stored { value: 'sid=abc; theme=dark' }
+ */
+function maskExtensionResult(
+  entry: Extract<ExtensionHistoryEntry, { type: 'result' }>,
+): ExtensionHistoryEntry {
+  return {
+    ...entry,
+    ...(entry.before === undefined
+      ? {}
+      : { before: maskSavedFacts(entry.before) }),
+    ...(entry.after === undefined
+      ? {}
+      : { after: maskSavedFacts(entry.after) }),
+    ...(entry.cause === undefined
+      ? {}
+      : { cause: maskSavedFacts(entry.cause) }),
+  }
+}
+
+/**
+ * Masks again what one entry holds before its detail is served: a capture's facts and debugger snapshot, a result's observed values.
+ * Called by {@link readEntryDetail}.
+ * @param entry - An extension journal entry as stored.
+ * @returns The whole entry with those members masked; any other entry as stored.
+ * @example maskExtensionEntryDetail(captureEntry).facts // => { 'value:cookie': '[masked]' } for a stored Cookie-shaped fact
+ */
+function maskExtensionEntryDetail(
+  entry: ExtensionHistoryEntry,
+): ExtensionHistoryEntry {
+  if (entry.type === 'capture')
+    return {
+      ...entry,
+      facts: maskSavedFacts(entry.facts),
+      debuggerSnapshot: maskSavedDebugSnapshot(entry.debuggerSnapshot),
+    }
+  return entry.type === 'result' ? maskExtensionResult(entry) : entry
+}
+
+/**
  * Reduces one journal entry to the lean form the events list returns: never a snapshot, the executed source text or frame bytes (a frame is named by its hash).
- * Called by {@link readExtensionHistoryResource} for the events list; the whole entry is its own detail resource.
+ * Called by {@link readExtensionHistoryResource} for the events list; the whole entry is its own detail resource. A capture's facts and a result's observed values are masked again by {@link maskSavedFacts}, so a history saved before the shape rules serves no Cookie, Authorization or secret URL query value.
  * @param entry - An extension journal entry as stored.
  * @returns The lean event.
  * @example leanExtensionEvent(captureEntry) // => { sequence: 4, type: 'capture', elapsedMs: 60, pauseId, path: 'popup.js', line: 3, sourceHash: '…', sourceBytes: 812 }
@@ -21,13 +66,13 @@ function leanExtensionEvent(
 ): Record<string, unknown> {
   if (entry.type === 'capture') {
     const { debuggerSnapshot: _snapshot, ...lean } = entry
-    return lean
+    return { ...lean, facts: maskSavedFacts(lean.facts) }
   }
-  return entry
+  return entry.type === 'result' ? maskExtensionResult(entry) : entry
 }
 
 /**
- * Answers one entry's detail page: the entry as stored, whole.
+ * Answers one entry's detail page: the entry as stored, whole, with a capture's facts and debugger snapshot masked again by {@link maskSavedFacts} and {@link maskSavedDebugSnapshot}, and a result's observed values by {@link maskSavedFacts}, so a history saved before the shape rules serves no cookie or credential value.
  * Called by {@link readExtensionHistoryResource} for `events/<sequence>`.
  * @param baseUri - The history's resource address.
  * @param entries - The verified journal entries.
@@ -49,7 +94,11 @@ function readEntryDetail(
       'NOT_FOUND',
       `The history has no entry with sequence ${sequence}. Read ${baseUri}/events for the sequences it holds.`,
     )
-  return readJsonPage(`${baseUri}/events/${sequence}`, entry, page)
+  return readJsonPage(
+    `${baseUri}/events/${sequence}`,
+    maskExtensionEntryDetail(entry),
+    page,
+  )
 }
 
 /**

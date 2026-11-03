@@ -8,6 +8,8 @@ import type { StudyService } from '../service'
 import { declaredStopOfSnapshot } from './declaredStopOfSnapshot'
 import { describeBoundPlace, type BoundPlace } from './describeBoundPlace'
 import { explanationPlace, type ExplanationPlace } from './explanationPlace'
+import { maskSavedDebugSnapshot } from './maskSavedDebugSnapshot'
+import { maskSavedFacts } from './maskSavedFacts'
 import { readJsonPage } from './readJsonPage'
 
 /** A saved study as a recording context retains it. */
@@ -15,6 +17,33 @@ type SavedStudy = RecordingContext['study']
 
 /** One observation of a saved study. */
 type SavedObservation = SavedStudy['observations'][number]
+
+/**
+ * Masks what each observation of a recording context holds beside its recorded source text, so a study saved before the shape rules serves no cookie, credential or secret URL query value: the debugger snapshot ({@link maskSavedDebugSnapshot}), the captured values and the facts each explanation cites ({@link maskSavedFacts}). The context's hash was verified when it was read, and its source text stays as recorded.
+ * Called by {@link readRecordingResource} before it serves a whole context or the learning resource built from it.
+ * @param context - The verified recording context.
+ * @returns The context with each observation masked.
+ * @example maskSavedContext(context).study.observations[0]?.values // => { 'value:cookieHeader': '[masked]' }
+ */
+function maskSavedContext(context: RecordingContext): RecordingContext {
+  return {
+    ...context,
+    study: {
+      ...context.study,
+      observations: context.study.observations.map((observation) => ({
+        ...observation,
+        values: maskSavedFacts(observation.values),
+        interpretations: observation.interpretations.map((interpretation) => ({
+          ...interpretation,
+          facts: maskSavedFacts(interpretation.facts),
+        })),
+        ...(observation.debugger && {
+          debugger: maskSavedDebugSnapshot(observation.debugger),
+        }),
+      })),
+    },
+  }
+}
 
 /**
  * Puts a saved observation's declared, requested and bound places together; called by {@link savedObservationResource}.
@@ -228,7 +257,8 @@ export async function readRecordingResource(
   try {
     if (suffix?.startsWith('context/')) {
       const [, contextHash, selection, ...page] = suffix.split('/')
-      const { context } = await store.readContext(studyId, contextHash)
+      const saved = await store.readContext(studyId, contextHash)
+      const context = maskSavedContext(saved.context)
       if (!selection) return json(context)
       return readJsonPage(
         `${base}/context/${contextHash}/learning`,

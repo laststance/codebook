@@ -20,7 +20,7 @@ export type NodeServerHistoryHeaderInput = {
 }
 
 /**
- * Builds the header a node-server history starts with: the run's identity, the declaration with secret-named values masked, the declared request and stops, the repository revision and the hashes of the cited sources.
+ * Builds the header a node-server history starts with: the run's identity, the declaration with secret-named values masked (the request's path and body cut to the bounds the declaration has, since a mask can lengthen them; {@link maskNodeServerConfiguration}), the declared request and stops, the repository revision and the hashes of the cited sources.
  * Called by {@link StudyService} just before it starts the history of a node-server run. The question is the explained article node's title until the chat saves its own question with its learning material.
  * @param input - The run's identity, declaration and pinned article node.
  * @returns The header without its `formatVersion`, which the store stamps.

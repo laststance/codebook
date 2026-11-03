@@ -84,3 +84,69 @@ jobs:
 
       - name: Run fallow architecture
         run: pnpm --dir extension architecture
+
+  analyses:
+    # The other free local Fallow analyses, side by side in one job (parallel steps) instead of a job each: the plan
+    # runs 20 jobs at once. audit gates the change against its base with the committed baselines; flags, security,
+    # similar-code and suppressions are candidate or discovery output for the job summary and never fail the job.
+    name: Fallow analyses
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      # The change's base: the pull request's base commit, or the commit before a push to main (Fallow reads it).
+      FALLOW_AUDIT_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The base commit must be in the clone for the changed-code scope.
+          fetch-depth: 0
+
+      - name: Prepare environment
+        uses: ./.github/actions/prepare
+
+      - parallel:
+          # Gates: a dead-code, complexity or duplication finding the change introduces fails the job; inherited ones are listed.
+          - name: Run fallow audit
+            # An explicit bash runs with pipefail, so audit's exit status survives the pipe to tee and the step gates.
+            shell: bash
+            # CRAP needs coverage, which the measured health job owns; without it audit would score a static estimate, as health:static avoids with the same option.
+            run: >-
+              pnpm --dir extension exec fallow audit --dead-code-baseline fallow-dead-code-baseline.json
+              --dupes-baseline fallow-dupes-baseline.json --health-baseline fallow-health-baseline.json
+              --max-crap inf --format markdown | tee -a "$GITHUB_STEP_SUMMARY"
+
+          - name: Report fallow flags
+            run: |
+              pnpm --dir extension exec fallow flags --format markdown >> "$GITHUB_STEP_SUMMARY" ||
+                echo "::warning::fallow flags ended with $?"
+
+          - name: Report fallow security candidates
+            run: |
+              {
+                echo '## Fallow security candidates (unverified)'
+                echo '```text'
+                pnpm --dir extension exec fallow security --summary || echo "fallow security ended with $?"
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"
+
+          # The pinned local model (Apache-2.0) is downloaded on the runner with explicit non-interactive consent.
+          - name: Report fallow similar code
+            run: |
+              {
+                echo '## Fallow similar code (candidates)'
+                echo '```text'
+                pnpm --dir extension exec fallow similar-code setup --local --yes --quiet &&
+                  pnpm --dir extension exec fallow similar-code ||
+                  echo "fallow similar-code ended with $?"
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"
+
+          - name: Report fallow suppressions
+            run: |
+              {
+                echo '## Fallow suppressions'
+                echo '```text'
+                pnpm --dir extension exec fallow suppressions --summary || echo "fallow suppressions ended with $?"
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"

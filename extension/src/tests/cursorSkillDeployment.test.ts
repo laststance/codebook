@@ -3529,8 +3529,11 @@ async function skillWindowWhoseNewFileGetsTheFreedNumber(
         const file = await openWithoutFollowing(path)
         const statusOf = file.stat.bind(file)
         return Object.assign(file, {
-          stat: async (options?: StatOptions) =>
-            renumbered(await statusOf(options)),
+          stat: async (options?: StatOptions) => {
+            const status = await statusOf(options)
+            // A status asked with `throwIfNoEntry: false` is undefined for a missing file: nothing to renumber.
+            return status && renumbered(status)
+          },
         })
       },
     },

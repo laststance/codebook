@@ -26,6 +26,7 @@ import { assertNodeLearningCitations } from './utils/assertNodeLearningCitations
 import { capMissingList } from './utils/capMissingList'
 import { evaluateNodeServerCapture } from './utils/evaluateNodeServerCapture'
 import { evaluateNodeServerLearning } from './utils/evaluateNodeServerLearning'
+import { maskSecretQueryValues } from './utils/maskSecretQueryValues'
 import {
   acceptNodeServerEntry,
   newNodeServerJournalProgress,
@@ -77,7 +78,8 @@ function emptyNodeServerSummary(
     status: 'partial',
     verification: 'unavailable',
     question: header.question,
-    requestLine: `${header.declaredRequest.method} ${header.declaredRequest.path}`,
+    // Masked again: a header saved before `code` was masked kept the callback code in its declared request path, and the catalog and the Saved studies row show this line.
+    requestLine: `${header.declaredRequest.method} ${maskSecretQueryValues(header.declaredRequest.path)}`,
     declaredStopCount: header.declaredStops.length,
     reachedStopCount: 0,
     stopCount: 0,

@@ -5,11 +5,12 @@ import {
 import type { ChromeExtensionObservedRead } from '../runtime'
 
 import { isSecretName } from './isSecretName'
+import { maskFactString } from './maskFactString'
 import { redactSecretText } from './redactSecretText'
 import { hidePrivateRoots, type CauseRoots } from './sanitizeCause'
 
 /**
- * Masks one JSON value for the report: a member under a secret-like key is replaced whole, and every string loses credential shapes and private roots.
+ * Masks one JSON value for the report: a member under a secret-like key is replaced whole, and every string loses credential shapes (a Cookie-shaped or Authorization-shaped string whole, the secret values of a URL query, {@link maskFactString}) and private roots.
  * @param value - Any JSON value read from the extension.
  * @param roots - The private roots a text must not show.
  * @returns The value with the same shape.
@@ -17,7 +18,7 @@ import { hidePrivateRoots, type CauseRoots } from './sanitizeCause'
  */
 function maskNode(value: unknown, roots: CauseRoots): unknown {
   if (typeof value === 'string')
-    return hidePrivateRoots(redactSecretText(value), roots)
+    return hidePrivateRoots(maskFactString(value), roots)
   if (Array.isArray(value)) return value.map((item) => maskNode(item, roots))
   if (typeof value === 'object' && value !== null)
     return Object.fromEntries(

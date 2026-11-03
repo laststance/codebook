@@ -44,7 +44,8 @@ export function fileSystemWithLargeFileIds(): typeof fileSystem {
       const statOfOpenedFile = file.stat.bind(file)
       file.stat = (async (options?: StatOptions) => {
         const stats = await statOfOpenedFile(options)
-        renumber(stats)
+        // A status asked with `throwIfNoEntry: false` is undefined for a missing file: nothing to renumber.
+        if (stats) renumber(stats)
         return stats
       }) as typeof file.stat
       return file
