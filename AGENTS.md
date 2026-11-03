@@ -6,7 +6,7 @@ Single entry point for every coding agent; Codex and Claude Code (v2.1.281+) loa
 
 Before planning, implementation or runtime trials:
 
-1. New session, or PRODUCT_GOAL.md changed: read [PRODUCT_GOAL.md](PRODUCT_GOAL.md) in full except `## Final acceptance protocol`; open [the approved PNG](docs/designs/assets/codebook-product-spec-v9.png) with an image tool; read the active cycle Issue (open, label `cycle`) with comments (`gh issue view <N> --comments`).
+1. New session, or PRODUCT_GOAL.md changed: read [PRODUCT_GOAL.md](PRODUCT_GOAL.md) in full except `## Final acceptance protocol`; open [the approved PNG](assets/codebook-product-spec-v9.png) with an image tool; read the active cycle Issue (open, label `cycle`) with comments (`gh issue view <N> --comments`).
 2. After every context compaction, before any other work, whatever the task: read PRODUCT_GOAL.md in full, every line; open the PNG with an image tool and check its identity; then read the active cycle Issue with comments. This file loads automatically as project instructions (Claude Code, Codex): reread it from disk only when its text is not in context or it changed on disk since the session began. Top rule: the goal and the image are the final product every token is spent for; a plan or change made without them is waste. A compacted summary, the restore hook's text or an earlier read is no substitute.
 3. Final acceptance selected: read [`## Final acceptance protocol`](PRODUCT_GOAL.md#final-acceptance-protocol).
 
@@ -203,6 +203,7 @@ No decision log; delivery chain and ship limit: [Delivery](#delivery).
   - Skip a rule, convention or skill step that plainly adds nothing to the product instead of following it by habit.
   - Docs unrelated to the application ride on the current work branch: no separate PR, no wait on CI with an obvious result.
   - Still forbidden: spending money without the owner's permission; anything illegal. Irreversible steps under **Never without the owner** still wait for the owner.
+- **Every agent rule in AGENTS.md:** every agent rule and procedure lives in this file. Never create a `docs/` folder or another rule or procedure document, even when a review suggests one. Assets such as the approved PNG live in `assets/`.
 - **Process feedback:** a development-flow step that wastes much time, or a step the rules lack for completing the product, once noticed → a post in the repository's [GitHub Discussions](https://github.com/laststance/codebook/discussions) (category Ideas): observation, evidence, cost, proposal. Public: no private paths or secrets. The current cycle continues meanwhile.
 - **The owner cannot answer:** every decision point → the recommended option, named in the Issue's Owner decisions. Owner-directed pause → stop at once; only the owner's explicit message lifts it. A conditional pause ("when X is done, stop") is not immediate.
 - **Dedicated Windows development machine:** setup and repair (IME settings, QA reinstall/reset, needed data removal) need no new permission. Spend the time on live explanation, save and synchronized replay. Remedy truly needing the owner → research it, finish independent preparation, give concrete verified steps. Outcomes and gates still govern.
@@ -214,9 +215,9 @@ No decision log; delivery chain and ship limit: [Delivery](#delivery).
   - The v9 PNG fixes screen hierarchy and interactions, not learning content: summaries, sequence diagrams and explanations are generated per question as clear, graphical learning resources from what actually ran.
   - Never shape the skill, the generation, help examples or acceptance to reproduce the image's sample flow, participants or text.
 - **Who operates a native check:** the driving agent itself (chat submissions, replay checks, every native check a row owes), never a subagent; implementation may run in subagents.
-- **Trial coordination:** dedicated VS Code and isolated-profile Cursor trials need no screen-time slot; on the Mac they run in the [macOS Space](docs/agents/native-qa.md), never on the owner's desktop. Ask only when real interference with the owner's work blocks a trial (a possible focus change is not that). Report a recording that truly needs exclusive foreground.
+- **Trial coordination:** dedicated VS Code and isolated-profile Cursor trials need no screen-time slot; on the Mac they run in the [macOS Space](#native-qa), never on the owner's desktop. Ask only when real interference with the owner's work blocks a trial (a possible focus change is not that). Report a recording that truly needs exclusive foreground.
 - **Hosts:** development on the Mac or a Windows machine with WSL2; the owner moves it back to the Mac when free. Target systems: [Product constraints](PRODUCT_GOAL.md#product-constraints).
-  - Mac: macOS native checks and their OBS recordings run in the Cua Space `local:codebook-qa` (macOS VM) so the owner keeps using the Mac ([Native QA](docs/agents/native-qa.md)); the Mac's own desktop only when the owner directs it, with its procedures (protected Mac settings hashes, Computer Use grants).
+  - Mac: macOS native checks and their OBS recordings run in the Cua Space `local:codebook-qa` (macOS VM) so the owner keeps using the Mac ([Native QA](#native-qa)); the Mac's own desktop only when the owner directs it, with its procedures (protected Mac settings hashes, Computer Use grants).
   - `/Users/ryotamurakami` paths = the Mac.
   - A native check on another host freezes its own procedure and identities in the Issue and reports what it could not run.
   - Evidence depending on the Mac's private `artifacts/`, the Space, QA profiles or local branches never carries over by assumption.
@@ -282,8 +283,40 @@ Formatting: `pnpm --dir extension format` / `format:check` and the lint-staged h
 
 **Local shards.** Split whole files (one big file gains nothing): after a build, `node --test --test-concurrency=4 --test-shard=1/4 extension/dist/tests/*.test.js` for all four indices, one file set and source, every exit 0; read-only shards may share the build. Each shard has its own concurrency (4 × 4 = 16 processes): no unrestricted shards. Single runner stays default; measure before adding workers or CI jobs; keep Node's file isolation.
 
-- Each `extension/scripts/*-qa.mjs` runs in a workflow or is listed retired in `workflowPins.test.mjs`; `build:fast` needs `isolatedModules`.
-- Before running the gate or a Reader DOM check in a fresh checkout or worktree, changing a CI workflow (`test.yml`, the package, Windows or Reader DOM job), test shards or timings, a test in a split file (adding, renaming or restructuring tests), the pre-gate runner (`run-pregate-tests.mjs`), adding or retiring a `*-qa.mjs` script, or counting a package-workflow VSIX as test evidence: read [docs/agents/checks.md](docs/agents/checks.md) (CI Test shards, Windows job, Reader DOM setup and cases).
+**CI Test shards.** `pnpm --dir extension test:shard --shard 3/14 --lanes 2`; `--list` prints the plan.
+
+- Each file runs once; a new partition needs no workflow change. Each job < 1 min; GitHub's shown time includes a runner wait the repo cannot shorten.
+- Test job restores the `extension/node_modules` cache, calls `node` directly (no `pnpm install --frozen-lockfile`); cache miss → shared `prepare` action.
+- `extension/test-timings.json` records every file + every test of a file slower than 8 s. Unknown tests still run once; a later-added test runs in its file's complement part until timings are re-recorded.
+- Change `matrix.shard` (`.github/workflows/test.yml`) and both `after_n_builds` (`codecov.yml`) together.
+- Near 60 s: compare planned vs measured seconds in the log (`▶ … (planned … s)`); re-record drifted timings (`test:shard --record`, on its machine's scale) or add a shard. Org runs 20 jobs at once; a new shard/job uses that margin.
+- Failed Codecov upload never fails a job (`continue-on-error: true`); prints warning `Coverage upload failed` (pinned by `workflowPins.test.mjs`).
+- Split files run with `--test-force-exit` by top-level test name (errors after a part's last test go unreported there). Whole-file runs, the local run and the `split-files` job (after a `main` push whose shards passed: `test-shard.mjs --whole-split-files`, Node's default exit) still report them → register tests synchronously; no subtest/suite member named like a recorded top-level test, no recorded name with a line break (each breaks the split); else leave the file unsplit.
+- Silence: a call printing nothing for 120 s → its whole process tree ended and named; its shard fails whatever the exit code (`--silence-seconds` sets it). POSIX: SIGTERM to the runner; after 5 s (or once it exited) SIGKILL to every still-running tree process, SIGTERM-ignoring test files too. Windows: `taskkill /T /F`.
+- Pre-gate runner (`run-pregate-tests.mjs`):
+  - ends a silent run the same way and fails its lane; a run holding `package.test.mjs` gets the package command's 180 s extra unless `--silence-seconds` is given; that test's build logs progress every 30 s;
+  - ends its build's whole tree after 300 s (`--build-seconds`);
+  - build and runs share the runner's process group, so killing a lane's group ends them. Not `package.test.mjs`'s package commands (own process groups, as pnpm gives lifecycle scripts): `runPackageCommand` ends those when they end, at its limit, and on SIGINT/SIGTERM/SIGHUP/SIGQUIT to the package test.
+- SIGINT/SIGTERM/SIGHUP to `test-shard.mjs` or the pre-gate runner → every live child's whole tree ended; exit 130/143/129.
+- Runs start without `FORCE_COLOR` so counts read. A call's count = its runner's last summary block, kept whole even when the failure report after it passes the last 4,000,000 characters kept of its output (block repeated after the kept end, under a note).
+- `test-shard.mjs` option refusals are one line (incl. a `--shard` total or `--lanes` count > 1,000); `--record` refuses `--whole-split-files`, `--list`, `--shard`, `--lanes`. A call counting no test fails.
+- A `main` push keeps its Test run (only a PR's newer push cancels one), so a later push does not cancel its `split-files` job.
+- `test:shard --record` stops with a one-line refusal naming what did not end, leaving no process, at a test or hook exceeding the limit and at a run silent for limit + 5 s (max a timer can wait: 2,147,483.647 s).
+- Missing or malformed `test-timings.json`, or an entry that is no `{ totalMs, tests? }` → refused with the way out (`test:shard --record`).
+- A package-workflow VSIX ≠ Test jobs passed: that workflow runs no product suite, only the compaction hook test, compiler build, `build:fast --check` emit comparison, `test:package` and the VSIX. `build:fast` needs `isolatedModules`.
+
+**Windows job** (`storage-locks-windows.yml`).
+
+- One test file at a time (`--test-concurrency=1`; its PowerShell process-start reads bounded at 3 s); two `node --test` steps: `dist/tests` after the build; `scripts/tests` without one.
+- Path filter omits `extension/src/constants.ts` and `extension/src/runtimeSupport/constants.ts` on purpose; the weekly run (Mondays 05:17 UTC, default branch) and manual runs cover them.
+- A new test of a kind the job runs joins its run command, path filter and `workflowPins.test.mjs` pin (script tests as `scripts/<name>`).
+
+**Reader DOM** (`reader-dom.yml`).
+
+- Five checks: `study-bootstrap-qa.mjs`, `wiki-reader-dom-qa.mjs` (Wiki reader rail with its end sentences, 640–1200 px; at 960 × 600 they fit a rail ≤ 45vh), `study-reading-pose-qa.mjs`, `understanding-focus-qa.mjs`, `repository-return-qa.mjs`. Each `extension/scripts/*-qa.mjs` runs in a workflow or is listed retired in `workflowPins.test.mjs`.
+- Setup once per checkout or worktree (`npm ci` again after lockfile changes): `(cd .github/reader-dom && npm ci --ignore-scripts)` (pins `playwright-cli` 0.1.22); `export PATH="$PWD/.github/reader-dom/node_modules/.bin:$PATH"`; `playwright-cli install-browser ffmpeg`; installed Chrome (or `PLAYWRIGHT_MCP_EXECUTABLE_PATH`).
+- Run `node extension/scripts/<check>-qa.mjs verify <folder>` after a build, one folder per concurrent run. A check passes its flow to the browser CLI as a file (arguments > 131,072 bytes fail with `spawn E2BIG`).
+- New case: uses only `page`, `options` and its own definitions (no import; `page.evaluate` takes values as arguments); writes revisions as `revisionAt(n)` (Saved studies: `savedRevision`); fails first under `red <folder>` (all five checks take it).
 
 **Fallow.**
 
@@ -316,10 +349,112 @@ Formatting: `pnpm --dir extension format` / `format:check` and the lint-staged h
 
 - Native checks are part of `/ship`, not a phase of their own: the VS Code and Cursor checks a cycle owes run as `/ship` Step 9.2.1's required plan checks (its QA step), beside its smoke probes. gstack's browser QA alone proves no native behavior.
 - Build and evidence: build the VSIX with `qa-build.mjs` from the clean commit `/ship` reviews and install it in each host; the build gets no review of its own. A Critical/Major finding of a check is fixed in that `/ship` pass (new commit, new build, check repeated). Post each run's log with `post-trial-evidence.mjs --manifest`, quoting its exit line.
-- Observing a native check (state checks, screenshots, evidence stills): [docs/agents/native-trial-observation.md](docs/agents/native-trial-observation.md).
 - UI changes: view the PNG again; compare real screenshots with its region at the normal desktop baseline; record differences and interaction.
 - Motion needs recorded interaction + inspected frames; generated pixels or renderer assertions prove no native behavior.
-- Before any work on the WSL desktop or in the macOS Space (setup, repair, a native check, its recording, moving its evidence to the Mac): read [docs/agents/native-qa.md](docs/agents/native-qa.md) (WSL desktop, macOS Space `local:codebook-qa`, OBS Window Capture recording).
+- All work on the WSL desktop or in the macOS Space (setup, repair, a native check, its recording, moving its evidence to the Mac) follows the rules below.
+
+**Observing a native check** (Cua Space `local:codebook-qa` or a desktop). A `computer_screenshot` answers about 600,000 characters; in Cycles 0056 to 0058 screenshots were 85% of all tool output and forced most of the context compactions → check state with **text** first, spend **pictures** on visual evidence.
+
+- Text for every step that only needs to know what is there (a window, a dialog, a label, a value, a process, a file):
+  - windows and focus: `computer_window_list` (filter with `app`), `computer_get_current_window`;
+  - controls and labels: `computer_get_accessibility_tree` with the window's `window_id` and a `max_depth` (names buttons, dialog titles, picker entries and the chat's input text);
+  - acting on a control: `computer_accessibility_act` with the tree's `snapshot_id` and `element_id` (`press`, `focus`, `set_value`); needs no coordinates, so no screenshot to find them;
+  - processes, ports, files and logs in the Space: `space_bash`, e.g. `lsof -nP -iTCP:4100 -sTCP:LISTEN`, `pgrep -fl 'Visual Studio Code'`, `osascript -e 'tell application "System Events" to get name of every window of process "Code"'`, or a `tail` of the file a step writes;
+  - after an action, verify its result the same way: the tree, the process or the file shows it.
+- Pictures for a claim about what the learner sees (layout against the v9 PNG, rendering, a frame of motion): capture a region in the Space, shrink it, then `download` `/tmp/shot.jpg` and Read it:
+
+```sh
+screencapture -x -R<x>,<y>,<width>,<height> /tmp/shot.png
+sips -s format jpeg -s formatOptions 70 -Z 1000 /tmp/shot.png --out /tmp/shot.jpg
+```
+
+- Evidence stills: keep the full-size PNG as the evidence file (downloaded, SHA-256 on both sides, per the macOS Space rules below); Read only the reduced copy.
+- Coordinates: `computer_screenshot` when a click needs coordinates the accessibility tree cannot give (a canvas, a webview without accessible names); its pixel space is the one clicks use.
+- Motion: recordings and their frames follow the OBS rules below; Read reduced frames (`ffmpeg … -vf scale=1000:-1`).
+
+**WSL desktop (WSLg on Windows).**
+
+- At most one window each for browser, VS Code, Cursor across QA profiles (child processes excluded); reuse windows and tabs; preserve drafts, unsaved files, settings before closing extra owned windows; keep the limit when reopening or following editor links.
+- Layout: supervising terminal left; active app (browser and editors take turns), Ubuntu windows too, in the larger right region via supported move/resize, normal zoom.
+- Before testing: check a current screenshot of that layout; record display size, window and viewport geometry, scaling, host, theme; take coordinates from the current screen.
+- After each switch: confirm visible app and focus before input (activation success is not enough); verified input still failing → report it so the owner can minimize the terminal.
+- Yield while the owner uses the desktop; then find the window again.
+- The screenshot proves placement only; the PNG, both hosts and every acceptance condition still govern.
+
+**macOS Space (`local:codebook-qa`).**
+
+- macOS 26 VM from `ghcr.io/trycua/macos:26`, run by Cua Spaces on the Mac with its own Lume (Apple Virtualization framework): 8 CPUs, 16 GB, 150 GB disk, display 1920 × 1080, account `lume`.
+- Setup and repair inside (tools, target clone, QA profiles, OBS) need no new permission; keep its settings, profiles, data as the owner's.
+- Keep the Space's VS Code and Cursor current:
+  - `update.mode` stays `default` in both;
+  - before each native check, check each host's update feed and install a newer release (notarized, same Team ID as the installed app); record the versions in the Issue;
+  - during final acceptance an update changes a frozen host identity ([Final acceptance](PRODUCT_GOAL.md#final-acceptance) 1): record old and new versions and retest the rows it affects ([Retesting](PRODUCT_GOAL.md#retesting-and-final-artifact-validity)).
+- Drive via the `cua` MCP (`space_bash`, `computer_screenshot`, `computer_click`, `computer_type`, `download`) or `cua sb exec`. The guest's Cua Driver refuses background keys (foreground delivery inside the VM is fine); `type_text` reports less than it delivered → check the screen.
+- Start with `cua doctor local:codebook-qa`. `No route to host` = the daemon lost Local Network access → restart it (`cua daemon start` from Terminal when the Cua Spaces app is not running).
+- Sign in to what native checks need (Copilot, Cursor, GitHub) yourself, without asking:
+  - `cua teleport push --app com.google.Chrome --scope full --include ".config/google-chrome/Default/Cookies" --url http://<Space address>:3211 --no-launch` (`CUA_ENV_TOKEN` from `~/.cua/spaces-credentials.json`) copies the Mac Chrome's cookies into the Space's Chrome;
+  - keep only needed sites; make Chrome the default browser; click through each app's sign-in;
+  - only the Mac's Chrome Safe Storage prompt waits for the owner.
+- Guest sign-ins can be lost at the next VM boot (login keychain re-keyed every boot; teleported cookies stay) → restart the VM only when needed.
+- Evidence leaves the Space for the Mac's ignored `artifacts/` with matching SHA-256 on both sides; the Space keeps no only copy.
+
+**macOS video: OBS Window Capture in the Space.**
+
+- Records the chosen window behind other windows, no exclusive foreground hold; gathers evidence, changes nothing in Codebook's own recording or replay.
+- One-take comparison in the Space (identities, limits, evidence hashes: [#108](https://github.com/laststance/codebook/issues/108)): OBS kept 30 fps, a new frame every 33 ms, sharper text; the Space's own window stream lost 69–271 ms at each window change; Cua Driver's recorder has no guest video backend → neither of those two records evidence.
+- Never QuickTime/Screenshot (blocks interaction). `screencapture -v -l <window-id>` gave black background frames → needs a new passing pixel and motion preflight first.
+- A working recorder does not prove input reached its target.
+
+OBS steps:
+
+1. Install [official OBS](https://obsproject.com/download) in the Space (version and architecture checked), never in the extension, build graph or VSIX.
+   - Keep existing profiles and scenes; use a named QA profile and scene collection; record its actual active name.
+   - Renderer Metal (`global.ini`, `[Video] Renderer=Metal`): OpenGL renders in software at ~6 fps and the recording does not start.
+   - Keep editor settings, unrelated windows, drafts, debugger sessions, learner data.
+   - Grant screen recording only (no camera, microphone, input monitoring, remote control) in the Space's System Settings; reopen OBS when asked; allow macOS's direct window capture prompt.
+   - Turn global audio devices off before starting; check a silent take's tracks.
+2. Per host, identify the exact editor window, repository and profile (never the first similar name); recheck title, host version, source and dirty state, VSIX, runtime and skill identities, display and window size, zoom, theme.
+3. Add **macOS Screen Capture**. Before every take, check Properties:
+   - **Method: Window Capture** (Display/Application Capture records other windows);
+   - **Window:** the exact QA window (`[Code] … (Workspace) — <QA profile>`); the name never shows the mode;
+   - **Show fullscreen and hidden windows** only widens the window list; no deprecated Window Capture source, no display crop;
+   - minimizing pauses the stream (occlusion and another desktop differ);
+   - switching hosts: pick the other window, redo steps 4–6.
+4. **Edit → Transform → Reset Transform**; check size, position, rotation, four crops.
+   - Pixel comparisons: Base (Canvas) and Output (Scaled) resolution = the source, even pixels (H.264 needs even sizes: resize an odd window first); recheck after canvas/window changes; label a scaled overview, keep unscaled evidence.
+   - Check the preview's corners (title, Activity Bar or debugger, source, summary or chat, transport or status bar): cropped = not ready.
+   - Verify the frame rate in the saved file; claim no finer timing (30 fps proven, not 60).
+5. Preflight, before a take counts:
+   - start; see **Stop Recording** with a running timer;
+   - make a reversible visible change; confirm painted pixels change (titles or AX values can lead); restore it;
+   - another app in front without minimizing: the target keeps updating, the other stays out;
+   - before native input (brief activation allowed): check focus and stale-target errors; never type into an unverified palette or submit a terminal draft;
+   - stop; check metadata and frames; reject black, frozen, wrong-window or cropped output; tell input from recorder failures; diagnose no product from them.
+6. Take: new recording; stable source, host, VSIX build, geometry; action times logged; the whole transition with loading and gaps; finalization confirmed. A recreated target needs reselection + a new preflight.
+
+OBS control and evidence:
+
+- Use OBS's public controls: its window via the Space's tools, or obs-websocket in the Space (`StartRecord`, `GetRecordStatus`, `StopRecord`); [`--startrecording`](https://obsproject.com/kb/launch-parameters) only with a prepared profile whose active configuration and output path you verify.
+- No blind duplicate launch; `--multi` only as a bounded retry with old processes verified as owned; never terminate unknown or owner processes.
+- Copy each recording to the Mac (`download`); compare SHA-256 with the Space's `shasum -a 256`; inspect without overwriting evidence; originals stay private.
+- Extract metadata, 10 fps frames (make the folder first), hash, every native frame of a transition for temporal defects, and a silent copy keeping the original (set audio before recording):
+
+```sh
+ffprobe -v error -show_entries format=duration,size:stream=codec_name,width,height,avg_frame_rate,nb_frames -of json "$QA_VIDEO"
+ffmpeg -hide_banner -loglevel error -i "$QA_VIDEO" -vf fps=10 "$QA_FRAMES/frame-%05d.png"
+shasum -a 256 "$QA_VIDEO"
+ffmpeg -hide_banner -loglevel error -ss "$QA_TRANSITION_START" -i "$QA_VIDEO" -t "$QA_TRANSITION_SECONDS" -fps_mode passthrough "$QA_TRANSITION_FRAMES/frame-%05d.png"
+ffmpeg -hide_banner -loglevel error -i "$QA_ORIGINAL_VIDEO" -map 0:v:0 -c copy -an "$QA_SILENT_VIDEO"
+```
+
+- Keep failed attempts and failed takes as evidence.
+- Tested OBS takes verified window recording and visible updates (Space, VS Code behind Safari); not Cursor, minimized or locked-screen operation, child dialogs, exact update latency or replay synchronization.
+- Open frames with an image tool: target identity, full edges, content changes, gaps and clearing, correspondence.
+- Record beside the [loop](#working-loop)'s fields: real fps and duration, inspected frames, hashes, inspected file. A picture, AX dump, filename, frame count or green indicator replaces nothing.
+- Black/frozen → recheck identity, minimization, permission, redraw; never substitute the desktop or a stale frame.
+- Wrong input target → refresh state, verify window and control, retry only the reversible action (connection errors prove no recorder or product failure).
+- Finish: confirm finalization; restore tabs and panels; close only sessions the check started; verify owned PIDs before any signal; keep evidence and reusable QA configuration; never kill all OBS/editor processes or reset permissions or settings broadly.
+- The preflight stays mandatory whatever [upstream docs](https://obsproject.com/kb/macos-screen-capture-source) say.
 
 ## External validation targets
 
@@ -338,20 +473,49 @@ Formatting: `pnpm --dir extension format` / `format:check` and the lint-staged h
 
 ### Issue tracker
 
-GitHub Issues on laststance/codebook via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+GitHub Issues on laststance/codebook via the `gh` CLI for every operation (`gh` infers the repo from `git remote -v` inside a clone). This file's [Where things live](#where-things-live), [Cycle rule](#cycle-rule) and [GitHub](#github) rules win: cycle Issue (label `cycle`, title `Cycle NNNN: <outcome>`, four body sections), goal Issue #1, the `goal` label; open an Issue from evidence, never from a planning tool's need; the repository is public (everything posted is world-readable, a security defect before its fix too).
+
+- Create: `gh issue create --title "..." --body "..."` (a heredoc for multi-line bodies). A skill's "publish to the issue tracker" = create a GitHub issue.
+- Read: `gh issue view <number> --json number,title,body,labels,comments`; a skill's "fetch the relevant ticket" = this.
+- List: `gh issue list --state open --json number,title,body,labels,comments --jq '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'` with the fitting `--label` and `--state` filters.
+- Sub-issue of a parent: `gh issue create --parent <parent> ...`, or `gh issue edit <parent> --add-sub-issue <child>` afterwards (`gh` 2.94+). Older `gh`: `gh api --method POST repos/<owner>/<repo>/issues/<parent>/sub_issues -F sub_issue_id=<child-db-id>` (database id, as in Blocking below). Without sub-issues: `Part of #<parent>` at the top of the child body.
+- Comment: `gh issue comment <number> --body "..."`. Labels: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`. Close: `gh issue close <number> --comment "..."`.
+- PRs as a request surface: **no** (`/triage` reads this flag; `yes` would make external PRs feature requests). When `yes`, PRs take the issues' labels and states through `gh pr`: read `gh pr view <number> --comments` and `gh pr diff <number>`; list external PRs `gh api --paginate 'repos/{owner}/{repo}/pulls?state=open' --jq '.[] | select(.author_association | IN("OWNER","MEMBER","COLLABORATOR") | not) | {number, title, author: .user.login, author_association, labels: [.labels[].name]}'`; comment, label, close with `gh pr comment`, `gh pr edit --add-label`/`--remove-label`, `gh pr close`.
+- Issues and PRs share one number space: resolve a bare `#42` with `gh pr view 42`, fall back to `gh issue view 42`.
+- Wayfinding (`/wayfinder`): the **map** is one issue labelled `wayfinder:map` holding the Notes / Decisions-so-far / Fog body (`gh issue create --label wayfinder:map`); its **child** issues are the tickets.
+  - Child ticket: linked to the map as a GitHub sub-issue (above); where sub-issues are not enabled, an entry in the map body's task list + `Part of #<map>` at the top of the child body. Labels `wayfinder:<type>` (`research`/`prototype`/`grilling`/`task`). A claimed ticket is assigned to the driving dev.
+  - Blocking: GitHub's native issue dependencies, the canonical, UI-visible form: `gh api --method POST repos/<owner>/<repo>/issues/<child>/dependencies/blocked_by -F issue_id=<blocker-db-id>`, `<blocker-db-id>` = the blocker's numeric database id (`gh api repos/<owner>/<repo>/issues/<n> --jq .id`, not the `#number` or `node_id`). `issue_dependencies_summary.blocked_by` counts open blockers only (the live gate). Without dependencies: a `Blocked by: #<n>, #<n>` line at the top of the child body. A ticket is unblocked when every blocker is closed.
+  - Frontier query: the map's open children (`gh issue list --state open`, scoped to the map's sub-issues / task list), minus any with an open blocker (`issue_dependencies_summary.blocked_by > 0`, or an open issue in the `Blocked by` line) or an assignee; first in map order wins.
+  - Claim: `gh issue edit <n> --add-assignee @me`, the session's first write.
+  - Resolve: `gh issue comment <n> --body "<answer>"`, then `gh issue close <n>`, then append a context pointer (gist + link) to the map's Decisions-so-far.
 
 ### Triage labels
 
-Five default triage roles, each label named after its role (all five exist on GitHub). See `docs/agents/triage-labels.md`.
+Five canonical triage roles the skills (mattpocock/skills) speak of, each label named after its role (all five exist on GitHub); a skill naming a role (e.g. "apply the AFK-ready triage label") → use its label. A changed label vocabulary is edited here.
+
+- `needs-triage`: maintainer needs to evaluate this issue.
+- `needs-info`: waiting on reporter for more information.
+- `ready-for-agent`: fully specified, ready for an AFK agent.
+- `ready-for-human`: requires human implementation.
+- `wontfix`: will not be actioned.
 
 ### Domain docs
 
-Single-context: one root `GLOSSARY.md` and `docs/adr/`, created lazily. See `docs/agents/domain.md`.
+Single-context: one root `GLOSSARY.md`, created lazily. Product outcomes live in PRODUCT_GOAL.md and owner rules in this file, stated as rules; a glossary entry never restates or overrides either.
+
+- Before exploring, read the root `GLOSSARY.md`, or, when a root `GLOSSARY-MAP.md` exists, each per-context `GLOSSARY.md` it points at that is relevant to the topic.
+- Absent → proceed silently: never flag the absence or suggest creating it upfront. `mattpocock-skills:domain-modeling` (reached via `mattpocock-skills:grilling` and `mattpocock-skills:codebase-design`) creates it lazily when terms actually get resolved.
+- Name a domain concept (issue title, refactor proposal, hypothesis, test name) with the glossary's term; no synonym it avoids. A concept it lacks = invented language (reconsider) or a real gap (note it for `mattpocock-skills:domain-modeling`).
+- No ADRs and no `docs/adr/`: no decision log ([Standing directions](#standing-directions)).
 
 ## Codex compaction hook
 
 [`.codex/hooks.json`](.codex/hooks.json) registers only `SessionStart` with `^compact$` (startup, resume ignored); Claude Code runs the same command from `.claude/settings.json`, the only shared Claude file (`compact` matcher, 5 s timeout).
 
-- The command prints the re-entry rule, the scope and pause sentence, then this file's `## Mandatory entry` and `## Standing directions` verbatim.
-- Test: `node --test .codex/restore-product-context.test.mjs` (CI too).
-- Before changing the hook, its sections or its test, enabling it as a collaborator, or claiming that it is active or delivered on a host: read [docs/agents/compaction-hook.md](docs/agents/compaction-hook.md) (output limit, missing sections, collaborator setup, activation, test assertions).
+- The command (`.codex/restore-product-context.mjs`; Node, Git, POSIX shell) prints ≤ 10,000 characters: the re-entry rule first (PRODUCT_GOAL.md in full + the PNG, then the Issue; AGENTS.md from disk only when it is not in context or changed), the scope and pause sentence, then this file's `## Mandatory entry` and `## Standing directions` verbatim. Why: Claude Code injects longer hook context only as a 2,000-character preview + file path.
+  - Sections outgrowing the limit → prints the rule and points to AGENTS.md.
+  - Missing or renamed section (CRLF line ends, trailing spaces after a heading tolerated) → rule still printed; names what is missing on stderr; exit 0.
+  - Restores no editing gate or Stop continuation.
+- Collaborators: each enables hooks, trusts the project, reviews the hook in Codex [`/hooks`](https://learn.chatgpt.com/docs/hooks) after every definition change (may disable it alone there), and checks that a fresh `/compact` shows `CODEBOOK: RESTORE PRODUCT CONTEXT AFTER COMPACTION` (proves delivery, not reading or understanding).
+- Files alone establish no activation; this repo changes no global Codex setting; a Codex observation verifies no Claude Code delivery.
+- Test: `node --test .codex/restore-product-context.test.mjs` (CI too): rule within the first 2,000 characters, whole output ≤ 10,000 (~1,500 tokens, under Codex's `additionalContextLimit` of 4,000), both sections verbatim. Missing/renamed section = no error (exit 0, note on stderr); any other failure (e.g. unreadable AGENTS.md, malformed hook input) exits nonzero with stderr, no fail-closed guarantee.

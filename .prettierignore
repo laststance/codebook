@@ -1,6 +1,5 @@
 # Governance documents and evidence records keep their authored layout (owner decision, 2026-10-01).
 *.md
-docs
 
 # Bundled skill bytes are identity-tracked by content hash and version.
 extension/skills
