@@ -18,6 +18,8 @@ A Next app in a folder below the repository root runs from the repository root, 
 4. The first pause shows the values in the native debugger at the file inside the app's folder; continue to the rendered page as for any run.
 5. After you reopened the editor on the repository root (or updated Codebook), ask again: a window opened on the app's folder itself refuses the run and says which `packageRoot` to use.
 
+Running a Next app below the repository root in your installed VS Code or Cursor remains subject to native validation; the development checks are recorded in the cycle Issue of Cycle 0074.
+
 The refusal for each `packageRoot` problem, and what the chat does, are in the `nextPackageRoot` section of `codebook://help/repository-browser`. See **Explain a browser interaction in a Next.js app** for the rest of a Next run.
 
 ## Set up editor AI chat

@@ -17,12 +17,12 @@ export const PAGES_SERVER_STUDY_WORKSPACE_KEY = '0'.repeat(64)
 
 /**
  * Runs a Pages server run in a service to its completion and captures its study, keeping the run so a test can read its folder and its resource.
- * Used by {@link capturePagesServerStudy} and by the nested-app tests, which pass harness options (`nextPackage`, a `getStaticProps` page) and the data function's name.
+ * Used by {@link capturePagesServerStudy} and by the nested-app tests, which pass harness options (`packageRoot`, `packageApp`, a `getStaticProps` page) and the data function's name.
  * @param context - The running test, which owns the harness cleanup.
  * @param extra - Harness options handed to {@link pagesServerService}.
  * @param frameName - The name of the paused frame (`getServerSideProps` by default).
  * @returns The study the writer produced and the run it came from.
- * @example const { study, run } = await capturePagesServerRun(context, { nextPackage: { root: 'examples/web' } }, 'getStaticProps')
+ * @example const { study, run } = await capturePagesServerRun(context, { packageRoot: 'examples/web' }, 'getStaticProps')
  */
 export async function capturePagesServerRun(
   context: TestContext,

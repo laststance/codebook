@@ -47,7 +47,7 @@ async function writeInstalledNext(
 /**
  * Writes a different Next app at the repository root, whose every file differs from the nested app's: Pages and App pages, a `package.json` with another dev script and port, an older installed `next` and a `.next/dev` build that routes `/` to another page. A reader that takes the repository root for the package root reads these and answers differently or refuses.
  *
- * Why it exists: Issue 192 requires a decoy root in every nested-run fixture; used by `configuredRuntimeHarness` for `nextPackage.decoyRoot`.
+ * Why it exists: Issue 192 requires a decoy root in every nested-run fixture; used by `configuredRuntimeHarness` for `packageApp.decoyRoot`.
  * @param repositoryDirectory - The repository root.
  * @param withNext - Whether the decoy installs its own `node_modules/next` (not when the nested app hoists its Next to the root).
  * @example await writeDecoyNextApp(directory, true)
@@ -84,7 +84,7 @@ export async function writeDecoyNextApp(
 /**
  * Completes the nested Next app the harness stages: its `package.json` (webpack `dev` script), and, for a run without a Pages build, its App folder and installed `next`; moves `next` to the repository root when the app hoists it.
  *
- * Why it exists: the Pages build writer installs `next` in the folder it is given; the App and hoisted shapes need these files instead. Called by `configuredRuntimeHarness` for `nextPackage`.
+ * Why it exists: the Pages build writer installs `next` in the folder it is given; the App and hoisted shapes need these files instead. Called by `configuredRuntimeHarness` for `packageRoot`.
  * @param input - `repositoryDirectory` and `packageDirectory` absolute folders; `withNext` installs `next` (the Pages writer already did); `next` where it must end up.
  * @example await writeNestedPackage({ repositoryDirectory, packageDirectory, withNext: true, next: 'package' })
  */

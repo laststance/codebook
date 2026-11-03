@@ -204,6 +204,8 @@ export function serverRenderHelp() {
       configurationEntryRender: SERVER_RENDER_ENTRY_CONFIGURATION,
       configurationSearchRerender: SERVER_RENDER_SEARCH_CONFIGURATION,
       configurationPagesEntryRender: SERVER_RENDER_PAGES_ENTRY_CONFIGURATION,
+      nestedApp:
+        'A Next app below the repository root (packageRoot): the nested server-stop example is configurationNestedServerStop in nextPackageRoot (codebook://help/repository-browser#next-package-root); source.path stays repository-relative and starts with packageRoot.',
       entryRender:
         'configurationEntryRender (App Router): the stop pauses the render that serves the entry route on the page load (entry /dashboard, operations omitted, one server stop with afterOperation 0 in fetchCardData of app/lib/data.ts).',
       searchRerender: `configurationSearchRerender (App Router): entry /dashboard/invoices, one text operation into the search box, and server stops with afterOperation 1 in app/dashboard/invoices/page.tsx and in app/lib/data.ts. The render is sent with ${REPOSITORY_OPERATION_ACTION}; a stop pauses the render of the entry route that Codebook observed after operation 1.`,

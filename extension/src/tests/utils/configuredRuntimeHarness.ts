@@ -1,5 +1,5 @@
 import { mkdir, realpath, symlink, writeFile } from 'node:fs/promises'
-import { dirname, join, relative, resolve } from 'node:path'
+import { dirname, join, posix, resolve } from 'node:path'
 import type { TestContext } from 'node:test'
 import { runInNewContext } from 'node:vm'
 
@@ -352,9 +352,18 @@ export async function configuredRuntimeHarness(
   let packageSourcePath = reference.configuration.source.path
   if (packageFolder && !options.packageApp?.stopsOutside) {
     // A named source already lies inside the package; the default one moves below it.
-    if (options.sourcePath)
-      packageSourcePath = relative(packageFolder, options.sourcePath)
-    else nestSources(reference, packageFolder)
+    if (options.sourcePath) {
+      // Next module ids and script URLs are POSIX paths on every OS, so the logical path is taken with posix.
+      packageSourcePath = posix.relative(packageFolder, options.sourcePath)
+      if (
+        packageSourcePath === '..' ||
+        packageSourcePath.startsWith('../') ||
+        posix.isAbsolute(packageSourcePath)
+      )
+        throw new Error(
+          `sourcePath ${options.sourcePath} must lie inside packageRoot ${packageFolder}.`,
+        )
+    } else nestSources(reference, packageFolder)
   }
   if (options.entryPath ?? options.nextPages?.entryPath)
     reference.configuration.entryPath =
@@ -1890,11 +1899,10 @@ export async function configuredRuntimeHarness(
         },
       },
       './utils/readDeclaredDevelopmentPort': {
-        readDeclaredDevelopmentPort: async (workspaceRoot: string) => ({
-          ...(declaredPortRoots.push(workspaceRoot), {}),
-          port: 4321,
-          source: 'the dev script in package.json',
-        }),
+        readDeclaredDevelopmentPort: async (workspaceRoot: string) => {
+          declaredPortRoots.push(workspaceRoot)
+          return { port: 4321, source: 'the dev script in package.json' }
+        },
       },
       './utils/assertDevelopmentPortFree': {
         assertDevelopmentPortFree: async () => undefined,

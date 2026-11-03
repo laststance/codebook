@@ -2,12 +2,16 @@ import {
   MILLISECONDS_PER_SECOND,
   NEXT_APP_SELECTION_RULE,
   NEXT_MANIFEST_POLL_MS,
+  NEXT_PACKAGE_DISCOVERY_APP_LIMIT,
+  NEXT_PACKAGE_DISCOVERY_MANIFEST_LIMIT,
+  NEXT_PACKAGE_DISCOVERY_MAX_DEPTH,
   NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE,
   NEXT_PACKAGE_ROOT_MINIMUM_API,
   NEXT_PACKAGE_ROOT_MINIMUM_EXTENSION,
   NEXT_PAGES_SOURCE_EXTENSIONS,
   NEXT_SETUP_STEPS,
   NEXT_WEBPACK_COMPATIBILITY_SENTENCE,
+  REPOSITORY_GIT_TIMEOUT_MS,
   REPOSITORY_SETUP_TIMEOUT_MS,
 } from './constants'
 import { ERROR_RECOVERY } from './errors'
@@ -16,6 +20,10 @@ import {
   nextHelpAnchor,
   type NextRefusalCode,
 } from './nextRefusals'
+
+/** The discovery's one deadline in seconds, as the help names it: the discovery works within the Git read bound ({@link REPOSITORY_GIT_TIMEOUT_MS}). */
+const NEXT_PACKAGE_DISCOVERY_DEADLINE_SECONDS =
+  REPOSITORY_GIT_TIMEOUT_MS / MILLISECONDS_PER_SECOND
 
 /** The Pages source extensions Codebook tries, as the help names them: `.tsx, .ts, .jsx, .js`. */
 const PAGES_SOURCE_EXTENSIONS_TEXT = NEXT_PAGES_SOURCE_EXTENSIONS.map(
@@ -174,8 +182,8 @@ const PACKAGE_ROOT_REFUSALS = {
   'outside-repository': {
     code: 'INVALID_CONFIGURATION',
     meaning:
-      'packageRoot resolves to a folder outside the opened repository (a ".." segment or an absolute path).',
-    fix: 'Declare the folder as a repository-relative path inside the repository, copied from the packages entry the question is about or from details.suggestions. Nothing started (details.sideEffects none).',
+      'Two forms. A packageRoot with a ".." segment, a leading "/" or a backslash never reaches the resolver: the schema refuses it at parse as INVALID_CONFIGURATION "Start arguments do not match the selected profile or accepted intent." with no details.reason and no details.suggestions. With details.reason outside-repository the path was well-formed but resolves to a folder outside the opened repository (only the resolver answers so, with details.suggestions).',
+    fix: 'In both forms declare the folder as a repository-relative path inside the repository (forward slashes, no ".." and no leading "/"), copied from the packages entry the question is about or, when the refusal carries them, from details.suggestions. Nothing started (details.sideEffects none).',
   },
   'link-leaves-repository': {
     code: 'INVALID_CONFIGURATION',
@@ -247,12 +255,9 @@ function nextPackageRootHelp() {
     status: {
       rootIsApp:
         "next-dev-webpack readiness: true when the root package.json names next and the root has a route folder (app, src/app, pages or src/pages). Only then is the root a candidate; the root's ready keeps its meaning.",
-      packages:
-        'Array of the Next apps below the root that tracked package.json files name (depth 4 or less, at most 50): { packageRoot, routerKind, installed, ready, version?, missing[] }. packageRoot is the exact value to declare; ready and missing are what a start with that packageRoot checks. Entries carry no preparation or notes: a start reports them. Untracked apps are not listed.',
-      packagesTruncated:
-        'true when the list is incomplete; packagesTruncatedReason says why: limit (more than 50 apps), manifest-cap (more than 500 manifests), deadline (the 5 s discovery bound), skipped-path (a path was skipped) or git-failed.',
-      whenTruncated:
-        "When packagesTruncated is true and the app the question names is not listed, declare its packageRoot from the repository's files (the folder that holds its package.json); the start checks it, and an unlisted depth 5 or untracked folder runs when it passes.",
+      packages: `Array of the Next apps below the root that tracked package.json files name (depth ${NEXT_PACKAGE_DISCOVERY_MAX_DEPTH} or less, at most ${NEXT_PACKAGE_DISCOVERY_APP_LIMIT}): { packageRoot, routerKind, installed, ready, version?, missing[] }. packageRoot is the exact value to declare; ready and missing are what a start with that packageRoot checks. Entries carry no preparation or notes: a start reports them. Untracked apps are not listed.`,
+      packagesTruncated: `true when the list is incomplete; packagesTruncatedReason says why: limit (more than ${NEXT_PACKAGE_DISCOVERY_APP_LIMIT} apps), manifest-cap (more than ${NEXT_PACKAGE_DISCOVERY_MANIFEST_LIMIT} manifests), deadline (the ${NEXT_PACKAGE_DISCOVERY_DEADLINE_SECONDS} s discovery bound), skipped-path (a path was skipped) or git-failed.`,
+      whenTruncated: `When packagesTruncated is true and the app the question names is not listed, declare its packageRoot from the repository's files (the folder that holds its package.json); the start checks it, and an unlisted depth ${NEXT_PACKAGE_DISCOVERY_MAX_DEPTH + 1} or untracked folder runs when it passes.`,
     },
     configurationNestedServerStop: NEXT_NESTED_SERVER_STOP_CONFIGURATION,
     configurationNestedBrowserStop: NEXT_NESTED_BROWSER_STOP_CONFIGURATION,
