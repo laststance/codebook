@@ -14,6 +14,14 @@ import type { RepositoryConfiguration } from '../repositoryConfigSchemas'
 import { maskStoredFact } from './maskStoredFact'
 import { redactInspectedValue } from './redactInspectedValue'
 
+/** Reason stored for a declared inspection the debugger refused to evaluate; {@link ConfiguredBrowserRun} compares against it to tell the chat that the value is a getter, and how to recover. */
+export const INSPECTION_REJECTED_REASON =
+  'Evaluation unavailable or rejected for possible side effects.'
+
+/** Reason stored for a declared inspection that evaluated without a bounded primitive at the exact frame. */
+export const INSPECTION_UNBOUNDED_REASON =
+  'No bounded primitive value is available at this exact frame.'
+
 /** Captures declared bounded facts for {@link ConfiguredBrowserRun}; an object or function is captured as its `{ type }` marker, because its members are not bounded, and explicit unavailability preserves other facts while the caller gates continuation. @param maskKnownText - Masks the values a Vite run learned from its env files in a captured string; the identity for a run without such values. @example await inspectConfiguredValues(evaluate, callFrameId, configuration.inspections, assertCurrent) */
 export async function inspectConfiguredValues(
   evaluate: (
@@ -68,9 +76,36 @@ export async function inspectConfiguredValues(
       continue
     }
     const reason = response.exceptionDetails
-      ? 'Evaluation unavailable or rejected for possible side effects.'
-      : 'No bounded primitive value is available at this exact frame.'
+      ? INSPECTION_REJECTED_REASON
+      : INSPECTION_UNBOUNDED_REASON
     unavailableValues.push({ path, reason })
   }
   return { values, unavailableValues }
+}
+
+/**
+ * Words the failure of a required inspection that came back unavailable.
+ *
+ * Why: the chat needs to know whether the debugger refused the value as a possible side effect (a getter, such as a fetch Response's status), because only then does declaring it optional or choosing a plain value recover the run. Called by {@link ConfiguredBrowserRun} when a stop's required inspection is in the facts' unavailable list.
+ *
+ * @param missing - The required inspection that is unavailable.
+ * @param unavailableValues - The unavailable list {@link inspectConfiguredValues} returned for the stop.
+ * @param hint - The self-declared-binding hint for the stop's line; when set, it explains the refusal better than the getter text and is appended to the plain message.
+ * @returns The failure message.
+ * @example requiredInspectionFailureMessage({ mode: 'value', path: 'response.status' }, unavailableValues, '')
+ */
+export function requiredInspectionFailureMessage(
+  missing: { mode: string; path: string },
+  unavailableValues: ConfiguredObservation['unavailableValues'],
+  hint: string,
+): string {
+  const label = `${missing.mode}:${missing.path}`
+  const rejected = unavailableValues.some(
+    (value) =>
+      value.path === label && value.reason === INSPECTION_REJECTED_REASON,
+  )
+  // A binding the stop's own line declares is refused the same way, and its hint explains it better.
+  if (rejected && hint === '')
+    return `Required inspection ${label} is unavailable: Codebook reads values without side effects, and reading it runs a getter (an accessor property, such as a fetch Response's status or a Map's size), which the debugger refused. Declare it as an optional inspection (required: false) or choose a value the code holds in a variable or a plain property, then start one new run; the getter's value can be read in the native debugger state of this observation. Captured facts remain readable.`
+  return `Required inspection ${label} is unavailable; captured facts remain readable.${hint}`
 }

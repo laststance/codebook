@@ -3395,6 +3395,33 @@ test('a click target that matches no element ends preparation saying so, with th
   assert.equal(mouse.length, 0)
 })
 
+// Value: protects=an agent whose required inspection is a getter (an accessor property such as a fetch Response's status) learning why it was refused and how to recover instead of reading a bare unavailability; fails_when=the failure drops the getter explanation, the optional-inspection advice or the new-run instruction, or names the reason for a value that merely has no bounded primitive; no_claim=the real V8 refusal, which the native check observes
+test('a required inspection the debugger refuses as a possible side effect fails explaining the getter and how to declare a readable value', async (context) => {
+  // Arrange: the stop's line only uses nextTheme, and reading it throws as V8 does under throwOnSideEffect.
+  const { run } = await configuredRuntimeHarness(context, undefined, [], {
+    mappings: 'AAAA',
+    fixture: { source: 'setTheme(nextTheme);\n', citationEndLine: 2 },
+    inspectionScope: {
+      get nextTheme(): never {
+        throw new Error('side effect')
+      },
+    },
+  })
+  await run.prepare()
+  // Act
+  run.action('one', 'repository-click')
+  await waitUntil(
+    () => run.view().status === 'failed',
+    'required getter refused',
+  )
+  await run.stop()
+  // Assert
+  assert.equal(
+    run.view().failures[0],
+    "Error: Required inspection value:nextTheme is unavailable: Codebook reads values without side effects, and reading it runs a getter (an accessor property, such as a fetch Response's status or a Map's size), which the debugger refused. Declare it as an optional inspection (required: false) or choose a value the code holds in a variable or a plain property, then start one new run; the getter's value can be read in the native debugger state of this observation. Captured facts remain readable.",
+  )
+})
+
 // Cycle 0044 (0042-N11-3): red while a required value that the stopped line itself declares ended the run with "is unavailable" and no word about why.
 test('a required value that the stopped line itself declares fails saying that the line declares it and where to declare the stop instead', async (context) => {
   // Arrange: the stop is on `const nextTheme = "dark";` and requires value:nextTheme, which has no value before that line runs.

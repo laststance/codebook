@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { rm, writeFile } from 'node:fs/promises'
+import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -4173,6 +4173,45 @@ test('configured help says that every stop needs a required value inspection of 
     true,
   )
   assert.doesNotMatch(inspections, /declare type:<path> or a primitive member/)
+})
+
+// Value: protects=the help, the bundled skill and the packaged README all telling the chat that a getter is refused as a possible side effect and must be declared optional or replaced by a variable or plain property; fails_when=any of the three loses the rule, so a chat declares response.status as required again; no_claim=the wording elsewhere in those texts
+test('help, skill and README tell the chat that a getter is refused and to declare it optional or choose a plain value', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+  const root = join(__dirname, '..', '..')
+
+  // Act
+  const help = await readResource(service, 'codebook://help/repository-browser')
+  const skill = await readFile(
+    join(root, 'skills', 'codebook', 'SKILL.md'),
+    'utf8',
+  )
+  const readme = await readFile(join(root, 'README.md'), 'utf8')
+
+  // Assert
+  assert.ok('text' in help)
+  const inspections = z
+    .object({ inspections: z.string() })
+    .parse(JSON.parse(help.text)).inspections
+  assert.equal(
+    inspections.includes(
+      "so a getter (an accessor property: a fetch Response's status or ok, a Headers entry, a Map's size, a class getter) is refused as a possible side effect; declare such a value optional (required: false) or choose a variable or plain property the code holds.",
+    ),
+    true,
+  )
+  assert.equal(
+    skill.includes(
+      "a getter (an accessor property, such as a fetch Response's status or a Map's size) is refused as a possible side effect, so declare it optional or pick another value",
+    ),
+    true,
+  )
+  assert.equal(
+    readme.includes(
+      "a getter (an accessor property such as a fetch Response's `status` or `ok`, a Headers entry, a Map's `size` or a class getter) is refused as a possible side effect: declare such a value optional (`required:false`) or choose a variable or plain property the code holds.",
+    ),
+    true,
+  )
 })
 
 // Value: protects=the help an agent reads before its first start saying that a required value must already exist when the debugger pauses before the stop's line runs, and that Codebook requests a stop whose own line declares its binding on the next line that can pause; fails_when=the help's sentence on inspections does not say it; why_new=Cycle 0045 cause 11 (DX-1 b), rewritten for N14d-15 (DX-1 a) and for Cycle 0047 row 49 (D14.5-1: a partly scanned server stop whose module is not loaded is refused at its arming); seam=none

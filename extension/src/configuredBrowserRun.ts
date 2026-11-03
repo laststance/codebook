@@ -212,7 +212,10 @@ import { findNextRouteFolder } from './utils/findNextRouteFolder'
 import { findUnmappedDeclaredStop } from './utils/findUnmappedDeclaredStop'
 import { formatRefusalFailure } from './utils/formatRefusalFailure'
 import { holdsNextPagesRendererPatterns } from './utils/holdsNextPagesRendererPatterns'
-import { inspectConfiguredValues } from './utils/inspectConfiguredValues'
+import {
+  inspectConfiguredValues,
+  requiredInspectionFailureMessage,
+} from './utils/inspectConfiguredValues'
 import { isBlankOrCommentLine } from './utils/isBlankOrCommentLine'
 import { isBrowserOnEntryRoute } from './utils/isBrowserOnEntryRoute'
 import { isFrameAtPosition } from './utils/isFrameAtPosition'
@@ -10476,7 +10479,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       )
       if (missing)
         throw new Error(
-          `Required inspection ${missing.mode}:${missing.path} is unavailable; captured facts remain readable.${selfDeclaredInspectionHint(stop.bundle.source, frame.line, missing.path, this.definition.descriptor.anchors[stop.anchorIndex]!.endLine, stop.source.line)}`,
+          requiredInspectionFailureMessage(
+            missing,
+            facts.unavailableValues,
+            selfDeclaredInspectionHint(
+              stop.bundle.source,
+              frame.line,
+              missing.path,
+              this.definition.descriptor.anchors[stop.anchorIndex]!.endLine,
+              stop.source.line,
+            ),
+          ),
         )
       await this.capture(phase, current, pause)
       current()
