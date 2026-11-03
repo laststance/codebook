@@ -263,6 +263,40 @@
       ],
       "pattern": "theme=dark; sid=SECRET",
       "reason": "the dummy cookie value a Next output-masking test seeds to prove it never reaches a message; never a credential"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "extension/src/tests/outputCookieLikeValues.test.ts",
+        "extension/src/tests/savedHistoryServingMasks.test.ts"
+      ],
+      "pattern": "\\[masked\\]",
+      "reason": "the mask placeholder the Cycle 0073 output and serving-path masking tests expect after a Cookie or Authorization label; no secret value"
+    },
+    {
+      "finding": "db.url_with_password",
+      "paths": [
+        "extension/src/tests/replayCaptureCookieLikeValues.test.ts",
+        "extension/src/tests/replayCaptureShapeEdges.test.ts"
+      ],
+      "pattern": "postgres[:]//u:p@h/db",
+      "reason": "the dummy DATABASE_URL an environment-alias capture test feeds in to show it is saved as a class name; never a credential"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "extension/src/utils/redactValuePreview.ts"
+      ],
+      "pattern": "\"token\":\"abc\"",
+      "reason": "a JSDoc example of a serialised object inside a preview string; no secret value"
+    },
+    {
+      "finding": "internal.url_private",
+      "paths": [
+        "extension/src/tests/shapeResponseBody.test.ts"
+      ],
+      "pattern": "http[:]//localhost:4100/welcome",
+      "reason": "the dummy local redirect a response-shaping test masks; no private address"
     }
   ]
 }

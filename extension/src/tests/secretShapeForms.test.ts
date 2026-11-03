@@ -23,6 +23,7 @@ function assertFinishesWithin(
   const startedAt = performance.now()
   work()
   const tookMs = performance.now() - startedAt
+  // gstack-timing-ok: the bound is the contract (linear-time shape scans); measured times are 2–14 ms against a bound of hundreds of ms, so only the quadratic regression it guards fails it.
   assert.ok(tookMs < boundMs, `${label} took ${Math.round(tookMs)} ms`)
 }
 

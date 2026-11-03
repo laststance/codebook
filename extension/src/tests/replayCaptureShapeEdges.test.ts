@@ -404,5 +404,6 @@ test('a replay snapshot saves a raw value above the scan bound as its class name
   assertSnapshotHoldsNone(snapshot, [SESSION_VALUE])
   assert.equal(savedLocal(snapshot, 'body').value, 'string')
   assert.equal(savedLocal(snapshot, 'payload').value, 'Object')
+  // gstack-timing-ok: the bound is the contract (a linear scan of a 120 KB value); measured times are 2–14 ms, so the 1 s bound only fails on the quadratic regression it guards.
   assert.ok(tookMs < 1_000, `the capture took ${Math.round(tookMs)} ms`)
 })
