@@ -33,7 +33,8 @@ export async function inspectConfiguredValues(
   maskKnownText: (text: string) => string = (text) => text,
 ) {
   const values: ConfiguredObservation['values'] = {},
-    unavailableValues: ConfiguredObservation['unavailableValues'] = []
+    unavailableValues: ConfiguredObservation['unavailableValues'] = [],
+    sideEffectRefused: string[] = []
   for (const inspection of inspections) {
     assertCurrent()
     const path = `${inspection.mode}:${inspection.path}`
@@ -75,12 +76,39 @@ export async function inspectConfiguredValues(
       else values[path] = stored
       continue
     }
+    // Only V8's own side-effect refusal (a getter or another call under throwOnSideEffect) is told to the chat as a getter; any other throw keeps the plain wording.
+    if (isSideEffectRefusal(response.exceptionDetails))
+      sideEffectRefused.push(path)
     const reason = response.exceptionDetails
       ? INSPECTION_REJECTED_REASON
       : INSPECTION_UNBOUNDED_REASON
     unavailableValues.push({ path, reason })
   }
-  return { values, unavailableValues }
+  return {
+    values,
+    unavailableValues,
+    ...(sideEffectRefused.length ? { sideEffectRefused } : {}),
+  }
+}
+
+/**
+ * Says whether an evaluation was refused by V8's side-effect check (`throwOnSideEffect`), as opposed to an expression that threw for another reason (a name not in scope, a `TypeError`).
+ *
+ * Why: only a side-effect refusal means the declared value is a getter or another call Codebook will not run, so only then does the failure advise an optional inspection or a plain value. Called by {@link inspectConfiguredValues} for each unavailable evaluation.
+ * @param details - The `exceptionDetails` of a `Debugger.evaluateOnCallFrame` answer, if any.
+ * @returns
+ * - `true` for V8's `EvalError: Possible side-effect in debug-evaluate`
+ * - `false` for no exception or any other one
+ * @example isSideEffectRefusal({ exceptionId: 1, text: 'Uncaught', lineNumber: 0, columnNumber: 0, exception: { type: 'object', className: 'EvalError', description: 'EvalError: Possible side-effect in debug-evaluate' } }) // => true
+ */
+function isSideEffectRefusal(
+  details: Protocol.Runtime.ExceptionDetails | undefined,
+): boolean {
+  const exception = details?.exception
+  return (
+    exception?.className === 'EvalError' &&
+    /possible side-effect/i.test(exception.description ?? '')
+  )
 }
 
 /**
@@ -89,21 +117,18 @@ export async function inspectConfiguredValues(
  * Why: the chat needs to know whether the debugger refused the value as a possible side effect (a getter, such as a fetch Response's status), because only then does declaring it optional or choosing a plain value recover the run. Called by {@link ConfiguredBrowserRun} when a stop's required inspection is in the facts' unavailable list.
  *
  * @param missing - The required inspection that is unavailable.
- * @param unavailableValues - The unavailable list {@link inspectConfiguredValues} returned for the stop.
+ * @param sideEffectRefused - The inspections (`<mode>:<path>`) V8 refused as a possible side effect at this stop, from {@link inspectConfiguredValues}.
  * @param hint - The self-declared-binding hint for the stop's line; when set, it explains the refusal better than the getter text and is appended to the plain message.
  * @returns The failure message.
- * @example requiredInspectionFailureMessage({ mode: 'value', path: 'response.status' }, unavailableValues, '')
+ * @example requiredInspectionFailureMessage({ mode: 'value', path: 'response.status' }, ['value:response.status'], '')
  */
 export function requiredInspectionFailureMessage(
   missing: { mode: string; path: string },
-  unavailableValues: ConfiguredObservation['unavailableValues'],
+  sideEffectRefused: readonly string[],
   hint: string,
 ): string {
   const label = `${missing.mode}:${missing.path}`
-  const rejected = unavailableValues.some(
-    (value) =>
-      value.path === label && value.reason === INSPECTION_REJECTED_REASON,
-  )
+  const rejected = sideEffectRefused.includes(label)
   // A binding the stop's own line declares is refused the same way, and its hint explains it better.
   if (rejected && hint === '')
     return `Required inspection ${label} is unavailable: Codebook reads values without side effects, and reading it runs a getter (an accessor property, such as a fetch Response's status or a Map's size), which the debugger refused. Declare it as an optional inspection (required: false) or choose a value the code holds in a variable or a plain property, then start one new run; the getter's value can be read in the native debugger state of this observation. Captured facts remain readable.`

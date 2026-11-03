@@ -1348,7 +1348,7 @@ export async function configuredRuntimeHarness(
           return {
             result: { value: evaluateInspection(parameters?.expression) },
           }
-        } catch {
+        } catch (error) {
           return {
             result: { type: 'undefined' },
             exceptionDetails: {
@@ -1356,6 +1356,17 @@ export async function configuredRuntimeHarness(
               text: 'Unavailable test local',
               lineNumber: 0,
               columnNumber: currentColumn - 1,
+              // An EvalError stands in for V8's side-effect refusal under throwOnSideEffect, which names itself this way.
+              ...(error instanceof EvalError
+                ? {
+                    exception: {
+                      type: 'object' as const,
+                      subtype: 'error' as const,
+                      className: 'EvalError',
+                      description: `EvalError: ${error.message}`,
+                    },
+                  }
+                : {}),
             },
           }
         }

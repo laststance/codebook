@@ -10481,7 +10481,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         throw new Error(
           requiredInspectionFailureMessage(
             missing,
-            facts.unavailableValues,
+            facts.sideEffectRefused ?? [],
             selfDeclaredInspectionHint(
               stop.bundle.source,
               frame.line,

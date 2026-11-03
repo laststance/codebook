@@ -3397,13 +3397,13 @@ test('a click target that matches no element ends preparation saying so, with th
 
 // Value: protects=an agent whose required inspection is a getter (an accessor property such as a fetch Response's status) learning why it was refused and how to recover instead of reading a bare unavailability; fails_when=the failure drops the getter explanation, the optional-inspection advice or the new-run instruction, or names the reason for a value that merely has no bounded primitive; no_claim=the real V8 refusal, which the native check observes
 test('a required inspection the debugger refuses as a possible side effect fails explaining the getter and how to declare a readable value', async (context) => {
-  // Arrange: the stop's line only uses nextTheme, and reading it throws as V8 does under throwOnSideEffect.
+  // Arrange: the stop's line only uses nextTheme, and reading it is refused with V8's side-effect EvalError, as under throwOnSideEffect.
   const { run } = await configuredRuntimeHarness(context, undefined, [], {
     mappings: 'AAAA',
     fixture: { source: 'setTheme(nextTheme);\n', citationEndLine: 2 },
     inspectionScope: {
       get nextTheme(): never {
-        throw new Error('side effect')
+        throw new EvalError('Possible side-effect in debug-evaluate')
       },
     },
   })
@@ -3419,6 +3419,33 @@ test('a required inspection the debugger refuses as a possible side effect fails
   assert.equal(
     run.view().failures[0],
     "Error: Required inspection value:nextTheme is unavailable: Codebook reads values without side effects, and reading it runs a getter (an accessor property, such as a fetch Response's status or a Map's size), which the debugger refused. Declare it as an optional inspection (required: false) or choose a value the code holds in a variable or a plain property, then start one new run; the getter's value can be read in the native debugger state of this observation. Captured facts remain readable.",
+  )
+})
+
+// Value: protects=a required inspection that throws for another reason (a name not in scope, a TypeError) keeps the plain unavailability text and is never told it is a getter; fails_when=every throw is worded as a refused getter, misleading an agent whose path is simply wrong; no_claim=the real V8 refusal, which the native check observes
+test('a required inspection that throws without a side-effect refusal keeps the plain unavailability wording', async (context) => {
+  // Arrange: reading nextTheme throws a plain error, as an expression with a name not in scope does.
+  const { run } = await configuredRuntimeHarness(context, undefined, [], {
+    mappings: 'AAAA',
+    fixture: { source: 'setTheme(nextTheme);\n', citationEndLine: 2 },
+    inspectionScope: {
+      get nextTheme(): never {
+        throw new ReferenceError('nextTheme is not defined')
+      },
+    },
+  })
+  await run.prepare()
+  // Act
+  run.action('one', 'repository-click')
+  await waitUntil(
+    () => run.view().status === 'failed',
+    'required plain throw refused',
+  )
+  await run.stop()
+  // Assert
+  assert.equal(
+    run.view().failures[0],
+    'Error: Required inspection value:nextTheme is unavailable; captured facts remain readable.',
   )
 })
 
