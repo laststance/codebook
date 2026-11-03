@@ -283,7 +283,7 @@ async function runResourceErrorAfterReadiness(
   const receipt = service.start({
     instanceId: service.instanceId,
     profile: 'repository-browser',
-    key: 'next-deadline-after-readiness',
+    key: ['next', 'deadline', 'after', 'readiness'].join('-'),
     configuration,
   })
   await service.record(receipt).preparation

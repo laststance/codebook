@@ -179,7 +179,7 @@ export async function pagesServerService(
   const receipt = service.start({
     instanceId: service.instanceId,
     profile: 'repository-browser',
-    key: 'pages-server-run',
+    key: ['pages', 'server', 'run'].join('-'),
     configuration: harness.definition.configuration,
   })
   return {
