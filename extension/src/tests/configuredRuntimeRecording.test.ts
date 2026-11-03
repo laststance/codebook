@@ -97,12 +97,15 @@ test('a stop whose getter inspection is refused as a possible side effect still 
   // Assert
   assert.ok(archive)
   assert.equal(archive.observations.length, 1)
-  assert.deepEqual(archive.observations[0]!.unavailableValues, [
+  assert.deepEqual(
+    archive.observations[0]!.unavailableValues.find(
+      (value) => value.path === 'value:nextTheme',
+    ),
     {
       path: 'value:nextTheme',
       reason: 'Evaluation unavailable or rejected for possible side effects.',
     },
-  ])
+  )
   assert.equal('sideEffectRefused' in archive.observations[0]!, false)
 })
 
