@@ -10,6 +10,7 @@ import {
   readPagesAsyncChain,
   type PagesChainStep,
 } from '../utils/readPagesAsyncChain'
+import { readPagesRenderedPage } from '../utils/readPagesRenderedPage'
 import { readWithinVerdictBudget } from '../utils/readWithinVerdictBudget'
 import { valueShapeSummaryOf } from '../utils/valueShapeSummaryOf'
 
@@ -82,6 +83,72 @@ test('a Pages server module address names its compiled page and nothing else doe
     undefined,
   )
   assert.equal(pagesCompiledPathOfModuleUrl(''), undefined)
+})
+
+// Value: protects=Next's own page naming for a folder's index file and for a page named `index`: `pages/products/index.tsx` is the page `/products` and compiles to `pages/products.js`, the root `pages/index.tsx` stays `pages/index.js`, the page `/index` (`pages/index/index.tsx`) is `pages/index/index.js`, a static page under `index/` gets one more `index/` (`pages/index/index/foo.js`), a dynamic one does not; fails_when=a folder's index page keeps its `/index` tail so the manifest never lists it, or `pages/index/index.tsx` is read as the root page; no_claim=a custom pageExtensions, Next versions other than 16.1.4 and 16.4.4 (`next dev --webpack` of 16.1.4 measured `pages/products/index.js` listed as `"/products": "pages/products.js"`; the `index` names are read from `removePagePathTail`, `normalizePagePath` and the pages-manifest plugin in the 16.1.4 and 16.4.4 source)
+test('a folder index page and a page named index compile to the path Next lists in pages-manifest.json', () => {
+  // Arrange
+  const moduleUrlOf = (path: string): string =>
+    `webpack-internal:///(pages-dir-node)/./${path}`
+
+  // Act, Assert
+  assert.equal(
+    pagesCompiledPathOfModuleUrl(moduleUrlOf('pages/products/index.tsx')),
+    'pages/products.js',
+  )
+  assert.equal(
+    pagesCompiledPathOfModuleUrl(moduleUrlOf('src/pages/blog/2024/index.js')),
+    'pages/blog/2024.js',
+  )
+  assert.equal(
+    pagesCompiledPathOfModuleUrl(moduleUrlOf('pages/index.tsx')),
+    'pages/index.js',
+  )
+  assert.equal(
+    pagesCompiledPathOfModuleUrl(moduleUrlOf('pages/index/index.tsx')),
+    'pages/index/index.js',
+  )
+  assert.equal(
+    pagesCompiledPathOfModuleUrl(moduleUrlOf('pages/index/foo.tsx')),
+    'pages/index/index/foo.js',
+  )
+  assert.equal(
+    pagesCompiledPathOfModuleUrl(moduleUrlOf('pages/index/[id].tsx')),
+    'pages/index/[id].js',
+  )
+  assert.equal(
+    pagesCompiledPathOfModuleUrl(moduleUrlOf('pages/products/index/index.ts')),
+    'pages/products/index.js',
+  )
+})
+
+// Value: protects=the page of a hit inside a folder index page's data function: the page-module frame `pages/products/index.tsx` is found in `pages-manifest.json` under `/products`, so the hit reads as that page (not the entry page's) and the Pages verdict resumes it; fails_when=the compiled path keeps `/index`, the manifest has no such value, and the hit reads as unreadable instead of the page it renders; no_claim=the verdict built on it (the verdict tests)
+test('a page-module frame of a folder index page reads as that page through the manifest', async () => {
+  // Arrange
+  const { reader } = scriptedPagesReader({
+    manifest: { '/': 'pages/index.js', '/products': 'pages/products.js' },
+    requests: [],
+  })
+
+  // Act
+  const page = await readPagesRenderedPage(
+    {
+      pathnameCallFrameId: undefined,
+      insideFrameUrls: [
+        'webpack-internal:///(pages-dir-node)/./pages/products/index.tsx',
+      ],
+      entryRoute: '/',
+    },
+    reader,
+    manualVerdictBudget().budget,
+  )
+
+  // Assert
+  assert.deepEqual(page, {
+    state: 'read',
+    route: '/products',
+    evidence: 'frame',
+  })
 })
 
 // Value: protects=page requests only: the document and Next's data request name the page path, `index.json` is the root, and an image, script or API call names none; fails_when=an asset request counts as the outstanding page request, or a data request keeps its prefix and suffix; no_claim=i18n locale prefixes in data requests
