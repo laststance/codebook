@@ -12,6 +12,7 @@ import {
   NEXT_PACKAGE_SUGGESTION_TIMEOUT_MS,
   REPOSITORY_GIT_TIMEOUT_MS,
 } from '../constants'
+import { repositoryPathSchema } from '../sourceSchemas'
 
 import { manifestNamesNext } from './nextManifest'
 import { readRepositoryBuildText } from './readRepositoryBuildText'
@@ -123,9 +124,11 @@ function listManifestFolders(output: string): {
       folderSegments.length > NEXT_PACKAGE_DISCOVERY_MAX_DEPTH
     )
       continue
+    // A folder the start schema refuses (a backslash is legal on POSIX) is never offered as a packageRoot.
     if (
       path.length > NEXT_PACKAGE_DISCOVERY_MAX_PATH_CHARS ||
-      CONTROL_CHARACTERS.test(path)
+      CONTROL_CHARACTERS.test(path) ||
+      !repositoryPathSchema.safeParse(folderSegments.join('/')).success
     ) {
       skippedPath = true
       continue

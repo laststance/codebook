@@ -250,6 +250,19 @@ test('discovery skips a path that is too long or holds a control character', asy
   assert.equal(scan.truncation, 'skipped-path')
 })
 
+// protects=OCR S3 backslash: a tracked folder holding a backslash (legal on POSIX) is not listed because the start schema refuses it as a packageRoot, and the list is truncated as skipped-path; fails_when=the folder is offered as a packageRoot; no_claim=file systems that refuse the name
+test('discovery does not list a folder whose name the start schema refuses', async (context) => {
+  // Arrange
+  const root = await makeRepository(context)
+  await trackedApp(root, 'apps/ok')
+  await trackedApp(root, 'apps/back\\slash')
+  // Act
+  const scan = await scanNextPackages(root, async (app) => app.packageRoot)
+  // Assert
+  assert.deepEqual(scan.items, ['apps/ok'])
+  assert.equal(scan.truncation, 'skipped-path')
+})
+
 // protects=E15 deadline: when the injected clock passes the one deadline the apps finished so far are listed with reason deadline; fails_when=the scan ignores the clock, lists an unfinished app or loses the reason; no_claim=real timers
 test('discovery stops at the deadline of the injected clock and lists what it read', async (context) => {
   // Arrange

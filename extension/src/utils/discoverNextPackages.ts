@@ -42,13 +42,13 @@ export type DiscoverNextPackagesOptions = ScanNextPackagesOptions & {
 /**
  * Words a failure of a package read as a sentence for `codebook_status`, without any path.
  *
- * Why it exists: an `lstat` of an unreadable `.next` throws an Error whose text holds the absolute path, and an entry's `missing` reaches the chat. A {@link StudyError} already words its own message; anything else becomes a fixed sentence naming only the errno code. Called by {@link readNextPackageReadiness}.
+ * Why it exists: an `lstat` of an unreadable `.next` throws an Error whose text holds the absolute path, and an entry's `missing` reaches the chat. A {@link StudyError} already words its own message; anything else becomes a fixed sentence naming only the errno code. Called by {@link readNextPackageReadiness} and by the nested start's prerequisites ({@link selectedNextPackageStartPrerequisites}).
  *
  * @param error - What the read threw.
  * @returns The sentence.
  * @example describeReadFailure(Object.assign(new Error("EACCES: lstat '/x/.next'"), { code: 'EACCES' })) // => 'The package could not be checked (EACCES).'
  */
-function describeReadFailure(error: unknown): string {
+export function describeReadFailure(error: unknown): string {
   if (error instanceof StudyError) return error.message
   const code =
     typeof error === 'object' && error !== null && 'code' in error

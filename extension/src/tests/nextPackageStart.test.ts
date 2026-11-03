@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 
@@ -150,4 +150,32 @@ test('a repeated start with packageRoot "." answers the receipt of the start wit
   const second = await startRun(harness, 'same-key', '.')
   // Assert
   assert.equal(second.receipt.runId, first.receipt.runId)
+})
+
+// protects=OCR S3 path leak: an unreadable .next of a nested package reaches PREREQUISITE_MISSING as an errno sentence, never the absolute path; fails_when=the message holds String(error) with the repository path; no_claim=Windows or root-user permission models
+test('a nested start with an unreadable .next refuses without the absolute path', async (context) => {
+  // Arrange
+  if (process.platform === 'win32' || process.getuid?.() === 0) {
+    context.skip('permission bits do not deny access here')
+    return
+  }
+  const harness = await rootJudgedHarness()
+  const dotNext = join(harness.directory, 'examples/web/.next')
+  // The folder is readable again before the repository is removed (after hooks run in order).
+  context.after(async () => {
+    await chmod(dotNext, 0o755).catch(() => undefined)
+    await harness.close()
+  })
+  await installNestedApp(harness.directory)
+  await put(join(dotNext, 'dev/keep'), '')
+  await chmod(dotNext, 0o000)
+  // Act
+  const { state } = await startRun(harness, 'unreadable', 'examples/web')
+  // Assert
+  assert.equal(state.error?.code, 'PREREQUISITE_MISSING')
+  assert.equal(state.error?.message.includes(harness.directory), false)
+  assert.equal(
+    state.error?.message.includes('The package could not be checked (EACCES).'),
+    true,
+  )
 })

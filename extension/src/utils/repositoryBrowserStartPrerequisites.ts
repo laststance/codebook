@@ -1,8 +1,8 @@
 import { REPOSITORY_BROWSER_PROFILE } from '../constants'
-import { StudyError } from '../errors'
 import type { StudyEnvironment } from '../runtime'
 
 import { assertDevelopmentWorkspace } from './assertDevelopmentWorkspace'
+import { describeReadFailure } from './discoverNextPackages'
 import { resolveNextPackage } from './resolveNextPackage'
 import { suggestNextPackageRoots } from './scanNextPackages'
 
@@ -106,9 +106,8 @@ export async function selectedNextPackageStartPrerequisites(
     nextPackage.nextFolder,
   ).then(
     () => [],
-    (error: unknown) => [
-      error instanceof StudyError ? error.message : String(error),
-    ],
+    // Errno only, never the absolute path an unreadable `.next` carries.
+    (error: unknown) => [describeReadFailure(error)],
   )
   const missing = [...prerequisites.missing, ...packageGaps]
   return { ready: missing.length === 0, missing }
