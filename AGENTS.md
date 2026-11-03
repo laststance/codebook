@@ -233,6 +233,7 @@ No decision log; delivery chain and ship limit: [Delivery](#delivery).
 - Development chats: VS Code = Copilot Chat, model **GPT-6.1 Terra** (replaces GPT6 Luna; listed in Space's VS Code 1.142.0, GPT-6.1 Luna not); before each VS Code trial search picker for `6.1` and `luna` → switch to GPT-6.1 Luna, cheaper, if it appears; Cursor = Agent, model **Grok 4.6 high**, Fast on allowed; after observed credit exhaustion (either host) = installed **Codex Extension** (Claude Code extension fallback retired).
   - Model missing from picker → that host's trial NOT RUN, picker list recorded.
   - Record actual chat and fallback reason; buy no credits; never label fallback evidence Copilot.
+  - QA profiles run chat tools with full access (owner 2026-11-03), so no trial spends steps on per-tool approval clicks: VS Code QA profile `chat.permissions.default: "autoApprove"` (Allow all); Cursor Agent auto-run on Run Everything. Check before each trial; record it as a trial identity.
   - Final acceptance has own standard-chat rules. Historical Claude extension observations keep identities.
 
 ## Commands and checks
