@@ -7,8 +7,10 @@ import { test } from 'node:test'
 import {
   ACTIVE_TIMEOUT_MS,
   PAGES_STOP_RESUMED_HIT_LIMIT,
+  PAGES_UNANNOUNCED_SCRIPT_READ_LIMIT,
   REPOSITORY_SETUP_TIMEOUT_MS,
 } from '../constants'
+import { StudyError } from '../errors'
 import { LearningLibrary } from '../learningLibrary'
 import type { RepositoryOperation } from '../repositoryConfigSchemas'
 import type { ConfiguredRuntimeSnapshot, RuntimeControl } from '../runtime'
@@ -350,6 +352,134 @@ test('a getServerSideProps stop and a stop in the helper it calls pause in order
   )
   assert.deepEqual(journaled(harness, 'breakpoint.unconfirmed'), [])
   await continueAndComplete(harness, prepared, second)
+})
+
+// Value: protects=plan contract 5 mixed run: a Pages run that declares a server stop in getServerSideProps (entry load) and a browser stop in the page component (after a click) pauses each in its own participant in the declared order, the server stop as the data function's entry-load pause with declaredIndex 0, then the browser stop after operation 1 with declaredIndex 1 and no data function named for it; fails_when=preparation refuses or fails either stop (the server stop's line 6 is unmapped in the browser module), the browser stop is judged by the data-function verdict (it is then journaled unconfirmed and counted in the attribution summary), or the two pauses swap participants, scripts or indexes; no_claim=a real next/link click (the stand-in page answers the input), the order of a real render's hits (the browser stop is declared after the click) and the browser-stop filter of refuseUnmappedPagesStop alone (a server stop is judged against its own server module, which maps its line, so removing the filter shows nothing; the next test pins that browser stops are checked)
+test('a Pages run with a server stop in getServerSideProps and a browser stop in the page component pauses each in its own participant in the declared order', async (context) => {
+  // Arrange
+  const harness = await pagesServerRun(context, {
+    additionalStops: [
+      {
+        line: 2,
+        column: 1,
+        inspections: [{ path: 'count', mode: 'value', required: true }],
+      },
+    ],
+    operations: {
+      operations: [clickNextPage],
+      stopOperations: [0, 1],
+      stopParticipants: ['server', 'browser'],
+    },
+  })
+  const prepared = harness.run.prepare()
+  await armedEntry(harness)
+  // Act: the data function runs at the entry load and the learner continues
+  harness.server!.hit(
+    hitOnLine(PAGES_SERVER_RETURN_LINE, {
+      fixture: 'get-server-side-props-before-await',
+    }),
+  )
+  const serverPause = await publishedPause(harness)
+  harness.setDocumentReadyState('complete')
+  await harness.run.continue('server', serverPause.pause)
+  await prepared
+  // The click makes the page component render in the browser.
+  harness.run.action('op-1', 'repository-operation')
+  const browserPause = await waitUntil(() => {
+    const view = harness.run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.participants.browser?.snapshot
+  }, 'the published browser pause')
+  // Assert
+  const view = harness.run.view()
+  // plain() drops the browser pause's absent attribution: only a server render pause is attributed.
+  assert.deepEqual(
+    plain(
+      view.snapshots.map((pause) => ({
+        participant: pause.participant,
+        execution: pause.execution,
+        attribution: pause.attribution,
+        declaredIndex: pause.declaredIndex,
+        executionIndex: pause.executionIndex,
+        scriptUrl: pause.source.scriptUrl,
+        line: pause.source.line,
+        count: pause.values['value:count'],
+      })),
+    ),
+    [
+      {
+        participant: 'server',
+        execution: 'server-render',
+        attribution: 'entry-load',
+        declaredIndex: 0,
+        executionIndex: 0,
+        scriptUrl: 'webpack-internal:///(pages-dir-node)/./src/pages/index.tsx',
+        line: 6,
+        count: 3,
+      },
+      {
+        participant: 'browser',
+        execution: 'browser',
+        declaredIndex: 1,
+        executionIndex: 1,
+        scriptUrl:
+          'webpack-internal:///(pages-dir-browser)/./src/pages/index.tsx',
+        line: 2,
+        count: 3,
+      },
+    ],
+  )
+  // The server slot is empty after its continue; the browser pause holds the browser slot.
+  assert.equal(view.participants.server?.snapshot, undefined)
+  assert.equal(view.participants.browser?.snapshot?.id, browserPause.id)
+  // Only the server stop is a data-function hit: the browser stop is never judged by the verdict or counted in its ledger.
+  assert.deepEqual(plain(view.dataFunctions), {
+    [serverPause.id]: 'getServerSideProps',
+  })
+  assert.deepEqual(plain(view.attributionSummary), {
+    taken: { frame: 1, request: 0 },
+    unconfirmed: 0,
+    resumed: {},
+  })
+  assert.deepEqual(journaled(harness, 'breakpoint.unconfirmed'), [])
+  assert.equal(view.failures.length, 0)
+  assert.equal(view.status, 'paused-browser')
+})
+
+// Value: protects=plan contract 5 mixed run, refusal: in a Pages run that declares a server stop in getServerSideProps and a browser stop on a line of getServerSideProps (which the browser module does not map), the browser stop is refused as server-only naming the browser stop's own line (src/pages/index.tsx:5) with the Pages details, before the browser opens, and the server stop beside it, declared on line 6, is not named; fails_when=the browser stop of a mixed run is not checked (the run goes on to the general uncoded binding failure) or the refusal names the server stop; no_claim=a mixed run whose both stops are valid (the test above) and a real Next server compile
+test('a browser stop on a getServerSideProps line beside a server stop is refused as server-only naming the browser stop', async (context) => {
+  // Arrange
+  const harness = await pagesServerRun(context, {
+    additionalStops: [
+      {
+        line: 5,
+        column: 1,
+        inspections: [{ path: 'count', mode: 'value', required: true }],
+      },
+    ],
+    operations: {
+      operations: [clickNextPage],
+      stopOperations: [0, 1],
+      stopParticipants: ['server', 'browser'],
+    },
+  })
+  // Act
+  const failure = await harness.run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // Assert
+  assert.ok(failure instanceof StudyError, String(failure))
+  assert.equal(failure.code, 'NEXT_SERVER_ONLY_STOP')
+  assert.match(
+    failure.message,
+    /^Declared stop src\/pages\/index\.tsx:5 cannot pause in the browser/,
+  )
+  assert.deepEqual(plain(failure.details), {
+    router: 'pages',
+    sideEffects: 'unknown',
+  })
+  assert.equal(harness.launchConfigurations.length, 0)
 })
 
 // Value: protects=AC 2 helper after an await: a stop in a helper (a module of its own) that runs after an await inside the helper pauses when the data function is seen only among the async frames, with the page read from that async frame's page module; fails_when=the hit is judged outside the data function because the synchronous frames hold the helper alone, or its page is unreadable; no_claim=the helper's own module being sealed from a shared chunk (the reader tests) and the recorded chain of a helper (the getStaticProps helper payload has its own test of the verdict)
@@ -990,6 +1120,47 @@ test('a hit that cannot be proven pauses unconfirmed with its reason and is neve
   }
 })
 
+// Value: protects=AC 16 unconfirmed after an operation: a hit whose attribution cannot be proven (no async chain) after a next/link click pauses labelled unconfirmed with operationIndex 1 and its journal reason, and the run resource carries the unconfirmed note alone, without the entry-load sentence that the page finishes loading after the continue (no entry render is held after an operation); fails_when=the after-operation pause is resumed as outside the data function, is labelled after-operation or entry-load, or the message tells the chat that an entry render is paused and the page finishes loading after the continue; no_claim=the entry-load rows of the table test above, and the verdict's own cases (pagesDataFunctionHitVerdict tests)
+test('an unconfirmed pause after a click shows the unconfirmed note without the entry-load sentence', async (context) => {
+  // Arrange
+  const harness = await pagesServerRun(context, {
+    fixture: {
+      source: PAGES_QUERY_PAGE_SOURCE,
+      citationEndLine: 7,
+      declaredLine: PAGES_SERVER_RETURN_LINE,
+    },
+    documentReadyState: 'complete',
+    operations: oneClickThenStop(clickNextPage),
+    inspections: [...PAGE_QUERY_INSPECTION],
+    inspectionScope: { page: '2' },
+  })
+  await harness.run.prepare()
+  harness.run.action('op-1', 'repository-operation')
+  await waitUntil(() => harness.inputsSeen() === 1, 'the click was sent')
+  // Act: the click's hit carries no async chain, so the data function cannot be proven
+  harness.server!.hit(
+    hitOnLine(PAGES_SERVER_RETURN_LINE, {
+      fixture: 'get-server-side-props-after-await',
+      edit: (event): void => {
+        event.asyncStackTrace = undefined
+      },
+    }),
+  )
+  const pause = await publishedPause(harness)
+  // Assert
+  const view = harness.run.view()
+  assert.equal(pause.attribution, 'unconfirmed')
+  assert.equal(pause.operationIndex, 1)
+  assert.deepEqual(journaled(harness, 'breakpoint.unconfirmed'), [
+    { reason: 'no-async-chain' },
+  ])
+  assert.deepEqual(journaled(harness, 'breakpoint.outside-data-function'), [])
+  assert.equal(
+    view.renderMessage,
+    "This pause is unconfirmed (no-async-chain): Codebook could not establish that it is inside the entry page's data function, so explain the values as unconfirmed and never as proof.",
+  )
+})
+
 // Value: protects=AC 16 verdict-error: an event of an unexpected shape pauses unconfirmed, writes exactly one Output > Codebook line with a log id, a value-free shape summary and the Next version, and puts the log id in the journal entry of the reason; fails_when=the verdict throws into the run, the line is missing or repeats, the line quotes a value of the event, or the journal entry lacks the log id; no_claim=which Next change produces such a shape
 test('an event of an unexpected shape pauses unconfirmed and writes one log line with a log id', async (context) => {
   // Arrange
@@ -1229,6 +1400,100 @@ test('a renderer whose first text read failed is read again at the next hit and 
     { reason: 'no-async-chain' },
   ])
   await continueAndComplete(harness, prepared, second)
+})
+
+/** The ids of scripts the proxy never announced that a deep stack names, four more than a run reads. */
+const EXTRA_SCRIPT_IDS = Array.from(
+  { length: PAGES_UNANNOUNCED_SCRIPT_READ_LIMIT + 4 },
+  (_, index) => `extra-${index + 1}`,
+)
+
+/** Adds, below the recorded frames, one frame in each of {@link EXTRA_SCRIPT_IDS}, scripts Node loaded from files (their text holds no `sourceURL`). */
+function withExtraUnannouncedScripts(
+  event: PagesPausedEvent,
+  scriptUrls: Record<string, string>,
+): void {
+  for (const scriptId of EXTRA_SCRIPT_IDS) {
+    scriptUrls[scriptId] =
+      `file:///workspace/node_modules/next/dist/server/${scriptId}.js`
+    event.callFrames.push({
+      callFrameId: `${scriptId}-frame`,
+      functionName: 'deepFrame',
+      location: { scriptId, lineNumber: 1, columnNumber: 0 },
+      url: '',
+    })
+  }
+}
+
+/** A data-function hit whose stack names 20 scripts the proxy never announced, below the recorded frames. */
+const deepStackHit = hitOnLine(PAGES_SERVER_RETURN_LINE, {
+  fixture: 'get-server-side-props-before-await',
+  unannounced: EXTRA_SCRIPT_IDS,
+  edit: withExtraUnannouncedScripts,
+})
+
+// Value: protects=unannounced-script read cap: a hit whose stack names 20 scripts the proxy never announced makes the run read the text of the first 16 only, in stack order, and still pauses the data function's hit as the learner's entry-load pause; fails_when=the cap is gone and the run reads all 20 scripts of a hit (a deep stack then costs one inspector read per script), or the cap makes the hit pause unconfirmed or resume; no_claim=how many scripts a real stack names, and the second hit of a run (the 16 scripts are kept after the first)
+test('a hit naming 20 unannounced scripts reads the text of the first 16 only and still pauses as the data function', async (context) => {
+  // Arrange
+  const harness = await pagesServerRun(context)
+  const prepared = harness.run.prepare()
+  await armedEntry(harness)
+  // Act
+  harness.server!.hit(deepStackHit)
+  const pause = await publishedPause(harness)
+  // Assert
+  assert.deepEqual(
+    harness.server!.scriptReads.filter((scriptId) =>
+      scriptId.startsWith('extra-'),
+    ),
+    [
+      'extra-1',
+      'extra-2',
+      'extra-3',
+      'extra-4',
+      'extra-5',
+      'extra-6',
+      'extra-7',
+      'extra-8',
+      'extra-9',
+      'extra-10',
+      'extra-11',
+      'extra-12',
+      'extra-13',
+      'extra-14',
+      'extra-15',
+      'extra-16',
+    ],
+  )
+  assert.equal(pause.attribution, 'entry-load')
+  assert.deepEqual(journaled(harness, 'breakpoint.unconfirmed'), [])
+  await continueAndComplete(harness, prepared, pause)
+})
+
+// Value: protects=unannounced-script read budget: a read of an unannounced script that does not answer within the hit's real 1 s budget ends the search for the other scripts of that hit (the 19 behind it are not read), and the hit is still answered, not left paused; fails_when=the search goes on past the spent budget and reads the next scripts, each waiting its own budget, or the held read keeps the hit unanswered; no_claim=the verdict reached with a spent budget (the verdict tests pin it), and a later hit that reads the held script again
+test('an unannounced script whose text read does not answer ends the search within the hit budget and the hit is still answered', async (context) => {
+  // Arrange
+  const harness = await pagesServerRun(context)
+  harness.run.prepare().catch(() => undefined)
+  await armedEntry(harness)
+  const release = harness.server!.holdScriptRead('extra-1')
+  context.after(release)
+  // Act
+  harness.server!.hit(deepStackHit)
+  const pause = await publishedPause(harness)
+  // Assert
+  assert.deepEqual(
+    harness.server!.scriptReads.filter((scriptId) =>
+      scriptId.startsWith('extra-'),
+    ),
+    ['extra-1'],
+  )
+  // The spent budget leaves the verdict without proof: the pause is the learner's, labelled unconfirmed.
+  assert.equal(pause.attribution, 'unconfirmed')
+  assert.deepEqual(journaled(harness, 'breakpoint.unconfirmed'), [
+    { reason: 'chain-incomplete', cause: 'timeout' },
+  ])
+  assert.equal(harness.run.view().participants.server?.snapshot, pause)
 })
 
 /** The async chain of the recorded render below the data-function level (`render`, `doRender`, …), which a proxy can hand over behind a stack trace id. */

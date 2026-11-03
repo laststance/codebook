@@ -7088,6 +7088,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * at the expected stop (its module, its bound line)
    *     continuation in flight ──► pendingCdpStop, replayed by beginAfter
    *     otherwise              ──► participant.stopped, bound by inspect
+   *         a server stop of a Pages run is first judged by classifyPagesHit (the data-function verdict, one 1 s budget for all its reads):
+   *             inside the entry page's data function ──► the learner's pause, entry-load or after-operation
+   *             proof missing                         ──► the learner's pause labelled unconfirmed, journaled with its reason
+   *             another page's data function, outside every data function,
+   *             or an unreadable page while the browser is elsewhere
+   *                                                   ──► resumeClassifiedHit: journaled (other-route, outside-data-function,
+   *                                                       unattributed-resumed), counted, resumed by the run, the stop stays armed;
+   *                                                       the 500th resumed hit of one stop ends the run SERVER_STOP_NOT_REACHED
+   *         a repeat hit of a stop that already paused never gets here: settleServerStop resumes it when its
+   *         stopped event arrives (breakpoint.repeat-hit), and it is not counted toward the 500
    * anywhere else              ──► participant.unannouncedPause, with the stop expected then
    *                                  resumed   → retireUnannouncedPause
    *                                  announced → onEvent fails, or inspect judges it when it was held for that stop

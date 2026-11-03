@@ -184,6 +184,8 @@ export function createServerParticipant(parts: ServerParticipantParts) {
   const inspectorMethods: string[] = []
   /** The methods of {@link inspectorMethods} sent with `request`, which the real channel journals as `cdp.sent` and `cdp.response`; a `requestQuietly` send is not listed. */
   const journaledInspectorMethods: string[] = []
+  /** The script id of every `Debugger.getScriptSource` the run sent through the proxy, in order, also a read still held or one that fails. */
+  const scriptReads: string[] = []
   /** What `pathname` evaluates to on a Pages hit's `renderToHTMLImpl` frame, by call frame id (`null`: an evaluation that throws). */
   const pagesPathnames = new Map<string, string | null>()
   /** The answers of `Debugger.getStackTrace`, by stack trace id. */
@@ -356,6 +358,7 @@ export function createServerParticipant(parts: ServerParticipantParts) {
       }
       if (method === 'Debugger.getScriptSource') {
         const scriptId = parameters?.scriptId ?? ''
+        scriptReads.push(scriptId)
         await heldScriptReads.get(scriptId)
         if (failingScriptReads.delete(scriptId))
           throw new Error(
@@ -786,6 +789,8 @@ export function createServerParticipant(parts: ServerParticipantParts) {
     inspectorMethods,
     /** The methods the run sent with the journaled `request` path, in order; the real channel writes a `cdp.sent` and a `cdp.response` entry for each one, and none for a successful `requestQuietly`. */
     journaledInspectorMethods,
+    /** The script id of every text read (`Debugger.getScriptSource`) the run sent, in order, a read that is still held included. @example harness.server!.scriptReads.filter((id) => id.startsWith('extra-')) */
+    scriptReads,
     /** Every resume the run sent the server session, with the hit it resumed. */
     continues,
     /** The hit each route read asked about, in order. */
