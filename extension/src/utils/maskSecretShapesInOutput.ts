@@ -3,9 +3,11 @@ import {
   REDACTION_MASK,
 } from '../constants'
 
+import { maskSecretRecordValues } from './maskSecretRecordValues'
 import {
   isAuthorizationShape,
   isCookieHeaderShape,
+  maskSecretUrlParts,
   maskShapedLiterals,
   type ShapedLiteralsResult,
 } from './secretShapes'
@@ -37,14 +39,14 @@ const LINE_BREAK = /(\r\n|\r|\n)/
 
 /**
  * Tells whether the text after a Cookie or Authorization label starts like a credential.
- * Why: the label already proves a credential header, so one non-secret pair (`JSESSIONID=…`) or a trailing comment must not make the value readable; called by {@link maskLabelledCredentials}.
- * @param value - The text after the label's separator.
+ * Why: the label already proves a credential header, so one non-secret pair (`JSESSIONID=…`) or a trailing comment must not make the value readable; called by {@link maskLabelledCredentials} and by the output redactor to tell an over-long line that starts like a credential from a benign one.
+ * @param value - The text after the label's separator, or a line without its indentation.
  * @returns `true` when it starts with a cookie pair, or with an Authorization scheme and its credential (not `Bearer`).
  * @example
  * startsWithCredential('JSESSIONID=ABCDEF0123456789') // => true
  * startsWithCredential('banner accepted') // => false
  */
-function startsWithCredential(value: string): boolean {
+export function startsWithCredential(value: string): boolean {
   return COOKIE_PAIR_START.test(value) || AUTHORIZATION_START.test(value)
 }
 
@@ -101,7 +103,7 @@ function maskLabelledCredentials(line: string, mask: string): string {
  * Called by {@link maskSecretShapesInOutput} for each line.
  * @param line - One line without its break.
  * @param mask - What replaces a masked value.
- * @returns The line with the credential replaced by the mask; unchanged when it holds none. A line that is one secret-named assignment (`API_KEY=…`) keeps its name.
+ * @returns The line with the credential replaced by the mask; unchanged when it holds none. A line that is one secret-named assignment (`API_KEY=…`) keeps its name; the secret query and fragment values of a URL or path in any other line are masked.
  * @example
  * maskBareLine('Cookie: sid=abc; theme=dark', '[masked]') // => 'Cookie: [masked]'
  * maskBareLine('  Basic dXNlcjpwYXNz,', '[masked]') // => '  [masked],'
@@ -124,18 +126,20 @@ function maskBareLine(line: string, mask: string): string {
     const onlyPair = SINGLE_PAIR.exec(text)
     return `${kept}${onlyPair ? onlyPair[1] : ''}${mask}${ending}`
   }
-  return isAuthorizationShape(text) && !BEARER_VALUE.test(text)
-    ? `${kept}${mask}${ending}`
-    : line
+  if (isAuthorizationShape(text) && !BEARER_VALUE.test(text))
+    return `${kept}${mask}${ending}`
+  // A request log prints the callback code or reset token of a path or a fragment in plain text.
+  return maskSecretUrlParts(line)
 }
 
 /**
- * Masks the Cookie, Authorization and flat-header-array shapes in development-server or test output, the shapes the replay capture masks in a saved value: a quoted element that is a Cookie header or an Authorization value, the element that directly follows a quoted secret header name (a logged `rawHeaders`, on the same line or the next, also when the list ends in `... more items`), a labelled credential header (also with a quoted Digest, a trailing comment, one non-secret cookie pair or a blank for its separator), and a line that is such a value by itself; a carriage return breaks a line like a newline.
+ * Masks the Cookie, Authorization and flat-header-array shapes in development-server or test output, the shapes the replay capture masks in a saved value: a quoted element that is a Cookie header or an Authorization value, the element that directly follows a quoted secret header name (a logged `rawHeaders`, on the same line or the next, also when the list ends in `... more items`), a labelled credential header (also with a quoted Digest, a trailing comment, one non-secret cookie pair or a blank for its separator), a line that is such a value by itself, the `value` of a printed record named by a secret cookie name ({@link maskSecretRecordValues}), and the secret query and fragment values of a URL or path in a line; a carriage return breaks a line like a newline.
  * Why: a data function often logs the request; the shared redactor knows credential prefixes but not these shapes. Called by {@link createOutputRedactor} for each released run of lines and by {@link maskNextServerOutput}.
  * @param text - Output of one or more whole lines (the last may lack its break).
  * @param afterHeaderName - Whether the output before this text ended right after a quoted secret header name, so a list printed across writes keeps its pairing.
  * @param mask - What replaces a masked value; {@link REDACTION_MASK} unless the caller keeps another marker ({@link maskNextServerOutput}).
- * @returns The masked text and whether it ends right after a quoted secret header name.
+ * @param headerArrayDepth - How many `[` of a secret header name's value array the output before this text left open (the result's `headerArrayDepth`), so every element of an array printed across writes is masked up to its closing bracket.
+ * @returns The masked text, whether it ends right after a quoted secret header name, and how many `[` of that name's array are still open.
  * @example
  * maskSecretShapesInOutput("[\n  'Host',\n  'x',\n  'Cookie',\n  'sid=abc',\n  ... 2 more items\n]").text // => "[\n  'Host',\n  'x',\n  'Cookie',\n  [masked],\n  ... 2 more items\n]"
  * maskSecretShapesInOutput('sid=abc; theme=dark\n').text // => '[masked]\n'
@@ -144,8 +148,14 @@ export function maskSecretShapesInOutput(
   text: string,
   afterHeaderName = false,
   mask: string = REDACTION_MASK,
+  headerArrayDepth = 0,
 ): ShapedLiteralsResult {
-  const shaped = maskShapedLiterals(text, afterHeaderName, mask)
+  const shaped = maskShapedLiterals(
+    maskSecretRecordValues(text, mask),
+    afterHeaderName,
+    mask,
+    headerArrayDepth,
+  )
   return {
     // The split keeps each break at an odd index, so only the lines between them are judged.
     text: shaped.text
@@ -155,5 +165,6 @@ export function maskSecretShapesInOutput(
       )
       .join(''),
     afterHeaderName: shaped.afterHeaderName,
+    headerArrayDepth: shaped.headerArrayDepth,
   }
 }

@@ -2,10 +2,12 @@ import type { ExtensionStopContext } from './chromeExtensionContracts'
 import {
   EXTENSION_OUTPUT_EVENT_LIMIT,
   PROCESS_OUTPUT_EVENT_LIMIT_CHARS,
+  REDACTION_MASK,
 } from './constants'
 import { maskSecretShapesInOutput } from './utils/maskSecretShapesInOutput'
 import { redactSecretText } from './utils/redactSecretText'
 import { hidePrivateRoots, type CauseRoots } from './utils/sanitizeCause'
+import type { ShapedLiteralsCarry } from './utils/secretShapes'
 
 /**
  * Journals the console output of an extension run's page and service worker as `chrome-extension.output` events, bounded by count and size (C3, ER10).
@@ -19,8 +21,11 @@ import { hidePrivateRoots, type CauseRoots } from './utils/sanitizeCause'
 export class ExtensionOutputJournal {
   private journaled = 0
   private dropped = 0
-  /** Per context: whether its last journaled text ended right after a quoted secret header name, so a header list printed over several events keeps its pairing. */
-  private readonly afterHeaderName = new Map<ExtensionStopContext, boolean>()
+  /** Per context: whether its last journaled text ended right after a quoted secret header name or inside its array, so a header list printed over several events keeps its pairing. */
+  private readonly headerListCarry = new Map<
+    ExtensionStopContext,
+    ShapedLiteralsCarry
+  >()
 
   constructor(
     private readonly record: (type: string, detail?: unknown) => unknown,
@@ -39,11 +44,17 @@ export class ExtensionOutputJournal {
       return
     }
     this.journaled += 1
+    const carry = this.headerListCarry.get(context)
     const shaped = maskSecretShapesInOutput(
       text,
-      this.afterHeaderName.get(context) ?? false,
+      carry?.afterHeaderName ?? false,
+      REDACTION_MASK,
+      carry?.headerArrayDepth ?? 0,
     )
-    this.afterHeaderName.set(context, shaped.afterHeaderName)
+    this.headerListCarry.set(context, {
+      afterHeaderName: shaped.afterHeaderName,
+      headerArrayDepth: shaped.headerArrayDepth,
+    })
     const hidden = hidePrivateRoots(redactSecretText(shaped.text), this.roots)
     this.record('chrome-extension.output', {
       context,

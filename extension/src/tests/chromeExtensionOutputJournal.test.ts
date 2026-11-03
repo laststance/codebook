@@ -73,3 +73,45 @@ test('the extension console journal masks the element that follows a header name
     ],
   )
 })
+
+/** The mask placeholder, kept out of `label: [masked]` literals so the repository's secret scanner does not read them as credential assignments. */
+const MASK = '[masked]'
+
+// protects=a Set-Cookie array printed over several console events stays masked until its closing bracket (Cycle 0073 pt1 /ship pass 1: only a flag survived each event, so the second value was journaled); fails_when=the journal carries whether the next element is a value but not how deep the array is, so an element two events after the opening bracket is journaled; no_claim=an array that never closes
+test('the extension console journal keeps masking the elements of a Set-Cookie array over several events', () => {
+  // Arrange
+  const { journal, events } = createJournal()
+
+  // Act
+  journal.add('page', "['Set-Cookie', [\n")
+  journal.add('page', `'id=${COOKIE_VALUE}',\n`)
+  journal.add('page', `'app=${COOKIE_VALUE}-2'\n`)
+  journal.add('page', "]], 'Via', 'proxy'\n")
+
+  // Assert
+  assert.deepEqual(
+    events.map((event) => event.detail),
+    [
+      { context: 'page', text: "['Set-Cookie', [\n" },
+      { context: 'page', text: `${MASK},\n` },
+      { context: 'page', text: `${MASK}\n` },
+      { context: 'page', text: "]], 'Via', 'proxy'\n" },
+    ],
+  )
+})
+
+// protects=a console line with a quoted session pair above the scan limit does not survive the journal's cut to 4,096 characters (Cycle 0073 pt1 /ship pass 1: the literal was passed raw, then cut after its first characters); fails_when=the journaled text holds any part of the session pair; no_claim=the length of the journaled text, which the cut owns
+test('the extension console journal masks a quoted session pair longer than the scan limit before it cuts the text', () => {
+  // Arrange
+  const { journal, events } = createJournal()
+  const padding = 'x'.repeat(17_000)
+
+  // Act
+  journal.add('page', `'sid=${COOKIE_VALUE}; pad=${padding}'\n`)
+
+  // Assert
+  assert.deepEqual(
+    events.map((event) => event.detail),
+    [{ context: 'page', text: `${MASK}\n` }],
+  )
+})

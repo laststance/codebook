@@ -93,12 +93,18 @@ const LIST_GAP = /^[\s,]*$/
 /** The characters a list element or an object key can directly follow; after a `:` or `=>` a quoted element is a value. */
 const ELEMENT_START_PREFIXES: ReadonlySet<string> = new Set(['[', '{', ','])
 
-/** The result of {@link maskShapedLiterals}. */
-export type ShapedLiteralsResult = {
-  /** The text with each credential-shaped quoted element masked. */
-  text: string
+/** What a scan of one chunk hands to the next chunk of the same stream, so a header list printed over several writes keeps its pairing. */
+export type ShapedLiteralsCarry = {
   /** `true` when the text ends right after a quoted secret header name (or inside the array that is its value), so the next quoted element of the next chunk is its value. */
   afterHeaderName: boolean
+  /** How many `[` of the array that is a secret header name's value are still open at the end of the text (0 when no array is open); the next chunk starts inside that array, so every quoted element up to its closing bracket is a value. */
+  headerArrayDepth: number
+}
+
+/** The result of {@link maskShapedLiterals}. */
+export type ShapedLiteralsResult = ShapedLiteralsCarry & {
+  /** The text with each credential-shaped quoted element masked. */
+  text: string
 }
 
 /** A stretch of a text and the text that replaces it. */
@@ -425,6 +431,19 @@ function maskSecretUrlFragments(text: string): string {
 }
 
 /**
+ * Masks the secret query and fragment values of every URL or path inside a text: `GET /cb?code=abc 200` and `redirect https://idp/cb#access_token=abc`.
+ * Why: a development server's request log prints the callback code or reset token of the request in plain text; called by {@link maskBareShape} and the output line masking ({@link maskSecretShapesInOutput}). Each query and fragment run is scanned once, so the time is linear.
+ * @param text - A URL, a path with a query, or a line of text holding one.
+ * @returns The text with each secret-named or `code` value replaced by {@link REDACTION_MASK}; unchanged when it holds none.
+ * @example
+ * maskSecretUrlParts('GET /cb?code=abc&page=2 200') // => 'GET /cb?code=[masked]&page=2 200'
+ * maskSecretUrlParts('GET /items?page=2 200') // => 'GET /items?page=2 200'
+ */
+export function maskSecretUrlParts(text: string): string {
+  return maskSecretUrlFragments(maskSecretUrlQueries(text))
+}
+
+/**
  * Takes the text out of a debugger's quoted string preview.
  * Called by {@link findSecretSiblingIndexes} to read a `name` or `key` member.
  * @param preview - A variable's value preview, such as `'sid'`.
@@ -502,7 +521,7 @@ export function maskBareShape(
     (isAuthorizationShape(text) && !BEARER_CREDENTIAL.test(text.trim()))
   )
     return mask
-  return maskSecretUrlFragments(maskSecretUrlQueries(text))
+  return maskSecretUrlParts(text)
 }
 
 /**
@@ -600,45 +619,107 @@ function startsAnElement(text: string, index: number): boolean {
   return before < 0 || ELEMENT_START_PREFIXES.has(text.charAt(before))
 }
 
+/** A quoted element of a text: where it opens, where it ends, and whether its closing quote is missing (it then runs to the end of its line). */
+export type QuotedElement = {
+  /** The index of the opening quote. */
+  start: number
+  /** The index after the closing quote; for an element without one, the end of its line (before a carriage return that ends it). */
+  end: number
+  /** `true` when the line ends before a closing quote: the element is cut off, or the quote is only an apostrophe or a stray mark. */
+  isUnterminated: boolean
+}
+
 /**
- * Finds where the quoted element that opens at `index` ends, or -1 when no element opens there.
- * Called by {@link findShapedLiterals} for each position of the text.
+ * Finds the quoted element that opens at `index`, if one opens there.
+ * Called by {@link findShapedLiterals} for each position of the text and by the printed-record rule.
  * @param text - The text.
  * @param index - A position in it.
  * @param noCloserBefore - For each quote character, the line break before which no closing quote exists; filled in here when an opening quote finds none.
- * @returns The index after the closing quote, or -1 for a character that is no quote, a quote after a word character (`it's`, `5"`), or a quote without a closing quote on its line.
- * @example elementEnd("['a']", 1, new Map()) // => 4
+ * @returns The element, or `undefined` for a character that is no quote, a quote after a word character (`it's`, `5"`), or a quote after one that already found no closing quote on its line. A quote without a closing quote on its line is an unterminated element that runs to the line's end.
+ * @example
+ * findQuotedElement("['a']", 1, new Map()) // => { start: 1, end: 4, isUnterminated: false }
+ * findQuotedElement("['a", 1, new Map()) // => { start: 1, end: 3, isUnterminated: true }
  */
-function elementEnd(
+export function findQuotedElement(
   text: string,
   index: number,
   noCloserBefore: Map<string, number>,
-): number {
+): QuotedElement | undefined {
   const quote = text.charAt(index)
-  if (quote !== "'" && quote !== '"' && quote !== '`') return -1
+  if (quote !== "'" && quote !== '"' && quote !== '`') return undefined
   // A quote right after a word character is an apostrophe or a unit mark, not the start of an element.
-  if (index > 0 && /\w/.test(text.charAt(index - 1))) return -1
+  if (index > 0 && /\w/.test(text.charAt(index - 1))) return undefined
   // This line has no closing quote for it: scanning it would read the line to its end again.
-  if (index < (noCloserBefore.get(quote) ?? 0)) return -1
+  if (index < (noCloserBefore.get(quote) ?? 0)) return undefined
   const end = endOfLiteral(text, index)
-  if (end === -1) noCloserBefore.set(quote, lineEndFrom(text, index))
-  return end
+  if (end !== -1) return { start: index, end, isUnterminated: false }
+  const lineEnd = lineEndFrom(text, index)
+  noCloserBefore.set(quote, lineEnd)
+  // A carriage return that ends a Windows line is not part of the element.
+  const hasReturn = lineEnd > index + 1 && text.charAt(lineEnd - 1) === '\r'
+  return {
+    start: index,
+    end: hasReturn ? lineEnd - 1 : lineEnd,
+    isUnterminated: true,
+  }
+}
+
+/**
+ * Tells whether an element that lost its closing quote ends in the mark of a trimmed text (`…` or {@link REPLAY_DEBUG_TRUNCATION_MARKER}), so a cap cut it.
+ * Called by {@link elementReplacement}.
+ * @param text - The text.
+ * @param element - An unterminated element.
+ * @returns `true` when the element's end carries a trim mark.
+ * @example endsInTrimMark("['Cookie', 'sid=abc… [truncated]", { start: 11, end: 31, isUnterminated: true }) // => true
+ */
+function endsInTrimMark(text: string, element: QuotedElement): boolean {
+  const tail = text.slice(
+    Math.max(
+      element.start + 1,
+      element.end - 2 * REPLAY_DEBUG_TRUNCATION_MARKER.length,
+    ),
+    element.end,
+  )
+  return withoutTrimMark(tail.trimEnd()).wasTrimmed
+}
+
+/**
+ * Decides what one quoted element becomes.
+ * Called by {@link readElement}.
+ * @param text - The text.
+ * @param element - The element.
+ * @param isValue - Whether the element is the value of a secret header name or sits inside its array.
+ * @param mask - What replaces a masked element.
+ * @returns `mask` for a value (whatever its length, and also when its closing quote is missing), for an element the scan does not read because it is longer than {@link SECRET_SHAPE_SCAN_LIMIT_CHARS} (a literal that is not read cannot be shown to hold no credential), and for an unterminated element that ends in a trim mark; the replacement of {@link shapedReplacement} for any other closed element; `undefined` to keep it.
+ * @example elementReplacement("['Cookie', 'sid=abc']", { start: 11, end: 20, isUnterminated: false }, true, '[masked]') // => '[masked]'
+ */
+function elementReplacement(
+  text: string,
+  element: QuotedElement,
+  isValue: boolean,
+  mask: string,
+): string | undefined {
+  if (isValue) return mask
+  if (element.isUnterminated)
+    return endsInTrimMark(text, element) ? mask : undefined
+  if (element.end - element.start > SECRET_SHAPE_SCAN_LIMIT_CHARS) return mask
+  return shapedReplacement(text.slice(element.start, element.end), mask)
 }
 
 /**
  * Decides what one quoted element becomes and what the scan knows after it.
  * Called by {@link findShapedLiterals} for each element.
  * @param text - The text.
- * @param element - The element's opening index and its end past the closing quote.
+ * @param element - The element.
  * @param previousEnd - Where the previous element ended.
  * @param state - What the scan knew after the previous element.
  * @param mask - What replaces a masked element.
  * @returns The replacement for the element (`undefined` keeps it) and the state after it.
- * @example readElement("['Cookie', 'sid']", { start: 11, end: 16 }, 9, { awaitingValue: true, arrayDepth: 0, listIndex: 0 }, '[masked]').replacement // => '[masked]'
+ * @example readElement("['Cookie', 'sid']", { start: 11, end: 16, isUnterminated: false }, 9, { awaitingValue: true, arrayDepth: 0, listIndex: 0 }, '[masked]').replacement // => '[masked]'
  */
 function readElement(
   text: string,
-  element: { start: number; end: number },
+  element: QuotedElement,
   previousEnd: number,
   state: PairingState,
   mask: string,
@@ -646,19 +727,11 @@ function readElement(
   const gap = text.slice(previousEnd, element.start)
   const position = readValuePosition(state, gap)
   const listIndex = nextListIndex(state.listIndex, gap)
-  const literal = text.slice(element.start, element.end)
-  const isTooLong = element.end - element.start > SECRET_SHAPE_SCAN_LIMIT_CHARS
-  // A value is masked whole, whatever its length; any other element only when it has a credential shape and is short enough to read.
-  const replacement = position.isValue
-    ? mask
-    : isTooLong
-      ? undefined
-      : shapedReplacement(literal, mask)
+  const replacement = elementReplacement(text, element, position.isValue, mask)
   const isHeaderName =
     replacement === undefined &&
-    !isTooLong &&
     (listIndex === undefined || listIndex % 2 === 0) &&
-    isCredentialHeaderName(literal.slice(1, -1)) &&
+    isCredentialHeaderName(text.slice(element.start + 1, element.end - 1)) &&
     startsAnElement(text, element.start)
   return {
     replacement,
@@ -673,11 +746,12 @@ function readElement(
 
 /**
  * Finds every quoted element of a text that holds a credential: a Cookie header, an Authorization value, the element that follows a quoted secret header name (`['Cookie', 'sid=abc']`, a logged `rawHeaders`, also an array of values), and a quoted URL with secret query or fragment values.
- * Why: one rule, run once over the original text, for a debugger's value preview and for a development server's output, so a credential reads the same masked wherever the capture, the history or the log shows it. Called by {@link maskShapedLiterals} and {@link redactValuePreview}. The scan is linear: a quote with no closing quote on its line is remembered, so the quotes after it on that line are not tried, and an element longer than {@link SECRET_SHAPE_SCAN_LIMIT_CHARS} is not read as a credential.
+ * Why: one rule, run once over the original text, for a debugger's value preview and for a development server's output, so a credential reads the same masked wherever the capture, the history or the log shows it. Called by {@link maskShapedLiterals} and {@link redactValuePreview}. The scan is linear: a quote with no closing quote on its line is remembered, so the quotes after it on that line are not tried. An element longer than {@link SECRET_SHAPE_SCAN_LIMIT_CHARS} is not read, so it is masked whole; an element cut off before its closing quote is masked to the end of its line when it follows a secret header name or ends in a trim mark, which a size cap leaves.
  * @param text - A preview or a text of one or more lines.
  * @param afterHeaderName - Whether the text before this one ended right after a quoted secret header name, so a stream split into chunks keeps the pairing.
  * @param mask - What replaces a masked element.
- * @returns The replacements in order of position (a whole credential element becomes `mask` with its quotes; a URL keeps everything but its secret values) and whether the text ends right after a quoted secret header name or inside its array.
+ * @param headerArrayDepth - How many `[` of a secret header name's value array the text before this one left open, so a chunk that starts inside the array keeps masking its elements.
+ * @returns The replacements in order of position (a whole credential element becomes `mask` with its quotes; a URL keeps everything but its secret values), whether the text ends right after a quoted secret header name or inside its array, and how many `[` of that array are still open.
  * @example
  * findShapedLiterals("['Host', 'x', 'Cookie', 'sid=abc']", false, '[masked]').replacements // => [{ start: 24, end: 33, text: '[masked]' }]
  */
@@ -685,39 +759,44 @@ export function findShapedLiterals(
   text: string,
   afterHeaderName: boolean,
   mask: string,
-): { replacements: TextReplacement[]; afterHeaderName: boolean } {
+  headerArrayDepth = 0,
+): { replacements: TextReplacement[] } & ShapedLiteralsCarry {
   const replacements: TextReplacement[] = []
   const noCloserBefore = new Map<string, number>()
   let state: PairingState = {
       awaitingValue: afterHeaderName,
-      arrayDepth: 0,
+      arrayDepth: headerArrayDepth,
       listIndex: undefined,
     },
     previousEnd = 0
   for (let index = 0; index < text.length; index++) {
-    const end = elementEnd(text, index, noCloserBefore)
-    if (end === -1) continue
-    const read = readElement(
-      text,
-      { start: index, end },
-      previousEnd,
-      state,
-      mask,
-    )
+    const element = findQuotedElement(text, index, noCloserBefore)
+    if (element === undefined) continue
+    const read = readElement(text, element, previousEnd, state, mask)
+    // A quote that opens no closed element and hides nothing may be an apostrophe or a stray mark: the rest of its line is scanned as before.
+    if (element.isUnterminated && read.replacement === undefined) continue
     if (read.replacement !== undefined)
-      replacements.push({ start: index, end, text: read.replacement })
+      replacements.push({
+        start: index,
+        end: element.end,
+        text: read.replacement,
+      })
     state = read.state
-    previousEnd = end
+    previousEnd = element.end
     // The loop's own increment steps past the element's last character.
-    index = end - 1
+    index = element.end - 1
   }
   const tail = text.slice(previousEnd)
+  // The next chunk's first element is this one's value only when nothing but blanks, commas and `[` follows the name, or the value's array is still open.
+  const isAwaitingValue = state.awaitingValue && VALUE_GAP.test(tail)
+  let openDepth = 0
+  if (state.arrayDepth > 0)
+    openDepth = Math.max(0, state.arrayDepth + netBracketDepth(tail))
+  else if (isAwaitingValue) openDepth = netBracketDepth(tail)
   return {
     replacements,
-    // The next chunk's first element is this one's value only when nothing but blanks, commas and `[` follows the name, or the value's array is still open.
-    afterHeaderName:
-      (state.awaitingValue && VALUE_GAP.test(tail)) ||
-      (state.arrayDepth > 0 && state.arrayDepth + netBracketDepth(tail) > 0),
+    afterHeaderName: isAwaitingValue || openDepth > 0,
+    headerArrayDepth: openDepth,
   }
 }
 
@@ -766,7 +845,8 @@ export function applyTextReplacements(
  * @param text - A preview or a text of one or more lines.
  * @param afterHeaderName - Whether the text before this one ended right after a quoted secret header name, so a stream split into chunks keeps the pairing.
  * @param mask - What replaces a masked element; the capture's {@link REDACTION_MASK} unless a caller keeps another marker.
- * @returns The masked text and whether it ends right after a quoted secret header name. A whole credential element becomes `mask` with its quotes; a URL keeps everything but its secret values.
+ * @param headerArrayDepth - How many `[` of a secret header name's value array the text before this one left open (the result's `headerArrayDepth`).
+ * @returns The masked text, whether it ends right after a quoted secret header name, and how many `[` of that name's array are still open. A whole credential element becomes `mask` with its quotes; a URL keeps everything but its secret values.
  * @example
  * maskShapedLiterals("['Host', 'x', 'Cookie', 'sid=abc']").text // => "['Host', 'x', 'Cookie', [masked]]"
  * maskShapedLiterals("{referer: '/cb?code=abc'}").text // => "{referer: '/cb?code=[masked]'}"
@@ -776,8 +856,9 @@ export function maskShapedLiterals(
   text: string,
   afterHeaderName = false,
   mask: string = REDACTION_MASK,
+  headerArrayDepth = 0,
 ): ShapedLiteralsResult {
-  const scan = findShapedLiterals(text, afterHeaderName, mask)
+  const scan = findShapedLiterals(text, afterHeaderName, mask, headerArrayDepth)
   return {
     text: applyTextReplacements(
       text,
@@ -785,6 +866,7 @@ export function maskShapedLiterals(
       mask,
     ),
     afterHeaderName: scan.afterHeaderName,
+    headerArrayDepth: scan.headerArrayDepth,
   }
 }
 

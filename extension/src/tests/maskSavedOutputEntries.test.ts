@@ -219,3 +219,61 @@ test('a saved request path and redirect location lose their code and token value
     ],
   )
 })
+
+// The values below are made up: only the shape of their line marks them as credentials.
+const FIRST_COOKIE = ['opaque', 'one', '31ad'].join('-')
+const SECOND_COOKIE = ['opaque', 'two', '82be'].join('-')
+const THIRD_COOKIE = ['opaque', 'three', '5cf0'].join('-')
+
+// protects=a Set-Cookie array saved over entries cut at arbitrary places stays masked up to its closing bracket when the history is served (Cycle 0073 pt1 /ship pass 1: the array depth was lost at each entry, so a later value was served); fails_when=an element in a later entry of an array that is still open is served; no_claim=the boundaries between served entries, which move to where the line ends
+test('every element of a Set-Cookie array saved over several output entries is masked', () => {
+  // Arrange
+  const nested = [
+    serverOutput(1, 'stdout', "['Set-Cookie', [\n"),
+    serverOutput(2, 'stdout', `'id=${FIRST_COOKIE}',\n`),
+    serverOutput(3, 'stdout', `'app=${SECOND_COOKIE}'\n`),
+    serverOutput(4, 'stdout', "]], 'Via', 'proxy'\n"),
+  ]
+  const objectForm = [
+    testOutput(1, 'stdout', `{'Set-Cookie': ['app=${FIRST_COOKIE}',\n`),
+    testOutput(
+      2,
+      'stdout',
+      `'app=${SECOND_COOKIE}', 'app=${THIRD_COOKIE}']}, 'Via', 'proxy'\n`,
+    ),
+  ]
+
+  // Act
+  const servedNested = maskSavedServerEntries(nested)
+  const servedObject = maskSavedOutputEntries(objectForm)
+
+  // Assert
+  assert.equal(
+    outputTexts(servedNested).join(''),
+    "['Set-Cookie', [\n[masked],\n[masked]\n]], 'Via', 'proxy'\n",
+  )
+  assert.equal(
+    outputTexts(servedObject).join(''),
+    "{'Set-Cookie': [[masked],\n[masked], [masked]]}, 'Via', 'proxy'\n",
+  )
+  for (const secret of [FIRST_COOKIE, SECOND_COOKIE, THIRD_COOKIE]) {
+    assert.equal(JSON.stringify(servedNested).includes(secret), false)
+    assert.equal(JSON.stringify(servedObject).includes(secret), false)
+  }
+})
+
+// protects=a Cookie label cut over two saved entries after other text on its line is masked whole when the history is served; fails_when=the first entry's `[info] Coo` is judged alone and the pair in the next entry is served; no_claim=the boundaries between served entries, which move to where the line ends
+test('a Cookie label cut over two saved output entries after other text is masked whole', () => {
+  // Arrange
+  const entries = [
+    testOutput(1, 'stdout', '[info] Coo'),
+    testOutput(2, 'stdout', `kie: sid=${FIRST_COOKIE}; theme=dark\nnext\n`),
+  ]
+
+  // Act
+  const served = maskSavedOutputEntries(entries)
+
+  // Assert
+  assert.equal(JSON.stringify(served).includes(FIRST_COOKIE), false)
+  assert.equal(outputTexts(served).join(''), '[info] Cookie: [masked]\nnext\n')
+})

@@ -192,7 +192,7 @@ test('a rawHeaders element cut right before a secret-prefixed word is masked', (
   assert.equal(released, "['Cookie', [masked]]\n")
 })
 
-// protects=a Cookie value inside one header line longer than the 8 KiB hold, written in two parts (Cycle 0073 task 0 review: 31 of 70 cut positions printed it); fails_when=the line is released in pieces, so a cut inside the quoted value hides it from the mask; no_claim=a line that is written whole with its break in one write, which is judged whole
+// protects=a Cookie value inside one header line longer than the 8 KiB hold, written in two parts (Cycle 0073 task 0 review: 31 of 70 cut positions printed it); fails_when=the line is released in pieces, so a cut inside the quoted value hides it from the mask; no_claim=the exact text around the mask, which depends on where the carry cuts
 test('a Cookie value inside a header line longer than the hold is masked at every position the line is cut between two writes', () => {
   // Arrange
   const padding = 'a'.repeat(9_000)
@@ -224,18 +224,22 @@ test('a Cookie value inside a header line longer than the hold is masked at ever
     cutBeforeHoldLimit,
     `{"host":"localhost","padding":"${padding}","cookie":[masked]}\n`,
   )
-  assert.equal(cutPastHoldLimit, '[masked]\nready\n')
+  // The part before the Cookie label is no credential, so it is released with a short carry and the label and its value are judged together in the next write.
+  assert.equal(
+    cutPastHoldLimit,
+    `{"host":"localhost","padding":"${padding}","cookie":[masked]}\nready\n`,
+  )
 })
 
-// protects=the rest of an over-long header line is dropped across several writes and output resumes at its line break; fails_when=a middle write of the dropped line is released, or the line after it is lost; no_claim=a line without a Cookie, Authorization, quote, equals sign or semicolon, which is released with a short carry as before
+// protects=the rest of an over-long header line is dropped across several writes and output resumes at its line break; fails_when=a middle write of the dropped line is released, or the line after it is lost; no_claim=a long line that shows no Cookie or Authorization label, cookie pair, scheme or open header array (a JSON document), which is released with a short carry
 test('an over-long header line is dropped across writes and the next line is released', () => {
   // Arrange
   const redactor = createOutputRedactor()
-  const overlong = `{"padding":"${'a'.repeat(8_300)}`
+  const overlong = `{"cookie":"sid=${COOKIE_VALUE}; padding=${'a'.repeat(8_300)}`
 
   // Act
   const first = redactor.write(overlong)
-  const middle = redactor.write(`b","cookie":"sid=${COOKIE_VALUE}; theme=dark`)
+  const middle = redactor.write(`b","other":"sid=${COOKIE_VALUE}; theme=dark`)
   const last = redactor.write('"}\nlistening on http://127.0.0.1:4000\n')
   const ended = redactor.end()
 
@@ -304,4 +308,107 @@ test('prose after a Cookie or Authorization label stays readable', () => {
 
   // Assert
   assert.equal(masked, output)
+})
+
+// protects=the quoted-key colon branch of the header-list rule: a logged header object names `x-api-key` and `set-cookie` as quoted keys; fails_when=the value after a quoted credential key is printed; no_claim=an object whose keys are no credential header
+test('a logged header object masks the values of a quoted x-api-key and a quoted set-cookie key and keeps the host', () => {
+  // Arrange
+  const apiKey = ['k', '123'].join('-')
+  const output = `{ host: 'x', 'x-api-key': '${apiKey}', 'set-cookie': [ 'opaque' ] }`
+
+  // Act
+  const masked = maskSecretShapesInOutput(output).text
+
+  // Assert
+  assert.equal(
+    masked,
+    `{ host: 'x', 'x-api-key': ${MASK}, 'set-cookie': [ ${MASK} ] }`,
+  )
+})
+
+// protects=lines that are a credential by themselves: an assignment of a secret name, a plain assignment and an Authorization value with a trailing comma; fails_when=API_KEY=… keeps its value, port=3000 is masked, or the comma of a logged list is lost with the credential; no_claim=a line of prose
+test('a bare secret assignment is masked, a plain assignment is kept and a Basic credential keeps its trailing comma', () => {
+  // Arrange
+  const lines = [
+    ['API_KEY', 'abc123xyz'].join('='),
+    'port=3000',
+    `  Basic ${BASIC_CREDENTIAL},`,
+  ]
+
+  // Act
+  const masked = lines.map((line) => maskSecretShapesInOutput(line).text)
+
+  // Assert
+  assert.deepEqual(masked, [`API_KEY=${MASK}`, 'port=3000', `  ${MASK},`])
+})
+
+// protects=a printed cookie record in output, which the debugger preview already masks: the value beside a secret `name` or `key` member, also in a cookies array, in JSON, over several lines and when the value comes first (Cycle 0073 pt1 /ship pass 1: `{ name: 'sid', value: … }` was printed); fails_when=the record's value is printed, or the value of a record named by a plain word is masked with it; no_claim=a record split over two writes, which the redactor does not pair
+test('a printed record named by a secret cookie name has its value masked and a record named by a plain word keeps it', () => {
+  // Arrange
+  const records = [
+    `{ name: 'sid', value: '${COOKIE_VALUE}' }`,
+    `{ cookies: [ { name: 'sid', value: '${COOKIE_VALUE}' } ] }`,
+    `[ { name: 'sid', value: '${COOKIE_VALUE}' }, { name: 'theme', value: 'dark' } ]`,
+    `{ value: '${COOKIE_VALUE}', name: 'session' }`,
+    `{"name":"JSESSIONID","value":"${COOKIE_VALUE}","path":"/"}`,
+    `{\n  name: 'sid',\n  value: '${COOKIE_VALUE}',\n  path: '/'\n}`,
+    `{ key: 'session', value: ${COOKIE_VALUE.length} }`,
+    "{ name: 'theme', value: 'dark' }",
+  ]
+
+  // Act
+  const masked = records.map((record) => maskSecretShapesInOutput(record).text)
+
+  // Assert
+  assert.deepEqual(masked, [
+    `{ name: 'sid', value: ${MASK} }`,
+    `{ cookies: [ { name: 'sid', value: ${MASK} } ] }`,
+    `[ { name: 'sid', value: ${MASK} }, { name: 'theme', value: 'dark' } ]`,
+    `{ value: ${MASK}, name: 'session' }`,
+    `{"name":"JSESSIONID","value":${MASK},"path":"/"}`,
+    `{\n  name: 'sid',\n  value: ${MASK},\n  path: '/'\n}`,
+    `{ key: 'session', value: ${MASK} }`,
+    "{ name: 'theme', value: 'dark' }",
+  ])
+  assert.equal(masked.join('').includes(COOKIE_VALUE), false)
+})
+
+// protects=the printed record rule runs in released output lines as well as in the preview, in linear time; fails_when=the record scan rescans the text for each member; no_claim=the exact wall time of any machine
+test('a long line of printed records is masked in linear time', () => {
+  // Arrange
+  const output = `${"{ name: 'sid', value: 'x' }, ".repeat(5_000)}\n`
+  const startedAt = performance.now()
+
+  // Act
+  const masked = maskSecretShapesInOutput(output).text
+  const tookMs = performance.now() - startedAt
+
+  // Assert
+  assert.equal(masked, `${`{ name: 'sid', value: ${MASK} }, `.repeat(5_000)}\n`)
+  // gstack-timing-ok: the bound is the contract (linear-time output masking); the measured time is a few ms against a bound of hundreds of ms.
+  assert.ok(tookMs < 500, `masking took ${Math.round(tookMs)} ms`)
+})
+
+// protects=an OAuth callback code or a token in the path of a logged request line, which the README promises shows as [masked] in output (Cycle 0073 pt1 /ship pass 1: `GET /cb?code=… 200` stayed visible outside a Pages workspace); fails_when=a bare path with a secret or code query value, or a fragment token, is released unmasked, or an ordinary query is masked; no_claim=a query value that is no secret name, which stays readable
+test('a logged request path masks the code and secret query values, in the query and in the fragment, and keeps the other values', () => {
+  // Arrange
+  const callbackCode = ['callback', 'code', '8e1b3a65'].join('-')
+  const lines = [
+    `GET /cb?code=${callbackCode}&state=xyz 200 in 12ms\n`,
+    `GET /items?page=2&sort=name 200 in 3ms\n`,
+    `redirect to https://idp.example/cb#access_token=${callbackCode}&state=1\n`,
+    `GET /login?next=/cb?code=${callbackCode} 302\n`,
+  ]
+
+  // Act
+  const released = lines.map((line) => releaseAll([line]))
+
+  // Assert
+  assert.deepEqual(released, [
+    `GET /cb?code=${MASK}&state=xyz 200 in 12ms\n`,
+    'GET /items?page=2&sort=name 200 in 3ms\n',
+    `redirect to https://idp.example/cb#access_token=${MASK}&state=1\n`,
+    `GET /login?next=/cb?code=${MASK} 302\n`,
+  ])
+  assert.equal(released.join('').includes(callbackCode), false)
 })

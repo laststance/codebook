@@ -412,3 +412,94 @@ test('a long preview of nested unclosed members is scanned in linear time', () =
       redactValuePreview(text)
     })
 })
+
+/** The mask placeholder, kept out of `label: [masked]` literals so the repository's secret scanner does not read them as credential assignments. */
+const MASK = '[masked]'
+
+// The scripted secrets are made-up opaque strings; they are split so no scanner reads them as a real credential.
+const OPAQUE_SESSION = ['OPAQUE', 'SESSION', 'VALUE', '7c1e4b92'].join('_')
+
+// protects=the pairing state a scan hands to the next chunk when the array of a secret header name is still open; fails_when=the result tells only that the next element is a value, so a chunk that starts inside the array restarts at depth 0 and reads its second element as an ordinary one; no_claim=an array that never closes
+test('a scan that ends inside the array of a secret header name hands its open depth to the next chunk', () => {
+  // Arrange
+  const first = maskShapedLiterals("['Set-Cookie', [\n", false)
+  // Act
+  const second = maskShapedLiterals(
+    "'id=one',\n'app=two'\n",
+    first.afterHeaderName,
+    MASK,
+    first.headerArrayDepth,
+  )
+  const closing = maskShapedLiterals(
+    "]], 'Via', 'proxy'\n",
+    second.afterHeaderName,
+    MASK,
+    second.headerArrayDepth,
+  )
+  // Assert
+  assert.equal(first.headerArrayDepth, 1)
+  assert.equal(second.text, `${MASK},\n${MASK}\n`)
+  assert.equal(second.headerArrayDepth, 1)
+  assert.equal(closing.text, "]], 'Via', 'proxy'\n")
+  assert.equal(closing.afterHeaderName, false)
+  assert.equal(closing.headerArrayDepth, 0)
+})
+
+// protects=a quoted string longer than the scan limit is not passed through (Cycle 0073 pt1 /ship pass 1: a 17,000-character literal that holds a session pair printed it); fails_when=a literal the scan skips for its length stays raw; no_claim=a literal inside the limit, which is read by its shape
+test('a quoted string longer than the scan limit is masked whole', () => {
+  // Arrange
+  const padding = 'x'.repeat(17_000)
+  const sessionPair = `'sid=${OPAQUE_SESSION}; pad=${padding}'\n`
+  const doubleQuoted = `{"note": "${OPAQUE_SESSION} ${padding}"}\n`
+  // Act
+  const maskedPair = maskShapedLiterals(sessionPair)
+  const maskedNote = maskShapedLiterals(doubleQuoted)
+  // Assert
+  assert.equal(maskedPair.text, `${MASK}\n`)
+  assert.equal(maskedNote.text, `{"note": ${MASK}}\n`)
+})
+
+// protects=the linear time of the scan when long literals are masked whole; fails_when=masking a long literal rescans the line for each quote; no_claim=the exact wall time of any machine
+test('a line of many long quoted strings is masked in linear time', () => {
+  // Arrange
+  const line = `${`'${'z'.repeat(20_000)}', `.repeat(25)}\n`
+  // Act and Assert
+  assertFinishesWithin(500, 'maskShapedLiterals on long literals', () => {
+    assert.equal(maskShapedLiterals(line).text, `${`${MASK}, `.repeat(25)}\n`)
+  })
+})
+
+// protects=an element cut by the 4,096-character cap: it ends in the trim mark and has no closing quote (Cycle 0073 pt1 /ship pass 1: `Array(8) ['Cookie', 'sid=…… [truncated]` stayed unchanged when a saved history was served); fails_when=an unterminated element after a credential header name, or one that ends in a trim mark, is skipped because no closing quote follows it; no_claim=an unterminated quote in prose, which opens no element
+test('an unterminated element after a credential header name or ending in a trim mark is masked to its end', () => {
+  // Arrange
+  const afterHeaderName = `Array(8) ['Cookie', 'sid=${OPAQUE_SESSION}… [truncated]`
+  const afterHeaderNameWithoutMark = `['Authorization', 'Basic ${OPAQUE_SESSION}`
+  const endsInMark = `{note: 'sid=${OPAQUE_SESSION}…`
+  const inArray = `['Set-Cookie', ['a=1', 'b=${OPAQUE_SESSION}… [truncated]`
+  const prose = "Array(2) [don't, 'it is fine"
+  // Act
+  const maskedAfterName = redactValuePreview(afterHeaderName)
+  const maskedWithoutMark = redactValuePreview(afterHeaderNameWithoutMark)
+  const maskedMark = redactValuePreview(endsInMark)
+  const maskedInArray = redactValuePreview(inArray)
+  const maskedProse = redactValuePreview(prose)
+  const maskedOutput = maskShapedLiterals(`${afterHeaderName}\nready\n`).text
+  // Assert
+  assert.equal(maskedAfterName, `Array(8) ['Cookie', ${MASK}`)
+  assert.equal(maskedWithoutMark, `['Authorization', ${MASK}`)
+  assert.equal(maskedMark, `{note: ${MASK}`)
+  assert.equal(maskedInArray, `['Set-Cookie', [${MASK}, ${MASK}`)
+  assert.equal(maskedProse, prose)
+  assert.equal(maskedOutput, `Array(8) ['Cookie', ${MASK}\nready\n`)
+})
+
+// protects=a long closed literal after a credential header name is masked whole (Cycle 0073 pt1 /ship pass 1: coverage of the value-position branch for an element above the scan limit); fails_when=the length of the value decides whether it is masked; no_claim=a literal of the same length that no header name precedes
+test('a closed literal of 20,000 characters after a Cookie name is masked whole', () => {
+  // Arrange
+  const text = `['Cookie', '${'v'.repeat(20_000)}']`
+  // Act
+  const masked = maskShapedLiterals(text)
+  // Assert
+  assert.equal(masked.text, `['Cookie', ${MASK}]`)
+  assert.equal(masked.afterHeaderName, false)
+})

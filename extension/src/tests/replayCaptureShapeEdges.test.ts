@@ -407,3 +407,34 @@ test('a replay snapshot saves a raw value above the scan bound as its class name
   // gstack-timing-ok: the bound is the contract (a linear scan of a 120 KB value); measured times are 2–14 ms, so the 1 s bound only fails on the quadratic regression it guards.
   assert.ok(tookMs < 1_000, `the capture took ${Math.round(tookMs)} ms`)
 })
+
+// protects=a saved preview cut by the 4,096-character cap inside the element after a credential header name (Cycle 0073 pt1 /ship pass 1: `Array(8) ['Cookie', 'sid=…… [truncated]` had no closing quote, so the serve-time mask skipped it); fails_when=the saved snapshot serves the cut value of the Cookie element, from its preview or from the parent that shows it; no_claim=a preview whose element is closed, which the other masking tests cover
+test('a saved snapshot serves the cut value after a Cookie name masked', () => {
+  // Arrange
+  const source = { name: 'a.ts', text: 'x', hash: 'a'.repeat(64), line: 1 }
+  const snapshot: ReplayDebugSnapshot = {
+    version: 1,
+    frames: [
+      {
+        name: 'handler',
+        line: 1,
+        column: 1,
+        source,
+        scopes: [{ name: 'Local', variables: [0] }],
+      },
+    ],
+    variables: [
+      {
+        name: 'rawHeaders',
+        value: `Array(8) ['Cookie', 'sid=${SESSION_VALUE}… [truncated]`,
+        type: 'Array',
+        children: [],
+      },
+    ],
+    limitations: [],
+  }
+  // Act
+  const masked = maskSavedDebugSnapshot(snapshot)
+  // Assert
+  assert.equal(JSON.stringify(masked).includes(SESSION_VALUE), false)
+})

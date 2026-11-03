@@ -2302,7 +2302,7 @@ export const COLLAPSED_CLASS_NAMES: ReadonlySet<string> = new Set([
   'ServerResponse',
 ])
 
-/** The longest text the credential-shape scanners read in one piece ({@link redactValuePreview}, {@link maskShapedLiterals}): four times {@link REPLAY_DEBUG_TEXT_LIMIT_CHARS}, so every text the capture saves fits whole, and equal to Node's default limit for all request headers together, so no Cookie or Authorization header is longer. The debugger capture saves a longer raw value as its class name and never scans it; a quoted element longer than this is not read as a credential. */
+/** The longest text the credential-shape scanners read in one piece ({@link redactValuePreview}, {@link maskShapedLiterals}): four times {@link REPLAY_DEBUG_TEXT_LIMIT_CHARS}, so every text the capture saves fits whole, and equal to Node's default limit for all request headers together, so no Cookie or Authorization header is longer. The debugger capture saves a longer raw value as its class name and never scans it; a quoted element longer than this is not read, so it is masked whole. */
 export const SECRET_SHAPE_SCAN_LIMIT_CHARS = 4 * REPLAY_DEBUG_TEXT_LIMIT_CHARS
 
 /** The longest class name the capture and the saved-snapshot mask read from the start of a value preview when the debugger reported no type (`Socket {…}`, `Array(4) […]`): a longer identifier-like run is the value's own text, not a class, and the variable is saved as `Object`. */
@@ -2360,13 +2360,13 @@ export const SECRET_FRAME_OBSERVER_INTERVALS_MAX = 100
 /** The `sourceURL` the run marks the secret frame gate's own page expressions with, so the script journal leaves them out. */
 export const SECRET_FRAME_SOURCE_URL = 'codebook-secret-frame-gate'
 
-/** The most characters of an incomplete trailing token or private-key block an output redactor holds back; past it the held part is released masked ({@link createOutputRedactor}). 8 KiB. */
+/** The most characters of an incomplete trailing token, private-key block or line an output redactor holds back; past it the held part is released masked when it holds a secret start or a line that still looks like a credential, and with a short carry otherwise ({@link createOutputRedactor}). 8 KiB. */
 export const OUTPUT_REDACTION_HOLD_LIMIT_CHARS = 8_192
 
 /** The characters kept back when an over-long run shows no secret shape is released, so a secret marker cut by the release is still seen whole ({@link createOutputRedactor}). */
 export const OUTPUT_REDACTION_CARRY_CHARS = 16
 
-/** The longest first word of an unfinished output line that an output redactor still holds back, because a cookie name before `=` or a header name before `:` may follow with the next chunk ({@link createOutputRedactor}); a cookie name is shorter than this. */
+/** The longest single word of an unfinished output line that an output redactor holds back while it may be the start of an Authorization scheme or a secret cookie name before its `=`, and keeps as context once it is released, so the rest of its line is judged with it ({@link createOutputRedactor}); a cookie name is shorter than this. */
 export const OUTPUT_REDACTION_FIRST_WORD_HOLD_CHARS = 64
 
 /** The characters of a dropped private-key body kept to find an END marker split across chunks ({@link createOutputRedactor}); longer than the longest END marker its bounded label allows (about 106 characters). */
