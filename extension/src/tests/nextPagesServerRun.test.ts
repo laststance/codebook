@@ -1389,6 +1389,7 @@ const BEFORE_BROWSER_RECOVERY =
 
 /**
  * Builds the control of a run whose setup budget is the real 90 s, so the manual clock expires it with the message's own budget.
+ * The deadline is taken from the real clock, so the budget the run reads at preparation start can round to 89 s on a loaded machine: compare messages through {@link withSetupBudgetSeconds}.
  * @param context - The test, whose end aborts the run.
  * @returns The run's control.
  */
@@ -1399,6 +1400,20 @@ function setupBudgetControl(
     ...pagesControl(context),
     preparationDeadlineAt: Date.now() + REPOSITORY_SETUP_TIMEOUT_MS,
   }
+}
+
+/**
+ * Writes the setup budget of a deadline message as 90 s, so a message compares whole while the real-clock seconds before preparation started do not count.
+ * @param message - A `NEXT_SETUP_DEADLINE` message.
+ * @returns The message with its `(<n> s)` budget written as `(90 s)`.
+ * @example
+ * withSetupBudgetSeconds('Repository setup deadline (89 s) exceeded while reading the route manifests.') // => 'Repository setup deadline (90 s) exceeded while reading the route manifests.'
+ */
+function withSetupBudgetSeconds(message: string): string {
+  return message.replace(
+    /^Repository setup deadline \(\d+ s\)/,
+    'Repository setup deadline (90 s)',
+  )
 }
 
 // Value: protects=a setup deadline that expires while Codebook's readiness request is unanswered (a data function that hangs on a database call, which may have written) closes the readiness record with outcome timeout and fails NEXT_SETUP_DEADLINE with details.sideEffects unknown, the readiness record and a recovery that asks the learner before another start; fails_when=the deadline keeps only the one-retry recovery, carries no sideEffects or readinessRequest, or the record closes aborted; no_claim=a real hanging data function or a real 90 s wait (the manual clock expires the budget)
@@ -1424,7 +1439,7 @@ test('a setup deadline during an unanswered readiness request closes it timeout 
   }
   assert.equal(error.code, 'NEXT_SETUP_DEADLINE')
   assert.equal(
-    error.message,
+    withSetupBudgetSeconds(error.message),
     'Repository setup deadline (90 s) exceeded while waiting for the server to answer the entry page. Codebook stopped the server it started; the browser was not opened.',
   )
   assert.deepEqual(plain(error.details ?? null), {
@@ -1472,7 +1487,7 @@ test('a setup deadline after the readiness answer reports sideEffects unknown an
   }
   assert.equal(error.code, 'NEXT_SETUP_DEADLINE')
   assert.equal(
-    error.message,
+    withSetupBudgetSeconds(error.message),
     'Repository setup deadline (90 s) exceeded while reading the route manifests. Codebook stopped the server it started; the browser was not opened.',
   )
   assert.deepEqual(plain(error.details ?? null), {
