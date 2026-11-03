@@ -17,6 +17,11 @@ import { readAcceptedPagesSource } from './readAcceptedPagesSource'
 import type { readDevelopmentBundle } from './readDevelopmentBundle'
 import { readNextChunkModules } from './readNextChunkModules'
 import { redactNextEntryPath } from './redactNextEntryPath'
+import {
+  rootNextPackage,
+  type PackageRelativePath,
+  type ResolvedNextPackage,
+} from './resolveNextPackage'
 import type { NextPagesRoute } from './resolveNextPagesRoute'
 import { singleBundleOf } from './singleBundleOf'
 import {
@@ -40,9 +45,11 @@ type DevelopmentDiscovery = Awaited<
 
 /** What {@link readPagesDevelopmentBundle} needs to seal one declared browser stop of a Pages route. */
 export type PagesDevelopmentBundleRequest = {
-  /** The opened workspace (the Next project root). */
+  /** The opened repository's root; the Next package root of a root app. Read only through {@link PagesDevelopmentBundleRequest.nextPackage} when that is given. */
   workspace: string
-  /** The declared stop's source, with the hash the configuration accepted. */
+  /** The Next app the run resolved: build files are read below its package root and the stop is matched by its package-relative path. Absent for a root app (the package is then {@link rootNextPackage} of `workspace`). */
+  nextPackage?: ResolvedNextPackage
+  /** The declared stop's source (repository-relative path), with the hash the configuration accepted. */
   selected: RepositoryConfiguration['source']
   /** The Pages route the entry path resolved to ({@link resolveNextPagesRoute}), e.g. `/` or `/posts/[id]`. */
   route: NextPagesRoute['route']
@@ -65,8 +72,8 @@ export type PagesDevelopmentBundleResult =
 
 /**
  * Seals one declared browser stop of a Pages route from the chunks the page loads first, before the browser opens, so the debugger can bind it when the page's scripts are parsed.
- * Called by the Next run for each declared stop once {@link readNextRouteManifests} resolved the entry path as a Pages route. It verifies the stop's source against the accepted hash, reads the route's and `_app`'s entry chunks under `static/chunks/pages/` from `.next/dev/build-manifest.json` (never `webpack.js`, `main.js` or a `*.hot-update.js`), and takes the eval module `webpack-internal:///(pages-dir-browser)/./<path>` without executing it. Chunks are read once per run through the cache, within the run's discovery budget.
- * @param request - The workspace, the stop's source, the route, the run's cache and the served-chunk fallback.
+ * Called by the Next run for each declared stop once {@link readNextRouteManifests} resolved the entry path as a Pages route. It verifies the stop's source against the accepted hash (the source keeps its absolute path and SHA-256 whichever package it is in), reads the route's and `_app`'s entry chunks under `static/chunks/pages/` from `.next/dev/build-manifest.json` (never `webpack.js`, `main.js` or a `*.hot-update.js`), and takes the eval module `webpack-internal:///(pages-dir-browser)/./<package-relative path>` below the package root without executing it. Chunks are read once per run through the cache, within the run's discovery budget.
+ * @param request - The repository, the Next package, the stop's source (repository-relative), the route, the run's cache and the served-chunk fallback.
  * @returns
  * - `sealed` with the module and what its discovery measured, as {@link readDevelopmentBundle} returns them
  * - `not-in-initial-chunks` when no page or `_app` entry chunk holds the module (a lazily loaded module, or code the browser never runs)
@@ -79,14 +86,20 @@ export async function readPagesDevelopmentBundle(
   request: PagesDevelopmentBundleRequest,
 ): Promise<PagesDevelopmentBundleResult> {
   const { cache, selected, route } = request
+  const nextPackage = request.nextPackage ?? rootNextPackage(request.workspace)
   const started = performance.now(),
     bytesBefore = cache.readBytes
   return spendNextPagesDiscovery(
     cache,
-    request.workspace,
+    nextPackage.packageRoot,
     request.signal,
     async (step) => {
-      const original = await readAcceptedPagesSource(step, selected)
+      // Throws for a stop outside the package: its module is never one of this package's chunks.
+      const original = await readAcceptedPagesSource(
+        step,
+        selected,
+        nextPackage,
+      )
       const manifest = await step.readBuildText(
         BUILD_MANIFEST,
         REPOSITORY_JAVASCRIPT_LIMIT_BYTES,
@@ -146,7 +159,7 @@ function initialPageChunksOf(
  * @param step - The discovery step.
  * @param request - The stop's request (cache, source path, fallback).
  * @param candidates - The entry chunks to search.
- * @param original - The source's absolute path and its verified text.
+ * @param original - The source's absolute path, its verified text and its package-relative path.
  * @returns The sealed module of the first chunk that carries it, or `undefined` when none does.
  * @throws `Declared chunk … is absent from the selected build` without a fallback (the name is cleaned by {@link redactNextEntryPath}: no control character, length capped); `Ambiguous application source chunk` for differing copies.
  * @example
@@ -156,9 +169,12 @@ async function sealFromChunks(
   step: NextPagesDiscoveryStep,
   request: PagesDevelopmentBundleRequest,
   candidates: readonly string[],
-  original: Pick<BundleSource, 'sourcePath' | 'source'>,
+  original: Pick<BundleSource, 'sourcePath' | 'source'> & {
+    packageRelative: PackageRelativePath
+  },
 ): Promise<BundleSource | undefined> {
-  const scriptUrl = `webpack-internal:///(pages-dir-browser)/./${request.selected.path}`
+  // Next names the module by its package-relative path, never by the repository-relative one.
+  const scriptUrl = `webpack-internal:///(pages-dir-browser)/./${original.packageRelative}`
   const bundles: BundleSource[] = []
   for (const candidate of candidates) {
     const chunk = await readNextChunkModules(

@@ -48,7 +48,10 @@ export type DevelopmentServerStart = {
 
 /** What {@link DevelopmentServerAdapter.readBundle} needs to seal one declared stop. */
 export type DevelopmentBundleRequest = {
+  /** The opened repository's root (stop files and recorded sources are relative to it). */
   workspace: string
+  /** The Next app the run resolved: its readers read the package root and match the stop by its package-relative path. Absent for a Vite run and for a caller with only a root app. */
+  nextPackage?: ResolvedNextPackage
   source: RepositoryConfiguration['source']
   /** The last line of the stop's citation, up to which a stop declared on a line with no mapped position is requested at the first mapped position after it ({@link resolveArmedPlace}); a Pages server stop's seal checks that line's client mapping too ({@link sealPagesServerStop}). */
   citationEndLine: number

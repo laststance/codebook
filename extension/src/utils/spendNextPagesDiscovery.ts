@@ -23,7 +23,7 @@ export type NextPagesChunkFetcher = (
 
 /** One Pages discovery step's access to bytes, charged to the run's budget ({@link NextPagesDiscoveryCache}). */
 export type NextPagesDiscoveryStep = {
-  /** The canonical workspace. */
+  /** The canonical Next package root: every build path (`.next/dev/…`) and every package-relative source path is read below it. */
   readonly root: string
   /** When the run's discovery time ends, on the `performance.now()` clock. */
   readonly deadline: number
@@ -42,7 +42,7 @@ export type NextPagesDiscoveryStep = {
  * Runs one Pages discovery step within what is left of the run's discovery budget: bytes read count against {@link REPOSITORY_DISCOVERY_LIMIT_BYTES} and time against {@link REPOSITORY_DISCOVERY_TIMEOUT_MS}, both for the whole run, kept in the cache.
  * Called by {@link readPagesDevelopmentBundle} for each stop and by {@link readNextServerOnlyReason}, so several stops of one run share one budget.
  * @param cache - The run's discovery cache, which carries the bytes and time spent.
- * @param workspace - The opened workspace.
+ * @param workspace - The Next package root (the opened workspace for a root app); build files and sources are read below it.
  * @param signal - Ends the step with the run.
  * @param work - The step, given its byte access and deadline.
  * @returns What the step returns.

@@ -361,6 +361,7 @@ async function readNextPagesStopBundle(
 ): Promise<DevelopmentBundle> {
   const sealed = await readPagesDevelopmentBundle({
     workspace: request.workspace,
+    nextPackage: request.nextPackage,
     selected: request.source,
     route: nextRoute.route,
     signal: request.signal,
@@ -437,6 +438,7 @@ const NEXT_DEV_WEBPACK_ADAPTER: DevelopmentServerAdapter = {
     if (nextRoute && request.execution === 'server-action')
       return sealPagesServerStop({
         workspace: request.workspace,
+        nextPackage: request.nextPackage,
         selected: request.source,
         citationEndLine: request.citationEndLine,
         route: nextRoute.route,
@@ -454,6 +456,7 @@ const NEXT_DEV_WEBPACK_ADAPTER: DevelopmentServerAdapter = {
           request.signal,
           request.entryPath,
           request.execution,
+          request.nextPackage,
         )
   },
   browserDebugFields: (workspace) => ({
@@ -2528,7 +2531,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    */
   private async readPagesManifest(): Promise<PagesManifest> {
     const text = await readRepositoryBuildText(
-      this.options.workspace,
+      this.packageRoot,
       '.next/dev/server/pages-manifest.json',
       REPOSITORY_CHUNK_LIMIT_BYTES,
       this.abort.signal,
@@ -2775,7 +2778,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       // Bounded like the bundle reads of sealing (size, regular file, no links), by the classification bound and by the run's stop.
       const text = await this.withinClassificationBound(
         readRepositoryBuildText(
-          this.options.workspace,
+          this.packageRoot,
           '.next/dev/server/app-paths-manifest.json',
           REPOSITORY_CHUNK_LIMIT_BYTES,
           this.abort.signal,
@@ -3409,6 +3412,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const citation = this.definition.descriptor.anchors[stop.anchorIndex]!
     const acquired = await adapter.readBundle({
       workspace: this.options.workspace,
+      ...(this.nextPackage ? { nextPackage: this.nextPackage } : {}),
       source: stop.source,
       citationEndLine: citation.endLine,
       signal: this.abort.signal,

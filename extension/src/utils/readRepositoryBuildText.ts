@@ -4,7 +4,7 @@ import { join, relative, resolve, sep } from 'node:path'
 
 import { unchangedSource } from './unchangedSource'
 
-/** Acquires bounded unchanged build bytes inside the selected workspace for module discovery, rejecting linked ancestors and replacements. @example await readRepositoryBuildText(root, '.next/dev/static/chunk.js', limit, signal) */
+/** Acquires bounded unchanged build bytes inside the selected root for module discovery, rejecting linked ancestors and replacements. `root` is the Next package root for a Next read (the opened workspace for a root app or a Vite run); a path leaving it is refused. @example await readRepositoryBuildText(root, '.next/dev/static/chunk.js', limit, signal) */
 export async function readRepositoryBuildText(
   root: string,
   path: string,
