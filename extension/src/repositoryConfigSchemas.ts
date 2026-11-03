@@ -658,19 +658,24 @@ export const operationsRepositoryConfigSchema =
     refuseViteNestedPackageRoot(configuration, context)
   })
 /**
- * The configuration of a study of formats 3 to 8: versions 1 to 3 as before, and none of them may carry a `packageRoot` (the field exists only in format 9, see {@link packageRootRepositoryConfigSchema}).
- * The explicit refusal keeps formats 3 to 8 closed even if the live version 3 shape gains an optional `packageRoot`.
+ * The configuration `codebook_start` accepts for the `repository-browser` profile: versions 1 to 3, where version 3 may declare `packageRoot` (`next-dev-webpack` only).
+ * Why it exists: the start, its idempotency intent, the help's `configurationSchema` and the source preparation must admit a nested Next app, while a saved study of formats 3 to 8 must not ({@link retainedRepositoryConfigSchema}).
+ * Read by the start schemas in `schemas.ts`, the help resource and {@link prepareRepositoryStudy}.
+ * @example liveRepositoryConfigSchema.parse({ version: 3, adapter: 'next-dev-webpack', packageRoot: 'examples/app', ... }) // accepted
  */
-export const retainedRepositoryConfigSchema = z
-  .union([
-    repositoryConfigSchema,
-    crossRuntimeRepositoryConfigSchema,
-    operationsRepositoryConfigSchema,
-  ])
-  .refine(
-    (configuration) => !('packageRoot' in configuration),
-    'Only a study of format 9 keeps a packageRoot.',
-  )
+export const liveRepositoryConfigSchema = z.union([
+  repositoryConfigSchema,
+  crossRuntimeRepositoryConfigSchema,
+  operationsRepositoryConfigSchema,
+])
+/**
+ * The configuration of a study of formats 3 to 8: versions 1 to 3 as before, and none of them may carry a `packageRoot` (the field exists only in format 9, see {@link packageRootRepositoryConfigSchema}).
+ * The explicit refusal keeps formats 3 to 8 closed although the live version 3 shape ({@link liveRepositoryConfigSchema}) has an optional `packageRoot`.
+ */
+export const retainedRepositoryConfigSchema = liveRepositoryConfigSchema.refine(
+  (configuration) => !('packageRoot' in configuration),
+  'Only a study of format 9 keeps a packageRoot.',
+)
 /**
  * The configuration a format 9 study retains: the version 3 `next-dev-webpack` shape with a required `packageRoot` other than `"."`.
  * Read by {@link studyConfigurationSchema}; a run whose package root is `"."` saves the formats 7 or 8 it always did, without the field.

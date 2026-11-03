@@ -41,7 +41,7 @@ import type { NodeHistorySummary } from './nodeHistorySummary'
 import { nodeServerHelp } from './nodeServerHelp'
 import { nodeTestConfigSchema } from './nodeTestConfigSchemas'
 import { operationsHelp } from './operationsHelp'
-import { retainedRepositoryConfigSchema } from './repositoryConfigSchemas'
+import { liveRepositoryConfigSchema } from './repositoryConfigSchemas'
 import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { savedSessionHelp } from './savedSessionHelp'
@@ -281,7 +281,7 @@ export async function readResource(
       // The saved-session section: what it keeps, where it lives, how to remove it and how the chat waits (API 1.15).
       ...savedSessionHelp(),
       profile: CONFIGURED_PROFILE,
-      configurationSchema: z.toJSONSchema(retainedRepositoryConfigSchema, {
+      configurationSchema: z.toJSONSchema(liveRepositoryConfigSchema, {
         io: 'input',
       }),
       entry: `API ${API_VERSION}, extension ${CONFIGURED_MINIMUM_EXTENSION_VERSION} or later. Read actual workspace source and publish an immutable source-only article first. Use its default repository/<bookId>/<nodeId> identity, exact revision, selected citation, path/hash and one-based source line/column. Leave learningItemId absent to preserve the article identity.`,

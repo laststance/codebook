@@ -6,7 +6,7 @@ import {
 import { StudyError } from '../errors'
 import type { RepositoryBookStore } from '../repositoryBook'
 import {
-  retainedRepositoryConfigSchema,
+  liveRepositoryConfigSchema,
   type RetainedRepositoryConfiguration,
 } from '../repositoryConfigSchemas'
 import type { RepositorySourceService } from '../repositorySource'
@@ -60,7 +60,7 @@ export async function prepareRepositoryStudy(
       )
   }
   assertActive()
-  const configuration = retainedRepositoryConfigSchema.parse(input),
+  const configuration = liveRepositoryConfigSchema.parse(input),
     selected = await books.readDefinition(
       configuration.book.bookId,
       configuration.book.revision,
