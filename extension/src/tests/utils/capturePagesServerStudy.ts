@@ -3,6 +3,7 @@ import type { TestContext } from 'node:test'
 import type { RetainedStudy } from '../../retainedStudySchemas'
 import { waitUntil } from '../../runtimeSupport/utils/waitUntil'
 import { captureStudy } from '../../utils/captureStudy'
+import { snapshotSourceHashes } from '../../utils/snapshotSourceHashes'
 
 import { armedEntry } from './entryRenderHarness'
 import {
@@ -21,6 +22,7 @@ export const PAGES_SERVER_STUDY_WORKSPACE_KEY = '0'.repeat(64)
  * @param context - The running test, which owns the harness cleanup.
  * @param extra - Harness options handed to {@link pagesServerService}.
  * @param frameName - The name of the paused frame (`getServerSideProps` by default).
+ * @param options - `terminalSummary: true` publishes an explanation whose learning summary holds one observed step citing the run's terminal reference before the study is captured, as an agent does at the end of a run.
  * @returns The study the writer produced and the run it came from.
  * @example const { study, run } = await capturePagesServerRun(context, { packageRoot: 'examples/web' }, 'getStaticProps')
  */
@@ -28,6 +30,7 @@ export async function capturePagesServerRun(
   context: TestContext,
   extra: PagesServerRunOptions = {},
   frameName = 'getServerSideProps',
+  options: { terminalSummary?: boolean } = {},
 ): Promise<{
   study: RetainedStudy
   run: Awaited<ReturnType<typeof pagesServerService>>
@@ -52,6 +55,41 @@ export async function capturePagesServerRun(
   harness.setDocumentReadyState('complete')
   await service.continue(state().participants.server!.continueArguments!)
   await waitUntil(() => state().state === 'completed', 'the completed run')
+  if (options.terminalSummary) {
+    // The terminal reference exists once the run is released.
+    await service.stop(receipt)
+    const terminal = state().terminalReference
+    const observation = state().observations[0]
+    const snapshot = service.record(receipt).runtime?.view().snapshots[0]
+    if (!terminal || !observation || !snapshot)
+      throw new Error('The completed run offers no terminal reference.')
+    await service.explain({
+      instanceId: receipt.instanceId,
+      runId: receipt.runId,
+      key: 'terminal-summary',
+      snapshotUri: observation.snapshotUri,
+      sourceHash: snapshotSourceHashes(snapshot).typescript,
+      valuePaths: ['value:count'],
+      interpretation: 'The page ends with count 3.',
+      learningSummary: {
+        question: 'What does the page end with?',
+        title: 'Final result',
+        summary: 'The page finished its data function.',
+        participants: [{ id: 'page', label: 'Page' }],
+        steps: [
+          {
+            id: 'finish',
+            from: 'page',
+            to: 'page',
+            label: 'Finished',
+            explanation: 'The run completed with the recorded result.',
+            evidence: 'observed',
+            reference: terminal,
+          },
+        ],
+      },
+    })
+  }
   const study = await captureStudy(
     service,
     service.record(receipt),

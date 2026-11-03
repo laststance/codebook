@@ -4,12 +4,12 @@ import {
   REPOSITORY_BROWSER_PROFILE,
 } from '../constants'
 import { EvidenceIntegrityError, StudyError } from '../errors'
-import { dropDefaultPackageRoot } from '../repositoryConfigSchemas'
 import { readResource } from '../resources'
 import type { RetainedStudy } from '../retainedStudySchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import type { StudyRecord, StudyService } from '../service'
 
+import { withCanonicalPackageRoot } from './canonicalDefinition'
 import { decodeRetainedStudy } from './decodeRetainedStudy'
 import { describeStudy } from './describeStudy'
 import { maskLearningSummaryText } from './maskLearningSummaryText'
@@ -202,14 +202,10 @@ export async function captureStudy(
   )
   // E10: a nested run saves the canonical repository-relative real path of its folder (a symlinked alias saves its target); the declared value stays in the run's evidence journal.
   // A declared alias that resolved to the repository root (runtime value ".") is a root run: its saved configuration drops the field and keeps the root run's format.
-  const nestedRoot = runtime?.nextPackageRoot
-  const canonicalConfiguration =
-    nestedRoot !== undefined && redactedConfiguration.version === 3
-      ? dropDefaultPackageRoot({
-          ...redactedConfiguration,
-          packageRoot: nestedRoot,
-        })
-      : redactedConfiguration
+  const canonicalConfiguration = withCanonicalPackageRoot(
+    redactedConfiguration,
+    runtime?.nextPackageRoot,
+  )
   // Fixed by the sealed configuration; the runtime's format 8 pause fields are written only in format 8.
   const studyVersion = studyFormatOfConfiguration(canonicalConfiguration)
   const configured =

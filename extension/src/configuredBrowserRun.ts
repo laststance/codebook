@@ -11132,7 +11132,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     configuration: ConfiguredDefinition['configuration']
     hash: string
   } {
-    const canonical = canonicalDefinition(this.definition, this.preparedStates)
+    const canonical = canonicalDefinition(
+      this.definition,
+      this.preparedStates,
+      this.nextPackageView().nextPackageRoot,
+    )
     return {
       configuration: canonical.configuration,
       hash: canonical.configurationHash,
@@ -11145,7 +11149,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * this.servedDefinition().configuration.initialInputs?.[0]?.text // => '[pending]' before the control is resolved
    */
   private servedDefinition(): ConfiguredDefinition {
-    if (preparedInputsOf(this.definition.configuration) === undefined)
+    const canonical = this.canonicalConfiguration()
+    // Neither prepared texts nor a canonical packageRoot differ from the declaration: the accepted definition is served as is.
+    if (
+      preparedInputsOf(this.definition.configuration) === undefined &&
+      canonical.hash === this.definition.configurationHash
+    )
       return this.definition
     return {
       ...this.definition,
@@ -11154,7 +11163,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         this.preparedStates,
         'view',
       ),
-      configurationHash: this.canonicalConfiguration().hash,
+      configurationHash: canonical.hash,
     }
   }
   /**

@@ -3202,6 +3202,8 @@ export class StudyService {
     return canonicalDefinition(
       definition,
       record.canonicalTextStates ?? record.runtime?.view().preparedTextStates,
+      // The saved study carries the canonical packageRoot (E10): the run resource and the reference hash that same configuration.
+      record.runtime?.view().nextPackageRoot,
     ).configurationHash
   }
 

@@ -14,7 +14,9 @@ import { test, type TestContext } from 'node:test'
 
 import { LearningLibrary } from '../learningLibrary'
 import type { RepositoryOperation } from '../repositoryConfigSchemas'
+import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { decodeConfiguredStudy } from '../utils/decodeConfiguredStudy'
 
 import { capturePagesServerRun } from './utils/capturePagesServerStudy'
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
@@ -142,6 +144,61 @@ test('a symlinked alias packageRoot runs the target app and saves the target pat
     'packageRoot' in study.configuration && study.configuration.packageRoot,
     'examples/react/nextjs',
   )
+})
+
+// protects=E10 / review S1: an aliased packageRoot run publishes an observed terminal learning step and the saved study still decodes, because the run resource, the terminal reference and the saved study carry one configuration hash; fails_when=the resource and the reference hash the declared alias while the study saves the target path (the saved study is refused with 'Learning summary result lacks verified terminal evidence.'); no_claim=the replay of the study (test above)
+test('a symlinked alias packageRoot run with an observed terminal learning step saves a study that decodes', async (context) => {
+  // Arrange
+  const options = nestedPagesOptions({
+    decoyRoot: true,
+    declared: 'links/web',
+  })
+  // Act
+  const { study, run } = await capturePagesServerRun(
+    context,
+    options,
+    'getStaticProps',
+    { terminalSummary: true },
+  )
+  const decoded = decodeConfiguredStudy(
+    JSON.parse(JSON.stringify(study)),
+    study.workspaceKey,
+  )
+  // Assert
+  assert.equal(study.version, 9)
+  assert.equal(
+    run.state().configurationHash,
+    sha256(JSON.stringify(study.configuration)),
+  )
+  assert.equal(decoded.learningSummary?.content.steps[0]?.evidence, 'observed')
+})
+
+// protects=AC 6 / E10 / review S1: an alias that links to the repository root is a root run, so its resource, terminal reference and saved format 8 study agree on the hash of the configuration without packageRoot; fails_when=the saved study is refused for a hash that differs from the reference; no_claim=nested aliases (test above)
+test('a packageRoot that links to the repository root with an observed terminal learning step saves a study that decodes', async (context) => {
+  // Arrange
+  const options: PagesServerRunOptions = {
+    packageRoot: '.',
+    packageApp: { declared: 'links/root' },
+    sourcePath: PAGES_SERVER_PAGE_PATH,
+  }
+  // Act
+  const { study, run } = await capturePagesServerRun(
+    context,
+    options,
+    'getServerSideProps',
+    { terminalSummary: true },
+  )
+  const decoded = decodeConfiguredStudy(
+    JSON.parse(JSON.stringify(study)),
+    study.workspaceKey,
+  )
+  // Assert
+  assert.equal(study.version, 8)
+  assert.equal(
+    run.state().configurationHash,
+    sha256(JSON.stringify(study.configuration)),
+  )
+  assert.equal(decoded.learningSummary?.content.steps[0]?.evidence, 'observed')
 })
 
 // protects=AC 6 / review OCR low: a packageRoot that is a link to the repository root is a root run, so its study keeps the root run's format 8 and carries no packageRoot; fails_when=the declared alias stays in the saved configuration and the study saves as format 9; no_claim=the format of a nested app (test above)
