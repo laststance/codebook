@@ -537,7 +537,7 @@ export type ConfiguredRuntimeView = {
   definition: ConfiguredDefinition
   /** How far the run resolved each `initialInputs` text (`pending`, `secret` or `plain`); the texts themselves are never in the view. A view without it counts every text as unresolved. */
   preparedTextStates?: PreparedTextState[]
-  /** The canonical repository-relative folder of a Next app below the repository root (E10: a symlinked alias reads as its target); absent for a run at the root. The study writer saves it as the configuration's `packageRoot`. */
+  /** The canonical repository-relative folder of a Next app below the repository root (E10: a symlinked alias reads as its target); `.` for a declared alias that resolved to the repository root, absent for any other run at the root. The study writer saves it as the configuration's `packageRoot` and drops `.` (a root run saves without the field). */
   nextPackageRoot?: string
   manifest?: {
     hash: string
