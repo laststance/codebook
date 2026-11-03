@@ -240,8 +240,8 @@ const PACKAGE_ROOT_REFUSALS = {
   'library-place-ambiguous': {
     code: 'NEXT_STOP_NOT_SEALED',
     meaning:
-      'The debugger placed the library stop at a position that maps back to more than one source position or to a source Codebook does not allow, so the pause could not be tied to the declared line. details.sideEffects is unknown: the entry had been requested.',
-    fix: 'Tell the learner the stop could not be placed on one source position; declare the stop on a line that holds a single statement. Do not start another run with the same stop.',
+      'The debugger placed the library stop at a position that maps back to more than one source position or to a source Codebook does not allow, so the pause could not be tied to the declared line. A library stop on a line that itself declares a binding a required inspection reads is refused the same way: unlike a stop in the app, it is not moved to the next line. details.sideEffects is unknown: the entry had been requested.',
+    fix: 'Tell the learner the stop could not be placed on one source position; declare the stop on a line that holds a single statement, after the line that declares the value it reads. Do not start another run with the same stop.',
   },
   'library-build-changed': {
     code: 'RUNTIME_FAILED',

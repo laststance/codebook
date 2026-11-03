@@ -34,7 +34,7 @@ export const NEXT_PACKAGE_ROOT_MINIMUM_API = '1.18'
  * Defined once: `codebook://help/repository-browser` serves it as `nextPackageRoot.envelope`, `extension/README.md` repeats it word for word, the CHANGELOG entry of the release repeats it, and a docs test holds help and README equal to this constant.
  */
 export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
-  "A Next app in a folder below the repository root runs from the repository root, not from the app's folder: its own code is runnable and learnable when Next resolves inside the repository and every stop lies in the app's own files, a stop in a shared package outside the app's folder is refused before anything starts, and no saved sign-in session is used below the root, so an app that needs a sign-in cannot run there yet."
+  "A Next app in a folder below the repository root runs from the repository root, not from the app's folder: its own code is runnable and learnable when Next resolves inside the repository and every stop lies in the app's own files, a server stop in a workspace library the app links to inside the repository pauses when the library's build carries source maps with its checked-out source, any other stop outside the app's folder is refused before anything starts, and no saved sign-in session is used below the root, so an app that needs a sign-in cannot run there yet."
 
 /**
  * The selection rule for a Next question, shared word for word by the repository-browser help (`startHere`, `nextQuickStart.callOrder`, `nextPackageRoot`) and the MCP initial instructions; the bundled skill paraphrases it and a test pins the paraphrase.
