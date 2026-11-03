@@ -195,6 +195,29 @@ test('only a document or a Next data request names a page path', () => {
   )
 })
 
+// Value: protects=Next's data request naming for pages called `index`: Next adds one `index` segment to the data path of the root, of a page named `index` and of everything below it, so the page path is read back by removing that one segment; fails_when=the data request of `/index` or `/index/foo` names `/index/index` or `/index/index/foo`, so the page read from the request never matches the entry; no_claim=i18n locale prefixes in data requests
+test('a data request of a page called index names that page and not the doubled path', () => {
+  // Arrange
+  const dataRequest = (dataPath: string) => ({
+    url: `http://localhost:3000/_next/data/b1/${dataPath}`,
+    resourceType: 'Fetch' as const,
+  })
+
+  // Act
+  const root = pagesRequestPathOf(dataRequest('index.json'))
+  const indexPage = pagesRequestPathOf(dataRequest('index/index.json'))
+  const belowIndexPage = pagesRequestPathOf(
+    dataRequest('index/index/foo.json?x=1'),
+  )
+  const ordinaryPage = pagesRequestPathOf(dataRequest('products/1.json'))
+
+  // Assert
+  assert.equal(root, '/')
+  assert.equal(indexPage, '/index')
+  assert.equal(belowIndexPage, '/index/foo')
+  assert.equal(ordinaryPage, '/products/1')
+})
+
 // Value: protects=value-free shape summary: a summary names fields, types and list lengths and no value, cuts depth, and hides a property name that is not identifier-like; fails_when=a string value, a number or a data-carrying key reaches the Output line of a verdict error; no_claim=the wording of the Output line (the run's)
 test('a shape summary holds no value', () => {
   // Arrange
