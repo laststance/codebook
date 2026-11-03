@@ -653,6 +653,53 @@ function declaredLineOf(stop: PreparedStop): number {
 }
 
 /**
+ * Gives the declared and the armed place of a prepared stop in the terms of the file its `source.path` names, for the journal entries and texts that pair the path with lines.
+ *
+ * Why: for a library stop `source` and `armed` are built-file places, which the agent cannot find in the library source it declared the stop in ({@link declaredLineOf}). The armed built place is translated through the frozen build; one the build cannot translate is not named apart from the declared place. Any other stop keeps its own places. Called by the evidence entries of {@link ConfiguredBrowserRun} that record {@link declaredAndArmedPlace}.
+ * @param stop - A prepared stop.
+ * @returns The `declared` and `armed` positions to give {@link declaredAndArmedPlace}.
+ * @example sourceTermsOf(libraryStop) // => { declared: { line: 7, column: 3 }, armed: { line: 7, column: 3 } } while libraryStop.armed is built line 30
+ */
+function sourceTermsOf(stop: PreparedStop): {
+  declared: { line: number; column: number }
+  armed: { line: number; column: number }
+} {
+  const { library } = stop
+  // A stop outside a library runs in its own source terms.
+  if (!library) return { declared: stop.source, armed: stop.armed }
+  const armed =
+    library.frozen.toSource(
+      library.builtPath,
+      stop.armed.line,
+      stop.armed.column,
+    ) ??
+    // The armed built line is the declared one's build: it names the armed source line.
+    (stop.armed.line === library.builtLine
+      ? {
+          line: library.frozen.armedSourceLine,
+          column: library.declared.column,
+        }
+      : library.declared)
+  return { declared: library.declared, armed }
+}
+
+/**
+ * Gives the source line of a built line of a library stop for an agent-facing text; any other stop's line is already a source line.
+ * @param stop - A prepared stop.
+ * @param line - A one-based line in the stop's own terms (built for a library stop).
+ * @returns The library source line the built line maps to, else the stop's declared line (a built line is never named); `line` for a stop outside a library.
+ * @example sourceLineOf(libraryStop, 31) // => 8 for built line 31 mapping to source line 8
+ */
+function sourceLineOf(stop: PreparedStop, line: number): number {
+  const { library } = stop
+  if (!library) return line
+  return (
+    library.frozen.toSource(library.builtPath, line, undefined)?.line ??
+    library.declared.line
+  )
+}
+
+/**
  * Names the bindings of a stop's required inspections that its own declared line declares; called by {@link ConfiguredBrowserRun.requestAfterSelfDeclaringLine} at preparation.
  * @param stop - The declared stop, as {@link configuredStops} gives it.
  * @param lines - The lines of the stop's sealed source.
@@ -4570,9 +4617,19 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): LibraryStopState {
     const { frozen } = freeze
     const packageRootRelative = this.nextPackageOrRoot.packageRootRelative
-    const builtLine = frozen
+    const builtPlaces = frozen
       .toBuilt(frozen.armedSourceLine)
-      .find((place) => place.builtPath === builtPath)?.builtLine
+      .filter((place) => place.builtPath === builtPath)
+    // One source line built into several lines of the file: arming the first would be a guess.
+    if (builtPlaces.length > 1)
+      throw libraryPlaceAmbiguousRefusal(
+        packageRootRelative,
+        frozen.library.name,
+        frozen.stopPath,
+        frozen.armedSourceLine,
+        'the source line builds into several lines of the built file',
+      )
+    const builtLine = builtPlaces[0]?.builtLine
     if (builtLine === undefined)
       throw libraryPlaceAmbiguousRefusal(
         packageRootRelative,
@@ -4993,7 +5050,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     stop.breakpoint = this.requestBreakpoint(stop)
     this.evidence.record('breakpoint.requested-again-after-break-locations', {
       participant: stop.participant,
-      ...declaredAndArmedPlace(stop.source, stop.armed),
+      ...declaredAndArmedPlace(
+        sourceTermsOf(stop).declared,
+        sourceTermsOf(stop).armed,
+      ),
       refusedPlace: { line: place.line, column: place.column },
     })
     return this.serverAcknowledgement(stop)
@@ -5260,13 +5320,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const { armed, source, firstRequest } = stop
     // A second request names the column it replaced on its line.
     if (firstRequest)
-      return `requested again at ${armed.line}:${armed.column}, the line's break location before the first requested column ${firstRequest.column}`
+      return `requested again at ${sourceLineOf(stop, armed.line)}:${armed.column}, the line's break location before the first requested column ${firstRequest.column}`
     if (armed.line === source.line) return `requested column ${source.column}`
     // A map too large to scan left the place to the debugger's break locations.
     const chosenBy = stop.scan.complete
       ? 'the first mapped position after the declared line'
       : 'the first place the debugger can pause at after the declared line'
-    return `requested at ${armed.line}:${armed.column}, ${chosenBy}`
+    return `requested at ${sourceLineOf(stop, armed.line)}:${armed.column}, ${chosenBy}`
   }
 
   /**
@@ -5700,7 +5760,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (!this.hasPausableColumn(pausableColumns)) return
     this.evidence.record('breakpoint.slid-past-pausable-line', {
       participant: stop.participant,
-      ...declaredAndArmedPlace(stop.source, stop.armed),
+      ...declaredAndArmedPlace(
+        sourceTermsOf(stop).declared,
+        sourceTermsOf(stop).armed,
+      ),
       bound: { line: bound.line, column: bound.column },
       pausableColumn: this.nearestPausableColumn(
         pausableColumns,
@@ -5748,17 +5811,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): Error {
     const { armed, source } = stop,
       requestedColumn = (firstRequest ?? armed).column
+    // A library stop's lines are built lines: the texts name the library source lines.
     const pausableLine =
         armed.line === source.line
-          ? `the declared line ${source.line}`
-          : `line ${armed.line}, where the stop was requested`,
+          ? `the declared line ${declaredLineOf(stop)}`
+          : `line ${sourceLineOf(stop, armed.line)}, where the stop was requested`,
       secondRequest = firstRequest
-        ? `, and a second request at ${armed.line}:${armed.column} was bound on line ${binding.line} again`
+        ? `, and a second request at ${sourceLineOf(stop, armed.line)}:${armed.column} was bound on line ${sourceLineOf(stop, binding.line)} again`
         : ''
     const advice = this.slideAdvice(stop)
     return this.bindingFailure(
       stop,
-      `Declared stop ${this.declaredAt(stop)} bound at ${binding.line}:${binding.column}, refused: the debugger can pause on ${pausableLine}, so requested column ${requestedColumn} lies after its statement${secondRequest}; ${advice}`,
+      `Declared stop ${this.declaredAt(stop)} bound at ${sourceLineOf(stop, binding.line)}:${binding.column}, refused: the debugger can pause on ${pausableLine}, so requested column ${requestedColumn} lies after its statement${secondRequest}; ${advice}`,
     )
   }
 
@@ -5935,13 +5999,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         stop.bundle.source.split(/\r\n|\r|\n/),
       ),
       names = bindings.join(' and '),
-      firstLine = stop.earliestRequestLine,
+      declaredLine = declaredLineOf(stop),
+      // A library stop's lines are built lines: the text names the library source lines.
+      firstLine = sourceLineOf(stop, stop.earliestRequestLine),
       statementEnd = firstLine - 1
     // A statement that ends on its own line needs no second line number.
     const declaration =
-      statementEnd === stop.source.line
-        ? `which line ${stop.source.line} declares`
-        : `which line ${stop.source.line} declares in a statement that ends on line ${statementEnd}`
+      statementEnd === declaredLine
+        ? `which line ${declaredLine} declares`
+        : `which line ${declaredLine} declares in a statement that ends on line ${statementEnd}`
     return `Declared stop ${this.declaredAt(stop)} requires ${names}, ${declaration}, so ${names} ${bindings.length === 1 ? 'has' : 'have'} no value before line ${firstLine}; the sealed map was too large to scan completely and the server has not loaded the module yet, so Codebook cannot find where the debugger can pause from line ${firstLine} on. Declare this stop on line ${firstLine} or a later line, within a citation that covers that line (${this.declaredField(stop)})`
   }
 
@@ -6325,7 +6391,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const lines = 'lines' in counted ? [...counted.lines, boundLine] : counted
     this.evidence.record('breakpoint.rule-from-break-locations', {
       participant: stop.participant,
-      ...declaredAndArmedPlace(stop.source, stop.armed),
+      ...declaredAndArmedPlace(
+        sourceTermsOf(stop).declared,
+        sourceTermsOf(stop).armed,
+      ),
       boundLine,
       breakLocationLines: [...new Set(lines)]
         .sort((left, right) => left - right)
@@ -6838,7 +6907,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.journalStopModule('stop.module-parsed', {
         participant: name,
         source: stop.source.path,
-        line: stop.source.line,
+        line: declaredLineOf(stop),
         scriptId: event.scriptId,
         scriptUrl: event.url,
       })
@@ -6915,7 +6984,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const journaled = {
       participant: name,
       source: stop.source.path,
-      line: stop.source.line,
+      line: declaredLineOf(stop),
       scriptId: event.scriptId,
       scriptUrl: event.url,
     }
@@ -10678,7 +10747,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         column: stop.source.column,
         path: stop.bundle.sourcePath,
       },
-      ...declaredAndArmedPlace(stop.source, stop.armed),
+      ...declaredAndArmedPlace(
+        sourceTermsOf(stop).declared,
+        sourceTermsOf(stop).armed,
+      ),
       returned: this.describeAnswer(answered, receipt.success),
       observed: receipt.success ? receipt.data : undefined,
       // The editor answered no column: the entry says where the run took it from.

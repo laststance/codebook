@@ -116,7 +116,7 @@ export type FrozenLibraryBuild = Readonly<{
   /**
    * Gives the built place of a source line in every build flavour that maps it, so the caller can ask the server compile which flavour it holds.
    * @param sourceLine - One-based source line.
-   * @returns One entry per candidate with a mapping on that line; the built line is the first generated line of the mapping (one-based).
+   * @returns One entry per generated line of a candidate that holds a mapping of that line, in generated order (one-based); so a source line built into several lines of a file has several entries for it, which the caller must not choose among.
    */
   toBuilt(sourceLine: number): BuiltPlace[]
   /**
@@ -465,6 +465,8 @@ async function indexOfStopSource(
 type MappingTable = {
   /** The first generated position (zero-based) of each one-based source line. */
   firstByLine: Map<number, { line: number; column: number }>
+  /** Every zero-based generated line that holds a segment of each one-based source line, ascending and without repeats; the first equals {@link firstByLine}'s line. */
+  generatedLinesByLine: Map<number, number[]>
   /** The segments of each zero-based generated line, in generated order; `source` is `false` for a segment of another source. */
   byGeneratedLine: Map<
     number,
@@ -476,6 +478,7 @@ type MappingTable = {
 function tabulate(mappings: string, sourceIndex: number): MappingTable {
   const table: MappingTable = {
     firstByLine: new Map(),
+    generatedLinesByLine: new Map(),
     byGeneratedLine: new Map(),
   }
   let complete: boolean
@@ -493,6 +496,13 @@ function tabulate(mappings: string, sourceIndex: number): MappingTable {
         originalColumn: segment.original.column + 1,
       })
       table.byGeneratedLine.set(segment.generatedLine, segments)
+      if (isSource) {
+        const lines = table.generatedLinesByLine.get(line) ?? []
+        // Segments arrive in generated order, so a repeat is the last entry.
+        if (lines.at(-1) !== segment.generatedLine)
+          lines.push(segment.generatedLine)
+        table.generatedLinesByLine.set(line, lines)
+      }
       if (isSource && !table.firstByLine.has(line))
         table.firstByLine.set(line, {
           line: segment.generatedLine,
@@ -774,10 +784,12 @@ function createFrozen(
     candidates: candidates.map(({ candidate }) => candidate),
     toBuilt(sourceLine) {
       return candidates.flatMap(({ candidate, table }) => {
-        const first = table.firstByLine.get(sourceLine)
-        return first
-          ? [{ builtPath: candidate.builtPath, builtLine: first.line + 1 }]
-          : []
+        return (table.generatedLinesByLine.get(sourceLine) ?? []).map(
+          (generatedLine) => ({
+            builtPath: candidate.builtPath,
+            builtLine: generatedLine + 1,
+          }),
+        )
       })
     },
     toSource(builtPath, builtLine, builtColumn) {

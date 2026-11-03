@@ -282,6 +282,18 @@ test('a pause in the browser copy of the library module is not an unowned page p
   // Assert
   assert.equal(harness.run.view().status === 'failed', false)
   assert.equal(harness.run.view().failures.join('; '), '')
+  // The copy's pause reached the run and was handled, not silently dropped: it is journaled as an observed pause of the browser copy.
+  assert.deepEqual(
+    harness.run
+      .view()
+      .events.filter(
+        (event) =>
+          event.type === 'cdp.pause-observed' &&
+          JSON.stringify(event.detail).includes('"scriptId":"browser-copy"'),
+      )
+      .map((event) => Reflect.get(Object(event.detail), 'participant')),
+    ['browser'],
+  )
   harness.run.stop().catch(() => undefined)
   await prepared.catch(() => undefined)
 })
