@@ -10,8 +10,6 @@ import {
   REPLAY_DEBUG_MAX_FRAMES,
   REPLAY_DEBUG_MAX_SCOPES,
   REPLAY_DEBUG_MAX_VARIABLES,
-  REPLAY_DEBUG_TEXT_LIMIT_CHARS,
-  REPLAY_DEBUG_TRUNCATION_MARKER,
   REPLAY_SCOPE_NOT_CAPTURED_TEXT,
   SECRET_SHAPE_SCAN_LIMIT_CHARS,
 } from '../constants'
@@ -21,6 +19,8 @@ import {
 } from '../replayDebugSchemas'
 import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
 
+import { boundedClassNameOf } from './boundedClassNameOf'
+import { cutToSavedTextLimit } from './cutToSavedTextLimit'
 import { isInsideFolder } from './isInsideFolder'
 import { maskSavedDebugSnapshot } from './maskSavedDebugSnapshot'
 import { redactSecretText } from './redactSecretText'
@@ -28,7 +28,7 @@ import {
   previewShowsCredentialShape,
   redactValuePreview,
 } from './redactValuePreview'
-import { classNameOf, findSecretSiblingIndexes } from './secretShapes'
+import { findSecretSiblingIndexes } from './secretShapes'
 import { shouldCaptureReplayScope } from './shouldCaptureReplayScope'
 import { stripTerminalControls } from './stripTerminalControls'
 import {
@@ -188,10 +188,10 @@ function previewValueOf(variable: {
 }): string {
   // The scanners read the value whole; a longer one is not read at all.
   if (variable.value.length > SECRET_SHAPE_SCAN_LIMIT_CHARS)
-    return classNameOf(variable)
+    return boundedClassNameOf(variable)
   return variable.variablesReference > 0 &&
     previewShowsCredentialShape(variable.value)
-    ? classNameOf(variable)
+    ? boundedClassNameOf(variable)
     : redactValuePreview(variable.value)
 }
 
@@ -234,10 +234,9 @@ export async function captureReplayDebugSnapshot(
   // Terminal controls go first: js-debug colors a DOM node's preview with ANSI SGR codes (`\u001b[34m<button …`), which are display noise in a saved value and would otherwise split a secret pattern.
   const shorten = (value: string) => {
     const plain = stripTerminalControls(value)
-    const masked = redactSecretText(input.maskKnownText?.(plain) ?? plain)
-    return masked.length <= REPLAY_DEBUG_TEXT_LIMIT_CHARS
-      ? masked
-      : `${masked.slice(0, REPLAY_DEBUG_TEXT_LIMIT_CHARS - REPLAY_DEBUG_TRUNCATION_MARKER.length)}${REPLAY_DEBUG_TRUNCATION_MARKER}`
+    return cutToSavedTextLimit(
+      redactSecretText(input.maskKnownText?.(plain) ?? plain),
+    )
   }
   const read = async (
     command: 'scopes' | 'variables',

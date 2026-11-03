@@ -1,7 +1,8 @@
 import { REDACTION_MASK, SECRET_SHAPE_SCAN_LIMIT_CHARS } from '../constants'
 
+import { boundedClassNameOf } from './boundedClassNameOf'
 import { isSecretName } from './isSecretName'
-import { classNameOf, isCollapsedClassName } from './secretShapes'
+import { isCollapsedClassName } from './secretShapes'
 
 /** The name of the Node environment object's holder and of the property that is the environment object: `process.env`. */
 const ENVIRONMENT_HOLDER_NAME = 'process'
@@ -107,6 +108,6 @@ export function withheldVariableValue(
     variable.name === PREVIEW_DATA_NAME ||
     isCollapsedClassName(variable)
   )
-    return classNameOf(variable)
+    return boundedClassNameOf(variable)
   return undefined
 }

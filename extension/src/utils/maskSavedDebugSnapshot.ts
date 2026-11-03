@@ -1,10 +1,12 @@
 import type { ReplayDebugSnapshot } from '../replayDebugSchemas'
 
+import { boundedClassNameOf } from './boundedClassNameOf'
+import { cutToSavedTextLimit } from './cutToSavedTextLimit'
 import {
   previewShowsCredentialShape,
   redactValuePreview,
 } from './redactValuePreview'
-import { classNameOf, findSecretSiblingIndexes } from './secretShapes'
+import { findSecretSiblingIndexes } from './secretShapes'
 import {
   isEnvironmentAliasName,
   withheldVariableValue,
@@ -83,10 +85,11 @@ function decideVariables(snapshot: ReplayDebugSnapshot): {
     const isParent =
       variable.children.length > 0 || variable.unavailable !== undefined
     // Children that were masked or never read cannot vouch for the parent's own preview: its text stays only when it shows no credential shape.
+    // Masking can lengthen a preview (`code=x` reads `code=[masked]`), so the result is cut to the saved text limit again; the snapshot schema would reject it otherwise.
     const value =
       isParent && previewShowsCredentialShape(variable.value)
-        ? classNameOf(variable)
-        : redactValuePreview(variable.value)
+        ? boundedClassNameOf(variable)
+        : cutToSavedTextLimit(redactValuePreview(variable.value))
     if (value === variable.value) return variable
     didChange = true
     return { ...variable, value }

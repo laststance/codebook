@@ -2305,6 +2305,9 @@ export const COLLAPSED_CLASS_NAMES: ReadonlySet<string> = new Set([
 /** The longest text the credential-shape scanners read in one piece ({@link redactValuePreview}, {@link maskShapedLiterals}): four times {@link REPLAY_DEBUG_TEXT_LIMIT_CHARS}, so every text the capture saves fits whole, and equal to Node's default limit for all request headers together, so no Cookie or Authorization header is longer. The debugger capture saves a longer raw value as its class name and never scans it; a quoted element longer than this is not read as a credential. */
 export const SECRET_SHAPE_SCAN_LIMIT_CHARS = 4 * REPLAY_DEBUG_TEXT_LIMIT_CHARS
 
+/** The longest class name the capture and the saved-snapshot mask read from the start of a value preview when the debugger reported no type (`Socket {…}`, `Array(4) […]`): a longer identifier-like run is the value's own text, not a class, and the variable is saved as `Object`. */
+export const PREVIEW_CLASS_NAME_MAX_CHARS = 64
+
 /** What the run resource shows for a prepared text whose control is not yet resolved; a view state only, never stored or hashed ({@link redactPreparedTexts}). */
 export const PREPARED_TEXT_PENDING_MARK = '[pending]'
 
