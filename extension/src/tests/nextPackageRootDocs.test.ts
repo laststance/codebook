@@ -34,6 +34,7 @@ const REASONS = [
   'not-a-next-app',
   'outside-package',
   'package-root-fresh-session',
+  'nested-workspace',
 ]
 
 type PackageRootHelp = {

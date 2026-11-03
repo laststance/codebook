@@ -217,6 +217,12 @@ const PACKAGE_ROOT_REFUSALS = {
       "A run below the repository root starts with a fresh browser and never loads the repository's saved sign-in session, which was set up for the root app, and the app asked for a sign-in.",
     fix: 'Do not set up a saved session: this app cannot sign in below the root in this version. Tell the learner so and offer a question about code that needs no sign-in.',
   },
+  'nested-workspace': {
+    code: 'PREREQUISITE_MISSING',
+    meaning:
+      'The opened folder lies below the Git repository root, so source authoring refuses every run in this window; details.gitRoot names the repository folder and details.packageRoot the opened folder relative to it. codebook_status reports every repository-browser adapter not ready there.',
+    fix: 'Ask the learner to open the details.gitRoot folder (the repository root) in the editor and do not retry in this window. A Next app then runs from the root with packageRoot set to details.packageRoot; other adapters do not support a folder below the root yet.',
+  },
 } as const
 
 /**
