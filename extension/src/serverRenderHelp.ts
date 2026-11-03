@@ -228,7 +228,7 @@ export function serverRenderHelp() {
         'The run-level after must hold only after the last operation: Codebook reads it just before that operation and refuses the run with INPUT_NOT_ACCEPTED (nothing is sent) when it already holds. For a search, check what only the searched state shows (the example reads the value attribute of the search box once the URL carries the query), never a heading or control the page shows before the search.',
       copyFrom: SERVER_RENDER_COPY_FROM,
       callOrder: [
-        `codebook_status: read profiles[].prerequisites.adapters["next-dev-webpack"].routerKind, choose the router (routerChoice), and confirm the API is at least that router's minimum (${SERVER_RENDER_MINIMUM_API} for an App Router page, ${SERVER_RENDER_PAGES_MINIMUM_API} for a Pages Router page), that profiles[].configurationVersions lists 3 and that the next-dev-webpack adapter is ready; copy instanceId. On an older API tell the learner to update Codebook; never use version 2 instead.`,
+        `codebook_status: read profiles[].prerequisites.adapters["next-dev-webpack"].routerKind, choose the router (routerChoice), and confirm the API is at least that router's minimum (${SERVER_RENDER_MINIMUM_API} for an App Router page, ${SERVER_RENDER_PAGES_MINIMUM_API} for a Pages Router page), that profiles[].configurationVersions lists 3 and that the app the question is about is ready (the selection rule of nextPackageRoot: the root only when rootIsApp is true, else the ready packages entry, declared with its packageRoot from API 1.18); copy instanceId. On an older API tell the learner to update Codebook; never use version 2 instead.`,
         'codebook_sources, then codebook_source: read the file each stop is in; copy its path, full SHA-256 and the line and column from numberedText.',
         'codebook_publish_book: publish a source-only article whose node cites those files; copy bookId, revision and nodeId.',
         'codebook_start (Pages Router: first apply pagesSideEffects, and ask the learner when the data function writes or sends): profile repository-browser, one of the configurations above with the copied values and a stable key; the answer is a receipt with a run id, not success.',
@@ -271,6 +271,11 @@ export function serverRenderHelp() {
           item: 'saved study of a Pages Router server run (saved-study compatibility)',
           change:
             'format 8, unchanged and with no new field: Codebook 0.2.73.2 or later opens and replays it with the recorded server values, and 0.2.73.2 is the supported rollback target (earlier versions do not mask saved debugger history when they serve it). Only starting such a run needs 0.2.74.0 and API 1.17',
+        },
+        {
+          item: 'saved study of a run below the repository root (packageRoot, API 1.18)',
+          change:
+            'format 9 (.study.v9.json): the evidence rules of format 7 or 8 (whichever the configuration takes without packageRoot) plus the packageRoot field. Codebook 0.2.74.0 lists a format 9 study as saved by a newer Codebook; update Codebook to open it. Studies of runs without packageRoot keep formats 3 to 8, unchanged (nextPackageRoot)',
         },
       ],
     },

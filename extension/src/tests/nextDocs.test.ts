@@ -189,6 +189,7 @@ test('the repository-browser help keeps its existing top keys and leads with sta
     'nextQuickStart',
     'nextSupport',
     'nextRefusals',
+    'nextPackageRoot',
     'operationsQuickStart',
     'operationsDeclare',
     'operationsSecrets',

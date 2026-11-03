@@ -509,7 +509,7 @@ test('the migration table separates the saved Pages run (format 8 unchanged) fro
     row.item.startsWith('saved study of a Pages Router server run'),
   )
   // Assert
-  assert.equal(table.length, 5)
+  assert.equal(table.length, 6)
   assert.equal(
     live?.change,
     'Codebook 0.2.74.0 or later, MCP API 1.17 or later; an older Codebook refuses a server stop in a Pages run with NEXT_SERVER_ONLY_STOP',
@@ -528,7 +528,7 @@ test('the migration table separates the saved Pages run (format 8 unchanged) fro
 })
 
 // Value: protects=API 1.17 is the served version and its API note names the additive Pages fields (dataFunction, the run's Next version and attribution summary, the failure details) and keeps saved-study compatibility apart from the live feature; fails_when=API_VERSION is not 1.17 or the note drops a field; no_claim=that the run reports the fields (the run tests)
-test('API_VERSION is 1.17 and its note names the Pages data-function fields and the unchanged study format', async () => {
+test('API_VERSION is 1.18 and its 1.17 note names the Pages data-function fields and the unchanged study format', async () => {
   // Arrange
   const constants = await readPackaged('src', 'constants.ts')
   // Act
@@ -537,7 +537,7 @@ test('API_VERSION is 1.17 and its note names the Pages data-function fields and 
       .split('\n')
       .find((line) => line.startsWith(' * 1.17 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.17')
+  assert.equal(API_VERSION, '1.18')
   for (const phrase of [
     'Pages Router data-function server stops (configuration version 3)',
     '`nextVersion` and `attributionSummary`',
@@ -556,12 +556,12 @@ test('API_VERSION is 1.17 and its note names the Pages data-function fields and 
 })
 
 // Value: protects=the bundled skill carries one Pages sentence (data functions take server stops in configuration version 3, the readiness request is mentioned when a value can depend on it) and the consent sentence, copies no configuration, and no longer calls Pages server-side code unsupported; fails_when=a sentence leaves the skill, the version is not 1.0.66, or the skill embeds the quick start's configuration; no_claim=how a chat follows the rules
-test('the bundled skill 1.0.66 states the Pages data-function stops, the readiness request and the consent rule without copying the contract', async () => {
+test('the bundled skill 1.0.67 states the Pages data-function stops, the readiness request and the consent rule without copying the contract', async () => {
   // Arrange
   const skill = await readPackaged('skills', 'codebook', 'SKILL.md')
   const paragraph = await readServerRendersSkillParagraph()
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.66"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.67"\n'))
   assert.ok(
     paragraph.startsWith(
       '**Server renders (API 1.16; Pages Router data functions API 1.17).**',
@@ -633,18 +633,19 @@ test('the README Server renders section describes the Pages data-function stops,
 })
 
 // Value: protects=the README states the Pages-specific refusals (a server stop in pages/api or _document before the server starts, a version 2 server stop naming version 3 with requiredVersion, the Pages client-component reason), the API 1.17 note and the skill version the update step names; fails_when=a refusal bullet keeps the pre-1.17 wording or the 1.17 note or the 1.0.66 version leaves the README; no_claim=the refusals themselves (the run tests)
-test('the README names the Pages server-stop refusals, the API 1.17 note and skill 1.0.66', async () => {
+test('the README names the Pages server-stop refusals, the API 1.17 note and skill 1.0.67', async () => {
   // Arrange
   const readme = await readPackaged('README.md')
   // Act / Assert
   for (const phrase of [
-    'with **MCP API 1.17** (`codebook_status` reports the installed build). API 1.17 is additive: it adds Pages Router data-function server stops in configuration version 3',
+    'with **MCP API 1.18** (`codebook_status` reports the installed build). API 1.18 is additive:',
+    'API 1.17 is additive: it adds Pages Router data-function server stops in configuration version 3',
     'A saved Pages server run stays study format 8 with no new field.',
     'A server stop in a `pages/api` file or in `_document` is refused with this code before the development server starts (`details.sideEffects` is `none`).',
     'A server stop in a version 2 Pages run is refused with this code too, naming configuration version 3 and the Pages quick start (`details.requiredVersion` is `3`)',
     'Every refusal of a stop in a Pages run carries `details.router: "pages"`.',
     "(`details.reason` is `client-component`: the page component and `getInitialProps` lines also run in the page's server render and in the browser",
-    "so Cursor's managed skill updates to **1.0.66**",
+    "so Cursor's managed skill updates to **1.0.67**",
     '**What the chat asks first (1.0.66).**',
   ])
     assert.ok(readme.includes(phrase), phrase)

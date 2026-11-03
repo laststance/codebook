@@ -1,6 +1,10 @@
 import {
   MILLISECONDS_PER_SECOND,
+  NEXT_APP_SELECTION_RULE,
   NEXT_MANIFEST_POLL_MS,
+  NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE,
+  NEXT_PACKAGE_ROOT_MINIMUM_API,
+  NEXT_PACKAGE_ROOT_MINIMUM_EXTENSION,
   NEXT_PAGES_SOURCE_EXTENSIONS,
   NEXT_SETUP_STEPS,
   NEXT_WEBPACK_COMPATIBILITY_SENTENCE,
@@ -28,8 +32,7 @@ const NEXT_SETUP_DEADLINE_SCOPE = `at its early steps (${NEXT_SETUP_STEPS.starti
  * The first key of `codebook://help/repository-browser`: one sentence that sends an agent from `codebook_status` to the quick start of its app's adapter.
  * Served before both quick starts, so an agent reads it before either.
  */
-export const REPOSITORY_BROWSER_START_HERE =
-  "Read codebook_status first: profiles[].prerequisites.adapters names the adapter that is ready for this workspace, and the next-dev-webpack readiness names routerKind (app, pages, both or none); then read the matching section of this help, nextQuickStart for a Next app (App Router or Pages Router) or viteQuickStart for a Vite app. For a flow of several steps (type, choose an option, click) or a secret typed by the learner, read operationsQuickStart (configuration version 3) after it. For code that runs on the server of a Next app (an App Router page's server render, or a Pages Router page's getServerSideProps or getStaticProps and the code they call), read serverRenderQuickStart, which opens with the router choice and each router's own minimums."
+export const REPOSITORY_BROWSER_START_HERE = `Read codebook_status first: profiles[].prerequisites.adapters names the adapter that is ready for this workspace, and the next-dev-webpack readiness names routerKind (app, pages, both or none), rootIsApp and packages (the Next apps below the repository root). ${NEXT_APP_SELECTION_RULE} Then read the matching section of this help, nextQuickStart for a Next app (App Router or Pages Router) or viteQuickStart for a Vite app. For a flow of several steps (type, choose an option, click) or a secret typed by the learner, read operationsQuickStart (configuration version 3) after it. For code that runs on the server of a Next app (an App Router page's server render, or a Pages Router page's getServerSideProps or getStaticProps and the code they call), read serverRenderQuickStart, which opens with the router choice and each router's own minimums. For a Next app below the repository root, read nextPackageRoot (its examples, refusals and limits).`
 
 /**
  * A minimal valid `next-dev-webpack` configuration, generic on purpose: every identity and hash is a placeholder the agent replaces with the value the step named in {@link NEXT_QUICK_START_COPY_FROM} returned.
@@ -85,6 +88,214 @@ const NEXT_QUICK_START_COPY_FROM = {
 } as const
 
 /**
+ * A complete version 3 configuration for a server stop in a Next app below the repository root: the app's folder is `packageRoot`, and `source.path` is repository-relative (it starts with that folder).
+ * Served as `nextPackageRoot.configurationNestedServerStop` and parsed by a test with {@link liveRepositoryConfigSchema}. Every value is a neutral placeholder, not any project's folder or file: the agent replaces the folder with the `packageRoot` value of the `packages` entry the question is about, the book identity and the hash with the values the earlier steps returned.
+ */
+export const NEXT_NESTED_SERVER_STOP_CONFIGURATION = {
+  version: 3,
+  adapter: 'next-dev-webpack',
+  packageRoot: 'apps/my-app',
+  book: {
+    bookId: 'my-article',
+    revision: 1,
+    nodeId: 'my-node',
+    anchorIndex: 0,
+  },
+  source: {
+    path: 'apps/my-app/pages/items/[id].tsx',
+    hash: '0000000000000000000000000000000000000000000000000000000000000000',
+    line: 18,
+    column: 5,
+  },
+  participant: 'server',
+  afterOperation: 0,
+  entryPath: '/items/1',
+  before: [{ kind: 'visible', selector: 'h1' }],
+  after: [{ kind: 'text', selector: 'h1', equals: 'Item' }],
+  inspections: [{ path: 'itemId', mode: 'value', required: true }],
+} as const
+
+/**
+ * A complete version 3 configuration for a browser stop in a Next app below the repository root, reached by one declared click: a browser stop declares `afterOperation` from 1 (a browser stop with `afterOperation: 0` is refused), so the example carries one `click` operation.
+ * Served as `nextPackageRoot.configurationNestedBrowserStop` and parsed by a test with {@link liveRepositoryConfigSchema}. Folder, file, selectors and texts are neutral placeholders, as in {@link NEXT_NESTED_SERVER_STOP_CONFIGURATION}.
+ */
+export const NEXT_NESTED_BROWSER_STOP_CONFIGURATION = {
+  version: 3,
+  adapter: 'next-dev-webpack',
+  packageRoot: 'apps/my-app',
+  book: {
+    bookId: 'my-article',
+    revision: 1,
+    nodeId: 'my-node',
+    anchorIndex: 0,
+  },
+  source: {
+    path: 'apps/my-app/src/components/Toggle.tsx',
+    hash: '0000000000000000000000000000000000000000000000000000000000000000',
+    line: 12,
+    column: 5,
+  },
+  participant: 'browser',
+  afterOperation: 1,
+  entryPath: '/',
+  before: [{ kind: 'visible', selector: '[data-testid="toggle-button"]' }],
+  after: [
+    {
+      kind: 'text',
+      selector: '[data-testid="toggle-state"]',
+      equals: 'On',
+    },
+  ],
+  operations: [
+    {
+      kind: 'click',
+      title: 'Click the toggle',
+      selector: '[data-testid="toggle-button"]',
+    },
+  ],
+  inspections: [{ path: 'enabled', mode: 'value', required: true }],
+} as const
+
+/**
+ * The help anchor of one section of {@link nextPackageRootHelp}: `codebook://help/repository-browser#<id>`.
+ * @param id - The section or reason id.
+ * @returns The resource address with the id as its anchor.
+ * @example packageRootAnchor('outside-package') // => 'codebook://help/repository-browser#outside-package'
+ */
+function packageRootAnchor(id: string): string {
+  return `codebook://help/repository-browser#${id}`
+}
+
+/**
+ * One refusal of a `packageRoot` run, keyed by the `details.reason` the error carries: the code it answers with, what it means and the fix the chat follows.
+ * Keyed by reason so the compiler holds the table's entries uniform; {@link nextPackageRootHelp} serves them in this record's order.
+ */
+const PACKAGE_ROOT_REFUSALS = {
+  'outside-repository': {
+    code: 'INVALID_CONFIGURATION',
+    meaning:
+      'packageRoot resolves to a folder outside the opened repository (a ".." segment or an absolute path).',
+    fix: 'Declare the folder as a repository-relative path inside the repository, copied from the packages entry the question is about or from details.suggestions. Nothing started (details.sideEffects none).',
+  },
+  'link-leaves-repository': {
+    code: 'INVALID_CONFIGURATION',
+    meaning:
+      'A link on the way to packageRoot leads out of the repository, so its real path is outside it.',
+    fix: 'Declare the real folder inside the repository (a packages entry or details.suggestions), never the link. Codebook does not follow a link out of the repository. Nothing started.',
+  },
+  'not-a-folder': {
+    code: 'INVALID_CONFIGURATION',
+    meaning: 'packageRoot names a file, not a folder.',
+    fix: "Declare the folder that holds the app's package.json, not a file in it. Nothing started.",
+  },
+  missing: {
+    code: 'INVALID_CONFIGURATION',
+    meaning: 'No folder exists at packageRoot in this repository.',
+    fix: 'Correct the path from the repository\'s files (forward slashes, no leading "./") or take a value from the packages entries or details.suggestions. Nothing started.',
+  },
+  unreadable: {
+    code: 'INVALID_CONFIGURATION',
+    meaning:
+      'The folder cannot be read; the refusal carries the operating system error code.',
+    fix: 'Tell the learner the folder is not readable and which error code the refusal names; only the learner can change its permissions. Do not retry with the same value. Nothing started.',
+  },
+  'not-a-next-app': {
+    code: 'INVALID_CONFIGURATION (read the code the refusal carries)',
+    meaning:
+      'The folder has no package.json that names next in dependencies, devDependencies or peerDependencies.',
+    fix: 'Declare the folder whose package.json names next (a packages entry), or tell the learner this folder is not a Next app. Nothing started.',
+  },
+  'outside-package': {
+    code: 'NEXT_STOP_NOT_SEALED',
+    meaning:
+      'A stop file lies outside packageRoot (a shared package the app imports, for example); details.files lists every such stop and details.packageRoot the app folder. Refused before the server starts: nothing ran.',
+    fix: 'Declare stops only in files inside details.packageRoot, or tell the learner that code outside the app folder cannot be observed in this version. Do not start another run with the same stops.',
+  },
+  'package-root-fresh-session': {
+    code: 'SIGN_IN_REQUIRED',
+    meaning:
+      "A run below the repository root starts with a fresh browser and never loads the repository's saved sign-in session, which was set up for the root app, and the app asked for a sign-in.",
+    fix: 'Do not set up a saved session: this app cannot sign in below the root in this version. Tell the learner so and offer a question about code that needs no sign-in.',
+  },
+} as const
+
+/**
+ * Builds the `nextPackageRoot` key of `codebook://help/repository-browser`: how to run a Next app that lives below the repository root (API 1.18).
+ *
+ * Why it exists: before API 1.18 a Next app below the repository root could not run, and a chat that meets one (a monorepo, an `examples/` folder) needs the selection rule, the exact configuration shape, the refusal fixes, the cross-adapter difference and the limits before it reads the long sections. Called by {@link nextHelp}, which serves its result as one key.
+ *
+ * @returns The section: envelope sentence, selection rule, status fields, two complete version 3 examples, the refusal-to-fix table (one anchor per `details.reason`), the cross-adapter `packageRoot` table, the saved-session rule, the opened-folder rule and the study-format note.
+ * @example
+ * nextPackageRootHelp().refusals['outside-package'].anchor // => 'codebook://help/repository-browser#outside-package'
+ */
+function nextPackageRootHelp() {
+  return {
+    anchor: packageRootAnchor('next-package-root'),
+    minimumApi: NEXT_PACKAGE_ROOT_MINIMUM_API,
+    minimumExtension: NEXT_PACKAGE_ROOT_MINIMUM_EXTENSION,
+    envelope: NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE,
+    selectionRule: NEXT_APP_SELECTION_RULE,
+    versionCheck: `packageRoot exists only in configuration version 3 and only when codebook_status reports API ${NEXT_PACKAGE_ROOT_MINIMUM_API} or later (Codebook ${NEXT_PACKAGE_ROOT_MINIMUM_EXTENSION}; compare the number after the dot as a whole number). On an older API, or when a start refuses packageRoot as an unknown key, tell the learner to update Codebook and do not run the app by another route.`,
+    openFrom:
+      "Open the repository root, never the app's folder: with a folder below the repository root open, source authoring is refused with PREREQUISITE_MISSING and the message names the packageRoot to declare once the learner has opened the root. Do not retry in that window; ask the learner to open the repository root.",
+    status: {
+      rootIsApp:
+        "next-dev-webpack readiness: true when the root package.json names next and the root has a route folder (app, src/app, pages or src/pages). Only then is the root a candidate; the root's ready keeps its meaning.",
+      packages:
+        'Array of the Next apps below the root that tracked package.json files name (depth 4 or less, at most 50): { packageRoot, routerKind, installed, ready, version?, missing[] }. packageRoot is the exact value to declare; ready and missing are what a start with that packageRoot checks. Entries carry no preparation or notes: a start reports them. Untracked apps are not listed.',
+      packagesTruncated:
+        'true when the list is incomplete; packagesTruncatedReason says why: limit (more than 50 apps), manifest-cap (more than 500 manifests), deadline (the 5 s discovery bound), skipped-path (a path was skipped) or git-failed.',
+      whenTruncated:
+        "When packagesTruncated is true and the app the question names is not listed, declare its packageRoot from the repository's files (the folder that holds its package.json); the start checks it, and an unlisted depth 5 or untracked folder runs when it passes.",
+    },
+    configurationNestedServerStop: NEXT_NESTED_SERVER_STOP_CONFIGURATION,
+    configurationNestedBrowserStop: NEXT_NESTED_BROWSER_STOP_CONFIGURATION,
+    examples: {
+      nestedServerStop:
+        "configurationNestedServerStop: a Pages Router data-function stop (participant server, afterOperation 0, operations omitted) in a Next app whose folder is packageRoot. source.path stays repository-relative and starts with packageRoot; entryPath is the page's own route. The folder, file, line and inspection are placeholders: replace them, the book and the hash with the app the question is about (copyFrom of serverRenderQuickStart).",
+      nestedBrowserStop:
+        'configurationNestedBrowserStop: a browser stop in a component of the app, reached by one declared click (a browser stop declares afterOperation from 1; afterOperation 0 is refused). Same placeholders and the same path rule.',
+    },
+    refusals: Object.fromEntries(
+      Object.entries(PACKAGE_ROOT_REFUSALS).map(([reason, entry]) => [
+        reason,
+        { anchor: packageRootAnchor(reason), ...entry },
+      ]),
+    ),
+    adapters: {
+      anchor: packageRootAnchor('package-root-adapters'),
+      table: [
+        {
+          adapter: 'node-server',
+          packageRoot:
+            'Its own field, default "."; an invalid value is refused with NODE_SERVER_SOURCE_REFUSED.',
+        },
+        {
+          adapter: 'next-dev-webpack',
+          packageRoot:
+            'Version 3 only, absent means "." (the repository root); a bad value is refused with INVALID_CONFIGURATION, a missing Next with PREREQUISITE_MISSING.',
+        },
+        {
+          adapter: 'vite-dev',
+          packageRoot:
+            'Not supported: a value other than "." is refused with INVALID_CONFIGURATION. Remove packageRoot; a Vite app runs at the repository root only.',
+        },
+      ],
+    },
+    savedSession:
+      'A run with packageRoot other than "." never loads the repository\'s saved sign-in session and records no sign-in paths into it; the run resource reports savedSessionSkipped "package-root". An app that needs a sign-in cannot run below the root in this version (package-root-fresh-session).',
+    studies:
+      'A nested run is saved as study format 9 (.study.v9.json) with packageRoot in its configuration, so the saved study names the app that ran; recorded sources and book citations stay repository-relative. A run without packageRoot (or with ".") keeps the format it takes today. Codebook 0.2.74.0 lists a format 9 study as saved by a newer Codebook; update Codebook to open it. Format 9 replays from recorded evidence, also after the app\'s folder is removed.',
+    limits: [
+      NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE,
+      "Library or shared packages the app imports (a workspace package Next compiles through transpilePackages) stay outside the stop range: a stop there is refused with NEXT_STOP_NOT_SEALED (outside-package), so a question whose answer needs that code is outside this version's claim.",
+      "Next resolves as Node would from the app's folder: the first node_modules/next found from packageRoot up to the repository root, never above it, whose real path is inside the repository (a pnpm link into the root's node_modules/.pnpm and a hoisted workspace install qualify; Yarn PnP and NODE_PATH count as not installed). A missing Next names the install command of the repository's lockfile as the learner's decision; Codebook never runs it.",
+      'One run at a time per window: a root run beside a nested run is refused with BUSY.',
+    ],
+  }
+}
+
+/**
  * What each Next refusal code means, keyed by code so the compiler holds it complete; the help lists the codes in the order of {@link NEXT_REFUSAL_CODES}, never in this record's.
  * Each text names fields and limits, never a value from a run.
  */
@@ -109,7 +320,7 @@ const NEXT_REFUSAL_MEANINGS: Record<NextRefusalCode, string> = {
  *
  * Why it exists: an agent that meets a Next app, App Router or Pages Router, needs the minimal route, the stoppable code and the limits before it reads the long contract sections. Called by the resource reader for the repository-browser help, which spreads these keys after the Vite ones, as it does with {@link viteHelp}.
  *
- * @returns Keys to spread into the help object: `nextQuickStart`, `nextSupport` and `nextRefusals`, the last derived from {@link NEXT_REFUSAL_CODES} with each code's recovery from {@link ERROR_RECOVERY}.
+ * @returns Keys to spread into the help object: `nextQuickStart`, `nextSupport`, `nextRefusals` and `nextPackageRoot` (the Next app below the repository root, API 1.18), `nextRefusals` being derived from {@link NEXT_REFUSAL_CODES} with each code's recovery from {@link ERROR_RECOVERY}.
  * @example
  * const help = { startHere: REPOSITORY_BROWSER_START_HERE, ...viteHelp(), ...nextHelp() }
  * help.nextRefusals.NEXT_ROUTE_NOT_FOUND.anchor // => 'codebook://help/repository-browser#NEXT_ROUTE_NOT_FOUND'
@@ -119,16 +330,16 @@ export function nextHelp() {
   return {
     nextQuickStart: {
       summary:
-        'For a Next 16 app, App Router or Pages Router: configure adapter "next-dev-webpack" and use the tools in this order. Use it when codebook_status reports profiles[].prerequisites.adapters["next-dev-webpack"].ready true; its routerKind names the routers the workspace holds. For a question about code that runs while the server renders an App Router page (API 1.16 or later), or about a Pages Router page\'s getServerSideProps or getStaticProps and the code they call (API 1.17 or later), read serverRenderQuickStart in this help instead of this configuration: it opens with the router choice.',
+        'For a Next 16 app, App Router or Pages Router: configure adapter "next-dev-webpack" and use the tools in this order. Use it when codebook_status reports profiles[].prerequisites.adapters["next-dev-webpack"].ready true; its routerKind names the routers the workspace holds. For a question about code that runs while the server renders an App Router page (API 1.16 or later), or about a Pages Router page\'s getServerSideProps or getStaticProps and the code they call (API 1.17 or later), read serverRenderQuickStart in this help instead of this configuration: it opens with the router choice. For a Next app below the repository root (API 1.18 or later) this version 1 configuration does not apply: read nextPackageRoot, whose examples are version 3 configurations that declare packageRoot.',
       prerequisites: [
         "Stop your own next dev for this workspace first: Codebook starts its own, and a .next/dev/lock another process holds refuses the start with PREREQUISITE_MISSING (Codebook never removes another process's lock).",
-        'The dependencies are installed (node_modules/next); Codebook installs nothing.',
+        'The dependencies are installed (node_modules/next; for an app below the repository root, the first node_modules/next from its folder up to the repository root, inside the repository); Codebook installs nothing.',
         'When the next-dev-webpack readiness reports preparation skipped (statements before next dev in package.json scripts.dev, a predev script, or the pre<name> script of a script that dev runs), the learner runs that preparation from the workspace root before the start: Codebook never runs it. The environment settings its notes name are not applied either.',
       ],
       configuration: NEXT_QUICK_START_CONFIGURATION,
       copyFrom: NEXT_QUICK_START_COPY_FROM,
       callOrder: [
-        'codebook_status: confirm profiles[].prerequisites.adapters["next-dev-webpack"].ready is true, read its routerKind and preparation; copy instanceId.',
+        `codebook_status: read profiles[].prerequisites.adapters["next-dev-webpack"] (ready, rootIsApp, routerKind, preparation, packages) and apply the selection rule; copy instanceId. ${NEXT_APP_SELECTION_RULE}`,
         'codebook://help/repository-browser (this help): read nextSupport for the code a stop can be in and nextRefusals for the codes a start can answer.',
         'codebook_sources, then codebook_source: read the file the stop is in; copy its path, full SHA-256 and the line and column from numberedText.',
         'codebook_publish_book: publish a source-only article whose node cites that file; copy bookId, revision and nodeId.',
@@ -179,5 +390,6 @@ export function nextHelp() {
         },
       ]),
     ),
+    nextPackageRoot: nextPackageRootHelp(),
   }
 }
