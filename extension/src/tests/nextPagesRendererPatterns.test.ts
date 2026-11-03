@@ -84,3 +84,68 @@ test('a location outside the text finds no call and CRLF, CR, LS and PS count as
       JSON.stringify(separator),
     )
 })
+
+// Value: protects=the cost of the renderer lookups of a hit: the frames of a hit ask one renderer text of about 1 MiB again and again, and only the first lookup numbers its lines, so 400 further lookups of a 500,000-line text together cost less than ten first lookups; fails_when=each lookup splits the whole text into its lines again (400 further lookups then cost about 400 first lookups); no_claim=a time in milliseconds (the bound compares the lookups with the first one on the same machine and load)
+test('looks up many frames of one large renderer text without numbering its lines again for each', () => {
+  // Arrange
+  const lineCount = 500_000
+  const largeText = `${'x\n'.repeat(lineCount)}getServerSideProps({req})`
+  const furtherLookupCount = 400
+
+  // Act
+  const firstStartedAt = performance.now()
+  const firstCall = nextPagesDataFunctionCallAt(largeText, lineCount, 0)
+  const firstLookupMs = performance.now() - firstStartedAt
+  const furtherStartedAt = performance.now()
+  let lastCall
+  for (let lookup = 0; lookup < furtherLookupCount; lookup++)
+    lastCall = nextPagesDataFunctionCallAt(largeText, lineCount, 0)
+  const furtherLookupsMs = performance.now() - furtherStartedAt
+
+  // Assert
+  assert.deepEqual(firstCall, {
+    dataFunction: 'getServerSideProps',
+    form: 'call',
+  })
+  assert.deepEqual(lastCall, {
+    dataFunction: 'getServerSideProps',
+    form: 'call',
+  })
+  assert.ok(
+    furtherLookupsMs < firstLookupMs * 10,
+    `${furtherLookupCount} further lookups took ${furtherLookupsMs} ms, the first ${firstLookupMs} ms`,
+  )
+})
+
+// Value: protects=the lookup cache is keyed by the text: two different renderer texts asked in turn at the same line and column each answer for their own text, and a copy of a text answers as the text does; fails_when=the numbering of one text is reused for another (a call is found in a text that has none, or missed in one that has it); no_claim=how many texts are kept
+test('answers each renderer text for itself when lookups of different texts alternate', () => {
+  // Arrange
+  const textWithCall = 'first\nlet a=1;getServerSideProps({req})\nlast'
+  const textWithStaticCall = 'first\nlet a=1;getStaticProps({params})\nlast'
+  const textWithoutCall = 'first\nlet a=1;render(req,res)\nlast'
+  const copyOfTextWithCall = [
+    'first',
+    'let a=1;getServerSideProps({req})',
+    'last',
+  ].join('\n')
+
+  // Act
+  const answers = [
+    nextPagesDataFunctionCallAt(textWithCall, 1, 8),
+    nextPagesDataFunctionCallAt(textWithoutCall, 1, 8),
+    nextPagesDataFunctionCallAt(textWithStaticCall, 1, 8),
+    nextPagesDataFunctionCallAt(textWithCall, 1, 8),
+    nextPagesDataFunctionCallAt(copyOfTextWithCall, 1, 8),
+    nextPagesDataFunctionCallAt(textWithCall, 2, 0),
+  ]
+
+  // Assert
+  assert.deepEqual(answers, [
+    { dataFunction: 'getServerSideProps', form: 'call' },
+    undefined,
+    { dataFunction: 'getStaticProps', form: 'call' },
+    { dataFunction: 'getServerSideProps', form: 'call' },
+    { dataFunction: 'getServerSideProps', form: 'call' },
+    undefined,
+  ])
+})
