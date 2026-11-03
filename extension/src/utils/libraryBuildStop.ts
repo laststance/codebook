@@ -34,6 +34,8 @@ import { sha256 } from '../runtimeSupport/utils/sha256'
 
 import { appReachesLibrary } from './appReachesLibrary'
 import type { NextPagesDiscoveryCache } from './createNextPagesDiscoveryCache'
+import { isAtOrInsideFolder } from './isAtOrInsideFolder'
+import { linksToRealFolder } from './linksToRealFolder'
 import { readRepositoryBuildText } from './readRepositoryBuildText'
 import { resolveArmedPlace } from './resolveArmedPlace'
 import type { ResolvedNextPackage } from './resolveNextPackage'
@@ -160,12 +162,6 @@ function toPosix(path: string): string {
   return path.split(sep).join('/')
 }
 
-/** Says whether a path lies inside a root (the root itself counts). */
-function isInside(root: string, path: string): boolean {
-  const rel = relative(root, path)
-  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
-}
-
 /**
  * Reads the `name` of a folder's `package.json` without ever blocking on a non-regular file.
  *
@@ -203,19 +199,6 @@ async function readPackageName(folder: string): Promise<string | undefined> {
   }
 }
 
-/** Says whether `<base>/<name>` resolves by real path to the folder. */
-async function linksTo(
-  base: string,
-  name: string,
-  realFolder: string,
-): Promise<boolean> {
-  try {
-    return (await realpath(join(base, 'node_modules', name))) === realFolder
-  } catch {
-    return false
-  }
-}
-
 /**
  * Finds the workspace library a stop file belongs to, so a stop outside the Next app can be sealed through the library's build instead of refused as `outside-package`.
  *
@@ -249,7 +232,7 @@ export async function detectLibraryPackage(
     const realFile = await realpath(resolve(root, stopPath))
     // A file whose real path leaves the repository, or is another path than declared, is not a library file.
     if (
-      !isInside(root, realFile) ||
+      !isAtOrInsideFolder(root, realFile) ||
       toPosix(relative(root, realFile)) !== toPosix(normalize(stopPath))
     )
       return undefined
@@ -268,13 +251,13 @@ async function libraryOfFile(
 ): Promise<LibraryPackage | undefined> {
   let folder = dirname(realFile)
   // The walk ends at the repository root, which is the last folder tried.
-  while (isInside(root, folder)) {
+  while (isAtOrInsideFolder(root, folder)) {
     // A stopped run leaves the walk (caught by the caller as no library).
     signal?.throwIfAborted()
     const name = await readPackageName(folder)
     if (name !== undefined) {
       const linked =
-        (await linksTo(root, name, folder)) ||
+        (await linksToRealFolder(root, name, folder)) ||
         (await appReachesLibrary(
           root,
           nextPackage.packageRoot,
@@ -396,7 +379,7 @@ async function realMapPath(
   if (!entry.isSymbolicLink()) return undefined
   try {
     const real = await realpath(path)
-    return isInside(root, real) ? real : undefined
+    return isAtOrInsideFolder(root, real) ? real : undefined
   } catch {
     return undefined
   }

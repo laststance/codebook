@@ -1,5 +1,5 @@
 import { lstat, opendir, realpath, stat } from 'node:fs/promises'
-import { isAbsolute, join, relative, sep } from 'node:path'
+import { join, relative, sep } from 'node:path'
 
 import {
   LIBRARY_BUILD_ENTRY_LIMIT_COUNT,
@@ -7,24 +7,8 @@ import {
   LIBRARY_LINK_FOLDER_LIMIT_COUNT,
 } from '../constants'
 
-/** Says whether a path lies inside a root (the root itself counts). */
-function isInside(root: string, path: string): boolean {
-  const rel = relative(root, path)
-  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
-}
-
-/** Says whether `<base>/node_modules/<name>` resolves by real path to the folder. */
-async function linksTo(
-  base: string,
-  name: string,
-  realFolder: string,
-): Promise<boolean> {
-  try {
-    return (await realpath(join(base, 'node_modules', name))) === realFolder
-  } catch {
-    return false
-  }
-}
+import { isAtOrInsideFolder } from './isAtOrInsideFolder'
+import { linksToRealFolder } from './linksToRealFolder'
 
 /** Lists a folder's entries within the per-listing bound; a missing or unreadable folder is empty and an over-bound one is `undefined`. */
 async function listNames(
@@ -78,7 +62,7 @@ async function workspacePackageOf(
     const real = await realpath(path)
     // A package below any `node_modules` (a pnpm store or installed package) is never followed.
     const isWorkspaceFolder =
-      isInside(root, real) &&
+      isAtOrInsideFolder(root, real) &&
       !relative(root, real).split(sep).includes('node_modules')
     return isWorkspaceFolder &&
       (await stat(join(real, 'package.json'))).isFile()
@@ -150,7 +134,7 @@ export async function appReachesLibrary(
       if (visited.has(folder)) continue
       visited.add(folder)
       if (visited.size > LIBRARY_LINK_FOLDER_LIMIT_COUNT) return false
-      if (await linksTo(folder, name, libraryFolder)) return true
+      if (await linksToRealFolder(folder, name, libraryFolder)) return true
       const linked = await followLinks(root, folder, depth, signal)
       if (linked === undefined) return false
       next.push(...linked)
