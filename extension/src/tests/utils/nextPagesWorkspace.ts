@@ -49,6 +49,10 @@ export type NextPagesHarnessOptions = {
    * Writes the page's server compile (`.next/dev/server/pages/index.js`), whose `(pages-dir-node)` module of the cited source maps every line. `true` is a compile that holds the cited module; an object stages where the module is and which server chunks the compile requires ({@link NextPagesServerCompile}).
    */
   serverCompile?: boolean | NextPagesServerCompile
+  /** Further entries of the written `pages-manifest.json` (route to compiled page, such as `/other` to `pages/other.js`), so a hit can be read as another page's. */
+  pagesManifest?: Record<string, string>
+  /** Makes Codebook's readiness request for the entry end without an answer, as a data function that writes and then never answers does: the stand-in launcher sends it, then fails with this outcome. */
+  readinessFailure?: 'timeout' | 'connection-lost'
   /** Adds an App folder (`src/app/page.tsx`), so the workspace has both routers. */
   withAppFolder?: boolean
   /** The masked output tail the stand-in server reports. */
@@ -78,7 +82,12 @@ export async function writeNextPagesWorkspace(
   workspace: string,
   cited: { path: string; text: string },
   options: NextPagesHarnessOptions,
-): Promise<{ moduleJavascript: string; buildManifest: string }> {
+): Promise<{
+  moduleJavascript: string
+  buildManifest: string
+  /** The text of the cited source's `(pages-dir-node)` module, when the server compile was written. */
+  serverModuleJavascript?: string
+}> {
   const write = async (path: string, text: string): Promise<void> => {
     await mkdir(dirname(join(workspace, path)), { recursive: true })
     await writeFile(join(workspace, path), text)
@@ -105,9 +114,10 @@ export async function writeNextPagesWorkspace(
     '.next/dev/routes-manifest.json',
     JSON.stringify({ ...routesManifest, ...options.routesManifest }),
   )
+  const pagesManifest = { ...PAGES_MANIFEST, ...options.pagesManifest }
   await write(
     '.next/dev/server/pages-manifest.json',
-    JSON.stringify(PAGES_MANIFEST),
+    JSON.stringify(pagesManifest),
   )
   const mappedModule = pagesEvalModule(
     root,
@@ -137,12 +147,14 @@ export async function writeNextPagesWorkspace(
       browserChunk('pages/_app', {}),
     )
   }
-  if (options.serverCompile)
-    await writePagesServerBuild(
-      write,
-      root,
-      cited,
-      options.serverCompile === true ? {} : options.serverCompile,
-    )
-  return { moduleJavascript, buildManifest }
+  const serverModuleJavascript = options.serverCompile
+    ? await writePagesServerBuild(
+        write,
+        root,
+        cited,
+        options.serverCompile === true ? {} : options.serverCompile,
+        pagesManifest,
+      )
+    : undefined
+  return { moduleJavascript, buildManifest, serverModuleJavascript }
 }

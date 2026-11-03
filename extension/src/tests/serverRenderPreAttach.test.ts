@@ -302,17 +302,19 @@ test('a pre-attach discovery whose binding throws fails the run with a reason an
   assert.deepEqual(unhandled, [])
 })
 
-// Value: protects=a Pages run keeps today's handling of a pause in an unknown script (no discovery, no new SOURCE_CHANGED path); fails_when=the Pages run reads the script text and journals script.discovered; no_claim=the Pages failure wording
-test('a Pages run does not discover a script it never saw parsed', async (context) => {
+// Value: protects=a Pages run that declares a server stop reads the text of a server script it never saw parsed, as an App Router run does, and journals script.discovered (Cycle 0073 gate: the unannounced-script guard no longer excludes Pages runs; a Pages run without a server stop never gets here); fails_when=the Pages run's server pause in an unknown script is ignored and nothing is discovered; why_new=changed in Cycle 0073 (AC 6): it pinned "a Pages run does not discover"; no_claim=the Pages failure wording
+test('a Pages run with a server stop discovers a script it never saw parsed', async (context) => {
   // Arrange
   const harness = await afterOperationRun(context, 1)
   Object.assign(harness.run, { pagesRun: { route: '/dashboard/invoices' } })
   // Act
   harness.server!.hit({ route: '/dashboard/invoices', unannounced: {} })
-  await new Promise<void>((resolve) => setTimeout(resolve, 300))
+  await waitUntil(
+    () => journaled(harness, 'script.discovered').length === 1,
+    'the script behind the pause was discovered',
+  )
   // Assert
-  assert.equal(journaled(harness, 'script.discovered').length, 0)
-  assert.equal(harness.run.view().participants.server?.snapshot, undefined)
+  assert.equal(journaled(harness, 'script.discovered').length, 1)
 })
 
 // Value: protects=the journal bound: script.discovered is listed only up to the diagnostic cap and the rest are counted; fails_when=every discovered script is journaled; no_claim=the cap's value for a real run

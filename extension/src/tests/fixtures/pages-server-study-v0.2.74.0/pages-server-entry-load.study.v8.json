@@ -1,0 +1,216 @@
+{
+  "version": 8,
+  "workspaceKey": "0000000000000000000000000000000000000000000000000000000000000000",
+  "id": "1ec2c98d-d708-445d-a202-070ffee978c1_dffde268-a5d7-45c1-b008-e9dbc657f88d",
+  "instanceId": "1ec2c98d-d708-445d-a202-070ffee978c1",
+  "runId": "dffde268-a5d7-45c1-b008-e9dbc657f88d",
+  "profile": "repository-browser",
+  "createdAt": "2026-11-03T02:14:36.641Z",
+  "savedAt": "2026-11-03T02:14:37.138Z",
+  "state": "completed",
+  "terminal": false,
+  "finalOutcome": "pending-teardown",
+  "materialSignature": "294f16da8cfc5762e8ea70920b27722846e34bc0d4762505cda6343ca6453ec8",
+  "configuration": {
+    "version": 3,
+    "adapter": "next-dev-webpack",
+    "book": {
+      "bookId": "interface",
+      "revision": 1,
+      "nodeId": "theme",
+      "anchorIndex": 0
+    },
+    "source": {
+      "path": "src/pages/index.tsx",
+      "hash": "bf50d0bd499eec3143ad531fe9a9817814c480270597b78fa655985a6214a63d",
+      "line": 6,
+      "column": 1
+    },
+    "participant": "server",
+    "afterOperation": 0,
+    "before": [
+      {
+        "kind": "visible",
+        "selector": "button"
+      }
+    ],
+    "after": [
+      {
+        "kind": "text",
+        "selector": "label",
+        "equals": "Dark"
+      }
+    ],
+    "inspections": [
+      {
+        "path": "count",
+        "mode": "value",
+        "required": true
+      }
+    ],
+    "additionalStops": []
+  },
+  "configurationHash": "df91f7bf9b0fb2f6078a0aa05fcc7118ac2a69f3f027bffeffe3c9d6e8b2e598",
+  "descriptor": {
+    "itemId": "repository/interface/theme",
+    "bookTitle": "Interface",
+    "nodeTitle": "Theme",
+    "anchors": [
+      {
+        "path": "src/pages/index.tsx",
+        "hash": "bf50d0bd499eec3143ad531fe9a9817814c480270597b78fa655985a6214a63d",
+        "startLine": 1,
+        "endLine": 7
+      },
+      {
+        "path": "src/mode.ts",
+        "hash": "f6d4386593d51ec67ad6d6811031238456f33ee12b3fa92a9df833159a355501",
+        "startLine": 1,
+        "endLine": 1
+      }
+    ],
+    "citationContext": {
+      "kind": "citations",
+      "hash": "abb78b18bfedf8b1f88aa3a8206ad9e7603a9e432e82585b4df66e75bceae5af",
+      "anchors": [
+        {
+          "path": "src/mode.ts",
+          "hash": "f6d4386593d51ec67ad6d6811031238456f33ee12b3fa92a9df833159a355501",
+          "startLine": 1,
+          "endLine": 1
+        },
+        {
+          "path": "src/pages/index.tsx",
+          "hash": "bf50d0bd499eec3143ad531fe9a9817814c480270597b78fa655985a6214a63d",
+          "startLine": 1,
+          "endLine": 7
+        }
+      ]
+    },
+    "sources": [
+      {
+        "path": "src/pages/index.tsx",
+        "hash": "bf50d0bd499eec3143ad531fe9a9817814c480270597b78fa655985a6214a63d",
+        "text": "export default function Home({ count }) {\n  return count\n}\nexport async function getServerSideProps({ query }) {\n  const count = 3\n  return { props: { count } }\n}\n",
+        "lineCount": 8
+      },
+      {
+        "path": "src/mode.ts",
+        "hash": "f6d4386593d51ec67ad6d6811031238456f33ee12b3fa92a9df833159a355501",
+        "text": "export const mode = \"display\";\n",
+        "lineCount": 2
+      }
+    ]
+  },
+  "operation": {
+    "id": "d8dc14fe-a2ae-4c1b-b0c2-6f7efd909e5f",
+    "key": "entry-load",
+    "inputDispatched": false,
+    "inputAcknowledged": false,
+    "continuedPause": {
+      "sessionId": "server-session",
+      "threadId": 1,
+      "generation": 1
+    },
+    "afterVerified": true
+  },
+  "firstExecutionObserved": false,
+  "observations": [
+    {
+      "id": "server-session:1",
+      "itemId": "repository/interface/theme",
+      "actionId": "repository-click",
+      "capturePhase": "paused-server",
+      "snapshotUri": "codebook://1ec2c98d-d708-445d-a202-070ffee978c1/runs/dffde268-a5d7-45c1-b008-e9dbc657f88d/snapshots/server-session%3A1",
+      "participant": "server",
+      "execution": "server-render",
+      "attribution": "entry-load",
+      "declaredIndex": 0,
+      "executionIndex": 0,
+      "capturedAt": "2026-11-03T02:14:37.039Z",
+      "elapsedMs": 567.474958,
+      "pause": {
+        "sessionId": "server-session",
+        "threadId": 1,
+        "generation": 1
+      },
+      "source": {
+        "text": "export default function Home({ count }) {\n  return count\n}\nexport async function getServerSideProps({ query }) {\n  const count = 3\n  return { props: { count } }\n}\n",
+        "hash": "bf50d0bd499eec3143ad531fe9a9817814c480270597b78fa655985a6214a63d",
+        "line": 6,
+        "column": 1,
+        "javascriptHash": "df7d93fae53cda52bbd100b19604303fcbf04ca455690039d0bfc0325a33267c",
+        "mapHash": "44e17df1a3e2731ff641c0bd090105d95c2e6f8d193206594cb3987e971a5583",
+        "scriptId": "server",
+        "scriptUrl": "webpack-internal:///(pages-dir-node)/./src/pages/index.tsx",
+        "generated": {
+          "line": 5,
+          "column": 0
+        },
+        "binding": {
+          "declaredLine": 6,
+          "boundLine": 6,
+          "mappedLinesBetween": 0
+        }
+      },
+      "values": {
+        "value:count": 3
+      },
+      "debugger": {
+        "version": 1,
+        "frames": [
+          {
+            "name": "getServerSideProps",
+            "line": 6,
+            "column": 1,
+            "source": {
+              "text": "export default function Home({ count }) {\n  return count\n}\nexport async function getServerSideProps({ query }) {\n  const count = 3\n  return { props: { count } }\n}\n",
+              "hash": "bf50d0bd499eec3143ad531fe9a9817814c480270597b78fa655985a6214a63d",
+              "line": 6,
+              "name": "src/pages/index.tsx"
+            },
+            "scopes": [
+              {
+                "name": "Local",
+                "variables": [0]
+              }
+            ]
+          }
+        ],
+        "variables": [
+          {
+            "name": "count",
+            "value": "3",
+            "type": "number",
+            "children": []
+          }
+        ],
+        "limitations": []
+      },
+      "unavailableValues": [],
+      "interpretations": []
+    }
+  ],
+  "captures": [
+    {
+      "phase": "before",
+      "status": "captured",
+      "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=",
+      "hash": "13f49d37064e5e9a125e79406f0e4d06a719813a3a3cca585595433c73e9b259"
+    },
+    {
+      "phase": "paused-server",
+      "status": "captured",
+      "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=",
+      "hash": "13f49d37064e5e9a125e79406f0e4d06a719813a3a3cca585595433c73e9b259",
+      "snapshotId": "server-session:1"
+    },
+    {
+      "phase": "after",
+      "status": "captured",
+      "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=",
+      "hash": "13f49d37064e5e9a125e79406f0e4d06a719813a3a3cca585595433c73e9b259"
+    }
+  ],
+  "links": []
+}

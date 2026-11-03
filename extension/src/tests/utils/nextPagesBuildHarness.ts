@@ -166,6 +166,8 @@ export type NextPagesServerCompile = {
  * @param workspace - The canonical workspace the maps name.
  * @param cited - The cited source's workspace-relative path and text; its `(pages-dir-node)` module maps every line.
  * @param compile - Where the cited module lives and which chunks the compile requires; the compile holds it and requires nothing by default.
+ * @param pagesManifest - The Pages manifest to write; the stand-in project's (`/` is `pages/index.js`) by default.
+ * @returns The text of the cited source's `(pages-dir-node)` module: what the Next server's debugger reports for the script, and what the sealed module holds.
  * @example await writePagesServerBuild(write, workspace, { path: 'src/pages/index.tsx', text }, { chunks: { 'chunks/shared': { holdsCited: true } } })
  */
 export async function writePagesServerBuild(
@@ -173,20 +175,20 @@ export async function writePagesServerBuild(
   workspace: string,
   cited: { path: string; text: string },
   compile: NextPagesServerCompile = {},
-): Promise<void> {
-  const citedModule = {
-    [`./${cited.path}`]: pagesEvalModule(
-      workspace,
-      cited.path,
-      cited.text,
-      'pages-dir-node',
-      cited.text.trimEnd().split('\n').length,
-    ),
-  }
+  pagesManifest: Readonly<Record<string, string>> = PAGES_MANIFEST,
+): Promise<string> {
+  const citedModuleText = pagesEvalModule(
+    workspace,
+    cited.path,
+    cited.text,
+    'pages-dir-node',
+    cited.text.trimEnd().split('\n').length,
+  )
+  const citedModule = { [`./${cited.path}`]: citedModuleText }
   const chunks = compile.chunks ?? {}
   await write(
     '.next/dev/server/pages-manifest.json',
-    JSON.stringify(PAGES_MANIFEST),
+    JSON.stringify(pagesManifest),
   )
   await write(
     '.next/dev/server/pages/index.js',
@@ -201,6 +203,7 @@ export async function writePagesServerBuild(
         `.next/dev/server/${id}.js`,
         serverChunk(chunk.holdsCited ? citedModule : {}),
       )
+  return citedModuleText
 }
 
 /**
@@ -255,13 +258,16 @@ export async function nextPagesBuild(context: TestContext) {
     workspace,
     write,
     /** Writes the page's server build around the stand-in page ({@link writePagesServerBuild}). */
-    writeServerBuild: (compile?: NextPagesServerCompile): Promise<void> =>
-      writePagesServerBuild(
+    writeServerBuild: async (
+      compile?: NextPagesServerCompile,
+    ): Promise<void> => {
+      await writePagesServerBuild(
         write,
         workspace,
         { path: 'src/pages/index.tsx', text: PAGE_SOURCE },
         compile,
-      ),
+      )
+    },
     pageModule,
     pageChunk,
     page: {
