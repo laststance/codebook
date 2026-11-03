@@ -370,6 +370,13 @@ const operationsConfigurationShape = z.strictObject({
     .max(SIGN_IN_PATH_LIMIT)
     .optional(),
   session: z.literal('fresh').optional(),
+  // Optional, not defaulted: a configuration without it keeps its exact parsed shape; absent and "." both mean the repository root.
+  packageRoot: z
+    .union([z.literal('.'), repositoryPathSchema])
+    .optional()
+    .describe(
+      'next-dev-webpack only: the Next app\'s folder, relative to the opened repository root (for example "examples/react/nextjs"). Omit it, or declare ".", for an app at the repository root. Stop files and book citations stay repository-relative and must lie inside this folder.',
+    ),
 })
 
 /**
@@ -543,6 +550,48 @@ function refuseViteServerParticipants(
       })
 }
 
+/**
+ * Refuses `packageRoot` other than "." under `adapter: "vite-dev"`, which runs an app at the repository root only in this version.
+ * Called by {@link operationsRepositoryConfigSchema}, so the public schema, not a later start, rejects it.
+ * @param configuration - A parsed version 3 configuration.
+ * @param context - The refinement context that receives the issue.
+ * @example refuseViteNestedPackageRoot({ adapter: 'vite-dev', packageRoot: 'apps/web', … }, context) // adds an issue at ['packageRoot']
+ */
+function refuseViteNestedPackageRoot(
+  configuration: z.infer<typeof operationsConfigurationShape>,
+  context: z.RefinementCtx,
+): void {
+  if (
+    configuration.adapter !== 'vite-dev' ||
+    configuration.packageRoot === undefined ||
+    configuration.packageRoot === '.'
+  )
+    return
+  context.addIssue({
+    code: 'custom',
+    path: ['packageRoot'],
+    message: `adapter "vite-dev" runs an app at the repository root only; remove packageRoot (declared "${configuration.packageRoot.slice(0, 80).replace(/[\u0000-\u001f\u007f]/g, '?')}"). This version supports packageRoot for adapter "next-dev-webpack" only.`,
+  })
+}
+
+/**
+ * Drops a `packageRoot` of "." from a parsed version 3 configuration, so absent and "." are one configuration for the idempotency key, the run and the saved study.
+ * Called by {@link StudyService.start} on the parsed start before its signature is taken.
+ * @param configuration - Any parsed retained repository configuration.
+ * @returns The same object when nothing is dropped, else a copy without `packageRoot`.
+ * @example dropDefaultPackageRoot({ version: 3, packageRoot: '.', … }) // => { version: 3, … }
+ */
+export function dropDefaultPackageRoot<
+  Configuration extends { version: number },
+>(configuration: Configuration): Configuration {
+  if (!('packageRoot' in configuration) || configuration.packageRoot !== '.')
+    return configuration
+  const { packageRoot: _default, ...rest } = configuration as Configuration & {
+    packageRoot: string
+  }
+  return rest as unknown as Configuration
+}
+
 /** Applies shared bounded fact requirements to both retained intent versions without changing their serialized fields. @example validateInspections(configuration, context) */
 function validateInspections(
   configuration:
@@ -606,6 +655,7 @@ export const operationsRepositoryConfigSchema =
   operationsConfigurationShape.superRefine((configuration, context) => {
     validateInspections(configuration, context)
     validateOperations(configuration, context)
+    refuseViteNestedPackageRoot(configuration, context)
   })
 /**
  * The configuration of a study of formats 3 to 8: versions 1 to 3 as before, and none of them may carry a `packageRoot` (the field exists only in format 9, see {@link packageRootRepositoryConfigSchema}).

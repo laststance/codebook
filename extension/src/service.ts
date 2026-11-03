@@ -104,6 +104,7 @@ import type {
 import type { RecordingSeal } from './recordingSchemas'
 import type { RecordingStore, RecordingWriter } from './recordingStore'
 import type { RepositoryBookStore } from './repositoryBook'
+import { dropDefaultPackageRoot } from './repositoryConfigSchemas'
 import type {
   SourceListInput,
   SourceReadInput,
@@ -1716,7 +1717,14 @@ export class StudyService {
         'Start arguments do not match the selected profile or accepted intent.',
         parsed.error.message,
       )
-    const intent = parsed.data,
+    // Absent and "." packageRoot are one configuration: drop "." before the signature and the record are taken.
+    const intent =
+        parsed.data.profile === REPOSITORY_BROWSER_PROFILE
+          ? {
+              ...parsed.data,
+              configuration: dropDefaultPackageRoot(parsed.data.configuration),
+            }
+          : parsed.data,
       signature = sha256(JSON.stringify(intent))
     if (previous) {
       if (previous.signature !== signature)
