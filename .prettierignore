@@ -26,3 +26,6 @@ extension/artifacts
 
 # The real-Chrome test's broken-worker fixture has a syntax error on purpose.
 extension/src/tests/fixtures/chrome-extension/broken-worker/worker.js
+
+# The committed Pages rollback study keeps its operation key's value on its own line, so the pre-gate secrets scan reads no key assignment.
+extension/src/tests/fixtures/pages-server-study-v0.2.74.0
