@@ -1820,8 +1820,10 @@ export async function configuredRuntimeHarness(
           signal: AbortSignal,
           _entryPath?: string,
           execution?: string,
+          nextPackage?: { packageRoot: string },
         ) => {
-          developmentBundleRoots.push(workspaceRoot)
+          // A nested app is read below its package root; the first argument stays the repository root.
+          developmentBundleRoots.push(nextPackage?.packageRoot ?? workspaceRoot)
           // A hung `.next/dev` read ends only when the run is cancelled.
           if (options.sealHangs)
             await new Promise<never>((_resolve, reject) =>

@@ -164,7 +164,7 @@ test('a server stop of an App Router app below the repository root reaches the r
   assert.equal(roots.launchRequests[0], packageDirectory)
   const attach = harness.serverLaunches[0]
   assert.equal(attach?.cwd, packageDirectory)
-  assert.deepEqual(attach?.sourceMapPathOverrides, {
+  assert.deepEqual(plain(attach?.sourceMapPathOverrides), {
     'webpack://_N_E/./*': `${packageDirectory}/*`,
   })
   // The package-relative module the server sealed maps to <packageRoot>/<file> on disk.
@@ -172,7 +172,7 @@ test('a server stop of an App Router app below the repository root reaches the r
   assert.equal(sealed?.scriptUrl, 'webpack-internal:///(rsc)/./src/theme.ts')
   assert.equal(
     join(packageDirectory, 'src/theme.ts'),
-    join(harness.directory, PACKAGE_ROOT, 'src/theme.ts'),
+    join(await realpath(harness.directory), PACKAGE_ROOT, 'src/theme.ts'),
   )
 })
 
@@ -193,6 +193,7 @@ test('a browser stop reached by an operation in an app below the repository root
   )
   await harness.run.continue('browser', stop.pause)
   await waitUntil(() => harness.run.view().status === 'completed', 'completed')
+  await harness.run.stop()
   // Assert
   assert.equal(harness.run.view().finalOutcome, 'demonstrated')
   assert.equal(
