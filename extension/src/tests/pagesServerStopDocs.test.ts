@@ -259,7 +259,7 @@ test('the Pages quick start explains an unconfirmed pause and names the data fun
   assert.ok(unconfirmed.includes('never count it as proof'))
   assert.ok(
     unconfirmed.includes(
-      'When every pause of a run is unconfirmed (attributionSummary.taken is 0 and unconfirmed is above 0), stop and tell the learner.',
+      'When every pause of a run is unconfirmed (attributionSummary.taken.frame and attributionSummary.taken.request are both 0 and unconfirmed is above 0), stop and tell the learner.',
     ),
   )
   assert.ok(
@@ -362,7 +362,7 @@ test('serverRenderErrors.pagesReasons has an anchor for each Pages reason and jo
   )
   assert.ok(
     pagesReasons['chain-incomplete'].meaning.includes(
-      'continuation-limit, fetch-failed, other-debugger or timeout',
+      'continuation-limit, fetch-failed or timeout',
     ),
   )
   assert.ok(
@@ -890,6 +890,211 @@ test('the served help keeps the readiness record out of the saved study and stat
   assert.ok(
     help.nextSupport.afterReadiness.includes(
       'details.router pages and details.sideEffects unknown',
+    ),
+  )
+})
+
+// Value: protects=the bundled skill keeps the "may run once or come from a cache" advice to an App Router page and gives a Pages run its own not-reached sentence (the module-scope and cache causes do not apply; the message names the entry page's data function; an unconfirmed pause is never proof and an all-unconfirmed run is stopped), pointing to the help without copying it; fails_when=the cache advice is stated for every router again, the Pages sentence or the unconfirmed rule leaves the skill, or the skill copies the help's contract (a configuration or the not-reached message); no_claim=how a chat follows the rules
+test('the bundled skill scopes the run-once and cache advice to App Router and gives a Pages run its own not-reached and unconfirmed sentences', async () => {
+  // Arrange
+  const paragraph = await readServerRendersSkillParagraph()
+  // Act
+  const appRouterAdvice =
+    'say the stop was not reached and that the first execution was not observed (`firstExecutionObserved: false`); for an App Router page add that its code may run once or come from a cache.'
+  const pagesNotReached =
+    "When `SERVER_STOP_NOT_REACHED` ends a Pages run, the module-scope and cache causes do not apply: say what its message says, that the line did not run inside the entry page's data function for the observed request, and read the help's `SERVER_STOP_NOT_REACHED` section for the recovery."
+  const pagesUnconfirmed =
+    'Never count an `unconfirmed` pause as proof; when every pause of a Pages run is `unconfirmed`, stop and tell the learner (`serverRenderQuickStart.pagesUnconfirmed`).'
+  // Assert
+  assert.ok(paragraph.includes(appRouterAdvice))
+  assert.ok(paragraph.includes(pagesNotReached))
+  assert.ok(paragraph.includes(pagesUnconfirmed))
+  assert.equal(
+    paragraph.includes(
+      'say the stop was not reached, that its code may run once or come from a cache, and that',
+    ),
+    false,
+  )
+  assert.equal(paragraph.includes('did not reach declared stop'), false)
+})
+
+// Value: protects=the help and the README tell the chat that the replay labels every unconfirmed server pause "route not confirmed", whatever its reason (a Pages pause is unconfirmed also for no-async-chain, no-renderer-frame, chain-incomplete and verdict-error, which the label does not name), and that the live run resource and the journal name the reason; fails_when=either sentence leaves the help or the README, or the help claims the replay names the reason; no_claim=the replay's label itself (describePauseName is unchanged in this cycle)
+test('the help and the README say the replay labels an unconfirmed pause "route not confirmed" whatever the reason and that the live run names it', async () => {
+  // Arrange
+  const unconfirmed = serverRenderHelp().serverRenderQuickStart.pagesUnconfirmed
+  const section = await readServerRendersReadmeSection()
+  // Act / Assert
+  assert.ok(
+    unconfirmed.includes(
+      'The replay of a saved study labels such a pause "route not confirmed" whatever its reason, because the saved study keeps the attribution and not the reason; the live run resource\'s message names the reason while the pause is held, and the journal entry breakpoint.unconfirmed keeps it.',
+    ),
+  )
+  assert.ok(
+    section.includes(
+      "The replay of a saved study labels every such pause `route not confirmed`, whatever the reason, because the saved study keeps the attribution and not the reason; the run resource's `message` names the reason while the pause is held, and the journal entry `breakpoint.unconfirmed` keeps it.",
+    ),
+  )
+})
+
+// Value: protects=the unconfirmed sentence of the help reads the attribution summary as the run publishes it (taken is an object with frame and request counts), so an all-unconfirmed run is recognised by two zero counts and not by a number that is never 0; fails_when=the sentence says attributionSummary.taken is 0, or the summary's shape changes and the sentence keeps the old one; no_claim=that the run publishes the summary at the right moment (the run tests)
+test('the unconfirmed sentence of the help reads the attribution summary taken as the object {frame, request} the ledger publishes', () => {
+  // Arrange
+  const ledger = new PagesHitLedger()
+  ledger.recordUnconfirmed()
+  const unconfirmed = serverRenderHelp().serverRenderQuickStart.pagesUnconfirmed
+  // Act
+  const summary = ledger.summary()
+  // Assert
+  assert.deepEqual(summary, {
+    taken: { frame: 0, request: 0 },
+    unconfirmed: 1,
+    resumed: {},
+  })
+  assert.equal(unconfirmed.includes('attributionSummary.taken is 0'), false)
+  assert.ok(
+    unconfirmed.includes(
+      'attributionSummary.taken.frame and attributionSummary.taken.request are both 0 and unconfirmed is above 0',
+    ),
+  )
+})
+
+// Value: protects=the help has an anchor for the journal events breakpoint.repeat-hit and pages.renderer-unrecognised, named as the journal names them, with the sentence that makes each usable (a repeat hit is no failure and no count; an unrecognised renderer makes a hit pause no-renderer-frame, never outside-data-function); fails_when=an anchor is missing, misnamed or empty, or a meaning claims more or less than the run does; no_claim=that the run writes the events (the run tests)
+test('serverRenderErrors.pagesReasons has anchors for the journal events breakpoint.repeat-hit and pages.renderer-unrecognised', () => {
+  // Arrange
+  const { pagesReasons } = serverRenderHelp().serverRenderErrors
+  // Act
+  const repeatHit = pagesReasons['breakpoint.repeat-hit']
+  const unrecognised = pagesReasons['pages.renderer-unrecognised']
+  // Assert
+  assert.ok('breakpoint.repeat-hit' in pagesReasons)
+  assert.ok('pages.renderer-unrecognised' in pagesReasons)
+  assert.equal(
+    repeatHit.anchor,
+    'codebook://help/repository-browser#breakpoint.repeat-hit',
+  )
+  assert.equal(
+    unrecognised.anchor,
+    'codebook://help/repository-browser#pages.renderer-unrecognised',
+  )
+  assert.ok(
+    repeatHit.meaning.startsWith(
+      'Journal event breakpoint.repeat-hit: a later hit of a stop that already paused',
+    ),
+  )
+  assert.ok(
+    repeatHit.meaning.includes(
+      "it is neither the stop's pause nor a failure, and details.resumedHits does not count it",
+    ),
+  )
+  assert.ok(
+    unrecognised.meaning.startsWith(
+      "Journal event pages.renderer-unrecognised ({ nextVersion }), written once per run: the script Codebook takes for Next's page renderer holds none of the data-function call shapes it knows",
+    ),
+  )
+  assert.ok(unrecognised.meaning.includes('Next 16.1.4 and 16.4.4'))
+  assert.ok(
+    unrecognised.meaning.includes(
+      'pauses unconfirmed with reason no-renderer-frame and is never resumed as outside-data-function',
+    ),
+  )
+})
+
+// Value: protects=the help, the Next support table and the README give the client-component rule as the code applies it (any line of the entry page's own module that the page's client compile maps, which includes a helper or a constant in the page file that the component uses) and say such a helper takes a server stop once it lives in its own module; fails_when=a surface names only the page component and getInitialProps again, or the module-of-its-own remedy leaves one of them; no_claim=which constructs a real client compile maps (the sealing tests use a stand-in map)
+test('the line rule names every client-mapped line of the entry page module, helpers and constants included, in the help, the support table and the README', async () => {
+  // Arrange
+  const lineChoice = serverRenderHelp().serverRenderQuickStart.pagesLineChoice
+  const { pagesServerStops } = nextHelp().nextSupport
+  const section = await readServerRendersReadmeSection()
+  // Act / Assert
+  assert.ok(
+    lineChoice.includes(
+      "The same holds for any other line of the entry page's own module that the page's client compile maps, such as a helper or a constant in the page file that the component uses; such a helper takes a server stop once it lives in its own module.",
+    ),
+  )
+  assert.ok(
+    pagesServerStops[1]?.includes(
+      "The rule is any line of the entry page's own module that the page's client compile maps, which includes a helper or a constant in the page file that the component uses; such a helper takes a server stop once it lives in its own module.",
+    ),
+  )
+  assert.ok(
+    section.includes(
+      "The rule is any line of the entry page's own module that the page's client compile maps, which includes a helper or a constant in the page file that the component uses; such a helper takes a server stop once it lives in its own module.",
+    ),
+  )
+})
+
+// Value: protects=the API 1.17 note and the README's API 1.17 paragraph name the seal.evidence journal entry, the run resource message that names an unconfirmed pause's reason, and the help-shape change of serverRenderQuickStart.supportedCode (a string in 1.16, { app, pages } in 1.17), so a client that read the string learns it; fails_when=one of the three leaves the note or the paragraph, or supportedCode stops being { app, pages }; no_claim=that a client written for 1.16 reads the new shape (no request states a version)
+test('the API 1.17 note and the README name seal.evidence, the unconfirmed message and the supportedCode shape change', async () => {
+  // Arrange
+  const constants = await readPackaged('src', 'constants.ts')
+  const readme = await readPackaged('README.md')
+  const note =
+    constants
+      .split('\n')
+      .find((line) => line.startsWith(' * 1.17 is additive')) ?? ''
+  const paragraph =
+    readme.split('\n').find((line) => line.startsWith('Minimum versions:')) ??
+    ''
+  const { supportedCode } = serverRenderHelp().serverRenderQuickStart
+  // Act / Assert
+  assert.deepEqual(Object.keys(supportedCode), ['app', 'pages'])
+  for (const text of [note, paragraph]) {
+    for (const phrase of [
+      '`seal.evidence`',
+      '`client-mapping-unverified`',
+      '`message`',
+      '`serverRenderQuickStart.supportedCode`',
+      '`{ app, pages }`',
+    ])
+      assert.ok(text.includes(phrase), phrase)
+  }
+  assert.ok(
+    note.includes(
+      "the run resource's `message` names the reason of an unconfirmed pause",
+    ),
+  )
+  assert.ok(
+    paragraph.includes(
+      "the run resource's `message` names the reason of an unconfirmed pause",
+    ),
+  )
+  assert.ok(
+    note.includes(
+      "`serverRenderQuickStart.supportedCode` is an object `{ app, pages }` and was a string in 1.16 (a change of the help's shape)",
+    ),
+  )
+  assert.ok(
+    paragraph.includes(
+      "`serverRenderQuickStart.supportedCode` is an object `{ app, pages }` and was a string in 1.16 (a change of the help's shape)",
+    ),
+  )
+})
+
+// Value: protects=neither the served help, the README nor the chain reader's source names the chain-incomplete cause other-debugger, which no run produces (the run does not know its debugger id, so a foreign stack trace id is fetched and fails), and the help and the README say a stack trace id the debugger cannot resolve ends the chain as fetch-failed; fails_when=other-debugger returns to the help, the README or the source's cause union, or the fetch-failed sentence leaves the help or the README; no_claim=V8's error text for an unresolvable id
+test('the help, the README and the chain reader name no other-debugger cause, and the help and the README say an unresolvable stack trace id ends the chain as fetch-failed', async (context) => {
+  // Arrange
+  const help = await readServedHelp(context)
+  const readme = await readPackaged('README.md')
+  const chainSource = await readPackaged(
+    'src',
+    'utils',
+    'readPagesAsyncChain.ts',
+  )
+  // Act
+  const meaning =
+    help.serverRenderErrors.pagesReasons['chain-incomplete'].meaning
+  // Assert
+  assert.equal(JSON.stringify(help).includes('other-debugger'), false)
+  assert.equal(readme.includes('other-debugger'), false)
+  assert.equal(chainSource.includes('other-debugger'), false)
+  assert.ok(
+    meaning.includes(
+      'a stack trace id the debugger cannot resolve ends the chain as fetch-failed',
+    ),
+  )
+  assert.ok(
+    readme.includes(
+      'a stack trace id the debugger cannot resolve ends the chain as `fetch-failed`',
     ),
   )
 })

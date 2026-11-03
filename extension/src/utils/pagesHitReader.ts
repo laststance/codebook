@@ -23,7 +23,7 @@ export interface PagesHitReader {
   getStackTrace(
     stackTraceId: Protocol.Runtime.StackTraceId,
   ): Promise<Protocol.Runtime.StackTrace>
-  /** The id of the debugger this run's pauses come from, when the run knows it; a stack trace id with another `debuggerId` is not read. */
+  /** The id of the debugger this run's pauses come from. The run does not know it (`undefined`) and no verdict step reads it: a stack trace id the debugger cannot resolve, another debugger's included, is fetched and ends the chain as `fetch-failed` ({@link readPagesAsyncChain}). */
   readonly ownDebuggerId: string | undefined
   /** `pages-manifest.json` of the development build; `undefined` when it could not be read. */
   pagesManifest(): Promise<PagesManifest | undefined>

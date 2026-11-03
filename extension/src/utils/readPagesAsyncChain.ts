@@ -15,7 +15,7 @@ import {
 
 /** Why an async chain could not be read to its end. */
 export type PagesChainIncompleteCause =
-  'continuation-limit' | 'fetch-failed' | 'other-debugger' | 'timeout'
+  'continuation-limit' | 'fetch-failed' | 'timeout'
 
 /** One step of reading the chain: the frames of one more level, or the reason the chain stops short. */
 export type PagesChainStep =
@@ -36,7 +36,7 @@ type ContinuationRead =
  * @param budget - The hit's single time budget.
  * @yields
  * - `{ kind: 'level', frames }` for each level, the event's own levels without a read and a fetched level after one
- * - `{ kind: 'incomplete', cause }` once, last, when the chain stops short: a stack trace id of another debugger (`other-debugger`), a failed or malformed answer (`fetch-failed`), the fifth read (`continuation-limit`) or a spent budget (`timeout`)
+ * - `{ kind: 'incomplete', cause }` once, last, when the chain stops short: a failed or malformed answer (`fetch-failed`, which is also how a stack trace id the debugger cannot resolve ends the chain), the fifth read (`continuation-limit`) or a spent budget (`timeout`)
  * A generator that ends without an `incomplete` step has read the chain to its end.
  * @example
  * for await (const step of readPagesAsyncChain({ asyncStackTrace }, reader, budget)) if (step.kind === 'incomplete') break
@@ -46,10 +46,7 @@ export async function* readPagesAsyncChain(
     asyncStackTrace?: PagesAsyncStackNode
     asyncStackTraceId?: Protocol.Runtime.StackTraceId
   },
-  reader: Pick<
-    PagesHitReader,
-    'scriptUrlOf' | 'getStackTrace' | 'ownDebuggerId'
-  >,
+  reader: Pick<PagesHitReader, 'scriptUrlOf' | 'getStackTrace'>,
   budget: VerdictBudget,
 ): AsyncGenerator<PagesChainStep, void> {
   let readsSpent = 0
@@ -90,23 +87,16 @@ export async function* readPagesAsyncChain(
  * Fetches the level a stack trace id points to, within the read limit and the hit's budget.
  * @param stackTraceId - The `parentId` or `asyncStackTraceId` to resolve.
  * @param readsSpent - How many continuation reads this hit has already spent.
- * @param reader - Supplies `getStackTrace` and the own debugger id.
+ * @param reader - Supplies `getStackTrace`.
  * @param budget - The hit's single time budget.
  * @returns The fetched level, or the cause the chain is incomplete.
  */
 async function fetchContinuation(
   stackTraceId: Protocol.Runtime.StackTraceId,
   readsSpent: number,
-  reader: Pick<PagesHitReader, 'getStackTrace' | 'ownDebuggerId'>,
+  reader: Pick<PagesHitReader, 'getStackTrace'>,
   budget: VerdictBudget,
 ): Promise<ContinuationRead> {
-  // An id of another debugger cannot be resolved here, so no read is spent on it.
-  if (
-    stackTraceId.debuggerId !== undefined &&
-    reader.ownDebuggerId !== undefined &&
-    stackTraceId.debuggerId !== reader.ownDebuggerId
-  )
-    return { kind: 'incomplete', cause: 'other-debugger' }
   if (readsSpent >= PAGES_STACK_TRACE_READ_LIMIT)
     return { kind: 'incomplete', cause: 'continuation-limit' }
   const read = await readWithinVerdictBudget(
@@ -114,7 +104,7 @@ async function fetchContinuation(
     budget,
   )
   if (read.status === 'timeout') return { kind: 'incomplete', cause: 'timeout' }
-  // An answer that is no stack trace counts as a failed read.
+  // A rejected read (a stack trace id the debugger cannot resolve, another debugger's for one) and an answer that is no stack trace count as a failed read.
   const parsed =
     read.status === 'read'
       ? pagesAsyncStackNodeSchema.safeParse(read.value)

@@ -923,8 +923,8 @@ test('a chain that starts only in asyncStackTraceId is fetched from the id', asy
   assert.deepEqual(calls.stackTraceIds, [startId])
 })
 
-// Value: protects=AC 16 other debugger: a stack trace id of another debugger is not read and the chain is incomplete with cause other-debugger; fails_when=a foreign id is fetched (and fails or answers wrongly) or the hit is resumed as outside; no_claim=how the run learns its own debugger id (the reader supplies it)
-test('a continuation of another debugger is chain-incomplete other-debugger and costs no read', async () => {
+// Value: protects=AC 16 unresolvable continuation: a stack trace id that names another debugger is fetched like any other (the run does not know its own debugger id) and, when the debugger cannot resolve it, the chain is incomplete with cause fetch-failed; there is no other-debugger cause; fails_when=a foreign id is skipped without a read or reported as another cause, or the hit is resumed as outside; no_claim=V8's real error text for a foreign id (the read is scripted to reject)
+test('a continuation of another debugger is read like any other and ends the chain as chain-incomplete fetch-failed', async () => {
   // Arrange
   const fixture = pagesPausedFixtureOf('get-server-side-props-after-await')
   const event = chainContinuingIn(fixture, {
@@ -945,9 +945,11 @@ test('a continuation of another debugger is chain-incomplete other-debugger and 
     action: 'pause',
     attribution: 'unconfirmed',
     reason: 'chain-incomplete',
-    cause: 'other-debugger',
+    cause: 'fetch-failed',
   })
-  assert.deepEqual(calls.stackTraceIds, [])
+  assert.deepEqual(calls.stackTraceIds, [
+    { id: 'foreign-1', debuggerId: 'dbg-2' },
+  ])
 })
 
 // Value: protects=AC 16 failed fetch, incomplete chain never outside: a chain cut by a continuation that cannot be fetched, with renderer frames in what was read and no call among them, is chain-incomplete `fetch-failed` and is never resumed as outside the data function; fails_when=the cut chain is called outside (a data-function hit behind the cut would then be resumed for good); no_claim=V8's real error text (the read is scripted to reject)

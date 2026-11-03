@@ -171,7 +171,7 @@ const PAGES_NOT_PAUSED =
  * What a hit Codebook could not attribute means and what the chat does with it; shared by the quick start and the reason anchors.
  */
 const PAGES_UNCONFIRMED =
-  "A pause labelled attribution unconfirmed may come from the page's render rather than its data function. Explain its values as unconfirmed: say that the attribution is unconfirmed, never present the pause as the data function's, and never count it as proof that the data function ran there. The run resource's message says so with the reason, and the journal entry breakpoint.unconfirmed names it (reason no-async-chain, no-renderer-frame, route-unreadable, chain-incomplete with a cause, or verdict-error with a logId; see serverRenderErrors.pagesReasons). When every pause of a run is unconfirmed (attributionSummary.taken is 0 and unconfirmed is above 0), stop and tell the learner."
+  "A pause labelled attribution unconfirmed may come from the page's render rather than its data function. Explain its values as unconfirmed: say that the attribution is unconfirmed, never present the pause as the data function's, and never count it as proof that the data function ran there. The run resource's message says so with the reason, and the journal entry breakpoint.unconfirmed names it (reason no-async-chain, no-renderer-frame, route-unreadable, chain-incomplete with a cause, or verdict-error with a logId; see serverRenderErrors.pagesReasons). The replay of a saved study labels such a pause \"route not confirmed\" whatever its reason, because the saved study keeps the attribution and not the reason; the live run resource's message names the reason while the pause is held, and the journal entry breakpoint.unconfirmed keeps it. When every pause of a run is unconfirmed (attributionSummary.taken.frame and attributionSummary.taken.request are both 0 and unconfirmed is above 0), stop and tell the learner."
 
 /**
  * Builds the server-render part of `codebook://help/repository-browser` (API 1.16 for App Router, 1.17 for Pages Router data functions): the quick start with its router choice and three complete version 3 configurations, the omitted-vs-`[]` rule, the call order by run state, the API check, the migration table, the limits and the anchors of the codes and reasons a server-render run adds.
@@ -210,7 +210,7 @@ export function serverRenderHelp() {
       pagesEntryRender:
         "configurationPagesEntryRender (Pages Router): entry /products/1, the concrete path of the dynamic route pages/products/[id].tsx, operations omitted, one server stop with afterOperation 0 on a line inside that page's getServerSideProps. The stop pauses when Next runs the data function for the browser's entry request. The path, the line and the inspection are placeholders, not a project's file: replace them, the book and the hash with the learner's page (copyFrom).",
       pagesLineChoice:
-        'Pages Router: choose a line inside the entry page\'s getServerSideProps or getStaticProps, or in a module they call (a helper, an API client, the handler a wrapper such as withSession returns). A line of the page component or of getInitialProps is a browser stop: declare it with participant "browser" (a getInitialProps line pauses in the browser only after a client navigation, never at the entry load). A server stop on such a line is refused with NEXT_STOP_NOT_SEALED (details.reason client-component, details.router pages).',
+        "Pages Router: choose a line inside the entry page's getServerSideProps or getStaticProps, or in a module they call (a helper, an API client, the handler a wrapper such as withSession returns). A line of the page component or of getInitialProps is a browser stop: declare it with participant \"browser\" (a getInitialProps line pauses in the browser only after a client navigation, never at the entry load). The same holds for any other line of the entry page's own module that the page's client compile maps, such as a helper or a constant in the page file that the component uses; such a helper takes a server stop once it lives in its own module. A server stop on such a line is refused with NEXT_STOP_NOT_SEALED (details.reason client-component, details.router pages).",
       pagesAfterOperation:
         'Pages Router: operations, afterOperation k from 1 and the run-level after follow configurationSearchRerender and afterConditionRule. A Pages stop with afterOperation k pauses when operation k makes Next run the data function again, for example a click on a next/link to the same route with a new query, for which Next fetches /_next/data/<build>/<route>.json; under next dev that request runs getServerSideProps and also getStaticProps again. An operation that makes no such request of the entry route ends the run with SERVER_STOP_NOT_REACHED (details.phase after-operation).',
       pagesStaticProps:
@@ -339,7 +339,7 @@ export function serverRenderHelp() {
         'chain-incomplete': {
           anchor: 'codebook://help/repository-browser#chain-incomplete',
           meaning:
-            'Reason of the journal entry breakpoint.unconfirmed: the async chain could not be read to its end, with a cause (also in that entry) of continuation-limit, fetch-failed, other-debugger or timeout. An incomplete chain is never reported as outside-data-function. Explain the values as unconfirmed (serverRenderQuickStart.pagesUnconfirmed).',
+            'Reason of the journal entry breakpoint.unconfirmed: the async chain could not be read to its end, with a cause (also in that entry) of continuation-limit, fetch-failed or timeout; a stack trace id the debugger cannot resolve ends the chain as fetch-failed. An incomplete chain is never reported as outside-data-function. Explain the values as unconfirmed (serverRenderQuickStart.pagesUnconfirmed).',
         },
         'verdict-error': {
           anchor: 'codebook://help/repository-browser#verdict-error',
@@ -351,6 +351,17 @@ export function serverRenderHelp() {
             'codebook://help/repository-browser#client-mapping-unverified',
           meaning:
             "Journal entry seal.evidence ({ stop, evidence }) for a stop on a line of the entry page's own module: the scan of the page's client compile stopped at its size limit, so whether the browser maps the line is unknown. Codebook accepted the stop; the run-time check still takes only data-function hits, so a page-component line armed this way ends not reached (its hit is resumed as outside-data-function), never paused as data.",
+        },
+        'breakpoint.repeat-hit': {
+          anchor: 'codebook://help/repository-browser#breakpoint.repeat-hit',
+          meaning:
+            "Journal event breakpoint.repeat-hit: a later hit of a stop that already paused (a second request that reaches the same line) was resumed; it is neither the stop's pause nor a failure, and details.resumedHits does not count it; the journal keeps only the first 100 entries of each event type.",
+        },
+        'pages.renderer-unrecognised': {
+          anchor:
+            'codebook://help/repository-browser#pages.renderer-unrecognised',
+          meaning:
+            "Journal event pages.renderer-unrecognised ({ nextVersion }), written once per run: the script Codebook takes for Next's page renderer holds none of the data-function call shapes it knows (the renderer of Next 16.1.4 and 16.4.4), so recognition itself failed, for example after a Next change. A hit with an async chain whose stack holds no data-function call then pauses unconfirmed with reason no-renderer-frame and is never resumed as outside-data-function. Explain such a pause as unconfirmed (serverRenderQuickStart.pagesUnconfirmed).",
         },
       },
     },
