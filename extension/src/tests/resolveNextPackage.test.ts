@@ -12,7 +12,11 @@ import { dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { StudyError } from '../errors'
-import { resolveNextPackage } from '../utils/resolveNextPackage'
+import {
+  assertNextPackageUnchanged,
+  resolveNextPackage,
+  rootNextPackage,
+} from '../utils/resolveNextPackage'
 
 /** Makes a temporary repository (real path) that is removed when the test ends. */
 async function makeRepository(context: TestContext): Promise<string> {
@@ -383,4 +387,35 @@ test('maps a symlinked alias by its real path', async (context) => {
   // Assert
   assert.equal(insideAlias, 'src/real.ts')
   assert.equal(outsideTarget, undefined)
+})
+
+// protects=E4 (review CodeRabbit minor): a broken node_modules/next link in the package is the nearest entry and is refused, never replaced by an ancestor's Next; fails_when=the walk follows links (access) and falls back to the root's valid Next; no_claim=the message wording
+test('refuses a package whose node_modules/next link is broken instead of using the root Next', async (context) => {
+  // Arrange
+  const root = await makeRepository(context)
+  await installNext(join(root, 'node_modules/next'))
+  await nextApp(join(root, 'examples/web'))
+  await mkdir(join(root, 'examples/web/node_modules'), { recursive: true })
+  await symlink(
+    join(root, 'does-not-exist'),
+    join(root, 'examples/web/node_modules/next'),
+  )
+  // Act
+  const error = await refusalOf(() => resolveNextPackage(root, 'examples/web'))
+  // Assert
+  assert.equal(error.code, 'PREREQUISITE_MISSING')
+})
+
+// protects=review OCR low: re-checking a root package at launch reports no change; fails_when=the root package is re-resolved as a nested folder and a root without a node_modules/next of its own is reported changed; no_claim=nested change detection (other tests)
+test('re-checking a root package at launch resolves without a false change', async (context) => {
+  // Arrange
+  const root = await makeRepository(context)
+  const rootPackage = rootNextPackage(root)
+  // Act
+  const outcome = await assertNextPackageUnchanged(rootPackage).then(
+    () => 'unchanged',
+    () => 'refused',
+  )
+  // Assert
+  assert.equal(outcome, 'unchanged')
 })

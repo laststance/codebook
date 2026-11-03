@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict'
-import { readdir, realpath, rm, mkdtemp } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { LearningLibrary } from '../learningLibrary'
@@ -136,6 +144,22 @@ test('a symlinked alias packageRoot runs the target app and saves the target pat
   )
 })
 
+// protects=AC 6 / review OCR low: a packageRoot that is a link to the repository root is a root run, so its study keeps the root run's format 8 and carries no packageRoot; fails_when=the declared alias stays in the saved configuration and the study saves as format 9; no_claim=the format of a nested app (test above)
+test('a packageRoot that links to the repository root saves the root run format without packageRoot', async (context) => {
+  // Arrange
+  const options: PagesServerRunOptions = {
+    packageRoot: '.',
+    packageApp: { declared: 'links/root' },
+    // The page lies at the root, not below a "." folder.
+    sourcePath: PAGES_SERVER_PAGE_PATH,
+  }
+  // Act
+  const { study } = await capturePagesServerRun(context, options)
+  // Assert
+  assert.equal(study.version, 8)
+  assert.equal('packageRoot' in study.configuration, false)
+})
+
 // protects=AC 2/AC 15: a server stop of an App Router app below a decoy root is sealed through the package, and every Next reader and the debugger attach receive the package folder, never the repository root; fails_when=a reader or the attach takes the repository root (launch cwd, source map override, bundle read, port read, workspace check); no_claim=the real readers of the mocked seam (their own decoy-root tests)
 test('a server stop of an App Router app below the repository root reaches the readers and the debugger with the package folder', async (context) => {
   // Arrange
@@ -217,6 +241,34 @@ test('a stop outside the package folder is refused before any server starts', as
     packageApp: { decoyRoot: true, stopsOutside: true },
     operations: { operations: [CLICK], stopOperations: [1] },
   })
+  // Act
+  const failure = await harness.run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // Assert
+  assert.equal(Reflect.get(Object(failure), 'code'), 'NEXT_STOP_NOT_SEALED')
+  assert.equal(
+    plain(Reflect.get(Object(failure), 'details')).reason,
+    'outside-package',
+  )
+  assert.equal(harness.developmentServerLaunches(), 0)
+})
+
+// protects=E4 / review OCR medium: a stop declared through a link outside the package that points inside is refused outside-package before any process starts, because every reader maps lexically; fails_when=the gate judges by real path only, so the alias passes and fails later with an unclassified error; no_claim=a file inside the package that links out (real-path rule, resolver tests)
+test('a stop declared through a symlink alias outside the package is refused before any server starts', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, [], {
+    packageRoot: PACKAGE_ROOT,
+    packageApp: { decoyRoot: true, stopsOutside: true },
+    sourcePath: 'shared/theme.ts',
+    operations: { operations: [CLICK], stopOperations: [1] },
+  })
+  const target = join(harness.directory, PACKAGE_ROOT, 'src/theme.ts')
+  await mkdir(dirname(target), { recursive: true })
+  await writeFile(target, 'export const theme = 1\n')
+  await rm(join(harness.directory, 'shared/theme.ts'))
+  await symlink(target, join(harness.directory, 'shared/theme.ts'))
   // Act
   const failure = await harness.run.prepare().then(
     () => undefined,

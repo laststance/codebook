@@ -1141,9 +1141,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @example this.nextPackageView() // => { nextPackageRoot: 'examples/react/nextjs' }
    */
   private nextPackageView(): { nextPackageRoot?: string } {
-    return this.nextPackage && !this.nextPackage.isRoot
-      ? { nextPackageRoot: this.nextPackage.packageRootRelative }
-      : {}
+    if (!this.nextPackage) return {}
+    if (!this.nextPackage.isRoot)
+      return { nextPackageRoot: this.nextPackage.packageRootRelative }
+    // A declared alias that resolved to the repository root is a root run: "." tells the study writer to drop the alias from the saved configuration.
+    return this.nextPackage.declaredPackageRoot === '.'
+      ? {}
+      : { nextPackageRoot: '.' }
   }
 
   /**
@@ -1171,8 +1175,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     for (const stop of configuredStops(configuration))
       if (
         !outside.includes(stop.source.path) &&
-        (await nextPackage.toPackageRelativeByRealPath(stop.source.path)) ===
-          undefined
+        // Inside both ways: the readers map lexically, so an alias outside the package that links in must be refused here too, as must a file inside that links out.
+        (nextPackage.toPackageRelative(stop.source.path) === undefined ||
+          (await nextPackage.toPackageRelativeByRealPath(stop.source.path)) ===
+            undefined)
       )
         outside.push(stop.source.path)
     if (outside.length)
@@ -1213,6 +1219,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
     await this.evidence.initialize()
     this.alive()
+    // One shared resolver judges the selected package before any process starts: real path, Next installation, then stops outside the package.
+    // It runs before the saved-session admission, which decides from the resolved package (a packageRoot that links to the root is the root run).
+    if (this.definition.configuration.adapter === 'next-dev-webpack') {
+      this.nextPackage = await this.resolveNextPackageOfRun()
+      this.alive()
+    }
     // A version 3 run asks the store once, before any server starts, whether it runs with the saved session; versions 1 and 2 never touch it.
     await this.admitSession()
     this.alive()
@@ -1226,11 +1238,6 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.definition.configuration.adapter,
     )
     this.adapter = adapter
-    // One shared resolver judges the selected package before any process starts: real path, Next installation, then stops outside the package.
-    if (adapter.name === 'next-dev-webpack') {
-      this.nextPackage = await this.resolveNextPackageOfRun()
-      this.alive()
-    }
     await adapter.assertWorkspace(
       this.packageRoot,
       this.options.node,
@@ -1447,6 +1454,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @example this.skipSavedSessionOfPackageRoot() // true for packageRoot "examples/app", false when absent or "."
    */
   private skipSavedSessionOfPackageRoot(): boolean {
+    // Decided from the resolved package: a packageRoot that links to the repository root is the root run and keeps its saved session.
+    if (this.nextPackage?.isRoot) return false
     const declaredPackageRoot =
       'packageRoot' in this.definition.configuration
         ? this.definition.configuration.packageRoot

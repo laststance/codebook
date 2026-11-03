@@ -845,6 +845,9 @@ export const PLAYBACK_PAGE_STEP_MS = 10_000
 export const REPLAY_VIEWPORT_RECEIPT_LIMIT = 12
 export const REPOSITORY_GIT_TIMEOUT_MS = 5_000
 
+/** How many characters of a refused `packageRoot` declaration the schema message echoes. */
+export const PACKAGE_ROOT_ECHO_CHARS = 80
+
 /** How many `package.json` manifests the status discovery of Next apps below the repository root reads at most; more are not read and make the list truncated (`manifest-cap`). */
 export const NEXT_PACKAGE_DISCOVERY_MANIFEST_LIMIT = 500
 /** How many bytes of one `package.json` the discovery reads; a larger manifest is skipped. */

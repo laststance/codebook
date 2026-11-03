@@ -15,6 +15,7 @@ import {
   REPOSITORY_CONFIG_VERSION,
   REPOSITORY_FORBIDDEN_INSPECTION_SEGMENTS,
   REPOSITORY_INSPECTION_LIMIT,
+  PACKAGE_ROOT_ECHO_CHARS,
   REPOSITORY_INSPECTION_PATH_LIMIT_CHARS,
   REPOSITORY_INSPECTION_SEGMENT_LIMIT,
   REPOSITORY_LITERAL_LIMIT_CHARS,
@@ -570,7 +571,7 @@ function refuseViteNestedPackageRoot(
   context.addIssue({
     code: 'custom',
     path: ['packageRoot'],
-    message: `adapter "vite-dev" runs an app at the repository root only; remove packageRoot (declared "${configuration.packageRoot.slice(0, 80).replace(/[\u0000-\u001f\u007f]/g, '?')}"). This version supports packageRoot for adapter "next-dev-webpack" only.`,
+    message: `adapter "vite-dev" runs an app at the repository root only; remove packageRoot (declared "${configuration.packageRoot.slice(0, PACKAGE_ROOT_ECHO_CHARS).replace(/[\u0000-\u001f\u007f]/g, '?')}"). This version supports packageRoot for adapter "next-dev-webpack" only.`,
   })
 }
 

@@ -195,3 +195,21 @@ test('the run resource reads savedSessionSkipped package-root for a nested run a
   assert.equal(nestedState.savedSessionSkipped, 'package-root')
   assert.equal('savedSessionSkipped' in rootState, false)
 })
+
+// Value: protects=review OCR low (skip keyed on the resolved package): a packageRoot that is a link to the repository root is the root run and keeps its saved session; fails_when=the skip is decided from the declared string, so the alias run starts fresh with savedSessionSkipped package-root; no_claim=the study format of such a run (captureStudy test)
+test('a packageRoot that links to the repository root still loads the repository saved session', async (context) => {
+  // Arrange
+  const aliased = await harness(context, '.', {
+    packageApp: { declared: 'links/root' },
+    // A named source keeps the harness from nesting the stop below the "." folder.
+    sourcePath: 'src/theme.ts',
+  })
+
+  // Act
+  await aliased.run.prepare()
+
+  // Assert
+  const view = aliased.run.view()
+  assert.equal(view.session, 'saved')
+  assert.equal('savedSessionSkipped' in view, false)
+})

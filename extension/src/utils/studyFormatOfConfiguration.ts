@@ -24,9 +24,10 @@ type StudyFormatSubject = Pick<ConfiguredStudy, 'version' | 'configuration'>
 function packageRootOf(
   configuration: ConfiguredStudy['configuration'],
 ): string | undefined {
-  const value: unknown = (configuration as { packageRoot?: unknown })
-    .packageRoot
-  return typeof value === 'string' ? value : undefined
+  // Only a version 3 configuration declares the field.
+  return configuration.version === OPERATIONS_CONFIG_VERSION
+    ? configuration.packageRoot
+    : undefined
 }
 
 /**

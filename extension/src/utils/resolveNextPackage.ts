@@ -1,4 +1,4 @@
-import { access, realpath, stat } from 'node:fs/promises'
+import { access, lstat, realpath, stat } from 'node:fs/promises'
 import { dirname, join, posix, relative, resolve, sep } from 'node:path'
 
 import { z } from 'zod'
@@ -428,8 +428,9 @@ async function resolveNearestNext(
   ) {
     const candidate = join(folder, 'node_modules', 'next')
     searched.push(repositoryPosixPath(repositoryRoot, candidate))
+    // lstat, not access: a broken `node_modules/next` link is still the nearest entry and ends the walk (E4: no fallback to an ancestor's Next).
     if (
-      await access(candidate).then(
+      await lstat(candidate).then(
         () => true,
         () => false,
       )
@@ -444,7 +445,10 @@ async function resolveNearestNext(
   if (nearest === undefined)
     throw await missingNext(repositoryRoot, shown, searched)
   const nextReal = await realPathOrCode(nearest)
-  if ('code' in nextReal || !isFolderOrInside(repositoryRoot, nextReal.path))
+  // A link that cannot be followed (broken, looping, unreadable) leaves no Next to run.
+  if ('code' in nextReal)
+    throw await missingNext(repositoryRoot, shown, searched)
+  if (!isFolderOrInside(repositoryRoot, nextReal.path))
     throw outsideNext(shown, searched)
   const nextManifest = await readJsonInside(
     repositoryRoot,
@@ -541,6 +545,8 @@ function outsideNext(shown: string, searched: readonly string[]): StudyError {
 export async function assertNextPackageUnchanged(
   resolved: ResolvedNextPackage,
 ): Promise<void> {
+  // A root package is never re-resolved here (its Next check belongs to the workspace check), so it cannot report a false change.
+  if (resolved.isRoot) return
   const again = await resolveNextPackage(
     resolved.repositoryRoot,
     resolved.packageRootRelative,
