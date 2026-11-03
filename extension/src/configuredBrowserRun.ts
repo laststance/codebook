@@ -857,6 +857,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private nextPackage?: ResolvedNextPackage
   /** The frozen library builds of the run's library stops, by `path:line:column`, taken before any process starts. */
   private readonly libraryFreezes = new Map<string, LibraryFreeze>()
+  /** The discovery budget every library stop's freeze charges, so N library stops cannot multiply the bounds. */
+  private readonly libraryBudget = { readBytes: 0, spentMs: 0 }
   /** The adapter of the configuration, chosen at the start of preparation. */
   private adapter?: DevelopmentServerAdapter
   /** The setup step reached, named when the setup deadline expires. */
@@ -1311,7 +1313,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Called by {@link resolveNextPackageOfRun} for each stop outside the package; the library source text is read once here and checked against the accepted hash, and kept for the capture.
    * @param stop - A stop whose file lies outside the package.
    * @param nextPackage - The resolved nested Next app.
-   * @returns `true` when the stop was frozen as a library stop; `false` when it stays an `outside-package` stop (not a server stop, not a version 3 run, or no linked workspace library).
+   * @returns `true` when the stop was frozen as a library stop; `false` when it stays an `outside-package` stop (not a server stop, not a version 3 run, no linked workspace library, or an app whose router kind is not `pages`).
    * @throws `NEXT_STOP_NOT_SEALED` (`library-build-stale`, `library-build-unmapped`; `sideEffects: "none"`) from {@link freezeLibraryBuild}; an error when the checked-out file differs from the accepted hash.
    * @example
    * if (!(await this.freezeLibraryStop(stop, nextPackage))) outside.push(stop.source.path)
@@ -1331,6 +1333,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       stop.source.path,
     )
     if (!library) return false
+    // Only a Pages app runs a Pages route, so only there is a library build frozen; an App Router app (or one with no route folder) keeps the outside-package refusal before anything starts. An app with both routers is refused too: its entry route is known only after the server started.
+    if ((await readNextRouterKind(nextPackage.packageRoot)) !== 'pages')
+      return false
     const key = libraryFreezeKey(stop.source)
     if (this.libraryFreezes.has(key)) return true
     const frozen = await freezeLibraryBuild({
@@ -1345,7 +1350,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           this.definition.descriptor.anchors[stop.anchorIndex]!.endLine,
       },
       signal: this.abort.signal,
-      budget: { readBytes: 0, spentMs: 0 },
+      budget: this.libraryBudget,
     })
     const realRoot = await realpath(this.options.workspace)
     const sourceText = await readFile(join(realRoot, stop.source.path), 'utf8')
@@ -4145,6 +4150,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     })
     this.alive()
     if (manifests.kind === 'app') {
+      this.refuseLibraryStopsOfAppRoute()
       // The route is known once the manifests resolved it, so it is recorded before the App verdict: a setup deadline during that verdict keeps an App run's uncoded text ({@link setupDeadlineText}).
       this.nextRoute = { router: 'app', route: manifests.route.key }
       // An App route keeps today's readiness verdict, judged on the answer already read; an entry behind sign-in was proven by the saved session's own load instead.
@@ -4273,6 +4279,33 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         nextServerOnlyStopMessage(place, reason),
         { details: PAGES_STOP_REFUSAL_DETAILS },
       )
+  }
+
+  /**
+   * Ends a run whose frozen library server stop cannot be sealed because the entry path resolved to an App Router route.
+   * Called by {@link resolvePagesCapableRoute} when the manifests resolve an App route; the server already started, so the refusal reports `sideEffects` `unknown`.
+   * @throws `NEXT_STOP_NOT_SEALED` with `details.reason` `outside-package` when any library stop was frozen; nothing otherwise.
+   * @example
+   * this.refuseLibraryStopsOfAppRoute() // throws for a library stop frozen before an App entry
+   */
+  private refuseLibraryStopsOfAppRoute(): void {
+    if (this.libraryFreezes.size === 0) return
+    const files = [...this.libraryFreezes.values()].map(
+      (freeze) => freeze.frozen.stopPath,
+    )
+    const packageRoot = this.nextPackageOrRoot.packageRootRelative
+    throw nextRefusal(
+      'NEXT_STOP_NOT_SEALED',
+      `Stop file${files.length === 1 ? '' : 's'} ${files.join(', ')} lie${files.length === 1 ? 's' : ''} outside packageRoot ${packageRoot}, and the entry path resolves to an App Router route; Codebook seals stops outside the Next app's folder only for a Pages Router route.`,
+      {
+        details: {
+          reason: 'outside-package',
+          files,
+          packageRoot,
+          sideEffects: 'unknown',
+        },
+      },
+    )
   }
 
   /**
