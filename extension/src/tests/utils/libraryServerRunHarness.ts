@@ -18,6 +18,7 @@ import {
   pagesServerService,
   type PagesServerRunOptions,
 } from './pagesServerRunHarness'
+import type { ScriptedCallerFrame } from './serverRenderParticipant'
 
 /** The workspace key of a study captured here. */
 export const LIBRARY_STUDY_WORKSPACE_KEY = '0'.repeat(64)
@@ -80,14 +81,19 @@ export function libraryRunOptions(
  * Runs the library server stop in a service to its completion and captures the study, as the editor saves it: arms, hits `return doubled` with the data function's frames, continues and completes.
  * @param context - The running test.
  * @param spec - What the library fixture stages.
- * @param frame - Where the scripted adapter reports the top frame instead of the bound place, as js-debug does on a line-granular eval map: `column` replaces the reported column, `builtLineOffset` moves the reported built line.
+ * @param frame - Where the scripted adapter reports the top frame instead of the bound place, as js-debug does on a line-granular eval map: `column` replaces the reported column, `builtLineOffset` moves the reported built line; `callers` adds caller frames under it.
  * @returns The study, the run and the staged library.
  * @example const { study, run } = await captureLibraryRun(context)
  */
 export async function captureLibraryRun(
   context: TestContext,
   spec: LibraryFixtureSpec = {},
-  frame: { builtLineOffset?: number; column?: number } = {},
+  frame: {
+    builtLineOffset?: number
+    column?: number
+    /** Caller frames the adapter reports under the stopped frame. */
+    callers?: ScriptedCallerFrame[]
+  } = {},
 ): Promise<{
   study: RetainedStudy
   run: Awaited<ReturnType<typeof pagesServerService>>
@@ -98,6 +104,7 @@ export async function captureLibraryRun(
   const { harness, state, service, receipt } = run
   harness.server!.setFrameName('double')
   harness.server!.setScope({ doubled: 6 })
+  harness.server!.setCallerFrames(frame.callers ?? [])
   run.holdMaintenance()
   await armedEntry(harness).catch((timeout: unknown) => {
     throw new Error(

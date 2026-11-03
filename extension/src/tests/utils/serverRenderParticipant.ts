@@ -23,6 +23,15 @@ const LOCAL_SCOPE_REFERENCE = 601
 const FIRST_SCRIPTED_VARIABLE_REFERENCE = 700
 
 /** One variable of a DAP `variables` answer. */
+/** A caller frame the scripted DAP stack reports under the stopped frame. */
+export interface ScriptedCallerFrame {
+  name: string
+  /** The frame's file; the stop's own file when omitted. */
+  path?: string
+  line: number
+  column: number
+}
+
 interface ScriptedVariable {
   name: string
   value: string
@@ -177,6 +186,8 @@ export function createServerParticipant(parts: ServerParticipantParts) {
   let heldStackAnswer: Promise<void> | undefined
   /** The name the DAP stack frame of a hit reports; `serverStep` unless a test sets another. */
   let frameName = 'serverStep'
+  /** Caller frames the DAP stack reports under the stopped frame; none unless a test sets some. */
+  let callerFrames: ScriptedCallerFrame[] = []
   /** The variables the DAP `variables` request answers by reference, when a test scripted the scope; the default scope (`nextTheme`) otherwise. */
   const scriptedVariables = new Map<number, ScriptedVariable[]>()
   let nextVariableReference = FIRST_SCRIPTED_VARIABLE_REFERENCE
@@ -215,6 +226,13 @@ export function createServerParticipant(parts: ServerParticipantParts) {
               line: frame.line,
               column: frame.column,
             },
+            ...callerFrames.map((caller, index) => ({
+              id: currentHit * 1000 + index + 1,
+              name: caller.name,
+              source: { path: caller.path ?? parts.sourcePath },
+              line: caller.line,
+              column: caller.column,
+            })),
           ],
         }
       }
@@ -782,6 +800,10 @@ export function createServerParticipant(parts: ServerParticipantParts) {
     /** Sets the name the DAP stack frame of the next hits reports (`getServerSideProps`). @example harness.server.setFrameName('getServerSideProps') */
     setFrameName(name: string): void {
       frameName = name
+    },
+    /** Sets the caller frames the DAP stack reports under the stopped frame of the next hits; a frame without `path` is in the stop's own file. @example harness.server.setCallerFrames([{ name: 'caller', line: 9, column: 1 }]) */
+    setCallerFrames(callers: ScriptedCallerFrame[]): void {
+      callerFrames = callers
     },
     /** Every DAP command the run sent the server session, in order. */
     commands,
