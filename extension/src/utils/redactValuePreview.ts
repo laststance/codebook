@@ -3,6 +3,7 @@ import { PREVIEW_VALUE_PREFIX_LIMIT_CHARS, REDACTION_MASK } from '../constants'
 import { isSecretName } from './isSecretName'
 import {
   applyTextReplacements,
+  findLabelledAuthorizations,
   findShapedLiterals,
   isSecretHeaderName,
   unquotePreviewString,
@@ -26,6 +27,15 @@ const BARE_VALUE_TERMINATORS: ReadonlySet<string> = new Set([
   '}',
   ']',
   ')',
+])
+
+/** The characters after which a member of an object printed in a string can start: the opening bracket of the object, array or call, and the separator between two members. */
+const STRING_MEMBER_PREFIXES: ReadonlySet<string> = new Set([
+  '{',
+  '[',
+  '(',
+  ',',
+  ';',
 ])
 
 /** A stretch of a preview. */
@@ -200,7 +210,7 @@ function assignContainers(preview: string, members: PreviewMember[]): void {
  * @param text - The preview.
  * @param start - Where the value starts, after its key's `:`.
  * @param limit - The index of the string's closing quote.
- * @returns The end of a quoted value or of a bare one (a number, `true`, `null`) at its `,`, `}`, `]` or `)`; a bracketed value, or a bare one with no end within {@link PREVIEW_VALUE_PREFIX_LIMIT_CHARS} characters, runs to `limit`, so it is masked whole.
+ * @returns The end of a quoted value or of a bare one (a number, `true`, `null`) at its `,`, `}`, `]` or `)`, without the blanks before it; a bracketed value, or a bare one with no end within {@link PREVIEW_VALUE_PREFIX_LIMIT_CHARS} characters, runs to `limit`, so it is masked whole.
  * @example endOfValueInString(`'{"a":1,"b":2}'`, 6, 13) // => 7
  */
 function endOfValueInString(
@@ -215,7 +225,10 @@ function endOfValueInString(
   let index = start
   while (index < scanEnd && !BARE_VALUE_TERMINATORS.has(text.charAt(index)))
     index++
-  return index === scanEnd && scanEnd < limit ? limit : index
+  if (index === scanEnd && scanEnd < limit) return limit
+  // The blanks before the terminator (`{ password: x }`) stay readable.
+  while (index > start && /\s/.test(text.charAt(index - 1))) index--
+  return index
 }
 
 /**
@@ -241,21 +254,53 @@ function createEnclosingQuotedText(
 }
 
 /**
- * Reads every member of a preview with the end of its value and the bracket it sits in.
- * A key-shaped text inside a quoted string is prose when its key is bare (`'Invalid session: expired'`) and is skipped. A quoted key inside a string is the JSON of a serialised object (`'{"token":"abc"}'`) and stays a member whose value ends before the string's closing quote; it pairs only with the members of the same string.
+ * Tells whether a bare key inside a quoted string starts a member of an object printed in that string (`'{ password: x, n: 1 }'`, `util.inspect` output kept in a string) and not a word of prose (`'Invalid session: expired'`).
+ * Why: a bare key and a colon in a string are prose, unless the text before the key shows the key is a member: only blanks, then `{`, `[`, `(`, `,` or `;`, come before it inside the string. Called by {@link readPreviewMembers} for each bare key inside a string.
  * @param preview - A value as the debugger displays it.
- * @returns The members, in order of position.
- * @example readPreviewMembers("{a: 1, b: 'x'}").map((member) => member.key) // => ['a', 'b']
+ * @param keyIndex - Where the bare key starts.
+ * @param quotedStart - The index of the opening quote of the string that holds the key.
+ * @returns `true` when the first character before the key, after blanks and inside the string, is a member prefix; `false` at the start of the string and after a word.
+ * @example
+ * startsStringMember("'{ password: x }'", 3, 0) // => true
+ * startsStringMember("'Invalid session: expired'", 9, 0) // => false
  */
-function readPreviewMembers(preview: string): PreviewMember[] {
-  const structure = readPreviewStructure(preview)
+function startsStringMember(
+  preview: string,
+  keyIndex: number,
+  quotedStart: number,
+): boolean {
+  let before = keyIndex - 1
+  while (before > quotedStart && /\s/.test(preview.charAt(before))) before--
+  return (
+    before > quotedStart && STRING_MEMBER_PREFIXES.has(preview.charAt(before))
+  )
+}
+
+/**
+ * Reads every member of a preview with the end of its value and the bracket it sits in.
+ * A key-shaped text inside a quoted string is prose when its key is bare and nothing shows it starts a member (`'Invalid session: expired'`), and is skipped. A bare key that starts a member of an object printed in the string (`'{ password: x }'`) stays a member whose value ends before the string's closing quote, like a quoted key (`'{"token":"abc"}'`, the JSON of a serialised object); it pairs only with the members of the same string.
+ * @param preview - A value as the debugger displays it.
+ * @param structure - The quoted texts and brackets of the preview ({@link readPreviewStructure}).
+ * @returns The members, in order of position.
+ * @example readPreviewMembers("{a: 1, b: 'x'}", readPreviewStructure("{a: 1, b: 'x'}")).map((member) => member.key) // => ['a', 'b']
+ */
+function readPreviewMembers(
+  preview: string,
+  structure: PreviewStructure,
+): PreviewMember[] {
   const endOfBareValue = createBareValueEnd(preview)
   const enclosingQuotedText = createEnclosingQuotedText(structure.quoted)
   const members: PreviewMember[] = []
   for (const match of preview.matchAll(PREVIEW_KEY)) {
     // A quoted key starts at its own opening quote, which is not inside the quoted text it opens.
     const enclosing = enclosingQuotedText(match.index)
-    if (enclosing !== undefined && match[1] !== undefined) continue
+    // A bare key inside a string is prose unless it starts a member of an object printed there.
+    if (
+      enclosing !== undefined &&
+      match[1] !== undefined &&
+      !startsStringMember(preview, match.index, enclosing.start)
+    )
+      continue
     const valueStart = match.index + match[0].length
     const memberKey = match[1] ?? match[2] ?? match[3] ?? ''
     members.push({
@@ -321,6 +366,41 @@ function pairValueRanges(
 }
 
 /**
+ * Finds the values after an Authorization label in a preview or a fact string, whatever the scheme: `'Authorization: ApiKey …'` held in a string, `Authorization=…`, a header line a fact keeps bare.
+ * Why: a header line held in a string is no member (its bare key is prose to the member rule), and the member rule ends a bare value at its first comma, which a credential such as AWS4-HMAC-SHA256's `Credential=…,Signature=…` holds. The label rule ({@link findLabelledAuthorizations}) ends a value at the closing quote of the string that holds it, so the quote stays. The value of an object's own `authorization` member is left to the member rule, which ends a bare value at its comma and keeps the members after it. Called by {@link redactValuePreview} and {@link previewShowsCredentialShape}.
+ * @param preview - A value as the debugger displays it.
+ * @param structure - The quoted texts and brackets of the preview.
+ * @param members - The members of the preview.
+ * @returns One replacement per value.
+ * @example findAuthorizationLabelValues("{h: 'Authorization: ApiKey abc'}", structure, members) // => [{ start: 20, end: 30, text: '[masked]' }]
+ */
+function findAuthorizationLabelValues(
+  preview: string,
+  structure: PreviewStructure,
+  members: readonly PreviewMember[],
+): TextReplacement[] {
+  const enclosingQuotedText = createEnclosingQuotedText(structure.quoted)
+  // The value of a member inside an object starts where the member's value starts, or one character on when it is quoted.
+  const memberValueStarts = new Set(
+    members
+      .filter((member) => member.container >= 0)
+      .map((member) => member.valueStart),
+  )
+  return findLabelledAuthorizations(preview, REDACTION_MASK, (labelIndex) => {
+    const enclosing = enclosingQuotedText(labelIndex)
+    if (enclosing === undefined) return preview.length
+    // An unclosed string runs to the end of the preview.
+    const isClosed =
+      preview.charAt(enclosing.end - 1) === preview.charAt(enclosing.start)
+    return isClosed ? enclosing.end - 1 : enclosing.end
+  }).filter(
+    (replacement) =>
+      !memberValueStarts.has(replacement.start) &&
+      !memberValueStarts.has(replacement.start - 1),
+  )
+}
+
+/**
  * Masks the members of secret-named keys inside a debugger's value preview (`{apiKey: 'x', host: 'y'}`, `Map(1) {'authorization' => 'x'}`), the value beside a secret `name` or `key` member (`{name: 'sid', value: 'x'}`), and every quoted element that holds a credential shape (a Cookie header, an Authorization value, the element after `'Cookie'` in a flat header array, a URL's secret query values), so an expandable value's own text never carries what its children are masked for.
  * Why: the editor's debug adapter previews an object with its members' values; the redaction contract masks a secret-named member and everything inside it, wherever its value appears. Called by {@link redactInspectedValue} and {@link captureReplayDebugSnapshot} before the credential shapes of {@link redactSecretText}, and by {@link maskSavedDebugSnapshot} for every saved preview. The member ranges and the quoted credential elements are both found on the original preview and put in together, so no stretch shifts the quote pairing of the others.
  * @param preview - A value as the debugger displays it.
@@ -333,13 +413,15 @@ function pairValueRanges(
  * redactValuePreview("{msg: 'Invalid session: expired', h: 'sid=1; theme=dark'}") // => "{msg: 'Invalid session: expired', h: [masked]}"
  */
 export function redactValuePreview(preview: string): string {
-  const members = readPreviewMembers(preview)
+  const structure = readPreviewStructure(preview)
+  const members = readPreviewMembers(preview, structure)
   const memberReplacements: TextReplacement[] = [
     ...secretNamedRanges(members),
     ...pairValueRanges(preview, members),
   ].map((range) => ({ ...range, text: REDACTION_MASK }))
   return applyTextReplacements(preview, [
     ...memberReplacements,
+    ...findAuthorizationLabelValues(preview, structure, members),
     ...findShapedLiterals(preview, false, REDACTION_MASK).replacements,
   ])
 }
@@ -354,9 +436,11 @@ export function redactValuePreview(preview: string): string {
  * previewShowsCredentialShape("{id: 7, theme: 'dark'}") // => false
  */
 export function previewShowsCredentialShape(preview: string): boolean {
-  const pairs = pairValueRanges(preview, readPreviewMembers(preview))
+  const structure = readPreviewStructure(preview)
+  const members = readPreviewMembers(preview, structure)
   return (
-    pairs.length > 0 ||
+    pairValueRanges(preview, members).length > 0 ||
+    findAuthorizationLabelValues(preview, structure, members).length > 0 ||
     findShapedLiterals(preview, false, REDACTION_MASK).replacements.length > 0
   )
 }

@@ -289,12 +289,11 @@ test('a labelled Cookie or Authorization header is masked with a quoted Digest, 
   )
 })
 
-// protects=prose that only mentions a Cookie or Authorization label stays readable; fails_when=a label alone masks the rest of the line, whatever follows it; no_claim=prose that happens to start with a cookie pair or an Authorization scheme and a long word
+// protects=prose that only mentions a Cookie or Authorization label stays readable; fails_when=a Cookie label, or an Authorization label without a colon or an equals sign, masks the rest of the line, whatever follows it; no_claim=a value after an Authorization label with a colon or an equals sign, which is masked whatever its scheme (previewStringKeysAndAuthorizationLabels), and prose that starts with a cookie pair
 test('prose after a Cookie or Authorization label stays readable', () => {
   // Arrange
   const output = [
     'Cookie banner accepted',
-    'Authorization: Token expired',
     'Set-Cookie header was ignored',
     'Authorization header missing',
     '',

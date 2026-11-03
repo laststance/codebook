@@ -45,11 +45,26 @@ const BASE64_CREDENTIAL_SCHEMES: ReadonlySet<string> = new Set([
   'ntlm',
 ])
 
-/** What a credential token has that a plain word lacks: a digit, one of `_~+/=-`, or a `.` that does not just end a sentence (`Token generated.`). */
-const CREDENTIAL_TOKEN_MARK = /[\d_~+/=-]|\.(?!\.*$)/
+/** What a credential token has that a plain word lacks: a digit, one of `_~+/=-`, or a `.` inside it. A `.` that only ends a sentence (`Token generated.`) is cut off first ({@link withoutTrailingDots}), so the test needs no look-ahead, which would read the rest of a long dot run again for every dot. */
+const CREDENTIAL_TOKEN_MARK = /[\d_~+/=-]|\./
 
 /** A `Bearer` credential: {@link redactSecretText} masks its token and keeps the word, so the literal masker leaves it to that shape. */
 const BEARER_CREDENTIAL = /^bearer[ \t]/i
+
+/** How many characters "Bearer " takes: the part of a value read to tell a Bearer credential from any other scheme. */
+const BEARER_PREFIX_CHARS = 'Bearer '.length
+
+/** An `Authorization` label, also as the end of `Proxy-Authorization` or `X-Authorization`, with `:` or `=` as its separator (the key may be quoted: `"authorization":`). Group 1 holds the opening quote of the value, empty when the value is bare. A label with no separator (`Authorization header missing`) is prose, and a longer word (`authorization_endpoint`, `userAuthorization`) is another name. */
+const AUTHORIZATION_LABEL = /\bauthorization["']?[ \t]*[:=][ \t]*(["']?)/gi
+
+/** The brackets a bare value may open (`Foo (bar)`, a mask such as `[masked]`); each one is closed again inside the value. */
+const OPENING_BRACKETS: ReadonlySet<string> = new Set(['{', '[', '('])
+
+/** The brackets that close what the label sits in (the object, array or call that holds it) when nothing in the value opened them. */
+const CLOSING_BRACKETS: ReadonlySet<string> = new Set(['}', ']', ')'])
+
+/** The characters that end a line. */
+const LINE_BREAK_CHARACTERS: ReadonlySet<string> = new Set(['\n', '\r'])
 
 /** One `name=value` parameter of a Digest credential, the value bare or quoted. */
 const DIGEST_PARAMETER = String.raw`[A-Za-z][\w-]*=(?:"[^"]*"|[^\s,"]+)`
@@ -202,6 +217,21 @@ export function isCookieHeaderShape(text: string): boolean {
 }
 
 /**
+ * Cuts the dots off the end of a token: the full stop of a sentence, or a run of them.
+ * Why: a token of letters and a long run of dots must be judged in one pass; a look-ahead past each dot reads the rest of the run again (8.1 s for 262,144 dots), which would block the extension host. Called by {@link looksLikeCredentialToken}.
+ * @param token - A run of characters of `A-Za-z0-9._~+/=-`.
+ * @returns The token without its trailing dots.
+ * @example
+ * withoutTrailingDots('generated.') // => 'generated'
+ * withoutTrailingDots('a.b...') // => 'a.b'
+ */
+function withoutTrailingDots(token: string): string {
+  let end = token.length
+  while (end > 0 && token.charAt(end - 1) === '.') end--
+  return token.slice(0, end)
+}
+
+/**
  * Tells whether the credential of an Authorization value reads as a credential and not as a word of prose.
  * Called by {@link isAuthorizationShape}.
  * @param scheme - The scheme in lowercase.
@@ -214,7 +244,7 @@ export function isCookieHeaderShape(text: string): boolean {
 function looksLikeCredentialToken(scheme: string, token: string): boolean {
   if (BASE64_CREDENTIAL_SCHEMES.has(scheme)) return true
   return (
-    CREDENTIAL_TOKEN_MARK.test(token) ||
+    CREDENTIAL_TOKEN_MARK.test(withoutTrailingDots(token)) ||
     (/[a-z]/.test(token) && /[A-Z]/.test(token.slice(1)))
   )
 }
@@ -238,6 +268,110 @@ export function isAuthorizationShape(text: string): boolean {
       credential[2] ?? '',
     )
   return AUTHORIZATION_DIGEST.test(trimmed)
+}
+
+/**
+ * Finds where a bare value after an Authorization label ends: at the line's end, or at a closing bracket that nothing in the value opened.
+ * Why: the object or call that holds the label (`{ authorization: ApiKey x }`, `log(Authorization: ApiKey x)`) keeps its closing bracket, while a value that brings its own brackets (`Foo (bar)`, the mask `[masked]` of an earlier pass) is masked whole and a second pass changes nothing. Called by {@link findLabelledAuthorizations}.
+ * @param text - The text.
+ * @param valueStart - The index right after the label's separator.
+ * @param limit - The index the value never passes.
+ * @returns The index where the value ends, at most `limit`.
+ * @example
+ * endOfBareAuthorizationValue('(Authorization: ApiKey abc) retried', 16, 35) // => 26
+ * endOfBareAuthorizationValue('Authorization: [masked]', 15, 23) // => 23
+ */
+function endOfBareAuthorizationValue(
+  text: string,
+  valueStart: number,
+  limit: number,
+): number {
+  let openBrackets = 0
+  for (let index = valueStart; index < limit; index++) {
+    const character = text.charAt(index)
+    // A value is one line's; a lone carriage return breaks a line like a newline.
+    if (LINE_BREAK_CHARACTERS.has(character)) return index
+    if (OPENING_BRACKETS.has(character)) openBrackets++
+    else if (CLOSING_BRACKETS.has(character)) {
+      if (openBrackets === 0) return index
+      openBrackets--
+    }
+  }
+  return limit
+}
+
+/**
+ * Finds where a quoted value after an Authorization label ends.
+ * Called by {@link findLabelledAuthorizations}.
+ * @param text - The text.
+ * @param valueStart - The index right after the value's opening quote.
+ * @param quote - The opening quote character.
+ * @param limit - The index the value never passes.
+ * @returns The index of the closing quote; a value with no closing quote on its line ends with the line. A backslash escapes the character after it, a line break excepted. At most `limit`.
+ * @example endOfQuotedAuthorizationValue('{"authorization": "ApiKey abc", "n": 1}', 19, '"', 38) // => 29
+ */
+function endOfQuotedAuthorizationValue(
+  text: string,
+  valueStart: number,
+  quote: string,
+  limit: number,
+): number {
+  for (let index = valueStart; index < limit; index++) {
+    const character = text.charAt(index)
+    if (LINE_BREAK_CHARACTERS.has(character) || character === quote)
+      return index
+    if (
+      character === '\\' &&
+      !LINE_BREAK_CHARACTERS.has(text.charAt(index + 1))
+    )
+      index++
+  }
+  return limit
+}
+
+/**
+ * Finds the value after each Authorization or Proxy-Authorization label that has a `:` or an `=` after it, whatever the scheme of the credential.
+ * Why: the label alone proves the value is a credential, so `ApiKey 8f3a…`, `AWS4-HMAC-SHA256 Credential=…,Signature=…` and `Basic YTpi` are masked although no scheme list names them; the unlabelled shape rule ({@link isAuthorizationShape}) keeps its prose guard for a bare `Token expired`. A `Bearer` value is left to {@link redactSecretText}, which masks its token and keeps the word, so there is one masking for it. A quoted value is masked up to its closing quote; a bare value up to the line's end, or a closing bracket that nothing in the value opened, so the object or call that holds the label keeps its shape. Called by {@link maskShapedLiterals} for output and by {@link redactValuePreview} for a debugger preview and a fact string.
+ * @param text - A preview or a text of one or more lines.
+ * @param mask - What replaces a value.
+ * @param limitOf - Tells the index a value never passes for the label at a given index, so a header line held in a quoted string ends before the string's closing quote. Called with indexes that do not decrease. Defaults to the text's end.
+ * @returns One replacement per value, in order of position; a label inside a value already replaced belongs to that value, and an empty value is no replacement.
+ * @example
+ * findLabelledAuthorizations('Authorization: ApiKey abc', '[masked]') // => [{ start: 15, end: 25, text: '[masked]' }]
+ * findLabelledAuthorizations('Authorization: Bearer abc', '[masked]') // => []
+ * findLabelledAuthorizations('Authorization header missing', '[masked]') // => []
+ */
+export function findLabelledAuthorizations(
+  text: string,
+  mask: string,
+  limitOf?: (labelIndex: number) => number,
+): TextReplacement[] {
+  const replacements: TextReplacement[] = []
+  let maskedUntil = 0
+  for (const label of text.matchAll(AUTHORIZATION_LABEL)) {
+    // A label inside a value that is already masked belongs to that value.
+    if (label.index < maskedUntil) continue
+    const valueStart = label.index + label[0].length
+    // A Bearer value keeps its word and gets its token masked by `redactSecretText`.
+    if (
+      BEARER_CREDENTIAL.test(
+        text.slice(valueStart, valueStart + BEARER_PREFIX_CHARS),
+      )
+    )
+      continue
+    const limit = Math.min(limitOf?.(label.index) ?? text.length, text.length)
+    const quote = label[1] ?? ''
+    const end =
+      quote === ''
+        ? endOfBareAuthorizationValue(text, valueStart, limit)
+        : endOfQuotedAuthorizationValue(text, valueStart, quote, limit)
+    const value = text.slice(valueStart, end)
+    // A label with nothing after it, or with the mask of an earlier pass, has nothing to mask.
+    if (value.trim() === '' || value === mask) continue
+    replacements.push({ start: valueStart, end, text: mask })
+    maskedUntil = end
+  }
+  return replacements
 }
 
 /**
@@ -627,7 +761,7 @@ export function applyTextReplacements(
 }
 
 /**
- * Masks every quoted element of a text that holds a credential: a Cookie header, an Authorization value, the element that follows a quoted secret header name (`['Cookie', 'sid=abc']`, a logged `rawHeaders`), and the secret query values of a quoted URL.
+ * Masks every quoted element of a text that holds a credential: a Cookie header, an Authorization value, the element that follows a quoted secret header name (`['Cookie', 'sid=abc']`, a logged `rawHeaders`), and the secret query values of a quoted URL; and the value after an `Authorization:` or `Authorization=` label, whatever its scheme ({@link findLabelledAuthorizations}).
  * Why: the development server's output masking applies this rule to its lines; called by the output masking. {@link redactValuePreview} merges {@link findShapedLiterals} with its member ranges instead.
  * @param text - A preview or a text of one or more lines.
  * @param afterHeaderName - Whether the text before this one ended right after a quoted secret header name, so a stream split into chunks keeps the pairing.
@@ -636,6 +770,7 @@ export function applyTextReplacements(
  * @example
  * maskShapedLiterals("['Host', 'x', 'Cookie', 'sid=abc']").text // => "['Host', 'x', 'Cookie', [masked]]"
  * maskShapedLiterals("{referer: '/cb?code=abc'}").text // => "{referer: '/cb?code=[masked]'}"
+ * maskShapedLiterals('Authorization: ApiKey abc').text // => 'Authorization: [masked]'
  */
 export function maskShapedLiterals(
   text: string,
@@ -644,7 +779,11 @@ export function maskShapedLiterals(
 ): ShapedLiteralsResult {
   const scan = findShapedLiterals(text, afterHeaderName, mask)
   return {
-    text: applyTextReplacements(text, scan.replacements, mask),
+    text: applyTextReplacements(
+      text,
+      [...scan.replacements, ...findLabelledAuthorizations(text, mask)],
+      mask,
+    ),
     afterHeaderName: scan.afterHeaderName,
   }
 }
