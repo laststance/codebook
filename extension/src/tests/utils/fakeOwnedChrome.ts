@@ -47,6 +47,12 @@ export type FakeOwnedChromeBehaviour = {
   extensionOwnPages?: string[]
   /** How long the fake takes to answer a command: one sent with a shorter timeout fails as `timed out`, as a real Chrome's answer arrives too late for it. Unset, every timeout is met. */
   answerLatencyMs?: number
+  /** The first this many `ServiceWorker.startWorker` commands answer success and start nothing, as Chrome does when the registration has no active version yet. */
+  ignoredStarts?: number
+  /** A command for which this answers `true` is never answered: it fails as `timed out` after its own timeout. */
+  neverAnswers?: (command: RecordedCommand) => boolean
+  /** A virtual clock: the dependencies' `now` reads it and every `sleep` and every unanswered command advances it, so a bounded wait runs in no real time. */
+  clock?: { now(): number; advance(ms: number): void }
 }
 
 /** The fake browser as a test sees it. */
@@ -102,6 +108,7 @@ export function fakeOwnedChrome(
   const signalledIds: number[] = []
   let stopTimeoutsLeft = behaviour.stopTimesOutOnce ? 1 : 0
   let workerRunning = true
+  let startsLeftToIgnore = behaviour.ignoredStarts ?? 0
   let popupOpen = false
   let connectionClosed = false
   let alive = true
@@ -150,7 +157,8 @@ export function fakeOwnedChrome(
         workerRunning = Boolean(behaviour.stopLeavesWorker)
         return {}
       case 'ServiceWorker.startWorker':
-        workerRunning = true
+        if (startsLeftToIgnore > 0) startsLeftToIgnore -= 1
+        else workerRunning = true
         return {}
       case 'Extensions.setStorageItems':
         assertExtensionPage(sessionId)
@@ -238,6 +246,10 @@ export function fakeOwnedChrome(
       }
       commands.push(command)
       behaviour.onCommand?.(command)
+      if (behaviour.neverAnswers?.(command)) {
+        behaviour.clock?.advance(timeoutMs ?? 10_000)
+        throw new FlatCdpCommandError(method, undefined, 'timed out')
+      }
       // A command whose timeout is shorter than the fake's answer time is lost, as the connection's own timer would drop it.
       if (
         behaviour.answerLatencyMs !== undefined &&
@@ -295,7 +307,8 @@ export function fakeOwnedChrome(
         return browser
       },
       connect: async () => connection,
-      sleep: async () => undefined,
+      ...(behaviour.clock !== undefined && { now: behaviour.clock.now }),
+      sleep: async (ms) => behaviour.clock?.advance(ms),
       stopper: {
         platform: 'linux',
         signal: (pid, signal): void => {

@@ -51,6 +51,8 @@ const CHROME_EXTENSION_EVENT_WHEN: Record<string, string> = {
     'a declared line paused in the other context than the stop declares; it is resumed',
   'chrome-extension.intervention':
     'Codebook stopped or started the service worker, resumed a prepare-pause or re-armed a stop after a worker restart',
+  'chrome-extension.worker-start':
+    'once per wake that started the service worker, with how many `ServiceWorker.startWorker` commands Codebook sent before the worker was listed or the wake bound passed',
   'chrome-extension.phase':
     'every phase transition of the preparation, so a slow or failed start shows where it stopped',
   'chrome-extension.dialog':
@@ -584,7 +586,7 @@ export function chromeExtensionHelp() {
     limits: [
       `At most ${EXTENSION_CLICK_LIMIT} clicks (each with a title of 1 to 80 characters, a selector, an optional kind click or dblclick, an optional dialog accept or dismiss and optional inputs) and ${EXTENSION_STOP_LIMIT} stops.`,
       `The run deadline is ${REPOSITORY_RUN_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s; a pause longer than ${PAUSE_HOLD_SECONDS} s ends the run (${EXTENSION_WORKER_PAUSE_HOLD_MS / MILLISECONDS_PER_SECOND} s for a service-worker stop); a continuation answer waits about ${(ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND).toFixed(0)} s and then reports the latest state without next.`,
-      `The service worker is awaited ${EXTENSION_WAKE_BOUND_MS / MILLISECONDS_PER_SECOND} s before each click.`,
+      `The service worker is awaited ${EXTENSION_WAKE_BOUND_MS / MILLISECONDS_PER_SECOND} s before each click; Codebook sends the worker start again every second within that bound, because Chrome can drop one start without an error.`,
       `An observed read is at most ${EXTENSION_OBSERVE_READ_LIMIT_BYTES} bytes; a larger value reads unavailable.`,
       `At most ${EXTENSION_OUTPUT_EVENT_LIMIT} console lines are journaled per run.`,
       'One run is active at a time; a run that completed or failed is released at once.',

@@ -9,6 +9,7 @@ import type {
   FlatCdpConnection,
   OwnedExtensionBrowser,
   ResolvedExtensionRun,
+  WorkerStart,
 } from '../chromeExtensionContracts'
 import {
   CHROME_EXTENSION_MIN_VERSION,
@@ -20,6 +21,7 @@ import {
   EXTENSION_POPUP_WORKER_SETTLE_MS,
   EXTENSION_STOP_COMMAND_TIMEOUT_MS,
   EXTENSION_STOP_WORKERS_BOUND_MS,
+  EXTENSION_WORKER_START_RESEND_MS,
   EXTENSION_WORKER_QUIET_MS,
   MANAGED_PROFILE_OWNER_FILE,
   MANAGED_PROFILE_PREFIX,
@@ -79,6 +81,8 @@ export interface OwnedBrowserDependencies {
   stopper: ProcessStopper
   /** Starts the sweep of abandoned profile folders beside the launch; never rejects. */
   startSweep(root: string, owner: StorageOwnerIdentity): void
+  /** The monotonic clock in milliseconds that {@link OwnedExtensionBrowser.startWorker}'s deadline is read on; defaults to `performance.now`. A test names a virtual clock that its `sleep` advances. */
+  now?: () => number
   /** Records the spawned browser's pid in the profile's owned marker; defaults to {@link writeOwnedBrowserMarker}. A test injects failures. */
   writeBrowserMarker?: typeof writeOwnedBrowserMarker
 }
@@ -287,6 +291,90 @@ async function workerTargets(
       target.type === 'service_worker' &&
       target.url.startsWith(`chrome-extension://${extensionId}/`),
   )
+}
+
+/**
+ * Starts the extension's worker and waits for its target, sending the start again every {@link EXTENSION_WORKER_START_RESEND_MS} (the body of {@link OwnedExtensionBrowser.startWorker}).
+ * Why: `ServiceWorker.startWorker` answers success at once and discards whether the worker started; it silently does nothing when the registration has no active version yet, so one send and a wait can wait for ever. A start of a running worker changes nothing, so the re-send is safe.
+ * Called through {@link OwnedExtensionBrowser.startWorker} by the debugger's wake of the worker, once per wake. Every request and pause is bounded by the time left, so the call ends at `deadlineAt` (plus one scheduling tick); a request that times out is counted as no answer, not as a failure.
+ * @param session - The launch session of the browser.
+ * @param deadlineAt - The clock reading at which the wait ends.
+ * @param signal - Ends the wait with its reason when aborted.
+ * @returns Whether the worker target was listed and how many starts were sent; `{ listed: false, sends: 0 }` at once for an extension without a declared worker.
+ * @throws {@link StudyError} `BROWSER_LOST` when the connection ended; `CHROME_COMMAND_UNAVAILABLE` when Chrome lacks the command; the signal's reason when aborted.
+ * @example
+ * await startWorkerUntil(session, performance.now() + 5_000) // => { listed: true, sends: 2 }
+ */
+async function startWorkerUntil(
+  session: Session,
+  deadlineAt: number,
+  signal: AbortSignal | undefined,
+): Promise<WorkerStart> {
+  // A popup-only extension has no worker: nothing to start, and the command would fail.
+  if (!session.hasWorker) return { listed: false, sends: 0 }
+  const now = session.dependencies.now ?? (() => performance.now())
+  let sends = 0
+  let nextSendAt = now()
+  // One command bounded by the time left; a timeout is no answer, a lost connection is the run's loss.
+  const within = async (
+    method: string,
+    params: Record<string, unknown>,
+    sessionId?: string,
+  ): Promise<Record<string, unknown> | undefined> => {
+    try {
+      return await extensionCommand(
+        session.cdp,
+        session.chromeVersion,
+        method,
+        params,
+        sessionId,
+        Math.max(1, deadlineAt - now()),
+      )
+    } catch (error) {
+      if (isConnectionLost(error))
+        throw new StudyError(
+          'BROWSER_LOST',
+          'Chrome was lost while the extension worker was starting.',
+        )
+      if (error instanceof FlatCdpCommandError && error.detail === 'timed out')
+        return undefined
+      throw error
+    }
+  }
+  // Send (when due), look at the targets, pause; the last look comes after the last send and before the deadline check.
+  while (deadlineAt - now() > 0) {
+    signal?.throwIfAborted()
+    if (now() >= nextSendAt) {
+      nextSendAt = now() + EXTENSION_WORKER_START_RESEND_MS
+      sends += 1
+      await within(
+        'ServiceWorker.startWorker',
+        { scopeURL: `chrome-extension://${session.extensionId}/` },
+        session.controlSessionId,
+      )
+    }
+    signal?.throwIfAborted()
+    // A send that used the time left leaves no time for a look.
+    if (deadlineAt - now() <= 0) break
+    const answer = await within('Target.getTargets', {})
+    if (
+      answer !== undefined &&
+      readCdpTargets(answer).some(
+        (target) =>
+          target.type === 'service_worker' &&
+          target.url.startsWith(`chrome-extension://${session.extensionId}/`),
+      )
+    )
+      return { listed: true, sends }
+    // Pause no longer than the next send or the deadline.
+    const pauseMs = Math.min(
+      EXTENSION_BROWSER_POLL_MS,
+      Math.max(0, nextSendAt - now()),
+      Math.max(0, deadlineAt - now()),
+    )
+    if (pauseMs > 0) await session.dependencies.sleep(pauseMs)
+  }
+  return { listed: false, sends }
 }
 
 /** Everything the steps after the connection share. */
@@ -933,15 +1021,8 @@ export async function launchOwnedExtensionBrowser(
       closedDuplicateSurfacePages,
       controlSessionId,
       profile,
-      startWorker: async (): Promise<void> => {
-        await extensionCommand(
-          cdp,
-          chromeVersion,
-          'ServiceWorker.startWorker',
-          { scopeURL: `chrome-extension://${extensionId}/` },
-          controlSessionId,
-        )
-      },
+      startWorker: (deadlineAt, signal) =>
+        startWorkerUntil(session, deadlineAt, signal),
       stopWorkers: (boundMs): Promise<void> =>
         stopExtensionWorkers(session, boundMs),
       attachSurface: () => attachSurface(cdp, surfaceTargetId),

@@ -43,7 +43,9 @@ import {
 } from './constants'
 import { StudyError } from './errors'
 import { codebookStopLedger } from './runtimeSupport/codebookStopLedger'
+import { FlatCdpCommandError } from './runtimeSupport/flatCdpConnection'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
+import type { CdpTargetInfo } from './runtimeSupport/utils/cdpFieldReaders'
 import { createPhaseReporter } from './runtimeSupport/utils/createPhaseReporter'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { WaitTimeoutError } from './runtimeSupport/utils/waitTimeoutError'
@@ -860,10 +862,21 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     throw refusal()
   }
 
+  /** How many `ServiceWorker.startWorker` commands the latest wake sent; named in the refusal. */
+  private workerStartSends = 0
+
+  /** Words the refusal of a wake that reached its deadline, with the figures an agent decides a retry by (`details.workerStartSends`, `details.wakeBoundMs`). */
   private workerNotAttached(): StudyError {
     return new StudyError(
       'SERVICE_WORKER_NOT_ATTACHED',
       `The extension's service worker did not start while ${this.input.run.surface.kind} was open.`,
+      undefined,
+      undefined,
+      undefined,
+      {
+        workerStartSends: this.workerStartSends,
+        wakeBoundMs: EXTENSION_WAKE_BOUND_MS,
+      },
     )
   }
 
@@ -881,20 +894,29 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
    * @throws {@link StudyError} `SERVICE_WORKER_NOT_ATTACHED` when no worker session appears within the wake bound.
    */
   private async wakeWorker(signal: AbortSignal): Promise<void> {
+    // One deadline bounds the start, its re-sends, the worker session and its verification.
+    const deadlineAt = performance.now() + EXTENSION_WAKE_BOUND_MS
+    this.workerStartSends = 0
     if (this.entriesOf('worker').length === 0) {
       this.recordIntervention('start-worker')
-      await this.input.startWorker()
+      const started = await this.input.startWorker(deadlineAt, signal)
+      this.workerStartSends = started.sends
+      this.input.record('chrome-extension.worker-start', {
+        sends: started.sends,
+      })
+      // The worker target never appeared: waiting for a session of it would only wait out the same deadline.
+      if (!started.listed) throw this.workerNotAttached()
     }
     const worker = await this.waitOr(
       async () => {
         return this.entriesOf('worker')[0]
       },
       'the extension worker session',
-      EXTENSION_WAKE_BOUND_MS,
+      timeLeft(deadlineAt),
       signal,
       () => this.workerNotAttached(),
     )
-    await this.verifyWorker(worker, signal)
+    await this.verifyWorker(worker, signal, deadlineAt)
   }
 
   /**
@@ -902,17 +924,33 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
    * Called by {@link wakeWorker} after a worker child appears; a worker child while no such single target exists is another extension's and is demoted to `other`.
    * @param entry - The worker child adopted as the extension's worker.
    * @param signal - The run's abort signal.
-   * @throws {@link StudyError} `SERVICE_WORKER_NOT_ATTACHED` when the extension's worker target is not listed within the wake bound.
+   * @param deadlineAt - The wake's deadline, a `performance.now()` reading; the target list is read with the time left.
+   * @throws {@link StudyError} `SERVICE_WORKER_NOT_ATTACHED` when the extension's worker target is not listed by the deadline.
    */
   private async verifyWorker(
     entry: SessionEntry,
     signal: AbortSignal,
+    deadlineAt: number,
   ): Promise<void> {
-    // The target list can trail the worker's child session, so it is polled within the wake bound before the child is demoted.
+    // The target list can trail the worker's child session, so it is polled within the wake deadline before the child is demoted.
     await this.waitOr(
       async () => {
         const origin = `chrome-extension://${this.input.run.extensionId}/`
-        const workers = (await this.input.readTargets()).filter(
+        let listed: readonly CdpTargetInfo[]
+        try {
+          listed = await this.input.readTargets(
+            Math.max(1, timeLeft(deadlineAt)),
+          )
+        } catch (error) {
+          // A list that is not answered in the time left is no answer; the wait ends at the deadline.
+          if (
+            error instanceof FlatCdpCommandError &&
+            error.detail === 'timed out'
+          )
+            return false
+          throw error
+        }
+        const workers = listed.filter(
           (target) =>
             target.type === 'service_worker' &&
             normalizedUrl(target.url).startsWith(origin),
@@ -925,7 +963,7 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
         )
       },
       "the extension's service worker target to be the only one of the extension listed",
-      EXTENSION_WAKE_BOUND_MS,
+      timeLeft(deadlineAt),
       signal,
       () => {
         entry.kind = 'other'
@@ -1120,6 +1158,17 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     this.termination.dispose()
     this.sessionStarts.dispose()
   }
+}
+
+/**
+ * Milliseconds left until a wake's deadline, never below zero.
+ * Called by the wake of {@link VscodeChromeExtensionDebugger} for each wait that shares the wake's one deadline.
+ * @param deadlineAt - A `performance.now()` reading.
+ * @example
+ * timeLeft(performance.now() + 3_000) // => about 3000
+ */
+function timeLeft(deadlineAt: number): number {
+  return Math.max(0, deadlineAt - performance.now())
 }
 
 /**

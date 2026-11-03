@@ -99,6 +99,7 @@ test('omits an unlisted event type and lists every whitelisted type', () => {
     'chrome-extension.surface-lost',
     'chrome-extension.context-mismatch',
     'chrome-extension.intervention',
+    'chrome-extension.worker-start',
     'chrome-extension.phase',
     'chrome-extension.dialog',
     'chrome-extension.debugger-error',

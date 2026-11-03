@@ -2541,6 +2541,8 @@ export const EXTENSION_STEP_REQUEST_TIMEOUT_MS = 20_000
 export const EXTENSION_BROWSER_START_BOUND_MS = 30_000
 /** Interval at which the owned launch polls the browser's files and targets. */
 export const EXTENSION_BROWSER_POLL_MS = 100
+/** While the extension's worker target is not listed, the owned browser sends `ServiceWorker.startWorker` again this often: Chrome answers the command at once and discards whether the worker started, so a dropped start is only seen by the missing target. */
+export const EXTENSION_WORKER_START_RESEND_MS = 1_000
 /** Each command on the owned browser's CDP connection has this deadline unless the caller names another. */
 export const EXTENSION_CDP_COMMAND_TIMEOUT_MS = 10_000
 /** After `ServiceWorker.startWorker`, the popup opens only once the worker has had this long to apply the extension's own state (task 0). */

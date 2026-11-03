@@ -251,6 +251,7 @@ test('the help lists every journal event the run writes, with its published fiel
       ['chrome-extension.surface-lost', 'surface'],
       ['chrome-extension.context-mismatch', 'stopIndex, context'],
       ['chrome-extension.intervention', 'kind, time'],
+      ['chrome-extension.worker-start', 'sends'],
       ['chrome-extension.phase', 'name, elapsedMs'],
       ['chrome-extension.dialog', 'type, answer, message'],
       ['chrome-extension.debugger-error', 'message'],

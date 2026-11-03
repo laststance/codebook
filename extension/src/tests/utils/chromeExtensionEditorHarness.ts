@@ -9,6 +9,7 @@ import type * as vscode from 'vscode'
 import type {
   ExtensionPhaseReporter,
   ExtensionStopContext,
+  WorkerStart,
 } from '../../chromeExtensionContracts'
 import type {
   ChromeExtensionDebugger,
@@ -552,9 +553,16 @@ export async function extensionEditorHarness(
     createDebugger(
       stops: TestStop[],
       overrides: {
-        startWorker?: () => Promise<void>
+        startWorker?: (
+          deadlineAt: number,
+          signal?: AbortSignal,
+        ) => Promise<void | WorkerStart>
         /** The browser's targets; defaults to the surface page and the extension's worker. */
         targets?: Array<{ targetId: string; type: string; url: string }>
+        /** Replaces the target read entirely (it is given the time the debugger allows the read); a test makes it hang or change between reads. */
+        readTargets?: (
+          timeoutMs?: number,
+        ) => Promise<Array<{ targetId: string; type: string; url: string }>>
         assertSourcesUnchanged?: () => void
         workerPath?: string
         onPhase?: ExtensionPhaseReporter
@@ -591,7 +599,8 @@ export async function extensionEditorHarness(
           },
           port: 9333,
           surfaceTargetId: SURFACE_TARGET,
-          readTargets: async () =>
+          readTargets: async (timeoutMs) =>
+            (await overrides.readTargets?.(timeoutMs)) ??
             overrides.targets ?? [
               { targetId: SURFACE_TARGET, type: 'page', url: SURFACE_URL },
               {
@@ -600,11 +609,19 @@ export async function extensionEditorHarness(
                 url: WORKER_URL,
               },
             ],
-          startWorker:
-            overrides.startWorker ??
-            (async (): Promise<void> => {
+          startWorker: async (deadlineAt, signal) => {
+            if (overrides.startWorker === undefined) {
               startWorkerCalls.push(startWorkerCalls.length + 1)
-            }),
+              return { listed: true, sends: 1 }
+            }
+            // A test's own start answers a `WorkerStart`, or nothing when it only adds the worker child.
+            return (
+              (await overrides.startWorker(deadlineAt, signal)) ?? {
+                listed: true,
+                sends: 1,
+              }
+            )
+          },
           assertSourcesUnchanged:
             overrides.assertSourcesUnchanged ?? ((): void => {}),
           roots: { storage: [], workspace: [folder], home: ['/Users/ada'] },

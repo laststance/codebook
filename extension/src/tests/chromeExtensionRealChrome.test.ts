@@ -125,15 +125,21 @@ async function launch(
   context: TestContext,
   chrome: FoundChrome,
   run: ResolvedExtensionRun,
+  /** The profile root to use; a fresh temporary folder when omitted. A test that names one can look at it after a failed launch. */
+  givenRoot?: string,
 ): Promise<{ browser: OwnedExtensionBrowser; root: string }> {
-  const root = await realpath(
-    await mkdtemp(join(tmpdir(), 'codebook-real-chrome-')),
-  )
+  const root =
+    givenRoot ??
+    (await realpath(await mkdtemp(join(tmpdir(), 'codebook-real-chrome-'))))
   const browser = await launchOwnedExtensionBrowser({
     chromeExecutable: chrome.executable,
     profileRoot: root,
     owner: { hostname: 'real-chrome-test' },
     run,
+  }).catch(async (error: unknown) => {
+    // A launch that throws returns no browser to close after the test: the temporary folder goes now, so a failed or starved launch leaves nothing behind.
+    await rm(root, { recursive: true, force: true })
+    throw error
   })
   context.after(async () => {
     await browser.close()
@@ -311,37 +317,78 @@ test(
     if (!chrome) return
     // Arrange
     const run = await runOf(FIXTURE, {
+      workerPath: 'worker.js',
       surface: { kind: 'page', path: 'page.html' },
       surfaceUrl: `chrome-extension://${idOfPath(await realpath(FIXTURE))}/page.html`,
     })
     const { browser } = await launch(context, chrome, run)
+    // The precondition holds before the start: no worker is listed, so a later listing is the start's doing.
     const before = (await targetsOf(browser)).filter(
       ({ type }) => type === 'service_worker',
     )
+    assert.deepEqual(before, [])
     // Act
-    await browser.startWorker()
-    // On a loaded machine (the coverage run of the whole suite) the worker target took longer than a second to appear: poll the target list for it.
-    const started = await waitUntil(
-      async () => {
-        const workers = (await targetsOf(browser)).filter(
-          ({ type }) => type === 'service_worker',
-        )
-        return workers.length > 0 ? workers : undefined
-      },
-      'the extension’s service worker is listed after startWorker',
-      WORKER_LISTED_WAIT_MS,
+    // startWorker re-sends the start while the worker is not listed (Chrome can drop one start without an error), so a slow or dropped first start still ends listed.
+    const start = await browser.startWorker(
+      performance.now() + WORKER_LISTED_WAIT_MS,
+    )
+    const started = (await targetsOf(browser)).filter(
+      ({ type }) => type === 'service_worker',
+    )
+    // A timeout names what was seen, so a rare failure can be told apart afterwards.
+    assert.equal(
+      start.listed,
+      true,
+      `the worker was not listed after ${start.sends} sends in ${WORKER_LISTED_WAIT_MS} ms; targets: ${JSON.stringify(await targetsOf(browser))}`,
     )
     await browser.stopWorkers(EXTENSION_STOP_WORKERS_BOUND_MS)
     const after = (await targetsOf(browser)).filter(
       ({ type }) => type === 'service_worker',
     )
     // Assert
-    assert.equal(before.length, 0)
     assert.deepEqual(
       started.map(({ url }) => url),
       [`chrome-extension://${run.extensionId}/worker.js`],
     )
     assert.equal(after.length, 0)
+  },
+)
+
+// Value: protects=the re-send of ServiceWorker.startWorker is safe: Codebook sends it again to a worker that may already run; fails_when=Chrome answers a start of a running worker by replacing the worker (a new target id) or stopping it; no_claim=a worker with a js-debug session attached
+test(
+  'real Chrome: a start sent again to a listed worker leaves the same running worker target',
+  { timeout: TEST_TIMEOUT_MS },
+  async (context) => {
+    const chrome = await requireChrome(context)
+    if (!chrome) return
+    // Arrange
+    const run = await runOf(FIXTURE, {
+      workerPath: 'worker.js',
+      surface: { kind: 'page', path: 'page.html' },
+      surfaceUrl: `chrome-extension://${idOfPath(await realpath(FIXTURE))}/page.html`,
+    })
+    const { browser } = await launch(context, chrome, run)
+    const start = await browser.startWorker(
+      performance.now() + WORKER_LISTED_WAIT_MS,
+    )
+    assert.equal(start.listed, true)
+    const workerOf = async () =>
+      (await targetsOf(browser)).filter(({ type }) => type === 'service_worker')
+    const first = await workerOf()
+    // Act
+    await browser.cdp.request(
+      'ServiceWorker.startWorker',
+      { scopeURL: `chrome-extension://${run.extensionId}/` },
+      browser.controlSessionId,
+    )
+    await delay(500)
+    const second = await workerOf()
+    // Assert
+    assert.equal(first.length, 1)
+    assert.deepEqual(
+      second.map(({ targetId, url }) => [targetId, url]),
+      first.map(({ targetId, url }) => [targetId, url]),
+    )
   },
 )
 
@@ -379,6 +426,34 @@ test(
   },
 )
 
+// Value: protects=the test helper's cleanup: a launch that throws leaves no temporary profile root behind (a starved launch once leaked it); fails_when=the helper rethrows without removing its root; no_claim=the product's own profile removal (tested above)
+test(
+  'real Chrome: the test launch helper removes its profile root when the launch throws',
+  { timeout: TEST_TIMEOUT_MS },
+  async (context) => {
+    const chrome = await requireChrome(context)
+    if (!chrome) return
+    // Arrange
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-real-chrome-')),
+    )
+    context.after(() => rm(root, { recursive: true, force: true }))
+    const run = await runOf(FIXTURE, { extensionId: 'a'.repeat(32) })
+    // Act
+    const failure = await launch(context, chrome, run, root).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+    const rootLeft = await stat(root).then(
+      () => true,
+      () => false,
+    )
+    // Assert
+    assert.ok(failure instanceof StudyError)
+    assert.equal(rootLeft, false)
+  },
+)
+
 // Value: protects=ER4 against the real Chrome: the shape of a worker that cannot start (installed, but no worker target ever appears); fails_when=Chrome starts reporting such an extension as not loaded, or the worker target appears; no_claim=the error text of the failed registration
 test(
   'real Chrome: an extension whose worker has a syntax error installs and starts no worker target',
@@ -390,18 +465,20 @@ test(
     const root = await realpath(BROKEN_FIXTURE)
     const extensionId = idOfPath(root)
     const run = await runOf(BROKEN_FIXTURE, {
+      workerPath: 'worker.js',
       surface: { kind: 'page', path: 'manifest.json' },
       surfaceUrl: `chrome-extension://${extensionId}/manifest.json`,
     })
     // Act
     const { browser } = await launch(context, chrome, run)
-    await browser.startWorker().catch(() => undefined)
-    await delay(1_000)
+    // A worker that cannot start is never listed: a short deadline ends the wait with listed false.
+    const start = await browser.startWorker(performance.now() + 1_500)
     const workers = (await targetsOf(browser)).filter(
       ({ type }) => type === 'service_worker',
     )
     // Assert
     assert.equal(browser.extensionId, extensionId)
+    assert.equal(start.listed, false)
     assert.deepEqual(workers, [])
   },
 )

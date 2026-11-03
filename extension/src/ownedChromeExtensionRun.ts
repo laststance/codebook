@@ -655,9 +655,17 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
       run: resolved,
       port: browser.port,
       surfaceTargetId: browser.surfaceTargetId,
-      readTargets: async () =>
-        readCdpTargets(await browser.cdp.request('Target.getTargets', {})),
-      startWorker: () => browser.startWorker(),
+      readTargets: async (timeoutMs) =>
+        readCdpTargets(
+          await browser.cdp.request(
+            'Target.getTargets',
+            {},
+            undefined,
+            timeoutMs,
+          ),
+        ),
+      startWorker: (deadlineAt, signal) =>
+        browser.startWorker(deadlineAt, signal),
       assertSourcesUnchanged: () => this.sourceCheck?.(),
       roots: this.roots,
       record: this.record,
