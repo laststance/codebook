@@ -733,8 +733,9 @@ test('every reader of saved debugger history is classified and each serving read
     'utils/readTestHistoryEvents.ts',
     'nodeServerHistorySink.ts',
   ]
-  /** Serve the facts of a saved stop or study, in a list, a detail entry, a replay model or a recording context. */
+  /** Serve the facts of a saved stop or study, in a list, a detail entry, a replay model, a recording context or the native debugger's extra scope. */
   const factServingModules = [
+    'replayDebuggerSlot.ts',
     'resources.ts',
     'utils/readExtensionHistoryResource.ts',
     'utils/readRecordingResource.ts',

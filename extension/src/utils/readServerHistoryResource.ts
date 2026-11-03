@@ -8,6 +8,7 @@ import type { ResourceContent } from '../resources'
 import { answerUnreadableHistoryEntry } from './answerUnreadableHistoryEntry'
 import { maskSavedFacts } from './maskSavedFacts'
 import { maskSavedServerEntries } from './maskSavedServerEntries'
+import { maskSavedServerHeader } from './maskSavedServerHeader'
 import { readHistoryResourceTail } from './readHistoryResourceTail'
 import { readJsonPage } from './readJsonPage'
 import { rehydrateNodeServerEntries } from './rehydrateServerStopSnapshot'
@@ -156,7 +157,7 @@ function readServerEntryDetail(
 }
 
 /**
- * Answers a `codebook://node-history/<id>` resource for a server history: the history with its three verdicts, the lean events list, one entry's detail, or the learning material.
+ * Answers a `codebook://node-history/<id>` resource for a server history: the history with its three verdicts (its header masked again, {@link maskSavedServerHeader}), the lean events list, one entry's detail, or the learning material.
  * Called by {@link readResource} for an id the history repository resolves to the node-server profile.
  * @param store - The workspace's server history store.
  * @param studyId - The history's study id.
@@ -200,7 +201,8 @@ export async function readServerHistoryResource(
   return readHistoryResourceTail({
     store,
     studyId,
-    history,
+    // The header is masked again too: a history saved before `code` was masked kept the callback code in its declared request path.
+    history: { ...history, header: maskSavedServerHeader(history.header) },
     suffix,
     verdicts: (summary) => serverVerdicts(summary, history.seal !== undefined),
   })

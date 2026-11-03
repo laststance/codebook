@@ -487,3 +487,113 @@ test('presentNodeHistoryMoment presents nothing for a selection superseded durin
   assert.equal(created.length, 1)
   assert.deepEqual(next.presentations, [])
 })
+
+/** The mask placeholder, kept out of `label: [masked]` literals so the repository's secret scanner does not read them as credential assignments. */
+const MASK = '[masked]'
+
+/**
+ * Makes a debugger whose `present` records the inspections it was given, which is how the real {@link ReplayDebugger} decides whether a stop it shows is selected again.
+ * @param received - Receives the inspections argument of every presentation, in order.
+ * @example const view = inspectionRecordingDebugger(received)
+ */
+function inspectionRecordingDebugger(received: unknown[]): ReplayDebugger {
+  return {
+    get available(): boolean {
+      return true
+    },
+    async dispose(): Promise<void> {},
+    async present(
+      _snapshot: unknown,
+      _label: string,
+      _signal: AbortSignal,
+      _sourceDocument: unknown,
+      inspections?: unknown,
+    ): Promise<ReplayInspection> {
+      received.push(inspections)
+      return 'inspected'
+    },
+    invalidate(): void {},
+  } as unknown as ReplayDebugger
+}
+
+// protects=a test or server history moment that is presented again is not selected again in the native debugger, while its Cookie fact is still masked and its plain fact stays readable; fails_when=the slot hands the debugger a new masked array on each presentation (ReplayDebugger.present re-selects the stop whenever the inspections array differs), or serves the Cookie value; no_claim=the debugger's own selection check (replayDebugger tests)
+test('presenting the same recorded stop twice hands the debugger one masked facts array, with the Cookie fact masked and the plain fact readable', async () => {
+  // Arrange
+  const cookieValue = ['opaque', 'session', 'value', '4f9c2d71'].join('-')
+  const stop = {
+    ...STOP,
+    facts: [
+      {
+        path: 'cookieHeader',
+        mode: 'value',
+        display: `'sid=${cookieValue}; theme=dark'`,
+      },
+      { path: 'page', mode: 'value', display: "'page=2'" },
+    ],
+  } as unknown as NonNullable<NodeHistoryMomentInput['verifiedStop']>
+  const received: unknown[] = []
+  const view = inspectionRecordingDebugger(received)
+  const slot = new ReplayDebuggerSlot(
+    () => view,
+    () => {},
+    () => {},
+  )
+
+  // Act
+  await presentNodeHistoryMoment(slot, momentInput(stop, { value: true }))
+  await presentNodeHistoryMoment(slot, momentInput(stop, { value: true }))
+
+  // Assert
+  assert.equal(received.length, 2)
+  assert.equal(JSON.stringify(received).includes(cookieValue), false)
+  assert.deepEqual(received[0], [
+    { path: 'cookieHeader', mode: 'value', display: MASK },
+    { path: 'page', mode: 'value', display: "'page=2'" },
+  ])
+  assert.equal(
+    received[1],
+    received[0],
+    'the same stop reached the debugger as a new array, so it would be selected again',
+  )
+})
+
+// protects=each recorded stop keeps its own masked facts, so a stop presented after another is not shown the earlier stop's values; fails_when=the masked facts are cached by anything but the stop's own facts array; no_claim=the identity of the array for one stop (the test above)
+test('presenting another recorded stop hands the debugger that stop’s own masked facts', async () => {
+  // Arrange
+  const cookieValue = ['opaque', 'session', 'value', '4f9c2d71'].join('-')
+  const firstStop = {
+    ...STOP,
+    facts: [
+      {
+        path: 'cookieHeader',
+        mode: 'value',
+        display: `'sid=${cookieValue}; theme=dark'`,
+      },
+    ],
+  } as unknown as NonNullable<NodeHistoryMomentInput['verifiedStop']>
+  const secondStop = {
+    ...STOP,
+    index: 2,
+    facts: [{ path: 'page', mode: 'value', display: "'page=3'" }],
+  } as unknown as NonNullable<NodeHistoryMomentInput['verifiedStop']>
+  const received: unknown[] = []
+  const view = inspectionRecordingDebugger(received)
+  const slot = new ReplayDebuggerSlot(
+    () => view,
+    () => {},
+    () => {},
+  )
+
+  // Act
+  await presentNodeHistoryMoment(slot, momentInput(firstStop, { value: true }))
+  await presentNodeHistoryMoment(slot, momentInput(secondStop, { value: true }))
+
+  // Assert
+  assert.deepEqual(received[0], [
+    { path: 'cookieHeader', mode: 'value', display: MASK },
+  ])
+  assert.deepEqual(received[1], [
+    { path: 'page', mode: 'value', display: "'page=3'" },
+  ])
+  assert.notEqual(received[1], received[0])
+})

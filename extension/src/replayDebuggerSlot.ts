@@ -12,6 +12,36 @@ import { untilAborted } from './utils/untilAborted'
 /** A recorded stop of a test replay, as {@link presentNodeHistoryMoment} presents it. */
 type NodeTestHistoryStop = Extract<NodeTestHistoryEntry, { type: 'stop' }>
 
+/** The facts of a recorded stop, as the history saved them and as {@link maskedFactsOfStop} hands them on. */
+type NodeTestHistoryStopFacts = NodeTestHistoryStop['facts']
+
+/**
+ * The masked copy of each stop's facts, keyed by the stop's own facts array: the same stop is presented again as the same array, which is how {@link ReplayDebugger.present} knows the stop is already selected. Entries go with the stop's facts array.
+ */
+const maskedFactsByStop = new WeakMap<
+  NodeTestHistoryStopFacts,
+  NodeTestHistoryStopFacts
+>()
+
+/**
+ * Masks a recorded stop's facts once, so a stop that is presented again reaches the native debugger as the same array.
+ * Why: {@link maskSavedFacts} returns a new array on every call, and {@link ReplayDebugger.present} selects a stop again whenever the inspections array differs from the one it shows.
+ * Called by {@link presentNodeHistoryMoment} for each verified stop it presents.
+ * @param facts - The facts of the stop as the history saved them.
+ * @returns The masked facts; the same array for the same `facts` array.
+ * @example
+ * maskedFactsOfStop(stop.facts) === maskedFactsOfStop(stop.facts) // => true
+ */
+function maskedFactsOfStop(
+  facts: NodeTestHistoryStopFacts,
+): NodeTestHistoryStopFacts {
+  const known = maskedFactsByStop.get(facts)
+  if (known) return known
+  const masked = maskSavedFacts(facts)
+  maskedFactsByStop.set(facts, masked)
+  return masked
+}
+
 /** The words a server stop adds to its debugger thread, as {@link NodeRecordedSourceMessage} names them. */
 type ServerStopThread = Pick<
   Extract<NodeRecordedSourceMessage, { kind: 'thread' }>,
@@ -260,8 +290,8 @@ export async function presentNodeHistoryMoment(
           new AbortController().signal,
           { uri: input.slotUri, hash: verifiedStop.source.hash },
           // The stop's recorded inspections, so values outside the captured scopes stay inspectable in the native debugger.
-          // Facts saved before the shape rules are masked again before the native debugger shows them (Cycle 0073 task 0).
-          maskSavedFacts(verifiedStop.facts),
+          // Facts saved before the shape rules are masked again before the native debugger shows them (Cycle 0073 task 0); once per stop, so presenting it again is no new selection.
+          maskedFactsOfStop(verifiedStop.facts),
         ),
   )
   return {
