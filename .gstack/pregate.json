@@ -223,6 +223,14 @@
     {
       "finding": "env.kv",
       "paths": [
+        "extension/src/tests/fixtures/saved-bytes-09859e5d/*.json"
+      ],
+      "pattern": "entry-load",
+      "reason": "the operation key entry-load (a run-operation name, the field is called key) in the saved-study byte-identity fixtures recorded at 09859e5d; no secret value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
         "extension/src/tests/viteDevScript.test.ts"
       ],
       "pattern": "plainsecret1",
