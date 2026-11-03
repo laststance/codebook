@@ -10,7 +10,7 @@ Before final acceptance, open `/Users/ryotamurakami/repository/nextjs-dashboard`
 
 ## Run a Next app below the repository root
 
-A Next app in a folder below the repository root runs from the repository root, not from the app's folder: its own code is runnable and learnable when Next resolves inside the repository and every stop lies in the app's own files, a stop in a shared package outside the app's folder is refused before anything starts, and no saved sign-in session is used below the root, so an app that needs a sign-in cannot run there yet.
+A Next app in a folder below the repository root runs from the repository root, not from the app's folder: its own code is runnable and learnable when Next resolves inside the repository and every stop lies in the app's own files, a server stop in a workspace library the app links to inside the repository pauses when the library's build carries source maps with its checked-out source, any other stop outside the app's folder is refused before anything starts, and no saved sign-in session is used below the root, so an app that needs a sign-in cannot run there yet.
 
 1. Install the repository's dependencies at its root (for example `pnpm install` next to the lockfile); Codebook installs nothing and runs no install command.
 2. Open the **repository root** in the editor, not the app's folder, and run **Codebook: Set Up AI Chat** (below).
