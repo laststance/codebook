@@ -818,13 +818,37 @@ async function readBuiltFile(
   )
   charge(request, spend, text)
   const comment = /\/\/[#@]\s*sourceMappingURL=(\S+)\s*$/.exec(text)
-  // The built file must announce this very map, or the map says nothing about it.
+  // The built file must announce this very map by location, or the map says nothing about it.
   if (
     !comment ||
-    basename(decodeURIComponent(comment[1]!)) !== basename(map.mapRelativePath)
+    resolveMapComment(builtPath, comment[1]!) !== map.mapRelativePath
   )
     throw new UnmappedCause('malformed')
   return { builtPath, text }
+}
+
+/**
+ * Resolves a `sourceMappingURL` comment the way a source map consumer does: a relative URL against the built file's folder, percent-decoded.
+ *
+ * Why it exists: {@link readBuiltFile} must accept a map only when the built file names that very map, not a same-named map in another folder.
+ * @param builtPath - The built file's repository-relative `/` path.
+ * @param url - The comment's URL.
+ * @returns The repository-relative `/` path the comment names, or `undefined` for an inline `data:` map, another scheme, an absolute path, an invalid percent escape or a path leaving the repository.
+ * @example resolveMapComment('build/modern/core.js', './core.js.map') // => 'build/modern/core.js.map'
+ */
+function resolveMapComment(builtPath: string, url: string): string | undefined {
+  // A scheme (`data:`, `file:`, `https:`) or an absolute path is not a repository-relative map.
+  if (/^[a-z][a-z\d+.-]*:/i.test(url) || url.startsWith('/')) return undefined
+  let decoded: string
+  try {
+    decoded = decodeURIComponent(url.replace(/[?#].*$/, ''))
+  } catch {
+    return undefined
+  }
+  const resolved = posix.normalize(
+    posix.join(posix.dirname(builtPath), decoded),
+  )
+  return resolved.startsWith('../') || resolved === '..' ? undefined : resolved
 }
 
 /** The pieces of one candidate: its record and its mapping table. */
