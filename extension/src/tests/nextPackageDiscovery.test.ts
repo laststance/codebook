@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import {
+  chmod,
+  lstat,
   mkdir,
   mkdtemp,
   realpath,
@@ -16,7 +18,9 @@ import { promisify } from 'node:util'
 
 import { StudyError } from '../errors'
 import { RepositorySourceService } from '../repositorySource'
+import { describeNestedWorkspace } from '../utils/describeNestedWorkspace'
 import { discoverNextPackages } from '../utils/discoverNextPackages'
+import { pointRootStartToPackages } from '../utils/pointRootStartToPackages'
 import type { RepositoryAdapterReadiness } from '../utils/readRepositoryAdapterReadiness'
 import { readStatusAdapterReadiness } from '../utils/readStatusAdapterReadiness'
 import { selectedNextPackageStartPrerequisites } from '../utils/repositoryBrowserStartPrerequisites'
@@ -384,7 +388,7 @@ test('a root without Next points to packages and says why an empty list is incom
   assert.equal(pointed['next-dev-webpack'].ready, false)
   assert.deepEqual(incomplete['next-dev-webpack'].missing, [
     'Install the selected workspace dependencies, including Next, before using next-dev-webpack.',
-    "The list of Next apps below the repository root is incomplete: Git could not list the tracked files. Only Git-tracked package.json files are listed; if the app the question names is not in packages, declare its packageRoot from the repository's files and let the start check it.",
+    "The list of Next apps below the repository root is incomplete: Git could not list the tracked files. Only Git-tracked package.json files are listed. Folders deeper than 4 levels are not listed. If the app the question names is not in packages, declare its packageRoot from the repository's files and let the start check it.",
   ])
 })
 
@@ -408,7 +412,7 @@ test('a workspace below the Git root reports every adapter not ready with the ne
   assert.deepEqual(next.packages, [])
   assert.equal(
     next.missing[0],
-    `This folder lies inside the Git repository "${gitRootName}" at "examples/web", and no adapter can run from it. Ask the learner to open the "${gitRootName}" folder (the repository root) in the editor; do not retry in this window. A Next app (next-dev-webpack) then runs from the repository root with packageRoot "examples/web". Other adapters (vite-dev, node-server, node-test, chrome-extension) do not support a folder below the repository root yet and have no workaround.`,
+    `This folder lies inside the Git repository "${gitRootName}" at "examples/web", and source authoring refuses it for every adapter, so no run can be set up from it. Ask the learner to open the "${gitRootName}" folder (the repository root) in the editor; do not retry in this window. A Next app (next-dev-webpack) then runs from the repository root with packageRoot "examples/web". Other adapters (vite-dev, node-server, node-test, chrome-extension) have no packageRoot to declare: they also need the repository root opened.`,
   )
   assert.deepEqual(readiness['vite-dev'].missing, next.missing)
 })
@@ -607,4 +611,223 @@ test('codebook_status discovers packages and words their gaps without a private 
   assert.deepEqual(adapters?.['next-dev-webpack'].packages?.[0]?.missing, [
     "EACCES: permission denied, lstat '<storage>/apps/web/.next'",
   ])
+})
+
+const INSTALL_SENTENCE =
+  'Install the selected workspace dependencies, including Next, before using next-dev-webpack.'
+
+// protects=OCR 1: a non-StudyError failure while reading a package (an unreadable .next) becomes a fixed sentence naming only the errno code, never the absolute path; fails_when=the entry's missing holds String(error) with the repository path; no_claim=Windows or root-user permission models
+test('an unreadable .next folder reads as a path-free sentence naming the errno code', async (context) => {
+  // Arrange
+  if (process.platform === 'win32' || process.getuid?.() === 0) {
+    context.skip('permission bits do not deny access here')
+    return
+  }
+  const root = await makeRepository(context)
+  await trackedApp(root, 'apps/web')
+  await installNext(root, 'apps/web')
+  await put(root, 'apps/web/.next/dev/keep')
+  await chmod(join(root, 'apps/web/.next'), 0o000)
+  // Act
+  // The folder is opened again before the assertions: the repository's removal (a FIFO after hook) needs it readable.
+  const discovery = await discoverNextPackages(root).finally(() =>
+    chmod(join(root, 'apps/web/.next'), 0o755),
+  )
+  // Assert
+  assert.deepEqual(discovery.packages[0]?.missing, [
+    'The package could not be checked (EACCES).',
+  ])
+  assert.equal(discovery.packages[0]?.ready, false)
+})
+
+// protects=OCR 2: a root that is the Next app but lacks an installation keeps the install sentence in status and in a root start, and is never told it is not the app; fails_when=missing says the root is not the app or a root start is pointed at nested apps; no_claim=the start of a nested app
+test('a root app without an installation keeps the install sentence although apps exist below it', async (context) => {
+  // Arrange
+  const root = await makeRepository(context)
+  await put(root, 'package.json', NEXT_MANIFEST)
+  await put(root, 'app/page.tsx')
+  await track(root, 'package.json')
+  await trackedApp(root, 'apps/web')
+  // Act
+  const readiness = await readStatusAdapterReadiness(
+    root,
+    process.execPath,
+    SIGNAL,
+  )
+  const pointed = await pointRootStartToPackages([INSTALL_SENTENCE], root)
+  // Assert
+  assert.equal(readiness['next-dev-webpack'].rootIsApp, true)
+  assert.deepEqual(readiness['next-dev-webpack'].missing, [INSTALL_SENTENCE])
+  assert.deepEqual(pointed, [INSTALL_SENTENCE])
+})
+
+// protects=OCR 3: a nested package whose .next/dev/lock is the file Codebook's own run holds reads ready, while a lock of another file still reads foreign; fails_when=the owned lock is not threaded into the per-package check or is accepted for another package's lock; no_claim=the root entry (own check)
+test("a nested package holding the run's own development lock reads ready; a foreign lock does not", async (context) => {
+  // Arrange
+  const root = await makeRepository(context)
+  for (const name of ['mine', 'foreign']) {
+    await trackedApp(root, `apps/${name}`)
+    await installNext(root, `apps/${name}`)
+    await put(root, `apps/${name}/.next/dev/lock`)
+  }
+  const mine = await lstat(join(root, 'apps/mine/.next/dev/lock'), {
+    bigint: true,
+  })
+  // Act
+  const owned = await discoverNextPackages(root, {
+    ownedLock: { dev: mine.dev, ino: mine.ino },
+  })
+  const withoutOwner = await discoverNextPackages(root)
+  // Assert
+  const readyByPackage = (list: typeof owned) =>
+    Object.fromEntries(
+      list.packages.map((entry) => [entry.packageRoot, entry.ready]),
+    )
+  assert.deepEqual(readyByPackage(owned), {
+    'apps/foreign': false,
+    'apps/mine': true,
+  })
+  assert.deepEqual(readyByPackage(withoutOwner), {
+    'apps/foreign': false,
+    'apps/mine': false,
+  })
+})
+
+// protects=OCR 4: the placement read and the discovery share one 5 s deadline (E15): when the placement read used the budget the discovery lists nothing and reports deadline; fails_when=the discovery gets a fresh budget after a slow placement read; no_claim=real Git timing
+test('a placement read that used the shared deadline leaves the discovery no time', async (context) => {
+  // Arrange
+  const root = await makeRepository(context)
+  await trackedApp(root, 'apps/web')
+  let calls = 0
+  // The first two reads happen before the placement read ends; later reads see the budget spent.
+  const now = (): number => (++calls <= 2 ? 0 : 5_000)
+  // Act
+  const readiness = await readStatusAdapterReadiness(
+    root,
+    process.execPath,
+    SIGNAL,
+    { discovery: { now } },
+  )
+  // Assert
+  const next = readiness['next-dev-webpack']
+  assert.deepEqual(next.packages, [])
+  assert.equal(next.packagesTruncatedReason, 'deadline')
+})
+
+// protects=OCR 4: rootIsApp is read although Git cannot place the folder; fails_when=a Git failure forces rootIsApp false; no_claim=the packages list (git-failed)
+test('rootIsApp is read when Git cannot place the opened folder', async (context) => {
+  // Arrange
+  const folder = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-nogit-')),
+  )
+  context.after(() => rm(folder, { recursive: true, force: true }))
+  await put(folder, 'package.json', NEXT_MANIFEST)
+  await put(folder, 'app/page.tsx')
+  // Act
+  const readiness = await readStatusAdapterReadiness(
+    folder,
+    process.execPath,
+    SIGNAL,
+  )
+  // Assert
+  assert.equal(readiness['next-dev-webpack'].rootIsApp, true)
+  assert.equal(
+    readiness['next-dev-webpack'].packagesTruncatedReason,
+    'git-failed',
+  )
+})
+
+// protects=OCR 5: an already-aborted signal ends the scan before anything is visited, and the caller's signal keeps no listener after the scan; fails_when=the scan visits apps after an abort or leaves its listener on the signal; no_claim=abort in the middle of a read
+test('a scan with an aborted signal visits nothing and leaves no listener on a live signal', async (context) => {
+  // Arrange
+  const root = await makeRepository(context)
+  await trackedApp(root, 'apps/web')
+  const live = new AbortController().signal
+  const added: string[] = []
+  const removed: string[] = []
+  const addEventListener = live.addEventListener.bind(live)
+  const removeEventListener = live.removeEventListener.bind(live)
+  live.addEventListener = ((type: string, ...rest: unknown[]) => {
+    added.push(type)
+    return Reflect.apply(addEventListener, live, [type, ...rest])
+  }) as typeof live.addEventListener
+  live.removeEventListener = ((type: string, ...rest: unknown[]) => {
+    removed.push(type)
+    return Reflect.apply(removeEventListener, live, [type, ...rest])
+  }) as typeof live.removeEventListener
+  const visited: string[] = []
+  const visit = async (app: { packageRoot: string }): Promise<string> => {
+    visited.push(app.packageRoot)
+    return app.packageRoot
+  }
+  // Act
+  const abortedScan = await scanNextPackages(root, visit, {
+    signal: AbortSignal.abort(),
+  })
+  const visitedAfterAbort = [...visited]
+  const liveScan = await scanNextPackages(root, visit, { signal: live })
+  // Assert
+  assert.deepEqual(abortedScan.items, [])
+  assert.deepEqual(visitedAfterAbort, [])
+  assert.deepEqual(liveScan.items, ['apps/web'])
+  assert.deepEqual(added, ['abort'])
+  assert.deepEqual(removed, ['abort'])
+})
+
+// protects=OCR 6: a workspace folder named ..foo below the Git root is below it, with its exact packageRoot; fails_when=startsWith('..') treats it as outside; no_claim=real links
+test('a nested workspace folder named ..foo is named by its packageRoot', () => {
+  // Arrange
+  const gitRoot = join(tmpdir(), 'codebook-repo')
+  // Act
+  const described = describeNestedWorkspace(
+    gitRoot,
+    join(gitRoot, '..foo', 'web'),
+  )
+  // Assert
+  assert.deepEqual(described, {
+    gitRootName: 'codebook-repo',
+    packageRoot: '..foo/web',
+  })
+})
+
+// protects=OCR 7: a folder whose name the 120-character declaration cut would shorten is never suggested, in the suggestions, the root pointer or the nested recovery; fails_when=a truncated value is offered as the exact packageRoot; no_claim=the status list, which keeps every listed path
+test('a folder longer than the declaration cut is not offered as a packageRoot', async (context) => {
+  // Arrange
+  const root = await makeRepository(context)
+  const longFolder = `apps/${'a'.repeat(130)}`
+  await trackedApp(root, longFolder)
+  await trackedApp(root, 'apps/web')
+  // Act
+  const suggested = await suggestNextPackageRoots(root)
+  const pointed = await pointRootStartToPackages([INSTALL_SENTENCE], root)
+  const nested = describeNestedWorkspace(root, join(root, longFolder))
+  // Assert
+  assert.deepEqual(suggested, ['apps/web'])
+  assert.equal(pointed[0]?.includes('aaaa'), false)
+  assert.match(pointed[0] ?? '', /for example "apps\/web"\)/)
+  assert.equal(nested.packageRoot, undefined)
+})
+
+// protects=OCR 8: the root pointer says that folders deeper than 4 are not listed, because the scan drops them without a truncation flag; fails_when=the depth limit is unsaid; no_claim=listing deeper folders
+test('the root pointer says that folders deeper than four levels are not listed', async (context) => {
+  // Arrange
+  const root = await makeRepository(context)
+  await trackedApp(root, 'apps/web')
+  await trackedApp(root, 'a/b/c/d/e')
+  // Act
+  const readiness = await readStatusAdapterReadiness(
+    root,
+    process.execPath,
+    SIGNAL,
+  )
+  // Assert
+  assert.deepEqual(
+    readiness['next-dev-webpack'].packages?.map((entry) => entry.packageRoot),
+    ['apps/web'],
+  )
+  assert.ok(
+    readiness['next-dev-webpack'].missing.includes(
+      'Folders deeper than 4 levels are not listed.',
+    ),
+  )
 })

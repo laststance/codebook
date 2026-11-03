@@ -1,15 +1,23 @@
 import { realpath } from 'node:fs/promises'
 
-import { REPOSITORY_GIT_TIMEOUT_MS } from '../constants'
+import {
+  NEXT_PACKAGE_DISCOVERY_MANIFEST_BYTES,
+  REPOSITORY_GIT_TOPLEVEL_BYTES,
+  REPOSITORY_GIT_TIMEOUT_MS,
+} from '../constants'
 
 import {
   describeNestedWorkspace,
   describeNestedWorkspaceRecovery,
 } from './describeNestedWorkspace'
-import { describeNextPackagesTruncation } from './describeNextPackagesTruncation'
+import {
+  describeNextPackagesTruncation,
+  NEXT_PACKAGE_DEPTH_SENTENCE,
+} from './describeNextPackagesTruncation'
 import {
   discoverNextPackages,
   type DiscoverNextPackagesOptions,
+  type NextPackageDiscovery,
 } from './discoverNextPackages'
 import { manifestNamesNext } from './nextManifest'
 import { readNextRouterKind } from './readNextRouterKind'
@@ -21,23 +29,20 @@ import {
 import { readRepositoryBuildText } from './readRepositoryBuildText'
 import { readGitTopLevel } from './runOpenedFolderGit'
 
-/** The root `package.json` is read through the safe reader with the same cap as the discovery's manifests. */
-const ROOT_MANIFEST_LIMIT_BYTES = 256 * 1024
-
 /**
  * Says whether the opened root is itself the Next app: its `package.json` names `next` and it has a route folder (E3).
  *
- * A hoisted root `node_modules/next` alone never makes the root the choice. Called by {@link readStatusAdapterReadiness}.
+ * A hoisted root `node_modules/next` alone never makes the root the choice. Called by {@link readStatusAdapterReadiness} and by {@link pointRootStartToPackages}.
  *
  * @param workspace - The opened repository's root.
  * @returns `true` for a root app; `false` for an unreadable manifest, no `next` dependency or no route folder.
  * @example await readRootIsApp('/repo') // => false for a monorepo root that only hoists Next
  */
-async function readRootIsApp(workspace: string): Promise<boolean> {
+export async function readRootIsApp(workspace: string): Promise<boolean> {
   const text = await readRepositoryBuildText(
     workspace,
     'package.json',
-    ROOT_MANIFEST_LIMIT_BYTES,
+    NEXT_PACKAGE_DISCOVERY_MANIFEST_BYTES,
   ).catch(() => undefined)
   if (text === undefined) return false
   let namesNext: boolean
@@ -55,16 +60,17 @@ type Placement =
   | { kind: 'nested'; gitRoot: string; workspace: string }
   | { kind: 'no-git' }
 
-/** Asks Git where the opened folder lies; any Git failure is `no-git`. */
+/** Asks Git where the opened folder lies within `timeoutMs`; any Git failure is `no-git`. */
 async function readPlacement(
   workspace: string,
   signal: AbortSignal,
+  timeoutMs: number,
 ): Promise<Placement> {
   try {
     const [top, real] = await Promise.all([
       readGitTopLevel(workspace, {
-        timeoutMs: REPOSITORY_GIT_TIMEOUT_MS,
-        maxBuffer: 65_536,
+        timeoutMs: Math.max(1, timeoutMs),
+        maxBuffer: REPOSITORY_GIT_TOPLEVEL_BYTES,
         signal,
       }).then((path) => realpath(path)),
       realpath(workspace),
@@ -79,6 +85,7 @@ async function readPlacement(
 
 /** The options of {@link readStatusAdapterReadiness}; the discovery's clock, deadline and entry reader are injectable. */
 export type StatusReadinessOptions = {
+  /** The discovery's clock, deadline, limits, owned lock and entry reader; `now` and `timeoutMs` also bound the placement read, which shares the discovery's one deadline. */
   discovery?: DiscoverNextPackagesOptions
 }
 
@@ -104,12 +111,21 @@ export async function readStatusAdapterReadiness(
   signal: AbortSignal,
   options: StatusReadinessOptions = {},
 ): Promise<RepositoryAdapterReadiness> {
-  const placement = await readPlacement(workspace, signal)
+  // E15: one deadline covers the placement read and the discovery, so a slow Git costs the discovery its share instead of doubling the wait.
+  const now = options.discovery?.now ?? Date.now
+  const deadlineAt =
+    now() + (options.discovery?.timeoutMs ?? REPOSITORY_GIT_TIMEOUT_MS)
+  const placement = await readPlacement(workspace, signal, deadlineAt - now())
   const [base, rootIsApp, discovery] = await Promise.all([
     readRepositoryAdapterReadiness(workspace, node, signal),
-    placement.kind === 'root' ? readRootIsApp(workspace) : false,
+    // The root manifest is read even when Git failed: rootIsApp does not depend on Git.
+    placement.kind === 'nested' ? false : readRootIsApp(workspace),
     placement.kind === 'root'
-      ? discoverNextPackages(workspace, { ...options.discovery, signal })
+      ? discoverNextPackages(workspace, {
+          ...options.discovery,
+          timeoutMs: Math.max(0, deadlineAt - now()),
+          signal,
+        })
       : undefined,
   ])
   if (placement.kind === 'nested') {
@@ -133,16 +149,27 @@ export async function readStatusAdapterReadiness(
     rootIsApp,
     packages: discovery?.packages ?? [],
     packagesTruncated: discovery?.packagesTruncated ?? true,
-    ...(discovery
-      ? discovery.packagesTruncatedReason
-        ? { packagesTruncatedReason: discovery.packagesTruncatedReason }
-        : {}
-      : { packagesTruncatedReason: 'git-failed' as const }),
+    ...truncationReasonOf(discovery),
   }
   return {
     'next-dev-webpack': { ...next, missing: rootMissing(next) },
     'vite-dev': base['vite-dev'],
   }
+}
+
+/**
+ * Names the truncation reason of the discovery, or `git-failed` when none ran.
+ * @param discovery - The discovery's answer; `undefined` when Git could not place the folder.
+ * @returns The `packagesTruncatedReason` field to spread, or nothing for a complete list.
+ * @example truncationReasonOf(undefined) // => { packagesTruncatedReason: 'git-failed' }
+ */
+function truncationReasonOf(
+  discovery: NextPackageDiscovery | undefined,
+): Pick<NextAdapterReadiness, 'packagesTruncatedReason'> {
+  if (!discovery) return { packagesTruncatedReason: 'git-failed' }
+  if (discovery.packagesTruncatedReason)
+    return { packagesTruncatedReason: discovery.packagesTruncatedReason }
+  return {}
 }
 
 /**
@@ -159,8 +186,8 @@ export async function readStatusAdapterReadiness(
  * @example rootMissing({ ready: false, missing: ['Install …'], packages: [], packagesTruncated: false }) // => ['Install …']
  */
 function rootMissing(next: NextAdapterReadiness): string[] {
-  // Only a root that has no Next installation (no router kind is read then) is rewritten.
-  if (next.routerKind !== undefined) return next.missing
+  // Only a root that has no Next installation (no router kind is read then) is rewritten, and never a root that is itself the app: its only gap is the install.
+  if (next.routerKind !== undefined || next.rootIsApp) return next.missing
   const incomplete =
     next.packagesTruncated && next.packagesTruncatedReason
       ? [describeNextPackagesTruncation(next.packagesTruncatedReason)]
@@ -168,7 +195,7 @@ function rootMissing(next: NextAdapterReadiness): string[] {
   if (next.packages && next.packages.length > 0)
     return [
       "Next is not installed at the repository root, so the root is not the app. Next apps below the root are listed in packages: start the one the question is about by declaring its packageRoot (the entry's packageRoot value), and only when that entry's ready is true.",
-      ...incomplete,
+      ...(incomplete.length > 0 ? incomplete : [NEXT_PACKAGE_DEPTH_SENTENCE]),
     ]
   return incomplete.length > 0 ? [...next.missing, ...incomplete] : next.missing
 }

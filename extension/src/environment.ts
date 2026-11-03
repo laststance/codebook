@@ -472,6 +472,8 @@ export async function createEnvironment(
             workspace,
             nodeExecutable,
             new AbortController().signal,
+            // The run's own live lock is not foreign at its own package.
+            { discovery: { ownedLock: ownedConfiguredLock } },
           )
         : await readRepositoryAdapterReadiness(
             workspace,

@@ -1,3 +1,4 @@
+import { readRootIsApp } from './readStatusAdapterReadiness'
 import { sanitizeDeclaredPath } from './resolveNextPackage'
 import { suggestNextPackageRoots } from './scanNextPackages'
 
@@ -11,7 +12,7 @@ const INSTALL_SENTENCE_START = 'Install the selected workspace dependencies'
  * @param missing - The unready start's `missing` sentences.
  * @param workspace - The opened repository's root.
  * @returns
- * - `missing` unchanged when no sentence is the install sentence, or when no Next app is found below the root
+ * - `missing` unchanged when no sentence is the install sentence, when the root is itself the Next app (only its install is missing), or when no Next app is found below the root
  * - The sentences with the install sentence replaced by one that names up to five discovered `packageRoot` values and points to `packages` in `codebook_status`
  * @example await pointRootStartToPackages(['Install the selected workspace dependencies, including Next, before using next-dev-webpack.'], '/repo') // => ['Next is not installed at the repository root, but this repository has Next apps below it (for example "apps/web"). …']
  */
@@ -21,6 +22,8 @@ export async function pointRootStartToPackages(
 ): Promise<string[]> {
   if (!missing.some((sentence) => sentence.includes(INSTALL_SENTENCE_START)))
     return [...missing]
+  // A root that is the app but lacks an installation needs the install sentence, not a pointer to other apps.
+  if (await readRootIsApp(workspace)) return [...missing]
   const roots = await suggestNextPackageRoots(workspace)
   if (roots.length === 0) return [...missing]
   const named = roots

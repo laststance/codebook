@@ -1,8 +1,12 @@
+import { lstat } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { StudyError } from '../errors'
 
-import { assertDevelopmentWorkspace } from './assertDevelopmentWorkspace'
+import {
+  assertDevelopmentWorkspace,
+  type DevelopmentLockIdentity,
+} from './assertDevelopmentWorkspace'
 import { readNextRouterKind } from './readNextRouterKind'
 import {
   readNextInstallation,
@@ -25,11 +29,58 @@ export type NextPackageDiscovery = {
 
 /** Options of {@link discoverNextPackages}; `readPackage` is injectable so a test can make one package slow. */
 export type DiscoverNextPackagesOptions = ScanNextPackagesOptions & {
+  /** The lock identity Codebook's own running app holds; a package whose `.next/dev/lock` is exactly that file is not judged foreign. */
+  ownedLock?: DevelopmentLockIdentity
   readPackage?: (
     repositoryRoot: string,
     packageRoot: string,
     signal: AbortSignal,
+    ownedLock?: DevelopmentLockIdentity,
   ) => Promise<NextPackageReadiness>
+}
+
+/**
+ * Words a failure of a package read as a sentence for `codebook_status`, without any path.
+ *
+ * Why it exists: an `lstat` of an unreadable `.next` throws an Error whose text holds the absolute path, and an entry's `missing` reaches the chat. A {@link StudyError} already words its own message; anything else becomes a fixed sentence naming only the errno code. Called by {@link readNextPackageReadiness}.
+ *
+ * @param error - What the read threw.
+ * @returns The sentence.
+ * @example describeReadFailure(Object.assign(new Error("EACCES: lstat '/x/.next'"), { code: 'EACCES' })) // => 'The package could not be checked (EACCES).'
+ */
+function describeReadFailure(error: unknown): string {
+  if (error instanceof StudyError) return error.message
+  const code =
+    typeof error === 'object' && error !== null && 'code' in error
+      ? error.code
+      : undefined
+  // Only an errno-shaped code is repeated; any other value could carry text.
+  return typeof code === 'string' && /^[A-Z][A-Z0-9_]{1,30}$/.test(code)
+    ? `The package could not be checked (${code}).`
+    : 'The package could not be checked.'
+}
+
+/**
+ * Keeps the owned lock identity only when it is this package's own lock file.
+ *
+ * Why it exists: the run owns one `.next/dev/lock`; handing it to another package's check would call that package's missing lock foreign. Called by {@link readNextPackageReadiness}.
+ *
+ * @param packageRoot - The package's real root.
+ * @param ownedLock - The identity the running app holds, if any.
+ * @returns `ownedLock` when `<packageRoot>/.next/dev/lock` is that file; `undefined` otherwise.
+ * @example await ownedLockOfPackage('/repo/apps/web', { dev: 1n, ino: 2n }) // => { dev: 1n, ino: 2n } when that is its lock
+ */
+async function ownedLockOfPackage(
+  packageRoot: string,
+  ownedLock: DevelopmentLockIdentity | undefined,
+): Promise<DevelopmentLockIdentity | undefined> {
+  if (!ownedLock) return undefined
+  const identity = await lstat(join(packageRoot, '.next/dev/lock'), {
+    bigint: true,
+  }).catch(() => undefined)
+  return identity?.dev === ownedLock.dev && identity.ino === ownedLock.ino
+    ? ownedLock
+    : undefined
 }
 
 /**
@@ -40,6 +91,7 @@ export type DiscoverNextPackagesOptions = ScanNextPackagesOptions & {
  * @param repositoryRoot - The opened repository's root.
  * @param packageRoot - The discovered repository-relative folder.
  * @param signal - Ends the checks.
+ * @param ownedLock - The lock identity Codebook's own running app holds, permitted at its own package.
  * @returns The entry.
  * @example await readNextPackageReadiness('/repo', 'apps/web', signal) // => { packageRoot: 'apps/web', routerKind: 'app', installed: true, ready: true, version: '16.0.1', missing: [] }
  */
@@ -47,6 +99,7 @@ async function readNextPackageReadiness(
   repositoryRoot: string,
   packageRoot: string,
   signal: AbortSignal,
+  ownedLock?: DevelopmentLockIdentity,
 ): Promise<NextPackageReadiness> {
   let resolved: Awaited<ReturnType<typeof resolveNextPackage>>
   try {
@@ -58,7 +111,7 @@ async function readNextPackageReadiness(
       routerKind: await readNextRouterKind(join(repositoryRoot, packageRoot)),
       installed: false,
       ready: false,
-      missing: [error instanceof Error ? error.message : String(error)],
+      missing: [describeReadFailure(error)],
     }
   }
   const [routerKind, installation, gaps] = await Promise.all([
@@ -67,13 +120,11 @@ async function readNextPackageReadiness(
     assertDevelopmentWorkspace(
       resolved.packageRoot,
       signal,
-      undefined,
+      await ownedLockOfPackage(resolved.packageRoot, ownedLock),
       resolved.nextFolder,
     ).then(
       () => [],
-      (error: unknown) => [
-        error instanceof StudyError ? error.message : String(error),
-      ],
+      (error: unknown) => [describeReadFailure(error)],
     ),
   ])
   const missing = [...installation.missing, ...gaps]
@@ -103,10 +154,15 @@ export async function discoverNextPackages(
   repositoryRoot: string,
   options: DiscoverNextPackagesOptions = {},
 ): Promise<NextPackageDiscovery> {
-  const { readPackage = readNextPackageReadiness, ...scanOptions } = options
+  const {
+    readPackage = readNextPackageReadiness,
+    ownedLock,
+    ...scanOptions
+  } = options
   const scan = await scanNextPackages(
     repositoryRoot,
-    (app, signal) => readPackage(repositoryRoot, app.packageRoot, signal),
+    (app, signal) =>
+      readPackage(repositoryRoot, app.packageRoot, signal, ownedLock),
     scanOptions,
   )
   return {

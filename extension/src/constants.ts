@@ -862,6 +862,8 @@ export const NEXT_PACKAGE_DISCOVERY_MAX_PATH_CHARS = 256
 export const NEXT_PACKAGE_DISCOVERY_CONCURRENCY = 8
 /** The output cap of the discovery's `git ls-files`; an overflow ends the discovery as `git-failed`. */
 export const NEXT_PACKAGE_DISCOVERY_GIT_BYTES = 8 * 1024 * 1024
+/** The `maxBuffer` of the one `git rev-parse --show-toplevel` that decides where the opened folder lies (a path, far below this). */
+export const REPOSITORY_GIT_TOPLEVEL_BYTES = 65_536
 /** How long a refusal waits for the discovered `packageRoot` suggestions. */
 export const NEXT_PACKAGE_SUGGESTION_TIMEOUT_MS = 2_000
 /** How many discovered `packageRoot` values a refusal carries as `details.suggestions`. */

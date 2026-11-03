@@ -15,6 +15,7 @@ import {
 
 import { manifestNamesNext } from './nextManifest'
 import { readRepositoryBuildText } from './readRepositoryBuildText'
+import { sanitizeDeclaredPath } from './resolveNextPackage'
 import {
   runOpenedFolderGit,
   type OpenedFolderGitLimits,
@@ -100,7 +101,7 @@ function isMissingFile(error: unknown): boolean {
 }
 
 /**
- * Lists the Git-tracked folders below the repository root, shallow-first, whose `package.json` could hold a Next app.
+ * Lists the Git-tracked folders below the repository root, shallow-first, whose `package.json` could hold a Next app (a folder deeper than the depth limit is not listed).
  * @param output - NUL-separated `git ls-files -z` output.
  * @returns The folders to read and whether a path was skipped for its length or a control character.
  * @example listManifestFolders('a/package.json\0b/c/package.json\0package.json\0') // => { folders: ['a', 'b/c'], skippedPath: false }
@@ -264,7 +265,10 @@ export async function scanNextPackages<Item>(
   }
   const deadlineAt = now() + timeoutMs
   const stop = new AbortController()
-  options.signal?.addEventListener('abort', () => stop.abort(), { once: true })
+  const onCallerAbort = (): void => stop.abort()
+  // An already-aborted signal never fires its event, so it is read first.
+  if (options.signal?.aborted) return { items: [] }
+  options.signal?.addEventListener('abort', onCallerAbort, { once: true })
   const items: Item[] = []
   let reason: NextPackageTruncationReason | undefined
   const note = (next: NextPackageTruncationReason): void => {
@@ -333,11 +337,17 @@ export async function scanNextPackages<Item>(
       Math.max(0, deadlineAt - now()),
     )
   })
-  const outcome = await Promise.race([
-    collect().then(() => 'done' as const),
-    expiry,
-  ])
-  clearTimeout(timer)
+  let outcome: 'done' | 'expired'
+  try {
+    outcome = await Promise.race([
+      collect().then(() => 'done' as const),
+      expiry,
+    ])
+  } finally {
+    // The caller's signal can outlive the scan, so the listener must not.
+    clearTimeout(timer)
+    options.signal?.removeEventListener('abort', onCallerAbort)
+  }
   if (outcome === 'expired') {
     stop.abort()
     note('deadline')
@@ -352,7 +362,7 @@ export async function scanNextPackages<Item>(
  *
  * @param repositoryRoot - The opened repository's root.
  * @param options - Clock and cancellation; the deadline is {@link NEXT_PACKAGE_SUGGESTION_TIMEOUT_MS}.
- * @returns The first five Next-app folders, shallow-first then by path.
+ * @returns The first five Next-app folders whose names can be declared exactly, shallow-first then by path.
  * @example await suggestNextPackageRoots('/repo') // => ['examples/react/nextjs']
  */
 export async function suggestNextPackageRoots(
@@ -361,7 +371,12 @@ export async function suggestNextPackageRoots(
 ): Promise<string[]> {
   const scan = await scanNextPackages(
     repositoryRoot,
-    async (app) => app.packageRoot,
+    async (app) => {
+      // A folder the declaration cut would shorten fails when declared, so it is never suggested.
+      if (sanitizeDeclaredPath(app.packageRoot) !== app.packageRoot)
+        throw new Error('The folder name is too long to declare.')
+      return app.packageRoot
+    },
     {
       ...options,
       timeoutMs: NEXT_PACKAGE_SUGGESTION_TIMEOUT_MS,

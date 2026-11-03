@@ -28,12 +28,15 @@ export function describeNestedWorkspace(
 ): NestedWorkspace {
   const rootName = basename(gitRoot)
   const path = relative(gitRoot, workspace)
-  const isBelow = path !== '' && !path.startsWith('..') && !isAbsolute(path)
+  // A folder named `..foo` lies below the root; only a `..` segment leaves it.
+  const leaves = path === '..' || path.startsWith(`..${sep}`)
+  const isBelow = path !== '' && !leaves && !isAbsolute(path)
+  const posixPath = path.split(sep).join('/')
+  // A path the declaration cut would shorten (or rewrite) is not the exact value to declare, so none is offered.
+  const declarable = isBelow && sanitizeDeclaredPath(posixPath) === posixPath
   return {
     gitRootName: sanitizeDeclaredPath(rootName || 'the Git root folder'),
-    ...(isBelow
-      ? { packageRoot: sanitizeDeclaredPath(path.split(sep).join('/')) }
-      : {}),
+    ...(declarable ? { packageRoot: posixPath } : {}),
   }
 }
 
@@ -55,7 +58,7 @@ export function describeNestedWorkspaceRecovery(
   const declaration = nested.packageRoot
     ? `with packageRoot "${nested.packageRoot}"`
     : "with packageRoot set to the opened folder's repository-relative path"
-  return `This folder lies inside the Git repository "${nested.gitRootName}"${folder}, and no adapter can run from it. Ask the learner to open the "${nested.gitRootName}" folder (the repository root) in the editor; do not retry in this window. A Next app (next-dev-webpack) then runs from the repository root ${declaration}. Other adapters (vite-dev, node-server, node-test, chrome-extension) do not support a folder below the repository root yet and have no workaround.`
+  return `This folder lies inside the Git repository "${nested.gitRootName}"${folder}, and source authoring refuses it for every adapter, so no run can be set up from it. Ask the learner to open the "${nested.gitRootName}" folder (the repository root) in the editor; do not retry in this window. A Next app (next-dev-webpack) then runs from the repository root ${declaration}. Other adapters (vite-dev, node-server, node-test, chrome-extension) have no packageRoot to declare: they also need the repository root opened.`
 }
 
 /**
