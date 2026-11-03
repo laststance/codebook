@@ -562,6 +562,8 @@ export type ConfiguredRuntimeView = {
   session?: 'saved' | 'fresh'
   /** `kept` for a run that started with the saved session: the app data the profile already had stays (such a run never writes `initialStorage`: a configuration that declares it is refused). */
   appState?: 'kept'
+  /** `package-root` for a run that declared a `packageRoot` other than "." and so never loaded the repository's saved session; the run resource serves it as `savedSessionSkipped`. */
+  savedSessionSkipped?: 'package-root'
   /** The saved-session status the run read at admission; the run resource serves it as `savedSession`. */
   savedSession?: SavedSessionStatus
   /** The saved-session confirmation of a version 3 run; the service fills it, not the runtime. */

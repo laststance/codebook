@@ -985,8 +985,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /** Why a `SIGN_IN_REQUIRED` of a run that started fresh names, as the store's admission gave it. */
   private freshSignInReason: Extract<
     SignInRequiredReason,
-    'no-saved-session' | 'setup-not-finished'
+    'no-saved-session' | 'setup-not-finished' | 'package-root-fresh-session'
   > = 'no-saved-session'
+  /** Set when the run declared a `packageRoot` other than "." and so skipped the repository's saved session ({@link admitSession}); served as `savedSessionSkipped`. */
+  private savedSessionSkipped?: 'package-root'
   /** Whether the readiness check found the entry redirected to a sign-in path, so a saved run loads it once in its browser before sealing ({@link warmEntryBehindSignIn}). */
   private entryBehindSignIn = false
   /** The entry answer of a workspace with a Pages folder whose entry is behind sign-in: its route manifests are read only after the saved session's browser loaded the entry, which compiles the route ({@link resolvePagesCapableRoute}). */
@@ -1423,6 +1425,50 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Starts a run that declared a `packageRoot` other than "." with a fresh profile and never asks the saved-session store (D11).
+   *
+   * Why it exists: the repository's saved session was set up for the root app, so a package below the root must not load it, hold its lock or remember its sign-in paths. Called first by {@link admitSession}.
+   * @returns Whether the run skipped the saved session; `false` leaves the root-run path unchanged.
+   * @example this.skipSavedSessionOfPackageRoot() // true for packageRoot "examples/app", false when absent or "."
+   */
+  private skipSavedSessionOfPackageRoot(): boolean {
+    const declaredPackageRoot =
+      'packageRoot' in this.definition.configuration
+        ? this.definition.configuration.packageRoot
+        : undefined
+    if (declaredPackageRoot === undefined || declaredPackageRoot === '.')
+      return false
+    this.session = 'fresh'
+    this.savedSessionSkipped = 'package-root'
+    this.freshSignInReason = 'package-root-fresh-session'
+    this.evidence.record('run.session', {
+      session: 'fresh',
+      store: false,
+      savedSessionSkipped: 'package-root',
+    })
+    this.logRunStart('info', `web app session: ${this.session} (package root)`)
+    return true
+  }
+
+  /**
+   * Hands the run's declared sign-in paths to the saved-session store so the next setup offers them first.
+   *
+   * Called by {@link admitSession} for a root run only: a package below the root returns earlier ({@link skipSavedSessionOfPackageRoot}) and so records nothing into the root app's store. A failure is only noted, since the run does not depend on it.
+   * @param port - The saved-session store bound to the run.
+   * @param signInPaths - The configuration's `signInPaths`, if any.
+   * @example this.rememberDeclaredSignInPaths(port, ['/login'])
+   */
+  private rememberDeclaredSignInPaths(
+    port: SavedSessionRunPort,
+    signInPaths: readonly string[] | undefined,
+  ): void {
+    if (!signInPaths) return
+    void port.rememberSignInPaths([...signInPaths]).catch(() => {
+      this.evidence.record('run.sign-in-paths-not-remembered')
+    })
+  }
+
+  /**
    * Asks the saved-session store once whether this version 3 run starts with the learner's saved session or with a fresh profile, and takes the hold on the saved folder when it does.
    *
    * Why it exists: the answer decides the browser's profile, the refusals that start nothing (a setup open, a folder in use or unusable) and the reason a later `SIGN_IN_REQUIRED` names. It runs after the evidence started and before any server, so a refusal starts no server and no Chrome. The id sent is the service's run id, so the store's lock names the run that Stop run and remove stops. Versions 1 and 2 never call the store. Called first by {@link prepareOwned}.
@@ -1434,16 +1480,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (!configuration) return
     const port = this.options.savedSession
     const runId = this.options.control?.runId ?? this.id
+    if (this.skipSavedSessionOfPackageRoot()) return
     if (!port) {
       this.session = 'fresh'
       this.evidence.record('run.session', { session: 'fresh', store: false })
       return
     }
-    // The last declared paths seed the next setup; a failure is only noted, since the run does not depend on it.
-    if (configuration.signInPaths)
-      void port.rememberSignInPaths(configuration.signInPaths).catch(() => {
-        this.evidence.record('run.sign-in-paths-not-remembered')
-      })
+    this.rememberDeclaredSignInPaths(port, configuration.signInPaths)
     const admission = await port
       .acquire(
         runId,
@@ -1575,12 +1618,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    */
   private sessionView(): Pick<
     ConfiguredRuntimeView,
-    'session' | 'appState' | 'savedSession'
+    'session' | 'appState' | 'savedSession' | 'savedSessionSkipped'
   > {
     if (!this.operationsConfiguration || !this.session) return {}
     return {
       session: this.session,
       ...(this.session === 'saved' ? { appState: 'kept' as const } : {}),
+      ...(this.savedSessionSkipped
+        ? { savedSessionSkipped: this.savedSessionSkipped }
+        : {}),
       ...(this.savedSessionAtStart
         ? { savedSession: { ...this.savedSessionAtStart } }
         : {}),
@@ -3348,7 +3394,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): string {
     const declaredFresh = this.operationsConfiguration?.session === 'fresh'
     // A run that declared a fresh profile is told to drop the declaration; the editor's setup step would not change its next run.
-    if (!declaredFresh) this.notifySignInRequired(reason)
+    // A package below the root has no setup to offer either: the editor shows no Set Up Saved Session… notice for it.
+    if (!declaredFresh && reason !== 'package-root-fresh-session')
+      this.notifySignInRequired(reason)
     return signInRequiredMessage(reason, {
       repositoryName:
         this.options.savedSession?.repositoryName ??

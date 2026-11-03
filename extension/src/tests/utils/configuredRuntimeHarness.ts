@@ -206,6 +206,8 @@ export async function configuredRuntimeHarness(
     reloadDuringEntryLoad?: boolean
     /** Runs the Next configuration in a workspace with a Pages folder: the stand-in server answers the structured entry check, the `.next/dev` build is written around the cited source, and the page reports `window.next.router` ({@link NextPagesHarnessOptions}). */
     nextPages?: NextPagesHarnessOptions
+    /** Runs the version 3 configuration (with `operations`) for the Next app at this repository-relative folder: the config declares `packageRoot`, the folder gets a `package.json` and a Next installation, and the first cited source moves below it (unless `sourcePath` names one). Every other file of the repository stays the root's. */
+    packageRoot?: string
     /** Moves the first cited source, and the stop declared in it, to this workspace-relative path (such as a file under `src/pages`). */
     sourcePath?: string
     /** Runs a nested Next app: the configuration declares this `packageRoot` (version 3, with `operations`), and the Pages project (Next, `.next/dev`, chunks) is written under it instead of at the repository root, so `sourcePath` must lie inside it. */
@@ -311,6 +313,11 @@ export async function configuredRuntimeHarness(
   if (fixture?.declaredColumn)
     reference.configuration.source.column = fixture.declaredColumn
   if (options.sourcePath) relocateFirstSource(reference, options.sourcePath)
+  else if (options.packageRoot)
+    relocateFirstSource(
+      reference,
+      `${options.packageRoot}/${reference.configuration.source.path}`,
+    )
   if (options.entryPath ?? options.nextPages?.entryPath)
     reference.configuration.entryPath =
       options.entryPath ?? options.nextPages?.entryPath
@@ -361,6 +368,7 @@ export async function configuredRuntimeHarness(
         ...(options.operations.session
           ? { session: options.operations.session }
           : {}),
+        ...(options.packageRoot ? { packageRoot: options.packageRoot } : {}),
       }
     : options.participant
       ? {
@@ -388,6 +396,20 @@ export async function configuredRuntimeHarness(
     reference.configurationHash = sha256(JSON.stringify(configuration))
   for (const source of reference.descriptor!.sources)
     await repository.track(source.path, source.text)
+  // A nested package is a ready Next app: its package.json and its own Next installation.
+  if (options.packageRoot) {
+    const app = join(repository.directory, options.packageRoot)
+    await mkdir(join(app, 'node_modules/next/dist/bin'), { recursive: true })
+    await writeFile(
+      join(app, 'package.json'),
+      '{"name":"web","dependencies":{"next":"16.4.3"}}',
+    )
+    await writeFile(
+      join(app, 'node_modules/next/package.json'),
+      '{"name":"next","version":"16.4.3"}',
+    )
+    await writeFile(join(app, 'node_modules/next/dist/bin/next'), '')
+  }
   // A Pages project around the cited source: its Pages folder, Next, the `.next/dev` build and the module the page executes.
   const pagesBuild = options.nextPages
     ? await writeNextPagesWorkspace(

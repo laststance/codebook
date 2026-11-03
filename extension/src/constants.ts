@@ -1600,13 +1600,14 @@ export const SIGN_IN_PATH_LIMIT = 4
 export const SIGN_IN_REPOSITORY_NAME_FALLBACK = 'this repository'
 /**
  * Why a saved-session run answers `SIGN_IN_REQUIRED`, in the order the help lists them.
- * `no-saved-session`: none is set up, or the run declared `session: "fresh"`; `setup-not-finished`: the last setup was closed without Done; `redirected-to-sign-in`: the run used the saved session and the app still asked for sign-in; `session-cookie-only`: the app keeps its sign-in only while the browser stays open, so a saved session cannot keep it.
+ * `no-saved-session`: none is set up, or the run declared `session: "fresh"`; `setup-not-finished`: the last setup was closed without Done; `redirected-to-sign-in`: the run used the saved session and the app still asked for sign-in; `session-cookie-only`: the app keeps its sign-in only while the browser stays open, so a saved session cannot keep it; `package-root-fresh-session`: the run declared a `packageRoot` other than `"."`, so it started fresh and never used the repository's saved session, which was set up for the root app.
  */
 export const SIGN_IN_REQUIRED_REASONS = [
   'no-saved-session',
   'setup-not-finished',
   'redirected-to-sign-in',
   'session-cookie-only',
+  'package-root-fresh-session',
 ] as const
 /** The reason a saved-session run answers `SIGN_IN_REQUIRED` with, as {@link SIGN_IN_REQUIRED_REASONS} lists it. @example const reason: SignInRequiredReason = 'no-saved-session' */
 export type SignInRequiredReason = (typeof SIGN_IN_REQUIRED_REASONS)[number]

@@ -2,7 +2,7 @@ import {
   SIGN_IN_REQUIRED_REASONS,
   type SignInRequiredReason,
 } from '../constants'
-import type { ErrorCode } from '../errors'
+import { PACKAGE_ROOT_FRESH_SESSION_RECOVERY, type ErrorCode } from '../errors'
 import {
   NEXT_PAGES_FAILURE_VARIANT,
   NEXT_REFUSAL_CODES,
@@ -41,7 +41,7 @@ export type RefusalFailureCode =
 export type RefusalFailure = {
   code: RefusalFailureCode
   message: string
-  /** Present only for a known variant of a code that has variants (`NEXT_SETUP_DEADLINE`). */
+  /** Present only for a known variant of a code that has variants (`NEXT_SETUP_DEADLINE`, and `SIGN_IN_REQUIRED` led by `package-root-fresh-session`). */
   recoveryOverride?: string
   /** Present only for `SIGN_IN_REQUIRED` led by a known reason: the fields the agent reads as `details.reason`. */
   details?: { reason: SignInRequiredReason }
@@ -80,8 +80,15 @@ export function refusalFailureOf(text: string): RefusalFailure | undefined {
   // A sign-in refusal carries its reason as the variant; an unknown reason restores the code alone.
   if (code === 'SIGN_IN_REQUIRED') {
     const reason = SIGN_IN_REQUIRED_REASONS.find((known) => known === variant)
-    return reason === undefined
-      ? { code, message }
+    if (reason === undefined) return { code, message }
+    // A run of a package below the root has no saved session to set up: its own recovery replaces the setup one.
+    return reason === 'package-root-fresh-session'
+      ? {
+          code,
+          message,
+          recoveryOverride: PACKAGE_ROOT_FRESH_SESSION_RECOVERY,
+          details: { reason },
+        }
       : { code, message, details: { reason } }
   }
   // A Pages entry redirect carries the Pages fields as its variant; any other variant restores the code alone.

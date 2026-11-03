@@ -3855,6 +3855,9 @@ export class StudyService {
         ? {
             session: runtime.session,
             ...(runtime.appState ? { appState: runtime.appState } : {}),
+            ...(runtime.savedSessionSkipped
+              ? { savedSessionSkipped: runtime.savedSessionSkipped }
+              : {}),
             ...(runtime.savedSession
               ? { savedSession: runtime.savedSession }
               : {}),

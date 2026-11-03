@@ -36,6 +36,9 @@ export function signInRequiredMessage(
       ? 'before it sent anything'
       : `after operation ${facts.operationIndex}`
   const asked = `The page landed on ${where}`
+  // A package below the root never uses the repository's saved session, declared fresh or not: no setup helps it.
+  if (reason === 'package-root-fresh-session')
+    return `${asked}; the run declared a packageRoot other than ".", so it started with a fresh profile and did not use the saved session of ${repositoryName}, which was set up for the root app. It stopped ${when}. Do not set up a saved session: this app cannot sign in below the root in this version.`
   // A declared fresh profile is the cause whatever the store holds: a setup would not change the next run.
   if (facts.declaredFresh)
     return `${asked}; the run declared session: "fresh", so it did not use the saved session of ${repositoryName}, and it stopped ${when}. For a flow behind sign-in, remove session: "fresh" from the configuration, then start one new run.`

@@ -24,5 +24,8 @@ export function signInRequiredNotice(
       return `The saved session for ${repositoryName} may have expired. Set it up again.`
     case 'session-cookie-only':
       return `${repositoryName} keeps its sign-in only while the browser stays open, so a saved session cannot keep it.`
+    // The editor shows no notice for this reason (the run skipped the saved session; there is nothing to set up); the sentence keeps the switch complete.
+    case 'package-root-fresh-session':
+      return `This run is for a package below the root of ${repositoryName}, which has no saved session in this version.`
   }
 }
