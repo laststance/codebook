@@ -32,7 +32,7 @@ const CODED_FAILURE_CODES = [
   // A server-render stop the page never reached, and an entry page that did not load after the last pause (Cycle 0071).
   'SERVER_STOP_NOT_REACHED',
   'ENTRY_LOAD_TIMEOUT',
-  // A library stop's build that changed after the freeze; its variant carries the details.
+  // A library stop's build that changed after the freeze, only with its `library-build-changed` variant ({@link refusalFailureOf}).
   'RUNTIME_FAILED',
 ] as const satisfies readonly ErrorCode[]
 
@@ -58,6 +58,23 @@ export type RefusalFailure = {
 const CODED_FAILURE_LEAD = /^([A-Z][A-Z_]*)(?:\(([^()\n]*)\))?: /
 
 /**
+ * Finds the coded failure a failure text's lead names.
+ *
+ * Why: `RUNTIME_FAILED` counts as coded only as a library build change ({@link libraryDetailsOfFailure}), so any other run failure text keeps today's uncoded handling. Called by {@link refusalFailureOf}.
+ * @param lead - The match of the coded-failure lead, or `null` when the text has none.
+ * @returns The known code, or `undefined` for no lead, an unknown code or a `RUNTIME_FAILED` without the `library-build-changed` variant.
+ * @example codedFailureCodeOf(CODED_FAILURE_LEAD.exec('RUNTIME_FAILED: The run failed.')) // => undefined
+ */
+function codedFailureCodeOf(
+  lead: RegExpExecArray | null,
+): (typeof CODED_FAILURE_CODES)[number] | undefined {
+  const code = CODED_FAILURE_CODES.find((known) => known === lead?.[1])
+  return code === 'RUNTIME_FAILED' && !libraryDetailsOfFailure(code, lead?.[2])
+    ? undefined
+    : code
+}
+
+/**
  * Restores the refusal a run's failure text leads with, for the service that turns a failed run's reason into the error an agent reads.
  *
  * Why it exists: a failure raised by a timer or an event (a setup deadline, a reload after the click, a Fast Refresh of a sealed module) has no thrown error, so the run records `<CODE>: <message>` or `<CODE>(<variant>): <message>` ({@link formatRefusalFailure}), and the code, its recovery and its help anchor must survive that text. Called by {@link StudyService.runtimeFailureError} and {@link StudyService.preparationError}.
@@ -78,7 +95,7 @@ export function refusalFailureOf(text: string): RefusalFailure | undefined {
   const viteFailure = viteFailureOf(text)
   if (viteFailure) return viteFailure
   const lead = CODED_FAILURE_LEAD.exec(text)
-  const code = CODED_FAILURE_CODES.find((known) => known === lead?.[1])
+  const code = codedFailureCodeOf(lead)
   if (!lead || !code) return undefined
   const message = text.slice(lead[0].length),
     variant = lead[2]
