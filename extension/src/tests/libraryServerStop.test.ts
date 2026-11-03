@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { setTimeout as sleep } from 'node:timers/promises'
 
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
@@ -252,7 +251,7 @@ test('a pause in the browser copy of the library module is not an unowned page p
     functionName: '',
     hitBreakpoints: ['native'],
   })
-  await sleep(600)
+  harness.advance(1000)
   // Assert
   assert.equal(harness.run.view().status === 'failed', false)
   assert.equal(harness.run.view().failures.join('; '), '')

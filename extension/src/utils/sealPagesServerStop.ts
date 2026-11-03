@@ -1,7 +1,5 @@
 import { REPOSITORY_DISCOVERY_TIMEOUT_MS } from '../constants'
 import type { DevelopmentBundle } from '../developmentServerAdapter'
-import { StudyError } from '../errors'
-import { PAGES_STOP_REFUSAL_DETAILS } from '../nextRefusals'
 import type { BundleSource } from '../repositoryBundle'
 import type { RepositoryConfiguration } from '../repositoryConfigSchemas'
 
@@ -16,7 +14,7 @@ import { resolveArmedPlace } from './resolveArmedPlace'
 import type { ResolvedNextPackage } from './resolveNextPackage'
 import type { NextPagesRoute } from './resolveNextPagesRoute'
 import type { NextPagesChunkFetcher } from './spendNextPagesDiscovery'
-import { thrownMessage } from './thrownMessage'
+import { wordPagesSealFailure } from './wordPagesSealFailure'
 
 /** The client mapping of one source line in a sealed module, as {@link lineMappingOf} reads it. */
 type ClientLineMapping = ReturnType<typeof lineMappingOf>
@@ -59,16 +57,7 @@ export type PagesServerStopSealRequest = {
 export async function sealPagesServerStop(
   request: PagesServerStopSealRequest,
 ): Promise<DevelopmentBundle> {
-  try {
-    return await sealOnDataPath(request)
-  } catch (error) {
-    // The run's abort and a coded refusal keep what they say; any other failure came after the readiness request ran the data function.
-    if (request.signal?.aborted || error instanceof StudyError) throw error
-    const message = thrownMessage(error)
-    throw new StudyError('RUNTIME_FAILED', message, message, undefined, error, {
-      ...PAGES_STOP_REFUSAL_DETAILS,
-    })
-  }
+  return wordPagesSealFailure(request.signal, () => sealOnDataPath(request))
 }
 
 /**

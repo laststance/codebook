@@ -201,6 +201,69 @@ function previewValueOf(variable: {
     : redactValuePreview(variable.value)
 }
 
+/**
+ * Chooses the line and column a stack frame is recorded at: the debugger's own, except a library stop's top frame (the caller's override) and a caller frame the caller's maps translate to the library source.
+ *
+ * Called by {@link captureReplayDebugSnapshot} for every frame.
+ * @param index - The frame's place in the stack; 0 is the stopped frame.
+ * @param frame - The debugger's frame.
+ * @param input - The capture input with the optional `topFrame` and `translateFrame`.
+ * @returns The place to record, and the translation when the frame was translated.
+ * @example recordedPlaceOfFrame(0, { id: 1, name: 'f', line: 9, column: 1 }, { ...input, topFrame: { line: 3, column: 3 } }) // => { place: { line: 3, column: 3 } }
+ */
+function recordedPlaceOfFrame(
+  index: number,
+  frame: DebugProtocol.StackFrame,
+  input: Pick<CaptureInput, 'topFrame' | 'translateFrame'>,
+): {
+  place: { line: number; column: number }
+  translated?: ReturnType<NonNullable<CaptureInput['translateFrame']>>
+} {
+  if (index === 0) return { place: input.topFrame ?? frame }
+  const translated = input.translateFrame?.(frame)
+  return { place: translated ?? frame, translated }
+}
+
+/**
+ * Builds the saved frame of one stack frame before its scopes are read: its name and place, and for the stopped frame the verified source, for a caller frame the location the debugger (or the caller's maps) named.
+ *
+ * Called by {@link captureReplayDebugSnapshot} for every frame.
+ * @param index - The frame's place in the stack; 0 is the stopped frame.
+ * @param frame - The debugger's frame.
+ * @param input - The capture input.
+ * @param shorten - The capture's masking and length cut applied to each text.
+ * @returns The frame with empty scopes.
+ * @example savedFrameHeaderOf(1, { id: 2, name: 'caller', line: 4, column: 1 }, input, (text) => text) // => { name: 'caller', line: 4, column: 1, scopes: [], sourceUnavailable: '…' }
+ */
+function savedFrameHeaderOf(
+  index: number,
+  frame: DebugProtocol.StackFrame,
+  input: CaptureInput,
+  shorten: (value: string) => string,
+): ReplayDebugSnapshot['frames'][number] {
+  const { place, translated } = recordedPlaceOfFrame(index, frame, input)
+  const header = {
+    name: shorten(frame.name),
+    line: Math.max(1, place.line),
+    column: Math.max(1, place.column),
+    scopes: [],
+  }
+  if (index === 0) return { ...header, source: input.verifiedSource }
+  return {
+    ...header,
+    sourceUnavailable: 'Executed source was not verified for this frame.',
+    ...(translated
+      ? {
+          recordedLocation: {
+            name: shorten(translated.name),
+            path: shorten(translated.path),
+          },
+        }
+      : // The location the debugger itself reported is kept so the replay Call Stack can name the file; nothing is invented when the debugger gave none.
+        recordedLocationOf(frame.source, shorten, input.workspaceRoot)),
+  }
+}
+
 /** Called at a verified live pause to persist bounded values, never live DAP handles; stale pauses abort the whole capture. Only the stopped frame's local scopes are copied ({@link shouldCaptureReplayScope}). @example await captureReplayDebugSnapshot({ stack, verifiedSource, request, assertCurrent }) */
 export async function captureReplayDebugSnapshot(
   input: CaptureInput,
@@ -443,30 +506,7 @@ export async function captureReplayDebugSnapshot(
   for (const [index, frame] of input.stack.stackFrames
     .slice(0, maxFrames)
     .entries()) {
-    const translated = index === 0 ? undefined : input.translateFrame?.(frame)
-    const place =
-      index === 0 ? (input.topFrame ?? frame) : (translated ?? frame)
-    const saved: ReplayDebugSnapshot['frames'][number] = {
-      name: shorten(frame.name),
-      line: Math.max(1, place.line),
-      column: Math.max(1, place.column),
-      scopes: [],
-      ...(index === 0
-        ? { source: input.verifiedSource }
-        : {
-            sourceUnavailable:
-              'Executed source was not verified for this frame.',
-            ...(translated
-              ? {
-                  recordedLocation: {
-                    name: shorten(translated.name),
-                    path: shorten(translated.path),
-                  },
-                }
-              : // The location the debugger itself reported is kept so the replay Call Stack can name the file; nothing is invented when the debugger gave none.
-                recordedLocationOf(frame.source, shorten, input.workspaceRoot)),
-          }),
-    }
+    const saved = savedFrameHeaderOf(index, frame, input, shorten)
     snapshot.frames.push(saved)
     try {
       const response = scopeResponse.parse(

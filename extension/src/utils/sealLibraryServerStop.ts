@@ -8,11 +8,9 @@ import type {
   DevelopmentBundle,
   LibraryStopSealInput,
 } from '../developmentServerAdapter'
-import { StudyError } from '../errors'
 import {
   libraryBuildChangedFailure,
   libraryNotInBuildRefusal,
-  PAGES_STOP_REFUSAL_DETAILS,
 } from '../nextRefusals'
 import { mapSchema, type BundleSource } from '../repositoryBundle'
 
@@ -30,7 +28,7 @@ import {
   spendNextPagesDiscovery,
   type NextPagesDiscoveryStep,
 } from './spendNextPagesDiscovery'
-import { thrownMessage } from './thrownMessage'
+import { wordPagesSealFailure } from './wordPagesSealFailure'
 
 /** What {@link sealLibraryServerStop} needs to seal a server stop in a workspace library. */
 export type LibraryServerStopSealRequest = {
@@ -60,16 +58,7 @@ export type LibraryServerStopSealRequest = {
 export async function sealLibraryServerStop(
   request: LibraryServerStopSealRequest,
 ): Promise<DevelopmentBundle> {
-  try {
-    return await sealWithin(request)
-  } catch (error) {
-    // The run's abort and a coded refusal keep what they say; any other failure came after the readiness request.
-    if (request.signal?.aborted || error instanceof StudyError) throw error
-    const message = thrownMessage(error)
-    throw new StudyError('RUNTIME_FAILED', message, message, undefined, error, {
-      ...PAGES_STOP_REFUSAL_DETAILS,
-    })
-  }
+  return wordPagesSealFailure(request.signal, () => sealWithin(request))
 }
 
 /** Reads the compile and the non-vendor server chunks it requires, in order. */

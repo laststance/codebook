@@ -165,7 +165,7 @@ export function libraryBuildUnmappedRefusal(
 }
 
 /** The `details.reason` values of the library refusals that come after Codebook's readiness request (`sideEffects: "unknown"`). */
-export const LIBRARY_RUNTIME_REASONS = [
+const LIBRARY_RUNTIME_REASONS = [
   'library-not-in-build',
   'library-place-ambiguous',
   'library-build-changed',
