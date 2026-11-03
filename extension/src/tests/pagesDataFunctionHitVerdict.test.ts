@@ -751,6 +751,32 @@ test('a renderer text without the known patterns, or an unreadable one, makes th
   assert.deepEqual(withUnreadableText, expected)
 })
 
+// Value: protects=finding OCR verdict lens (safety net): a renderer whose data-function call sites Next changed but that still bundles the tracer-constants enum (`RenderSpan.getStaticProps="Render.getStaticProps"`) is unrecognised, so a complete chain through it with no call found is `no-renderer-frame`, never resumed outside-data-function; fails_when=the enum's text counts as recognition, so every real data-function hit of such a Next is resumed silently as outside-data-function; no_claim=a real future Next runtime (the renderer text is scripted from the 16.1.4 enum)
+test('a renderer that keeps the tracer-constants enum but lost its call sites makes a complete chain no-renderer-frame', async () => {
+  // Arrange
+  const fixture = pagesPausedFixtureOf('get-server-side-props-after-await')
+  const { reader } = readerFor(fixture, {
+    scriptSources: {
+      [RENDERER_SCRIPT_ID]:
+        'RenderSpan1=((RenderSpan=RenderSpan1||{}).getServerSideProps="Render.getServerSideProps",RenderSpan.getStaticProps="Render.getStaticProps",RenderSpan.renderToString="Render.renderToString"\nasync function renderToHTMLImpl(req,res,pathname){data=await loadPageData({req:req,res:res})}',
+    },
+  })
+
+  // Act
+  const verdict = await pagesDataFunctionHitVerdictOf(
+    hitOf(fixture.rawEvent),
+    reader,
+    openBudget(),
+  )
+
+  // Assert
+  assert.deepEqual(verdict, {
+    action: 'pause',
+    attribution: 'unconfirmed',
+    reason: 'no-renderer-frame',
+  })
+})
+
 // Value: protects=AC 16 verdict-error: an event of an unexpected shape pauses unconfirmed `verdict-error` with a shape summary that names fields and types and none of the values, and the verdict does not throw; fails_when=a changed protocol throws into the run, or the summary copies a value the debuggee produced; no_claim=the Output line and its log id (the run writes them from this verdict)
 test('an event of an unexpected shape is a verdict-error that holds no value', async () => {
   // Arrange

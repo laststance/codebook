@@ -2066,23 +2066,24 @@ export const NEXT_PAGES_RENDERER_SCRIPT_PATH =
   'next/dist/compiled/next-server/pages.runtime.dev.js'
 /**
  * The texts that identify a data-function call in the Pages renderer's source, versioned data taken from the runtime of the listed Next versions (E0b, Issue 188).
- * `callText` is what the source starts with at the location of the frame that calls the data function (`async()=>getServerSideProps({req:req,…`, `()=>getStaticProps({…`); `tracedAwaitText` is what the source holds at the location of the frame that awaits the traced call (`trace(trace_constants.RenderSpan.getServerSideProps,{…`). V8 keeps the call arrow in the async chain, so the traced await has not been needed so far; it identifies the same call from the frame that wraps it. A runtime text that holds none of these texts makes every hit `no-renderer-frame`.
+ * `callText` is what the source starts with at the location of the frame that calls the data function (`async()=>getServerSideProps({req:req,…`, `()=>getStaticProps({…`); `tracedAwaitText` is what the source holds at the location of the frame that awaits the traced call (`trace(trace_constants.RenderSpan.getServerSideProps,{…`). V8 keeps the call arrow in the async chain, so the traced await has not been needed so far; it identifies the same call from the frame that wraps it.
+ * Only `tracedAwaitText` recognises the renderer ({@link holdsNextPagesRendererPatterns}): it is the renderer's own call site, while the tracer-constants enum that every compiled Next runtime bundles (`RenderSpan.getStaticProps="Render.getStaticProps"`) lacks the `trace_constants.` prefix, and a page module that declares its data function holds `callText`. A runtime text that holds neither `tracedAwaitText` is unrecognised, which makes every hit whose call frame is not found `no-renderer-frame`.
  */
 export const NEXT_PAGES_RENDERER_PATTERNS = [
   {
     dataFunction: 'getServerSideProps',
     callText: 'getServerSideProps(',
-    tracedAwaitText: 'RenderSpan.getServerSideProps',
+    tracedAwaitText: 'trace_constants.RenderSpan.getServerSideProps',
     nextVersions: ['16.1.4', '16.4.4'],
   },
   {
     dataFunction: 'getStaticProps',
     callText: 'getStaticProps(',
-    tracedAwaitText: 'RenderSpan.getStaticProps',
+    tracedAwaitText: 'trace_constants.RenderSpan.getStaticProps',
     nextVersions: ['16.1.4', '16.4.4'],
   },
 ] as const
-/** How many characters of the renderer's source from a frame's location are searched for a traced-await text; the traced call opens with `trace(trace_constants.` before the text. */
+/** How many characters of the renderer's source from a frame's location are searched for a traced-await text; the traced call opens with `trace(` before the text. */
 export const NEXT_PAGES_TRACED_AWAIT_WINDOW_CHARS = 64
 /** The constant expression a Pages hit evaluates on the synchronous frame of the traced call to read the page Next renders: `pathname` is a parameter of the renderer's `renderToHTMLImpl`, the page pattern of the manifest key (`/`, `/products/[id]`). It is a plain identifier, never the request, headers or cookies. */
 export const NEXT_PAGES_PAGE_EXPRESSION = 'pathname'
@@ -2090,7 +2091,7 @@ export const NEXT_PAGES_PAGE_EXPRESSION = 'pathname'
 export const PAGES_STACK_TRACE_READ_LIMIT = 4
 /** How many hits of one Pages server stop the run resumes (`breakpoint.other-route`, `breakpoint.outside-data-function`, `breakpoint.unattributed-resumed`) before it disarms the stop and ends the run `SERVER_STOP_NOT_REACHED`: a helper that many requests or the page's render call (a formatter in a list) would otherwise pause and resume without end. */
 export const PAGES_STOP_RESUMED_HIT_LIMIT = 500
-/** The most scripts of the server whose text one Pages run reads to find Next's renderer among the scripts the proxy never announced (parsed before the debugger attached); a stack of a data function holds about six distinct scripts, so past this bound a run no longer reads new ones and the hit reads as `no-renderer-frame`. */
+/** The most scripts of the server other than Next's renderer whose text one Pages run reads among the synchronous frames' scripts the proxy never announced (parsed before the debugger attached), to find the renderer and the addresses of the others; a stack of a data function holds about six distinct scripts. Only a read that answered counts (a failed one is made again by a later hit); past this bound a run no longer reads new ones, so a renderer frame among them reads as `no-renderer-frame` and a page module's frame names no page. */
 export const PAGES_UNANNOUNCED_SCRIPT_READ_LIMIT = 16
 /** The most outstanding page requests of the browser the run keeps for the Pages page read; a page loads a handful, so a run that sees more has no single page request to name (the oldest are dropped). */
 export const PAGES_OUTSTANDING_REQUEST_LIMIT = 64

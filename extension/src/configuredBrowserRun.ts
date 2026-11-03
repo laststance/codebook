@@ -265,6 +265,7 @@ import { PagesHitLedger } from './utils/pagesHitLedger'
 import type { PagesHitReader, PagesManifest } from './utils/pagesHitReader'
 import { pagesNotReachedMessage } from './utils/pagesNotReachedMessage'
 import { pagesServerStopRefusal } from './utils/pagesServerStopRefusal'
+import { parsePagesPausedEvent } from './utils/parsePagesPausedEvent'
 import { pathnameLeftFromEntry } from './utils/pathnameLeftFromEntry'
 import { pausePlace } from './utils/pausePlace'
 import { placeAfterDeclaringLine } from './utils/placeAfterDeclaringLine'
@@ -872,8 +873,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private isUnrecognisedRendererJournaled = false
   /** The ids of the Pages renderer's scripts the proxy never announced, found by their text (a script parsed before the debugger attached, as the readiness request's compile does). */
   private readonly rendererScriptIds = new Set<string>()
-  /** The ids of the unannounced scripts a Pages hit already read, so each is read once per run. */
+  /** The ids of the unannounced scripts other than the renderer whose text a Pages hit read, so each is read once per run; a read that failed is not listed and is made again. */
   private readonly unannouncedScriptsRead = new Set<string>()
+  /** The addresses of the unannounced scripts other than the renderer, by script id, from the last `sourceURL` comment of their text: a page module parsed before the debugger attached, whose synchronous frame names the page of a hit. */
+  private readonly unannouncedScriptUrls = new Map<string, string>()
   /** The data function each Pages server pause was found inside, by snapshot id; a live run resource field only. */
   private readonly dataFunctionBySnapshot = new Map<
     string,
@@ -2382,7 +2385,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.abort.signal,
     )
     try {
-      await this.identifyUnannouncedRenderer(event, budget)
+      await this.identifyUnannouncedScripts(event, budget)
       const verdict = await pagesDataFunctionHitVerdictOf(
         {
           event,
@@ -2402,8 +2405,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Gives the verdict what it reads from the run: the script addresses and the renderer's text, the debugger's read-only commands through the server's proxy, the pages manifest and the browser's outstanding page requests.
-   * Codebook sends no state-changing `Debugger` command here (no `Debugger.enable`, no `setAsyncCallStackDepth`).
+   * Gives the verdict what it reads from the run: the script addresses (announced, or found by {@link identifyUnannouncedScripts}) and the renderer's text, the debugger's read-only commands through the server's proxy, the pages manifest and the browser's outstanding page requests.
+   * Codebook sends no state-changing `Debugger` command here (no `Debugger.enable`, no `setAsyncCallStackDepth`). The reads go through the quiet path: up to {@link PAGES_STOP_RESUMED_HIT_LIMIT} resumed hits per stop must not fill the evidence journal with a `cdp.sent` and a `cdp.response` per read; a failed read is still journaled.
    * @returns The reader {@link pagesDataFunctionHitVerdictOf} takes.
    * @example this.pagesHitReader().scriptUrlOf('1477') // 'file:///workspace/node_modules/next/dist/compiled/next-server/pages.runtime.dev.js'
    */
@@ -2415,16 +2418,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         participant.scriptUrls.get(scriptId) ??
         (this.rendererScriptIds.has(scriptId)
           ? NEXT_PAGES_RENDERER_SCRIPT_PATH
-          : undefined),
+          : this.unannouncedScriptUrls.get(scriptId)),
       scriptSourceOf: async (scriptId) => {
         const text = await this.scriptTextOf(scriptId)
         if (text !== undefined) this.noteRendererText(text)
         return text
       },
       evaluateOnCallFrame: (request) =>
-        cdp.request('Debugger.evaluateOnCallFrame', request),
+        cdp.requestQuietly('Debugger.evaluateOnCallFrame', request),
       getStackTrace: async (stackTraceId) =>
-        (await cdp.request('Debugger.getStackTrace', { stackTraceId }))
+        (await cdp.requestQuietly('Debugger.getStackTrace', { stackTraceId }))
           .stackTrace,
       // The run does not know the debugger's id; a stack trace id is fetched and the proxy answers for its own debugger only.
       ownDebuggerId: undefined,
@@ -2451,7 +2454,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Gives the text of a script of the server, read once through `Debugger.getScriptSource` and kept; a read that failed is made again by the next hit.
-   * Why it exists: the renderer's source is searched for the data-function call at each frame's location, and a hit must not pay for reading about 200 KB.
+   * Why it exists: the renderer's source is searched for the data-function call at each frame's location, and a hit must not pay for reading about 200 KB. The read goes through the quiet path like the verdict's other reads ({@link pagesHitReader}).
    * @param scriptId - The script's id.
    * @returns The text; `undefined` when it could not be read.
    * @example await this.scriptTextOf('1477')
@@ -2463,8 +2466,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const read = (async (): Promise<string | undefined> => {
       if (!cdp) return undefined
       try {
-        return (await cdp.request('Debugger.getScriptSource', { scriptId }))
-          .scriptSource
+        return (
+          await cdp.requestQuietly('Debugger.getScriptSource', { scriptId })
+        ).scriptSource
       } catch {
         return undefined
       }
@@ -2509,41 +2513,45 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Finds Next's Pages renderer among the synchronous frames' scripts the proxy never announced, by their text.
-   * Why it exists: the readiness request compiles the page and loads the renderer before the debugger attaches, and the proxy forwards only scripts parsed after its subscription, so a synchronous frame of the renderer would otherwise carry no address and every hit would read as `no-renderer-frame`. Each unknown script is read once per run (at most {@link PAGES_UNANNOUNCED_SCRIPT_READ_LIMIT}) within the hit's budget; only a text that holds the renderer's patterns is kept. Called by {@link classifyPagesHit} before the verdict.
-   * @param event - The paused event.
+   * Finds Next's Pages renderer among the synchronous frames' scripts the proxy never announced, by their text, and takes the address of each other such script from its last `sourceURL` comment.
+   * Why it exists: the readiness request compiles the page and loads the renderer before the debugger attaches, and the proxy forwards only scripts parsed after its subscription, so a synchronous frame of the renderer or of the page module would otherwise carry no address: every hit would read as `no-renderer-frame`, and a hit after the data function's `await` could not name its page from the page module. Only the frames of an event of the expected shape ({@link parsePagesPausedEvent}) are read, so a malformed frame is left to the verdict's `verdict-error`. Each unknown script is read once per hit within the hit's budget, and by later hits until one read answers; a text that holds the renderer's call site ({@link holdsNextPagesRendererPatterns}) is kept as the renderer, any other is read once per run (at most {@link PAGES_UNANNOUNCED_SCRIPT_READ_LIMIT} of them) and only its address kept. Called by {@link classifyPagesHit} before the verdict.
+   * @param event - The paused event, as received.
    * @param budget - The hit's single time budget.
-   * @example await this.identifyUnannouncedRenderer(event, budget)
+   * @example await this.identifyUnannouncedScripts(event, budget)
    */
-  private async identifyUnannouncedRenderer(
+  private async identifyUnannouncedScripts(
     event: Protocol.Debugger.PausedEvent,
     budget: VerdictBudget,
   ): Promise<void> {
     const known = this.participants.server.scriptUrls
-    for (const { location } of event.callFrames) {
-      const { scriptId } = location
+    const frames = parsePagesPausedEvent(event)?.callFrames ?? []
+    // A script is read at most once per hit, however many frames of it the stack holds.
+    const scriptIds = new Set(frames.map((frame) => frame.location.scriptId))
+    for (const scriptId of scriptIds) {
       if (
         known.has(scriptId) ||
+        this.rendererScriptIds.has(scriptId) ||
         this.unannouncedScriptsRead.has(scriptId) ||
         this.unannouncedScriptsRead.size >= PAGES_UNANNOUNCED_SCRIPT_READ_LIMIT
       )
         continue
-      this.unannouncedScriptsRead.add(scriptId)
       const read = await readWithinVerdictBudget(
         () => this.scriptTextOf(scriptId),
         budget,
       )
-      if (read.status === 'timeout') {
-        // The budget ended mid-read: the script is read again by a later hit.
-        this.unannouncedScriptsRead.delete(scriptId)
-        return
+      // The budget ended mid-read: the script is read again by a later hit.
+      if (read.status === 'timeout') return
+      // A read that failed (`Debugger.getScriptSource` answered no text) is made again by a later hit.
+      if (read.status !== 'read' || read.value === undefined) continue
+      if (holdsNextPagesRendererPatterns(read.value)) {
+        this.rendererScriptIds.add(scriptId)
+        continue
       }
-      if (read.status === 'read' && read.value !== undefined) {
-        if (holdsNextPagesRendererPatterns(read.value))
-          this.rendererScriptIds.add(scriptId)
-        // A text that is no renderer is not kept: only the renderer's text serves later hits.
-        else this.rendererTexts.delete(scriptId)
-      }
+      this.unannouncedScriptsRead.add(scriptId)
+      // A text that is no renderer is not kept: only its address serves later hits.
+      this.rendererTexts.delete(scriptId)
+      const url = lastSourceUrlOf(read.value)
+      if (url) this.unannouncedScriptUrls.set(scriptId, url)
     }
   }
 

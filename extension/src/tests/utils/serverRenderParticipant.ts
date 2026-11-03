@@ -57,8 +57,23 @@ export interface PagesHitScript {
   edit?: (event: PagesPausedEvent, scriptUrls: Record<string, string>) => void
   /** The answers of `Debugger.getStackTrace` by stack trace id: a `Runtime.StackTrace`, or `'fail'` for a rejected read. */
   stackTraces?: Record<string, object | 'fail'>
-  /** The fixture scripts the proxy never announces (parsed before the debugger attached, as the readiness request's compile does): `'all'`, or their ids. Their texts can still be read. */
+  /** The fixture scripts the proxy never announces (parsed before the debugger attached, as the readiness request's compile does): `'all'`, or their ids. Their texts can still be read: the renderer's is the vendored runtime, a webpack module's ends with its `sourceURL` comment, a file loaded by Node's own loader has none. */
   unannounced?: 'all' | readonly string[]
+  /** The text `Debugger.getScriptSource` answers for a fixture script, by id, in place of the default above: a page module that declares its data function, or a renderer whose call sites Next changed. */
+  scriptTexts?: Readonly<Record<string, string>>
+}
+
+/**
+ * Gives the text a fixture script the proxy never announced answers: a webpack module (`webpack-internal:///…`, `(pages-dir-node)/…`) is evaluated with its address in a closing `sourceURL` comment, a file Node's own loader read (`file:///…`) has none.
+ * @param url - The script's address in the recorded payload.
+ * @returns A stand-in module text.
+ * @example
+ * unannouncedModuleTextOf('(pages-dir-node)/./pages/index.js').endsWith('\n//# sourceURL=(pages-dir-node)/./pages/index.js') // => true
+ * unannouncedModuleTextOf('file:///app/node_modules/next/dist/server/base-server.js').includes('sourceURL') // => false
+ */
+function unannouncedModuleTextOf(url: string): string {
+  const body = '/* module parsed before the debugger attached */'
+  return url.startsWith('file:') ? body : `${body}\n//# sourceURL=${url}`
 }
 
 /** One hit of an armed server breakpoint, as the spike's logs show it. */
@@ -130,6 +145,8 @@ export function createServerParticipant(parts: ServerParticipantParts) {
   const announced = new Map<string, string>()
   const scriptTexts = new Map<string, string>()
   const heldScriptReads = new Map<string, Promise<void>>()
+  /** The scripts whose next text read fails, as a transient `Debugger.getScriptSource` error does. */
+  const failingScriptReads = new Set<string>()
   const routes = new Map<number, ServerRouteAnswer>()
   const frames = new Map<number, { line: number; column: number }>()
   let currentHit = 0
@@ -165,6 +182,8 @@ export function createServerParticipant(parts: ServerParticipantParts) {
   let nextVariableReference = FIRST_SCRIPTED_VARIABLE_REFERENCE
   /** Every method the run sent through the server's inspector proxy, in order. */
   const inspectorMethods: string[] = []
+  /** The methods of {@link inspectorMethods} sent with `request`, which the real channel journals as `cdp.sent` and `cdp.response`; a `requestQuietly` send is not listed. */
+  const journaledInspectorMethods: string[] = []
   /** What `pathname` evaluates to on a Pages hit's `renderToHTMLImpl` frame, by call frame id (`null`: an evaluation that throws). */
   const pagesPathnames = new Map<string, string | null>()
   /** The answers of `Debugger.getStackTrace`, by stack trace id. */
@@ -304,7 +323,21 @@ export function createServerParticipant(parts: ServerParticipantParts) {
       parts.released('server proxy')
       this.onClose?.()
     },
+    /** Sends a request the real channel journals (`cdp.sent`, `cdp.response`). */
     async request(
+      method: string,
+      parameters?: {
+        expression?: string
+        scriptId?: string
+        callFrameId?: string
+        stackTraceId?: { id: string }
+      },
+    ) {
+      journaledInspectorMethods.push(method)
+      return this.answer(method, parameters)
+    },
+    /** Answers a request of either path as the server's inspector does. */
+    async answer(
       method: string,
       parameters?: {
         expression?: string
@@ -324,6 +357,10 @@ export function createServerParticipant(parts: ServerParticipantParts) {
       if (method === 'Debugger.getScriptSource') {
         const scriptId = parameters?.scriptId ?? ''
         await heldScriptReads.get(scriptId)
+        if (failingScriptReads.delete(scriptId))
+          throw new Error(
+            `Debugger.getScriptSource: No script for id: ${scriptId}`,
+          )
         return { scriptSource: scriptTexts.get(scriptId) ?? parts.javascript }
       }
       if (
@@ -371,7 +408,7 @@ export function createServerParticipant(parts: ServerParticipantParts) {
       method: string,
       parameters?: Record<string, unknown>,
     ): Promise<unknown> {
-      return this.request(method, parameters)
+      return this.answer(method, parameters)
     },
   }
 
@@ -461,13 +498,16 @@ export function createServerParticipant(parts: ServerParticipantParts) {
       if (announced.has(scriptId)) continue
       const isUnannounced =
         script.unannounced === 'all' || script.unannounced?.includes(scriptId)
-      if (isNextPagesRendererUrl(url))
-        scriptTexts.set(
-          scriptId,
-          pagesRuntimeTextOf(
-            fixture.nextVersion === '16.4.4' ? '16.4.4' : '16.1.4',
-          ),
-        )
+      const text =
+        script.scriptTexts?.[scriptId] ??
+        (isNextPagesRendererUrl(url)
+          ? pagesRuntimeTextOf(
+              fixture.nextVersion === '16.4.4' ? '16.4.4' : '16.1.4',
+            )
+          : isUnannounced
+            ? unannouncedModuleTextOf(url)
+            : undefined)
+      if (text !== undefined) scriptTexts.set(scriptId, text)
       if (!isUnannounced) announce(scriptId, url)
     }
     // `pathname` is a parameter of the renderer's `renderToHTMLImpl`, the frame that holds the traced call.
@@ -605,6 +645,10 @@ export function createServerParticipant(parts: ServerParticipantParts) {
     setScriptText(scriptId: string, text: string): void {
       scriptTexts.set(scriptId, text)
     },
+    /** Makes the run's next read of a script's text fail, as a transient `Debugger.getScriptSource` error; the read after it answers. */
+    failNextScriptRead(scriptId: string): void {
+      failingScriptReads.add(scriptId)
+    },
     /** Keeps the run's read of a script's text open until the returned function is called. */
     holdScriptRead(scriptId: string): () => void {
       let release = (): void => {}
@@ -740,6 +784,8 @@ export function createServerParticipant(parts: ServerParticipantParts) {
     commands,
     /** Every method the run sent through the server's inspector proxy, in order: the Pages verdict sends read-only `Debugger` commands only. */
     inspectorMethods,
+    /** The methods the run sent with the journaled `request` path, in order; the real channel writes a `cdp.sent` and a `cdp.response` entry for each one, and none for a successful `requestQuietly`. */
+    journaledInspectorMethods,
     /** Every resume the run sent the server session, with the hit it resumed. */
     continues,
     /** The hit each route read asked about, in order. */

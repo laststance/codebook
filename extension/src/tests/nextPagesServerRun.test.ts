@@ -14,6 +14,7 @@ import { describeServerRenderFailureDetails } from '../utils/describeServerRende
 import type { PagesPausedEvent } from '../utils/parsePagesPausedEvent'
 
 import { armedEntry } from './utils/entryRenderHarness'
+import { pagesPausedFixtureOf } from './utils/pagesPausedFixture'
 import {
   hitOnLine,
   PAGES_SERVER_PAGE_SOURCE,
@@ -1046,6 +1047,240 @@ test('an unreadable page is resumed unattributed while the browser is on another
   // Assert
   assert.deepEqual(journaled(harness, 'breakpoint.unattributed-resumed'), [{}])
   assert.equal(harness.run.view().snapshots.length, 0)
+})
+
+/** Waits until the run answered the last scripted hit: a published pause, a resume, or a failure of the run. @example await hitAnswered(harness) */
+function hitAnswered(harness: PagesHarness) {
+  return waitUntil(() => {
+    const view = harness.run.view()
+    return (
+      view.participants.server?.snapshot !== undefined ||
+      harness.server!.continues.length > 0 ||
+      view.failures.length > 0
+    )
+  }, 'the answer to the hit')
+}
+
+/** A Pages renderer that still bundles the tracer-constants enum of Next 16.1.4 (`RenderSpan.getStaticProps="Render.getStaticProps"`) but whose data-function call sites Next changed. */
+const RENDERER_WITHOUT_CALL_SITES =
+  'RenderSpan1=((RenderSpan=RenderSpan1||{}).getServerSideProps="Render.getServerSideProps",RenderSpan.getStaticProps="Render.getStaticProps",RenderSpan.renderToString="Render.renderToString"\nasync function renderToHTMLImpl(req,res,pathname){data=await loadPageData({req:req,res:res})}'
+
+// Value: protects=finding OCR verdict lens (safety net in the run): a hit through a renderer that lost its data-function call sites but kept the tracer-constants enum pauses unconfirmed no-renderer-frame, is never resumed outside-data-function, and the run journals pages.renderer-unrecognised once with the Next version although it read the text twice (at the announcement and in the verdict); fails_when=the enum makes the renderer read as recognised, so the hit is resumed silently and nothing records the changed Next; no_claim=a real changed Next runtime (the text is scripted)
+test('a renderer that lost its call sites pauses the hit unconfirmed and journals the unrecognised renderer once', async (context) => {
+  // Arrange
+  const harness = await pagesServerRun(context)
+  harness.run.prepare().catch(() => undefined)
+  await armedEntry(harness)
+  // Act
+  harness.server!.hit(
+    hitOnLine(PAGES_SERVER_RETURN_LINE, {
+      fixture: 'get-server-side-props-after-await',
+      scriptTexts: { [RENDERER_SCRIPT_ID]: RENDERER_WITHOUT_CALL_SITES },
+    }),
+  )
+  await hitAnswered(harness)
+  // Assert
+  assert.deepEqual(journaled(harness, 'breakpoint.outside-data-function'), [])
+  assert.deepEqual(journaled(harness, 'breakpoint.unconfirmed'), [
+    { reason: 'no-renderer-frame' },
+  ])
+  assert.deepEqual(journaled(harness, 'pages.renderer-unrecognised'), [
+    { nextVersion: '16.4.3' },
+  ])
+  assert.equal(
+    harness.run.view().participants.server?.snapshot?.attribution,
+    'unconfirmed',
+  )
+})
+
+/** The entry page's own module as Next's server compile evaluates it: the data function declared, the address the recorded payloads name in the closing `sourceURL`. */
+const ENTRY_PAGE_MODULE_TEXT = [
+  'export default function Home({ count }) {',
+  '  return count',
+  '}',
+  'export async function getServerSideProps({ query }) {',
+  '  const count = await countOf(query)',
+  '  return { props: { count: formatCount(count) } }',
+  '}',
+  '//# sourceURL=(pages-dir-node)/./pages/index.js',
+].join('\n')
+
+// Value: protects=finding OCR verdict lens (page read from an unannounced page module): getServerSideProps awaits, then calls a helper that hits; the synchronous frames are [helper, getServerSideProps], the page module was parsed before the debugger attached (never announced, url ''), and no page request is outstanding; the run reads the page module's text, takes its address from the sourceURL and names the entry page from it through pages-manifest.json, so the hit pauses entry-load with frame evidence, and the page module, which declares getServerSideProps, is not taken for the renderer; fails_when=the page module's address stays unknown (or it is taken for the renderer), so the hit pauses unconfirmed route-unreadable, another page's hit cannot be named other-route, and evidence silently becomes request when one request is outstanding; no_claim=js-debug's real announcement order and webpack's real eval text (the module text is scripted)
+test("a helper hit after the data function's await names the entry page from a page module the proxy never announced", async (context) => {
+  // Arrange
+  const harness = await pagesServerRun(context, {
+    sourcePath: 'src/lib/helper.ts',
+  })
+  const prepared = harness.run.prepare()
+  await armedEntry(harness)
+  // Act: the helper's frame sits above getServerSideProps, whose module the proxy never announced
+  harness.server!.hit(
+    hitOnLine(PAGES_SERVER_RETURN_LINE, {
+      fixture: 'get-server-side-props-after-await',
+      prepend: true,
+      unannounced: ['1498'],
+      scriptTexts: { '1498': ENTRY_PAGE_MODULE_TEXT },
+    }),
+  )
+  await hitAnswered(harness)
+  // Assert
+  const view = harness.run.view()
+  assert.deepEqual(journaled(harness, 'breakpoint.unconfirmed'), [])
+  assert.deepEqual(plain(view.attributionSummary?.taken), {
+    frame: 1,
+    request: 0,
+  })
+  const pause = view.participants.server!.snapshot!
+  assert.equal(pause.attribution, 'entry-load')
+  await continueAndComplete(harness, prepared, pause)
+})
+
+// Value: protects=finding OCR wiring lens (pre-read guard): a hit whose second synchronous frame has no location (a changed protocol) pauses unconfirmed verdict-error with its log id and one Output line, and the run does not fail; fails_when=the renderer pre-read destructures the frame's location and throws out of the inspection, so the run fails instead of the specified unconfirmed pause; no_claim=which Next or js-debug change produces such a frame
+test('a hit whose synchronous frame lacks its location pauses unconfirmed verdict-error and the run goes on', async (context) => {
+  // Arrange
+  const lines: { level: string; text: string }[] = []
+  const control: RuntimeControl = {
+    ...pagesControl(context),
+    outputLog: (line) => lines.push(line),
+  }
+  const harness = await pagesServerRun(context, { control })
+  harness.run.prepare().catch(() => undefined)
+  await armedEntry(harness)
+  // Act
+  harness.server!.hit(
+    hitOnLine(PAGES_SERVER_RETURN_LINE, {
+      fixture: 'get-server-side-props-before-await',
+      edit: (event) => {
+        Object.assign(event.callFrames[1]!, { location: null })
+      },
+    }),
+  )
+  await hitAnswered(harness)
+  // Assert
+  const view = harness.run.view()
+  assert.deepEqual(plain(view.failures), [])
+  assert.deepEqual(journaled(harness, 'breakpoint.unconfirmed'), [
+    { reason: 'verdict-error', logId: 'service-run-73#hit-1' },
+  ])
+  assert.equal(view.participants.server?.snapshot?.attribution, 'unconfirmed')
+  assert.equal(lines.length, 1)
+})
+
+// Value: protects=finding OCR wiring lens (retry of a failed renderer read): the first hit's read of the unannounced renderer's text fails (a transient Debugger.getScriptSource error), so that hit pauses unconfirmed no-async-chain; the next hit reads the renderer again, finds it and pauses entry-load; fails_when=the failed read marks the renderer as read for the rest of the run, so every later hit reads as no-renderer-frame or no-async-chain; no_claim=what makes a real read fail
+test('a renderer whose first text read failed is read again at the next hit and found', async (context) => {
+  // Arrange: a stop on a getServerSideProps line and a stop in the helper it calls, as in the called-code test
+  const harness = await pagesServerRun(context, {
+    additionalStops: [
+      {
+        line: PAGES_SERVER_RETURN_LINE,
+        column: 1,
+        inspections: [{ path: 'count', mode: 'value', required: true }],
+      },
+    ],
+    operations: {
+      operations: [],
+      stopOperations: [0, 0],
+      stopParticipants: ['server', 'server'],
+    },
+    fixture: {
+      source: PAGES_SERVER_PAGE_SOURCE,
+      citationEndLine: 7,
+      declaredLine: 5,
+    },
+    inspections: [{ path: 'query', mode: 'value', required: true }],
+    inspectionScope: { count: 3, query: 'page=1' },
+  })
+  const prepared = harness.run.prepare()
+  await armedEntry(harness)
+  harness.server!.failNextScriptRead(RENDERER_SCRIPT_ID)
+  const synchronousOnly = (event: PagesPausedEvent): void => {
+    event.asyncStackTrace = undefined
+  }
+  // Act: both hits carry only synchronous frames, and the proxy never announced the renderer
+  harness.server!.hit(
+    hitOnLine(5, {
+      fixture: 'get-server-side-props-before-await',
+      unannounced: 'all',
+      edit: synchronousOnly,
+    }),
+  )
+  const first = await publishedPause(harness)
+  await harness.run.continue('server', first.pause)
+  await resumesReceived(harness, 1)
+  harness.server!.hit(
+    hitOnLine(PAGES_SERVER_RETURN_LINE, {
+      fixture: 'get-server-side-props-before-await',
+      prepend: true,
+      unannounced: 'all',
+      edit: synchronousOnly,
+    }),
+  )
+  const second = await nextPause(harness, first)
+  // Assert
+  assert.deepEqual(
+    [first.attribution, second.attribution],
+    ['unconfirmed', 'entry-load'],
+  )
+  assert.deepEqual(journaled(harness, 'breakpoint.unconfirmed'), [
+    { reason: 'no-async-chain' },
+  ])
+  await continueAndComplete(harness, prepared, second)
+})
+
+/** The async chain of the recorded render below the data-function level (`render`, `doRender`, …), which a proxy can hand over behind a stack trace id. */
+const RENDER_CHAIN = pagesPausedFixtureOf('get-server-side-props-after-await')
+  .event.asyncStackTrace!.parent!
+
+// Value: protects=finding OCR wiring lens (journal budget): the reads a Pages hit makes through the server's proxy (the renderer's text, pathname, an async-chain continuation) go through the quiet path, so resumed hits (here one other-route and one outside-data-function) add no cdp.sent or cdp.response entries and up to 500 resumed hits per stop cannot use up the 10,000-entry evidence journal; fails_when=the per-hit reads use the journaled path, so a few Pages stops of a hot helper end the run as an evidence failure; no_claim=the real channel's journaling (the scripted proxy lists which path each read took; the Cdp tests pin that a quiet success is not journaled and a quiet failure is)
+test('resumed Pages hits read the stack through the quiet path, adding no journal entries per read', async (context) => {
+  // Arrange
+  const harness = await pagesServerRun(context, {
+    sourcePath: 'src/lib/helper.ts',
+  })
+  harness.run.prepare().catch(() => undefined)
+  await armedEntry(harness)
+  // Act: another page's data function calls the helper, then the page's render calls it through a chain the proxy continues by id
+  harness.server!.hit(
+    hitOnLine(PAGES_SERVER_RETURN_LINE, {
+      fixture: 'get-server-side-props-before-await',
+      prepend: true,
+      pathname: '/other',
+    }),
+  )
+  await resumesReceived(harness, 1)
+  harness.server!.hit(
+    hitOnLine(PAGES_SERVER_RETURN_LINE, {
+      fixture: 'get-server-side-props-after-await',
+      edit: (event) => {
+        event.asyncStackTrace = undefined
+        event.asyncStackTraceId = { id: 'render-chain' }
+      },
+      stackTraces: { 'render-chain': RENDER_CHAIN },
+    }),
+  )
+  await resumesReceived(harness, 2)
+  // Assert
+  assert.deepEqual(journaled(harness, 'breakpoint.other-route'), [
+    { route: '/other' },
+  ])
+  assert.deepEqual(journaled(harness, 'breakpoint.outside-data-function'), [{}])
+  const hitReads = [
+    'Debugger.getScriptSource',
+    'Debugger.evaluateOnCallFrame',
+    'Debugger.getStackTrace',
+  ]
+  assert.deepEqual(
+    hitReads.filter((method) =>
+      harness.server!.inspectorMethods.includes(method),
+    ),
+    hitReads,
+  )
+  assert.deepEqual(
+    harness.server!.journaledInspectorMethods.filter((method) =>
+      hitReads.includes(method),
+    ),
+    [],
+  )
 })
 
 // Value: protects=AC 18 readiness on the record: a Pages run's resource and journal hold one readiness.entry-request entry with its HTTP status before the first pause, a taken pause names its data function in the run resource (not in the saved study), and the run resource names the Next version and the attribution summary; fails_when=the entry is missing, repeats, comes after the first pause or lacks the status, or the data function, version or summary is missing from the resource; no_claim=the status of a real request (the stand-in server answers 200)

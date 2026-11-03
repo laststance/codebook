@@ -62,6 +62,38 @@ test('a renderer text that holds neither pattern is unrecognised and finds no ca
   assert.equal(nextPagesDataFunctionCallAt(changedRuntime, 0, 26), undefined)
 })
 
+/** The tracer-constants enum as every compiled runtime of Next 16.1.4 bundles it (`pages-api.runtime.dev.js` 0:41631, `app-page.runtime.dev.js` 24:17439, `pages.runtime.dev.js` 0:47083), MIT, (c) Vercel, Inc. */
+const TRACER_CONSTANTS_ENUM_1614 =
+  'RenderSpan1=((RenderSpan=RenderSpan1||{}).getServerSideProps="Render.getServerSideProps",RenderSpan.getStaticProps="Render.getStaticProps",RenderSpan.renderToString="Render.renderToString"'
+
+// Value: protects=finding OCR verdict lens (renderer recognition): the tracer-constants enum that pages-api, app-page and app-route runtimes bundle, and a Pages renderer that kept it but lost its call sites, are not a recognised renderer and find no traced-await call at the enum's location; fails_when=`RenderSpan.getStaticProps` of the enum counts as the renderer's text, so a renderer whose call sites changed reads as recognised and every real hit is resumed outside-data-function; no_claim=the run's journal entry (the run test pins it)
+test('the tracer-constants enum every Next runtime bundles does not make a text the Pages renderer', () => {
+  // Arrange
+  const pagesApiRuntime = `var tracer;${TRACER_CONSTANTS_ENUM_1614};module.exports=apiResolver`
+  const rendererWithoutCallSites = `${TRACER_CONSTANTS_ENUM_1614}\nasync function renderToHTMLImpl(req,res,pathname){data=await loadPageData({req:req,res:res})}`
+
+  // Act, Assert
+  assert.equal(holdsNextPagesRendererPatterns(pagesApiRuntime), false)
+  assert.equal(holdsNextPagesRendererPatterns(rendererWithoutCallSites), false)
+  assert.equal(
+    nextPagesDataFunctionCallAt(rendererWithoutCallSites, 0, 89),
+    undefined,
+  )
+})
+
+// Value: protects=finding OCR verdict lens (unannounced script identification): a page module that declares its data function (`export async function getServerSideProps(`, `export async function getStaticProps(`) is never taken for Next's renderer; fails_when=a page module parsed before the debugger attached is added to the renderer's scripts, so its frame reads as the renderer and the page module is lost from the page read; no_claim=webpack's real eval wrapping of the module (only its declarations matter here)
+test('a page module that declares getServerSideProps or getStaticProps is never the Pages renderer', () => {
+  // Arrange
+  const serverSidePropsPage =
+    'export default function Home({ count }) {\n  return count\n}\nexport async function getServerSideProps({ query }) {\n  return { props: { count: 3 } }\n}\n//# sourceURL=webpack-internal:///(pages-dir-node)/./pages/index.tsx'
+  const staticPropsPage =
+    'export async function getStaticProps() {\n  return { props: {} }\n}\n//# sourceURL=webpack-internal:///(pages-dir-node)/./pages/about.tsx'
+
+  // Act, Assert
+  assert.equal(holdsNextPagesRendererPatterns(serverSidePropsPage), false)
+  assert.equal(holdsNextPagesRendererPatterns(staticPropsPage), false)
+})
+
 // Value: protects=location lookup bounds: a location past the last line or past the end of its line finds no call and does not throw, and a text with CRLF or Unicode line terminators numbers its lines as V8 does; fails_when=a stale location throws, or a Windows or separator-bearing runtime shifts the lines so a call is missed; no_claim=none beyond protects
 test('a location outside the text finds no call and CRLF, CR, LS and PS count as line ends', () => {
   // Arrange
