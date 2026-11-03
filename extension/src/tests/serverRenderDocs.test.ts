@@ -50,7 +50,8 @@ test('the packaged help states afterOperation 0, omitted operations, not-needed 
     'operations array [] is refused with INVALID_CONFIGURATION',
     'confirmation: \\"not-needed\\"',
     'client-component',
-    'server-side code of a Pages Router page',
+    'server-side code of other routes than the entry route',
+    'A Pages server stop does not pause, in this version',
     'route handlers',
     'Turbopack',
     'observed after',
@@ -83,7 +84,7 @@ test('no error recovery text says an operation caused a render', () => {
   )
 })
 
-// protects=AC 11 (the packaged skill carries the server-render rules); fails_when=a rule leaves the skill or its version is not 1.0.65; no_claim=how a chat follows the rules
+// protects=AC 11 (the packaged skill carries the server-render rules); fails_when=a rule leaves the skill or its version is not 1.0.66; no_claim=how a chat follows the rules
 test('the bundled skill declares the stop in code that runs on every render, uses afterOperation 0, checks API 1.16 and never claims a render the run did not pause in', async () => {
   // Arrange
   const skill = await readPackaged('skills', 'codebook', 'SKILL.md')
@@ -92,7 +93,7 @@ test('the bundled skill declares the stop in code that runs on every render, use
     skill.split('\n\n').find((part) => part.startsWith('**Server renders')) ??
     ''
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.65"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.66"\n'))
   for (const phrase of [
     'afterOperation: 0',
     'omitted',
