@@ -1,4 +1,7 @@
-import { REDACTION_MASK } from '../constants'
+import {
+  AUTHORIZATION_CREDENTIAL_MIN_CHARS,
+  REDACTION_MASK,
+} from '../constants'
 
 import {
   isAuthorizationShape,
@@ -7,15 +10,91 @@ import {
   type ShapedLiteralsResult,
 } from './secretShapes'
 
-/** A credential header and its value on one line: `Cookie: …`, `Set-Cookie: …`, `Authorization: …`, `Proxy-Authorization: …`, also as a logged key (`cookie = …`). Group 2 is the value up to a quote or the line's end. */
-const LABELLED_CREDENTIAL_HEADER =
-  /\b((?:proxy-)?authorization|(?:set-)?cookie)(["']?[ \t]*[:=][ \t]*["']?)([^\r\n"']*)/gi
+/**
+ * A credential header's label and what follows it up to its value: `Cookie:`, `Set-Cookie=`, `"authorization":`, `Proxy-Authorization:`, or only blanks (`cookie sid=…`), with an opening quote of the value in group 2 (empty when the value is bare).
+ * The label alone proves a header, so the value is judged by its start ({@link startsWithCredential}), not as a whole.
+ */
+const CREDENTIAL_LABEL =
+  /\b((?:proxy-)?authorization|(?:set-)?cookie)(?:["']?[ \t]*[:=][ \t]*|[ \t]+)(["']?)/gi
+
+/** A cookie pair at the start of a value: an RFC 6265 name and its `=`; what follows it (more pairs, attributes, a trailing comment) is part of the header. */
+const COOKIE_PAIR_START = /^[^\s=;,"'()<>@:\\/[\]?{}]+=/
+
+/** An Authorization scheme and the start of its credential: Basic, Negotiate, NTLM or Token with a credential token of at least {@link AUTHORIZATION_CREDENTIAL_MIN_CHARS} characters, or Digest with its first `name=`. A `Bearer` value is left to {@link redactSecretText}, which masks its token and keeps the word. */
+const AUTHORIZATION_START = new RegExp(
+  `^(?:(?:basic|negotiate|ntlm|token)[ \\t]+[A-Za-z0-9._~+/=-]{${AUTHORIZATION_CREDENTIAL_MIN_CHARS},}|digest[ \\t]+[A-Za-z][\\w-]*=)`,
+  'i',
+)
 
 /** A line that is exactly one `name=value` pair: group 1 is the name and its `=`. */
 const SINGLE_PAIR = /^([^\s=;]+=)[^;]*$/
 
 /** A `Bearer` value, which {@link redactSecretText} masks while it keeps the word. */
 const BEARER_VALUE = /^bearer[ \t]/i
+
+/** A line break, kept by `split` so the text can be joined again unchanged; a lone carriage return (a progress line, a terminal rewrite) starts a new line like `\n`. */
+const LINE_BREAK = /(\r\n|\r|\n)/
+
+/**
+ * Tells whether the text after a Cookie or Authorization label starts like a credential.
+ * Why: the label already proves a credential header, so one non-secret pair (`JSESSIONID=…`) or a trailing comment must not make the value readable; called by {@link maskLabelledCredentials}.
+ * @param value - The text after the label's separator.
+ * @returns `true` when it starts with a cookie pair, or with an Authorization scheme and its credential (not `Bearer`).
+ * @example
+ * startsWithCredential('JSESSIONID=ABCDEF0123456789') // => true
+ * startsWithCredential('banner accepted') // => false
+ */
+function startsWithCredential(value: string): boolean {
+  return COOKIE_PAIR_START.test(value) || AUTHORIZATION_START.test(value)
+}
+
+/**
+ * Finds where a quoted header value ends on its line.
+ * @param line - The line.
+ * @param valueStart - The index right after the value's opening quote.
+ * @param quote - The opening quote character.
+ * @returns The index of the closing quote, or the line's length when it has none; a backslash escapes the character after it.
+ * @example endOfQuotedValue('cookie: "a=b" x', 9, '"') // => 12
+ */
+function endOfQuotedValue(
+  line: string,
+  valueStart: number,
+  quote: string,
+): number {
+  for (let index = valueStart; index < line.length; index++) {
+    if (line[index] === '\\') index++
+    else if (line[index] === quote) return index
+  }
+  return line.length
+}
+
+/**
+ * Masks the value of each labelled credential header on one line: from after the label to the closing quote of a quoted value, else to the line's end.
+ * Why: a label such as `Cookie:` or `authorization` proves what follows is a credential, whatever its shape (a quoted Digest, a trailing comment, one `JSESSIONID=…` pair, a blank instead of `:`); called by {@link maskBareLine}.
+ * @param line - One line without its break.
+ * @param mask - What replaces a masked value.
+ * @returns The line with each such value replaced by the mask; unchanged when it holds none.
+ * @example
+ * maskLabelledCredentials('Cookie: JSESSIONID=ABCDEF0123456789', '[masked]') // => 'Cookie: [masked]'
+ * maskLabelledCredentials("cookie: 'sid=abc' ok", '[masked]') // => "cookie: '[masked]' ok"
+ * maskLabelledCredentials('Cookie banner accepted', '[masked]') // => 'Cookie banner accepted'
+ */
+function maskLabelledCredentials(line: string, mask: string): string {
+  let masked = '',
+    copiedUntil = 0
+  for (const label of line.matchAll(CREDENTIAL_LABEL)) {
+    // A label inside a value that is already masked belongs to that value.
+    if (label.index < copiedUntil) continue
+    const valueStart = label.index + label[0].length
+    if (!startsWithCredential(line.slice(valueStart))) continue
+    const quote = label[2] ?? ''
+    masked += line.slice(copiedUntil, valueStart) + mask
+    copiedUntil = quote
+      ? endOfQuotedValue(line, valueStart, quote)
+      : line.length
+  }
+  return masked + line.slice(copiedUntil)
+}
 
 /**
  * Masks the credential on one line of output: the value of a labelled credential header, or a line that is a Cookie header or an Authorization value by itself.
@@ -29,16 +108,7 @@ const BEARER_VALUE = /^bearer[ \t]/i
  * maskBareLine('API_KEY=abc', '[masked]') // => 'API_KEY=[masked]'
  */
 function maskBareLine(line: string, mask: string): string {
-  const labelled = line.replace(
-    LABELLED_CREDENTIAL_HEADER,
-    (whole, name: string, separator: string, value: string) => {
-      const credential = value.trim()
-      const isCredential = /cookie/i.test(name)
-        ? isCookieHeaderShape(credential)
-        : isAuthorizationShape(credential) && !BEARER_VALUE.test(credential)
-      return isCredential ? `${name}${separator}${mask}` : whole
-    },
-  )
+  const labelled = maskLabelledCredentials(line, mask)
   if (labelled !== line) return labelled
   // `console.log(req.headers.cookie)` prints the value alone, and a logged list ends its items with a comma.
   const trimmedEnd = line.trimEnd()
@@ -60,7 +130,7 @@ function maskBareLine(line: string, mask: string): string {
 }
 
 /**
- * Masks the Cookie, Authorization and flat-header-array shapes in development-server or test output, the shapes the replay capture masks in a saved value: a quoted element that is a Cookie header or an Authorization value, the element that directly follows a quoted secret header name (a logged `rawHeaders`, on the same line or the next, also when the list ends in `... more items`), a labelled credential header line, and a line that is such a value by itself.
+ * Masks the Cookie, Authorization and flat-header-array shapes in development-server or test output, the shapes the replay capture masks in a saved value: a quoted element that is a Cookie header or an Authorization value, the element that directly follows a quoted secret header name (a logged `rawHeaders`, on the same line or the next, also when the list ends in `... more items`), a labelled credential header (also with a quoted Digest, a trailing comment, one non-secret cookie pair or a blank for its separator), and a line that is such a value by itself; a carriage return breaks a line like a newline.
  * Why: a data function often logs the request; the shared redactor knows credential prefixes but not these shapes. Called by {@link createOutputRedactor} for each released run of lines and by {@link maskNextServerOutput}.
  * @param text - Output of one or more whole lines (the last may lack its break).
  * @param afterHeaderName - Whether the output before this text ended right after a quoted secret header name, so a list printed across writes keeps its pairing.
@@ -77,10 +147,13 @@ export function maskSecretShapesInOutput(
 ): ShapedLiteralsResult {
   const shaped = maskShapedLiterals(text, afterHeaderName, mask)
   return {
+    // The split keeps each break at an odd index, so only the lines between them are judged.
     text: shaped.text
-      .split('\n')
-      .map((line) => maskBareLine(line, mask))
-      .join('\n'),
+      .split(LINE_BREAK)
+      .map((piece, index) =>
+        index % 2 === 1 ? piece : maskBareLine(piece, mask),
+      )
+      .join(''),
     afterHeaderName: shaped.afterHeaderName,
   }
 }

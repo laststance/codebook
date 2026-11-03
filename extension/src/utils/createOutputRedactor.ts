@@ -2,6 +2,7 @@ import {
   OUTPUT_REDACTION_BLOCK_DROP_LIMIT_CHARS,
   OUTPUT_REDACTION_CARRY_CHARS,
   OUTPUT_REDACTION_END_MARKER_TAIL_CHARS,
+  OUTPUT_REDACTION_FIRST_WORD_HOLD_CHARS,
   OUTPUT_REDACTION_HOLD_LIMIT_CHARS,
   REDACTION_MASK,
 } from '../constants'
@@ -67,6 +68,40 @@ const PARTIAL_LINE_MAY_BE_SHAPED =
 const NOT_KEY_BODY = /[^A-Za-z0-9+/=\s]/
 
 /**
+ * Finds where the last line of a text starts: right after its last line break, a newline or a lone carriage return (a progress line rewrites itself with one and is complete at it).
+ * @param text - The text seen so far.
+ * @returns The index of the last line's first character; `0` without a break, `text.length` when the text ends in one.
+ * @example
+ * lastLineStart('a=1\nb=2') // => 4
+ * lastLineStart('[==>  ] 40%\r') // => 12
+ */
+function lastLineStart(text: string): number {
+  return Math.max(text.lastIndexOf('\n'), text.lastIndexOf('\r')) + 1
+}
+
+/**
+ * Says whether an unfinished line may still become a Cookie or Authorization line once the rest of it arrives.
+ * Why: such a line waits for its break, so a pair, a label or an element split over writes is judged whole; called by {@link holdStart}.
+ * @param partialLine - The text after the last line break.
+ * @returns `true` when it holds a quote, `=` or `;`, a Cookie or Authorization word or scheme ({@link PARTIAL_LINE_MAY_BE_SHAPED}), or when it is one short word (a cookie name before its `=`, the first letters of a header label or scheme such as `Coo` or `Bas`).
+ * @example
+ * mayBecomeShapedLine('port=3000') // => true
+ * mayBecomeShapedLine('Coo') // => true
+ * mayBecomeShapedLine('server ready') // => false
+ * mayBecomeShapedLine('    ') // => false
+ */
+function mayBecomeShapedLine(partialLine: string): boolean {
+  if (PARTIAL_LINE_MAY_BE_SHAPED.test(partialLine)) return true
+  // Indentation alone waits for nothing: a word that follows it is judged when it arrives.
+  const firstWord = partialLine.trimStart()
+  return (
+    firstWord !== '' &&
+    firstWord.length <= OUTPUT_REDACTION_FIRST_WORD_HOLD_CHARS &&
+    !/\s/.test(firstWord)
+  )
+}
+
+/**
  * Says whether a trailing run without whitespace may still become a secret: it contains a secret start, ends in the first characters of one, or ends in a URL scheme.
  * Why: only such a run waits for the next chunk; any other text is released at once, so output keeps its arrival order and time around a debugger stop.
  * @param run - The trailing run of the text seen so far.
@@ -97,18 +132,16 @@ function mayBecomeSecret(run: string): boolean {
 function holdStart(text: string): number {
   let start = text.length
   // A trailing line that may become a Cookie or Authorization value waits for its line break (at most the hold limit, see `release`).
-  const lineStart = text.lastIndexOf('\n') + 1
-  if (
-    lineStart < text.length &&
-    PARTIAL_LINE_MAY_BE_SHAPED.test(text.slice(lineStart))
-  )
+  const lineStart = lastLineStart(text)
+  if (lineStart < text.length && mayBecomeShapedLine(text.slice(lineStart)))
     start = lineStart
   // A trailing run without whitespace waits only if it may still become a secret.
   // Scanned backwards by hand: a regular expression would rescan a long run from every start.
   let runStart = text.length
   while (runStart > 0 && !/\s/.test(text.charAt(runStart - 1))) runStart--
+  // The line's earlier part waits too, so a line is judged whole, not in two halves.
   if (runStart < text.length && mayBecomeSecret(text.slice(runStart)))
-    start = runStart
+    start = Math.min(start, runStart)
   // `Bearer` and its token may arrive in separate chunks.
   const bearer = /\bBearer(?:[ \t]+\S*)?$/i.exec(text)
   if (bearer) start = Math.min(start, bearer.index)
@@ -247,8 +280,8 @@ export function createOutputRedactor(): OutputRedactor {
   let held = ''
   // Whether the text released so far ended right after a quoted secret header name (a printed `rawHeaders` list), so the next element is its value.
   let afterHeaderName = false
-  // Set after an overflow: the rest of the oversized token (until whitespace) or private-key block is dropped; `held` stays empty meanwhile.
-  let dropping: 'token' | 'block' | undefined
+  // Set after an overflow: the rest of the oversized token (until whitespace), line (until its break) or private-key block is dropped; `held` stays empty meanwhile.
+  let dropping: 'token' | 'line' | 'block' | undefined
   const block: DroppedBlock = { droppedChars: 0, tail: '', atLineStart: false }
 
   /**
@@ -275,23 +308,27 @@ export function createOutputRedactor(): OutputRedactor {
     held = text.slice(split)
     if (held.length <= OUTPUT_REDACTION_HOLD_LIMIT_CHARS)
       return shapeAndRedact(released)
+    // A line that may be a Cookie or Authorization line cannot be judged in pieces: a value cut by a release escapes both halves.
+    const isShapedLine = PARTIAL_LINE_MAY_BE_SHAPED.test(
+      text.slice(lastLineStart(text)),
+    )
     // No secret start in the run: release it, keeping a short carry so a start cut by the release is still seen whole.
-    if (!SECRET_START.test(held)) {
+    if (!isShapedLine && !SECRET_START.test(held)) {
       const run = held
       const cut = carryStart(run)
       held = run.slice(cut)
       return shapeAndRedact(released + run.slice(0, cut))
     }
-    // Fail closed: a possible secret outgrew the hold, so mask it and drop the rest of that token or block.
+    // Fail closed: a possible secret outgrew the hold, so mask it and drop the rest of that token, line or block.
     const overflow = held
     held = ''
     const masked = shapeAndRedact(released) + REDACTION_MASK
-    // Only a private-key header (or one not yet closed) opens a block; any other run is a token, dropped to the next whitespace.
+    // Only a private-key header (or one not yet closed) opens a block; a shaped line is dropped to its break, any other run is a token dropped to the next whitespace.
     if (
       !PRIVATE_KEY_BEGIN.test(overflow) &&
       !UNFINISHED_BEGIN_AT_START.test(overflow)
     ) {
-      dropping = 'token'
+      dropping = isShapedLine ? 'line' : 'token'
       return masked
     }
     dropping = 'block'
@@ -319,6 +356,13 @@ export function createOutputRedactor(): OutputRedactor {
       if (!after) return ''
       dropping = undefined
       return release(after)
+    }
+    if (dropping === 'line') {
+      // The line's break is released with the text after it.
+      const lineEnd = text.search(/[\r\n]/)
+      if (lineEnd === -1) return ''
+      dropping = undefined
+      return release(text.slice(lineEnd))
     }
     return release(held + text)
   }

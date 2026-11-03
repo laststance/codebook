@@ -248,11 +248,11 @@ test('an oversized token keeps being dropped across a chunk without whitespace a
   const redactor = createOutputRedactor()
   const token = ['ghp', 'b'.repeat(9_000)].join('_')
   // Act
-  const first = redactor.write(`token ${token}`)
+  const first = redactor.write(`using ${token}`)
   const continuing = redactor.write('c'.repeat(500))
   const resumed = redactor.write('ccc ok\n')
   // Assert
-  assert.equal(first, 'token [masked]')
+  assert.equal(first, 'using [masked]')
   assert.equal(continuing, '')
   assert.equal(resumed, ' ok\n')
 })

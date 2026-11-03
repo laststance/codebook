@@ -132,7 +132,7 @@ test('a process that prints more than 32 KiB keeps its first 32 KiB for the anno
   assert.equal(capture.tail().includes('HEAD'), false)
 })
 
-// Value: protects=output keeps its arrival order across channels (pt1 Step 11 Codex structured finding: a partial line held by the redactor was delivered after later output, moving it past a debugger stop); fails_when=a plain partial line is delivered after the other channel's later line; why_new=no test interleaved channels around a partial line; seam=none; no_claim=a partial line ending in a possible secret prefix, which still waits
+// Value: protects=output keeps its arrival order across channels (pt1 Step 11 Codex structured finding: a partial line held by the redactor was delivered after later output, moving it past a debugger stop); fails_when=a plain partial line is delivered after the other channel's later line; why_new=no test interleaved channels around a partial line; seam=none; no_claim=a partial line ending in a possible secret prefix, or one single word (a cookie name may still be followed by its `=`), which still wait
 test('a partial plain line on stdout is delivered before a later stderr line', async () => {
   // Arrange
   const child = fakeChild()
@@ -147,7 +147,7 @@ test('a partial plain line on stdout is delivered before a later stderr line', a
     failurePrefix: 'test capture failed',
   })
   // Act
-  child.stdout.write('before')
+  child.stdout.write('before the stop')
   await flushStreams()
   child.stderr.write('later\n')
   await flushStreams()
@@ -157,7 +157,7 @@ test('a partial plain line on stdout is delivered before a later stderr line', a
   assert.deepEqual(
     events.map((event) => [event.channel, event.text]),
     [
-      ['stdout', 'before'],
+      ['stdout', 'before the stop'],
       ['stderr', 'later\n'],
       ['stdout', '\n'],
     ],

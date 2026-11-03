@@ -2363,6 +2363,9 @@ export const OUTPUT_REDACTION_HOLD_LIMIT_CHARS = 8_192
 /** The characters kept back when an over-long run shows no secret shape is released, so a secret marker cut by the release is still seen whole ({@link createOutputRedactor}). */
 export const OUTPUT_REDACTION_CARRY_CHARS = 16
 
+/** The longest first word of an unfinished output line that an output redactor still holds back, because a cookie name before `=` or a header name before `:` may follow with the next chunk ({@link createOutputRedactor}); a cookie name is shorter than this. */
+export const OUTPUT_REDACTION_FIRST_WORD_HOLD_CHARS = 64
+
 /** The characters of a dropped private-key body kept to find an END marker split across chunks ({@link createOutputRedactor}); longer than the longest END marker its bounded label allows (about 106 characters). */
 export const OUTPUT_REDACTION_END_MARKER_TAIL_CHARS = 128
 
