@@ -1,13 +1,13 @@
 # codebook agent instructions
 
-Single entry point for every coding agent; Codex and Claude Code (v2.1.281+) load it as project instructions. Keep agent instructions here: a `CLAUDE.md`, `.claude/CLAUDE.md` or `CLAUDE.local.md` in the repo or any directory above makes Claude Code read that file instead.
+Single entry point for every coding agent; Codex and Claude Code (v2.1.281+) load it as project instructions. Keep agent instructions here: a `CLAUDE.md`, `.claude/CLAUDE.md` or `CLAUDE.local.md` in the repo or any directory above would replace this file for Claude Code.
 
 ## Mandatory entry
 
 Before planning, implementation or runtime trials:
 
 1. New session, or PRODUCT_GOAL.md changed: read [PRODUCT_GOAL.md](PRODUCT_GOAL.md) in full except `## Final acceptance protocol`; open [the approved PNG](assets/codebook-product-spec-v9.png) with an image tool; read the active cycle Issue (open, label `cycle`) with comments (`gh issue view <N> --comments`).
-2. After every context compaction, before any other work, whatever the task: read PRODUCT_GOAL.md in full, every line; open the PNG with an image tool and check its identity; then read the active cycle Issue with comments. This file loads automatically as project instructions (Claude Code, Codex): reread it from disk only when its text is not in context or it changed on disk since the session began. Top rule: the goal and the image are the final product every token is spent for; a plan or change made without them is waste. A compacted summary, the restore hook's text or an earlier read is no substitute.
+2. After every context compaction, before any other work, whatever the task: read PRODUCT_GOAL.md in full, every line; open the PNG with an image tool and check its identity; then read the active cycle Issue with comments. This file is already loaded as project instructions: reread it from disk only when its text is not in context or it changed on disk since the session began. Top rule: the goal and the image are the final product every token is spent for; a plan or change made without them is waste. A compacted summary, the restore hook's text or an earlier read is no substitute.
 3. Final acceptance selected: read [`## Final acceptance protocol`](PRODUCT_GOAL.md#final-acceptance-protocol).
 
 The PNG is the product to build:
@@ -22,7 +22,7 @@ The PNG is the product to build:
   - Tasks: numbered checklist, one line each (source, defect, what closes it); close with "fixed in <sha>" or "evidence: <one line>". A finding during a bug-fix cycle = one more task.
   - Near GitHub's 65,536-character limit: continue the list in one pinned comment.
 - **PR** = results (gate, CI, native QA summary) + Issue reference.
-- **Issue closing comment** = outcome + every carried defect; the next bug-fix Issue copies that list.
+- **Issue closing comment** = outcome + every carried defect; the next bug-fix Issue, written before other work, copies that list. A bug-fix cycle states nothing is carried (`/spec` starts a feature cycle); defects the ship review limit records are named, and the next cycle is bug-fix.
 - **CHANGELOG.md** = what each version changes for users.
 - **Tag `docs-archive-2026-10-20`** = every record and document removed here.
 
@@ -43,10 +43,9 @@ Fix every carried defect in the next cycle; sole exception: the [ship review lim
   - No TypeScript 7: the native port has no JS API for ESLint.
   - Fallow always follows its latest release, majors included: catching up later is costlier than scoring a small step.
   - VS Code packages, `engines` and the Node pins stay as they are: a newer VS Code API than Cursor's breaks the extension in Cursor.
-  - Keep exact pins, fix breakages, pass the checks, and commit on the cycle branch.
+  - Keep exact pins, fix breakages, pass the checks, commit on the cycle branch.
   - A Fallow or c8 version change follows the [Fallow](#commands-and-checks) retake rules.
   - Small steps keep breaking changes cheap and security fixes immediate. A high `pnpm audit` advisory found mid-cycle is a defect of that cycle.
-
 - **Defect** = a Critical or Major finding (a review marks it critical, major, high, blocking, P0 or P1) or a failed gate, CI or native check. Medium, Minor, Low and informational findings, test gaps and doc debt are no defects: fixed when cheap and in scope, else answered Skip and named once in the PR or a short later-candidate list; they never start a bug-fix cycle.
 - **Feature cycle**: an increment of the final product. Starts only with nothing carried in; planned from the final product alone (`/spec` + plan reviews, from PRODUCT_GOAL.md and the gap audit). Defects it leaves unfixed are carried.
 - **Bug-fix cycle**: follows any cycle that left a defect; fixes those, nothing else.
@@ -55,7 +54,7 @@ Fix every carried defect in the next cycle; sole exception: the [ship review lim
   - Closes when every carried and found defect is closed → feature cycle, or another bug-fix cycle for defects that limit recorded.
 - A defect closes by a fix + a test failing without it, or recorded evidence it is no defect / no longer applies.
 - Carried defects live in the bug-fix cycle's Issue as tasks; a TODOS file, backlog or ledger of them is forbidden (a list that only records lets work end at the recording). Later candidate increments: a short list at most, never holding a carried defect.
-- Delivery: feature cycle fixes Critical findings before merge, carries Major ones (review, delegated review, native check, audit); bug-fix cycle fixes every Critical/Major finding before merge, except as the ship review limit allows.
+- Delivery: feature cycle fixes Critical findings before merge, carries Major ones; bug-fix cycle fixes every Critical/Major finding before merge, except as the ship review limit allows. Same for every source (`/review`, `/ship`, local CodeRabbit CLI, delegated review, native check, audit) and for a failed gate, CI or native check; below Major per the defect rule.
 
 ## Working loop
 
@@ -86,26 +85,20 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 
 - One bounded cycle at a time toward the complete product; after each merge `/spec` (+ the plan reviews the scope needs) writes the next cycle's Issue.
 - Work on a `codex/` branch; keep existing edits; reuse a fitting checkout.
-- Per cycle: one review round (4 local CodeRabbit CLI passes + 4 `open-code-review-delegate` reviews, all in parallel) → its fixes → `/ship` as PR (its QA step runs the cycle's native checks, [Native QA](#native-qa)) → required CI → separate exact-HEAD gate → merge as its own step with `--match-head-commit`.
-- One round only: after that round's fixes go straight to `/ship`; no second CodeRabbit/OCR round to recheck the fixes (the `/ship` review catches what they break).
-- Parallel reviews: start every review that reads no other review's result at the same time, never one after another.
-  - Examples: the 4 CodeRabbit CLI passes (one worktree each, within the included hourly reviews, never `--use-credits`) with the 4 OCR delegates (split by review lens when few files qualify); `/ship` pass 1's reviews (Codex structured review, red team, specialists); a plan-review phase's native and outside voices (outside one in a background shell, then the native agent).
-  - A review waits only for a result or tree it reads: `/autoplan` phases stay in order (each reviews the previous phase's amendments); a fix-check waits for its fix.
-- Parallel fixers: choose the fixer count and item split that finishes soonest, cost no object.
-  - Independent items needing no knowledge of each other → one subagent each (100 such items → 100 subagents, each in its own worktree from the branch head); only items sharing a file region or depending on another's result share a subagent or run in order.
-  - Integrate by cherry-pick, then one full suite.
+- Per cycle: one **review round** (4 local CodeRabbit CLI passes on the cycle's final range + 4 `open-code-review-delegate` (OCR) reviews, all in parallel) → its fixes → `/ship` as PR (native checks: [Native QA](#native-qa)) → required CI → separate exact-HEAD gate → merge as its own step with `--match-head-commit`.
+- One round only: after its fixes go straight to `/ship`; no second round to recheck them (the `/ship` review catches what they break).
+- Parallel reviews: start every review that reads no other review's result at once, never one after another; a review waits only for a result or tree it reads (`/autoplan` phases stay in order, each reviewing the previous phase's amendments; a fix-check waits for its fix).
+  - Examples: the round's 4 CodeRabbit CLI passes (one worktree each, within the included hourly reviews, never `--use-credits`) with its 4 OCR delegates (split by review lens when few files qualify); `/ship` pass 1's reviews (Codex structured review, red team, specialists); a plan-review phase's native and outside voices (outside one in a background shell, then the native agent).
+- Parallel fixers: choose the fixer count and item split that finishes soonest, cost no object. Independent items needing no knowledge of each other → one subagent each (100 such items → 100 subagents, each in its own worktree from the branch head); only items sharing a file region or depending on another's result share a subagent or run in order. Integrate by cherry-pick, then one full suite.
 - A large cycle may use up to three PRs (`cycle100-pt1`, `cycle100-pt2`, …), each passing reviews, CI and gate alone, merged in order; the Issue closes after the last.
-- Codex automatic review off (no Codex cloud step). No `@coderabbitai ignore` in PR bodies.
-- Hosted CodeRabbit off from Cycle 0057: `.coderabbit.yaml` keeps `reviews.auto_review.enabled: false` (CodeRabbit reads the PR branch's file); never post `@coderabbitai review`.
+- Codex automatic review off (no Codex cloud step).
+- Hosted CodeRabbit off from Cycle 0057: `.coderabbit.yaml` keeps `reviews.auto_review.enabled: false` (CodeRabbit reads the PR branch's file); never post `@coderabbitai review`, no `@coderabbitai ignore` in PR bodies. Merge waits for no hosted review or approval; a hosted review that still appears → report it in the PR, its findings follow the cycle rule like the local review's; run the local CodeRabbit CLI on the PR's final range before merge.
 - Outside review early: `/ship` Step 9 pass 1 also runs Step 11's Codex structured review (`codex review --base main`) on the whole diff, its findings part of pass 1; a plan changing process signalling, process identity or a stop/kill path also gets a Codex review before implementation. A fix-range pass (pass 2 on) under 300 changed lines dispatches the red team and the specialists whose area the range changes.
 
 **Delivery parameters.**
 
-- Merge: `node extension/scripts/merge-pr.mjs <n>` after the exact-HEAD gate in this checkout; it merges with `--squash --match-head-commit <head>` only when this checkout is at the PR head, the gate summary (`Checkout: clean`, every check `exit=0`, `GATE: pass on <head>`) and every workflow run, check run and status of that head passed (`CodeRabbit` never gates), and every workflow of the checkout's `.github/workflows` that runs on each pull request (no `paths` filter) has a successful run on the head; then fast-forwards the local `main`. Hand fallback, only for a defect of the script itself (named in the PR): `gh pr merge <n> --squash --match-head-commit <sha>`.
-- Cycle time report: right after each merge, comment on the merged PR with:
-  - the cycle's start (its Issue's creation) and completion (this merge) times;
-  - the time per work phase and step (spec, each /autoplan phase, implementation, each review and fix round, `/ship` with its native checks, CI, the gate, merge).
-  - Take times from recorded timestamps (Issue, commits, logs, `timing.json`); keep a running timeline in the cycle while it works; a cycle of several PRs reports the cycle so far on each.
+- Merge: `node extension/scripts/merge-pr.mjs <n>` after the exact-HEAD gate in this checkout at the PR head (`--help` lists the checks it enforces): squash with `--match-head-commit <head>`, then fast-forward the local `main`; `CodeRabbit` never gates. Hand fallback, only for a defect of the script itself (named in the PR): `gh pr merge <n> --squash --match-head-commit <sha>`.
+- Cycle time report: right after each merge, comment on the merged PR with the cycle's start (its Issue's creation) and completion (this merge) times and the time per work phase and step (spec, each /autoplan phase, implementation, each review and fix round, `/ship` with its native checks, CI, the gate, merge). Take times from recorded timestamps (Issue, commits, logs, `timing.json`); keep a running timeline in the cycle while it works; a cycle of several PRs reports the cycle so far on each.
 - `/ship` documentation candidate (`gstack-docs-candidate snapshot`) `--docs` roots: AGENTS.md, CHANGELOG.md, PRODUCT_GOAL.md, README.md, `extension/README.md`, `extension/skills/codebook/SKILL.md`, the v9 PNG.
 - CI packages via `node extension/scripts/package.mjs --out artifacts/packages/codebook.vsix`, checks via `node extension/scripts/check-package.mjs artifacts/packages/codebook.vsix` (`package.yml`).
 - Release commit: besides version files and CHANGELOG.md, one test line (expected version in `extension/scripts/tests/package.test.mjs`); `/ship` Step 16 counts it as release metadata, not a reviewed-tree change. Order: `/ship` Step 12 writes `VERSION` and the CHANGELOG heading → `node extension/scripts/bump-version.mjs <VERSION>` writes the three three-part places → Step 13 writes the entry → `bump-version.mjs --check` exits 0 (`test:package` fails any commit whose five places disagree).
@@ -114,22 +107,18 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 
 **Background work.**
 
-- `node extension/scripts/watch-background.mjs` (from Claude Code's start directory, else `--project <it>`) lists this session's (`CLAUDE_CODE_SESSION_ID`) background tasks and subagents with last-output time; marks those silent > 20 min; never marks finished/stopped subagents; a shell's row stays marked after it ends (its task notification is authoritative).
+- `node extension/scripts/watch-background.mjs` (from Claude Code's start directory, else `--project <it>`) lists this session's (`CLAUDE_CODE_SESSION_ID`) background tasks and subagents with last-output time; marks those silent > 20 min, never finished/stopped subagents; a shell's row stays marked after it ends (its task notification is authoritative).
 - Review subagent silent 20 min → stop it, redispatch on a narrower scope.
 - Subagent stopped by the API safety filter → redispatch at once, same brief, fallback model.
 - Waiting more than a few minutes → tell the owner what is awaited and since when.
 
 **Ship review limit.**
 
-- Installed `/ship`: max three fixing cycles; no fourth, no counter reset after a handoff, no round relabeled a repair.
+- Installed `/ship`: max three fixing cycles; no fourth, no counter reset after a handoff, no round relabeled a repair. The limit is `/ship`'s alone (one round is long; full convergence would stall delivery).
 - Third cycle still has findings (`converged:false`) → feature and bug-fix cycles alike, per the defect rule:
-  - fix every last-round Critical/Major finding (Critical always fixed before merge, per the delivery rules) and the cheap in-scope lower ones; answer the rest Skip, named once in the PR;
-  - record only still-open Critical/Major defects in a GitHub Issue (next cycle's tasks);
-  - merge after required CI + exact-HEAD gate, reporting `converged:false` in the PR;
-  - overrides no-carry for those recorded defects only.
-- The limit is `/ship`'s alone (one round is long; full convergence would stall delivery); it records defects of `/ship` rounds the PR cannot close (e.g. a Major finding whose fix/proof needs an unknown root cause or a native check).
-- A Critical finding never merges open: one the PR cannot close holds the merge until fixed (cycle + delivery rules).
-- Local CodeRabbit CLI and OCR delegate: Critical/Major findings follow the cycle rule, as do gate, CI and native-check failures; below Major per the defect rule. CodeRabbit CLI: the one parallel round on the cycle's final range before `/ship`.
+  - fix every last-round Critical/Major finding and the cheap in-scope lower ones; a Critical never merges open (one the PR cannot close holds the merge until fixed); answer the rest Skip, named once in the PR;
+  - record only still-open Critical/Major defects in a GitHub Issue (next cycle's tasks): defects of `/ship` rounds the PR cannot close (e.g. a Major finding whose fix/proof needs an unknown root cause or a native check); this overrides no-carry for those only;
+  - merge after required CI + exact-HEAD gate, reporting `converged:false` in the PR.
 
 **Skills** (read each installed SKILL.md at invocation; this map guides, copies no workflow):
 
@@ -153,26 +142,24 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 
 - `/spec`: plans a feature increment from PRODUCT_GOAL.md + gap audit, or writes a bug-fix Issue from the previous closing comment (one task + acceptance criterion per carried defect, nothing ranked or selected).
 - Plan reviews may change how a carried defect is fixed; never remove, merge away or defer one.
-- `/review`, `/ship` review steps: Critical fixed; Major fixed in a bug-fix cycle, carried from a feature cycle; below Major per the defect rule in both kinds (fixed when cheap and in scope, else answered Skip; no automatic fixes of informational findings).
+- `/review`, `/ship` review steps follow the [Cycle rule](#cycle-rule)'s Delivery bullet; no automatic fixes of informational findings.
 - `/ship`: commit the coverage audit's tests; plan completion audit counts an open bug-fix task NOT DONE and stops (no ship anyway, defer or drop); TODOS step writes no TODOS.md; fix documentation-audit blockers before commit.
 - Test gap, deferral, non-blocking doc debt, skill follow-up: later candidates, no carried defects.
-- Closing comment: feature cycle names every carried defect (bug-fix Issue comes before other work); bug-fix cycle states nothing is carried (`/spec` starts a feature cycle); defects recorded by the ship review limit → named, next cycle is bug-fix.
 
 **Invocation.**
 
 - Pass Issue, phase, bounded scope explicitly; PRODUCT_GOAL.md = destination, not permission to build everything.
 - Retired G08/G09 never return via an old prompt.
 - Give design skills `## Design target` and the PNG.
-- Honor scope gates without re-asking authorized routine choices or passing agent-chosen targets off as the user's; keep required reports; one approved recommendation authorizes no unrelated change.
+- Honor scope gates, passing no agent-chosen target off as the user's; keep required reports; one approved recommendation authorizes no unrelated change.
 - Shared-skill and Wiki-generation scope → DX + engineering review; discovery, loaded identity, runtime connection, AI-owned results are separate checks; Wiki works without runtime/debug MCP.
 
 **CodeRabbit and OCR.**
 
 - [.coderabbit.yaml](.coderabbit.yaml) = policy + exclusions: keep its guidelines current; validate with `coderabbit config validate .coderabbit.yaml`; pass it via `--config` beside extra context.
   - CLI 0.9.1 exits 1 on every file with `unknown keyword: "x-undocumented"` (its own schema defect): record that line as the validation result; a review with `-c` still applies the file.
-- Required: local CodeRabbit CLI, findings triage, CI, `open-code-review-delegate` (OCR picks files and rules, the host reviews; each eligible file reviewed or skipped with a reason; default exclusions reported apart; no independent external review).
+- Required: local CodeRabbit CLI, findings triage, CI, OCR (it picks files and rules, the host reviews; each eligible file reviewed or skipped with a reason; default exclusions reported apart; no independent external review).
 - Review against the implementation base; record completion, source cut, covered files, findings.
-- Hosted CodeRabbit not triggered ([Delivery](#delivery)): merge waits for no hosted review or approval; a hosted review that still appears → report it in the PR, its findings follow the cycle rule like the local review's; run the local CodeRabbit CLI on the PR's final range before merge.
 - Missing/private provider context = coverage limit.
 - Every user-visible behavior a CHANGELOG entry names needs a sentence in the packaged README (`extension/README.md`), as `.coderabbit.yaml`'s `CHANGELOG.md` instruction checks; a fix changing user-visible behavior changes that README in the same commit; fixers' briefs say so.
 - Claude Code CLI review: skipped; no native chat acceptance.
@@ -229,7 +216,7 @@ No decision log; delivery chain and ship limit: [Delivery](#delivery).
 - Write an owner rule as the rule itself into the required read it governs.
 - PRODUCT_GOAL.md changes only on explicit owner direction, with evidence and a concrete alternative; then raise the goal version and say why. The route within the goal is the agent's.
 - Keep all active goals while selecting one increment. Change accepted behavior only on explicit owner direction. Routine choices in the authorized phase need no repeated permission; an open gap does not authorize leaving it.
-- Keep evidence apart per host (VS Code, Cursor, independent browser) and per OS (macOS, Windows, Ubuntu): one verifies no other. Keep runtime and library coverage and stage order; fixture or development passes earn no acceptance credit.
+- Keep evidence apart per host (VS Code, Cursor, independent browser) and per OS (macOS, Windows, Ubuntu): one verifies no other. Keep runtime and library coverage and stage order.
 - Complete the authorized cycle, update the Issue, recommend one next action; go further only within owner authorization. These instructions create no background jobs, separate tasks or automations.
 - Changed UI needs mapped evidence + a current image comparison before review-complete.
 - Keep distinct, report apart: implementation, live validation, review, CI, merge, packaging, publication, installed verification, owner acceptance. A missing required check blocks a completion claim; unperformed work stays unverified.
@@ -238,10 +225,10 @@ No decision log; delivery chain and ship limit: [Delivery](#delivery).
 ## Development target
 
 - Until nine-project final acceptance starts, actual-editor trials use `nextjs-dashboard` (same repository and revision): Mac **`/Users/ryotamurakami/repository/nextjs-dashboard`**; its macOS Space **`/Users/lume/repository/nextjs-dashboard`**; Windows host **`/home/murakami/laststance/nextjs-dashboard`**.
-- Exception: the Node server execution form, which `nextjs-dashboard` lacks, is trialled on a pinned clone of P08 `laststance/switch-time` in the Space (`/Users/lume/qa/c57/switch-time`, revision recorded in the cycle Issue), with its documented local stack. Development evidence only; no final-row credit.
-- Exception (Cycle 0073 decision D2, Issue #188; the owner may revoke it): Pages Router server-side forms (`getServerSideProps`, `getStaticProps`), which `nextjs-dashboard` lacks, are trialled on a pinned clone of P02 `TanStack/query`'s `examples/react/nextjs` in the Space (`/Users/lume/qa/c73/tanstack-query`, revision recorded in the cycle Issue). Development evidence only; no final-row credit.
+- Exception: the Node server execution form, which `nextjs-dashboard` lacks, is trialled on a pinned clone of P08 `laststance/switch-time` in the Space (`/Users/lume/qa/c57/switch-time`, revision recorded in the cycle Issue), with its documented local stack.
+- Exception (Cycle 0073 decision D2, Issue #188; the owner may revoke it): Pages Router server-side forms (`getServerSideProps`, `getStaticProps`), which `nextjs-dashboard` lacks, are trialled on a pinned clone of P02 `TanStack/query`'s `examples/react/nextjs` in the Space (`/Users/lume/qa/c73/tanstack-query`, revision recorded in the cycle Issue).
 - Never an easier repository, never a tenth acceptance target. Recheck its revision, settings, dirty state; tell the owner before occupying the desktop; record unsupported behavior and missing setup. Docs-only work needs no native launch.
-- Development results earn no nine-project credit, fill no final row. Final acceptance freezes its own targets and candidate; Stage 1 starts only when its prerequisites hold.
+- All development results, the two exceptions included, are development evidence only: no nine-project credit, no final row filled; fixture results likewise. Final acceptance freezes its own targets and candidate; Stage 1 starts only when its prerequisites hold.
 - Use real opened repositories; isolated inputs verify mechanisms only, never as bundled demos or practical trials. Retired local trial resources are removed; old records in Git are no current proof.
 - Development chats: VS Code = Copilot Chat, model **GPT-6.1 Terra** (replaces GPT6 Luna; listed in the Space's VS Code 1.142.0, GPT-6.1 Luna not); before each VS Code trial search the picker for `6.1` and `luna` → switch to GPT-6.1 Luna, the cheaper one, if it appears; Cursor = Agent, model **Grok 4.6 high**, Fast on allowed; after observed credit exhaustion (either host) = the installed **Codex Extension** (Claude Code extension fallback retired).
   - Model missing from the picker → that host's trial is NOT RUN, picker list recorded.
@@ -254,7 +241,7 @@ No decision log; delivery chain and ship limit: [Delivery](#delivery).
   - `pnpm install` does not provide Bun: install that version, e.g. `curl -fsSL https://bun.com/install | bash -s "bun-v$(cat .bun-version)"`, else the commit hook and the format check fail.
   - Put that Node's own `bin` first in `PATH`; run from the repo root.
 
-Delivery commands (`--help` prints usage, exit codes 0/1/2/3/4/64 as each documents (`post-trial-evidence.mjs` also 10/11/12 for `gstack-post` results), `E_…` codes; a refusal's first line = its code, last line `Fix:`):
+Delivery commands (`--help` prints usage, exit codes and `E_…` codes; a refusal's first line = its code, last line `Fix:`):
 
 | Command | When |
 | --- | --- |
@@ -263,7 +250,7 @@ Delivery commands (`--help` prints usage, exit codes 0/1/2/3/4/64 as each docume
 | `node extension/scripts/post-trial-evidence.mjs <run-log.md> --manifest artifacts/<cycle>/<host>-<run>` | after a native check |
 | `node extension/scripts/merge-pr.mjs <n>` (`--dry-run`) | merge, after CI and the exact-HEAD gate |
 
-Formatting: `pnpm --dir extension format` / `format:check` and the lint-staged hook run `bun fmt` (the Bun of `.bun-version` on `PATH`, installed by `format.yml`, checked by the gate; reads `.prettierrc.json` and `.prettierignore`; gives the Prettier 3.9.8 result on this tree). Never format a README with it: hand-edit README sentences.
+Formatting: `pnpm --dir extension format` / `format:check` and the lint-staged hook run `bun fmt` (the Bun of `.bun-version` on `PATH`, installed by `format.yml`, checked by the gate; gives the Prettier 3.9.8 result on this tree). Never format a README with it: hand-edit README sentences.
 
 **Gate and focused runs.**
 
@@ -286,30 +273,19 @@ Formatting: `pnpm --dir extension format` / `format:check` and the lint-staged h
 **CI Test shards.** `pnpm --dir extension test:shard --shard 3/14 --lanes 2`; `--list` prints the plan.
 
 - Each file runs once; a new partition needs no workflow change. Each job < 1 min; GitHub's shown time includes a runner wait the repo cannot shorten.
-- Test job restores the `extension/node_modules` cache, calls `node` directly (no `pnpm install --frozen-lockfile`); cache miss → shared `prepare` action.
+- Test job (`test.yml`) restores the `extension/node_modules` cache and calls `node` directly (no `pnpm install --frozen-lockfile`); cache miss → shared `prepare` action.
 - `extension/test-timings.json` records every file + every test of a file slower than 8 s. Unknown tests still run once; a later-added test runs in its file's complement part until timings are re-recorded.
 - Change `matrix.shard` (`.github/workflows/test.yml`) and both `after_n_builds` (`codecov.yml`) together.
 - Near 60 s: compare planned vs measured seconds in the log (`▶ … (planned … s)`); re-record drifted timings (`test:shard --record`, on its machine's scale) or add a shard. Org runs 20 jobs at once; a new shard/job uses that margin.
 - Failed Codecov upload never fails a job (`continue-on-error: true`); prints warning `Coverage upload failed` (pinned by `workflowPins.test.mjs`).
 - Split files run with `--test-force-exit` by top-level test name (errors after a part's last test go unreported there). Whole-file runs, the local run and the `split-files` job (after a `main` push whose shards passed: `test-shard.mjs --whole-split-files`, Node's default exit) still report them → register tests synchronously; no subtest/suite member named like a recorded top-level test, no recorded name with a line break (each breaks the split); else leave the file unsplit.
-- Silence: a call printing nothing for 120 s → its whole process tree ended and named; its shard fails whatever the exit code (`--silence-seconds` sets it). POSIX: SIGTERM to the runner; after 5 s (or once it exited) SIGKILL to every still-running tree process, SIGTERM-ignoring test files too. Windows: `taskkill /T /F`.
-- Pre-gate runner (`run-pregate-tests.mjs`):
-  - ends a silent run the same way and fails its lane; a run holding `package.test.mjs` gets the package command's 180 s extra unless `--silence-seconds` is given; that test's build logs progress every 30 s;
-  - ends its build's whole tree after 300 s (`--build-seconds`);
-  - build and runs share the runner's process group, so killing a lane's group ends them. Not `package.test.mjs`'s package commands (own process groups, as pnpm gives lifecycle scripts): `runPackageCommand` ends those when they end, at its limit, and on SIGINT/SIGTERM/SIGHUP/SIGQUIT to the package test.
-- SIGINT/SIGTERM/SIGHUP to `test-shard.mjs` or the pre-gate runner → every live child's whole tree ended; exit 130/143/129.
-- Runs start without `FORCE_COLOR` so counts read. A call's count = its runner's last summary block, kept whole even when the failure report after it passes the last 4,000,000 characters kept of its output (block repeated after the kept end, under a note).
-- `test-shard.mjs` option refusals are one line (incl. a `--shard` total or `--lanes` count > 1,000); `--record` refuses `--whole-split-files`, `--list`, `--shard`, `--lanes`. A call counting no test fails.
-- A `main` push keeps its Test run (only a PR's newer push cancels one), so a later push does not cancel its `split-files` job.
-- `test:shard --record` stops with a one-line refusal naming what did not end, leaving no process, at a test or hook exceeding the limit and at a run silent for limit + 5 s (max a timer can wait: 2,147,483.647 s).
-- Missing or malformed `test-timings.json`, or an entry that is no `{ totalMs, tests? }` → refused with the way out (`test:shard --record`).
+- Silence: a call printing nothing for 120 s (`--silence-seconds`) has its whole process tree ended (SIGTERM, SIGKILL after 5 s; `taskkill /T /F` on Windows) and named, and its shard fails whatever the exit code. The pre-gate runner (`run-pregate-tests.mjs`) does the same, gives a run holding `package.test.mjs` 180 s extra unless `--silence-seconds` is given (that test's build logs progress every 30 s) and ends its build's tree after 300 s (`--build-seconds`). SIGINT/SIGTERM/SIGHUP to either runner ends every live child's tree (exit 128 + signal: 130/143/129). Limits: `--shard` total and `--lanes` ≤ 1,000; the last 4,000,000 characters of a call's output kept; `--record` stops at the silence limit + 5 s (max 2,147,483.647 s). `FORCE_COLOR` is stripped, option and timings-file refusals name their way out, a `main` push keeps its Test run; details in the headers and docstrings of `extension/scripts/test-shard.mjs`, `extension/scripts/run-pregate-tests.mjs`, `extension/scripts/utils/` and the `concurrency` comment of `.github/workflows/test.yml`.
 - A package-workflow VSIX ≠ Test jobs passed: that workflow runs no product suite, only the compaction hook test, compiler build, `build:fast --check` emit comparison, `test:package` and the VSIX. `build:fast` needs `isolatedModules`.
 
 **Windows job** (`storage-locks-windows.yml`).
 
-- One test file at a time (`--test-concurrency=1`; its PowerShell process-start reads bounded at 3 s); two `node --test` steps: `dist/tests` after the build; `scripts/tests` without one.
+- One test file at a time (`--test-concurrency=1`; the product bounds its PowerShell process-start reads at 3 s); a new test of a kind the job runs joins its run command, path filter and `workflowPins.test.mjs` pin (script tests as `scripts/<name>`).
 - Path filter omits `extension/src/constants.ts` and `extension/src/runtimeSupport/constants.ts` on purpose; the weekly run (Mondays 05:17 UTC, default branch) and manual runs cover them.
-- A new test of a kind the job runs joins its run command, path filter and `workflowPins.test.mjs` pin (script tests as `scripts/<name>`).
 
 **Reader DOM** (`reader-dom.yml`).
 
@@ -320,34 +296,28 @@ Formatting: `pnpm --dir extension format` / `format:check` and the lint-staged h
 
 **Fallow.**
 
-- **Lower the scores actively**, in any cycle.
-  - A finding a behaviour-neutral refactor can remove is refactored: tests unchanged and green, and the native path rechecked when it is natively verified.
-  - The fixed findings are then dropped from their baseline.
-  - Prefer the hotspots and targets `fallow health --hotspots --targets` ranks, and `fallow fix --dry-run` for dead code.
-- `pnpm --dir extension dupes` / `dead-code` fail on clones or dead code beyond `fallow-dupes-baseline.json` / `fallow-dead-code-baseline.json` (Fallow 3.38.1). `.fallowrc.json` excludes tests and scripts (`health.ignore`, `duplicates.ignore`; `ignoreFindings` keeps them entry points, so code they call counts as used).
-- `pnpm --dir extension health` (`scripts/checkHealth.mjs`, 20-min job) scores health with this run's coverage against `fallow-health-measured-baseline.json` (cyclomatic 20, cognitive 15, CRAP 30). Exit 0 clean, 1 findings, 2 refused/no verdict (e.g. pins differing from `fallow-health-reference.json`, a runner option in `NODE_OPTIONS`). Only option: `--format json`; never writes a baseline.
+- **Lower the scores actively**, in any cycle. A finding a behaviour-neutral refactor can remove is refactored: tests unchanged and green, and the native path rechecked when it is natively verified. The fixed findings are then dropped from their baseline. Prefer the hotspots and targets `fallow health --hotspots --targets` ranks, and `fallow fix --dry-run` for dead code.
+- `pnpm --dir extension dupes` / `dead-code` fail on clones or dead code beyond `fallow-dupes-baseline.json` / `fallow-dead-code-baseline.json` (Fallow 3.38.1). `.fallowrc.json` also keeps the excluded tests and scripts as entry points (`ignoreFindings`), so code they call counts as used.
+- `pnpm --dir extension health` (`scripts/checkHealth.mjs`, 20-min job; header: exit codes, the one option `--format json`, never writes a baseline) scores health with this run's coverage against `fallow-health-measured-baseline.json` (cyclomatic 20, cognitive 15, CRAP 30). Exit 2 = refused/no verdict (e.g. pins differing from `fallow-health-reference.json`, a runner option in `NODE_OPTIONS`).
   - Baselines = the current codebase at the retake, not one fixed old revision: fix findings above the committed baseline in the source.
   - Changing a pinned producer or one of the three settings → retake on the current code in a separate worktree with the new pins, record revision and hashes in the reference (`health.test.mjs` pins it), state it in the PR.
   - Never rename a callback or add a test only to move its static estimate.
-- `pnpm --dir extension health:static` (~2 s; in `check` after `lint`, before tests): same cyclomatic/cognitive limits without coverage, per function (`--baseline-mode identity`), against `fallow-health-baseline.json`. CRAP needs coverage → stays with `pnpm health`.
+- `pnpm --dir extension health:static` (~2 s; in `check` after `lint`, before tests): the cyclomatic/cognitive limits of `pnpm health` without coverage, per function (`--baseline-mode identity`), against `fallow-health-baseline.json`. CRAP needs coverage → stays with `pnpm health`.
   - Fixers run it after every change, before the full gate.
   - Fix new findings in the source; re-save the baseline (`fallow health --complexity --max-crap inf --baseline-mode identity --save-baseline fallow-health-baseline.json`) only to drop fixed findings, never to absorb one.
-- `pnpm --dir extension architecture` (~1 s; own CI job): `fallow architecture --fail-on-issues` against `fallow-architecture-baseline.json`, which holds no cycle: a new import cycle fails.
+- `pnpm --dir extension architecture` (~1 s; own CI job): `fallow-architecture-baseline.json` holds no cycle, so a new import cycle fails.
 - **Every free local Fallow analysis runs in CI.**
   - Today that also means `audit`, `flags`, `security`, `similar-code`, `mutation` (changed code vs base) and `suppressions`.
   - A command a Fallow update adds gets its CI step in that cycle's dependency step.
   - Deterministic pass/fail results gate, against a baseline where the command has one.
   - Candidate or discovery output (`security`, `similar-code`, `flags`, `suppressions`) goes to the job summary without gating.
-  - `mutation` checks that tests fail without the code they test, which a delegated fixer may skip.
-    - It runs in its own job with `--time-budget 10m` (about 10 minutes is the limit; 30 is too long).
-    - It gates with `--min-score` once a measured run sets the level.
-    - A surviving mutant raises a test that only walks a branch into one that fails on a real bug in real application state. When that state is hard to reach, the function is too complex: simplify it (lower the scores, above).
+  - `mutation` checks that tests fail without the code they test, which a delegated fixer may skip. It runs in its own job with `--time-budget 10m` (about 10 minutes is the limit; 30 is too long) and gates with `--min-score` once a measured run sets the level. A surviving mutant raises a test that only walks a branch into one that fails on a real bug in real application state; when that state is hard to reach, the function is too complex: simplify it (lower the scores, above).
   - Prefer `parallel:` steps in one job over new jobs: 20 concurrent jobs on the Free plan.
   - Fallow Cloud runtime coverage stays out: it is paid.
 
 ## Native QA
 
-- Native checks are part of `/ship`, not a phase of their own: the VS Code and Cursor checks a cycle owes run as `/ship` Step 9.2.1's required plan checks (its QA step), beside its smoke probes. gstack's browser QA alone proves no native behavior.
+- Native checks are part of `/ship`, not a phase of their own: the VS Code and Cursor checks a cycle owes run as `/ship` Step 9.2.1's required plan checks (its QA step), beside its smoke probes.
 - Build and evidence: build the VSIX with `qa-build.mjs` from the clean commit `/ship` reviews and install it in each host; the build gets no review of its own. A Critical/Major finding of a check is fixed in that `/ship` pass (new commit, new build, check repeated). Post each run's log with `post-trial-evidence.mjs --manifest`, quoting its exit line.
 - UI changes: view the PNG again; compare real screenshots with its region at the normal desktop baseline; record differences and interaction.
 - Motion needs recorded interaction + inspected frames; generated pixels or renderer assertions prove no native behavior.
@@ -355,12 +325,12 @@ Formatting: `pnpm --dir extension format` / `format:check` and the lint-staged h
 
 **Observing a native check** (Cua Space `local:codebook-qa` or a desktop). A `computer_screenshot` answers about 600,000 characters; in Cycles 0056 to 0058 screenshots were 85% of all tool output and forced most of the context compactions → check state with **text** first, spend **pictures** on visual evidence.
 
-- Text for every step that only needs to know what is there (a window, a dialog, a label, a value, a process, a file):
+- Text for every step that only needs to know what is there (a window, dialog, label, value, process, file):
   - windows and focus: `computer_window_list` (filter with `app`), `computer_get_current_window`;
-  - controls and labels: `computer_get_accessibility_tree` with the window's `window_id` and a `max_depth` (names buttons, dialog titles, picker entries and the chat's input text);
-  - acting on a control: `computer_accessibility_act` with the tree's `snapshot_id` and `element_id` (`press`, `focus`, `set_value`); needs no coordinates, so no screenshot to find them;
+  - controls and labels (buttons, dialog titles, picker entries, the chat's input text): `computer_get_accessibility_tree` with the window's `window_id` and a `max_depth`;
+  - acting on a control: `computer_accessibility_act` with the tree's `snapshot_id` and `element_id` (`press`, `focus`, `set_value`), no coordinates, so no screenshot to find them;
   - processes, ports, files and logs in the Space: `space_bash`, e.g. `lsof -nP -iTCP:4100 -sTCP:LISTEN`, `pgrep -fl 'Visual Studio Code'`, `osascript -e 'tell application "System Events" to get name of every window of process "Code"'`, or a `tail` of the file a step writes;
-  - after an action, verify its result the same way: the tree, the process or the file shows it.
+  - verify an action's result the same way (tree, process or file).
 - Pictures for a claim about what the learner sees (layout against the v9 PNG, rendering, a frame of motion): capture a region in the Space, shrink it, then `download` `/tmp/shot.jpg` and Read it:
 
 ```sh
@@ -368,7 +338,7 @@ screencapture -x -R<x>,<y>,<width>,<height> /tmp/shot.png
 sips -s format jpeg -s formatOptions 70 -Z 1000 /tmp/shot.png --out /tmp/shot.jpg
 ```
 
-- Evidence stills: keep the full-size PNG as the evidence file (downloaded, SHA-256 on both sides, per the macOS Space rules below); Read only the reduced copy.
+- Evidence stills: keep the full-size PNG as the evidence file (downloaded per the macOS Space rules below); Read only the reduced copy.
 - Coordinates: `computer_screenshot` when a click needs coordinates the accessibility tree cannot give (a canvas, a webview without accessible names); its pixel space is the one clicks use.
 - Motion: recordings and their frames follow the OBS rules below; Read reduced frames (`ffmpeg … -vf scale=1000:-1`).
 
@@ -391,12 +361,12 @@ sips -s format jpeg -s formatOptions 70 -Z 1000 /tmp/shot.png --out /tmp/shot.jp
   - during final acceptance an update changes a frozen host identity ([Final acceptance](PRODUCT_GOAL.md#final-acceptance) 1): record old and new versions and retest the rows it affects ([Retesting](PRODUCT_GOAL.md#retesting-and-final-artifact-validity)).
 - Drive via the `cua` MCP (`space_bash`, `computer_screenshot`, `computer_click`, `computer_type`, `download`) or `cua sb exec`. The guest's Cua Driver refuses background keys (foreground delivery inside the VM is fine); `type_text` reports less than it delivered → check the screen.
 - Start with `cua doctor local:codebook-qa`. `No route to host` = the daemon lost Local Network access → restart it (`cua daemon start` from Terminal when the Cua Spaces app is not running).
-- Sign in to what native checks need (Copilot, Cursor, GitHub) yourself, without asking:
+- Sign in to what native checks need (Copilot, Cursor, GitHub):
   - `cua teleport push --app com.google.Chrome --scope full --include ".config/google-chrome/Default/Cookies" --url http://<Space address>:3211 --no-launch` (`CUA_ENV_TOKEN` from `~/.cua/spaces-credentials.json`) copies the Mac Chrome's cookies into the Space's Chrome;
   - keep only needed sites; make Chrome the default browser; click through each app's sign-in;
   - only the Mac's Chrome Safe Storage prompt waits for the owner.
 - Guest sign-ins can be lost at the next VM boot (login keychain re-keyed every boot; teleported cookies stay) → restart the VM only when needed.
-- Evidence leaves the Space for the Mac's ignored `artifacts/` with matching SHA-256 on both sides; the Space keeps no only copy.
+- Evidence leaves the Space (`download`) for the Mac's ignored `artifacts/` with matching SHA-256 on both sides (`shasum -a 256` in the Space); the Space keeps no only copy.
 
 **macOS video: OBS Window Capture in the Space.**
 
@@ -435,8 +405,8 @@ OBS steps:
 OBS control and evidence:
 
 - Use OBS's public controls: its window via the Space's tools, or obs-websocket in the Space (`StartRecord`, `GetRecordStatus`, `StopRecord`); [`--startrecording`](https://obsproject.com/kb/launch-parameters) only with a prepared profile whose active configuration and output path you verify.
-- No blind duplicate launch; `--multi` only as a bounded retry with old processes verified as owned; never terminate unknown or owner processes.
-- Copy each recording to the Mac (`download`); compare SHA-256 with the Space's `shasum -a 256`; inspect without overwriting evidence; originals stay private.
+- No blind duplicate launch; `--multi` only as a bounded retry with old processes verified as owned.
+- Copy each recording to the Mac as evidence (above); inspect without overwriting it; originals stay private.
 - Extract metadata, 10 fps frames (make the folder first), hash, every native frame of a transition for temporal defects, and a silent copy keeping the original (set audio before recording):
 
 ```sh
@@ -453,7 +423,7 @@ ffmpeg -hide_banner -loglevel error -i "$QA_ORIGINAL_VIDEO" -map 0:v:0 -c copy -
 - Record beside the [loop](#working-loop)'s fields: real fps and duration, inspected frames, hashes, inspected file. A picture, AX dump, filename, frame count or green indicator replaces nothing.
 - Black/frozen → recheck identity, minimization, permission, redraw; never substitute the desktop or a stale frame.
 - Wrong input target → refresh state, verify window and control, retry only the reversible action (connection errors prove no recorder or product failure).
-- Finish: confirm finalization; restore tabs and panels; close only sessions the check started; verify owned PIDs before any signal; keep evidence and reusable QA configuration; never kill all OBS/editor processes or reset permissions or settings broadly.
+- Finish: confirm finalization; restore tabs and panels; close only sessions the check started; verify owned PIDs before any signal, never terminate unknown or owner processes or kill all OBS/editor processes; keep evidence and reusable QA configuration; never reset permissions or settings broadly.
 - The preflight stays mandatory whatever [upstream docs](https://obsproject.com/kb/macos-screen-capture-source) say.
 
 ## External validation targets
@@ -473,7 +443,7 @@ ffmpeg -hide_banner -loglevel error -i "$QA_ORIGINAL_VIDEO" -map 0:v:0 -c copy -
 
 ### Issue tracker
 
-Issues and specs live as GitHub Issues on laststance/codebook, via the `gh` CLI for every operation (`gh` infers the repo from `git remote -v` inside a clone). This file's [Where things live](#where-things-live), [Cycle rule](#cycle-rule) and [GitHub](#github) rules win: cycle Issue (label `cycle`, title `Cycle NNNN: <outcome>`, four body sections), goal Issue #1, the `goal` label; open an Issue from evidence, never from a planning tool's need; the repository is public (everything posted is world-readable, a security defect before its fix too).
+Issues and specs live as GitHub Issues on laststance/codebook, via the `gh` CLI for every operation. This file's [Where things live](#where-things-live), [Cycle rule](#cycle-rule) and GitHub paragraph of [Delivery](#delivery) win (cycle Issue, goal Issue #1, labels, Issues from evidence, public repository).
 
 - Create: `gh issue create --title "..." --body "..."` (a heredoc for multi-line bodies). A skill's "publish to the issue tracker" = create a GitHub issue.
 - Read: `gh issue view <number> --json number,title,body,labels,comments`; a skill's "fetch the relevant ticket" = this.
@@ -511,12 +481,11 @@ Single-context: one root `GLOSSARY.md`, created lazily. Product outcomes live in
 
 ## Codex compaction hook
 
-[`.codex/hooks.json`](.codex/hooks.json) registers only `SessionStart` with `^compact$` (startup, resume ignored); Claude Code runs the same command from `.claude/settings.json`, the only shared Claude file (`compact` matcher, 5 s timeout).
+[`.codex/hooks.json`](.codex/hooks.json) registers only `SessionStart` with `^compact$` (startup, resume ignored); Claude Code runs the same command from `.claude/settings.json`, the only shared Claude file.
 
-- The command (`.codex/restore-product-context.mjs`; Node, Git, POSIX shell) prints ≤ 10,000 characters: the re-entry rule first (PRODUCT_GOAL.md in full + the PNG, then the Issue; AGENTS.md from disk only when it is not in context or changed), the scope and pause sentence, then this file's `## Mandatory entry` and `## Standing directions` verbatim. Why: Claude Code injects longer hook context only as a 2,000-character preview + file path.
+- The command (`.codex/restore-product-context.mjs`; Node, Git, POSIX shell) prints ≤ 10,000 characters: the re-entry rule first ([Mandatory entry](#mandatory-entry) 2), the scope and pause sentence, then this file's `## Mandatory entry` and `## Standing directions` verbatim. Why: Claude Code injects longer hook context only as a 2,000-character preview + file path.
   - Sections outgrowing the limit → prints the rule and points to AGENTS.md.
   - Missing or renamed section (CRLF line ends, trailing spaces after a heading tolerated) → rule still printed; names what is missing on stderr; exit 0.
-  - Restores no editing gate or Stop continuation.
 - Collaborators: each enables hooks, trusts the project, reviews the hook in Codex [`/hooks`](https://learn.chatgpt.com/docs/hooks) after every definition change (may disable it alone there), and checks that a fresh `/compact` shows `CODEBOOK: RESTORE PRODUCT CONTEXT AFTER COMPACTION` (proves delivery, not reading or understanding).
 - Files alone establish no activation; this repo changes no global Codex setting; a Codex observation verifies no Claude Code delivery.
-- Test: `node --test .codex/restore-product-context.test.mjs` (CI too): rule within the first 2,000 characters, whole output ≤ 10,000 (~1,500 tokens, under Codex's `additionalContextLimit` of 4,000), both sections verbatim. Missing/renamed section = no error (exit 0, note on stderr); any other failure (e.g. unreadable AGENTS.md, malformed hook input) exits nonzero with stderr, no fail-closed guarantee.
+- Test: `node --test .codex/restore-product-context.test.mjs` (CI too): rule within the first 2,000 characters, whole output ≤ 10,000 (~1,500 tokens, under Codex's `additionalContextLimit` of 4,000), both sections verbatim; any other failure (e.g. unreadable AGENTS.md, malformed hook input) exits nonzero with stderr, no fail-closed guarantee.
