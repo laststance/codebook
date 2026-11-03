@@ -1,0 +1,291 @@
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+
+import { createVerdictBudget } from '../utils/createVerdictBudget'
+import { isNextPagesRendererUrl } from '../utils/isNextPagesRendererUrl'
+import { pagesCompiledPathOfModuleUrl } from '../utils/pagesCompiledPathOfModuleUrl'
+import { pagesRequestPathOf } from '../utils/pagesRequestPathOf'
+import { parsePagesPausedEvent } from '../utils/parsePagesPausedEvent'
+import {
+  readPagesAsyncChain,
+  type PagesChainStep,
+} from '../utils/readPagesAsyncChain'
+import { readWithinVerdictBudget } from '../utils/readWithinVerdictBudget'
+import { valueShapeSummaryOf } from '../utils/valueShapeSummaryOf'
+
+import { manualVerdictBudget } from './utils/manualVerdictBudget'
+import { scriptedPagesReader } from './utils/scriptedPagesReader'
+
+// Value: protects=renderer recognition by address: the renderer is the one `pages.runtime.dev.js` of the `next` package wherever it sits (file URL, pnpm store, Windows path); fails_when=a file of the project named like the renderer, the App Router runtime or a lookalike package path is taken for a renderer frame; no_claim=a renderer that Next moves to another path (the pattern text check would then find no renderer frame)
+test('only the pages.runtime.dev.js of the next package is a renderer script', () => {
+  // Arrange, Act, Assert
+  assert.equal(
+    isNextPagesRendererUrl(
+      'file:///workspace/app/node_modules/.pnpm/next@16.1.4/node_modules/next/dist/compiled/next-server/pages.runtime.dev.js',
+    ),
+    true,
+  )
+  assert.equal(
+    isNextPagesRendererUrl(
+      'C:\\workspace\\app\\node_modules\\next\\dist\\compiled\\next-server\\pages.runtime.dev.js',
+    ),
+    true,
+  )
+  assert.equal(
+    isNextPagesRendererUrl(
+      'file:///workspace/app/node_modules/next/dist/compiled/next-server/app-page.runtime.dev.js',
+    ),
+    false,
+  )
+  assert.equal(
+    isNextPagesRendererUrl('file:///workspace/app/pages.runtime.dev.js'),
+    false,
+  )
+  assert.equal(
+    isNextPagesRendererUrl(
+      'file:///workspace/xnext/dist/compiled/next-server/pages.runtime.dev.js',
+    ),
+    false,
+  )
+  assert.equal(isNextPagesRendererUrl(''), false)
+})
+
+// Value: protects=page module to compiled page: a module of the pages folder (also under src/, any source extension, with or without the webpack-internal scheme) names the compiled page the manifest lists; fails_when=a library of the project, a module of node_modules or another layer is read as a page, or src/pages keeps its prefix; no_claim=a custom pageExtensions (the extensions are Next's defaults)
+test('a Pages server module address names its compiled page and nothing else does', () => {
+  // Arrange, Act, Assert
+  assert.equal(
+    pagesCompiledPathOfModuleUrl('(pages-dir-node)/./pages/index.js'),
+    'pages/index.js',
+  )
+  assert.equal(
+    pagesCompiledPathOfModuleUrl(
+      'webpack-internal:///(pages-dir-node)/./src/pages/products/[id].tsx',
+    ),
+    'pages/products/[id].js',
+  )
+  assert.equal(
+    pagesCompiledPathOfModuleUrl('(pages-dir-node)/./lib/stats.js'),
+    undefined,
+  )
+  assert.equal(
+    pagesCompiledPathOfModuleUrl(
+      'webpack-internal:///(pages-dir-node)/./node_modules/next/dist/pages/x.js',
+    ),
+    undefined,
+  )
+  assert.equal(
+    pagesCompiledPathOfModuleUrl('webpack-internal:///(rsc)/./pages/index.js'),
+    undefined,
+  )
+  assert.equal(
+    pagesCompiledPathOfModuleUrl('(pages-dir-node)/./pages/styles.css'),
+    undefined,
+  )
+  assert.equal(pagesCompiledPathOfModuleUrl(''), undefined)
+})
+
+// Value: protects=page requests only: the document and Next's data request name the page path, `index.json` is the root, and an image, script or API call names none; fails_when=an asset request counts as the outstanding page request, or a data request keeps its prefix and suffix; no_claim=i18n locale prefixes in data requests
+test('only a document or a Next data request names a page path', () => {
+  // Arrange, Act, Assert
+  assert.equal(
+    pagesRequestPathOf({
+      url: 'http://localhost:3000/products/1?x=1',
+      resourceType: 'Document',
+    }),
+    '/products/1',
+  )
+  assert.equal(
+    pagesRequestPathOf({
+      url: 'http://localhost:3000/_next/data/b1/index.json?page=2',
+      resourceType: 'Fetch',
+    }),
+    '/',
+  )
+  assert.equal(
+    pagesRequestPathOf({
+      url: 'http://localhost:3000/_next/data/b1/blog/post.json',
+      resourceType: 'Fetch',
+    }),
+    '/blog/post',
+  )
+  assert.equal(
+    pagesRequestPathOf({
+      url: 'http://localhost:3000/logo.png',
+      resourceType: 'Image',
+    }),
+    undefined,
+  )
+  assert.equal(
+    pagesRequestPathOf({
+      url: 'http://localhost:3000/api/posts',
+      resourceType: 'Fetch',
+    }),
+    undefined,
+  )
+  assert.equal(
+    pagesRequestPathOf({ url: 'http://[', resourceType: 'Document' }),
+    undefined,
+  )
+})
+
+// Value: protects=value-free shape summary: a summary names fields, types and list lengths and no value, cuts depth, and hides a property name that is not identifier-like; fails_when=a string value, a number or a data-carrying key reaches the Output line of a verdict error; no_claim=the wording of the Output line (the run's)
+test('a shape summary holds no value', () => {
+  // Arrange
+  const event = {
+    callFrames: 'SECRET-TEXT',
+    reason: 7,
+    nested: { deeper: { deepest: { tooDeep: 'SECRET-DEEP' } } },
+    list: [{ token: 'SECRET-ITEM' }, 1],
+    'user=alice@example.test': true,
+  }
+
+  // Act
+  const summary = valueShapeSummaryOf(event)
+
+  // Assert
+  assert.equal(
+    summary,
+    '{callFrames:string,reason:number,nested:{deeper:{deepest:object}},list:array(2)[{token:string}],?:boolean}',
+  )
+  assert.equal(valueShapeSummaryOf(null), 'null')
+  assert.equal(valueShapeSummaryOf('SECRET'), 'string')
+  assert.equal(valueShapeSummaryOf([]), 'array(0)')
+})
+
+// Value: protects=event parsing: only the fields the verdict reads are kept (a scope chain is dropped), a missing column reads 0, and a frame without its script id or a callFrames that is no list is refused; fails_when=a protocol-required-but-unused field makes a good event a verdict error, or a broken event is accepted and fails inside the verdict; no_claim=every field of the protocol (only the ones read)
+test('an event keeps the fields the verdict reads and refuses a broken stack', () => {
+  // Arrange
+  const withScope = {
+    callFrames: [
+      {
+        callFrameId: '1',
+        functionName: 'getServerSideProps',
+        location: { scriptId: '7', lineNumber: 21 },
+        url: '',
+        scopeChain: [{ type: 'local' }],
+      },
+    ],
+    reason: 'other',
+  }
+
+  // Act, Assert
+  assert.deepEqual(parsePagesPausedEvent(withScope), {
+    callFrames: [
+      {
+        callFrameId: '1',
+        functionName: 'getServerSideProps',
+        location: { scriptId: '7', lineNumber: 21, columnNumber: 0 },
+        url: '',
+      },
+    ],
+  })
+  assert.equal(parsePagesPausedEvent({ callFrames: 'x' }), undefined)
+  assert.equal(
+    parsePagesPausedEvent({ callFrames: [{ location: { lineNumber: 1 } }] }),
+    undefined,
+  )
+  assert.equal(parsePagesPausedEvent(null), undefined)
+})
+
+// Value: protects=budgeted reads: a read that answers is returned, a read that rejects or throws is `failed`, and a spent budget wins even over a read that answers at once; fails_when=a rejection escapes into the verdict, or a spent budget lets a ready read through so a hit exceeds its one budget; no_claim=wall-clock timing (the budget is a promise the test settles)
+test('a budgeted read reports its answer, a failure or the spent budget', async () => {
+  // Arrange
+  const open = manualVerdictBudget()
+  const spent = manualVerdictBudget()
+  spent.expire()
+
+  // Act
+  const answered = await readWithinVerdictBudget(
+    async () => 'text',
+    open.budget,
+  )
+  const rejected = await readWithinVerdictBudget(
+    () => Promise.reject(new Error('gone')),
+    open.budget,
+  )
+  const threw = await readWithinVerdictBudget(() => {
+    throw new Error('sync')
+  }, open.budget)
+  const late = await readWithinVerdictBudget(async () => 'ready', spent.budget)
+  const lateAndImmediate = await readWithinVerdictBudget(
+    () => 'ready',
+    spent.budget,
+  )
+
+  // Assert
+  assert.deepEqual(answered, { status: 'read', value: 'text' })
+  assert.deepEqual(rejected, { status: 'failed' })
+  assert.deepEqual(threw, { status: 'failed' })
+  assert.deepEqual(late, { status: 'timeout' })
+  assert.deepEqual(lateAndImmediate, { status: 'timeout' })
+})
+
+// Value: protects=the hit's single budget: it ends after the given milliseconds and at once when the run stops, and disposing it clears the timer; fails_when=the budget outlives its time, ignores the run's stop, or leaves a timer behind; no_claim=real clocks (the timer is mocked)
+test('a verdict budget ends on time or when the run stops and clears its timer', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const timeBudget = createVerdictBudget(1_000)
+  const stopController = new AbortController()
+  const stopBudget = createVerdictBudget(60_000, stopController.signal)
+  const disposed = createVerdictBudget(1_000)
+  let didTimeBudgetEnd = false
+  let didStopBudgetEnd = false
+  let didDisposedEnd = false
+  void timeBudget.expired.then(() => (didTimeBudgetEnd = true))
+  void stopBudget.expired.then(() => (didStopBudgetEnd = true))
+  void disposed.expired.then(() => (didDisposedEnd = true))
+  const flush = () => new Promise((resolve) => setImmediate(resolve))
+
+  // Act
+  disposed.dispose()
+  context.mock.timers.tick(999)
+  await flush()
+  const endedBeforeTime = didTimeBudgetEnd
+  context.mock.timers.tick(1)
+  await flush()
+  stopController.abort()
+  await flush()
+
+  // Assert
+  assert.equal(endedBeforeTime, false)
+  assert.equal(didTimeBudgetEnd, true)
+  assert.equal(didStopBudgetEnd, true)
+  assert.equal(didDisposedEnd, false)
+  timeBudget.dispose()
+  stopBudget.dispose()
+})
+
+// Value: protects=lazy chain reads: a consumer that has what it needs from the inline levels spends no `Debugger.getStackTrace` read on the continuation behind them; fails_when=the chain reader fetches continuations ahead of the consumer, spending the hit's budget and reads on levels nobody needs; no_claim=the verdict's use of the reader (the verdict tests)
+test('the async chain is read lazily and a continuation is fetched only when asked for', async () => {
+  // Arrange
+  const { reader, calls } = scriptedPagesReader({
+    stackTraces: {
+      next: { callFrames: [] },
+    },
+  })
+  const start = {
+    asyncStackTrace: {
+      callFrames: [],
+      parentId: { id: 'next', debuggerId: 'd1' },
+    },
+  }
+  const steps: PagesChainStep[] = []
+
+  // Act
+  const chain = readPagesAsyncChain(start, reader, manualVerdictBudget().budget)
+  const first = await chain.next()
+  const readsAfterFirstLevel = calls.stackTraceIds.length
+  for (const step of [first, await chain.next(), await chain.next()])
+    if (!step.done) steps.push(step.value)
+
+  // Assert
+  assert.equal(readsAfterFirstLevel, 0)
+  assert.deepEqual(
+    steps.map((step) => step.kind),
+    ['level', 'level'],
+  )
+  assert.deepEqual(
+    calls.stackTraceIds.map((id) => id.id),
+    ['next'],
+  )
+})
