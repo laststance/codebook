@@ -1,6 +1,6 @@
-# Native trial observation
+# Native check observation
 
-Read before driving a native trial in the Cua Space (`local:codebook-qa`) or on a desktop. A `computer_screenshot` answers about 600,000 characters; in Cycles 0056 to 0058 screenshots were 85% of all tool output, and they forced most of the context compactions. Look with **text** first and spend **pictures** on visual evidence.
+Read before driving a native check in the Cua Space (`local:codebook-qa`) or on a desktop. A `computer_screenshot` answers about 600,000 characters; in Cycles 0056 to 0058 screenshots were 85% of all tool output, and they forced most of the context compactions. Look with **text** first and spend **pictures** on visual evidence.
 
 ## Text: check state
 

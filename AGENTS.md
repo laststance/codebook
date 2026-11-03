@@ -51,11 +51,11 @@ Fix every carried defect in the next cycle; sole exception: the [ship review lim
 - **Feature cycle**: an increment of the final product. Starts only with nothing carried in; planned from the final product alone (`/spec` + plan reviews, from PRODUCT_GOAL.md and the gap audit). Defects it leaves unfixed are carried.
 - **Bug-fix cycle**: follows any cycle that left a defect; fixes those, nothing else.
   - Issue: each defect a task (source: cycle + finding label; closing fix or evidence; the test failing without the fix). No increment; nothing selected, dropped or reduced.
-  - Carries nothing: defects found in it (implementation, review, delegated review, native trial, audit) are fixed in it, except Critical/Major ones the ship review limit records.
+  - Carries nothing: defects found in it (implementation, review, delegated review, native check, audit) are fixed in it, except Critical/Major ones the ship review limit records.
   - Closes when every carried and found defect is closed → feature cycle, or another bug-fix cycle for defects that limit recorded.
 - A defect closes by a fix + a test failing without it, or recorded evidence it is no defect / no longer applies.
 - Carried defects live in the bug-fix cycle's Issue as tasks; a TODOS file, backlog or ledger of them is forbidden (a list that only records lets work end at the recording). Later candidate increments: a short list at most, never holding a carried defect.
-- Delivery: feature cycle fixes Critical findings before merge, carries Major ones (review, delegated review, native trial, audit); bug-fix cycle fixes every Critical/Major finding before merge, except as the ship review limit allows.
+- Delivery: feature cycle fixes Critical findings before merge, carries Major ones (review, delegated review, native check, audit); bug-fix cycle fixes every Critical/Major finding before merge, except as the ship review limit allows.
 
 ## Working loop
 
@@ -86,7 +86,7 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 
 - One bounded cycle at a time toward the complete product; after each merge `/spec` (+ the plan reviews the scope needs) writes the next cycle's Issue.
 - Work on a `codex/` branch; keep existing edits; reuse a fitting checkout.
-- Per cycle: one review round (4 local CodeRabbit CLI passes + 4 `open-code-review-delegate` reviews, all in parallel) → its fixes → `/ship` as PR → required CI → separate exact-HEAD gate → merge as its own step with `--match-head-commit`.
+- Per cycle: one review round (4 local CodeRabbit CLI passes + 4 `open-code-review-delegate` reviews, all in parallel) → its fixes → `/ship` as PR (its QA step runs the cycle's native checks, [Native QA](#native-qa)) → required CI → separate exact-HEAD gate → merge as its own step with `--match-head-commit`.
 - One round only: after that round's fixes go straight to `/ship`; no second CodeRabbit/OCR round to recheck the fixes (the `/ship` review catches what they break).
 - Parallel reviews: start every review that reads no other review's result at the same time, never one after another.
   - Examples: the 4 CodeRabbit CLI passes (one worktree each, within the included hourly reviews, never `--use-credits`) with the 4 OCR delegates (split by review lens when few files qualify); `/ship` pass 1's reviews (Codex structured review, red team, specialists); a plan-review phase's native and outside voices (outside one in a background shell, then the native agent).
@@ -104,7 +104,7 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 - Merge: `node extension/scripts/merge-pr.mjs <n>` after the exact-HEAD gate in this checkout; it merges with `--squash --match-head-commit <head>` only when this checkout is at the PR head, the gate summary (`Checkout: clean`, every check `exit=0`, `GATE: pass on <head>`) and every workflow run, check run and status of that head passed (`CodeRabbit` never gates), and every workflow of the checkout's `.github/workflows` that runs on each pull request (no `paths` filter) has a successful run on the head; then fast-forwards the local `main`. Hand fallback, only for a defect of the script itself (named in the PR): `gh pr merge <n> --squash --match-head-commit <sha>`.
 - Cycle time report: right after each merge, comment on the merged PR with:
   - the cycle's start (its Issue's creation) and completion (this merge) times;
-  - the time per work phase and step (spec, each /autoplan phase, implementation, each review and fix round, native trials, `/ship`, CI, the gate, merge).
+  - the time per work phase and step (spec, each /autoplan phase, implementation, each review and fix round, `/ship` with its native checks, CI, the gate, merge).
   - Take times from recorded timestamps (Issue, commits, logs, `timing.json`); keep a running timeline in the cycle while it works; a cycle of several PRs reports the cycle so far on each.
 - `/ship` documentation candidate (`gstack-docs-candidate snapshot`) `--docs` roots: AGENTS.md, CHANGELOG.md, PRODUCT_GOAL.md, README.md, `extension/README.md`, `extension/skills/codebook/SKILL.md`, the v9 PNG.
 - CI packages via `node extension/scripts/package.mjs --out artifacts/packages/codebook.vsix`, checks via `node extension/scripts/check-package.mjs artifacts/packages/codebook.vsix` (`package.yml`).
@@ -213,10 +213,10 @@ No decision log; delivery chain and ship limit: [Delivery](#delivery).
   - Trials, evaluations and examples ask natural questions about different code paths and processes of the target, varied across rounds and hosts; never one fixed prompt (a cart, login or invoice example) round after round.
   - The v9 PNG fixes screen hierarchy and interactions, not learning content: summaries, sequence diagrams and explanations are generated per question as clear, graphical learning resources from what actually ran.
   - Never shape the skill, the generation, help examples or acceptance to reproduce the image's sample flow, participants or text.
-- **Who operates a native trial:** the driving agent itself (chat submissions, replay checks, every native check a row owes), never a subagent; implementation may run in subagents.
+- **Who operates a native check:** the driving agent itself (chat submissions, replay checks, every native check a row owes), never a subagent; implementation may run in subagents.
 - **Trial coordination:** dedicated VS Code and isolated-profile Cursor trials need no screen-time slot; on the Mac they run in the [macOS Space](docs/agents/native-qa.md), never on the owner's desktop. Ask only when real interference with the owner's work blocks a trial (a possible focus change is not that). Report a recording that truly needs exclusive foreground.
 - **Hosts:** development on the Mac or a Windows machine with WSL2; the owner moves it back to the Mac when free. Target systems: [Product constraints](PRODUCT_GOAL.md#product-constraints).
-  - Mac: macOS native trials and their OBS recordings run in the Cua Space `local:codebook-qa` (macOS VM) so the owner keeps using the Mac ([Native QA](docs/agents/native-qa.md)); the Mac's own desktop only when the owner directs it, with its procedures (protected Mac settings hashes, Computer Use grants).
+  - Mac: macOS native checks and their OBS recordings run in the Cua Space `local:codebook-qa` (macOS VM) so the owner keeps using the Mac ([Native QA](docs/agents/native-qa.md)); the Mac's own desktop only when the owner directs it, with its procedures (protected Mac settings hashes, Computer Use grants).
   - `/Users/ryotamurakami` paths = the Mac.
   - A native check on another host freezes its own procedure and identities in the Issue and reports what it could not run.
   - Evidence depending on the Mac's private `artifacts/`, the Space, QA profiles or local branches never carries over by assumption.
@@ -253,13 +253,13 @@ No decision log; delivery chain and ship limit: [Delivery](#delivery).
   - `pnpm install` does not provide Bun: install that version, e.g. `curl -fsSL https://bun.com/install | bash -s "bun-v$(cat .bun-version)"`, else the commit hook and the format check fail.
   - Put that Node's own `bin` first in `PATH`; run from the repo root.
 
-Delivery commands (`--help` prints usage, exit codes 0/1/2/3/4/64 (`post-trial-evidence.mjs` also 10/11/12 for `gstack-post` results), `E_…` codes; a refusal's first line = its code, last line `Fix:`):
+Delivery commands (`--help` prints usage, exit codes 0/1/2/3/4/64 as each documents (`post-trial-evidence.mjs` also 10/11/12 for `gstack-post` results), `E_…` codes; a refusal's first line = its code, last line `Fix:`):
 
 | Command | When |
 | --- | --- |
 | `node extension/scripts/bump-version.mjs <v>` / `--check` | release commit, after `/ship` Step 12 |
-| `node extension/scripts/qa-candidate.mjs` (`--status`, `--clean`) | on the clean commit a native trial installs |
-| `node extension/scripts/post-trial-evidence.mjs <run-log.md> --manifest artifacts/<cycle>/<host>-<run>` | after a native trial, once the candidate review is read |
+| `node extension/scripts/qa-candidate.mjs` (`--status`) | on the clean commit a native check installs |
+| `node extension/scripts/post-trial-evidence.mjs <run-log.md> --manifest artifacts/<cycle>/<host>-<run>` | after a native check |
 | `node extension/scripts/merge-pr.mjs <n>` (`--dry-run`) | merge, after CI and the exact-HEAD gate |
 
 Formatting: `pnpm --dir extension format` / `format:check` and the lint-staged hook run `bun fmt` (the Bun of `.bun-version` on `PATH`, installed by `format.yml`, checked by the gate; reads `.prettierrc.json` and `.prettierignore`; gives the Prettier 3.9.8 result on this tree). Never format a README with it: hand-edit README sentences.
@@ -314,11 +314,12 @@ Formatting: `pnpm --dir extension format` / `format:check` and the lint-staged h
 
 ## Native QA
 
-- Observing a native trial (state checks, screenshots, evidence stills): [docs/agents/native-trial-observation.md](docs/agents/native-trial-observation.md).
-- Candidate and evidence: build the trial VSIX with `qa-candidate.mjs` (its background Codex review runs while the trial is prepared); recorded runs start once the review ended or hit its limit; a Critical/Major/P0/P1 finding on the trial path is fixed first (new commit, new candidate). After reading the review, post each run's log with `post-trial-evidence.mjs --manifest`, quoting its exit line and triage; a review that did not start → name it as missing coverage.
+- Native checks are part of `/ship`, not a phase of their own: the VS Code and Cursor checks a cycle owes run as `/ship` Step 9.2.1's required plan checks (its QA step), beside its smoke probes. gstack's browser QA alone proves no native behavior.
+- Candidate and evidence: build the VSIX with `qa-candidate.mjs` on the clean commit `/ship` reviews and install it in each host; no review of the candidate (retired). A Critical/Major finding of a check is fixed in that `/ship` pass (new commit, new candidate, check repeated). Post each run's log with `post-trial-evidence.mjs --manifest`, quoting its exit line.
+- Observing a native check (state checks, screenshots, evidence stills): [docs/agents/native-trial-observation.md](docs/agents/native-trial-observation.md).
 - UI changes: view the PNG again; compare real screenshots with its region at the normal desktop baseline; record differences and interaction.
 - Motion needs recorded interaction + inspected frames; generated pixels or renderer assertions prove no native behavior.
-- Before any work on the WSL desktop or in the macOS Space (setup, repair, a native trial, its recording, moving its evidence to the Mac): read [docs/agents/native-qa.md](docs/agents/native-qa.md) (WSL desktop, macOS Space `local:codebook-qa`, OBS Window Capture recording).
+- Before any work on the WSL desktop or in the macOS Space (setup, repair, a native check, its recording, moving its evidence to the Mac): read [docs/agents/native-qa.md](docs/agents/native-qa.md) (WSL desktop, macOS Space `local:codebook-qa`, OBS Window Capture recording).
 
 ## External validation targets
 
