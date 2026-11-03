@@ -89,6 +89,7 @@ import {
   nextRefusal,
   PAGES_STOP_REFUSAL_DETAILS,
   READINESS_FAILURE_RECOVERY,
+  UNCODED_SETUP_DEADLINE_TEXT,
   nextSetupDeadlineRecovery,
   nextSetupDeadlineSentence,
   nextSetupDeadlineVariantOf,
@@ -1100,7 +1101,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.preparationBudgetMs = preparationDeadlineAt - now
     // The text is read at expiry: a Next run learns only after its route manifests whether it is a Pages run.
     this.progressDeadline(preparationDeadlineAt - now, () =>
-      this.setupDeadlineText(preparationDeadlineAt - now),
+      this.expireSetupBudget(preparationDeadlineAt - now),
     )
     this.runTimer = setTimeout(
       () =>
@@ -3675,6 +3676,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Closes Codebook's readiness request with outcome `timeout` when the setup budget ends while it is still unanswered, then words the deadline's failure.
+   * Why it exists: the request's own time limit starts later than the setup budget, so the budget always ends an unanswered request first; its record then says the clock ended it, not a stop of the run (`aborted`), and the deadline's error reads that record ({@link withSetupDeadlineSideEffects}). Called at expiry by the setup budget's progress deadline, which {@link prepareOwned} arms.
+   * @param budgetMs - The setup budget that expired.
+   * @returns The failure text of {@link setupDeadlineText}.
+   * @example this.expireSetupBudget(90_000) // an open readinessRequest now reads { state: 'closed', sentAtMs, outcome: 'timeout' }
+   */
+  private expireSetupBudget(budgetMs: number): string {
+    this.readiness.closeIfOpen('timeout')
+    return this.setupDeadlineText(budgetMs)
+  }
+
+  /**
    * Words the failure of an expired setup budget, read when the progress deadline of {@link prepareOwned} expires.
    * A Vite run names its step with `VITE_SETUP_DEADLINE`; a Next run on the Pages path names its step with `NEXT_SETUP_DEADLINE` and the variant whose static recovery fits what had already run; every other Next run keeps the plain text.
    * @param budgetMs - The setup budget that expired.
@@ -3689,7 +3702,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const mayTakePagesPath =
       this.pagesRun !== undefined ||
       (this.pagesCapable && this.nextRoute?.router !== 'app')
-    if (!mayTakePagesPath) return 'Repository setup deadline exceeded'
+    if (!mayTakePagesPath) return UNCODED_SETUP_DEADLINE_TEXT
     return formatRefusalFailure(
       'NEXT_SETUP_DEADLINE',
       nextSetupDeadlineSentence(

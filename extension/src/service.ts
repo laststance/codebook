@@ -247,6 +247,7 @@ import { waitForNextRunState } from './utils/waitForNextRunState'
 import { waitWithin } from './utils/waitWithin'
 import { withKnownNodeHistory } from './utils/withKnownNodeHistory'
 import { withRunStartRefusalDetails } from './utils/withRunStartRefusalDetails'
+import { withSetupDeadlineSideEffects } from './utils/withSetupDeadlineSideEffects'
 
 /** What the run resource tells an agent after the result while no explanation of the run carries a learning summary; `codebook://help/studies` describes the step in the last entry of its sequence. */
 const SAVE_LEARNING_SUMMARY_ADVICE =
@@ -3974,15 +3975,18 @@ export class StudyService {
       error:
         record.error?.describe() ??
         (runtimeFailure
-          ? this.runtimeFailureError(
-              runtimeFailure,
-              runtime?.operationFailure,
-              this.uri(record.id),
-              {
-                runId: record.id,
-                session: runtime?.session,
-                savedSession: runtime?.savedSession,
-              },
+          ? withSetupDeadlineSideEffects(
+              this.runtimeFailureError(
+                runtimeFailure,
+                runtime?.operationFailure,
+                this.uri(record.id),
+                {
+                  runId: record.id,
+                  session: runtime?.session,
+                  savedSession: runtime?.savedSession,
+                },
+              ),
+              runtime,
             ).describe()
           : undefined),
       cleanupError: record.cleanupError?.describe(),
@@ -4967,7 +4971,13 @@ export class StudyService {
       // A test run refused before its history began recorded nothing: it gives up its slot and its start key (EN1).
       if (record.profile === NODE_TEST_PROFILE && !record.nodeHistoryWriter)
         record.historyExcluded = 'refused-at-preparation'
-      record.error = this.sanitizedError(this.preparationError(record, error))
+      // A setup deadline after Codebook's readiness request also says what that request may have changed.
+      record.error = this.sanitizedError(
+        withSetupDeadlineSideEffects(
+          this.preparationError(record, error),
+          record.runtime?.view(),
+        ),
+      )
       record.runtime?.fail(record.error.message)
       if (record.nodePhase) record.nodePhase = 'failed'
     }

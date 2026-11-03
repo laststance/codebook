@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { REPOSITORY_SETUP_TIMEOUT_MS } from '../constants'
+import { StudyError } from '../errors'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
@@ -107,6 +108,37 @@ test('a both-routers run whose budget expires during the App verdict of an entry
     router: 'app',
     route: '/page',
   })
+})
+
+// Value: protects=an App Router readiness answer that is not OK, after Codebook's request ran the page's server components, fails the run with RUNTIME_FAILED, details.sideEffects unknown, the readiness record closed with that status, and a recovery that names an answer that is not OK as well as no answer; fails_when=the answered failure is not converted, the record lacks the status, or the recovery says the request never answered; no_claim=a real Next answer (the stand-in launcher rejects with its own sentence)
+test('an App Router readiness answer that is not OK fails RUNTIME_FAILED with sideEffects unknown and a recovery that reads the status', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    entryPath: '/dashboard',
+    readyAnswer: 500,
+  })
+  // Act
+  const failure = await harness.run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // Assert
+  assert.ok(failure instanceof StudyError)
+  const described = failure.describe()
+  const sentAtMs = harness.run.view().readinessRequest?.sentAtMs
+  assert.equal(described.code, 'RUNTIME_FAILED')
+  assert.equal(
+    described.message,
+    'Selected application page failed or redirected: 500. Select the actual entry path and prerequisites.',
+  )
+  assert.deepEqual(JSON.parse(JSON.stringify(described.details)), {
+    sideEffects: 'unknown',
+    readinessRequest: { state: 'closed', sentAtMs, status: 500 },
+  })
+  assert.equal(
+    described.recovery,
+    "Codebook's own readiness request for the entry path ran the page's server code (a data function, server components) before any stop was armed, and it did not end with an OK answer: read readinessRequest in the run resource, which holds the HTTP status of an answer that is not OK, or the outcome when no answer came. When that code writes or sends (a database write, a counter, an email, a payment call), it may have run: details.sideEffects is unknown, not none. Tell the learner, ask before another start, and never start again unasked. No declared input and no click was sent; Codebook stops the server it started (read resourcesReleased in the run resource). See codebook://help/repository-browser#readiness.entry-request.",
+  )
 })
 
 // Value: protects=an App-only Next run whose server exits before it listens keeps the launcher's failure text word for word, with no preparation or webpack note; fails_when=the Pages-path launch notes reach a workspace without a Pages folder; why_new=Cycle 0065 (App launch-failure text unchanged without a Pages folder); seam=launchFailure makes the stand-in readiness reject; no_claim=the launcher's own text (configuredApplication tests)

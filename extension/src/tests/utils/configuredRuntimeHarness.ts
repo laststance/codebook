@@ -51,7 +51,10 @@ import {
   type NextEntryResponse,
 } from '../../utils/describeNextEntryResponse'
 import { maskEnvValues, maskKnownValues } from '../../utils/maskKnownValues'
-import type { ReadinessObserver } from '../../utils/readinessEntryRecord'
+import {
+  readinessOutcomeOfError,
+  type ReadinessObserver,
+} from '../../utils/readinessEntryRecord'
 import { NEXT_PAGES_STATE_EXPRESSION } from '../../utils/readNextPagesState'
 import { readPagesDevelopmentBundle } from '../../utils/readPagesDevelopmentBundle'
 import * as viteDevAdapter from '../../viteDevAdapter'
@@ -224,6 +227,8 @@ export async function configuredRuntimeHarness(
     launchFailure?: string
     /** Makes the stand-in server's structured entry check (`readyEntry`) never answer until the run is cancelled, as a first compile that is still running does. */
     entryHangs?: boolean
+    /** The HTTP status the stand-in server answers to the App readiness check (`ready`), 200 by default; any other status closes the readiness record with it and rejects with the launcher's own sentence, as `ready` does for an answer that is not OK. */
+    readyAnswer?: number
     /**
      * Binds a stand-in saved-session store to the run, as `createRuntime` does for a version 3 run: `admission` is what the store answers (the saved session with a lease, or a fresh profile with the reason), `refuse` makes it throw a coded refusal instead, `refuseAtLaunch` makes the lease's last check at the launch throw one (a Chrome that took the folder meanwhile), and `appCookies` is the lease's cookie kind.
      * The stand-in browser then takes the lease like the real one (`prepareForLaunch` at launch, `recordBrowser` after it), and the page reports its navigations.
@@ -1506,6 +1511,26 @@ export async function configuredRuntimeHarness(
     if (failure === 'timeout') error.name = 'TimeoutError'
     throw error
   }
+  /**
+   * Plays a readiness request that was sent and gets no answer (`nextPages.readinessUnanswered`): it ends only when the run is cancelled, and its record closes with the outcome the real launcher names for that rejection.
+   * @param observer - The run's record, as the launcher gets it.
+   * @param signal - The run's stop signal, which the request carries.
+   * @throws The signal's reason once the run is cancelled.
+   */
+  const holdReadinessRequestUnanswered = (
+    observer: ReadinessObserver | undefined,
+    signal: AbortSignal,
+  ): Promise<never> => {
+    observer?.sent()
+    return new Promise<never>((_resolve, reject) =>
+      signal.addEventListener('abort', () => {
+        observer?.closed({
+          outcome: readinessOutcomeOfError(signal.reason, signal),
+        })
+        reject(signal.reason)
+      }),
+    )
+  }
   const fakeApplication = {
     ready: async (
       _signal: AbortSignal,
@@ -1515,7 +1540,15 @@ export async function configuredRuntimeHarness(
       readyEntryPaths.push(entryPath)
       if (options.launchFailure) throw new Error(options.launchFailure)
       releases.push('application acquired')
-      playReadinessRequest(observer, 200)
+      const status = options.readyAnswer ?? 200
+      playReadinessRequest(observer, status)
+      // An answer that is not OK rejects with the launcher's own sentence, after the record closed with its status.
+      if (status !== 200)
+        throw new Error(
+          entryPath === undefined || entryPath === '/'
+            ? `Application root failed: ${status}: ${options.nextPages?.outputTail ?? ''}`
+            : `Selected application page failed or redirected: ${status}. Select the actual entry path and prerequisites.`,
+        )
       return serverOrigin
     },
     // The structured entry check of a Pages-capable run: the scripted answer, described by the real code, never fetched.
@@ -1526,6 +1559,9 @@ export async function configuredRuntimeHarness(
       observer?: ReadinessObserver,
     ) => {
       entryChecks.push(entryPath)
+      // A data function that hangs keeps the sent request unanswered until the run is cancelled.
+      if (options.nextPages?.readinessUnanswered)
+        await holdReadinessRequestUnanswered(observer, signal)
       // A first compile that has not finished answers only when the run is cancelled.
       if (options.entryHangs)
         await new Promise<never>((_resolve, reject) =>

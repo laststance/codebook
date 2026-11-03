@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { ACTIVE_TIMEOUT_MS, PAGES_STOP_RESUMED_HIT_LIMIT } from '../constants'
+import {
+  ACTIVE_TIMEOUT_MS,
+  PAGES_STOP_RESUMED_HIT_LIMIT,
+  REPOSITORY_SETUP_TIMEOUT_MS,
+} from '../constants'
 import { LearningLibrary } from '../learningLibrary'
 import type { RepositoryOperation } from '../repositoryConfigSchemas'
 import type { ConfiguredRuntimeSnapshot, RuntimeControl } from '../runtime'
@@ -1373,6 +1377,138 @@ test('a readiness answer of 500 ends NEXT_ROUTE_NOT_COMPILED quoting the server 
     readinessRequest: { status: number }
   }
   assert.equal(resource.readinessRequest.status, 500)
+})
+
+/** The sentence a setup deadline's recovery starts with once Codebook's readiness request was sent. */
+const SETUP_DEADLINE_AFTER_READINESS_SENTENCE =
+  "Codebook's own readiness request for the entry path ran the page's server code (a data function, server components) before this deadline, so details.sideEffects is unknown, not none (details.readinessRequest holds the HTTP status, or outcome timeout when the deadline came before an answer). When that code writes or sends (a database write, a counter, an email, a payment call), tell the learner and ask before any new start, and never start again unasked; the rest of this recovery applies once the learner agrees, or when that code writes and sends nothing."
+
+/** The static recovery of a Next setup deadline before the browser opened. */
+const BEFORE_BROWSER_RECOVERY =
+  'Start once more with a new key (the first compile is warm after it); a second deadline means the project does not start in time for Codebook, so tell the learner the step the message names. Recovery: one retry, then the learner. The owned server was stopped; no browser was opened; no input was sent (read resourcesReleased in the run resource). See codebook://help/repository-browser#NEXT_SETUP_DEADLINE.'
+
+/**
+ * Builds the control of a run whose setup budget is the real 90 s, so the manual clock expires it with the message's own budget.
+ * @param context - The test, whose end aborts the run.
+ * @returns The run's control.
+ */
+function setupBudgetControl(
+  context: Parameters<typeof pagesControl>[0],
+): RuntimeControl {
+  return {
+    ...pagesControl(context),
+    preparationDeadlineAt: Date.now() + REPOSITORY_SETUP_TIMEOUT_MS,
+  }
+}
+
+// Value: protects=a setup deadline that expires while Codebook's readiness request is unanswered (a data function that hangs on a database call, which may have written) closes the readiness record with outcome timeout and fails NEXT_SETUP_DEADLINE with details.sideEffects unknown, the readiness record and a recovery that asks the learner before another start; fails_when=the deadline keeps only the one-retry recovery, carries no sideEffects or readinessRequest, or the record closes aborted; no_claim=a real hanging data function or a real 90 s wait (the manual clock expires the budget)
+test('a setup deadline during an unanswered readiness request closes it timeout and reports sideEffects unknown with a recovery that asks first', async (context) => {
+  // Arrange
+  const run = await pagesServerService(context, {
+    control: setupBudgetControl(context),
+    nextPages: { readinessUnanswered: true },
+  })
+  await waitUntil(
+    () =>
+      (plain(run.state()) as { readinessRequest?: { state: string } })
+        .readinessRequest?.state === 'open',
+    'the sent readiness request',
+  )
+  // Act
+  run.harness.advance(REPOSITORY_SETUP_TIMEOUT_MS)
+  await run.service.record(run.receipt).preparation
+  // Assert
+  const error = run.state().error!
+  const { readinessRequest } = plain(run.state()) as {
+    readinessRequest: { sentAtMs: number }
+  }
+  assert.equal(error.code, 'NEXT_SETUP_DEADLINE')
+  assert.equal(
+    error.message,
+    'Repository setup deadline (90 s) exceeded while waiting for the server to answer the entry page. Codebook stopped the server it started; the browser was not opened.',
+  )
+  assert.deepEqual(plain(error.details ?? null), {
+    sideEffects: 'unknown',
+    readinessRequest: {
+      state: 'closed',
+      sentAtMs: readinessRequest.sentAtMs,
+      outcome: 'timeout',
+    },
+  })
+  assert.equal(
+    error.recovery,
+    `${SETUP_DEADLINE_AFTER_READINESS_SENTENCE} ${BEFORE_BROWSER_RECOVERY}`,
+  )
+  assert.deepEqual(journaled(run.harness, 'readiness.entry-request'), [
+    { sentAtMs: readinessRequest.sentAtMs, outcome: 'timeout' },
+  ])
+})
+
+// Value: protects=a setup deadline that expires after Codebook's readiness request was answered (here while the route manifests are read) fails NEXT_SETUP_DEADLINE with details.sideEffects unknown, the readiness record with its status and a recovery that asks the learner before another start, because the data function already ran; fails_when=the deadline keeps only the one-retry recovery or carries no sideEffects or readinessRequest; no_claim=a real slow manifest write (the replaced reader answers only when the run is cancelled)
+test('a setup deadline after the readiness answer reports sideEffects unknown and the answered record with a recovery that asks first', async (context) => {
+  // Arrange
+  const run = await pagesServerService(context, {
+    control: setupBudgetControl(context),
+    nextPages: {
+      manifests: {
+        settings: {},
+        kind: 'unresolved',
+        manifests: { pages: true, app: false },
+      },
+      manifestsHang: true,
+    },
+  })
+  await waitUntil(
+    () => run.harness.manifestReads() === 1,
+    'the manifest read after the readiness answer',
+  )
+  // Act
+  run.harness.advance(REPOSITORY_SETUP_TIMEOUT_MS)
+  await run.service.record(run.receipt).preparation
+  // Assert
+  const error = run.state().error!
+  const { readinessRequest } = plain(run.state()) as {
+    readinessRequest: { sentAtMs: number }
+  }
+  assert.equal(error.code, 'NEXT_SETUP_DEADLINE')
+  assert.equal(
+    error.message,
+    'Repository setup deadline (90 s) exceeded while reading the route manifests. Codebook stopped the server it started; the browser was not opened.',
+  )
+  assert.deepEqual(plain(error.details ?? null), {
+    sideEffects: 'unknown',
+    readinessRequest: {
+      state: 'closed',
+      sentAtMs: readinessRequest.sentAtMs,
+      status: 200,
+    },
+  })
+  assert.equal(
+    error.recovery,
+    `${SETUP_DEADLINE_AFTER_READINESS_SENTENCE} ${BEFORE_BROWSER_RECOVERY}`,
+  )
+})
+
+// Value: protects=a fresh run whose entry Codebook's readiness request found redirected to a declared sign-in path ends with its recorded SIGN_IN_REQUIRED (reason, profile, setup command), not a readiness RUNTIME_FAILED: the run had already failed when its next check threw; fails_when=the failed run's "Repository run is unavailable" reaches the readiness wrapper before the run's cleanup aborted it (a cleanup that awaits before its abort, for example), so the wrapper turns it into RUNTIME_FAILED with the readiness recovery; no_claim=a real proxy redirect
+test('a fresh run whose readiness request is redirected to sign-in keeps SIGN_IN_REQUIRED, not a readiness RUNTIME_FAILED', async (context) => {
+  // Arrange
+  const run = await pagesServerService(context, {
+    savedSession: { admission: 'no-saved-session' },
+    entryAnswer: { status: 307, location: '/login' },
+    operations: {
+      operations: [],
+      stopOperations: [0],
+      stopParticipants: ['server'],
+      signInPaths: ['/login'],
+    },
+  })
+  // Act
+  await run.service.record(run.receipt).preparation
+  // Assert
+  const error = run.state().error!
+  assert.equal(error.code, 'SIGN_IN_REQUIRED')
+  assert.equal(error.details?.reason, 'no-saved-session')
+  assert.equal(error.details?.command, 'codebook.setUpSavedSession')
 })
 
 /** One outcome of a paused data function after the continue: what the page ends as, and how the run ends. */

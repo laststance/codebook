@@ -6,6 +6,7 @@ import { test, type TestContext } from 'node:test'
 import { API_VERSION } from '../constants'
 import { ERROR_RECOVERY } from '../errors'
 import { nextHelp } from '../nextHelp'
+import { READINESS_FAILURE_RECOVERY } from '../nextRefusals'
 import { operationsRepositoryConfigSchema } from '../repositoryConfigSchemas'
 import { readResource } from '../resources'
 import {
@@ -708,6 +709,68 @@ test('the help names the readiness record with the keys and outcomes the code pr
     'one readiness.entry-request entry (sentAtMs and the status or outcome)',
   ])
     assert.ok(readiness.includes(phrase), phrase)
+})
+
+// Value: protects=the recovery an agent reads on the RUNTIME_FAILED of a failed readiness check fits both failures the run converts: an answer that is not OK (readinessRequest holds its status) and no answer (it holds the outcome); fails_when=the recovery says the request did not end with an answer although the run also gives it to an answered failure, or stops naming where the status or outcome is read; no_claim=that the run converts the failure (the run tests)
+test('the readiness failure recovery covers an answer that is not OK as well as no answer', () => {
+  // Arrange
+  const recovery = READINESS_FAILURE_RECOVERY
+  // Act
+  const saysNoAnswerOnly = recovery.includes('did not end with an answer')
+  // Assert
+  assert.equal(saysNoAnswerOnly, false)
+  assert.ok(
+    recovery.includes(
+      'it did not end with an OK answer: read readinessRequest in the run resource, which holds the HTTP status of an answer that is not OK, or the outcome when no answer came.',
+    ),
+  )
+  assert.ok(recovery.includes('ask before another start'))
+})
+
+// Value: protects=the README and the help say what a setup deadline after the readiness request carries (its own code, details.sideEffects unknown, details.readinessRequest closed with outcome timeout when it came before an answer, details.router pages for a resolved Pages route, a recovery that asks first), that the setup deadline comes before the request's own limit, and that a RUNTIME_FAILED of the readiness check itself names connection-lost, not timeout; fails_when=a text still lists timeout as a RUNTIME_FAILED of the check, or the deadline sentence leaves the README, the readiness anchor, the Pages side-effect rule or the NEXT_SETUP_DEADLINE meaning; no_claim=that the run and the service add the details (the run and run-resource tests)
+test('the README and the help say a setup deadline after the readiness request reports sideEffects unknown and the readiness record', async (context) => {
+  // Arrange
+  const help = await readServedHelp(context)
+  const section = await readServerRendersReadmeSection()
+  // Act
+  const anchor =
+    help.serverRenderErrors.pagesReasons['readiness.entry-request'].meaning
+  const sideEffects = help.serverRenderQuickStart.pagesSideEffects
+  const readiness = help.serverRenderQuickStart.pagesReadinessRequest
+  const deadlineMeaning = help.nextRefusals.NEXT_SETUP_DEADLINE.meaning
+  // Assert
+  assert.ok(
+    section.includes(
+      'a setup deadline after the request was sent, while it waits for the answer or after it, keeps its own code (`NEXT_SETUP_DEADLINE`, or `RUNTIME_FAILED` with "Repository setup deadline exceeded" where it carries no Next code) and also carries `details.sideEffects: "unknown"` and `details.readinessRequest` (closed with `outcome: "timeout"` when the deadline came before an answer), `details.router: "pages"` once the entry resolved as a Pages route',
+    ),
+  )
+  assert.ok(section.includes('no answer (`connection-lost`)'))
+  assert.ok(
+    anchor.includes(
+      'A setup deadline after the request was sent, while it waits for the answer or after it, keeps its own code (NEXT_SETUP_DEADLINE, or RUNTIME_FAILED with Repository setup deadline exceeded where it carries no Next code) and carries details.sideEffects unknown and details.readinessRequest too',
+    ),
+  )
+  assert.ok(
+    sideEffects.includes(
+      "The 90 s setup deadline comes before the request's own time limit: a setup deadline after the request was sent, while it waits for the answer or after it, fails with NEXT_SETUP_DEADLINE",
+    ),
+  )
+  assert.ok(
+    readiness.includes(
+      'timeout when the 90 s setup deadline came before an answer',
+    ),
+  )
+  assert.ok(
+    deadlineMeaning.includes(
+      "Once Codebook's readiness request for the entry was sent, which runs the page's server code, the deadline also carries details.sideEffects unknown and details.readinessRequest",
+    ),
+  )
+  assert.equal(
+    section.includes('no answer (`timeout` or `connection-lost`)'),
+    false,
+  )
+  for (const text of [anchor, sideEffects])
+    assert.equal(text.includes('no answer (timeout or connection-lost)'), false)
 })
 
 // Value: protects=the help names the attribution summary and the resumedHits with the keys and the reasons the ledger really produces (taken by frame and request, unconfirmed, resumed by reason; resumedHits entries with reason, route for other-route only, count), and every reason has an anchor; fails_when=the ledger renames a key or adds a reason the help and its anchors do not name; no_claim=that the run feeds the ledger from real hits (the run tests)

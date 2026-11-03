@@ -53,6 +53,8 @@ export type NextPagesHarnessOptions = {
   pagesManifest?: Record<string, string>
   /** Makes Codebook's readiness request for the entry end without an answer, as a data function that writes and then never answers does: the stand-in launcher sends it, then fails with this outcome. */
   readinessFailure?: 'timeout' | 'connection-lost'
+  /** Makes Codebook's readiness request for the entry stay unanswered after it was sent, as a data function that hangs on a database call does: the stand-in launcher ends it only when the run is cancelled, and then closes the record as the real launcher does. */
+  readinessUnanswered?: boolean
   /** Adds an App folder (`src/app/page.tsx`), so the workspace has both routers. */
   withAppFolder?: boolean
   /** The masked output tail the stand-in server reports. */
