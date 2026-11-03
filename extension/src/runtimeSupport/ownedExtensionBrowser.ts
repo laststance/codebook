@@ -294,6 +294,36 @@ async function workerTargets(
 }
 
 /**
+ * Settles with `pending` unless `signal` aborts first, in which case it rejects with the signal's reason at once.
+ * Why: {@link startWorkerUntil} checks its signal only between commands, so a command or pause that never answers would hold a Stop until the wake bound. Called by {@link startWorkerUntil} around each command and pause; the abandoned promise's later outcome is ignored.
+ * @param pending - The command or pause to wait for.
+ * @param signal - The run's abort signal; without one `pending` is returned as is.
+ * @returns The value of `pending`.
+ * @throws The signal's reason when it aborts before `pending` settles.
+ * @example
+ * await rejectOnAbort(sleep(500), controller.signal)
+ */
+function rejectOnAbort<Value>(
+  pending: Promise<Value>,
+  signal: AbortSignal | undefined,
+): Promise<Value> {
+  if (signal === undefined) return pending
+  return new Promise<Value>((resolve, reject) => {
+    // Already stopped: reject now; the abandoned `pending` is swallowed below.
+    if (signal.aborted) {
+      pending.catch(() => undefined)
+      reject(signal.reason)
+      return
+    }
+    const onAbort = (): void => reject(signal.reason)
+    signal.addEventListener('abort', onAbort, { once: true })
+    pending.then(resolve, reject).finally(() => {
+      signal.removeEventListener('abort', onAbort)
+    })
+  })
+}
+
+/**
  * Starts the extension's worker and waits for its target, sending the start again every {@link EXTENSION_WORKER_START_RESEND_MS} (the body of {@link OwnedExtensionBrowser.startWorker}).
  * Why: `ServiceWorker.startWorker` answers success at once and discards whether the worker started; it silently does nothing when the registration has no active version yet, so one send and a wait can wait for ever. A start of a running worker changes nothing, so the re-send is safe.
  * Called through {@link OwnedExtensionBrowser.startWorker} by the debugger's wake of the worker, once per wake. Every request and pause is bounded by the time left, so the call ends at `deadlineAt` (plus one scheduling tick); a request that times out is counted as no answer, not as a failure.
@@ -322,13 +352,17 @@ async function startWorkerUntil(
     sessionId?: string,
   ): Promise<Record<string, unknown> | undefined> => {
     try {
-      return await extensionCommand(
-        session.cdp,
-        session.chromeVersion,
-        method,
-        params,
-        sessionId,
-        Math.max(1, deadlineAt - now()),
+      // A Stop ends a command that never answers at once, not at the wake bound.
+      return await rejectOnAbort(
+        extensionCommand(
+          session.cdp,
+          session.chromeVersion,
+          method,
+          params,
+          sessionId,
+          Math.max(1, deadlineAt - now()),
+        ),
+        signal,
       )
     } catch (error) {
       if (isConnectionLost(error))
@@ -375,7 +409,8 @@ async function startWorkerUntil(
       Math.max(0, nextSendAt - now()),
       Math.max(0, deadlineAt - now()),
     )
-    if (pauseMs > 0) await session.dependencies.sleep(pauseMs)
+    if (pauseMs > 0)
+      await rejectOnAbort(session.dependencies.sleep(pauseMs), signal)
   }
   // The last pause (or an unanswered look) may end at the deadline without a look after it; one bounded final look decides `listed`.
   signal?.throwIfAborted()

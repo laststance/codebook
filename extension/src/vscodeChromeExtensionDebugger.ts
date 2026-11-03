@@ -912,7 +912,8 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
         return this.entriesOf('worker')[0]
       },
       'the extension worker session',
-      timeLeft(deadlineAt),
+      // A start that listed the worker at the deadline still gets one read.
+      Math.max(1, timeLeft(deadlineAt)),
       signal,
       () => this.workerNotAttached(),
     )
@@ -966,7 +967,8 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
         )
       },
       "the extension's service worker target to be the only one of the extension listed",
-      timeLeft(deadlineAt),
+      // One read happens even when the deadline has passed.
+      Math.max(1, timeLeft(deadlineAt)),
       signal,
       () => {
         // No answered read means no evidence against the child: it stays a worker so a later wake can verify it.

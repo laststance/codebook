@@ -288,3 +288,47 @@ test('startWorker returns at once with no send for an extension that declares no
   assert.equal(clock.now(), before)
   await browser.close()
 })
+
+// Value: protects=E14, a Stop ends a start command that Chrome never answers at once; fails_when=startWorkerUntil checks the signal only between commands, so the hung command holds the Stop until its bound; no_claim=the debugger's handling of the abort
+test('startWorker rejects with the signal reason at once when a Stop arrives while a command never answers', async (context) => {
+  // Arrange
+  const clock = virtualClock()
+  const controller = new AbortController()
+  const reason = new Error('stopped by the learner')
+  const chrome = fakeOwnedChrome(behaviourOf(clock))
+  let hanging = false
+  const browser = await launchOwnedExtensionBrowser(
+    pageOptions(await profileRoot(context)),
+    {
+      ...chrome.dependencies,
+      connect: async (...args) => {
+        const connection = await chrome.dependencies.connect(...args)
+        return {
+          ...connection,
+          // A real never-answering command: it settles only when the test ends.
+          request: (method, params, sessionId, timeoutMs) =>
+            hanging && method === 'ServiceWorker.startWorker'
+              ? new Promise<never>(() => undefined)
+              : connection.request(method, params, sessionId, timeoutMs),
+        }
+      },
+    },
+  )
+  hanging = true
+  // Act
+  const pending = browser
+    .startWorker(clock.now() + WAKE_BOUND_MS, controller.signal)
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+  setTimeout(() => controller.abort(reason), 20)
+  const failure = await Promise.race([
+    pending,
+    new Promise((resolve) => setTimeout(() => resolve('still waiting'), 1_000)),
+  ])
+  // Assert
+  assert.equal(failure, reason)
+  hanging = false
+  await browser.close()
+})

@@ -293,14 +293,20 @@ test('a Stop during the worker start ends the wake with the stop reason before t
   // Arrange
   const controller = new AbortController()
   const reason = new Error('the learner stopped the run')
-  const { editor, created } = await attachedDebugger({
-    startWorker: (_deadlineAt, signal) =>
-      new Promise((_resolve, reject) => {
-        signal?.addEventListener('abort', () => reject(signal.reason), {
-          once: true,
-        })
-      }),
-  })
+  // A bound far past the stop: only the Stop, never the bound, can end the wake early enough.
+  const stopTestBoundMs = 3_000
+  const { editor, created } = await attachedDebugger(
+    {
+      startWorker: (_deadlineAt, signal) =>
+        new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(signal.reason), {
+            once: true,
+          })
+        }),
+    },
+    undefined,
+    stopTestBoundMs,
+  )
   const startedAt = performance.now()
   const waking = created.debug.waitForWorker(controller.signal)
   await sleep(40)
@@ -313,7 +319,7 @@ test('a Stop during the worker start ends the wake with the stop reason before t
   const elapsedMs = performance.now() - startedAt
   // Assert
   assert.equal(failure, reason)
-  assert.equal(elapsedMs < WAKE_BOUND_MS, true)
+  assert.equal(elapsedMs < stopTestBoundMs - END_SLACK_MS, true)
   assert.deepEqual(
     created.events.filter(
       ({ type }) => type === 'chrome-extension.worker-start',
@@ -322,4 +328,38 @@ test('a Stop during the worker start ends the wake with the stop reason before t
   )
   await created.debug.release()
   await editor.dispose()
+})
+
+// Value: protects=a worker the start just listed is not refused because the start used the whole wake bound; fails_when=the worker-session or target-list wait gets 0 ms at the deadline and never reads once; no_claim=Chrome's own timing
+test('a wake whose start lists the worker only at the deadline still adopts the worker session', async () => {
+  // Arrange
+  const boundMs = 200
+  let editorRef: Awaited<ReturnType<typeof attachedDebugger>>['editor']
+  const attached = await attachedDebugger(
+    {
+      startWorker: async (deadlineAt) => {
+        // The start runs until the deadline, then reports the worker listed, with its session already there.
+        await sleep(Math.max(0, deadlineAt - performance.now()) + 20)
+        await editorRef.addChild({
+          kind: 'service_worker',
+          id: 'worker-session',
+        })
+        return { listed: true, sends: 3 }
+      },
+    },
+    undefined,
+    boundMs,
+  )
+  editorRef = attached.editor
+  // Act
+  const outcome = await attached.created.debug
+    .waitForWorker(AbortSignal.timeout(5_000))
+    .then(
+      () => 'attached',
+      (reason: unknown) => String(reason),
+    )
+  // Assert
+  assert.equal(outcome, 'attached')
+  await attached.created.debug.release()
+  await attached.editor.dispose()
 })
