@@ -2,14 +2,16 @@ import { PREVIEW_VALUE_PREFIX_LIMIT_CHARS, REDACTION_MASK } from '../constants'
 
 import { isSecretName } from './isSecretName'
 import {
+  applyTextReplacements,
+  findShapedLiterals,
   isSecretHeaderName,
-  maskShapedLiterals,
   unquotePreviewString,
+  type TextReplacement,
 } from './secretShapes'
 
-/** A member key in a debugger's value preview, bare or quoted, followed by `:` (objects) or `=>` (maps). */
+/** A member key in a debugger's value preview, bare or quoted, followed by `:` (objects) or `=>` (maps). A bare key starts where no word character, `$` or `-` comes before it, so a long `a-a-a-…` run is tried once, not once per `a`. */
 const PREVIEW_KEY =
-  /(?<![\w$])(?:([A-Za-z_$][\w$-]*)|'([^'\\]*)'|"([^"\\]*)")\s*(?::|=>)\s*/g
+  /(?<![\w$-])(?:([A-Za-z_$][\w$-]*)|'([^'\\]*)'|"([^"\\]*)")\s*(?::|=>)\s*/g
 /** A type name and/or a parenthesized length that a debugger writes before a value's body (`Map(1) `, `Array(2) `, `(2) `, `Object `). */
 const VALUE_PREFIX = /^(?:[A-Za-z_$][\w$]*)?(?:\(\d+\))?\s*(?=[{[(])/
 /** Closing characters for the opening ones a preview value can start with. */
@@ -17,6 +19,45 @@ const CLOSING: Readonly<Record<string, string>> = {
   '{': '}',
   '[': ']',
   '(': ')',
+}
+/** The characters that end a bare member value (`undefined`, `42`, `true`) outside of quotes. */
+const BARE_VALUE_TERMINATORS: ReadonlySet<string> = new Set([
+  ',',
+  '}',
+  ']',
+  ')',
+])
+
+/** A stretch of a preview. */
+type PreviewRange = { start: number; end: number }
+
+/** One `key: value` or `key => value` member of a preview: where its value is and which bracketed value holds it. */
+type PreviewMember = {
+  key: string
+  /** Where the member's key starts. */
+  index: number
+  valueStart: number
+  valueEnd: number
+  /** The index of the innermost opening bracket around the member, or -1 for a member at the top level. A member inside a quoted string has a container of its own, below -1. */
+  container: number
+}
+
+/** Where a preview's quoted texts and bracketed values are, found in one pass so no member rescans them. */
+type PreviewStructure = {
+  /** The quoted texts in order of position, from the opening quote to past the closing one. */
+  quoted: readonly PreviewRange[]
+  /** For each opening bracket, the index past its matching closing bracket; a bracket without one is absent. */
+  bracketEnds: ReadonlyMap<number, number>
+}
+
+/**
+ * Tells whether a character opens a quoted text in a preview.
+ * @param character - One character.
+ * @returns `true` for `'`, `"` and a backtick.
+ * @example isQuote("'") // => true
+ */
+function isQuote(character: string): boolean {
+  return character === "'" || character === '"' || character === '`'
 }
 
 /**
@@ -36,64 +77,94 @@ function endOfQuoted(text: string, start: number): number {
 }
 
 /**
- * Finds where a bracketed value that starts at `start` ends, past its matching closing bracket, skipping quoted text; a value the preview cut off runs to the end.
- * @param text - The preview.
- * @param start - The index of the opening bracket.
- * @returns The index after the matching bracket, or `text.length`.
- * @example endOfBracketed('{id: 1}, n: 2', 0) // => 7
+ * Finds the quoted texts and the matching brackets of a preview in one pass, skipping quoted text when it counts brackets.
+ * Why: the members of a preview are found by pattern; a member-looking text inside a quoted string (`'Invalid session: expired'`) must be skipped, and a member's bracketed value must end without rescanning the rest of the preview for each member. Called by {@link readPreviewMembers}.
+ * @param preview - A value as the debugger displays it.
+ * @returns The quoted texts and the end of every bracketed value that closes.
+ * @example readPreviewStructure("{a: 'x'}").bracketEnds.get(0) // => 8
  */
-function endOfBracketed(text: string, start: number): number {
-  const opened: string[] = []
-  for (let index = start; index < text.length; index++) {
-    const character = text.charAt(index)
-    if (character === "'" || character === '"' || character === '`') {
-      index = endOfQuoted(text, index) - 1
+function readPreviewStructure(preview: string): PreviewStructure {
+  const quoted: PreviewRange[] = []
+  const bracketEnds = new Map<number, number>()
+  const opened: { closing: string; at: number }[] = []
+  for (let index = 0; index < preview.length; index++) {
+    const character = preview.charAt(index)
+    if (isQuote(character)) {
+      const end = endOfQuoted(preview, index)
+      quoted.push({ start: index, end })
+      index = end - 1
       continue
     }
     const closing = CLOSING[character]
-    if (closing) opened.push(closing)
-    else if (character === opened.at(-1)) opened.pop()
-    // The value ends once its own opening bracket is closed.
-    if (opened.length === 0) return index + 1
+    const innermost = opened.at(-1)
+    if (closing) opened.push({ closing, at: index })
+    // A closing bracket that does not match the innermost opening one is ignored.
+    else if (innermost !== undefined && character === innermost.closing) {
+      opened.pop()
+      bracketEnds.set(innermost.at, index + 1)
+    }
   }
-  return text.length
+  return { quoted, bracketEnds }
+}
+
+/**
+ * Builds the finder of where a bare member value (`undefined`, `42`, `Symbol(x)`) ends: at the next `,`, `}`, `]` or `)` outside quotes, without its trailing blanks.
+ * Why: a preview of many bare members (`a: a: a: …`) would scan to the end for each one; the finder remembers the terminator it found, so every member before it reuses the scan. Called by {@link readPreviewMembers}.
+ * @param text - The preview.
+ * @returns A function from the index where a bare value starts to the index where it ends. Starts must not decrease between calls.
+ * @example createBareValueEnd('{a: 1 , b: 2}')(4) // => 5
+ */
+function createBareValueEnd(text: string): (start: number) => number {
+  // Every start from `coveredFrom` to `coveredUntil` has the terminator at `coveredUntil`.
+  let coveredFrom = 0,
+    coveredUntil = -1,
+    trimmedEnd = 0
+  return (start) => {
+    if (start < coveredFrom || start > coveredUntil) {
+      coveredFrom = start
+      coveredUntil = start
+      // A quoted part belongs to the value whole, so a terminator inside it does not end the value.
+      while (
+        coveredUntil < text.length &&
+        !BARE_VALUE_TERMINATORS.has(text.charAt(coveredUntil))
+      )
+        coveredUntil = isQuote(text.charAt(coveredUntil))
+          ? endOfQuoted(text, coveredUntil)
+          : coveredUntil + 1
+      trimmedEnd = coveredUntil
+      while (trimmedEnd > coveredFrom && /\s/.test(text.charAt(trimmedEnd - 1)))
+        trimmedEnd--
+    }
+    return Math.max(start, trimmedEnd)
+  }
 }
 
 /**
  * Finds where one member value of a preview ends: a quoted string, a bracketed object, array or map (with any type name or length before it), or a bare token up to the next separator.
  * @param text - The preview.
  * @param start - Where the value starts, after its key's `:` or `=>`.
+ * @param structure - The preview's quoted texts and brackets.
+ * @param endOfBareValue - The finder of {@link createBareValueEnd}.
  * @returns The index where the value ends.
- * @example endOfPreviewValue("{a: 'x', b: 1}", 4) // => 7
+ * @example endOfPreviewValue("{a: 'x', b: 1}", 4, readPreviewStructure("{a: 'x', b: 1}"), createBareValueEnd("{a: 'x', b: 1}")) // => 7
  */
-function endOfPreviewValue(text: string, start: number): number {
+function endOfPreviewValue(
+  text: string,
+  start: number,
+  structure: PreviewStructure,
+  endOfBareValue: (start: number) => number,
+): number {
   const first = text.charAt(start)
-  if (first === "'" || first === '"' || first === '`')
-    return endOfQuoted(text, start)
+  if (isQuote(first)) return endOfQuoted(text, start)
   // A type name or a length before a body (`Array(2) [...]`, `(2) [...]`, `Object {...}`) belongs to the value, which ends with that body.
   const prefix = VALUE_PREFIX.exec(
     text.slice(start, start + PREVIEW_VALUE_PREFIX_LIMIT_CHARS),
   )
   if (prefix && prefix[0].length > 0)
-    return endOfBracketed(text, start + prefix[0].length)
-  if (CLOSING[first]) return endOfBracketed(text, start)
-  const bareToken = /^[^,}\])]*/.exec(text.slice(start))?.[0] ?? ''
-  return start + bareToken.trimEnd().length
+    return structure.bracketEnds.get(start + prefix[0].length) ?? text.length
+  if (CLOSING[first]) return structure.bracketEnds.get(start) ?? text.length
+  return endOfBareValue(start)
 }
-
-/** One `key: value` or `key => value` member of a preview: where its value is and which bracketed value holds it. */
-type PreviewMember = {
-  key: string
-  /** Where the member's key starts. */
-  index: number
-  valueStart: number
-  valueEnd: number
-  /** The index of the innermost opening bracket around the member, or -1 for a member at the top level. */
-  container: number
-}
-
-/** A stretch of a preview to replace with {@link REDACTION_MASK}. */
-type MaskRange = { start: number; end: number }
 
 /**
  * Tells in which bracketed value of a preview each member sits, so `{name: 'sid', value: '…'}` pairs its own members and no other object's.
@@ -109,14 +180,14 @@ function assignContainers(preview: string, members: PreviewMember[]): void {
     index < preview.length && next < members.length;
     index++
   ) {
-    // A member inside a quoted text is skipped over below and takes the bracket around that text.
     while (next < members.length && members[next]!.index <= index) {
-      members[next]!.container = opened.at(-1) ?? -1
+      // A member inside a quoted string already has its own container.
+      if (members[next]!.container === -1)
+        members[next]!.container = opened.at(-1) ?? -1
       next++
     }
     const character = preview.charAt(index)
-    if (character === "'" || character === '"' || character === '`')
-      index = endOfQuoted(preview, index) - 1
+    if (isQuote(character)) index = endOfQuoted(preview, index) - 1
     else if (CLOSING[character]) opened.push(index)
     else if (character === '}' || character === ']' || character === ')')
       opened.pop()
@@ -124,21 +195,82 @@ function assignContainers(preview: string, members: PreviewMember[]): void {
 }
 
 /**
+ * Finds where the value of a quoted key inside a quoted string ends, never past the string's closing quote.
+ * Called by {@link readPreviewMembers} for the members of a serialised object (`'{"token":"abc","n":1}'`).
+ * @param text - The preview.
+ * @param start - Where the value starts, after its key's `:`.
+ * @param limit - The index of the string's closing quote.
+ * @returns The end of a quoted value or of a bare one (a number, `true`, `null`) at its `,`, `}`, `]` or `)`; a bracketed value, or a bare one with no end within {@link PREVIEW_VALUE_PREFIX_LIMIT_CHARS} characters, runs to `limit`, so it is masked whole.
+ * @example endOfValueInString(`'{"a":1,"b":2}'`, 6, 13) // => 7
+ */
+function endOfValueInString(
+  text: string,
+  start: number,
+  limit: number,
+): number {
+  const first = text.charAt(start)
+  if (isQuote(first)) return Math.min(endOfQuoted(text, start), limit)
+  if (CLOSING[first]) return limit
+  const scanEnd = Math.min(limit, start + PREVIEW_VALUE_PREFIX_LIMIT_CHARS)
+  let index = start
+  while (index < scanEnd && !BARE_VALUE_TERMINATORS.has(text.charAt(index)))
+    index++
+  return index === scanEnd && scanEnd < limit ? limit : index
+}
+
+/**
+ * Builds the finder of the quoted text a position lies inside, after its opening quote.
+ * Called by {@link readPreviewMembers}.
+ * @param quoted - The quoted texts of a preview, in order of position.
+ * @returns A function from a position to the quoted text around it, or `undefined`. Positions must not decrease between calls.
+ * @example createEnclosingQuotedText([{ start: 3, end: 9 }])(5) // => { start: 3, end: 9 }
+ */
+function createEnclosingQuotedText(
+  quoted: readonly PreviewRange[],
+): (index: number) => PreviewRange | undefined {
+  let position = 0
+  return (index) => {
+    // The positions come in order, so the quoted texts are passed once.
+    while (position < quoted.length && quoted[position]!.end <= index)
+      position++
+    const quotedText = quoted[position]
+    return quotedText !== undefined && quotedText.start < index
+      ? quotedText
+      : undefined
+  }
+}
+
+/**
  * Reads every member of a preview with the end of its value and the bracket it sits in.
+ * A key-shaped text inside a quoted string is prose when its key is bare (`'Invalid session: expired'`) and is skipped. A quoted key inside a string is the JSON of a serialised object (`'{"token":"abc"}'`) and stays a member whose value ends before the string's closing quote; it pairs only with the members of the same string.
  * @param preview - A value as the debugger displays it.
  * @returns The members, in order of position.
  * @example readPreviewMembers("{a: 1, b: 'x'}").map((member) => member.key) // => ['a', 'b']
  */
 function readPreviewMembers(preview: string): PreviewMember[] {
+  const structure = readPreviewStructure(preview)
+  const endOfBareValue = createBareValueEnd(preview)
+  const enclosingQuotedText = createEnclosingQuotedText(structure.quoted)
   const members: PreviewMember[] = []
   for (const match of preview.matchAll(PREVIEW_KEY)) {
+    // A quoted key starts at its own opening quote, which is not inside the quoted text it opens.
+    const enclosing = enclosingQuotedText(match.index)
+    if (enclosing !== undefined && match[1] !== undefined) continue
     const valueStart = match.index + match[0].length
     members.push({
       key: match[1] ?? match[2] ?? match[3] ?? '',
       index: match.index,
       valueStart,
-      valueEnd: endOfPreviewValue(preview, valueStart),
-      container: -1,
+      // A value inside a string never runs past the string's closing quote.
+      valueEnd:
+        enclosing === undefined
+          ? endOfPreviewValue(preview, valueStart, structure, endOfBareValue)
+          : endOfValueInString(
+              preview,
+              valueStart,
+              Math.max(valueStart, enclosing.end - 1),
+            ),
+      container: enclosing === undefined ? -1 : -2 - enclosing.start,
     })
   }
   assignContainers(preview, members)
@@ -151,7 +283,7 @@ function readPreviewMembers(preview: string): PreviewMember[] {
  * @returns One range per member.
  * @example secretNamedRanges(readPreviewMembers("{apiKey: 'x'}")) // => [{ start: 9, end: 12 }]
  */
-function secretNamedRanges(members: readonly PreviewMember[]): MaskRange[] {
+function secretNamedRanges(members: readonly PreviewMember[]): PreviewRange[] {
   return members
     .filter((member) => isSecretName(member.key))
     .map((member) => ({ start: member.valueStart, end: member.valueEnd }))
@@ -167,18 +299,15 @@ function secretNamedRanges(members: readonly PreviewMember[]): MaskRange[] {
 function pairValueRanges(
   preview: string,
   members: readonly PreviewMember[],
-): MaskRange[] {
+): PreviewRange[] {
   const containersNamingASecret = new Set(
     members
       .filter((member) => {
+        if (member.key !== 'name' && member.key !== 'key') return false
         const text = unquotePreviewString(
           preview.slice(member.valueStart, member.valueEnd),
         )
-        return (
-          (member.key === 'name' || member.key === 'key') &&
-          text !== undefined &&
-          isSecretHeaderName(text)
-        )
+        return text !== undefined && isSecretHeaderName(text)
       })
       .map((member) => member.container),
   )
@@ -191,27 +320,8 @@ function pairValueRanges(
 }
 
 /**
- * Replaces the given stretches of a preview with {@link REDACTION_MASK}; a stretch inside one already replaced is gone with it.
- * @param preview - A value as the debugger displays it.
- * @param ranges - The stretches to replace.
- * @returns The preview with the stretches replaced.
- * @example maskRanges('{a: 1}', [{ start: 4, end: 5 }]) // => '{a: [masked]}'
- */
-function maskRanges(preview: string, ranges: readonly MaskRange[]): string {
-  let redacted = ''
-  let copiedUntil = 0
-  for (const range of [...ranges].sort((a, b) => a.start - b.start)) {
-    // A range inside a value already masked is gone with it.
-    if (range.start < copiedUntil) continue
-    redacted += preview.slice(copiedUntil, range.start) + REDACTION_MASK
-    copiedUntil = range.end
-  }
-  return redacted + preview.slice(copiedUntil)
-}
-
-/**
  * Masks the members of secret-named keys inside a debugger's value preview (`{apiKey: 'x', host: 'y'}`, `Map(1) {'authorization' => 'x'}`), the value beside a secret `name` or `key` member (`{name: 'sid', value: 'x'}`), and every quoted element that holds a credential shape (a Cookie header, an Authorization value, the element after `'Cookie'` in a flat header array, a URL's secret query values), so an expandable value's own text never carries what its children are masked for.
- * Why: the editor's debug adapter previews an object with its members' values; the redaction contract masks a secret-named member and everything inside it, wherever its value appears. Called by {@link redactInspectedValue} and {@link captureReplayDebugSnapshot} before the credential shapes of {@link redactSecretText}, and by {@link maskSavedDebugSnapshot} for every saved preview.
+ * Why: the editor's debug adapter previews an object with its members' values; the redaction contract masks a secret-named member and everything inside it, wherever its value appears. Called by {@link redactInspectedValue} and {@link captureReplayDebugSnapshot} before the credential shapes of {@link redactSecretText}, and by {@link maskSavedDebugSnapshot} for every saved preview. The member ranges and the quoted credential elements are both found on the original preview and put in together, so no stretch shifts the quote pairing of the others.
  * @param preview - A value as the debugger displays it.
  * @returns The preview with each such value replaced by {@link REDACTION_MASK}; unchanged when it names none.
  * @example
@@ -219,15 +329,18 @@ function maskRanges(preview: string, ranges: readonly MaskRange[]): string {
  * redactValuePreview("{session: {id: 1}, n: 2}")           // => '{session: [masked], n: 2}'
  * redactValuePreview("{name: 'sid', value: 'abc'}")        // => "{name: 'sid', value: [masked]}"
  * redactValuePreview("['Cookie', 'sid=abc']")              // => "['Cookie', [masked]]"
+ * redactValuePreview("{msg: 'Invalid session: expired', h: 'sid=1; theme=dark'}") // => "{msg: 'Invalid session: expired', h: [masked]}"
  */
 export function redactValuePreview(preview: string): string {
   const members = readPreviewMembers(preview)
-  return maskShapedLiterals(
-    maskRanges(preview, [
-      ...secretNamedRanges(members),
-      ...pairValueRanges(preview, members),
-    ]),
-  ).text
+  const memberReplacements: TextReplacement[] = [
+    ...secretNamedRanges(members),
+    ...pairValueRanges(preview, members),
+  ].map((range) => ({ ...range, text: REDACTION_MASK }))
+  return applyTextReplacements(preview, [
+    ...memberReplacements,
+    ...findShapedLiterals(preview, false, REDACTION_MASK).replacements,
+  ])
 }
 
 /**
@@ -241,5 +354,8 @@ export function redactValuePreview(preview: string): string {
  */
 export function previewShowsCredentialShape(preview: string): boolean {
   const pairs = pairValueRanges(preview, readPreviewMembers(preview))
-  return pairs.length > 0 || maskShapedLiterals(preview).text !== preview
+  return (
+    pairs.length > 0 ||
+    findShapedLiterals(preview, false, REDACTION_MASK).replacements.length > 0
+  )
 }

@@ -2288,7 +2288,7 @@ export const SUMMARY_CHOICE_DROPPED_NOTICE_PREFIX =
 /** The text that replaces a secret value or a secret-named value in every captured fact, variable, snapshot, output and cause ({@link redactSecretText}). */
 export const REDACTION_MASK = '[masked]'
 
-/** The fewest characters of a credential token an Authorization-shaped string needs ({@link isAuthorizationShape}): a shorter word after `Basic`, `Token` or `Negotiate` reads as prose (`Token expired`, `Basic usage`), not as a credential. */
+/** The fewest characters of a credential token an Authorization-shaped string needs ({@link isAuthorizationShape}): a shorter word after `Basic`, `Token` or `Negotiate` reads as prose (`Token expired`, `Basic usage`), not as a credential; a longer plain word (`Basic information`) reads as prose too, unless the token has a digit, a symbol or both letter cases. */
 export const AUTHORIZATION_CREDENTIAL_MIN_CHARS = 8
 
 /** The class names the replay capture saves as their class name only, never their members: the cookie and header stores (`RequestCookies`, `ReadonlyRequestCookies`, `ResponseCookies`, `Headers`) and the sockets and responses that hold a request's raw credentials (`Socket`, `TLSSocket`, `ServerResponse`) ({@link isCollapsedClassName}). */
@@ -2301,6 +2301,9 @@ export const COLLAPSED_CLASS_NAMES: ReadonlySet<string> = new Set([
   'TLSSocket',
   'ServerResponse',
 ])
+
+/** The longest text the credential-shape scanners read in one piece ({@link redactValuePreview}, {@link maskShapedLiterals}): four times {@link REPLAY_DEBUG_TEXT_LIMIT_CHARS}, so every text the capture saves fits whole, and equal to Node's default limit for all request headers together, so no Cookie or Authorization header is longer. The debugger capture saves a longer raw value as its class name and never scans it; a quoted element longer than this is not read as a credential. */
+export const SECRET_SHAPE_SCAN_LIMIT_CHARS = 4 * REPLAY_DEBUG_TEXT_LIMIT_CHARS
 
 /** What the run resource shows for a prepared text whose control is not yet resolved; a view state only, never stored or hashed ({@link redactPreparedTexts}). */
 export const PREPARED_TEXT_PENDING_MARK = '[pending]'
