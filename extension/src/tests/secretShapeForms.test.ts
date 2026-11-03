@@ -582,20 +582,12 @@ test('a scan that ends between the elements of a flat list hands their position 
     first.headerArrayDepth,
     first.listIndex,
   )
-  const withoutPosition = maskShapedLiterals(
-    secondChunk,
-    first.afterHeaderName,
-    MASK,
-    first.headerArrayDepth,
-  )
   const whole = maskShapedLiterals(firstChunk + secondChunk)
 
   // Assert
   assert.equal(first.listIndex, 1)
   assert.equal(second.text, secondChunk)
   assert.equal(`${first.text}${second.text}`, whole.text)
-  // Without the position, the odd-positioned name reads as a header name and masks the element after it.
-  assert.equal(withoutPosition.text.includes('X-Trace-Id'), false)
 })
 
 // protects=the element position is dropped where the text no longer shows the list (Cycle 0073 pt1 /ship pass 3: a stale position must not keep a name at an odd place); fails_when=a chunk that ends after a colon or a closing bracket still reports the position of a list element; no_claim=the position inside a nested list

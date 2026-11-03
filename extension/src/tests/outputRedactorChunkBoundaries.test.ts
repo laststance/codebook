@@ -485,3 +485,62 @@ test('a flat header array keeps masking a header name after an over-long credent
   assert.equal(released.includes(SESSION_VALUE), false)
   assert.equal(released.endsWith(`\n  'Cookie',\n  ${MASK},\n]\n`), true)
 })
+
+// protects=a header name after an over-long element that is dropped in the same write as the list's opening bracket (Cycle 0073 pt1 /ship pass 4: the position reset ran before the release's own scan, which set the position again from the bracket, so a name at an even place read as odd and its value printed); fails_when=the list position survives the drop, so the value after a credential header name in the next write is released; no_claim=a list whose elements the drop leaves cut inside a quoted name
+test('a flat header array keeps masking a header name after an over-long element dropped in the same write as its opening bracket', () => {
+  // Arrange
+  const redactor = createOutputRedactor()
+  const opening = `[\n  'Host',\n  'example',\n  'Cookie',\n  'sid=${'A'.repeat(9_000)}`
+
+  // Act
+  const first = redactor.write(opening)
+  const rest = redactor.write(
+    `',\n  'Via',\n  'proxy',\n  'X-Api-Key',\n  '${SESSION_VALUE}',\n]\n`,
+  )
+  const ended = redactor.end()
+  const released = first + rest + ended
+
+  // Assert
+  assert.equal(released.includes(SESSION_VALUE), false)
+  assert.equal(released.includes('AAAAAAAA'), false)
+})
+
+// protects=a prompt or a line that ends in a mark with digits or punctuation after it, which a program shows while it waits for input or pauses at a breakpoint (Cycle 0073 pt1 /ship pass 4: `Select item #` and `Port (default #3000):` lost their last word until the next write); fails_when=a run whose mark begins no parameter name waits for the next write; no_claim=a mark followed by a letter, which may begin `code=` or `token=` and still waits
+test('a line that ends in a mark followed by no parameter name is released at once', () => {
+  // Arrange
+  const lines = [
+    'Select item #',
+    'Port (default #3000):',
+    'Continue ?',
+    'Ready?!',
+    'Use C#,',
+    'ref #123',
+  ]
+
+  // Act
+  const released = lines.map((line) => createOutputRedactor().write(line))
+
+  // Assert
+  assert.deepEqual(released, lines)
+})
+
+// protects=a path or URL that ends in a closing bracket and then a bare question mark, whose query may come with the next write (Cycle 0073 pt1 /ship pass 4: the prompt exemption released it, so a `code=…` at the start of the next write was not masked); fails_when=a path or URL that ends in `)?` or `]?` is released before its query; no_claim=a relative path without a leading slash that ends in `)?`
+test('a path or URL that ends in a bracket and a bare question mark waits for its query, and its code is masked', () => {
+  // Arrange
+  const pathRedactor = createOutputRedactor()
+  const urlRedactor = createOutputRedactor()
+
+  // Act
+  const pathFirst = pathRedactor.write('/odata/Items(5)?')
+  const pathRest =
+    pathRedactor.write(`code=${SESSION_VALUE} 200\n`) + pathRedactor.end()
+  const urlFirst = urlRedactor.write('http://[::1]?')
+  const urlRest =
+    urlRedactor.write(`token=${SESSION_VALUE}\n`) + urlRedactor.end()
+
+  // Assert
+  assert.equal(pathFirst, '')
+  assert.equal(urlFirst, '')
+  assert.equal(`${pathFirst}${pathRest}`.includes(SESSION_VALUE), false)
+  assert.equal(`${urlFirst}${urlRest}`.includes(SESSION_VALUE), false)
+})
