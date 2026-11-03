@@ -178,7 +178,7 @@ test('STUDY_STORAGE_FORMATS, READABLE_STUDY_VERSION and the study schema agree',
   const numbered = STUDY_STORAGE_FORMATS.filter((row) => row.version >= 3)
   const schemaVersion = configuredStudySchema.shape.version
   // Assert
-  assert.equal(READABLE_STUDY_VERSION, 8)
+  assert.equal(READABLE_STUDY_VERSION, 9)
   assert.equal(SERVER_RENDER_STUDY_VERSION, 8)
   assert.equal(Math.max(...versions), READABLE_STUDY_VERSION)
   for (const row of numbered) {

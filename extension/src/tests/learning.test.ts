@@ -314,8 +314,8 @@ test('a library that holds a study in a newer format beside its older file lists
     newerInKnownFile = capturedStudy()
   await library.saveStudy(readable)
   await library.saveStudy(savedAgainByNewer)
-  const newerPath = join(directory, `${savedAgainByNewer.id}.study.v9.json`),
-    newerBytes = JSON.stringify({ ...savedAgainByNewer, version: 9 })
+  const newerPath = join(directory, `${savedAgainByNewer.id}.study.v10.json`),
+    newerBytes = JSON.stringify({ ...savedAgainByNewer, version: 10 })
   await writeFile(newerPath, newerBytes)
   await writeFile(
     join(directory, `${newerInKnownFile.id}.study.v4.json`),
@@ -337,9 +337,9 @@ test('a library that holds a study in a newer format beside its older file lists
     readOfKnownFile = library.readStudy(newerInKnownFile.id)
   // Assert
   const newerSentence =
-      'This study was saved in format 9 by a newer Codebook; this Codebook reads formats up to 8. Update the extension to open it. The study is kept as it is.',
+      'This study was saved in format 10 by a newer Codebook; this Codebook reads formats up to 9. Update the extension to open it. The study is kept as it is.',
     newerSentenceOfKnownFile =
-      'This study was saved in format 10 by a newer Codebook; this Codebook reads formats up to 8. Update the extension to open it. The study is kept as it is.'
+      'This study was saved in format 10 by a newer Codebook; this Codebook reads formats up to 9. Update the extension to open it. The study is kept as it is.'
   // All three refusals get their handler at once: a read that rejects while an earlier one is still awaited would be unhandled.
   await Promise.all([
     assert.rejects(readOfNewer, { message: newerSentence }),
@@ -469,7 +469,7 @@ test('Retry storage over sixty-four saved studies lists the library directory on
 })
 
 // Value: protects=a file in the library directory that is named like an archive of a newer format but belongs to no study leaves the saved studies usable (Cycle 0045 review PL-5); fails_when=the listing parses the file's prefix as a study id and throws, which breaks the list, the save admission, the removal, forgetting absent studies and Retry storage together; why_new=every listing test named its files after study ids; seam=the library directory, into which the test writes the stray file
-test('a stray x.study.v9.json in the library leaves the list, save admission, removal, forgetting absent studies and Retry storage working', async (context) => {
+test('a stray x.study.v10.json in the library leaves the list, save admission, removal, forgetting absent studies and Retry storage working', async (context) => {
   // Arrange: two saved studies and the stray file beside them.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-learning-'))
   context.after(() => rm(directory, { recursive: true, force: true }))
@@ -479,7 +479,7 @@ test('a stray x.study.v9.json in the library leaves the list, save admission, re
     removedByHand = capturedStudy()
   await library.saveStudy(kept)
   await library.saveStudy(removed)
-  await writeFile(join(directory, 'x.study.v9.json'), '{"version":9}')
+  await writeFile(join(directory, 'x.study.v10.json'), '{"version":10}')
   // Act
   const listedIds = (await library.list()).map((entry) => entry.id).sort()
   const admitsThird = await library.admitsStudy(removedByHand.id)
@@ -512,8 +512,8 @@ test('a stray x.study.v9.json in the library leaves the list, save admission, re
     [kept.id],
   )
   assert.equal(
-    await readFile(join(directory, 'x.study.v9.json'), 'utf8'),
-    '{"version":9}',
+    await readFile(join(directory, 'x.study.v10.json'), 'utf8'),
+    '{"version":10}',
   )
 })
 
@@ -564,7 +564,7 @@ test('Retry storage over a library with a study a newer Codebook saved under a k
   assert.equal(await readFile(newerSidecar, 'utf8'), newerSidecarBytes)
   assert.equal(
     checkpointOfNewerSidecar,
-    'Error: This study was saved in format 10 by a newer Codebook; this Codebook reads formats up to 8. Update the extension to open it. The study is kept as it is.',
+    'Error: This study was saved in format 10 by a newer Codebook; this Codebook reads formats up to 9. Update the extension to open it. The study is kept as it is.',
   )
   assert.deepEqual(
     (await library.list())

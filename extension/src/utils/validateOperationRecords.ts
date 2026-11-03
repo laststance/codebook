@@ -5,13 +5,13 @@ import type {
 import {
   ENTRY_LOAD_OPERATION_KEY,
   OPERATIONS_CONFIG_VERSION,
-  SERVER_RENDER_STUDY_VERSION,
 } from '../constants'
 
 import { afterOperationOf } from './afterOperationOf'
 import { configuredStops } from './configuredStops'
 import { declaredOperationsOf } from './declaredOperationsOf'
 import { stopOfObservation } from './stopOfObservation'
+import { usesServerRenderEvidence } from './studyFormatOfConfiguration'
 
 type StudyWithoutImages = Omit<ConfiguredStudy, 'captures'>
 
@@ -153,7 +153,7 @@ function assertPausesFollowOperations(
   records: readonly ConfiguredOperationRecord[],
 ): void {
   const stops = configuredStops(study.configuration)
-  const isFormat8 = study.version === SERVER_RENDER_STUDY_VERSION
+  const isFormat8 = usesServerRenderEvidence(study)
   // A pause belongs to the operation its stop follows, and cannot come before that operation's input.
   for (const [position, observation] of study.observations.entries()) {
     const stop = stopOfObservation(study.observations, stops, position)!
@@ -200,7 +200,7 @@ export function validateOperationRecords(study: StudyWithoutImages): void {
       (study.operation.key === ENTRY_LOAD_OPERATION_KEY &&
         !study.operation.inputDispatched)
     const onlyEntryRender =
-      study.version === SERVER_RENDER_STUDY_VERSION &&
+      usesServerRenderEvidence(study) &&
       isEntryLoadRecord &&
       study.observations.every(
         (_, position) =>

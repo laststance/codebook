@@ -342,15 +342,15 @@ test('a four-operation study with a server stop is saved as .study.v8.json and r
   )
 })
 
-// protects=an older Codebook (reads up to 8 here, as 0.2.72.0 reads up to 7) lists a study of a format one above, refuses to open it with its reason and keeps its bytes; fails_when=the listing skips the file, the read ends in a schema error, or the file changes; no_claim=the 0.2.72.0 binary itself (this code stands in for it with a format one above)
+// protects=an older Codebook (reads up to 9 here, as 0.2.72.0 reads up to 7) lists a study of a format one above, refuses to open it with its reason and keeps its bytes; fails_when=the listing skips the file, the read ends in a schema error, or the file changes; no_claim=the 0.2.72.0 binary itself (this code stands in for it with a format one above)
 test('a study saved in a format one above the readable one is listed, refused with its reason and kept untouched', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-future-study-'))
   context.after(() => rm(directory, { recursive: true, force: true }))
   const study = createOperationsStudy()
   const library = new LearningLibrary(directory, study.workspaceKey)
-  const futurePath = join(directory, `${study.id}.study.v9.json`)
-  const futureBytes = JSON.stringify({ ...study, version: 9 })
+  const futurePath = join(directory, `${study.id}.study.v10.json`)
+  const futureBytes = JSON.stringify({ ...study, version: 10 })
   await writeFile(futurePath, futureBytes)
   // Act
   const listed = await library.list()
@@ -360,11 +360,11 @@ test('a study saved in a format one above the readable one is listed, refused wi
   assert.equal(listed[0]?.format, 'newer')
   assert.equal(
     listed[0]?.reason,
-    'This study was saved in format 9 by a newer Codebook; this Codebook reads formats up to 8. Update the extension to open it. The study is kept as it is.',
+    'This study was saved in format 10 by a newer Codebook; this Codebook reads formats up to 9. Update the extension to open it. The study is kept as it is.',
   )
   await assert.rejects(read, {
     message:
-      'This study was saved in format 9 by a newer Codebook; this Codebook reads formats up to 8. Update the extension to open it. The study is kept as it is.',
+      'This study was saved in format 10 by a newer Codebook; this Codebook reads formats up to 9. Update the extension to open it. The study is kept as it is.',
   })
   assert.equal(await readFile(futurePath, 'utf8'), futureBytes)
 })

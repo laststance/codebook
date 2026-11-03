@@ -2,7 +2,6 @@ import { configuredObservationSchema } from '../configuredStudySchemas'
 import {
   REPOSITORY_BROWSER_ACTION,
   REPOSITORY_BROWSER_PROFILE,
-  SERVER_RENDER_STUDY_VERSION,
 } from '../constants'
 import { EvidenceIntegrityError, StudyError } from '../errors'
 import { readResource } from '../resources'
@@ -16,7 +15,10 @@ import { maskLearningSummaryText } from './maskLearningSummaryText'
 import { observationOfFormat } from './observationOfFormat'
 import { projectSavedOperations } from './projectSavedOperations'
 import { redactPreparedConfiguration } from './redactPreparedConfiguration'
-import { studyFormatOfConfiguration } from './studyFormatOfConfiguration'
+import {
+  studyFormatOfConfiguration,
+  usesServerRenderEvidence,
+} from './studyFormatOfConfiguration'
 
 /** Copies only committed canonical evidence for {@link StudyWorkspace}; a changed read is discarded. @example await captureStudy(service, record, workspaceKey) */
 export async function captureStudy(
@@ -214,8 +216,10 @@ export async function captureStudy(
             ? { viteVersion: runtime.viteVersion }
             : {}),
           // A format 8 study says the first execution of the page was not observed.
-          ...(studyVersion === SERVER_RENDER_STUDY_VERSION &&
-          runtime?.firstExecutionObserved === false
+          ...(usesServerRenderEvidence({
+            version: studyVersion,
+            configuration: canonicalConfiguration,
+          }) && runtime?.firstExecutionObserved === false
             ? { firstExecutionObserved: false as const }
             : {}),
           operation:
@@ -253,7 +257,10 @@ export async function captureStudy(
         ) || undefined,
       learningSummary,
       observations: observations.map((observation) =>
-        observationOfFormat(observation, studyVersion),
+        observationOfFormat(observation, {
+          version: studyVersion,
+          configuration: canonicalConfiguration,
+        }),
       ),
       captures,
       links: [],

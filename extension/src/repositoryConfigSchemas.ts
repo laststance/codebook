@@ -607,11 +607,44 @@ export const operationsRepositoryConfigSchema =
     validateInspections(configuration, context)
     validateOperations(configuration, context)
   })
-export const retainedRepositoryConfigSchema = z.union([
-  repositoryConfigSchema,
-  crossRuntimeRepositoryConfigSchema,
-  operationsRepositoryConfigSchema,
+/**
+ * The configuration of a study of formats 3 to 8: versions 1 to 3 as before, and none of them may carry a `packageRoot` (the field exists only in format 9, see {@link packageRootRepositoryConfigSchema}).
+ * The explicit refusal keeps formats 3 to 8 closed even if the live version 3 shape gains an optional `packageRoot`.
+ */
+export const retainedRepositoryConfigSchema = z
+  .union([
+    repositoryConfigSchema,
+    crossRuntimeRepositoryConfigSchema,
+    operationsRepositoryConfigSchema,
+  ])
+  .refine(
+    (configuration) => !('packageRoot' in configuration),
+    'Only a study of format 9 keeps a packageRoot.',
+  )
+/**
+ * The configuration a format 9 study retains: the version 3 `next-dev-webpack` shape with a required `packageRoot` other than `"."`.
+ * Read by {@link studyConfigurationSchema}; a run whose package root is `"."` saves the formats 7 or 8 it always did, without the field.
+ */
+export const packageRootRepositoryConfigSchema = operationsConfigurationShape
+  .extend({
+    adapter: z.literal('next-dev-webpack'),
+    packageRoot: repositoryPathSchema.refine(
+      (value) => value !== '.',
+      'A format 9 study names a package folder other than ".".',
+    ),
+  })
+  .superRefine((configuration, context) => {
+    validateInspections(configuration, context)
+    validateOperations(configuration, context)
+  })
+/** Every configuration a saved study can hold: the retained union of formats 3 to 8, or the format 9 package-root variant. */
+export const studyConfigurationSchema = z.union([
+  retainedRepositoryConfigSchema,
+  packageRootRepositoryConfigSchema,
 ])
+export type PackageRootRepositoryConfiguration = z.infer<
+  typeof packageRootRepositoryConfigSchema
+>
 export type RepositoryConfiguration = z.infer<typeof repositoryConfigSchema>
 export type RetainedRepositoryConfiguration = z.infer<
   typeof retainedRepositoryConfigSchema
