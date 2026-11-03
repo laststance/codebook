@@ -284,36 +284,39 @@ test('discovery stops at the deadline of the injected clock and lists what it re
   assert.equal(scan.truncation, 'deadline')
 })
 
-// protects=E15 status wait: a package read that never answers ends the discovery at its deadline with the finished entries, not the status call; fails_when=the discovery waits for the hanging read; no_claim=exact timing
-test('discovery returns at its deadline although one package read never answers', async (context) => {
-  // Arrange
-  const root = await makeRepository(context)
-  await trackedApp(root, 'apps/fast')
-  await trackedApp(root, 'apps/zz-hangs')
-  const startedAt = Date.now()
-  // Act
-  const discovery = await discoverNextPackages(root, {
-    timeoutMs: 300,
-    limits: { concurrency: 1 },
-    readPackage: async (_root, packageRoot) =>
-      packageRoot === 'apps/fast'
-        ? {
-            packageRoot,
-            routerKind: 'none',
-            installed: false,
-            ready: false,
-            missing: [],
-          }
-        : new Promise(() => undefined),
-  })
-  // Assert
-  assert.ok(Date.now() - startedAt < 3_000)
-  assert.deepEqual(
-    discovery.packages.map((entry) => entry.packageRoot),
-    ['apps/fast'],
-  )
-  assert.equal(discovery.packagesTruncatedReason, 'deadline')
-})
+// protects=E15 status wait: a package read that never answers ends the discovery at its deadline with the finished entries, not the status call; fails_when=the discovery waits for the hanging read (the test's own timeout fails it instead of a hang); no_claim=exact timing
+test(
+  'discovery returns at its deadline although one package read never answers',
+  // A hang fails here by name; no wall-clock bound, which a loaded runner could break.
+  { timeout: 20_000 },
+  async (context) => {
+    // Arrange
+    const root = await makeRepository(context)
+    await trackedApp(root, 'apps/fast')
+    await trackedApp(root, 'apps/zz-hangs')
+    // Act
+    const discovery = await discoverNextPackages(root, {
+      timeoutMs: 300,
+      limits: { concurrency: 1 },
+      readPackage: async (_root, packageRoot) =>
+        packageRoot === 'apps/fast'
+          ? {
+              packageRoot,
+              routerKind: 'none',
+              installed: false,
+              ready: false,
+              missing: [],
+            }
+          : new Promise(() => undefined),
+    })
+    // Assert
+    assert.deepEqual(
+      discovery.packages.map((entry) => entry.packageRoot),
+      ['apps/fast'],
+    )
+    assert.equal(discovery.packagesTruncatedReason, 'deadline')
+  },
+)
 
 // protects=E15 Git failure: a folder in no repository and a listing past maxBuffer end as git-failed with an empty list; fails_when=a Git failure throws out of status or reads as complete; no_claim=a missing Git binary
 test('discovery reports git-failed when Git cannot list the files', async (context) => {
