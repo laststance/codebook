@@ -152,7 +152,7 @@ const CODE_FACTS: Record<string, { when: string; sentence: string }> = {
     sentence: '<file> changed after the run started.',
   },
   SERVICE_WORKER_NOT_ATTACHED: {
-    when: 'start, or a click: the worker did not start and attach in time',
+    when: 'start, or a click: the worker did not start and attach in time; details.workerStartSends counts the start commands sent and details.wakeBoundMs is the wake bound in milliseconds',
     sentence:
       "The extension's service worker did not start while <surface> was open.",
   },

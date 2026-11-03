@@ -41,9 +41,11 @@ async function attachedDebugger(
       >[1]
     >['readTargets']
   >,
+  /** The wake bound of this test; a test that must tell "refused at once" from "waited the bound" passes a longer one. */
+  wakeBoundMs = WAKE_BOUND_MS,
 ) {
   const editor = await extensionEditorHarness({
-    constants: { EXTENSION_WAKE_BOUND_MS: WAKE_BOUND_MS },
+    constants: { EXTENSION_WAKE_BOUND_MS: wakeBoundMs },
   })
   let isWaking = false
   const created = editor.createDebugger([WORKER_STOP], {
@@ -156,9 +158,12 @@ test('a listed worker whose session never appears is refused at the wake bound w
 // Value: protects=DX-17, a start that reports no worker listed fails the wake at once; fails_when=the wake then waits the whole bound for a session of a worker that never appeared; no_claim=the real 5 s bound
 test('a wake whose start lists no worker is refused at once with the send count', async () => {
   // Arrange
-  const { editor, created } = await attachedDebugger({
-    startWorker: async () => ({ listed: false, sends: 5 }),
-  })
+  const refusedAtOnceBoundMs = 3_000
+  const { editor, created } = await attachedDebugger(
+    { startWorker: async () => ({ listed: false, sends: 5 }) },
+    undefined,
+    refusedAtOnceBoundMs,
+  )
   // Act
   const { error, elapsedMs } = await failedWake(
     created.debug.waitForWorker(AbortSignal.timeout(5_000)),
@@ -167,9 +172,54 @@ test('a wake whose start lists no worker is refused at once with the send count'
   assert.equal(error.code, 'SERVICE_WORKER_NOT_ATTACHED')
   assert.deepEqual(JSON.parse(JSON.stringify(error.details)), {
     workerStartSends: 5,
-    wakeBoundMs: WAKE_BOUND_MS,
+    wakeBoundMs: refusedAtOnceBoundMs,
   })
-  assert.equal(elapsedMs < WAKE_BOUND_MS / 2, true)
+  // Waiting the bound would take 3 s; the slack covers a loaded runner, so only a real wait fails this.
+  assert.equal(elapsedMs < refusedAtOnceBoundMs - END_SLACK_MS, true)
+  await created.debug.release()
+  await editor.dispose()
+})
+
+// Value: protects=a worker child is not lost for good when the wake ran out of time before any target list was answered; fails_when=verifyWorker demotes the child to other on a timeout that never read a list, so the next wake finds no worker child; no_claim=Chrome's own timing, or a wake whose list was answered and mismatched (the next test)
+test('a worker child stays attachable after a wake whose target list was never answered', async () => {
+  // Arrange
+  let answering = false
+  const { editor, created, beginWake } = await attachedDebugger(
+    {},
+    async (timeoutMs) => {
+      if (!answering) {
+        await sleep(timeoutMs ?? 10_000)
+        throw new FlatCdpCommandError(
+          'Target.getTargets',
+          undefined,
+          'timed out',
+        )
+      }
+      return [
+        {
+          targetId: 'worker-target',
+          type: 'service_worker',
+          url: `chrome-extension://${EXTENSION_ID}/service-worker.js`,
+        },
+      ]
+    },
+  )
+  await editor.addChild({ kind: 'service_worker', id: 'worker-session' })
+  beginWake()
+  const first = await failedWake(
+    created.debug.waitForWorker(AbortSignal.timeout(5_000)),
+  )
+  answering = true
+  // Act
+  const second = await created.debug
+    .waitForWorker(AbortSignal.timeout(5_000))
+    .then(
+      () => 'attached',
+      (reason: unknown) => String(reason),
+    )
+  // Assert
+  assert.equal(first.error.code, 'SERVICE_WORKER_NOT_ATTACHED')
+  assert.equal(second, 'attached')
   await created.debug.release()
   await editor.dispose()
 })

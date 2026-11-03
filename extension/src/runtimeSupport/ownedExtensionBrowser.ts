@@ -341,7 +341,19 @@ async function startWorkerUntil(
       throw error
     }
   }
-  // Send (when due), look at the targets, pause; the last look comes after the last send and before the deadline check.
+  // One bounded look at the targets (the time left, floored at 1 ms by `within`); true when the extension's worker is listed.
+  const workerListed = async (): Promise<boolean> => {
+    const answer = await within('Target.getTargets', {})
+    return (
+      answer !== undefined &&
+      readCdpTargets(answer).some(
+        (target) =>
+          target.type === 'service_worker' &&
+          target.url.startsWith(`chrome-extension://${session.extensionId}/`),
+      )
+    )
+  }
+  // Send (when due), look at the targets, pause; the last pause is followed by one more look after the loop.
   while (deadlineAt - now() > 0) {
     signal?.throwIfAborted()
     if (now() >= nextSendAt) {
@@ -354,18 +366,9 @@ async function startWorkerUntil(
       )
     }
     signal?.throwIfAborted()
-    // A send that used the time left leaves no time for a look.
-    if (deadlineAt - now() <= 0) break
-    const answer = await within('Target.getTargets', {})
-    if (
-      answer !== undefined &&
-      readCdpTargets(answer).some(
-        (target) =>
-          target.type === 'service_worker' &&
-          target.url.startsWith(`chrome-extension://${session.extensionId}/`),
-      )
-    )
-      return { listed: true, sends }
+    // A send that used the time left leaves no time for a look, not even the final one.
+    if (deadlineAt - now() <= 0) return { listed: false, sends }
+    if (await workerListed()) return { listed: true, sends }
     // Pause no longer than the next send or the deadline.
     const pauseMs = Math.min(
       EXTENSION_BROWSER_POLL_MS,
@@ -374,7 +377,9 @@ async function startWorkerUntil(
     )
     if (pauseMs > 0) await session.dependencies.sleep(pauseMs)
   }
-  return { listed: false, sends }
+  // The last pause (or an unanswered look) may end at the deadline without a look after it; one bounded final look decides `listed`.
+  signal?.throwIfAborted()
+  return { listed: await workerListed(), sends }
 }
 
 /** Everything the steps after the connection share. */

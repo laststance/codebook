@@ -549,7 +549,10 @@ export async function extensionEditorHarness(
     async dispose(): Promise<void> {
       await rm(folder, { recursive: true, force: true })
     },
-    /** Creates the debugger under test over the harness folder. */
+    /**
+     * Creates the debugger under test over the harness folder.
+     * A stub `startWorker` that answers `undefined` (it only adds the worker child) is reported as `{ listed: true, sends: 1 }`, and the default start does the same without calling the stub; neither waits for `deadlineAt`. A test that needs `listed: false` (or another send count) must return that `WorkerStart` explicitly.
+     */
     createDebugger(
       stops: TestStop[],
       overrides: {

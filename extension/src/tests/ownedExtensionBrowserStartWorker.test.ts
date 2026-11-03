@@ -130,6 +130,34 @@ test('startWorker re-sends once a second and returns listed false at the deadlin
   await browser.close()
 })
 
+// Value: protects=the final target look before listed false: a look that used the time left must not hide a worker that is listed; fails_when=the loop exits at the deadline without one more bounded Target.getTargets, so a worker listed during the last look's timeout reads as not listed; no_claim=real Chrome timing (virtual clock)
+test('startWorker makes one final target look at the deadline and lists a worker the unanswered look missed', async (context) => {
+  // Arrange
+  const clock = virtualClock()
+  let looks = 0
+  let counting = false
+  const chrome = fakeOwnedChrome(
+    behaviourOf(clock, {
+      // The first look of the wait is never answered and uses all the time left.
+      neverAnswers: ({ method }) =>
+        counting && method === 'Target.getTargets' && ++looks === 1,
+    }),
+  )
+  const browser = await launchOwnedExtensionBrowser(
+    pageOptions(await profileRoot(context)),
+    chrome.dependencies,
+  )
+  counting = true
+  const deadlineAt = clock.now() + WAKE_BOUND_MS
+  // Act
+  const result = await browser.startWorker(deadlineAt)
+  // Assert
+  assert.deepEqual(result, { listed: true, sends: 1 })
+  assert.equal(looks, 2)
+  assert.equal(clock.now() - deadlineAt <= 1, true)
+  await browser.close()
+})
+
 // Value: protects=E14, a Chrome that never answers cannot stretch the wake; fails_when=a request keeps its 10 s default timeout inside the wait, or a re-send leaves after the deadline; no_claim=a real hung Chrome
 test('startWorker ends at its deadline and sends nothing after it when Chrome never answers', async (context) => {
   // Arrange

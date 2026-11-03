@@ -925,13 +925,15 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
    * @param entry - The worker child adopted as the extension's worker.
    * @param signal - The run's abort signal.
    * @param deadlineAt - The wake's deadline, a `performance.now()` reading; the target list is read with the time left.
-   * @throws {@link StudyError} `SERVICE_WORKER_NOT_ATTACHED` when the extension's worker target is not listed by the deadline.
+   * @throws {@link StudyError} `SERVICE_WORKER_NOT_ATTACHED` when the extension's worker target is not listed by the deadline; the child is demoted only when a target list was answered and did not match, never when the deadline left no time to read it.
    */
   private async verifyWorker(
     entry: SessionEntry,
     signal: AbortSignal,
     deadlineAt: number,
   ): Promise<void> {
+    // Whether any target list was answered: a wake that ran out of time without one has seen nothing that contradicts the child.
+    let listAnswered = false
     // The target list can trail the worker's child session, so it is polled within the wake deadline before the child is demoted.
     await this.waitOr(
       async () => {
@@ -950,6 +952,7 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
             return false
           throw error
         }
+        listAnswered = true
         const workers = listed.filter(
           (target) =>
             target.type === 'service_worker' &&
@@ -966,6 +969,8 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
       timeLeft(deadlineAt),
       signal,
       () => {
+        // No answered read means no evidence against the child: it stays a worker so a later wake can verify it.
+        if (!listAnswered) return this.workerNotAttached()
         entry.kind = 'other'
         this.input.record('chrome-extension.debugger-error', {
           message:
