@@ -3246,11 +3246,11 @@ test('an Update that meets a marker nobody owns while another window holds the c
   }
 })
 
-/** Waits until a change of the window's own marker has given this answer, polling as {@link waitForEnd} does; it returns at the limit either way, so the test's assertion names what was missing; the limit is a safety net far above the attempt's own bound (20 claim attempts, each stretched by a slow disk), the wait ends on the recorded answer. */
+/** Waits until a change of the window's own marker has given this answer, polling as {@link waitForEnd} does; it returns at the limit either way, so the test's assertion names what was missing; the limit is a safety net far above the attempt's own bound (20 claim attempts, each stretched by a slow disk; about 8 s at most under the Cycle 0076 disk-contention load), the wait ends on the recorded answer. */
 async function waitForMarkerAnswer(
   window: { markerChanges: Array<{ answer?: boolean | 'threw' }> },
   answer: boolean,
-  limitMs = 120_000,
+  limitMs = 30_000,
 ): Promise<void> {
   const deadline = Date.now() + limitMs
   while (
