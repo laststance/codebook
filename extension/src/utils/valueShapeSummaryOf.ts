@@ -13,7 +13,7 @@ import {
  * @returns A string such as `{callFrames:array(2),reason:string}`; a string value is `string`, never its text; a name that is not identifier-like is `?`; the whole is at most 300 characters.
  * @example
  * valueShapeSummaryOf({ callFrames: 'SECRET', reason: 'other' }) // => '{callFrames:string,reason:string}'
- * valueShapeSummaryOf({ callFrames: [{ location: {} }, {}] })     // => '{callFrames:array(2)[{location:{}}]}'
+ * valueShapeSummaryOf({ callFrames: [{ location: {} }, {}] })     // => '{callFrames:array(2)[{location:object}]}'
  */
 export function valueShapeSummaryOf(value: unknown): string {
   return shapeOf(value, 0).slice(0, VALUE_SHAPE_SUMMARY_LIMIT_CHARS)

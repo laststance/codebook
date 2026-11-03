@@ -152,6 +152,18 @@ test('a shape summary holds no value', () => {
   assert.equal(valueShapeSummaryOf([]), 'array(0)')
 })
 
+// Value: protects=the depth cut inside a list: the first element of a list counts one level deeper, so an object nested in a list element is named only as `object` and a list's later elements add only its length; fails_when=a list element's own objects are spelled out past the depth limit, so a deep payload grows the Output line, or the summary stops matching what valueShapeSummaryOf's documented example shows; no_claim=the 300-character cut (the length limit)
+test('a shape summary names an object inside a list element only as object', () => {
+  // Arrange
+  const event = { callFrames: [{ location: {} }, {}] }
+
+  // Act
+  const summary = valueShapeSummaryOf(event)
+
+  // Assert
+  assert.equal(summary, '{callFrames:array(2)[{location:object}]}')
+})
+
 // Value: protects=event parsing: only the fields the verdict reads are kept (a scope chain is dropped), a missing column reads 0, and a frame without its script id or a callFrames that is no list is refused; fails_when=a protocol-required-but-unused field makes a good event a verdict error, or a broken event is accepted and fails inside the verdict; no_claim=every field of the protocol (only the ones read)
 test('an event keeps the fields the verdict reads and refuses a broken stack', () => {
   // Arrange
