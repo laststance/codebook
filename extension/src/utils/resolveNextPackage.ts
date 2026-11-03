@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { StudyError } from '../errors'
 
 import { isInsideFolder } from './isInsideFolder'
+import { manifestNamesNext } from './nextManifest'
 import { readRepositoryBuildText } from './readRepositoryBuildText'
 import { repositoryPosixPath } from './repositoryPosixPath'
 
@@ -88,12 +89,6 @@ const PACKAGE_MANIFEST_LIMIT_BYTES = 1024 * 1024
 const INSTALL_SENTENCE =
   'Install the selected workspace dependencies, including Next, before using next-dev-webpack.'
 
-/** The manifest fields the Next-app check reads. */
-const manifestSchema = z.looseObject({
-  dependencies: z.record(z.string(), z.unknown()).optional(),
-  devDependencies: z.record(z.string(), z.unknown()).optional(),
-  peerDependencies: z.record(z.string(), z.unknown()).optional(),
-})
 const nextManifestSchema = z.looseObject({ name: z.string() })
 
 /**
@@ -403,16 +398,9 @@ async function namesNextDependency(packageRoot: string): Promise<boolean> {
   const manifest = await readJsonInside(
     packageRoot,
     'package.json',
-    manifestSchema,
+    z.unknown(),
   )
-  return Boolean(
-    manifest &&
-    [
-      manifest.dependencies,
-      manifest.devDependencies,
-      manifest.peerDependencies,
-    ].some((section) => section !== undefined && 'next' in section),
-  )
+  return manifestNamesNext(manifest)
 }
 
 /**

@@ -312,6 +312,7 @@ import {
 } from './utils/resolveNextPagesEntry'
 import { sameScriptUrl } from './utils/sameScriptUrl'
 import { sanitizeCause } from './utils/sanitizeCause'
+import { suggestNextPackageRoots } from './utils/scanNextPackages'
 import { sealPagesServerStop } from './utils/sealPagesServerStop'
 import { selfDeclaredInspectionHint } from './utils/selfDeclaredInspectionHint'
 import { serverExecutionOfScriptUrl } from './utils/serverExecutionOfScriptUrl'
@@ -1150,6 +1151,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const nextPackage = await resolveNextPackage(
       this.options.workspace,
       declared,
+      // A refusal names up to five discovered apps (DX-5).
+      { suggest: () => suggestNextPackageRoots(this.options.workspace) },
     )
     if (nextPackage.isRoot) return nextPackage
     const outside: string[] = []

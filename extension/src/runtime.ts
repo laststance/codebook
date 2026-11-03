@@ -640,7 +640,10 @@ export interface StudyEnvironment {
   readonly remoteName?: string
   readonly build: { revision: string; dirty: boolean; sourceHash: string }
   assertWorkspace?(): void
-  prerequisites(): Promise<{
+  /**
+   * @param options.discoverPackages - Also discover the Next apps below the repository root (`codebook_status` only); a start leaves it off and judges its own package.
+   */
+  prerequisites(options?: { discoverPackages?: boolean }): Promise<{
     ready: boolean
     missing: string[]
     profiles?: Partial<

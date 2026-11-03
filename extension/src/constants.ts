@@ -845,6 +845,25 @@ export const PLAYBACK_PAGE_STEP_MS = 10_000
 export const REPLAY_VIEWPORT_RECEIPT_LIMIT = 12
 export const REPOSITORY_GIT_TIMEOUT_MS = 5_000
 
+/** How many `package.json` manifests the status discovery of Next apps below the repository root reads at most; more are not read and make the list truncated (`manifest-cap`). */
+export const NEXT_PACKAGE_DISCOVERY_MANIFEST_LIMIT = 500
+/** How many bytes of one `package.json` the discovery reads; a larger manifest is skipped. */
+export const NEXT_PACKAGE_DISCOVERY_MANIFEST_BYTES = 256 * 1024
+/** How many Next apps below the repository root `codebook_status` lists at most; more make the list truncated (`limit`). */
+export const NEXT_PACKAGE_DISCOVERY_APP_LIMIT = 50
+/** The deepest folder (in path segments) the discovery reads a manifest of: `examples/react/nextjs` is 3. */
+export const NEXT_PACKAGE_DISCOVERY_MAX_DEPTH = 4
+/** The longest path (in characters) the discovery lists; a longer one is skipped. */
+export const NEXT_PACKAGE_DISCOVERY_MAX_PATH_CHARS = 256
+/** How many manifests the discovery works on at once. */
+export const NEXT_PACKAGE_DISCOVERY_CONCURRENCY = 8
+/** The output cap of the discovery's `git ls-files`; an overflow ends the discovery as `git-failed`. */
+export const NEXT_PACKAGE_DISCOVERY_GIT_BYTES = 8 * 1024 * 1024
+/** How long a refusal waits for the discovered `packageRoot` suggestions. */
+export const NEXT_PACKAGE_SUGGESTION_TIMEOUT_MS = 2_000
+/** How many discovered `packageRoot` values a refusal carries as `details.suggestions`. */
+export const NEXT_PACKAGE_SUGGESTION_LIMIT = 5
+
 /** The bound of the repository revision read a server history's header carries: a slow Git costs the header its revision (read as unknown), never the history. */
 export const REPOSITORY_REVISION_BOUND_MS = 500
 /** The `maxBuffer` of source discovery's Git commands: 32 MiB holds the NUL-separated `ls-files -z` listing of {@link REPOSITORY_MAX_TRACKED_FILES} entries even when each ASCII path is near {@link REPOSITORY_PATH_LIMIT_CHARS} characters, so the entry cap refuses an oversized repository of typical names; a listing of longer or multi-byte names overflows the buffer first and is refused the same way (`LIMIT_EXCEEDED`). */

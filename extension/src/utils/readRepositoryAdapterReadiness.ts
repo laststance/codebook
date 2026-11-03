@@ -22,8 +22,22 @@ import {
   readViteWorkspaceGaps,
   type ViteDevScriptReadiness,
 } from './readViteWorkspaceGaps'
+import type { NextPackageTruncationReason } from './scanNextPackages'
 
 export type { NextDevPreparation, NextRouterKind, ViteDevScriptReadiness }
+
+/** One Next app below the repository root as `codebook_status` lists it (`packages[]`); see {@link discoverNextPackages}. */
+export type NextPackageReadiness = {
+  /** The repository-relative folder: the exact value to declare as `packageRoot`. */
+  packageRoot: string
+  routerKind: NextRouterKind
+  /** Whether Next resolves for this package ({@link resolveNextPackage}). */
+  installed: boolean
+  /** What a start with this `packageRoot` would decide on the package alone; the environment joins the shared Node and Chrome prerequisites and a managed run. */
+  ready: boolean
+  version?: string
+  missing: string[]
+}
 
 /** The Next prerequisite of one workspace. */
 export type NextAdapterReadiness = {
@@ -37,6 +51,14 @@ export type NextAdapterReadiness = {
   missing: string[]
   /** Sentences to tell the learner that never change `ready`: the folders searched for router kind `none`, skipped or unread preparation, unapplied environment settings by name. Present when there is one. */
   notes?: string[]
+  /** Status only: whether the root is itself the Next app (its `package.json` names `next` and it has a route folder); a hoisted root `node_modules/next` alone is not. */
+  rootIsApp?: boolean
+  /** Status only: the Next apps below the root from tracked `package.json` files, each with the readiness a start with its `packageRoot` decides. Empty below the Git root. */
+  packages?: NextPackageReadiness[]
+  /** Status only: whether `packages` is incomplete. */
+  packagesTruncated?: boolean
+  /** Status only: why `packages` is incomplete. */
+  packagesTruncatedReason?: NextPackageTruncationReason
 }
 
 /** The Vite prerequisite of one workspace. */

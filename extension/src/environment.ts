@@ -68,6 +68,7 @@ import {
   type NodeTestExecutionPlan,
 } from './utils/planNodeTestExecution'
 import { readRepositoryAdapterReadiness } from './utils/readRepositoryAdapterReadiness'
+import { readStatusAdapterReadiness } from './utils/readStatusAdapterReadiness'
 import {
   resolveExternalNode,
   resolveExternalNodeExecutable,
@@ -396,7 +397,7 @@ export async function createEnvironment(
           'Workspace identity changed; reconnect before reading or publishing repository content.',
         )
     },
-    prerequisites: async () => {
+    prerequisites: async (options) => {
       let ownedConfiguredLock: DevelopmentLockIdentity | undefined
       let preparingConfiguredRun = false,
         releasingConfiguredRun = false
@@ -465,11 +466,18 @@ export async function createEnvironment(
         ready: ready && specific.length === 0,
         missing: [...missing, ...specific],
       })
-      const adapters = await readRepositoryAdapterReadiness(
-        workspace,
-        nodeExecutable,
-        new AbortController().signal,
-      )
+      // Only the status answer pays for the discovery of Next apps below the root; a start judges its own package.
+      const adapters = options?.discoverPackages
+        ? await readStatusAdapterReadiness(
+            workspace,
+            nodeExecutable,
+            new AbortController().signal,
+          )
+        : await readRepositoryAdapterReadiness(
+            workspace,
+            nodeExecutable,
+            new AbortController().signal,
+          )
       return {
         ready,
         missing,
@@ -486,6 +494,17 @@ export async function createEnvironment(
                     ...configured,
                   ]),
                 ]),
+                // Each nested app is ready for a start only with the shared prerequisites and no managed run in the way, as the root is.
+                ...(adapters['next-dev-webpack'].packages
+                  ? {
+                      packages: adapters['next-dev-webpack'].packages.map(
+                        (entry) => ({
+                          ...entry,
+                          ...check([...entry.missing, ...managedRunState]),
+                        }),
+                      ),
+                    }
+                  : {}),
               },
               // A vite-dev start needs the shared prerequisites, Vite's own gates and no other managed run; Next's workspace checks do not apply to it, so a Vite app without Next can start.
               'vite-dev': {

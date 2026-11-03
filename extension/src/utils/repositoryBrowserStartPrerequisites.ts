@@ -4,6 +4,7 @@ import type { StudyEnvironment } from '../runtime'
 
 import { assertDevelopmentWorkspace } from './assertDevelopmentWorkspace'
 import { resolveNextPackage } from './resolveNextPackage'
+import { suggestNextPackageRoots } from './scanNextPackages'
 
 /** The sentence of a vite-dev start whose window reported no Vite readiness. */
 const VITE_READINESS_UNAVAILABLE =
@@ -95,6 +96,8 @@ export async function selectedNextPackageStartPrerequisites(
   const nextPackage = await resolveNextPackage(
     workspace,
     configuration.packageRoot,
+    // A refusal names up to five discovered apps (DX-5).
+    { suggest: () => suggestNextPackageRoots(workspace) },
   )
   const packageGaps = await assertDevelopmentWorkspace(
     nextPackage.packageRoot,
@@ -109,4 +112,33 @@ export async function selectedNextPackageStartPrerequisites(
   )
   const missing = [...prerequisites.missing, ...packageGaps]
   return { ready: missing.length === 0, missing }
+}
+
+/**
+ * Says whether a start is a `next-dev-webpack` run of the repository root (no `packageRoot`, or `"."`).
+ *
+ * Called by {@link StudyService} to decide whether a refused root start may point to the Next apps below the root (DX-19).
+ *
+ * @param profile - The profile of the run that is starting.
+ * @param configuration - The run's configuration.
+ * @returns `true` for a repository-browser run of the `next-dev-webpack` adapter without a non-root `packageRoot`.
+ * @example isRootNextStart('repository-browser', { adapter: 'next-dev-webpack' }) // => true
+ */
+export function isRootNextStart(
+  profile: string,
+  configuration: unknown,
+): boolean {
+  if (
+    profile !== REPOSITORY_BROWSER_PROFILE ||
+    typeof configuration !== 'object' ||
+    configuration === null ||
+    !('adapter' in configuration) ||
+    configuration.adapter !== 'next-dev-webpack'
+  )
+    return false
+  return (
+    !('packageRoot' in configuration) ||
+    configuration.packageRoot === undefined ||
+    configuration.packageRoot === '.'
+  )
 }
