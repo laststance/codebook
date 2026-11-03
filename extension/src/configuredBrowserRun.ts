@@ -10443,7 +10443,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       frame.line,
       frame.column,
     )
-    const facts = await inspectConfiguredValues(
+    // The refused-getter list only words a failure message; the snapshot (and the study it saves into) keeps values and unavailability alone.
+    const { sideEffectRefused = [], ...facts } = await inspectConfiguredValues(
       (parameters) =>
         participant.cdp!.request('Debugger.evaluateOnCallFrame', parameters),
       callFrame.callFrameId,
@@ -10481,7 +10482,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         throw new Error(
           requiredInspectionFailureMessage(
             missing,
-            facts.sideEffectRefused ?? [],
+            sideEffectRefused,
             selfDeclaredInspectionHint(
               stop.bundle.source,
               frame.line,

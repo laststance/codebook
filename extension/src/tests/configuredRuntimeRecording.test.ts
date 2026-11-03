@@ -16,6 +16,96 @@ import { projectRecording } from '../utils/projectRecording'
 
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
 
+// Value: protects=a stop whose inspection V8 refuses as a possible side effect (a getter such as a fetch Response's status) still saves as a learning replay, its refused value marked unavailable; fails_when=the diagnostic list of refused getters leaks into the snapshot and the strict observation schema rejects the save; no_claim=the real V8 refusal (an EvalError stands in for it), which the native checks observe
+test('a stop whose getter inspection is refused as a possible side effect still saves its observation with that value unavailable', async (context) => {
+  // Arrange: reading nextTheme is refused with V8's side-effect EvalError, as under throwOnSideEffect.
+  let service: StudyService | undefined, books: RepositoryBookStore | undefined
+  context.after(async () => {
+    await service?.shutdown()
+    books?.dispose()
+  })
+  const harness = await configuredRuntimeHarness(context, undefined, [], {
+      mappings: 'AAAA',
+      fixture: { source: 'setTheme(nextTheme);\n', citationEndLine: 2 },
+      inspectionScope: {
+        get nextTheme(): never {
+          throw new EvalError('Possible side-effect in debug-evaluate')
+        },
+      },
+    }),
+    directory = join(harness.directory, '.learning')
+  const library = new LearningLibrary(directory, '0'.repeat(64)),
+    store = new RecordingStore(directory, library.workspaceKey)
+  books = new RepositoryBookStore(harness.sources, library)
+  await books.publish({
+    bookId: 'interface',
+    expectedRevision: 0,
+    key: 'article',
+    document: {
+      title: 'Interface',
+      summary: 'Two citations.',
+      nodes: [
+        {
+          id: 'theme',
+          title: 'Theme',
+          sections: [{ title: 'Theme', text: 'Source-derived explanation.' }],
+          anchors: harness.definition.descriptor.anchors,
+          observations: [],
+        },
+      ],
+      edges: [],
+    },
+  })
+  service = new StudyService(
+    {
+      workspace: harness.directory,
+      host: {
+        id: 'vscode',
+        productVersion: 'test',
+        apiVersion: 'test',
+        commit: 'test',
+      },
+      build: {
+        revision: 'controlled-runtime',
+        dirty: false,
+        sourceHash: '0'.repeat(64),
+      },
+      prerequisites: async () => ({ ready: true, missing: [] }),
+      createRuntime: async () => harness.run,
+    },
+    join(harness.directory, '.service'),
+  )
+  service.repository = books
+  service.recordings = store
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'getter',
+    configuration: harness.definition.configuration,
+  })
+  const record = service.record(receipt)
+  harness.observeRecording(() => createRecordingObserver(record))
+  await record.preparation
+  service.action({ ...receipt, key: 'one', action: 'repository-click' })
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'required getter refused',
+  )
+  await service.stop(receipt)
+  // Act
+  const archive = await captureStudy(service, record, library.workspaceKey)
+  // Assert
+  assert.ok(archive)
+  assert.equal(archive.observations.length, 1)
+  assert.deepEqual(archive.observations[0]!.unavailableValues, [
+    {
+      path: 'value:nextTheme',
+      reason: 'Evaluation unavailable or rejected for possible side effects.',
+    },
+  ])
+  assert.equal('sideEffectRefused' in archive.observations[0]!, false)
+})
+
 for (const failure of ['renderer acknowledgement', 'required inspection'])
   test(`a failed ${failure} retains verified source and available facts offline without granting Continue`, async (context) => {
     // Arrange: real coordinator/storage with controlled protocol failure, not native paint evidence.
