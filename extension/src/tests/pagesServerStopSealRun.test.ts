@@ -1,14 +1,25 @@
 import assert from 'node:assert/strict'
-import { realpath, writeFile } from 'node:fs/promises'
+import { realpath, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 
+import {
+  REPOSITORY_DISCOVERY_LIMIT_BYTES,
+  REPOSITORY_DISCOVERY_TIMEOUT_MS,
+} from '../constants'
 import { StudyError } from '../errors'
+import { createNextPagesDiscoveryCache } from '../utils/createNextPagesDiscoveryCache'
+import { readPagesServerBundle } from '../utils/readPagesServerBundle'
+import {
+  sealPagesServerStop,
+  type PagesServerStopSealRequest,
+} from '../utils/sealPagesServerStop'
 
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
 import {
   browserChunk,
   PAGE_SOURCE,
+  nextPagesBuild,
   pagesEvalModule,
   serverChunk,
 } from './utils/nextPagesBuildHarness'
@@ -199,4 +210,136 @@ test('a server stop on an entry-page line whose browser chunk maps an older text
   )
   assert.deepEqual(failure.details, PAGES_DETAILS_AFTER_READINESS)
   assert.equal(harness.launchConfigurations.length, 0)
+})
+
+// Value: protects=a Pages page whose entry chunks do not hold the entry page's own module (it is loaded later) cannot be checked against the client compile, so a server stop on one of its lines is refused as browser-module-absent with router pages and sideEffects unknown, never accepted unchecked; fails_when=a missing entry chunk module is read as "the client compile does not map the line" and the stop is sealed; no_claim=a real next/dynamic page (the harness writes the page chunk without the module)
+test('a server stop on an entry-page line whose module no entry chunk holds is refused as browser-module-absent', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, [], {
+    fixture: { source: PAGE_SOURCE, citationEndLine: 5, declaredLine: 5 },
+    sourcePath: 'src/pages/index.tsx',
+    operations: SERVER_STOP_AT_ENTRY_LOAD,
+    nextPages: {
+      mappedLines: 4,
+      serverCompile: true,
+      citedInPageChunk: false,
+    },
+  })
+  // Act
+  const failure = await preparationFailure(harness)
+  // Assert
+  assert.ok(failure instanceof StudyError, String(failure))
+  assert.equal(failure.code, 'NEXT_STOP_NOT_SEALED')
+  assert.equal(
+    failure.message,
+    "Codebook could not verify the browser code of the page that holds src/pages/index.tsx:5, which it needs to tell a data-function line from a page-component line. This does not establish that the line is in the page's data function. A stop in a module that the data function imports, instead of the page's own file, needs no browser check: declare it there.",
+  )
+  assert.deepEqual(failure.details, PAGES_DETAILS_AFTER_READINESS)
+  assert.equal(harness.launchConfigurations.length, 0)
+})
+
+/**
+ * Writes the stand-in Pages project with a server compile that holds the entry page and returns the request that seals its line 5 (the data function) as a server stop, without going through a run, so a test can steer the discovery cache, the abort signal and the chunk fetcher the browser check uses.
+ * @param context - The test, which removes the project afterwards.
+ * @param extras - The request's signal, cache and fetcher; a fresh cache by default.
+ * @returns The request, the workspace's build helpers and the cache the request carries.
+ */
+async function entryPageDataFunctionRequest(
+  context: TestContext,
+  extras: Partial<PagesServerStopSealRequest> = {},
+) {
+  const build = await nextPagesBuild(context)
+  await build.writeServerBuild()
+  const cache = extras.cache ?? createNextPagesDiscoveryCache()
+  const request: PagesServerStopSealRequest = {
+    workspace: build.workspace,
+    selected: { ...build.page, line: 5, column: 1 },
+    citationEndLine: 5,
+    route: '/',
+    entrySource: 'src/pages/index.tsx',
+    ...extras,
+    cache,
+  }
+  return { build, request, cache }
+}
+
+/**
+ * Seals a request and returns what it rejected with.
+ * @returns The rejection, or `undefined` when the seal passed.
+ */
+async function sealFailure(
+  request: PagesServerStopSealRequest,
+): Promise<unknown> {
+  return sealPagesServerStop(request).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+}
+
+// Value: protects=a run whose discovery bytes the server seal used up ends the entry-page client check with RUNTIME_FAILED, the budget message and the Pages details (router pages, sideEffects unknown), because the data function already ran; fails_when=the budget failure of the browser check is read as "no browser module" and refused as NEXT_STOP_NOT_SEALED, which blames the page instead of the spent budget; no_claim=a real 128 MiB build (the cache is primed with the bytes the server seal reads, so the server seal takes exactly what is left)
+test('a server stop on an entry-page line ends as RUNTIME_FAILED with the Pages details when the server seal used the last discovery bytes', async (context) => {
+  // Arrange
+  const { build, request, cache } = await entryPageDataFunctionRequest(context)
+  // The server seal alone reads this many bytes; a cache that has only that much left is empty once the server seal is done.
+  const measured = createNextPagesDiscoveryCache()
+  await readPagesServerBundle({
+    workspace: build.workspace,
+    selected: request.selected,
+    route: '/',
+    cache: measured,
+  })
+  cache.readBytes = REPOSITORY_DISCOVERY_LIMIT_BYTES - measured.readBytes
+  // Act
+  const failure = await sealFailure(request)
+  // Assert
+  assert.ok(failure instanceof StudyError, String(failure))
+  assert.equal(failure.code, 'RUNTIME_FAILED')
+  assert.equal(failure.message, 'Build discovery resource limit exceeded')
+  assert.deepEqual(failure.details, PAGES_DETAILS_AFTER_READINESS)
+  // The server compile was read and decoded, and the budget ended at the browser check: the page's browser chunk was never read.
+  assert.equal(cache.readBytes, REPOSITORY_DISCOVERY_LIMIT_BYTES)
+  assert.deepEqual([...cache.chunks.keys()], ['server/pages/index.js'])
+})
+
+// Value: protects=a browser chunk fetch that fails after the run's discovery time ran out ends the entry-page client check with RUNTIME_FAILED, the budget message and the Pages details, not as a missing browser module; fails_when=the elapsed-time check of the browser check is removed, so the timeout of the fetch reads as "no browser module" and is refused as NEXT_STOP_NOT_SEALED; no_claim=a real 30 s wait or the real chunk fetcher (the fake fetcher spends the clock and fails)
+test('a server stop on an entry-page line ends as RUNTIME_FAILED with the Pages details when the browser chunk fetch fails after the discovery time ran out', async (context) => {
+  // Arrange
+  const cache = createNextPagesDiscoveryCache()
+  const { build, request } = await entryPageDataFunctionRequest(context, {
+    cache,
+    // The fetch spends the clock and fails the way an aborted download does, with an error that is no budget error.
+    fetchChunk: async () => {
+      cache.spentMs = REPOSITORY_DISCOVERY_TIMEOUT_MS
+      throw new Error('The operation was aborted due to timeout')
+    },
+  })
+  // No chunk file of the page exists, so its chunk is fetched from the owned server.
+  await rm(join(build.workspace, '.next/dev/static/chunks/pages/index.js'))
+  // Act
+  const failure = await sealFailure(request)
+  // Assert
+  assert.ok(failure instanceof StudyError, String(failure))
+  assert.equal(failure.code, 'RUNTIME_FAILED')
+  assert.equal(failure.message, 'Build discovery resource limit exceeded')
+  assert.deepEqual(failure.details, PAGES_DETAILS_AFTER_READINESS)
+})
+
+// Value: protects=a run stopped while the entry page's browser chunk is fetched rejects the seal with the abort reason itself, not as a refusal about the browser module and not as RUNTIME_FAILED with the Pages details; fails_when=the abort check of the browser check is removed (the stop reads as a missing browser module) or the seal wraps the abort as RUNTIME_FAILED; no_claim=the real chunk fetcher (the fake fetcher stops the run and fails)
+test('a run stopped during the entry-page browser check rejects the server stop seal with the abort reason unchanged', async (context) => {
+  // Arrange
+  const controller = new AbortController()
+  const reason = new Error('The run was stopped')
+  const { build, request } = await entryPageDataFunctionRequest(context, {
+    signal: controller.signal,
+    // The run is stopped while the fetch is under way; the fetch then fails with an error of its own.
+    fetchChunk: async () => {
+      controller.abort(reason)
+      throw new Error('fetch failed')
+    },
+  })
+  await rm(join(build.workspace, '.next/dev/static/chunks/pages/index.js'))
+  // Act
+  const failure = await sealFailure(request)
+  // Assert
+  assert.equal(failure, reason)
 })
