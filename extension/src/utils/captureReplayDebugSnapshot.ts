@@ -13,6 +13,7 @@ import {
   REPLAY_DEBUG_TEXT_LIMIT_CHARS,
   REPLAY_DEBUG_TRUNCATION_MARKER,
   REPLAY_SCOPE_NOT_CAPTURED_TEXT,
+  SECRET_SHAPE_SCAN_LIMIT_CHARS,
 } from '../constants'
 import {
   replayDebugSnapshotSchema,
@@ -30,7 +31,10 @@ import {
 import { classNameOf, findSecretSiblingIndexes } from './secretShapes'
 import { shouldCaptureReplayScope } from './shouldCaptureReplayScope'
 import { stripTerminalControls } from './stripTerminalControls'
-import { withheldVariableValue } from './withheldVariableValue'
+import {
+  isEnvironmentAliasName,
+  withheldVariableValue,
+} from './withheldVariableValue'
 
 const scopeResponse = z.object({
   scopes: z.array(
@@ -164,6 +168,31 @@ function recordedLocationOf(
       ...(keptPath !== undefined && { path: shorten(keptPath) }),
     },
   }
+}
+
+/**
+ * Decides the saved preview of a variable the capture reads normally: its class name when the preview is too long to scan or shows a credential on a parent, else the preview with its secret members and credential shapes masked.
+ *
+ * Called by the capture's `saveVariable` for every variable that is not withheld.
+ *
+ * @param variable - The adapter's variable.
+ * @returns The text to shorten and save. A raw value longer than {@link SECRET_SHAPE_SCAN_LIMIT_CHARS} fails closed as its class name and is never scanned, so a huge hostile value cannot stall the capture.
+ * @example
+ * previewValueOf({ name: 'cart', value: "{id: 7, theme: 'dark'}", variablesReference: 3 }) // => "{id: 7, theme: 'dark'}"
+ * previewValueOf({ name: 'html', value: `'${'x'.repeat(20_000)}'`, type: 'string', variablesReference: 0 }) // => 'string'
+ */
+function previewValueOf(variable: {
+  value: string
+  type?: string | undefined
+  variablesReference: number
+}): string {
+  // The scanners read the value whole; a longer one is not read at all.
+  if (variable.value.length > SECRET_SHAPE_SCAN_LIMIT_CHARS)
+    return classNameOf(variable)
+  return variable.variablesReference > 0 &&
+    previewShowsCredentialShape(variable.value)
+    ? classNameOf(variable)
+    : redactValuePreview(variable.value)
 }
 
 /** Called at a verified live pause to persist bounded values, never live DAP handles; stale pauses abort the whole capture. Only the stopped frame's local scopes are copied ({@link shouldCaptureReplayScope}). @example await captureReplayDebugSnapshot({ stack, verifiedSource, request, assertCurrent }) */
@@ -300,12 +329,7 @@ export async function captureReplayDebugSnapshot(
       parentName,
       isMaskedSibling,
     )
-    const value =
-      withheld ??
-      (variable.variablesReference > 0 &&
-      previewShowsCredentialShape(variable.value)
-        ? classNameOf(variable)
-        : redactValuePreview(variable.value))
+    const value = withheld ?? previewValueOf(variable)
     snapshot.variables.push({
       name: shorten(variable.name),
       value: withheld === REDACTION_MASK ? withheld : shorten(value),
@@ -330,6 +354,7 @@ export async function captureReplayDebugSnapshot(
       ) !== undefined
     )
       return
+    const firstChildIndex = snapshot.variables.length
     const nested = await captureVariables(
       variable.variablesReference,
       depth,
@@ -337,6 +362,22 @@ export async function captureReplayDebugSnapshot(
       variable.name,
     )
     const saved = snapshot.variables[index]!
+    // A variable named env whose members are environment variable names is an alias of process.env: it keeps its class name, and the members just read are dropped again.
+    const asEnvironment = isEnvironmentAliasName(variable.name)
+      ? withheldVariableValue(
+          variable,
+          context.parentName,
+          context.isMaskedSibling,
+          nested.variables.map((child) => snapshot.variables[child]!.name),
+        )
+      : undefined
+    if (asEnvironment !== undefined) {
+      snapshot.variables.length = firstChildIndex
+      saved.value = shorten(asEnvironment)
+      saved.children = []
+      saved.unavailable = undefined
+      return
+    }
     saved.children = nested.variables
     saved.unavailable = nested.unavailable
   }

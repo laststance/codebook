@@ -5,7 +5,10 @@ import {
   redactValuePreview,
 } from './redactValuePreview'
 import { classNameOf, findSecretSiblingIndexes } from './secretShapes'
-import { withheldVariableValue } from './withheldVariableValue'
+import {
+  isEnvironmentAliasName,
+  withheldVariableValue,
+} from './withheldVariableValue'
 
 type SavedVariable = ReplayDebugSnapshot['variables'][number]
 
@@ -58,6 +61,12 @@ function decideVariables(snapshot: ReplayDebugSnapshot): {
       variable,
       parentNames.get(index),
       maskedSiblings.has(index),
+      // The members an older snapshot saved under `env` say whether it is an alias of process.env.
+      isEnvironmentAliasName(variable.name)
+        ? variable.children.map(
+            (child) => snapshot.variables[child]?.name ?? '',
+          )
+        : undefined,
     )
     if (withheldValue !== undefined) {
       withheld.add(index)
