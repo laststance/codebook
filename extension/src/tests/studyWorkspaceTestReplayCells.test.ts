@@ -887,6 +887,12 @@ test('a reader position write that never returns holds neither Play nor the mome
   try {
     const store = harness.service.nodeHistoryStore!
     await openWithChosenStep(harness)
+    // Wait for the position writes of the open and the chosen step to end, so the held write is the first moment Play reaches; under load the chosen step's write could otherwise start after the mock and hold the first stop instead.
+    await waitUntil(
+      () => harness.reader['nodeHistoryPositionWrites'].size === 0,
+      'the open’s and the chosen step’s position writes end',
+      READER_RESULT_BOUND_MS,
+    )
     const advance = playbackClock(harness)
     const controller = advance(0)
     const writeHeld = new Promise<void>((resolve) => {
