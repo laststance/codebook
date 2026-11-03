@@ -236,6 +236,59 @@ test('a getServerSideProps stop after an await pauses through the async chain wi
   await continueAndComplete(harness, prepared, pause)
 })
 
+// Value: protects=AC 1 on a real start: the readiness request compiles the page and loads Next's renderer before the debugger attaches and the proxy announces only scripts parsed after its subscription, so the renderer's synchronous frame carries no script address; when the async chain does not name the renderer either, the run finds the renderer by its text and the stop still pauses as the data function's hit with frame evidence; fails_when=a renderer the proxy never announced reads as no-async-chain or no-renderer-frame and every such entry load pauses unconfirmed; no_claim=how js-debug really orders its announcements (E0b was recorded with the scripts announced), and a renderer text that Next changed (the verdict tests pin no-renderer-frame)
+test('a renderer script the proxy never announced is found by its text and the stop pauses as the data function', async (context) => {
+  // Arrange
+  const harness = await pagesServerRun(context)
+  const prepared = harness.run.prepare()
+  await armedEntry(harness)
+  // Act
+  harness.server!.hit(
+    hitOnLine(PAGES_SERVER_RETURN_LINE, {
+      fixture: 'get-server-side-props-before-await',
+      unannounced: 'all',
+      edit: (event) => {
+        event.asyncStackTrace = undefined
+      },
+    }),
+  )
+  const pause = await publishedPause(harness)
+  // Assert
+  assert.equal(pause.attribution, 'entry-load')
+  assert.deepEqual(journaled(harness, 'breakpoint.unconfirmed'), [])
+  assert.deepEqual(plain(harness.run.view().attributionSummary?.taken), {
+    frame: 1,
+    request: 0,
+  })
+  await continueAndComplete(harness, prepared, pause)
+})
+
+// Value: protects=AC 1 page by request: a hit whose page the stack cannot name (a helper in a module of its own, called after an await) is attributed to the entry page when the browser has exactly one outstanding page request, the entry document, and it is counted as request evidence, not frame evidence; fails_when=the Network events of the browser are not followed, so the hit pauses unconfirmed, or the evidence is counted as frame; no_claim=js-debug forwarding Network events through its proxy (the run asks the page's Network domain to be enabled and takes what arrives), and the verdict's own request cases (the verdict tests)
+test("a hit the stack cannot place is attributed to the entry page by the browser's one outstanding page request", async (context) => {
+  // Arrange
+  const harness = await pagesServerRun(context, {
+    sourcePath: 'src/lib/helper.ts',
+  })
+  const prepared = harness.run.prepare()
+  await armedEntry(harness)
+  harness.pageRequest.start('document-1', 'http://localhost:4321/', 'Document')
+  // Act
+  harness.server!.hit(
+    hitOnLine(PAGES_SERVER_RETURN_LINE, {
+      fixture: 'get-server-side-props-after-await',
+    }),
+  )
+  const pause = await publishedPause(harness)
+  // Assert
+  assert.equal(pause.attribution, 'entry-load')
+  assert.deepEqual(journaled(harness, 'breakpoint.unconfirmed'), [])
+  assert.deepEqual(plain(harness.run.view().attributionSummary?.taken), {
+    frame: 0,
+    request: 1,
+  })
+  await continueAndComplete(harness, prepared, pause)
+})
+
 // Value: protects=AC 2 called code: in one run a stop on a getServerSideProps line and a stop in the code it calls (declaredIndex 0 and 1) pause in that order with executionIndex 0 and 1, both inside the entry page's data function; fails_when=the second stop is resumed, pauses first, or the indexes follow another order; no_claim=a helper in a module of its own (one sealed module stands for the page and its helper here; the reader tests seal a shared chunk)
 test('a getServerSideProps stop and a stop in the helper it calls pause in order with declaredIndex 0 and 1', async (context) => {
   // Arrange

@@ -2089,6 +2089,8 @@ export const NEXT_PAGES_PAGE_EXPRESSION = 'pathname'
 export const PAGES_STACK_TRACE_READ_LIMIT = 4
 /** How many hits of one Pages server stop the run resumes (`breakpoint.other-route`, `breakpoint.outside-data-function`, `breakpoint.unattributed-resumed`) before it disarms the stop and ends the run `SERVER_STOP_NOT_REACHED`: a helper that many requests or the page's render call (a formatter in a list) would otherwise pause and resume without end. */
 export const PAGES_STOP_RESUMED_HIT_LIMIT = 500
+/** The most scripts of the server whose text one Pages run reads to find Next's renderer among the scripts the proxy never announced (parsed before the debugger attached); a stack of a data function holds about six distinct scripts, so past this bound a run no longer reads new ones and the hit reads as `no-renderer-frame`. */
+export const PAGES_UNANNOUNCED_SCRIPT_READ_LIMIT = 16
 /** The most outstanding page requests of the browser the run keeps for the Pages page read; a page loads a handful, so a run that sees more has no single page request to name (the oldest are dropped). */
 export const PAGES_OUTSTANDING_REQUEST_LIMIT = 64
 /** The address prefix of the data requests Next's client sends for a Pages navigation (`/_next/data/<build id>/<route>.json`). */

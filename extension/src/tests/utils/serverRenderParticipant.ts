@@ -57,6 +57,8 @@ export interface PagesHitScript {
   edit?: (event: PagesPausedEvent, scriptUrls: Record<string, string>) => void
   /** The answers of `Debugger.getStackTrace` by stack trace id: a `Runtime.StackTrace`, or `'fail'` for a rejected read. */
   stackTraces?: Record<string, object | 'fail'>
+  /** The fixture scripts the proxy never announces (parsed before the debugger attached, as the readiness request's compile does): `'all'`, or their ids. Their texts can still be read. */
+  unannounced?: 'all' | readonly string[]
 }
 
 /** One hit of an armed server breakpoint, as the spike's logs show it. */
@@ -457,6 +459,8 @@ export function createServerParticipant(parts: ServerParticipantParts) {
     // The scripts the stack names are announced once, the renderer's with its text.
     for (const [scriptId, url] of Object.entries(scriptUrls)) {
       if (announced.has(scriptId)) continue
+      const isUnannounced =
+        script.unannounced === 'all' || script.unannounced?.includes(scriptId)
       if (isNextPagesRendererUrl(url))
         scriptTexts.set(
           scriptId,
@@ -464,7 +468,7 @@ export function createServerParticipant(parts: ServerParticipantParts) {
             fixture.nextVersion === '16.4.4' ? '16.4.4' : '16.1.4',
           ),
         )
-      announce(scriptId, url)
+      if (!isUnannounced) announce(scriptId, url)
     }
     // `pathname` is a parameter of the renderer's `renderToHTMLImpl`, the frame that holds the traced call.
     for (const frame of event.callFrames)

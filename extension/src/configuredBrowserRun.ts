@@ -54,6 +54,8 @@ import {
   ENTRY_LOAD_OPERATION_KEY,
   ENTRY_LOAD_POLL_MS,
   PAGES_STOP_RESUMED_HIT_LIMIT,
+  PAGES_UNANNOUNCED_SCRIPT_READ_LIMIT,
+  NEXT_PAGES_RENDERER_SCRIPT_PATH,
   SERVER_RENDER_CLASSIFICATION_MS,
   SERVER_RENDER_PAUSE_POLL_MS,
   SERVER_RENDER_RESUMED_HIT_JOURNAL_LIMIT,
@@ -283,6 +285,10 @@ import { readNextServerOnlyReason } from './utils/readNextServerOnlyReason'
 import { readPagesDevelopmentBundle } from './utils/readPagesDevelopmentBundle'
 import { readNextInstallation } from './utils/readRepositoryAdapterReadiness'
 import { readRepositoryBuildText } from './utils/readRepositoryBuildText'
+import {
+  readWithinVerdictBudget,
+  type VerdictBudget,
+} from './utils/readWithinVerdictBudget'
 import { redactNextEntryPath } from './utils/redactNextEntryPath'
 import { redactPreparedConfiguration } from './utils/redactPreparedConfiguration'
 import type { PreparedTextState } from './utils/redactPreparedTexts'
@@ -862,6 +868,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   >()
   /** Whether the journal already names a renderer text the patterns do not recognise; it is journaled once per run. */
   private isUnrecognisedRendererJournaled = false
+  /** The ids of the Pages renderer's scripts the proxy never announced, found by their text (a script parsed before the debugger attached, as the readiness request's compile does). */
+  private readonly rendererScriptIds = new Set<string>()
+  /** The ids of the unannounced scripts a Pages hit already read, so each is read once per run. */
+  private readonly unannouncedScriptsRead = new Set<string>()
   /** The data function each Pages server pause was found inside, by snapshot id; a live run resource field only. */
   private readonly dataFunctionBySnapshot = new Map<
     string,
@@ -2367,6 +2377,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.abort.signal,
     )
     try {
+      await this.identifyUnannouncedRenderer(event, budget)
       const verdict = await pagesDataFunctionHitVerdictOf(
         {
           event,
@@ -2395,8 +2406,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const participant = this.participants.server
     const cdp = participant.cdp!
     return {
-      scriptUrlOf: (scriptId) => participant.scriptUrls.get(scriptId),
-      scriptSourceOf: (scriptId) => this.rendererTextOf(scriptId),
+      scriptUrlOf: (scriptId) =>
+        participant.scriptUrls.get(scriptId) ??
+        (this.rendererScriptIds.has(scriptId)
+          ? NEXT_PAGES_RENDERER_SCRIPT_PATH
+          : undefined),
+      scriptSourceOf: async (scriptId) => {
+        const text = await this.scriptTextOf(scriptId)
+        if (text !== undefined) this.noteRendererText(text)
+        return text
+      },
       evaluateOnCallFrame: (request) =>
         cdp.request('Debugger.evaluateOnCallFrame', request),
       getStackTrace: async (stackTraceId) =>
@@ -2426,32 +2445,21 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Gives the text of the Pages renderer script, read once through `Debugger.getScriptSource` and kept; a read that failed is made again by the next hit.
-   * Why it exists: the renderer's source is searched for the data-function call at each frame's location, and a hit must not pay for reading about 200 KB. A text with none of the known patterns is journaled once with the Next version, and every hit is then `no-renderer-frame`.
-   * @param scriptId - The renderer script's id.
+   * Gives the text of a script of the server, read once through `Debugger.getScriptSource` and kept; a read that failed is made again by the next hit.
+   * Why it exists: the renderer's source is searched for the data-function call at each frame's location, and a hit must not pay for reading about 200 KB.
+   * @param scriptId - The script's id.
    * @returns The text; `undefined` when it could not be read.
-   * @example await this.rendererTextOf('1477')
+   * @example await this.scriptTextOf('1477')
    */
-  private rendererTextOf(scriptId: string): Promise<string | undefined> {
+  private scriptTextOf(scriptId: string): Promise<string | undefined> {
     const known = this.rendererTexts.get(scriptId)
     if (known) return known
     const cdp = this.participants.server.cdp
     const read = (async (): Promise<string | undefined> => {
       if (!cdp) return undefined
       try {
-        const answer = await cdp.request('Debugger.getScriptSource', {
-          scriptId,
-        })
-        if (
-          !holdsNextPagesRendererPatterns(answer.scriptSource) &&
-          !this.isUnrecognisedRendererJournaled
-        ) {
-          this.isUnrecognisedRendererJournaled = true
-          this.evidence.record('pages.renderer-unrecognised', {
-            nextVersion: this.nextVersion,
-          })
-        }
-        return answer.scriptSource
+        return (await cdp.request('Debugger.getScriptSource', { scriptId }))
+          .scriptSource
       } catch {
         return undefined
       }
@@ -2465,6 +2473,24 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Journals once per run a renderer text that holds none of the known data-function patterns, with the Next version, so a change in Next shows as a recorded cause (`no-renderer-frame`) and not as silence.
+   * Called with the text of every script the verdict takes for the renderer.
+   * @param text - The renderer's text.
+   * @example this.noteRendererText(text) // journals pages.renderer-unrecognised once when the patterns are absent
+   */
+  private noteRendererText(text: string): void {
+    if (
+      holdsNextPagesRendererPatterns(text) ||
+      this.isUnrecognisedRendererJournaled
+    )
+      return
+    this.isUnrecognisedRendererJournaled = true
+    this.evidence.record('pages.renderer-unrecognised', {
+      nextVersion: this.nextVersion,
+    })
+  }
+
+  /**
    * Reads the renderer's text again because the runtime announced its script: the cached copy of that script id is dropped and read now, so the first hit finds it.
    * Called by the `Debugger.scriptParsed` handler of {@link observeParticipant}.
    * @param scriptId - The announced renderer script's id.
@@ -2472,7 +2498,48 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    */
   private refreshRendererText(scriptId: string): void {
     this.rendererTexts.delete(scriptId)
-    void this.rendererTextOf(scriptId)
+    void this.scriptTextOf(scriptId).then((text) => {
+      if (text !== undefined) this.noteRendererText(text)
+    })
+  }
+
+  /**
+   * Finds Next's Pages renderer among the synchronous frames' scripts the proxy never announced, by their text.
+   * Why it exists: the readiness request compiles the page and loads the renderer before the debugger attaches, and the proxy forwards only scripts parsed after its subscription, so a synchronous frame of the renderer would otherwise carry no address and every hit would read as `no-renderer-frame`. Each unknown script is read once per run (at most {@link PAGES_UNANNOUNCED_SCRIPT_READ_LIMIT}) within the hit's budget; only a text that holds the renderer's patterns is kept. Called by {@link classifyPagesHit} before the verdict.
+   * @param event - The paused event.
+   * @param budget - The hit's single time budget.
+   * @example await this.identifyUnannouncedRenderer(event, budget)
+   */
+  private async identifyUnannouncedRenderer(
+    event: Protocol.Debugger.PausedEvent,
+    budget: VerdictBudget,
+  ): Promise<void> {
+    const known = this.participants.server.scriptUrls
+    for (const { location } of event.callFrames) {
+      const { scriptId } = location
+      if (
+        known.has(scriptId) ||
+        this.unannouncedScriptsRead.has(scriptId) ||
+        this.unannouncedScriptsRead.size >= PAGES_UNANNOUNCED_SCRIPT_READ_LIMIT
+      )
+        continue
+      this.unannouncedScriptsRead.add(scriptId)
+      const read = await readWithinVerdictBudget(
+        () => this.scriptTextOf(scriptId),
+        budget,
+      )
+      if (read.status === 'timeout') {
+        // The budget ended mid-read: the script is read again by a later hit.
+        this.unannouncedScriptsRead.delete(scriptId)
+        return
+      }
+      if (read.status === 'read' && read.value !== undefined) {
+        if (holdsNextPagesRendererPatterns(read.value))
+          this.rendererScriptIds.add(scriptId)
+        // A text that is no renderer is not kept: only the renderer's text serves later hits.
+        else this.rendererTexts.delete(scriptId)
+      }
+    }
   }
 
   /**
