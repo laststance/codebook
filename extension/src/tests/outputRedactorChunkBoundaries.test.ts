@@ -289,7 +289,7 @@ test('ending the output during the drop of an over-long header line releases not
   assert.equal(afterEnd, 'fresh line\n')
 })
 
-// protects=a callback code or token in the query of a request path that a chunk boundary cuts (Cycle 0073 pt1 /ship pass 1: the query mask reads released lines, and a line is released at once when it holds no quote, equals sign or semicolon); fails_when=`GET /cb?co` is released before `de=…`, so the code is judged without its name; no_claim=a word with a question mark or a hash that no slash comes before (own test), which is released at once
+// protects=a callback code or token in the query of a request path that a chunk boundary cuts (Cycle 0073 pt1 /ship pass 1: the query mask reads released lines, and a line is released at once when it holds no quote, equals sign or semicolon); fails_when=`GET /cb?co` is released before `de=…`, so the code is judged without its name; no_claim=a bare question mark or hash at the end of a word that no slash comes before (own test), which is released at once
 test('a request path whose query is cut by a chunk boundary is masked, and a prompt followed by a blank is released at once', () => {
   // Arrange
   const redactor = createOutputRedactor()
@@ -307,7 +307,7 @@ test('a request path whose query is cut by a chunk boundary is masked, and a pro
   assert.equal(prompt, 'Continue? ')
 })
 
-// protects=output keeps its arrival order around a debugger stop for a prompt that ends in a letter that begins no label, a question mark or a hash (Cycle 0073 pt1 /ship pass 2: `Ready?` and `C#` waited for the next write, so they were delivered after later output); fails_when=a partial line whose last word is a letter outside c, a, s and p, or whose last word holds a `?` or `#` with no `/` before it, is held; no_claim=a trailing c, a, s or p letter (own test), and a line that holds a quote, an equals sign or a semicolon, which waits for its break by design
+// protects=output keeps its arrival order around a debugger stop for a prompt that ends in a letter that begins no label, a question mark or a hash (Cycle 0073 pt1 /ship pass 2: `Ready?` and `C#` waited for the next write, so they were delivered after later output); fails_when=a partial line whose last word is a letter outside c, a, s and p, or whose last word ends in a bare `?` or `#` with no `/` before it, is held; no_claim=a trailing c, a, s or p letter (own test), and a line that holds a quote, an equals sign or a semicolon, which waits for its break by design
 test('a partial line that ends in a letter that begins no label, a question mark or a hash is released at once', () => {
   // Arrange
   const prompts = ['Type X', 'Option B', 'Press z', 'Ready?', 'Use C#']
@@ -319,7 +319,7 @@ test('a partial line that ends in a letter that begins no label, a question mark
   assert.deepEqual(released, prompts)
 })
 
-// protects=the cut-label and cut-query leaks stay closed after the hold is narrowed (Cycle 0073 pt1 /ship pass 2: a query mark needs a slash before it); fails_when=`[x] Co`, `GET /cb?` or `see https://idp.example/cb#` is released before the next write, or the Cookie value that completes `[x] Co` is printed; no_claim=a label cut after its first letter alone (own test)
+// protects=the cut-label and cut-query leaks stay closed after the hold is narrowed (Cycle 0073 pt1 /ship pass 2: a bare query mark at the end of a run needs a slash before it); fails_when=`[x] Co`, `GET /cb?` or `see https://idp.example/cb#` is released before the next write, or the Cookie value that completes `[x] Co` is printed; no_claim=a label cut after its first letter alone (own test)
 test('a line cut after two letters of a label or after the query mark of a path still waits for the next write', () => {
   // Arrange
   const labelRedactor = createOutputRedactor()
@@ -368,4 +368,120 @@ test('a line that ends in the first letter of a label waits for the next write, 
     assert.equal(text.includes(SESSION_VALUE), false)
     assert.equal(text.includes(BASIC_CREDENTIAL), false)
   }
+})
+
+// protects=a query or fragment cut inside its first parameter name when no slash comes before the mark (Cycle 0073 pt1 /ship pass 3: `?to`, `app.html?tok` and `#access_to` were released, so the `ken=…` or `en=…` that followed was judged alone and printed); fails_when=a trailing run that starts with a `?` or `#`, or holds one with more characters after it, is released before the next write, or the value that follows is printed; no_claim=a bare mark at the end of a word (own test), which is released at once
+test('a query or fragment cut inside its first parameter name is masked although no slash comes before the mark', () => {
+  // Arrange
+  const cuts: Array<{ chunks: string[]; expected: string }> = [
+    {
+      chunks: ['?co', `de=${SESSION_VALUE}\n`],
+      expected: `?code=${MASK}\n`,
+    },
+    {
+      chunks: ['?to', `ken=${SESSION_VALUE}\n`],
+      // eslint-disable-next-line browser-security/no-credentials-in-query-params -- the expected text holds the mask, not a credential.
+      expected: `?token=${MASK}\n`,
+    },
+    {
+      chunks: ['app.html?tok', `en=${SESSION_VALUE}\n`],
+      // eslint-disable-next-line browser-security/no-credentials-in-query-params -- the expected text holds the mask, not a credential.
+      expected: `app.html?token=${MASK}\n`,
+    },
+    {
+      chunks: ['#access_to', `ken=${SESSION_VALUE}\n`],
+      expected: `#access_token=${MASK}\n`,
+    },
+    {
+      chunks: ['host.tld?co', `de=${SESSION_VALUE}\n`],
+      expected: `host.tld?code=${MASK}\n`,
+    },
+  ]
+
+  // Act
+  const results = cuts.map((cut) => {
+    const redactor = createOutputRedactor()
+    const first = redactor.write(cut.chunks[0] ?? '')
+    const rest = redactor.write(cut.chunks[1] ?? '') + redactor.end()
+    return { first, released: first + rest, expected: cut.expected }
+  })
+
+  // Assert
+  for (const result of results) {
+    assert.equal(result.first, '')
+    assert.equal(result.released, result.expected)
+    assert.equal(result.released.includes(SESSION_VALUE), false)
+  }
+})
+
+// protects=a prompt that asks a yes/no question keeps its arrival order around a debugger stop (Cycle 0073 pt1 /ship pass 3: `(y/n)?` holds a slash before its question mark, so the prompt waited for the next write like a request path); fails_when=a run whose trailing `?` or `#` directly follows `)` or `]` is held, or a request path that ends in the mark is released before its query; no_claim=a URL that itself ends in `)?` or `]?`, which is released with a prompt of that shape
+test('a prompt that ends in a question mark after a closing bracket is released at once, while a request path that ends in one still waits', () => {
+  // Arrange
+  const prompts = ['Continue (y/n)?', 'Overwrite [Y/n]?']
+  const pathRedactor = createOutputRedactor()
+
+  // Act
+  const released = prompts.map((prompt) => createOutputRedactor().write(prompt))
+  const pathStart = pathRedactor.write('GET /cb?')
+  const pathRest = pathRedactor.write(`code=${SESSION_VALUE} 200\n`)
+
+  // Assert
+  assert.deepEqual(released, prompts)
+  assert.equal(pathStart, 'GET ')
+  assert.equal(pathRest, `/cb?code=${MASK} 200\n`)
+})
+
+// protects=a header array that util.inspect prints over several lines and a chunk boundary cuts after a line break keeps the even and odd positions of its elements (Cycle 0073 pt1 /ship pass 3: the scan restarted without a position, so `'Authorization'`, a value after `'Host'`, was read as a name and the non-secret `'X-Trace-Id'` after it was masked); fails_when=the non-secret name or its value is masked after the split, or the split text differs from the same text written at once; no_claim=a header array that has no opening bracket in the text at all
+test('a flat header array cut after a line break keeps its element positions, so a non-secret element stays readable', () => {
+  // Arrange
+  const first = "[\n  'Host',\n"
+  const second = "  'Authorization',\n  'X-Trace-Id',\n  'trace'\n]\n"
+
+  // Act
+  const split = releaseAll([first, second])
+  const whole = releaseAll([first + second])
+
+  // Assert
+  assert.equal(
+    split,
+    "[\n  'Host',\n  'Authorization',\n  'X-Trace-Id',\n  'trace'\n]\n",
+  )
+  assert.equal(whole, split)
+})
+
+// protects=the value that follows a secret header name stays masked when the chunk boundary falls right after the name's comma (Cycle 0073 pt1 /ship pass 3: carrying the element position must not lose the pairing); fails_when=the element after `'Authorization',` in the next write is printed, or the split text differs from the same text written at once; no_claim=a value cut inside its own quotes
+test('a flat header array cut right after a secret header name still masks the value in the next write', () => {
+  // Arrange
+  const first = "[\n  'Host',\n  'x',\n  'Authorization',\n"
+  const second = `  'Bearer ${SESSION_VALUE}',\n  'Via',\n  'proxy'\n]\n`
+
+  // Act
+  const split = releaseAll([first, second])
+  const whole = releaseAll([first + second])
+
+  // Assert
+  assert.equal(
+    split,
+    `[\n  'Host',\n  'x',\n  'Authorization',\n  ${MASK},\n  'Via',\n  'proxy'\n]\n`,
+  )
+  assert.equal(whole, split)
+  assert.equal(split.includes(SESSION_VALUE), false)
+})
+
+// protects=a flat header array whose elements the redactor dropped (an over-long credential line) does not leave a stale element position behind (Cycle 0073 pt1 /ship pass 3: the carried position counts only the elements the scan saw, so after a drop an odd count would read the next real header name at an odd place); fails_when=the value after `'Cookie'`, which follows the dropped line in the same array, is printed; no_claim=the masking of the dropped line itself, which is covered by the over-long line tests
+test('a flat header array keeps masking a header name after an over-long credential line was dropped inside it', () => {
+  // Arrange
+  const redactor = createOutputRedactor()
+  const overlong = `  'x', 'y', 'cookie ${'a'.repeat(9_000)}`
+
+  // Act
+  const opening = redactor.write("[\n  'Host',\n")
+  const dropped = redactor.write(overlong)
+  const rest = redactor.write(`\n  'Cookie',\n  '${SESSION_VALUE}',\n]\n`)
+  const ended = redactor.end()
+  const released = opening + dropped + rest + ended
+
+  // Assert
+  assert.equal(released.includes(SESSION_VALUE), false)
+  assert.equal(released.endsWith(`\n  'Cookie',\n  ${MASK},\n]\n`), true)
 })

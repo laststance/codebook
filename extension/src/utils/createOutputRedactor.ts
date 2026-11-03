@@ -65,8 +65,10 @@ const SECRET_START_MARKERS = [
   '-----BEGIN',
 ]
 /** The marks of a URL's query and fragment: the secret name and value that follow one may come with the next chunk, and a query holds no blank, so the run ends where the query does. */
-const URL_QUERY_MARK = '?'
-const URL_FRAGMENT_MARK = '#'
+const QUERY_OR_FRAGMENT_MARK = /[?#]/
+
+/** The bracket that closes a prompt's choices (`(y/n)`, `[Y/n]`) right before its question mark. */
+const CLOSING_BRACKET = /[)\]]/
 
 /** A trailing scheme (`postgres:`, `https:/`) whose `//user:password@` may come with the next chunk; a scheme is at most 32 characters, which also keeps the search linear on a long run. */
 const TRAILING_SCHEME = /[A-Za-z][A-Za-z0-9+.-]{0,31}:\/{0,2}$/
@@ -196,26 +198,28 @@ function mayBecomeShapedLine(partialLine: string): boolean {
 }
 
 /**
- * Says whether a run reads like a URL or a path whose query or fragment is under way: a `/` comes before a `?` or a `#` in it.
- * Why: the `code=…` or `token=…` after the mark may come with the next chunk; a word with a mark and no slash before it (`Ready?`, `C#`) is no URL, and holding it moves a prompt behind later output. Plain searches from the first slash, each linear, so a long run is never rescanned from every start. Called by {@link mayBecomeSecret}.
+ * Says whether a trailing run may be cut inside the name of a query or fragment parameter, or just before it.
+ * Why: the `code=…` or `token=…` after a `?` or `#` may come with the next chunk, and a name cut in two (`?to` + `ken=…`) is not a secret name in either half. A run that starts with the mark, or holds characters after one (`app.html?tok`, `#access_to`), is held whether or not a `/` comes before it. A run that ends in a bare mark is held only when it reads like a path or a URL (a `/` before the mark): a word such as `Ready?` or `C#` is no URL, and a prompt such as `(y/n)?` or `[Y/n]?` closes with a bracket, so holding either would move it behind later output. The marks are found by one linear search, so a long run is never rescanned from every start. Called by {@link mayBecomeSecret}.
  * @param run - The trailing run without whitespace.
- * @returns `true` when a `?` or `#` follows the run's first `/`.
+ * @returns `true` when the run starts with a `?` or `#`, holds one that more characters follow, or ends in one that a `/` (and no closing bracket right before it) precedes.
  * @example
- * hasQueryMarkAfterSlash('/cb?co') // => true
- * hasQueryMarkAfterSlash('https://idp/cb#') // => true
- * hasQueryMarkAfterSlash('Ready?') // => false
+ * mayBeCutInQuery('?to') // => true
+ * mayBeCutInQuery('app.html?tok') // => true
+ * mayBeCutInQuery('/cb?') // => true
+ * mayBeCutInQuery('Ready?') // => false
+ * mayBeCutInQuery('(y/n)?') // => false
  */
-function hasQueryMarkAfterSlash(run: string): boolean {
-  const slash = run.indexOf('/')
-  return (
-    slash !== -1 &&
-    (run.indexOf(URL_QUERY_MARK, slash) !== -1 ||
-      run.indexOf(URL_FRAGMENT_MARK, slash) !== -1)
-  )
+function mayBeCutInQuery(run: string): boolean {
+  const mark = run.search(QUERY_OR_FRAGMENT_MARK)
+  if (mark === -1) return false
+  // The mark starts the run or more characters follow it: the parameter name may end anywhere in them.
+  if (mark === 0 || mark < run.length - 1) return true
+  // A bare mark ends the run: a prompt closes with a bracket before it, and a word has no slash.
+  return !CLOSING_BRACKET.test(run.charAt(mark - 1)) && run.includes('/')
 }
 
 /**
- * Says whether a trailing run without whitespace may still become a secret: it contains a secret start, ends in the first characters of one (at least {@link OUTPUT_REDACTION_PREFIX_HOLD_MIN_CHARS} of them), ends in a URL scheme, or is a URL or a path that holds the `?` or `#` of a query or fragment, whose `code=…` or `token=…` may follow ({@link hasQueryMarkAfterSlash}).
+ * Says whether a trailing run without whitespace may still become a secret: it contains a secret start, ends in the first characters of one (at least {@link OUTPUT_REDACTION_PREFIX_HOLD_MIN_CHARS} of them), ends in a URL scheme, or holds the `?` or `#` of a query or fragment whose `code=…` or `token=…` may follow ({@link mayBeCutInQuery}).
  * Why: only such a run waits for the next chunk; any other text is released at once, so output keeps its arrival order and time around a debugger stop.
  * @param run - The trailing run of the text seen so far.
  * @returns `true` when the run must wait for more text.
@@ -224,12 +228,13 @@ function hasQueryMarkAfterSlash(run: string): boolean {
  * mayBecomeSecret('Ready?')    // => false
  * mayBecomeSecret('tokenghp')  // => true
  * mayBecomeSecret('/cb?co')    // => true
+ * mayBecomeSecret('?to')       // => true
  */
 function mayBecomeSecret(run: string): boolean {
   if (
     SECRET_START.test(run) ||
     TRAILING_SCHEME.test(run) ||
-    hasQueryMarkAfterSlash(run)
+    mayBeCutInQuery(run)
   )
     return true
   // A chunk boundary inside a start leaves its first characters at the run's end.
@@ -426,10 +431,11 @@ function withoutReleasedHead(
  */
 export function createOutputRedactor(): OutputRedactor {
   let held = ''
-  // What the shape rules carry between two released runs: whether the output ended right after a quoted secret header name (a printed `rawHeaders` list), and how many `[` of a header value's array are still open.
+  // What the shape rules carry between two released runs: whether the output ended right after a quoted secret header name (a printed `rawHeaders` list), how many `[` of a header value's array are still open, and the position the next element takes in its list.
   let carry: ShapedLiteralsCarry = {
     afterHeaderName: false,
     headerArrayDepth: 0,
+    listIndex: undefined,
   }
   // The characters at the start of `held` that were already released as an unfinished one-word line (`theme` before `=dark; sid=…`): the line is judged whole, and what it releases leaves them out.
   let releasedHead = ''
@@ -449,10 +455,12 @@ export function createOutputRedactor(): OutputRedactor {
       carry.afterHeaderName,
       REDACTION_MASK,
       carry.headerArrayDepth,
+      carry.listIndex,
     )
     carry = {
       afterHeaderName: shaped.afterHeaderName,
       headerArrayDepth: shaped.headerArrayDepth,
+      listIndex: shaped.listIndex,
     }
     return redactSecretText(shaped.text)
   }
@@ -463,7 +471,7 @@ export function createOutputRedactor(): OutputRedactor {
    * @param line - The text after the last line break.
    * @param atLineStart - What the shape rules carried where the line starts.
    * @returns `true` when the line must fail closed.
-   * @example looksLikeCredential('Cookie: sid=abc', { afterHeaderName: false, headerArrayDepth: 0 }) // => true
+   * @example looksLikeCredential('Cookie: sid=abc', { afterHeaderName: false, headerArrayDepth: 0, listIndex: undefined }) // => true
    */
   const looksLikeCredential = (
     line: string,
@@ -477,6 +485,7 @@ export function createOutputRedactor(): OutputRedactor {
       atLineStart.afterHeaderName,
       REDACTION_MASK,
       atLineStart.headerArrayDepth,
+      atLineStart.listIndex,
     ).afterHeaderName
 
   /**
@@ -514,6 +523,7 @@ export function createOutputRedactor(): OutputRedactor {
         carry.afterHeaderName,
         REDACTION_MASK,
         carry.headerArrayDepth,
+        carry.listIndex,
       ),
     )
     // No secret start in the run: release it, keeping a short carry so a start cut by the release is still seen whole.
@@ -526,6 +536,8 @@ export function createOutputRedactor(): OutputRedactor {
     // Fail closed: a possible secret outgrew the hold, so mask it and drop the rest of that token, line or block.
     const overflow = held
     held = ''
+    // The dropped text may have held elements of a list, so the position of the next one is no longer known.
+    carry = { ...carry, listIndex: undefined }
     const masked = emit(released) + REDACTION_MASK
     // Only a private-key header (or one not yet closed) opens a block; a credential line is dropped to its break, any other run is a token dropped to the next whitespace.
     if (
@@ -582,6 +594,7 @@ export function createOutputRedactor(): OutputRedactor {
       carry.afterHeaderName,
       REDACTION_MASK,
       carry.headerArrayDepth,
+      carry.listIndex,
     )
     return withoutReleasedHead(
       maskHeldStart(shaped.text),

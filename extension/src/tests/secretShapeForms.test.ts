@@ -566,3 +566,52 @@ test('masking an element cut by a trim mark again leaves it unchanged', () => {
   // Assert
   assert.equal(twice, once)
 })
+
+// protects=the element position a scan hands to the next chunk when its list is still open (Cycle 0073 pt1 /ship pass 3: a chunk that started after `'Host',` restarted without a position, so `'Authorization'`, a value, was read as a header name and the next element was masked); fails_when=the result carries no position, or the next chunk, given it, reads an odd-positioned name as a header name, or the split text differs from the same text scanned at once; no_claim=a list the text does not show the start of
+test('a scan that ends between the elements of a flat list hands their position to the next chunk', () => {
+  // Arrange
+  const firstChunk = "[\n  'Host',\n"
+  const secondChunk = "  'Authorization',\n  'X-Trace-Id',\n  'trace'\n]\n"
+
+  // Act
+  const first = maskShapedLiterals(firstChunk)
+  const second = maskShapedLiterals(
+    secondChunk,
+    first.afterHeaderName,
+    MASK,
+    first.headerArrayDepth,
+    first.listIndex,
+  )
+  const withoutPosition = maskShapedLiterals(
+    secondChunk,
+    first.afterHeaderName,
+    MASK,
+    first.headerArrayDepth,
+  )
+  const whole = maskShapedLiterals(firstChunk + secondChunk)
+
+  // Assert
+  assert.equal(first.listIndex, 1)
+  assert.equal(second.text, secondChunk)
+  assert.equal(`${first.text}${second.text}`, whole.text)
+  // Without the position, the odd-positioned name reads as a header name and masks the element after it.
+  assert.equal(withoutPosition.text.includes('X-Trace-Id'), false)
+})
+
+// protects=the element position is dropped where the text no longer shows the list (Cycle 0073 pt1 /ship pass 3: a stale position must not keep a name at an odd place); fails_when=a chunk that ends after a colon or a closing bracket still reports the position of a list element; no_claim=the position inside a nested list
+test('a scan that ends outside the elements of a flat list reports no position', () => {
+  // Arrange
+  const afterColon = "{'Host': "
+  const afterClosing = "['a', 'b'] "
+  const afterOpening = "['a', ["
+
+  // Act
+  const colon = maskShapedLiterals(afterColon)
+  const closing = maskShapedLiterals(afterClosing)
+  const opening = maskShapedLiterals(afterOpening)
+
+  // Assert
+  assert.equal(colon.listIndex, undefined)
+  assert.equal(closing.listIndex, undefined)
+  assert.equal(opening.listIndex, 0)
+})

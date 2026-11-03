@@ -21,7 +21,7 @@ import type { ShapedLiteralsCarry } from './utils/secretShapes'
 export class ExtensionOutputJournal {
   private journaled = 0
   private dropped = 0
-  /** Per context: whether its last journaled text ended right after a quoted secret header name or inside its array, so a header list printed over several events keeps its pairing. */
+  /** Per context: whether its last journaled text ended right after a quoted secret header name or inside its array, how deep that array is and which position the next element of its list takes, so a header list printed over several events keeps its pairing. */
   private readonly headerListCarry = new Map<
     ExtensionStopContext,
     ShapedLiteralsCarry
@@ -50,10 +50,12 @@ export class ExtensionOutputJournal {
       carry?.afterHeaderName ?? false,
       REDACTION_MASK,
       carry?.headerArrayDepth ?? 0,
+      carry?.listIndex,
     )
     this.headerListCarry.set(context, {
       afterHeaderName: shaped.afterHeaderName,
       headerArrayDepth: shaped.headerArrayDepth,
+      listIndex: shaped.listIndex,
     })
     const hidden = hidePrivateRoots(redactSecretText(shaped.text), this.roots)
     this.record('chrome-extension.output', {

@@ -115,3 +115,29 @@ test('the extension console journal masks a quoted session pair longer than the 
     [{ context: 'page', text: `${MASK}\n` }],
   )
 })
+
+// protects=a header array that a page prints over two console events keeps the even and odd positions of its elements (Cycle 0073 pt1 /ship pass 3: the second event restarted without a position, so `'Authorization'`, a value after `'Host'`, was read as a name and the non-secret `'X-Trace-Id'` was journaled as [masked]); fails_when=the journaled `'X-Trace-Id'` or `'trace'` is masked, or a header name that is a real name at an even position stops masking the element after it across the events; no_claim=a header array printed without its opening bracket
+test('the extension console journal keeps the element positions of a header array printed over two events', () => {
+  // Arrange
+  const { journal, events } = createJournal()
+
+  // Act
+  journal.add('page', "[\n  'Host',\n")
+  journal.add('page', "  'Authorization',\n  'X-Trace-Id',\n  'trace'\n]\n")
+  journal.add('page', "[\n  'Host',\n  'x',\n  'Authorization',\n")
+  journal.add('page', `  'Bearer ${COOKIE_VALUE}',\n  'Via',\n  'proxy'\n]\n`)
+
+  // Assert
+  assert.deepEqual(
+    events.map((event) => event.detail),
+    [
+      { context: 'page', text: "[\n  'Host',\n" },
+      {
+        context: 'page',
+        text: "  'Authorization',\n  'X-Trace-Id',\n  'trace'\n]\n",
+      },
+      { context: 'page', text: "[\n  'Host',\n  'x',\n  'Authorization',\n" },
+      { context: 'page', text: `  ${MASK},\n  'Via',\n  'proxy'\n]\n` },
+    ],
+  )
+})

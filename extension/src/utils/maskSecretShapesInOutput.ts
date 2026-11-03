@@ -140,7 +140,8 @@ function maskBareLine(line: string, mask: string): string {
  * @param afterHeaderName - Whether the output before this text ended right after a quoted secret header name, so a list printed across writes keeps its pairing.
  * @param mask - What replaces a masked value; {@link REDACTION_MASK} unless the caller keeps another marker ({@link maskNextServerOutput}).
  * @param headerArrayDepth - How many `[` of a secret header name's value array the output before this text left open (the result's `headerArrayDepth`), so every element of an array printed across writes is masked up to its closing bracket.
- * @returns The masked text, whether it ends right after a quoted secret header name, and how many `[` of that name's array are still open.
+ * @param listIndex - The position the first quoted element of this text takes in its list (the result's `listIndex`), so a list printed across writes keeps telling a header name at an even position from a value.
+ * @returns The masked text, whether it ends right after a quoted secret header name, how many `[` of that name's array are still open, and the position the next quoted element takes.
  * @example
  * maskSecretShapesInOutput("[\n  'Host',\n  'x',\n  'Cookie',\n  'sid=abc',\n  ... 2 more items\n]").text // => "[\n  'Host',\n  'x',\n  'Cookie',\n  [masked],\n  ... 2 more items\n]"
  * maskSecretShapesInOutput('sid=abc; theme=dark\n').text // => '[masked]\n'
@@ -150,12 +151,14 @@ export function maskSecretShapesInOutput(
   afterHeaderName = false,
   mask: string = REDACTION_MASK,
   headerArrayDepth = 0,
+  listIndex: number | undefined = undefined,
 ): ShapedLiteralsResult {
   const shaped = maskShapedLiterals(
     maskSecretRecordValues(text, mask),
     afterHeaderName,
     mask,
     headerArrayDepth,
+    listIndex,
   )
   return {
     // The split keeps each break at an odd index, so only the lines between them are judged.
@@ -167,5 +170,6 @@ export function maskSecretShapesInOutput(
       .join(''),
     afterHeaderName: shaped.afterHeaderName,
     headerArrayDepth: shaped.headerArrayDepth,
+    listIndex: shaped.listIndex,
   }
 }

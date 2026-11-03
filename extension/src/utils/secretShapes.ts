@@ -99,6 +99,8 @@ export type ShapedLiteralsCarry = {
   afterHeaderName: boolean
   /** How many `[` of the array that is a secret header name's value are still open at the end of the text (0 when no array is open); the next chunk starts inside that array, so every quoted element up to its closing bracket is a value. */
   headerArrayDepth: number
+  /** The position in its list that the next quoted element takes when only blanks and commas come before it (0 after a `[`), or `undefined` when the text does not show it; a flat header list holds its names at even positions, so the next chunk keeps telling a name from a value. */
+  listIndex: number | undefined
 }
 
 /** The result of {@link maskShapedLiterals}. */
@@ -795,7 +797,8 @@ function readElement(
  * @param afterHeaderName - Whether the text before this one ended right after a quoted secret header name, so a stream split into chunks keeps the pairing.
  * @param mask - What replaces a masked element.
  * @param headerArrayDepth - How many `[` of a secret header name's value array the text before this one left open, so a chunk that starts inside the array keeps masking its elements.
- * @returns The replacements in order of position (a whole credential element becomes `mask` with its quotes; a URL keeps everything but its secret values), whether the text ends right after a quoted secret header name or inside its array, and how many `[` of that array are still open.
+ * @param listIndex - The position in its list that the first quoted element of this text takes when only blanks and commas come before it (the result's `listIndex`), so a chunk that starts between two elements of a flat header list keeps telling a name from a value.
+ * @returns The replacements in order of position (a whole credential element becomes `mask` with its quotes; a URL keeps everything but its secret values), whether the text ends right after a quoted secret header name or inside its array, how many `[` of that array are still open, and the position the next quoted element takes.
  * @example
  * findShapedLiterals("['Host', 'x', 'Cookie', 'sid=abc']", false, '[masked]').replacements // => [{ start: 24, end: 33, text: '[masked]' }]
  */
@@ -804,13 +807,15 @@ export function findShapedLiterals(
   afterHeaderName: boolean,
   mask: string,
   headerArrayDepth = 0,
+  listIndex: number | undefined = undefined,
 ): { replacements: TextReplacement[] } & ShapedLiteralsCarry {
   const replacements: TextReplacement[] = []
   const noCloserBefore = new Map<string, number>()
   let state: PairingState = {
       awaitingValue: afterHeaderName,
       arrayDepth: headerArrayDepth,
-      listIndex: undefined,
+      // The carried position is the next element's; the state holds the position of the element just read.
+      listIndex: listIndex === undefined ? undefined : listIndex - 1,
     },
     previousEnd = 0
   for (let index = 0; index < text.length; index++) {
@@ -841,6 +846,7 @@ export function findShapedLiterals(
     replacements,
     afterHeaderName: isAwaitingValue || openDepth > 0,
     headerArrayDepth: openDepth,
+    listIndex: nextListIndex(state.listIndex, tail),
   }
 }
 
@@ -890,7 +896,8 @@ export function applyTextReplacements(
  * @param afterHeaderName - Whether the text before this one ended right after a quoted secret header name, so a stream split into chunks keeps the pairing.
  * @param mask - What replaces a masked element; the capture's {@link REDACTION_MASK} unless a caller keeps another marker.
  * @param headerArrayDepth - How many `[` of a secret header name's value array the text before this one left open (the result's `headerArrayDepth`).
- * @returns The masked text, whether it ends right after a quoted secret header name, and how many `[` of that name's array are still open. A whole credential element becomes `mask` with its quotes; a URL keeps everything but its secret values.
+ * @param listIndex - The position the first quoted element of this text takes in its list (the result's `listIndex`).
+ * @returns The masked text, whether it ends right after a quoted secret header name, how many `[` of that name's array are still open, and the position the next quoted element takes. A whole credential element becomes `mask` with its quotes; a URL keeps everything but its secret values.
  * @example
  * maskShapedLiterals("['Host', 'x', 'Cookie', 'sid=abc']").text // => "['Host', 'x', 'Cookie', [masked]]"
  * maskShapedLiterals("{referer: '/cb?code=abc'}").text // => "{referer: '/cb?code=[masked]'}"
@@ -901,8 +908,15 @@ export function maskShapedLiterals(
   afterHeaderName = false,
   mask: string = REDACTION_MASK,
   headerArrayDepth = 0,
+  listIndex: number | undefined = undefined,
 ): ShapedLiteralsResult {
-  const scan = findShapedLiterals(text, afterHeaderName, mask, headerArrayDepth)
+  const scan = findShapedLiterals(
+    text,
+    afterHeaderName,
+    mask,
+    headerArrayDepth,
+    listIndex,
+  )
   return {
     text: applyTextReplacements(
       text,
@@ -911,6 +925,7 @@ export function maskShapedLiterals(
     ),
     afterHeaderName: scan.afterHeaderName,
     headerArrayDepth: scan.headerArrayDepth,
+    listIndex: scan.listIndex,
   }
 }
 

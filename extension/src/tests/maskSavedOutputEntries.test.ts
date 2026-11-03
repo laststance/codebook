@@ -277,3 +277,46 @@ test('a Cookie label cut over two saved output entries after other text is maske
   assert.equal(JSON.stringify(served).includes(FIRST_COOKIE), false)
   assert.equal(outputTexts(served).join(''), '[info] Cookie: [masked]\nnext\n')
 })
+
+// protects=a header array that util.inspect printed over several lines and the process saved in two entries is served with its non-secret elements readable (Cycle 0073 pt1 /ship pass 3: the second entry restarted without the position of its elements, so `'Authorization'`, a value after `'Host'`, was read as a name and `'X-Trace-Id'` was served as [masked]); fails_when=the served `'X-Trace-Id'` or `'trace'` is masked, or the entries come back with different text than a single-entry history of the same output; no_claim=a header array saved without its opening bracket
+test('a flat header array split over two saved output entries keeps its non-secret elements readable', () => {
+  // Arrange
+  const first = "[\n  'Host',\n"
+  const second = "  'Authorization',\n  'X-Trace-Id',\n  'trace'\n]\n"
+  const splitEntries = [
+    testOutput(1, 'stdout', first),
+    testOutput(2, 'stdout', second),
+  ]
+  const wholeEntries = [testOutput(1, 'stdout', first + second)]
+
+  // Act
+  const servedSplit = maskSavedOutputEntries(splitEntries)
+  const servedWhole = maskSavedOutputEntries(wholeEntries)
+
+  // Assert
+  assert.deepEqual(outputTexts(servedSplit), [first, second])
+  assert.equal(outputTexts(servedWhole).join(''), first + second)
+})
+
+// protects=the value that follows a secret header name stays masked when the process saved the name and its value in two entries and the cut falls right after the name's comma (Cycle 0073 pt1 /ship pass 3: carrying the element position must not lose the pairing); fails_when=the served value after `'Authorization',` is readable; no_claim=a value cut inside its own quotes
+test('a flat header array split right after a secret header name masks the value in the next saved output entry', () => {
+  // Arrange
+  const entries = [
+    serverOutput(1, 'stdout', "[\n  'Host',\n  'x',\n  'Authorization',\n"),
+    serverOutput(
+      2,
+      'stdout',
+      `  'Bearer ${SESSION_VALUE}',\n  'Via',\n  'proxy'\n]\n`,
+    ),
+  ]
+
+  // Act
+  const served = maskSavedServerEntries(entries)
+
+  // Assert
+  assert.equal(JSON.stringify(served).includes(SESSION_VALUE), false)
+  assert.equal(
+    outputTexts(served).join(''),
+    "[\n  'Host',\n  'x',\n  'Authorization',\n  [masked],\n  'Via',\n  'proxy'\n]\n",
+  )
+})
