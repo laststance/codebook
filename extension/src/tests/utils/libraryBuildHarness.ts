@@ -64,6 +64,37 @@ function vlq(value: number): string {
 }
 
 /**
+ * Encodes absolute segments as a map's `mappings`, so a test can write a build whose lines hold several source lines.
+ * @param lines - One list of segments per generated line; each segment gives its generated column and the zero-based source line and column it maps (source index 0).
+ * @returns The VLQ `mappings` text.
+ * @example mappingsOf([[{ genCol: 0, srcLine: 0, srcCol: 0 }]]) // => 'AAAA'
+ */
+export function mappingsOf(
+  lines: readonly (readonly {
+    genCol: number
+    srcLine: number
+    srcCol: number
+  }[])[],
+): string {
+  let srcLine = 0
+  let srcCol = 0
+  return lines
+    .map((segments) => {
+      let genCol = 0
+      return segments
+        .map((segment) => {
+          const encoded = `${vlq(segment.genCol - genCol)}${vlq(0)}${vlq(segment.srcLine - srcLine)}${vlq(segment.srcCol - srcCol)}`
+          genCol = segment.genCol
+          srcLine = segment.srcLine
+          srcCol = segment.srcCol
+          return encoded
+        })
+        .join(',')
+    })
+    .join(';')
+}
+
+/**
  * Transpiles the library source with TypeScript, as a library's own build does: the built file ends with its `sourceMappingURL` comment, and the map names the checked-out source relative to the map's folder and carries its text.
  * @param source - The text to transpile.
  * @param flavour - `modern` (ES2022) or `legacy` (ES5), which differ in their lines.
