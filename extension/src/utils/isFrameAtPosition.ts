@@ -8,18 +8,26 @@ import type { DebugProtocol } from '@vscode/debugprotocol'
  * @param frame - The debugger's top stack frame, if it reported one.
  * @param sourcePath - Absolute path of the source file the stop belongs to.
  * @param position - One-based line and column the frame is compared with; `undefined` when the caller has none, which never matches.
- * @returns `true` only when the frame names that file, line and column.
+ * @param options - `lineOnly` compares file and line but not column, for a library stop: Next's eval map of a bundled library module is line-granular, so the columns js-debug reports on a built line are not stable.
+ * @returns `true` only when the frame names that file, line and column (column left out under `lineOnly`).
  * @example
  * isFrameAtPosition({ id: 1, name: 'authorize', source: { path: '/app/auth.ts' }, line: 41, column: 24 }, '/app/auth.ts', { line: 41, column: 24 }) // => true
  * isFrameAtPosition({ id: 1, name: 'authorize', source: { path: '/app/auth.ts' }, line: 41, column: 11 }, '/app/auth.ts', { line: 41, column: 24 }) // => false
+ * isFrameAtPosition({ id: 1, name: 'authorize', source: { path: '/app/auth.ts' }, line: 41, column: 11 }, '/app/auth.ts', { line: 41, column: 24 }, { lineOnly: true }) // => true
  */
 export function isFrameAtPosition(
   frame: DebugProtocol.StackFrame | undefined,
   sourcePath: string,
   position: { line: number; column: number } | undefined,
+  options: { lineOnly?: boolean } = {},
 ): frame is DebugProtocol.StackFrame {
   if (!frame?.source?.path || !position) return false
-  // File, line and column are compared as one location.
+  // A library stop compares file and line only; every other stop compares file, line and column as one location.
+  if (options.lineOnly)
+    return (
+      `${resolve(frame.source.path)}:${frame.line}` ===
+      `${sourcePath}:${position.line}`
+    )
   return (
     `${resolve(frame.source.path)}:${frame.line}:${frame.column}` ===
     `${sourcePath}:${position.line}:${position.column}`

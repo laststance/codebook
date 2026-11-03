@@ -80,12 +80,14 @@ export function libraryRunOptions(
  * Runs the library server stop in a service to its completion and captures the study, as the editor saves it: arms, hits `return doubled` with the data function's frames, continues and completes.
  * @param context - The running test.
  * @param spec - What the library fixture stages.
+ * @param frame - Where the scripted adapter reports the top frame instead of the bound place, as js-debug does on a line-granular eval map: `column` replaces the reported column, `builtLineOffset` moves the reported built line.
  * @returns The study, the run and the staged library.
  * @example const { study, run } = await captureLibraryRun(context)
  */
 export async function captureLibraryRun(
   context: TestContext,
   spec: LibraryFixtureSpec = {},
+  frame: { builtLineOffset?: number; column?: number } = {},
 ): Promise<{
   study: RetainedStudy
   run: Awaited<ReturnType<typeof pagesServerService>>
@@ -102,11 +104,24 @@ export async function captureLibraryRun(
       `${String(timeout)}; the run's error: ${JSON.stringify(state().error)}`,
     )
   })
+  const hitAt = staged.files().hitAt(LIBRARY_RETURN_LINE)
   harness.server!.hit({
-    ...staged.files().hitAt(LIBRARY_RETURN_LINE),
+    ...hitAt,
+    source: {
+      line: hitAt.source.line + (frame.builtLineOffset ?? 0),
+      column: frame.column ?? hitAt.source.column,
+    },
     pages: { fixture: 'get-server-side-props-before-await', prepend: true },
   })
-  await waitUntil(() => state().state === 'paused-server', 'the library pause')
+  await waitUntil(
+    () => state().state === 'paused-server' || Boolean(state().error),
+    'the library pause',
+  )
+  // A refused pause names its cause at once instead of timing out.
+  if (state().error)
+    throw new Error(
+      `The library pause failed: ${JSON.stringify(state().error)}`,
+    )
   harness.setDocumentReadyState('complete')
   await service.continue(state().participants.server!.continueArguments!)
   await waitUntil(() => state().state === 'completed', 'the completed run')

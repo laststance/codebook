@@ -177,7 +177,7 @@ export function createBundleVerifier(input: BundleSource) {
         !isSameOriginal(mapping.originalSource, originalPath)
       )
     },
-    /** Confirms exact source and generated coordinates for the guarded paused inspector. @example verifier.verify(js, tsx, location, 'script-1', 19, 5) */
+    /** Confirms exact source and generated coordinates for the guarded paused inspector; `lineOnly` (a library stop, whose eval map is line-granular so js-debug's columns are not stable) compares the original line and not the column. @example verifier.verify(js, tsx, location, 'script-1', 19, 5) @example verifier.verify(js, built, location, 'script-1', 63, 4, { lineOnly: true }) */
     verify(
       executed: string,
       local: string,
@@ -185,6 +185,7 @@ export function createBundleVerifier(input: BundleSource) {
       scriptId: string,
       frameLine: number,
       frameColumn: number,
+      options: { lineOnly?: boolean } = {},
     ) {
       if (sha256(executed) !== hashes.javascript)
         throw new Error('Executed JavaScript differs from frozen module')
@@ -200,7 +201,13 @@ export function createBundleVerifier(input: BundleSource) {
         )
       )
         throw new Error('Generated position is outside executed source')
-      if (!isSourcePosition(bundle.source, frameLine - 1, frameColumn - 1))
+      if (
+        !isSourcePosition(
+          bundle.source,
+          frameLine - 1,
+          options.lineOnly ? 0 : frameColumn - 1,
+        )
+      )
         throw new Error('DAP position is outside original source')
       const mapping = sourceMap.findEntry(
         location.lineNumber,
@@ -210,7 +217,7 @@ export function createBundleVerifier(input: BundleSource) {
         !('originalSource' in mapping) ||
         canonicalSource(mapping.originalSource) !== originalPath ||
         mapping.originalLine + 1 !== frameLine ||
-        mapping.originalColumn + 1 !== frameColumn
+        (!options.lineOnly && mapping.originalColumn + 1 !== frameColumn)
       )
         throw new Error(
           'Generated location does not match exact DAP source position',

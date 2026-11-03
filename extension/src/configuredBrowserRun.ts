@@ -167,6 +167,7 @@ import {
   assertDevelopmentWorkspace,
   type DevelopmentLockIdentity,
 } from './utils/assertDevelopmentWorkspace'
+import { assertFrameAtBoundPosition } from './utils/assertFrameAtBoundPosition'
 import { assertSavedSessionOrigin } from './utils/assertSavedSessionOrigin'
 import { refuseViteMisroute } from './utils/assessViteWorkspace'
 import { boundColumnOfInstance } from './utils/boundColumnOfInstance'
@@ -224,7 +225,6 @@ import {
 } from './utils/inspectConfiguredValues'
 import { isBlankOrCommentLine } from './utils/isBlankOrCommentLine'
 import { isBrowserOnEntryRoute } from './utils/isBrowserOnEntryRoute'
-import { isFrameAtPosition } from './utils/isFrameAtPosition'
 import type { GeneratedPosition } from './utils/isGeneratedPositionBefore'
 import { isHotUpdateScriptUrl } from './utils/isHotUpdateScriptUrl'
 import { isModuleEntryPause } from './utils/isModuleEntryPause'
@@ -10149,6 +10149,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         declaredLine: stop.source.line,
         bound: stop.bound,
         acceptsBoundLine: stop.acceptsBoundLine,
+        // A library stop's built file has a line-granular map: its columns are not stable.
+        lineOnly: Boolean(stop.library),
       })
     )
       throw new Error(
@@ -10930,10 +10932,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       callFrame = stopped.event.callFrames[0]!,
       position = stop.source
     // The paused frame must be the position the debugger bound, which may differ from the requested column and, by the stop's rule, from the declared line.
-    if (!isFrameAtPosition(frame, stop.bundle.sourcePath, stop.bound))
-      throw new Error(
-        'DAP frame differs from the bound configured source position',
-      )
+    // A library stop pauses in a built file whose eval map is line-granular, so only file and line are compared; the generated-position checks below stay exact.
+    assertFrameAtBoundPosition(
+      frame,
+      stop.bundle.sourcePath,
+      stop.bound,
+      Boolean(stop.library),
+    )
     await this.verifySources()
     current()
     const executed = await participant.cdp!.request(
@@ -10950,6 +10955,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       executedModule.script!.scriptId,
       frame.line,
       frame.column,
+      { lineOnly: Boolean(stop.library) },
     )
     // The refused-getter list only words a failure message; the snapshot (and the study it saves into) keeps values and unavailability alone.
     const { sideEffectRefused = [], ...facts } = await inspectConfiguredValues(
