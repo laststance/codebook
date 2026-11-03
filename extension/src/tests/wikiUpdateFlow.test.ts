@@ -4568,6 +4568,36 @@ test('the watch of a VS Code update is the same status bar entry, and no notific
   }
 })
 
+/**
+ * Describes what one update window showed, for the message of a failed assertion.
+ *
+ * Why: this test once failed with empty status bar texts and nothing else to read. A recurrence must name which refusal, failed or unanswered start ended the run, so the message carries every record that tells.
+ * Value card: protects=a recurrence of the empty status bar names which refusal, failed or unanswered start ended the run; fails_when=a failure prints only the two arrays; no_claim=a cause, only the records that name it.
+ * Called by the status bar assertions of the outside-the-project update test.
+ *
+ * @param window - The window the update ran in (it may be closed already; its records stay).
+ * @param running - The window's update status, read before it closed.
+ * @returns One line of JSON with the notices, warnings, errors, marker changes, status, executed commands and confirmations.
+ * @example
+ * describeWindowForFailure(window, status) // => '{"notices":[],"warnings":[],…}'
+ */
+function describeWindowForFailure(
+  window: Awaited<ReturnType<typeof openWikiUpdateWindow>>,
+  running: ReturnType<
+    Awaited<ReturnType<typeof openWikiUpdateWindow>>['status']
+  >,
+): string {
+  return JSON.stringify({
+    notices: window.notices,
+    warnings: window.warnings,
+    errors: window.errors,
+    markerChanges: window.markerChanges,
+    running,
+    executedCommands: window.executedCommands,
+    confirmations: window.confirmations,
+  })
+}
+
 // Value: protects=the learner whose Wiki lies outside the project, where the chat asks to approve each step: the confirmation says why before the press, and the watch must not cover those approvals; fails_when=the confirmation loses the note, or such an update is watched with a notification again, or with an entry of its own words; why_new=Cycle 0045 (the note), Cycle 0046 row 336 (the title without it), row 592 (the watch in the status bar); seam=none
 test('the confirmation of an update whose output lies outside the project says the chat will ask to approve each step there, and its watch is the same status bar entry, with no notification', async () => {
   // Arrange
@@ -4609,10 +4639,12 @@ test('the confirmation of an update whose output lies outside the project says t
       assert.deepEqual(
         [window.statusBarTexts, window.progressTitles],
         [['$(sync~spin) Watching for the LLM Wiki · Stop watching'], []],
+        `The status bar entry or the progress titles differ. The ${window === fromTheLink ? 'fromTheLink' : 'fromTheCommand'} window showed: ${describeWindowForFailure(window, running)}`,
       )
       assert.equal(
         running.state === 'running' ? running.isOutputOutsideProject : false,
         true,
+        `The run was not an output outside the project. The ${window === fromTheLink ? 'fromTheLink' : 'fromTheCommand'} window showed: ${describeWindowForFailure(window, running)}`,
       )
     }
     assert.deepEqual(fromTheCommand.confirmations, [])
