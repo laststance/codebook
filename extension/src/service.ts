@@ -3471,7 +3471,7 @@ export class StudyService {
    * A run's timer and event failures (a Vite reload after the click, a Vite or Next setup deadline, a Fast Refresh of a sealed Next module) lead with their refusal code, so the agent reads the stable code, its recovery and help anchor and not only a text prefix ({@link refusalFailureOf}). Called by {@link StudyService.state}.
    *
    * @param runtimeFailure - The runtime's first failure text, sanitized.
-   * @returns The refusal for a failure led by its code, with the static recovery its variant selects (a `NEXT_SETUP_DEADLINE` step); any other failure as `RUNTIME_FAILED` with the text as its cause.
+   * @returns The refusal for a failure led by its code, with the static recovery its variant selects (a `NEXT_SETUP_DEADLINE` step) and the details it carries (a `NEXT_ENTRY_REDIRECTED` of a Pages entry: `router` and `sideEffects`); any other failure as `RUNTIME_FAILED` with the text as its cause.
    * @example
    * this.runtimeFailureError('VITE_PAGE_RELOADED: The page reloaded …').code // => 'VITE_PAGE_RELOADED'
    * this.runtimeFailureError('NEXT_SETUP_DEADLINE(router-absent): Repository setup deadline (90 s) exceeded …').describe().recovery // => 'Tell the learner the page at entryPath is not a Next Pages page: …'
@@ -3508,12 +3508,15 @@ export class StudyService {
       runUri,
     )
     if (operationError) return operationError
+    // A Pages entry redirect keeps the Pages fields its failure text carried.
     if (refusal)
       return new StudyError(
         refusal.code,
         refusal.message,
         refusal.message,
         refusal.recoveryOverride,
+        undefined,
+        refusal.pagesDetails,
       )
     return new StudyError(
       'RUNTIME_FAILED',
@@ -5004,7 +5007,7 @@ export class StudyService {
         ? undefined
         : refusalFailureOf(runtimeFailure)
     if (refusal && !(error instanceof StudyError))
-      // A sign-in refusal carries the reason and the profile the run used, and the two entry-load failures carry their stop and route fields; every other refusal keeps its words and recovery as before.
+      // A sign-in refusal carries the reason and the profile the run used, and the two entry-load failures carry their stop and route fields; every other refusal keeps its words and recovery as before, and a Pages entry redirect its Pages fields.
       return refusal.code === 'SIGN_IN_REQUIRED' ||
         refusal.code === 'SERVER_STOP_NOT_REACHED' ||
         refusal.code === 'ENTRY_LOAD_TIMEOUT'
@@ -5023,6 +5026,8 @@ export class StudyService {
             refusal.message,
             refusal.message,
             refusal.recoveryOverride,
+            undefined,
+            refusal.pagesDetails,
           )
     // A saved-session refusal of the run's start gets the fields that decide a retry (DX-5).
     if (error instanceof StudyError)

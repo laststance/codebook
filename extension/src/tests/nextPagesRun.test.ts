@@ -563,6 +563,29 @@ test('a Pages page that ended on another path once it loaded is refused as redir
   )
 })
 
+// Value: protects=a Pages page that ended on another path once it loaded carries details router pages and sideEffects unknown, since Codebook's readiness request already ran its data function and the static recovery alone says one new start; fails_when=the refusal carries no details, so the agent starts again without asking the learner; no_claim=the wording of the message (the test above)
+test('a Pages page that ended on another path once it loaded is refused with router pages and sideEffects unknown', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    nextPages: {
+      pageStates: [
+        {
+          pathname: '/login',
+          routerSeen: true,
+          isReady: true,
+          route: '/login',
+        },
+      ],
+    },
+  })
+  // Act
+  const failure = await preparationFailure(harness)
+  // Assert
+  assert.ok(failure instanceof StudyError, String(failure))
+  assert.equal(failure.code, 'NEXT_ENTRY_REDIRECTED')
+  assert.deepEqual(failure.details, PAGES_DETAILS_AFTER_READINESS)
+})
+
 // Value: protects=a client redirect that lands before the before conditions hold ends with NEXT_ENTRY_REDIRECTED and its recovery; fails_when=the before wait's timeout is reported as a missing condition, so the agent hunts for a selector instead of the redirect; why_new=Codex structured review P2, /ship round 3 (Cycle 0065); seam=pageStates stands in for the redirected page, failBeforeWith for its DOM without the before element; no_claim=the timing of a real router.push
 test('a Pages page that redirects before its before conditions hold is refused as redirected, not as a condition timeout', async (context) => {
   // Arrange
@@ -628,6 +651,24 @@ test('a Pages page whose router reports another route than the resolved one is r
     failure.message,
     /reports the Pages route \/\[slug\], not \/, the route the entry path resolved to/,
   )
+})
+
+// Value: protects=a Pages page whose router reports another route than the resolved one carries details router pages and sideEffects unknown; fails_when=the route-mismatch refusal carries no details; no_claim=the wording of the message (the test above)
+test('a Pages page whose router reports another route than the resolved one is refused with router pages and sideEffects unknown', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    nextPages: {
+      pageStates: [
+        { pathname: '/', routerSeen: true, isReady: true, route: '/[slug]' },
+      ],
+    },
+  })
+  // Act
+  const failure = await preparationFailure(harness)
+  // Assert
+  assert.ok(failure instanceof StudyError, String(failure))
+  assert.equal(failure.code, 'NEXT_ENTRY_REDIRECTED')
+  assert.deepEqual(failure.details, PAGES_DETAILS_AFTER_READINESS)
 })
 
 // Value: protects=the click step scrolls the click target into view once, right before it reads the click point, and the preparation's condition reads never scroll; fails_when=the scroll runs inside a condition read, runs again for every read, or comes after the point was read; why_new=Cycle 0066 task 13 (the scroll leaves the read-only DOM expression); seam=the harness records every expression the run evaluates in the page; no_claim=a real page's scroll (configuredAdapter tests evaluate the expressions)

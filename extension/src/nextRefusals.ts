@@ -76,6 +76,15 @@ export const PAGES_STOP_REFUSAL_DETAILS = {
 } as const
 
 /**
+ * The variant a Pages run's `NEXT_ENTRY_REDIRECTED` failure text carries (`NEXT_ENTRY_REDIRECTED(pages): …`), so the fields of {@link PAGES_STOP_REFUSAL_DETAILS} survive the text a timer or an event records.
+ * Written by {@link ConfiguredBrowserRun} when it records a redirect of a Pages entry (the entry load left the entry path, or the page left it before the click), and read by {@link refusalFailureOf} when it restores the text.
+ */
+export const NEXT_PAGES_FAILURE_VARIANT = 'pages'
+
+/** The type of {@link NEXT_PAGES_FAILURE_VARIANT}, which {@link formatRefusalFailure} accepts for `NEXT_ENTRY_REDIRECTED`. */
+export type NextPagesFailureVariant = typeof NEXT_PAGES_FAILURE_VARIANT
+
+/**
  * The recovery of a Next run whose readiness request failed after it was sent (it timed out, was stopped or lost its connection): the request runs the entry page's server code, so what it changed is not known.
  * It names fields, never values: it is passed as the {@link StudyError} recovery override, which reaches MCP without the sanitizer.
  */

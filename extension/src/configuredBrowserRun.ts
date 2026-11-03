@@ -85,6 +85,7 @@ import {
   type ErrorCode,
 } from './errors'
 import {
+  NEXT_PAGES_FAILURE_VARIANT,
   nextRefusal,
   PAGES_STOP_REFUSAL_DETAILS,
   READINESS_FAILURE_RECOVERY,
@@ -1561,7 +1562,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Adds `router: "pages"` and `sideEffects: "unknown"` to a refusal of the Pages entry (a redirect, a missing or uncompiled page, a 5xx answer) that came after the readiness request ran the page's data function, so an agent decides another start by the learner, not by itself.
-   * Called by {@link resolvePagesCapableRoute} for what {@link resolveNextPagesEntry} threw.
+   * Called by {@link resolvePagesCapableRoute} for what {@link resolveNextPagesEntry} threw and for its own refusal of a Pages entry behind sign-in.
    * @param error - What the entry resolution threw.
    * @returns The refusal with the details when the request was sent and the refusal carries none; `error` otherwise.
    * @example throw this.pagesRefusalAfterReadiness(nextRefusal('NEXT_ROUTE_NOT_COMPILED', '…')) // details { router: 'pages', sideEffects: 'unknown' }
@@ -1842,7 +1843,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Gives the view's words for a server render in progress: the entry-render pause held now, or the wait for the next stop of a set after a continue (task 3a).
+   * Gives the view's words for a server render in progress: the entry-render pause held now (an `unconfirmed` one of the entry load included), or the wait for the next stop of a set after a continue (task 3a).
    * Called by {@link view}.
    * @returns `{ renderMessage }` when there is something to say, else an empty object.
    * @example this.renderMessageView() // { renderMessage: 'Waiting for the next stop of this render (2 of 2).' }
@@ -1864,9 +1865,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         )
       : []
     const renderMessage = describeRenderRunMessage({
+      // An entry-render pause has no operation: labelled entry-load, or unconfirmed when its page could not be proven.
       isEntryRenderPaused:
         held?.execution === 'server-render' &&
-        held.attribution === 'entry-load',
+        (held.attribution === 'entry-load' ||
+          (held.attribution === 'unconfirmed' &&
+            held.operationIndex === undefined)),
       ...(held && this.unconfirmedReasonBySnapshot.has(held.id)
         ? { unconfirmedReason: this.unconfirmedReasonBySnapshot.get(held.id) }
         : {}),
@@ -2739,7 +2743,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Disarms a Pages server stop whose resumed hits reached {@link PAGES_STOP_RESUMED_HIT_LIMIT} and ends the run `SERVER_STOP_NOT_REACHED`, with the counts of what was resumed.
+   * Disarms a Pages server stop whose resumed hits reached {@link PAGES_STOP_RESUMED_HIT_LIMIT} and ends the run `SERVER_STOP_NOT_REACHED`, naming that stop with the counts of what was resumed and the hit-limit wording, which claims no time.
    * Why it exists: a helper that every request or the page's render calls many times would otherwise pause and resume without end; 500 resumed hits and no data-function hit say the line is not on the entry page's data path for this request. Called by {@link resumeClassifiedHit} after the resume that reached the limit.
    * @param stop - The Pages server stop.
    * @example await this.endPagesStopAtResumedHitLimit(stop)
@@ -2751,10 +2755,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     await stop.breakpoint
       ?.retire(this.participants.server.selected!, this.abort.signal)
       .catch(() => undefined)
+    // The stop that reached the limit is named, not the first unpaused stop of its set: a hit of another member can take the set's expected place meanwhile.
     this.fail(
       afterOperationOf(stop) === 0
-        ? this.entryRenderNotReachedText('not-hit')
-        : this.afterOperationNotReachedText(stop),
+        ? this.entryRenderNotReachedText('hit-limit', stop)
+        : this.afterOperationNotReachedText(stop, 'hit-limit'),
     )
   }
 
@@ -2777,10 +2782,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Words and records the failure of a render stop that was not hit within the active bound after its operation or the last continue: `SERVER_STOP_NOT_REACHED` with phase `after-operation`.
    * Inputs were sent, so the failure says so (`sent`, `sideEffects` unknown) and the chat never starts again unasked.
    * @param stop - The stop that was not reached.
+   * @param how - `not-hit` when the active bound expired; `hit-limit` when the resumed hits of a Pages stop reached {@link PAGES_STOP_RESUMED_HIT_LIMIT} ({@link endPagesStopAtResumedHitLimit}).
    * @returns The coded failure text.
    * @example this.afterOperationNotReachedText(stop) // 'SERVER_STOP_NOT_REACHED: Declared stop app/lib/data.ts:154 was not reached within 20 s after operation 1. It may have run only while …'
    */
-  private afterOperationNotReachedText(stop: PreparedStop): string {
+  private afterOperationNotReachedText(
+    stop: PreparedStop,
+    how: 'not-hit' | 'hit-limit' = 'not-hit',
+  ): string {
     const operationIndex = afterOperationOf(stop)!,
       isOfGroup = (other: PreparedStop): boolean =>
         other.participant === 'server' &&
@@ -2813,7 +2822,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         ? pagesNotReachedMessage({
             place,
             phase: 'after-operation',
-            how: 'not-hit',
+            how,
             operationIndex,
             seconds: ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND,
             resumedHits: this.pagesLedger.resumedHitsOf(place),
@@ -2970,17 +2979,21 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Words and records the failure of an entry-render stop that was not reached: the page loaded without it, or it was not hit within the active bound.
+   * Words and records the failure of an entry-render stop that was not reached: the page loaded without it, it was not hit within the active bound, or its resumed hits reached the limit.
    * Records the failure fields the run resource and the error carry (`SERVER_STOP_NOT_REACHED`, phase `entry-render`; no input was sent, so no side effects).
-   * @param how - `load-first` when the page finished loading before the stop was hit; `not-hit` when the bound expired first.
+   * @param how - `load-first` when the page finished loading before the stop was hit; `not-hit` when the bound expired first; `hit-limit` when the resumed hits of a Pages stop reached {@link PAGES_STOP_RESUMED_HIT_LIMIT}.
+   * @param limitedStop - The Pages stop whose resumed hits reached the limit ({@link endPagesStopAtResumedHitLimit}); without it the first entry-render stop not yet paused is named.
    * @returns The coded failure text.
    * @example this.entryRenderNotReachedText('load-first') // 'SERVER_STOP_NOT_REACHED: The page finished without reaching declared stop app/lib/data.ts:91. …'
    */
-  private entryRenderNotReachedText(how: 'load-first' | 'not-hit'): string {
+  private entryRenderNotReachedText(
+    how: 'load-first' | 'not-hit' | 'hit-limit',
+    limitedStop?: PreparedStop,
+  ): string {
     const remaining = this.stops
         .slice(this.stopIndex)
         .filter((stop) => afterOperationOf(stop) === 0),
-      stop = remaining[0] ?? this.stops[this.stopIndex]!,
+      stop = limitedStop ?? remaining[0] ?? this.stops[this.stopIndex]!,
       place = this.declaredAt(stop),
       isPages = this.isPagesServerStop(stop)
     this.operationFailure ??= {
@@ -3506,6 +3519,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Fails the run with `NEXT_ENTRY_REDIRECTED` when the main frame committed a document of another path than the entry path while the entry load is under way, so a `redirect()` of the entry render ends as the redirect it is, whatever stop a shared layout of the target holds.
+   * In a Pages run the text carries the `pages` variant, so the error keeps `details.router` `pages` and `details.sideEffects` `unknown`: the readiness request, and possibly the entry request, already ran the page's data function.
    * Called by {@link onPageNavigated} for a run in the entry-load phase, after the sign-in landing was judged.
    * @param url - The URL the main frame committed.
    * @returns `true` when the run failed now.
@@ -3515,11 +3529,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const entryPath = this.definition.configuration.entryPath ?? '/'
     const left = pathnameLeftFromEntry(url, entryPath)
     if (left === undefined) return false
+    const message = nextEntryLeftMessage(entryPath, left, 'after-load')
+    // A Pages redirect keeps the Pages fields through the failure text; an App Router run keeps its plain text.
     this.fail(
-      formatRefusalFailure(
-        'NEXT_ENTRY_REDIRECTED',
-        nextEntryLeftMessage(entryPath, left, 'after-load'),
-      ),
+      this.pagesRun
+        ? formatRefusalFailure(
+            'NEXT_ENTRY_REDIRECTED',
+            message,
+            NEXT_PAGES_FAILURE_VARIANT,
+          )
+        : formatRefusalFailure('NEXT_ENTRY_REDIRECTED', message),
     )
     return true
   }
@@ -3788,10 +3807,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       return
     }
     // Only an App route is supported behind sign-in; the warm load opened a browser, so the Pages refusal's words do not fit.
+    // That request already ran the page's server code, so the refusal carries the Pages fields as every refusal of the Pages entry does.
     if (entry.redirectsToSignIn !== undefined)
-      throw nextRefusal(
-        'NEXT_ENTRY_REDIRECTED',
-        `Codebook's own request for the entry path ${redactNextEntryPath(entryPath)}, which carries no saved session, was redirected to the sign-in path ${entry.redirectsToSignIn}, and the route manifests do not resolve the entry path as an App Router page; a Pages Router page behind sign-in is not supported in this version, so the run stopped before it sent anything.`,
+      throw this.pagesRefusalAfterReadiness(
+        nextRefusal(
+          'NEXT_ENTRY_REDIRECTED',
+          `Codebook's own request for the entry path ${redactNextEntryPath(entryPath)}, which carries no saved session, was redirected to the sign-in path ${entry.redirectsToSignIn}, and the route manifests do not resolve the entry path as an App Router page; a Pages Router page behind sign-in is not supported in this version, so the run stopped before it sent anything.`,
+        ),
       )
     const nextVersion = (await readNextInstallation(workspace)).version
     this.nextVersion = nextVersion
@@ -3962,7 +3984,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Checks a Pages page after it loaded and before any input: it is still at its entry path, its Next router becomes ready within the setup budget, and the router's route is the one the entry path resolved to.
    * Called by {@link prepareOwned} after the before conditions held. A redirect in the page, a rewrite, middleware or a client redirect ends the run before any input.
    * @param pagesRun - The resolved Pages route.
-   * @throws `NEXT_ENTRY_REDIRECTED` for another path or route; `NEXT_SETUP_DEADLINE` when the router is not ready within the budget.
+   * @throws `NEXT_ENTRY_REDIRECTED` for another path or route, with {@link PAGES_STOP_REFUSAL_DETAILS}; `NEXT_SETUP_DEADLINE` when the router is not ready within the budget.
    * @example
    * await this.confirmPagesEntryAfterLoad(this.pagesRun)
    */
@@ -3981,6 +4003,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       throw nextRefusal(
         'NEXT_ENTRY_REDIRECTED',
         `The page at the entry path ${redactNextEntryPath(this.definition.configuration.entryPath ?? '/')} reports the Pages route ${ready.route === undefined ? '(none)' : redactNextEntryPath(ready.route)}, not ${redactNextEntryPath(pagesRun.route)}, the route the entry path resolved to: a rewrite, middleware or a client redirect served another page, so Codebook sent no input or click; the browser Codebook opened is closed with the run.`,
+        { details: PAGES_STOP_REFUSAL_DETAILS },
       )
     this.evidence.record('next.router-ready', { route: pagesRun.route })
   }
@@ -4019,7 +4042,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Called by {@link confirmPagesEntryAfterLoad}, {@link refusePagesPathLeft} and {@link refusePagesPathLeftAfterWait}.
    * @param state - What the page reported.
    * @param moment - When it was read, for the message.
-   * @throws `NEXT_ENTRY_REDIRECTED` naming both paths, redacted.
+   * @throws `NEXT_ENTRY_REDIRECTED` naming both paths, redacted, with {@link PAGES_STOP_REFUSAL_DETAILS}: the readiness request already ran the page's data function.
    * @example
    * this.refuseLeftEntryPath({ pathname: '/login', routerSeen: true, isReady: true, route: '/login' }, 'after-load') // throws
    */
@@ -4032,6 +4055,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       throw nextRefusal(
         'NEXT_ENTRY_REDIRECTED',
         nextEntryLeftMessage(entryPath, state.pathname, moment),
+        { details: PAGES_STOP_REFUSAL_DETAILS },
       )
   }
 
@@ -8634,7 +8658,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Reads a Pages page's pathname right before the click and, when it left the entry path, fails the run with the coded `NEXT_ENTRY_REDIRECTED` text instead of clicking.
-   * Called by {@link dispatchInput}, whose failures reach the run as plain text, so the code is written into the failure here ({@link formatRefusalFailure}).
+   * Called by {@link dispatchInput}, whose failures reach the run as plain text, so the code and the `pages` variant, which keeps the Pages fields, are written into the failure here ({@link formatRefusalFailure}).
    * @returns `true` when the run was failed and no click may be sent; `false` when the page is still at its entry path.
    * @throws Any other failure of the read.
    * @example
@@ -8654,7 +8678,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         error.code !== 'NEXT_ENTRY_REDIRECTED'
       )
         throw error
-      this.fail(formatRefusalFailure('NEXT_ENTRY_REDIRECTED', error.message))
+      this.fail(
+        formatRefusalFailure(
+          'NEXT_ENTRY_REDIRECTED',
+          error.message,
+          NEXT_PAGES_FAILURE_VARIANT,
+        ),
+      )
       return true
     }
   }

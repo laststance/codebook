@@ -16,6 +16,7 @@ const runErrorSchema = z.object({
     message: z.string(),
     cause: z.string(),
     recovery: z.string(),
+    details: z.record(z.string(), z.unknown()).optional(),
   }),
 })
 
@@ -176,6 +177,36 @@ test('a sealed module replaced during a Pages preparation shows SOURCE_CHANGED i
     cause: message,
     recovery: ERROR_RECOVERY.SOURCE_CHANGED,
   })
+})
+
+// Value: protects=a Pages run that ended on a redirect after its readiness request reaches the agent with details router pages and sideEffects unknown whether the runtime failed after its preparation or while it prepared; fails_when=the run resource's error carries no details for the pages variant, or carries them for the same text without it; no_claim=the run raising the text (nextPagesServerRun tests)
+test('a Pages entry redirect recorded as a failure text shows router pages and sideEffects unknown in the run resource, and the same text without the variant shows none', async (context) => {
+  // Arrange
+  const message = 'The page left the entry path / for /login.'
+  // Act
+  const afterPreparation = await runResourceErrorAfterRuntimeFailure(
+    context,
+    formatRefusalFailure('NEXT_ENTRY_REDIRECTED', message, 'pages'),
+  )
+  const duringPreparation = await runResourceErrorAfterPreparationFailure(
+    context,
+    formatRefusalFailure('NEXT_ENTRY_REDIRECTED', message, 'pages'),
+  )
+  const withoutVariant = await runResourceErrorAfterRuntimeFailure(
+    context,
+    formatRefusalFailure('NEXT_ENTRY_REDIRECTED', message),
+  )
+  // Assert
+  const pagesError = {
+    code: 'NEXT_ENTRY_REDIRECTED',
+    message,
+    cause: message,
+    recovery: ERROR_RECOVERY.NEXT_ENTRY_REDIRECTED,
+    details: { router: 'pages', sideEffects: 'unknown' },
+  }
+  assert.deepEqual(afterPreparation, pagesError)
+  assert.deepEqual(duringPreparation, pagesError)
+  assert.equal(withoutVariant.details, undefined)
 })
 
 // Value: protects=a secret in a Next refusal's message never reaches its recovery, which is static and passes no sanitizer; records that the service's sanitizedError masks no key=value or query token, so the message's producer must redact them; fails_when=the recovery carries a value from the message, or the sanitizer's handling of these tokens changes unnoticed; why_new=Cycle 0065 secrets requirement (Issue 166); seam=environment.createRuntime and runtime.prepare

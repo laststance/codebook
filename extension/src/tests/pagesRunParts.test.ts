@@ -226,6 +226,40 @@ test('the Pages not-reached message names the outside sentence only for other-ro
   assert.doesNotMatch(plain, /module scope|use cache|cached/)
 })
 
+// Value: protects=the 500-hit end of a Pages stop has its own wording in both phases: Codebook stopped waiting after it resumed that many hits of the line and took none inside the entry page's data function, with no claim about seconds (the run can end seconds after arming); fails_when=the hit-limit end reuses the "within 20 s of the entry navigation" or "within 20 s after it" wording, or drops the count; no_claim=the run that reaches the limit (nextPagesServerRun tests)
+test('the Pages not-reached message of a stop that reached the resumed-hit limit says Codebook stopped waiting, without a seconds claim', () => {
+  // Arrange
+  const resumedHits = [
+    { reason: 'outside-data-function' as const, count: 498 },
+    { reason: 'unattributed-resumed' as const, count: 2 },
+  ]
+  // Act
+  const entryRender = pagesNotReachedMessage({
+    place: 'src/lib/stats.ts:3',
+    phase: 'entry-render',
+    how: 'hit-limit',
+    seconds: 20,
+    resumedHits,
+  })
+  const afterOperation = pagesNotReachedMessage({
+    place: 'src/lib/stats.ts:3',
+    phase: 'after-operation',
+    how: 'hit-limit',
+    operationIndex: 2,
+    seconds: 20,
+    resumedHits,
+  })
+  // Assert
+  assert.equal(
+    entryRender,
+    "Codebook stopped waiting for declared stop src/lib/stats.ts:3 after it resumed 500 hits of the line during the entry load, the limit, and took none of them as a hit inside the entry page's data function (getServerSideProps or getStaticProps). Codebook resumed 498 hit(s) of this line (498 outside every data function): the line may have run outside the entry page's data function. Declare the stop on a line the data function runs for that request or in code it calls, or declare a browser stop for code the page component runs, then start a new run.",
+  )
+  assert.equal(
+    afterOperation,
+    "Codebook stopped waiting for declared stop src/lib/stats.ts:3 after it resumed 500 hits of the line after operation 2, the limit, and took none of them as a hit inside the entry page's data function (getServerSideProps or getStaticProps). Codebook resumed 498 hit(s) of this line (498 outside every data function): the line may have run outside the entry page's data function. Declare the stop on a line the data function runs for that request or in code it calls, or declare a browser stop for code the page component runs, then start a new run.",
+  )
+})
+
 // Value: protects=the Pages server script address: only the (pages-dir-node) layer is a Pages server render, and the execution label of a pause reads server-render for it as for (rsc) and server-action for another server layer; fails_when=an App Router or browser layer reads as a Pages server script, or a Pages module is labelled a server action; no_claim=a script without an address
 test('only the pages-dir-node layer is a Pages server script and it is labelled a server render', () => {
   // Arrange

@@ -426,6 +426,33 @@ test('in a Next project with a Pages folder, a saved run whose entry behind sign
   assert.deepEqual(harness.inputRequests, [])
 })
 
+// Value: protects=a saved run whose Pages entry redirected to the sign-in path carries details router pages and sideEffects unknown, since Codebook's own entry request already ran the page's data function; fails_when=the refusal carries no details, so the agent starts again without asking the learner; no_claim=the message wording (the test above)
+test('a saved run whose Pages entry behind sign-in is refused carries router pages and sideEffects unknown', async (context) => {
+  // Arrange
+  const harness = await signInHarness(context, {
+    savedSession: { admission: 'saved' },
+    entryAnswer: REDIRECT_TO_LOGIN,
+    nextPages: {
+      manifests: {
+        settings: {},
+        kind: 'pages',
+        route: '/dashboard/invoices',
+        compiledPath: 'pages/dashboard/invoices.js',
+      },
+    },
+  })
+  // Act
+  const error = await harness.run.prepare().catch((failure: unknown) => failure)
+  // Assert
+  assert.ok(error instanceof StudyError)
+  assert.equal(error.code, 'NEXT_ENTRY_REDIRECTED')
+  // Copied into this realm's object, as plain() does elsewhere; a refusal without details copies to {}.
+  assert.deepEqual(
+    { ...error.details },
+    { router: 'pages', sideEffects: 'unknown' },
+  )
+})
+
 // Value: protects=OCR 17: a run that declared session fresh and lands on the sign-in page is told to drop the declaration, reads no-saved-session (as the help defines it, also when the store found an unfinished setup), and raises no Set Up notice, so the learner is not sent through a setup the next run would not use; fails_when=the message says the repository has no saved session or names an unfinished setup, or the editor notice is raised; no_claim=the store's own admission (signInProfile tests)
 test('a run that declared session fresh and lands on the sign-in page is told to remove session fresh and raises no setup notice', async (context) => {
   // Arrange

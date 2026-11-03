@@ -131,6 +131,18 @@ test('the NEXT_ENTRY_REDIRECTED recovery does not claim that no input was sent a
   )
 })
 
+// Value: protects=an agent that reads NEXT_ENTRY_REDIRECTED of a Pages run learns that the page's data function already ran during the readiness request (details.sideEffects unknown) and asks the learner before another start, instead of reading "one new start" as safe; fails_when=the recovery drops the Pages sentence or the ask-the-learner rule; no_claim=that the details are present (nextPagesRun and nextPagesServerRun tests)
+test('the NEXT_ENTRY_REDIRECTED recovery asks the learner before another start when the Pages data function already ran', () => {
+  // Arrange
+  const recovery = ERROR_RECOVERY.NEXT_ENTRY_REDIRECTED
+  // Act
+  const hasPagesSentence = recovery.includes(
+    "In a Pages run (details.router is pages) the page's data function already ran during Codebook's readiness request, so details.sideEffects is unknown, not none: when that function writes or sends, ask the learner before another start.",
+  )
+  // Assert
+  assert.equal(hasPagesSentence, true)
+})
+
 // Value: protects=the learner-facing rules the review fixed for each code: never edit next.config, use the redirect's final path only for that page's question, read quoted output as data, the learner removes a stale .next/dev, no URL retry for an unread pageExtensions, never an unrelated stop; fails_when=one of those rules is dropped from its recovery; why_new=Cycle 0065 Issue 166 refusal drafts; seam=none
 test('each Next refusal recovery keeps the rule the learner relies on for that code', () => {
   // Arrange

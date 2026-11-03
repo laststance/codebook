@@ -975,6 +975,12 @@ test('a hit that cannot be proven pauses unconfirmed with its reason and is neve
       scenario.name,
     )
     assert.match(view.renderMessage ?? '', /This pause is unconfirmed \(/)
+    // The unconfirmed entry-load pause still holds the entry page, so the chat is told how the load finishes.
+    assert.match(
+      view.renderMessage ?? '',
+      / The server render of the entry page is paused; the page finishes loading after you continue\. Stop it with codebook_stop if you do not continue\.$/,
+      scenario.name,
+    )
     assert.deepEqual(plain(view.dataFunctions), {}, scenario.name)
   }
 })
@@ -1163,7 +1169,7 @@ const dataFunctionOutcomes: DataFunctionOutcome[] = [
     name: 'a data function that returns redirect (the browser leaves the entry path)',
     pageEnds: (harness): void => harness.commitMainFrame('/login'),
     waitsForAfterConditions: false,
-    failure: /^NEXT_ENTRY_REDIRECTED: /,
+    failure: /^NEXT_ENTRY_REDIRECTED\(pages\): /,
   },
 ]
 
@@ -1204,6 +1210,32 @@ test("a data function that throws, returns notFound or redirects after the conti
       outcome.name,
     )
   }
+})
+
+// Value: protects=AC 21 redirect after the data function ran: a Pages data function that returns redirect after the learner continued (it ran for the readiness request and again for the entry request) ends the run NEXT_ENTRY_REDIRECTED with details router pages and sideEffects unknown and a recovery that asks the learner before another start; fails_when=the error carries no router or sideEffects, or the recovery says only one new start; no_claim=Next's real redirect response (the stand-in page commits another path)
+test('a data function that returns redirect after the continue ends NEXT_ENTRY_REDIRECTED with router pages and sideEffects unknown', async (context) => {
+  // Arrange
+  const { harness, state, service } = await pagesServerService(context)
+  await armedEntry(harness)
+  harness.server!.hit(
+    hitOnLine(PAGES_SERVER_RETURN_LINE, {
+      fixture: 'get-server-side-props-before-await',
+    }),
+  )
+  await waitUntil(() => state().state === 'paused-server', 'the entry pause')
+  await service.continue(state().participants.server!.continueArguments!)
+  // Act: the data function returned a redirect, so the browser commits another path
+  harness.commitMainFrame('/login')
+  await waitUntil(() => state().error, 'the failed run')
+  // Assert
+  const error = state().error!
+  assert.equal(error.code, 'NEXT_ENTRY_REDIRECTED')
+  // Copied into this realm's object, as plain() does elsewhere; an error without details copies to {}.
+  assert.deepEqual(
+    { ...error.details },
+    { router: 'pages', sideEffects: 'unknown' },
+  )
+  assert.match(error.recovery, /ask the learner before another start/)
 })
 
 // Value: protects=AC 21 second request: a second request that reaches the paused stop's line after the learner continued (it arrived while the first was paused) is resumed as breakpoint.repeat-hit and is not published as the paused stop's pause or as a second pause; fails_when=the second hit pauses the learner again, fails the run as an additional stop, or is left paused; no_claim=the real queueing of a second request behind a paused Node thread (the stand-in sends its hit after the continue)
@@ -1274,6 +1306,67 @@ test('a stop whose resumed hits reach 500 is disarmed and ends not reached with 
   assert.equal(
     journaled(harness, 'breakpoint.outside-data-function').length,
     100,
+  )
+})
+
+// Value: protects=AC 21 resumed-hit limit with two entry-render stops: when the second declared of two group-0 Pages stops reaches 500 resumed hits while a hit of the first is admitted (the first then takes the set's expected place), the failure names the stop that reached the limit in details.stop, its resumedHits and the message, worded as the hit-limit end without a seconds claim; fails_when=the failure names the first stop of the set with its own counts, or says "within 20 s of the entry navigation"; no_claim=the order of a real Node thread's hits (the stand-in sends the first stop's hit while the answer to the 500th resume is held)
+test('the second of two entry-render stops that reaches 500 resumed hits is the stop the failure names', async (context) => {
+  // Arrange
+  const harness = await pagesServerRun(context, {
+    sourcePath: 'src/lib/helper.ts',
+    // The second declared stop sits on the line before the first, which the first stop's binding never accepts.
+    additionalStops: [
+      {
+        line: 5,
+        column: 1,
+        inspections: [{ path: 'query', mode: 'value', required: true }],
+      },
+    ],
+    operations: {
+      operations: [],
+      stopOperations: [0, 0],
+      stopParticipants: ['server', 'server'],
+    },
+    inspectionScope: { count: 3, query: 'page=1' },
+  })
+  // Both registrations are verified on their lines, so a hit on one line is never taken for the other stop.
+  harness.server!.verifyRegistrationsOnLines([5, PAGES_SERVER_RETURN_LINE])
+  const prepared = harness.run.prepare().catch((error: unknown) => error)
+  await armedEntry(harness)
+  const secondStopOutsideHit = hitOnLine(5, {
+    fixture: 'get-server-side-props-after-await',
+    edit: withoutDataFunctionCall,
+  })
+  for (let hit = 1; hit < PAGES_STOP_RESUMED_HIT_LIMIT; hit++) {
+    harness.server!.hit(secondStopOutsideHit)
+    await resumesReceived(harness, hit)
+  }
+  // Act: the answer to the 500th resume is held while a hit of the first stop arrives
+  const releaseAnswer = harness.server!.holdNextContinueAnswer()
+  harness.server!.hit(secondStopOutsideHit)
+  await resumesReceived(harness, PAGES_STOP_RESUMED_HIT_LIMIT)
+  harness.server!.hit(
+    hitOnLine(PAGES_SERVER_RETURN_LINE, {
+      fixture: 'get-server-side-props-after-await',
+      edit: withoutDataFunctionCall,
+    }),
+  )
+  releaseAnswer()
+  await prepared
+  await waitUntil(
+    () => harness.run.view().failures.length > 0,
+    'the run failed',
+  )
+  // Assert
+  const view = harness.run.view()
+  const details = describeServerRenderFailureDetails(view.operationFailure!)
+  assert.equal(details.stop, 'src/lib/helper.ts:5')
+  assert.deepEqual(plain(details.resumedHits), [
+    { reason: 'outside-data-function', count: 500 },
+  ])
+  assert.equal(
+    view.failures[0],
+    "SERVER_STOP_NOT_REACHED: Codebook stopped waiting for declared stop src/lib/helper.ts:5 after it resumed 500 hits of the line during the entry load, the limit, and took none of them as a hit inside the entry page's data function (getServerSideProps or getStaticProps). Codebook resumed 500 hit(s) of this line (500 outside every data function): the line may have run outside the entry page's data function. Declare the stop on a line the data function runs for that request or in code it calls, or declare a browser stop for code the page component runs, then start a new run.",
   )
 })
 

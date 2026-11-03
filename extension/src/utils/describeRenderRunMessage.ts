@@ -1,6 +1,6 @@
 /** What the run knows about a render in progress, for {@link describeRenderRunMessage}. */
 export type RenderRunMessageInput = {
-  /** An entry-render pause is held now. */
+  /** An entry-render pause is held now: a server-render pause with no operation, `entry-load` or `unconfirmed`. */
   isEntryRenderPaused: boolean
   /** The run waits for the next stop of a set after a continue: the place of the awaited stop among the set's stops and the set's size. */
   waitingForNext?: { position: number; total: number }
