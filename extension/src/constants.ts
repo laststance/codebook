@@ -1954,6 +1954,8 @@ export const SOURCE_MAP_NAMED_SEGMENT_FIELDS = 5
 export const REPOSITORY_DISCOVERY_LIMIT_BYTES = 134_217_728
 export const REPOSITORY_DISCOVERY_CANDIDATE_LIMIT = 2_048
 export const REPOSITORY_DISCOVERY_TIMEOUT_MS = 30_000
+/** Bytes in one mebibyte, for help texts that state a byte limit in MiB. */
+export const BYTES_PER_MIB = 1_048_576
 /** The most build maps one library stop's discovery reads below the library folder ({@link freezeLibraryBuild}); more is refused as `library-build-unmapped` with cause `bound`. */
 export const LIBRARY_BUILD_MAP_LIMIT_COUNT = 2_000
 /** The most bytes of maps and built files one library stop's discovery reads in total ({@link freezeLibraryBuild}); the run's own {@link REPOSITORY_DISCOVERY_LIMIT_BYTES} applies besides. */

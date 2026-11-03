@@ -1,4 +1,9 @@
 import {
+  BYTES_PER_MIB,
+  LIBRARY_BUILD_DISCOVERY_TIMEOUT_MS,
+  LIBRARY_BUILD_ENTRY_LIMIT_COUNT,
+  LIBRARY_BUILD_MAP_LIMIT_COUNT,
+  LIBRARY_BUILD_TOTAL_LIMIT_BYTES,
   MILLISECONDS_PER_SECOND,
   NEXT_APP_SELECTION_RULE,
   NEXT_MANIFEST_POLL_MS,
@@ -11,7 +16,9 @@ import {
   NEXT_PAGES_SOURCE_EXTENSIONS,
   NEXT_SETUP_STEPS,
   NEXT_WEBPACK_COMPATIBILITY_SENTENCE,
+  REPOSITORY_DISCOVERY_TIMEOUT_MS,
   REPOSITORY_GIT_TIMEOUT_MS,
+  REPOSITORY_MAP_LIMIT_BYTES,
   REPOSITORY_SETUP_TIMEOUT_MS,
 } from './constants'
 import { ERROR_RECOVERY } from './errors'
@@ -227,9 +234,8 @@ const PACKAGE_ROOT_REFUSALS = {
   },
   'library-build-unmapped': {
     code: 'NEXT_STOP_NOT_SEALED',
-    meaning:
-      "A server stop lies in the checked-out source of a workspace library, but its build cannot be tied to that file; details.cause says why: no-map (no build map names the file), no-content (a map names it without the source text), no-line (no build mapping lies on the stop's line or within its citation after it), malformed (a map cannot be parsed), bound (more than 2000 maps) or deadline (the map search took more than 5 s). details.sideEffects is none: refused before anything started.",
-    fix: 'Tell the learner the cause. For no-map, no-content and malformed the learner can rebuild the library with source maps that include the source text; for no-line declare the stop on a line that runs; for bound and deadline this version cannot search that library. Codebook never builds. Do not retry with the same stop.',
+    meaning: `A server stop lies in the checked-out source of a workspace library, but its build cannot be tied to that file; details.cause says why: no-map (no build map names the file), no-content (a map names it without the source text), no-line (no build mapping lies on the stop's line or within its citation after it), malformed (a map cannot be parsed), bound (a limit was hit: more than ${LIBRARY_BUILD_MAP_LIMIT_COUNT} build maps, more than ${LIBRARY_BUILD_ENTRY_LIMIT_COUNT} entries in the build folders, a map larger than ${REPOSITORY_MAP_LIMIT_BYTES / BYTES_PER_MIB} MiB, more than ${LIBRARY_BUILD_TOTAL_LIMIT_BYTES / BYTES_PER_MIB} MiB read in total, or a search that did not finish) or deadline (the search ran out of time: the smaller of ${LIBRARY_BUILD_DISCOVERY_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s and what is left of the run's ${REPOSITORY_DISCOVERY_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s discovery time). details.sideEffects is none: refused before anything started.`,
+    fix: 'Tell the learner the cause. For no-map, no-content and malformed the learner can rebuild the library with source maps that include the source text; for no-line declare the stop on a line that runs; for bound and deadline this version cannot search that library, so a rebuild does not help. Codebook never builds. Do not retry with the same stop.',
   },
   'library-not-in-build': {
     code: 'NEXT_STOP_NOT_SEALED',
@@ -343,7 +349,7 @@ function nextPackageRootHelp() {
       'A nested run is saved as study format 9 (.study.v9.json) with packageRoot in its configuration, so the saved study names the app that ran; recorded sources and book citations stay repository-relative. A run without packageRoot (or with ".") keeps the format it takes today. Codebook 0.2.74.0 lists a format 9 study as saved by a newer Codebook; update Codebook to open it. Format 9 replays from recorded evidence, also after the app\'s folder is removed.',
     limits: [
       NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE,
-      "A server stop in the checked-out source of a workspace library the app imports through a link inside the repository can pause (see libraryStops). Libraries that Next compiles from source through transpilePackages, browser-side library stops, App Router Examples and a library outside the repository stay outside the stop range: a stop there is refused with NEXT_STOP_NOT_SEALED (outside-package), so a question whose answer needs that code is outside this version's claim.",
+      "A server stop in the checked-out source of a workspace library the app imports through a link inside the repository can pause (see libraryStops). A library that Next compiles from source through transpilePackages has no build of its own to match: when no build map names the stop file, the stop is refused as library-build-unmapped (cause no-map); browser-side library stops, App Router Examples and a library outside the repository stay outside the stop range, and a stop in a file the app does not link to is refused with NEXT_STOP_NOT_SEALED (outside-package). A question whose answer needs such code is outside this version's claim.",
       "Next resolves as Node would from the app's folder: the first node_modules/next found from packageRoot up to the repository root, never above it, whose real path is inside the repository (a pnpm link into the root's node_modules/.pnpm and a hoisted workspace install qualify; Yarn PnP and NODE_PATH count as not installed). A missing Next names the install command of the repository's lockfile as the learner's decision; Codebook never runs it.",
       'One run at a time per window: a root run beside a nested run is refused with BUSY.',
     ],

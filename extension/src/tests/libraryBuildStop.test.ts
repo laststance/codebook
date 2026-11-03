@@ -307,8 +307,9 @@ test('refuses a build whose sourcesContent differs from the checked-out file as 
   })
   assert.match(
     (refusal as unknown as Error).message,
-    /pnpm --filter @scope\/core build/,
+    /Run the build script of library @scope\/core yourself/,
   )
+  assert.doesNotMatch((refusal as unknown as Error).message, /pnpm|npm|yarn/)
 })
 
 // protects=AC 4 no-map: a library with no map naming the file is refused; fails_when=an unmapped build is frozen; no_claim=nothing

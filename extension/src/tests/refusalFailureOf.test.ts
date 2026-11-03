@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import {
+  libraryBuildChangedFailure,
+  libraryFailureText,
+  libraryPlaceAmbiguousRefusal,
+} from '../nextRefusals'
 import { formatRefusalFailure } from '../utils/formatRefusalFailure'
 import { refusalFailureOf } from '../utils/refusalFailureOf'
 
@@ -266,5 +271,35 @@ test('a written refusal failure reads back with its code, message and variant re
     code: 'SOURCE_CHANGED',
     message:
       'src/pages/index.tsx changed during the run, so Codebook stopped it.',
+  })
+})
+
+// protects=a library refusal recorded by a pause or an event restores with the same static recovery the thrown error describes, so describe().recovery after the run is not the generic text; fails_when=refusalFailureOf restores a library variant without its recoveryOverride, or one that differs from the builder's; no_claim=how the service forwards it
+test('a library refusal text restores the recovery its builder gives', () => {
+  // Arrange
+  const errors = [
+    libraryPlaceAmbiguousRefusal('examples/app', 'lib', 'a.ts', 3, 'why'),
+    libraryBuildChangedFailure('examples/app', 'lib', 'a.ts'),
+  ]
+  for (const error of errors) {
+    // Act
+    const text = libraryFailureText(error) ?? ''
+    const restored = refusalFailureOf(text)
+    // Assert
+    assert.equal(restored?.recoveryOverride, error.describe().recovery, text)
+    assert.ok(restored?.libraryDetails, text)
+  }
+})
+
+// protects=an unknown library variant restores the code alone, with no recovery override; fails_when=an unknown variant restores a recovery; no_claim=the known variants
+test('an unknown library variant restores no recovery override', () => {
+  // Act
+  const restored = refusalFailureOf(
+    'NEXT_STOP_NOT_SEALED(library-unknown): The build of library lib changed.',
+  )
+  // Assert
+  assert.deepEqual(restored, {
+    code: 'NEXT_STOP_NOT_SEALED',
+    message: 'The build of library lib changed.',
   })
 })

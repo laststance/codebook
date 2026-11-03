@@ -5,6 +5,7 @@ import {
 import { PACKAGE_ROOT_FRESH_SESSION_RECOVERY, type ErrorCode } from '../errors'
 import {
   libraryDetailsOfFailure,
+  libraryRecoveryOf,
   NEXT_PAGES_FAILURE_VARIANT,
   NEXT_REFUSAL_CODES,
   nextSetupDeadlineRecovery,
@@ -44,7 +45,7 @@ export type RefusalFailureCode =
 export type RefusalFailure = {
   code: RefusalFailureCode
   message: string
-  /** Present only for a known variant of a code that has variants (`NEXT_SETUP_DEADLINE`, and `SIGN_IN_REQUIRED` led by `package-root-fresh-session`). */
+  /** Present only for a known variant of a code that has variants (`NEXT_SETUP_DEADLINE`, `SIGN_IN_REQUIRED` led by `package-root-fresh-session`, and a library reason variant). */
   recoveryOverride?: string
   /** Present only for `SIGN_IN_REQUIRED` led by a known reason: the fields the agent reads as `details.reason`. */
   details?: { reason: SignInRequiredReason }
@@ -120,7 +121,13 @@ export function refusalFailureOf(text: string): RefusalFailure | undefined {
       : { code, message }
   // A library refusal after the readiness request carries its reason as the variant.
   const libraryDetails = libraryDetailsOfFailure(code, variant)
-  if (libraryDetails) return { code, message, libraryDetails }
+  if (libraryDetails)
+    return {
+      code,
+      message,
+      recoveryOverride: libraryRecoveryOf(libraryDetails.reason),
+      libraryDetails,
+    }
   // Of the other codes only a deadline has variants, and only a known name selects its static recovery.
   const recoveryOverride =
     code === 'NEXT_SETUP_DEADLINE' && variant !== undefined

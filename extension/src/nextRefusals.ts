@@ -95,13 +95,45 @@ export function outsidePackageRefusal(
   })
 }
 
-/** The static recovery of a `library-build-stale` refusal: fields only, because a recovery override reaches MCP unsanitized. */
-const LIBRARY_BUILD_STALE_RECOVERY =
-  "A workspace library's build does not match its checked-out source (details.library names the package, details.file the stop file). Tell the learner to rebuild that library themselves (the message names the build command) and ask for a new start; never run the build yourself, and never declare another stop to make the run succeed. Nothing was started: no server, no browser and no input (details.sideEffects is none). See codebook://help/repository-browser#NEXT_STOP_NOT_SEALED."
+/** The help anchor of one library refusal reason: the per-reason section, not the code's general one. */
+const libraryHelpAnchor = (reason: string): string =>
+  `codebook://help/repository-browser#${reason}`
 
-/** The static recovery of a `library-build-unmapped` refusal: fields only, because a recovery override reaches MCP unsanitized. */
-const LIBRARY_BUILD_UNMAPPED_RECOVERY =
-  "A workspace library's build carries no usable source map for the stop file (details.cause says why: no-map, no-content, no-line, malformed, bound or deadline; details.library names the package, details.file the stop file). Tell the learner the stop cannot be observed until the library is built with source maps that include sourcesContent, or declare a stop in the Next app's own folder; never run the build yourself. Nothing was started: no server, no browser and no input (details.sideEffects is none). See codebook://help/repository-browser#NEXT_STOP_NOT_SEALED."
+/** The sentence a library recovery ends with for a refusal raised before anything started. */
+const LIBRARY_NOTHING_STARTED =
+  'Nothing was started: no server, no browser and no input (details.sideEffects is none).'
+
+/** The sentence a library recovery ends with for a refusal raised after the readiness request. */
+const LIBRARY_ENTRY_REQUESTED =
+  "The entry had already been requested, so the page's data function may have run (details.sideEffects is unknown)."
+
+/**
+ * The static recovery of each library refusal, keyed by `details.reason`: fields only, because a recovery override reaches MCP unsanitized.
+ * Each text matches the fix of the same reason in the repository-browser help and ends at that reason's own anchor.
+ */
+const LIBRARY_RECOVERIES = {
+  'library-build-stale': `A workspace library's build does not match its checked-out source (details.library names the package, details.file the stop file). Tell the learner to run the build script of that library themselves and ask for a new start; never run the build yourself, and never declare another stop to make the run succeed. ${LIBRARY_NOTHING_STARTED} See ${libraryHelpAnchor('library-build-stale')}.`,
+  'library-build-unmapped': `A workspace library's build cannot be tied to the stop file (details.library names the package, details.file the stop file, details.cause says why). Read details.cause and follow the section for it in the help; the cause decides whether a rebuild can help. Never run the build yourself, and do not retry with the same stop. ${LIBRARY_NOTHING_STARTED} See ${libraryHelpAnchor('library-build-unmapped')}.`,
+  'library-not-in-build': `The page's server code does not hold exactly one built file of the library that maps the stop (details.candidates lists them). Tell the learner, or choose a stop on a line the page's server code runs; do not start another run with the same stop. ${LIBRARY_ENTRY_REQUESTED} See ${libraryHelpAnchor('library-not-in-build')}.`,
+  'library-place-ambiguous': `The library stop could not be tied to one source position. Declare the stop on a line that holds a single statement, after the line that declares the value it reads; do not start another run with the same stop. ${LIBRARY_ENTRY_REQUESTED} See ${libraryHelpAnchor('library-place-ambiguous')}.`,
+  'library-build-changed': `The library was rebuilt, or the server module changed, during the run. Tell the learner to finish the rebuild and ask for a new start; never run the build yourself. ${LIBRARY_ENTRY_REQUESTED} See ${libraryHelpAnchor('library-build-changed')}.`,
+} as const
+
+/** The `details.reason` values {@link LIBRARY_RECOVERIES} answers. */
+export type LibraryRecoveryReason = keyof typeof LIBRARY_RECOVERIES
+
+/**
+ * Gives the static recovery of a library refusal reason.
+ *
+ * Why it exists: the refusal builders and {@link refusalFailureOf} must give the agent the same recovery whether the refusal was thrown or restored from a run's failure text.
+ * @param reason - A library refusal `details.reason`.
+ * @returns The static recovery text, ending at the reason's own help anchor.
+ * @example
+ * libraryRecoveryOf('library-build-stale') // => "A workspace library's build does not match … See codebook://help/repository-browser#library-build-stale."
+ */
+export function libraryRecoveryOf(reason: LibraryRecoveryReason): string {
+  return LIBRARY_RECOVERIES[reason]
+}
 
 /** Why a library's build could not be matched to a stop file; the `details.cause` of a `library-build-unmapped` refusal. */
 export type LibraryBuildUnmappedCause =
@@ -121,7 +153,7 @@ export function libraryBuildStaleRefusal(
   libraryName: string,
   file: string,
 ): StudyError {
-  const message = `The build of library ${libraryName} does not match the checked-out ${file} (its source map's sourcesContent differs), so a stop there was refused before the server started for packageRoot ${packageRoot}. Run the library's build yourself, for example \`pnpm --filter ${libraryName} build\`, then start again; Codebook never builds.`
+  const message = `The build of library ${libraryName} does not match the checked-out ${file} (its source map's sourcesContent differs), so a stop there was refused before the server started for packageRoot ${packageRoot}. Run the build script of library ${libraryName} yourself, then start again; Codebook never builds.`
   return nextRefusal('NEXT_STOP_NOT_SEALED', message, {
     details: {
       reason: 'library-build-stale',
@@ -130,7 +162,7 @@ export function libraryBuildStaleRefusal(
       file,
       sideEffects: 'none',
     },
-    recovery: LIBRARY_BUILD_STALE_RECOVERY,
+    recovery: LIBRARY_RECOVERIES['library-build-stale'],
   })
 }
 
@@ -160,7 +192,7 @@ export function libraryBuildUnmappedRefusal(
       file,
       sideEffects: 'none',
     },
-    recovery: LIBRARY_BUILD_UNMAPPED_RECOVERY,
+    recovery: LIBRARY_RECOVERIES['library-build-unmapped'],
   })
 }
 
@@ -200,6 +232,7 @@ export function libraryNotInBuildRefusal(
       candidates: [...candidates],
       ...PAGES_STOP_REFUSAL_DETAILS,
     },
+    recovery: LIBRARY_RECOVERIES['library-not-in-build'],
   })
 }
 
@@ -230,6 +263,7 @@ export function libraryPlaceAmbiguousRefusal(
       file,
       ...PAGES_STOP_REFUSAL_DETAILS,
     },
+    recovery: LIBRARY_RECOVERIES['library-place-ambiguous'],
   })
 }
 
@@ -252,7 +286,7 @@ export function libraryBuildChangedFailure(
     'RUNTIME_FAILED',
     message,
     message,
-    undefined,
+    LIBRARY_RECOVERIES['library-build-changed'],
     undefined,
     {
       reason: 'library-build-changed',

@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { API_VERSION } from '../constants'
+import { libraryRecoveryOf } from '../nextRefusals'
 import { readResource } from '../resources'
 
 import { createHarness } from './helpers'
@@ -145,7 +146,7 @@ test('the bundled skill 1.0.68 tells the chat to name the build and never run it
   assert.ok(skill.includes('metadata:\n  version: "1.0.68"\n'))
   assert.ok(
     skill.includes(
-      "A question that leads from an Example into the checked-out library may declare a server stop in the library's source; when the run refuses with `library-build-stale`, tell the learner which build to run, and never run it yourself.",
+      "A question that leads from an Example into the checked-out library may declare a server stop in the library's source, but only when `codebook_status` reports API 1.19 or later; on an older API tell the learner to update Codebook instead of following the `outside-package` fix. When the run refuses with `library-build-stale`, tell the learner which build to run, and never run it yourself; for `library-build-unmapped` read `details.cause` and the help section for it.",
     ),
   )
   for (const sample of [
@@ -175,10 +176,49 @@ test('the README states the library-stop rule in the nested-app section with API
     "A server stop in the checked-out source of a workspace library the app imports through a link inside the repository pauses when the library's build carries source maps with `sourcesContent` equal to the checked-out source.",
     'Codebook never builds',
     "The native debugger may show the library's built file at the pause",
+    'a rebuild of the library, run by you, fixes it',
+    '`details.cause` and the help say whether a rebuild can help',
     ...LIBRARY_REASONS.map(([reason]) => `\`${reason}\``),
   ])
     assert.ok(section.includes(phrase), phrase)
   assert.ok(readme.includes('with **MCP API 1.19**'))
   assert.ok(readme.includes('(1.0.68).**'))
   assert.ok(readme.includes('updates to **1.0.68**'))
+})
+
+// protects=the help describes every bound and deadline cause of library-build-unmapped with the real limits, and says a transpilePackages library is refused as library-build-unmapped, not outside-package; fails_when=the bound text drops the entry, byte or unfinished-scan limits, hard-codes a stale number, or the limits sentence claims outside-package for transpilePackages; no_claim=that the run emits these causes (libraryBuildStop tests)
+test('the help describes every bound and deadline cause with the real limits and the transpilePackages outcome', async (context) => {
+  // Arrange
+  const help = await readHelp(context)
+  const meaning =
+    help.nextPackageRoot.refusals['library-build-unmapped']?.meaning ?? ''
+  // Act
+  const limits = help.nextPackageRoot.limits.join('\n')
+  // Assert
+  for (const phrase of [
+    'more than 2000 build maps',
+    'more than 50000 entries in the build folders',
+    'a map larger than 16 MiB',
+    'more than 128 MiB read in total',
+    'a search that did not finish',
+    "the smaller of 5 s and what is left of the run's 30 s discovery time",
+  ])
+    assert.ok(meaning.includes(phrase), phrase)
+  assert.ok(
+    limits.includes(
+      'transpilePackages has no build of its own to match: when no build map names the stop file, the stop is refused as library-build-unmapped (cause no-map)',
+    ),
+  )
+})
+
+// protects=every library-stop recovery refers to its own per-reason help anchor, so an agent opens the section of the reason; fails_when=a recovery links the general NEXT_STOP_NOT_SEALED section again; no_claim=the help body
+test('each library-stop refusal recovery links its own help section', () => {
+  // Arrange
+  const reasons = LIBRARY_REASONS.map(([reason]) => reason)
+  // Act
+  const anchors = reasons.map(
+    (reason) => libraryRecoveryOf(reason).match(/#([a-z-]+)\.$/)?.[1],
+  )
+  // Assert
+  assert.deepEqual(anchors, [...reasons])
 })
