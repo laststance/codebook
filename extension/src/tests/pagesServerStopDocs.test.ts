@@ -12,7 +12,14 @@ import {
   SERVER_RENDER_PAGES_ENTRY_CONFIGURATION,
   serverRenderHelp,
 } from '../serverRenderHelp'
+import { describeServerRenderFailureDetails } from '../utils/describeServerRenderFailureDetails'
+import { PagesHitLedger } from '../utils/pagesHitLedger'
+import { pagesNotReachedMessage } from '../utils/pagesNotReachedMessage'
 import { pagesServerStopRefusal } from '../utils/pagesServerStopRefusal'
+import {
+  ReadinessEntryRecord,
+  readinessOutcomeOfError,
+} from '../utils/readinessEntryRecord'
 
 import { createHarness } from './helpers'
 
@@ -206,9 +213,8 @@ test('the Pages quick start states the unobserved readiness request, its journal
   // Assert
   assert.ok(readiness.includes('That run is not observed and not counted'))
   assert.ok(readiness.includes('readiness.entry-request'))
-  assert.ok(
-    readiness.includes('timeout, aborted or connection-lost when none came'),
-  )
+  assert.ok(readiness.includes('outcome timeout, aborted or connection-lost'))
+  assert.ok(readiness.includes('the saved study holds neither'))
   assert.ok(readiness.includes('a cache, a counter, a one-time initialisation'))
   assert.ok(
     readiness.includes(
@@ -224,7 +230,15 @@ test('the Pages quick start states the unobserved readiness request, its journal
     sideEffects.includes('and ask first. Not running is the only escape'),
   )
   assert.ok(
-    sideEffects.includes('reports details.sideEffects unknown, never none'),
+    sideEffects.includes(
+      'a failure of a Pages run that reports details.sideEffects reports unknown, never none',
+    ),
+  )
+  assert.ok(sideEffects.includes('fails the run with RUNTIME_FAILED'))
+  assert.ok(
+    sideEffects.includes(
+      'or, in an App Router run, an answer that is not OK (Application root failed: <status>',
+    ),
   )
   assert.ok(sideEffects.includes('never start again unasked'))
 })
@@ -245,16 +259,21 @@ test('the Pages quick start explains an unconfirmed pause and names the data fun
   assert.ok(unconfirmed.includes('never count it as proof'))
   assert.ok(
     unconfirmed.includes(
-      'When every pause of a run is unconfirmed, stop and tell the learner.',
+      'When every pause of a run is unconfirmed (attributionSummary.taken is 0 and unconfirmed is above 0), stop and tell the learner.',
     ),
   )
   assert.ok(
     attribution.includes('dataFunction: getServerSideProps or getStaticProps'),
   )
-  assert.ok(attribution.includes('the Next version and an attribution summary'))
   assert.ok(
     attribution.includes(
-      "say that a line may have run outside the entry page's data function, never that it did",
+      'the Next version (nextVersion) and an attribution summary (attributionSummary: { taken: { frame, request }, unconfirmed, resumed: { <reason>: count } })',
+    ),
+  )
+  assert.ok(attribution.includes('observations[].dataFunction'))
+  assert.ok(
+    serverRenderQuickStart.pagesResumedHits.includes(
+      'only when the run resumed other-route or outside-data-function hits of that line (not for unattributed-resumed), because the verdict is a heuristic: say it that way, never that the line did',
     ),
   )
 })
@@ -317,6 +336,7 @@ test('serverRenderErrors.pagesReasons has an anchor for each Pages reason and jo
     'no-async-chain',
     'no-renderer-frame',
     'route-unreadable',
+    'unattributed-resumed',
     'chain-incomplete',
     'verdict-error',
     'client-mapping-unverified',
@@ -375,13 +395,14 @@ test('the help SERVER_STOP_NOT_REACHED section names the Pages details and a rec
     'details.resumedHits',
     'details.attributionMode',
     'details.nextVersion',
-    "the message then says the line may have run outside the entry page's data function",
-    'details.sideEffects is unknown in a Pages run',
+    'with reason other-route (and its route), outside-data-function or unattributed-resumed',
+    "The message adds that the line may have run outside the entry page's data function only when the run resumed other-route or outside-data-function hits of that line",
+    'details.sideEffects is unknown in both phases',
   ])
     assert.ok(meaning.includes(phrase), phrase)
   assert.ok(
     recovery.includes(
-      'when the data function writes, ask the learner before one new start and never start unasked',
+      'when the data function writes or sends, ask the learner before one new start and never start again unasked',
     ),
   )
   assert.ok(
@@ -515,9 +536,10 @@ test('API_VERSION is 1.17 and its note names the Pages data-function fields and 
   assert.equal(API_VERSION, '1.17')
   for (const phrase of [
     'Pages Router data-function server stops (configuration version 3)',
-    '`dataFunction`',
-    "the run resource names the run's Next version and an attribution summary",
+    '`nextVersion` and `attributionSummary`',
+    '`readinessRequest`',
     '`readiness.entry-request`',
+    '`observations[].dataFunction`',
     '`router`',
     '`resumedHits`',
     '`attributionMode`',
@@ -573,22 +595,29 @@ test('the README Server renders section describes the Pages data-function stops,
     '`configurationPagesEntryRender`',
     '`routerKind`',
     '**Pages Router data functions (0.2.74.0).**',
-    '`dataFunction`',
+    '`observations[].dataFunction`',
     'a placeholder dynamic-route source (`pages/products/[id].tsx`), which needs a concrete `entryPath` such as `/products/1`',
     '**Which line is a server line.**',
     '`getInitialProps` line pauses in the browser only after a client navigation, never at the entry load',
     '**After an operation.**',
+    '`readinessRequest`',
     '`readiness.entry-request`',
+    'The saved study holds neither',
     'the chat asks you before it starts such a run',
     '`details.sideEffects: "unknown"`',
     '`other-route`',
     '`outside-data-function`',
+    '`unattributed-resumed`',
     '`resumedHits`',
     '`attributionMode`',
     '`nextVersion`',
+    '`attributionSummary`',
+    '`breakpoint.repeat-hit`',
+    'ends the run with `SERVER_STOP_NOT_REACHED`, whose `resumedHits` count them all, while the journal keeps the first 100 entries of each event type',
     '**An `unconfirmed` pause.**',
-    '`no-async-chain`, `no-renderer-frame`, `route-unreadable`, `chain-incomplete` or `verdict-error`',
-    '`client-mapping-unverified`',
+    '`breakpoint.unconfirmed` names the reason: `no-async-chain`, `no-renderer-frame`, `route-unreadable`, `chain-incomplete` with its `cause`, or `verdict-error` with a `logId`',
+    '`pages.renderer-unrecognised`',
+    '`seal.evidence` `client-mapping-unverified`',
     '**Not paused in this version.**',
     '`getStaticPaths`',
     "`runtime: 'experimental-edge'`",
@@ -634,4 +663,233 @@ test('the served help names no call-site window and no production getStaticProps
     false,
   )
   assert.ok(text.includes('async-chain'))
+})
+
+// Value: protects=the help names the readiness record with the keys and the outcomes the run resource and the journal really carry (readinessRequest with state, sentAtMs, then status or outcome; the journal entry with sentAtMs and the status or outcome), so an agent reads the field it was told to read; fails_when=a key or an outcome of the record is renamed, added or dropped in the code and the help keeps the old one; no_claim=that the run writes the record at the right moment (the run tests)
+test('the help names the readiness record with the keys and outcomes the code produces', () => {
+  // Arrange
+  const journaled: Record<string, unknown>[] = []
+  const withStatus = new ReadinessEntryRecord(
+    (detail) => journaled.push(detail),
+    () => 5,
+  )
+  const withOutcome = new ReadinessEntryRecord(
+    () => undefined,
+    () => 7,
+  )
+  const readiness =
+    serverRenderHelp().serverRenderQuickStart.pagesReadinessRequest
+  // Act
+  withStatus.observer.sent()
+  const openKeys = Object.keys(withStatus.view() ?? {})
+  withStatus.observer.closed({ status: 500 })
+  const statusKeys = Object.keys(withStatus.view() ?? {})
+  withOutcome.observer.sent()
+  withOutcome.observer.closed({ outcome: 'connection-lost' })
+  const outcomeKeys = Object.keys(withOutcome.view() ?? {})
+  const signal = new AbortController().signal
+  const aborted = new AbortController()
+  aborted.abort()
+  const outcomes = [
+    readinessOutcomeOfError(new DOMException('late', 'TimeoutError'), signal),
+    readinessOutcomeOfError(new Error('stopped'), aborted.signal),
+    readinessOutcomeOfError(new Error('reset'), signal),
+  ]
+  // Assert
+  assert.deepEqual(openKeys, ['state', 'sentAtMs'])
+  assert.deepEqual(statusKeys, ['state', 'sentAtMs', 'status'])
+  assert.deepEqual(outcomeKeys, ['state', 'sentAtMs', 'outcome'])
+  assert.deepEqual(journaled, [{ sentAtMs: 5, status: 500 }])
+  assert.deepEqual(outcomes, ['timeout', 'aborted', 'connection-lost'])
+  for (const phrase of [
+    'readinessRequest: open (state open, sentAtMs) from the send',
+    'closed (state closed) with the HTTP status (status;',
+    'outcome timeout, aborted or connection-lost',
+    'one readiness.entry-request entry (sentAtMs and the status or outcome)',
+  ])
+    assert.ok(readiness.includes(phrase), phrase)
+})
+
+// Value: protects=the help names the attribution summary and the resumedHits with the keys and the reasons the ledger really produces (taken by frame and request, unconfirmed, resumed by reason; resumedHits entries with reason, route for other-route only, count), and every reason has an anchor; fails_when=the ledger renames a key or adds a reason the help and its anchors do not name; no_claim=that the run feeds the ledger from real hits (the run tests)
+test('the help names the attribution summary and resumed hits with the keys and reasons the ledger produces', () => {
+  // Arrange
+  const ledger = new PagesHitLedger()
+  const { serverRenderQuickStart, serverRenderErrors } = serverRenderHelp()
+  // Act
+  ledger.recordTaken('frame')
+  ledger.recordTaken('request')
+  ledger.recordUnconfirmed()
+  ledger.recordResumed('pages/a.tsx:3', {
+    action: 'resume',
+    event: 'breakpoint.other-route',
+    route: '/other',
+  })
+  ledger.recordResumed('pages/a.tsx:3', {
+    action: 'resume',
+    event: 'breakpoint.outside-data-function',
+  })
+  ledger.recordResumed('pages/a.tsx:3', {
+    action: 'resume',
+    event: 'breakpoint.unattributed-resumed',
+  })
+  const summary = ledger.summary()
+  const hits = ledger.resumedHitsOf('pages/a.tsx:3')
+  // Assert
+  assert.deepEqual(Object.keys(summary), ['taken', 'unconfirmed', 'resumed'])
+  assert.deepEqual(Object.keys(summary.taken), ['frame', 'request'])
+  assert.deepEqual(Object.keys(summary.resumed), [
+    'other-route',
+    'outside-data-function',
+    'unattributed-resumed',
+  ])
+  assert.deepEqual(
+    hits.map((hit) => Object.keys(hit)),
+    [
+      ['reason', 'route', 'count'],
+      ['reason', 'count'],
+      ['reason', 'count'],
+    ],
+  )
+  assert.ok(
+    serverRenderQuickStart.pagesAttribution.includes(
+      'attributionSummary: { taken: { frame, request }, unconfirmed, resumed: { <reason>: count } }',
+    ),
+  )
+  assert.ok(
+    serverRenderQuickStart.pagesAttribution.includes(
+      'other-route, outside-data-function or unattributed-resumed',
+    ),
+  )
+  assert.ok(
+    serverRenderErrors.codes.SERVER_STOP_NOT_REACHED.meaning.includes(
+      'as [{ reason, route?, count }]',
+    ),
+  )
+  for (const reason of Object.keys(summary.resumed))
+    assert.equal(
+      serverRenderErrors.pagesReasons[
+        reason as keyof typeof serverRenderErrors.pagesReasons
+      ].anchor,
+      `codebook://help/repository-browser#${reason}`,
+    )
+})
+
+// Value: protects=the help names the failure details of a Pages run as the code publishes them (router, resumedHits, attributionMode, nextVersion on SERVER_STOP_NOT_REACHED; router on ENTRY_LOAD_TIMEOUT), each as details.<key>; fails_when=the code renames or adds a Pages detail and the help's SERVER_STOP_NOT_REACHED or ENTRY_LOAD_TIMEOUT section does not name it; no_claim=that the run builds the facts (the run tests)
+test('the help names the Pages failure details the code publishes', () => {
+  // Arrange
+  const { codes } = serverRenderHelp().serverRenderErrors
+  const base = {
+    operationIndex: 0,
+    sent: 'not-sent',
+    logId: 'r1#start',
+  } as const
+  // Act
+  const notReached = describeServerRenderFailureDetails({
+    ...base,
+    code: 'SERVER_STOP_NOT_REACHED',
+    sideEffects: 'unknown',
+    serverRender: {
+      phase: 'entry-render',
+      stop: 'pages/a.tsx:3',
+      pausedStops: [],
+      notReachedStops: ['pages/a.tsx:3'],
+      pages: {
+        resumedHits: [],
+        attributionMode: 'async-chain',
+        nextVersion: '16.4.4',
+      },
+    },
+  })
+  const timeout = describeServerRenderFailureDetails({
+    ...base,
+    code: 'ENTRY_LOAD_TIMEOUT',
+    sideEffects: 'unknown',
+    entryLoad: {
+      router: 'pages',
+      entryRoute: '/',
+      lastPausedStop: 'pages/a.tsx:3',
+      elapsedMs: 20_000,
+    },
+  })
+  // Assert
+  for (const key of [
+    'router',
+    'resumedHits',
+    'attributionMode',
+    'nextVersion',
+  ]) {
+    assert.ok(key in notReached, key)
+    assert.ok(
+      codes.SERVER_STOP_NOT_REACHED.meaning.includes(`details.${key}`),
+      key,
+    )
+  }
+  assert.equal(notReached.router, 'pages')
+  assert.equal(notReached.attributionMode, 'async-chain')
+  assert.equal(timeout.router, 'pages')
+  assert.ok(codes.ENTRY_LOAD_TIMEOUT.meaning.includes('details.router pages'))
+  assert.ok(
+    codes.ENTRY_LOAD_TIMEOUT.meaning.includes('details.sideEffects unknown'),
+  )
+})
+
+// Value: protects=the help and the README say the not-reached message adds "may have run outside the entry page's data function" only for other-route and outside-data-function hits, as the message builder does; fails_when=the builder says it for unattributed-resumed hits, or omits it for the two reasons, while the docs keep the rule; no_claim=the rest of the message (the run tests pin it)
+test('the not-reached message says the line may have run outside only for other-route and outside-data-function hits, as the docs state', async () => {
+  // Arrange
+  const facts = {
+    place: 'pages/a.tsx:3',
+    phase: 'entry-render',
+    how: 'load-first',
+    seconds: 20,
+  } as const
+  const section = await readServerRendersReadmeSection()
+  // Act
+  const unattributed = pagesNotReachedMessage({
+    ...facts,
+    resumedHits: [{ reason: 'unattributed-resumed', count: 2 }],
+  })
+  const otherRoute = pagesNotReachedMessage({
+    ...facts,
+    resumedHits: [{ reason: 'other-route', route: '/other', count: 1 }],
+  })
+  const outside = pagesNotReachedMessage({
+    ...facts,
+    resumedHits: [{ reason: 'outside-data-function', count: 1 }],
+  })
+  // Assert
+  const sentence = "may have run outside the entry page's data function"
+  assert.equal(unattributed.includes(sentence), false)
+  assert.equal(otherRoute.includes(sentence), true)
+  assert.equal(outside.includes(sentence), true)
+  assert.ok(
+    section.includes(
+      'only when the run resumed `other-route` or `outside-data-function` hits of that line',
+    ),
+  )
+})
+
+// Value: protects=the help promises no saved-study journal entry (the study schema holds no readiness field) and says the repeat-hit and 500-hit rules the run really follows; fails_when=a sentence says the saved study holds the readiness entry, or the repeat-hit or 500-hit rule leaves the help; no_claim=the run's behaviour (the run tests)
+test('the served help keeps the readiness record out of the saved study and states the repeat-hit and 500-hit rules', async (context) => {
+  // Arrange
+  const help = await readServedHelp(context)
+  const text = JSON.stringify(help)
+  // Act
+  const resumedHits = help.serverRenderQuickStart.pagesResumedHits
+  // Assert
+  assert.equal(text.includes("saved study's journal"), false)
+  assert.ok(
+    resumedHits.includes(
+      "A later hit of a stop that already paused (a second request that reaches the same line) is resumed as breakpoint.repeat-hit: it is neither the stop's pause nor a failure, and resumedHits does not count it.",
+    ),
+  )
+  assert.ok(
+    resumedHits.includes(
+      'A stop whose resumed hits reach 500 is disarmed and the run ends with SERVER_STOP_NOT_REACHED, whose resumedHits count them all; the journal keeps only the first 100 entries of each event type.',
+    ),
+  )
+  assert.ok(
+    help.nextSupport.afterReadiness.includes(
+      'details.router pages and details.sideEffects unknown',
+    ),
+  )
 })
