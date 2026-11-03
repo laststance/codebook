@@ -639,6 +639,19 @@ type PreparedStop = ReturnType<typeof configuredStops>[number] & {
     scriptId?: string
   }
 }
+
+/**
+ * Gives the line a prepared stop was declared on, in the terms of the file it names.
+ *
+ * Why: a library stop runs in built terms (`source.line` is the built file's line) while its `source.path` names the library source, so a name or journal entry that pairs the two must take the declared source line. Called by the agent-facing stop names and the seal journal of {@link ConfiguredBrowserRun}.
+ * @param stop - A prepared stop.
+ * @returns The declared source line of a library stop; otherwise `source.line`.
+ * @example declaredLineOf(libraryStop) // 7 (the library source line), while libraryStop.source.line is 30 (built)
+ */
+function declaredLineOf(stop: PreparedStop): number {
+  return stop.library ? stop.library.declared.line : stop.source.line
+}
+
 /**
  * Names the bindings of a stop's required inspections that its own declared line declares; called by {@link ConfiguredBrowserRun.requestAfterSelfDeclaringLine} at preparation.
  * @param stop - The declared stop, as {@link configuredStops} gives it.
@@ -4433,7 +4446,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     prepared: PreparedStop,
     acquired: DevelopmentBundle,
   ): void {
-    const stop = `${prepared.source.path}:${prepared.source.line}`
+    const stop = `${prepared.source.path}:${declaredLineOf(prepared)}`
     if (acquired.layer)
       this.evidence.record('seal.layer', { stop, layer: acquired.layer })
     // A server stop of a Pages run accepted on evidence the seal could not read to its end says so in the journal, so a reader knows the line was not established as server-only.
@@ -5530,12 +5543,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /** Names a declared stop by its file and line in the failures an agent reads, so it can tell which of its stops to change; stops that share one line (a line that runs twice) are told apart by their place in the declared order. @example this.declaredAt(stop) // 'app/lib/actions.ts:36', or 'app/lib/actions.ts:36 (stop 2 of 3)' when another stop names that line */
   private declaredAt(stop: PreparedStop): string {
-    const place = `${stop.source.path}:${stop.source.line}`,
+    const place = `${stop.source.path}:${declaredLineOf(stop)}`,
       sharesLine = this.stops.some(
         (other) =>
           other !== stop &&
           other.source.path === stop.source.path &&
-          other.source.line === stop.source.line,
+          declaredLineOf(other) === declaredLineOf(stop),
       )
     return sharesLine
       ? `${place} (stop ${stop.declaredIndex + 1} of ${this.stops.length})`

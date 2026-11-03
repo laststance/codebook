@@ -45,6 +45,33 @@ test('a server stop in a linked workspace library pauses, saves in format 9 and 
   assert.equal(replayed.shownSourceHash, sha256(LIBRARY_SOURCE))
 })
 
+// protects=the run's evidence journal names a library stop by the library source line it was declared on, as the agent and the reader see it; fails_when=the seal journal pairs the library source path with the built file's line (packages/lib/src/core.ts:<built line>); no_claim=other journal entries, which name places the same way through declaredLineOf
+test('the seal journal names a library stop by its declared library source line, not the built line', async (context) => {
+  // Arrange: the build starts with two banner lines, so the library's return line 3 is built line 5.
+  const { run } = await captureLibraryRun(context, {
+    rewriteBuilt: ({ builtText, mapText }) => {
+      const map = JSON.parse(mapText) as { mappings: string }
+      return {
+        builtText: `/* banner */\n/* banner */\n${builtText}`,
+        mapText: JSON.stringify({ ...map, mappings: `;;${map.mappings}` }),
+      }
+    },
+  })
+  // Act
+  const sealLayers = run.service
+    .record(run.receipt)
+    .runtime!.view()
+    .events.filter((event) => event.type === 'seal.layer')
+    .map((event) => JSON.parse(JSON.stringify(event.detail)))
+  // Assert
+  assert.deepEqual(sealLayers, [
+    {
+      stop: `${LIBRARY_SOURCE_PATH}:${LIBRARY_RETURN_LINE}`,
+      layer: 'pages-dir-node',
+    },
+  ])
+})
+
 // protects=AC 4 a library whose build flavours are both unknown to the page's server compile is refused library-not-in-build after Codebook's readiness request, naming both candidates; fails_when=the run seals one flavour anyway, the refusal says sideEffects none, or the candidates are not named; no_claim=a real compile that holds another build
 test('a library stop whose built files are not in the page server compile is refused naming both candidates after the entry was requested', async (context) => {
   // Arrange
