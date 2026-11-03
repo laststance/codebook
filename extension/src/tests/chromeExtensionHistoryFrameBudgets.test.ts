@@ -40,6 +40,26 @@ function streamOf(salt: string, capturedAtMs: number) {
   }
 }
 
+/**
+ * Replaces the writer's frame append with one that never resolves and reports its first call.
+ *
+ * The frame writer renames each queued blob into place before it calls `appendFrame`, so the first
+ * call marks the point where no blob write is in flight any more. A test that stalls storage awaits
+ * it before it ends, so the fixture's directory removal cannot race a late blob write.
+ *
+ * @param writer - The history writer whose `appendFrame` is stalled.
+ * @returns Resolves when the frame writer first calls the stalled `appendFrame`.
+ * @example const firstAppend = stallAppendFrame(writer)
+ */
+function stallAppendFrame(writer: ChromeExtensionHistoryWriter): Promise<void> {
+  return new Promise<void>((resolve) => {
+    writer.appendFrame = (): Promise<void> => {
+      resolve()
+      return new Promise<void>(() => undefined)
+    }
+  })
+}
+
 /** Opens the pause a pin names, as the recorder does before its pin. */
 function openPause(writer: ChromeExtensionHistoryWriter): Promise<void> {
   return writer.appendPauseOpen({
@@ -234,7 +254,7 @@ test('resized frames offered at a high rate against stalled storage stay within 
   const { writer, clock } = await framesOver(context)
   const frames = new ExtensionHistoryFrameWriter(writer)
   clock.nowMs = 100_000
-  writer.appendFrame = (): Promise<void> => new Promise<void>(() => undefined)
+  const firstAppend = stallAppendFrame(writer)
   const salt = 'x'.repeat(1024 * 1024)
 
   // Act
@@ -245,6 +265,9 @@ test('resized frames offered at a high rate against stalled storage stay within 
       capturedAtMs: 60 * (index + 1),
     }),
   )
+
+  // The serial queue calls appendFrame only after the first blob is renamed, so no write is in flight past this
+  await firstAppend
 
   // Assert
   assert.equal(results.filter((result) => result === 'queued').length, 7)
@@ -258,8 +281,10 @@ test('a drain against a queue that never finishes returns at its deadline and re
   const { writer, clock } = await framesOver(context)
   const frames = new ExtensionHistoryFrameWriter(writer)
   clock.nowMs = 1_000
-  writer.appendFrame = (): Promise<void> => new Promise<void>(() => undefined)
+  const firstAppend = stallAppendFrame(writer)
   frames.offer(streamOf('stalled', 100))
+  // The blob write settles before the deadline starts, so no write is in flight when the test ends
+  await firstAppend
   mock.timers.enable({ apis: ['setTimeout'] })
   context.after(() => mock.timers.reset())
 
