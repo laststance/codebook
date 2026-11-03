@@ -211,14 +211,16 @@ export async function writePagesServerBuild(
 /**
  * Creates a temporary Pages project with a `.next/dev` build in Next 16's measured layout: the P02 build manifest (`/` loads `webpack.js`, `main.js`, `pages/index.js`; `/_app` loads `pages/_app.js`), the page module in `static/chunks/pages/index.js` and `_app` in `static/chunks/pages/_app.js`. `webpack.js` and `main.js` are folders, so any read of them fails.
  * @param context - The test, which removes the project afterwards.
+ * @param packageFolder - A repository-relative folder to build the Next app in (a nested app such as `examples/app`); empty builds it at the repository root. `workspace` stays the app's folder, `repository` is the folder above it.
  * @returns The workspace, helpers to write build files and the selected stops of the stand-in sources.
  * @example const build = await nextPagesBuild(context)
  */
-export async function nextPagesBuild(context: TestContext) {
-  const workspace = await realpath(
+export async function nextPagesBuild(context: TestContext, packageFolder = '') {
+  const repository = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-pages-build-')),
   )
-  context.after(() => rm(workspace, { recursive: true, force: true }))
+  context.after(() => rm(repository, { recursive: true, force: true }))
+  const workspace = join(repository, packageFolder)
   const write = async (path: string, text: string): Promise<void> => {
     await mkdir(dirname(join(workspace, path)), { recursive: true })
     await writeFile(join(workspace, path), text)
@@ -257,6 +259,7 @@ export async function nextPagesBuild(context: TestContext) {
     browserChunk('pages/_app', { './src/pages/_app.tsx': appModule }),
   )
   return {
+    repository,
     workspace,
     write,
     /** Writes the page's server build around the stand-in page ({@link writePagesServerBuild}). */

@@ -23,7 +23,7 @@ import { nodeServerConfigSchema } from './nodeServerConfigSchemas'
 import { nodeTestConfigSchema } from './nodeTestConfigSchemas'
 import {
   inspectionPathSchema,
-  retainedRepositoryConfigSchema,
+  liveRepositoryConfigSchema,
 } from './repositoryConfigSchemas'
 
 const instanceShape = { instanceId: z.uuid() }
@@ -31,7 +31,7 @@ const runShape = { ...instanceShape, runId: z.uuid() }
 const key = z.string().min(1).max(KEY_LENGTH_LIMIT)
 /** The configurations of the profiles whose declarations the tool boundary validates itself (repository-browser and node-test): a refusal there is the SDK's input validation error, as before node-server existed. */
 const checkedStartConfigurationSchema = z.union([
-  retainedRepositoryConfigSchema,
+  liveRepositoryConfigSchema,
   nodeTestConfigSchema,
 ])
 /** The node-server and chrome-extension member of the start's configuration: any object. The SDK validates the input before the handler runs, so a strict member would answer the SDK's "Input validation error" and never reach `INVALID_CONFIGURATION`, which lists every violation and names `codebook://help/node-server` (D4); {@link StudyService.start} parses it with {@link nodeServerConfigSchema} or {@link chromeExtensionConfigSchema}. */
@@ -48,7 +48,7 @@ export const startSchema = z
     key,
     configuration: z
       .union([
-        retainedRepositoryConfigSchema,
+        liveRepositoryConfigSchema,
         nodeTestConfigSchema,
         nodeServerStartConfigurationSchema,
       ])
@@ -77,7 +77,7 @@ export const startIntentSchema = z.discriminatedUnion('profile', [
     ...instanceShape,
     profile: z.literal(REPOSITORY_BROWSER_PROFILE),
     key,
-    configuration: retainedRepositoryConfigSchema,
+    configuration: liveRepositoryConfigSchema,
   }),
   z.strictObject({
     ...instanceShape,

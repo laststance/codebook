@@ -8,7 +8,7 @@ import { isUnlinkedRegularFile } from './isUnlinkedRegularFile'
  *
  * Why it exists: a listed App page is `found`, `otherExtension` (a custom `pageExtensions`) or `gone` (a stale `.next/dev` listing), and only a page without a default-extension source is looked up further ({@link findNextSourceWithOtherExtension}), so `false` here alone never means stale. Called only by {@link nextAppPageSourceKindOf}, which the router contest of {@link readNextRouteManifests} and the Pages run's conflict refusal ({@link resolveNextPagesEntry}) ask.
  * The key is untrusted manifest data: only a key of plain segments (no empty, `.` or `..` segment, no backslash or NUL) is looked up, in the App folder Next reads ({@link findNextRouteFolder}), with Next's default extensions and without following any link ({@link isUnlinkedRegularFile}).
- * @param workspace - The opened workspace (the Next project root).
+ * @param workspace - The package root (the Next project root; the repository root for a root app).
  * @param appKey - The App paths manifest key, e.g. `/page` or `/(shop)/cart/page`.
  * @param signal - Ends the lookup with the abort reason when the run is cancelled.
  * @returns `true` when `<app folder><appKey>.<ext>` exists for one of `.tsx`, `.ts`, `.jsx`, `.js`; `false` when none does, the project has no App folder, or the key is not a plain path.

@@ -103,6 +103,14 @@ export interface FlatCdpConnection {
   close(): void
 }
 
+/** What {@link OwnedExtensionBrowser.startWorker} found when its wait ended. */
+export interface WorkerStart {
+  /** Whether this extension's service-worker target was listed before the deadline. */
+  listed: boolean
+  /** How many `ServiceWorker.startWorker` commands were sent. */
+  sends: number
+}
+
 /**
  * The browser a chrome-extension run owns once the surface is open and every worker is stopped, ready for the js-debug attach (TZ1–TZ4).
  * Produced by the owned-browser launch; consumed by the debugger (attach port, surface identity) and the executor (CDP input).
@@ -120,8 +128,15 @@ export interface OwnedExtensionBrowser {
   controlSessionId: string
   /** Owner-marked profile folder. */
   profile: string
-  /** Starts the extension's service worker (`ServiceWorker.startWorker`). */
-  startWorker(): Promise<void>
+  /**
+   * Starts the extension's service worker (`ServiceWorker.startWorker`) and waits until its target is listed.
+   * Chrome answers the command at once and discards whether the worker started, so the command is sent again every second until this extension's `service_worker` target is listed or `deadlineAt` passes.
+   * @param deadlineAt - The `performance.now()` reading at which the wait ends; every request and pause inside it is bounded by the time left.
+   * @param signal - The run's abort signal; a Stop ends the wait with the signal's reason.
+   * @returns `listed` is whether the worker target was listed; `sends` counts the `ServiceWorker.startWorker` commands sent (0 for an extension without a declared worker, which returns at once with `listed: false`). Never rejects for time.
+   * @throws {@link StudyError} `BROWSER_LOST` when the connection ended; `CHROME_COMMAND_UNAVAILABLE` when Chrome lacks the command.
+   */
+  startWorker(deadlineAt: number, signal?: AbortSignal): Promise<WorkerStart>
   /** Stops every service worker and waits until none of the extension's remains, at most `boundMs`. */
   stopWorkers(boundMs: number): Promise<void>
   /**

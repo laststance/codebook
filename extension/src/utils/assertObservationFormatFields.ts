@@ -1,8 +1,8 @@
 import type { ConfiguredStudy } from '../configuredStudySchemas'
-import { SERVER_RENDER_STUDY_VERSION } from '../constants'
 
 import { afterOperationOf } from './afterOperationOf'
 import type { configuredStops } from './configuredStops'
+import { usesServerRenderEvidence } from './studyFormatOfConfiguration'
 
 type Observation = ConfiguredStudy['observations'][number]
 
@@ -92,7 +92,7 @@ export function assertObservationFormatFields(
   study: Omit<ConfiguredStudy, 'captures'>,
   stops: ReturnType<typeof configuredStops>,
 ): void {
-  if (study.version !== SERVER_RENDER_STUDY_VERSION) {
+  if (!usesServerRenderEvidence(study)) {
     const hasNewField =
       study.firstExecutionObserved !== undefined ||
       study.observations.some(

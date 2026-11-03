@@ -54,6 +54,9 @@ const CHROME_EXTENSION_EVENT_FIELDS: Record<
     kind: boundedText(input.kind, NODE_SERVER_EVENT_SHORT_TEXT_LIMIT_CHARS),
     time: boundedText(input.time, NODE_SERVER_EVENT_SHORT_TEXT_LIMIT_CHARS),
   }),
+  'chrome-extension.worker-start': (input) => ({
+    sends: integerField(input.sends),
+  }),
   'chrome-extension.phase': (input) => ({
     name: boundedText(input.name, NODE_SERVER_EVENT_SHORT_TEXT_LIMIT_CHARS),
     elapsedMs: integerField(input.elapsedMs),

@@ -7,6 +7,7 @@ import type { NextPagesDiscoveryCache } from './utils/createNextPagesDiscoveryCa
 import type { launchDevelopmentServer } from './utils/launchDevelopmentServer'
 import type { DeclaredDevelopmentPort } from './utils/readDeclaredDevelopmentPort'
 import type { DevelopmentServerLayer } from './utils/readDevelopmentBundle'
+import type { ResolvedNextPackage } from './utils/resolveNextPackage'
 
 /** The name a repository-browser configuration gives its development server (`adapter`), the one key of {@link DevelopmentServerAdapter}. */
 export type DevelopmentServerAdapterName = RepositoryConfiguration['adapter']
@@ -16,8 +17,10 @@ export type DevelopmentApp = ReturnType<typeof launchDevelopmentServer>
 
 /** What {@link DevelopmentServerAdapter.start} needs from the run that starts the server. */
 export type DevelopmentServerStart = {
-  /** The opened workspace, which is the package root this version. */
+  /** The Next app's package root (the opened repository root for a root app; the canonical `packageRoot` folder for a nested Next app); the Vite adapter's package root is the workspace root. */
   workspace: string
+  /** The package a Next run resolved ({@link resolveNextPackage}): the launch runs its verified executable with `workspace` as its working folder. Absent for a Vite run. */
+  nextPackage?: ResolvedNextPackage
   /** The Node executable of the run (`Codebook: Node Executable`). */
   node: string
   /** Appends to the run's evidence journal. */
@@ -45,7 +48,10 @@ export type DevelopmentServerStart = {
 
 /** What {@link DevelopmentServerAdapter.readBundle} needs to seal one declared stop. */
 export type DevelopmentBundleRequest = {
+  /** The opened repository's root (stop files and recorded sources are relative to it). */
   workspace: string
+  /** The Next app the run resolved: its readers read the package root and match the stop by its package-relative path. Absent for a Vite run and for a caller with only a root app. */
+  nextPackage?: ResolvedNextPackage
   source: RepositoryConfiguration['source']
   /** The last line of the stop's citation, up to which a stop declared on a line with no mapped position is requested at the first mapped position after it ({@link resolveArmedPlace}); a Pages server stop's seal checks that line's client mapping too ({@link sealPagesServerStop}). */
   citationEndLine: number
@@ -96,6 +102,7 @@ export interface DevelopmentServerAdapter {
     workspace: string,
     node: string,
     signal: AbortSignal,
+    nextPackage?: ResolvedNextPackage,
   ): Promise<void>
   /** Starts the owned server on the project's own port and returns it with that port. */
   start(request: DevelopmentServerStart): Promise<{

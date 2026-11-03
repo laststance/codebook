@@ -1,5 +1,48 @@
 # Changelog
 
+## [0.2.75.0] - 2026-11-03 (development candidate)
+
+Cycle 0074 ([Issue #192](https://github.com/laststance/codebook/issues/192)), a bug-fix cycle. A **Next app in a folder below the repository root** (a monorepo example, such as TanStack Query's `examples/react/nextjs`) can now be run, paused in its own code and saved as a replay, with the repository root open. The Chrome extension worker start and a history cleanup test, which made checks fail at random, are fixed.
+
+**Run a Next app below the repository root.** Open the repository root, not the app's folder, and ask about the app's code.
+- `codebook_status` now lists every Next app below the root under the `next-dev-webpack` readiness:
+  - `packages` gives each app's `packageRoot`, `routerKind`, `installed`, `ready`, `version` and `missing`;
+  - `rootIsApp` says whether the root itself is a Next app;
+  - when the list is cut, `packagesTruncated` is set and `packagesTruncatedReason` says why. The list holds at most 50 apps from tracked `package.json` files up to four folders deep.
+- The chat picks the app your question is about and declares it as `packageRoot` in a version 3 configuration. Codebook then starts that app's Next (webpack) from its folder: the port is read from the app's own dev script, and Next loads the app's own environment files. The native server debugger maps a pause to the file inside the app's folder.
+- Recorded sources, book citations and saved configurations keep repository-relative paths.
+- A symlinked alias of the folder runs the folder it points to. An alias of the repository root is an ordinary root run.
+- A Next installed at the repository root (hoisted) counts. Yarn PnP and `NODE_PATH` count as not installed.
+
+**Clear refusals, before anything starts.** Each of these is refused with its own `details.reason` and recovery, and `details.sideEffects: "none"`:
+- a `packageRoot` outside the repository, or through a link that leaves it;
+- a file, or a missing folder;
+- a folder whose `package.json` does not name `next` (`not-a-next-app`);
+- a Next that resolves only outside the repository;
+- a stop in a file outside the app's folder (`NEXT_STOP_NOT_SEALED`, `outside-package`).
+
+A `vite-dev` run refuses a `packageRoot` other than `"."`: this version supports it for `next-dev-webpack` only. With the app's folder itself open, source authoring is still refused with `PREREQUISITE_MISSING`. The message names the repository root's folder and the `packageRoot` to declare there (`nested-workspace`), and every repository-browser adapter in `codebook_status` reports not ready with that recovery.
+
+**Saved sessions.** A run of an app below the root starts without the repository's saved sign-in session, which belongs to the root app. The run resource says so (`savedSessionSkipped`).
+
+**Saved and replayed.** A run with a `packageRoot` is saved as study format 9 (`.study.v9.json`) and replays from its recorded evidence, also after the app's folder is removed. Every other run keeps the format it takes today (3 to 8), byte for byte. Codebook 0.2.74.0 lists a format 9 study as saved by a newer Codebook; update to open it.
+
+**A getter value is refused with a way forward.** Codebook reads values without running code, so a getter (a fetch Response's `status`, a Map's `size`, a class getter) is refused as a possible side effect.
+- A required inspection refused this way now fails with a message that says so. It tells the chat to declare the value optional or choose a variable or plain property, then start one new run.
+- The help, the bundled skill and the README say this before the chat chooses its values.
+
+**Chrome extension runs wake their worker reliably.** Chrome can drop a start of the extension's service worker without an error. Codebook now re-sends the start every second, within one 5 s bound, until the worker is listed.
+- `SERVICE_WORKER_NOT_ATTACHED` names how many starts were sent (`details.workerStartSends`) and the bound (`details.wakeBoundMs`).
+- A Stop during the wake ends it at once, also while Chrome does not answer.
+
+**Native checks (development evidence, no final-row credit).** On TanStack Query at `84f5b0f5b` in the macOS Space, with the repository root open, both chats chose `examples/react/nextjs` from `codebook_status`:
+- VS Code 1.144.1 (Copilot Chat, GPT-6.1 Terra) and Cursor 3.28.7 (Agent, Grok 4.6 High Fast) paused `getStaticProps`'s calls in the example's own code;
+- the native debugger showed the values (`limit = 10`, 100 posts fetched);
+- the run continued to the rendered list and saved as format 9;
+- the replay opened from the library after the app stopped and the chat closed, with the recorded source, values and call stack at each stop.
+
+**Compatibility.** MCP API 1.18 is additive: `packageRoot`, the `next-dev-webpack` readiness fields `rootIsApp`, `packages`, `packagesTruncated` and `packagesTruncatedReason`, the refusal details `field`, `packageRoot`, `reason` and `suggestions`, and `savedSessionSkipped`. Bundled skill 1.0.67. Roll forward rather than back: 0.2.74.0 does not open format 9 studies.
+
 ## [0.2.74.0] - 2026-11-03 (development candidate)
 
 Cycle 0073 ([Issue #188](https://github.com/laststance/codebook/issues/188)), a feature cycle: a web app run of a **Next.js Pages Router** page can now **pause the page's server-side data function**, so the chat can show how the page gets its data on the server, with the values in the native debugger.

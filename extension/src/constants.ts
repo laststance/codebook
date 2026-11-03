@@ -5,6 +5,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 /**
  * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ * 1.18 is additive: a Next app below the repository root runs from the repository root (`next-dev-webpack`, configuration version 3 only). A version 3 configuration may declare `packageRoot` (a repository-relative folder, absent or `"."` for the repository root); the `next-dev-webpack` readiness gains `rootIsApp`, `packages` (entries `{ packageRoot, routerKind, installed, ready, version?, missing }`), `packagesTruncated` and `packagesTruncatedReason` (`limit`, `manifest-cap`, `deadline`, `skipped-path` or `git-failed`); the refusals gain `details.field`, `details.packageRoot`, `details.reason` (`outside-repository`, `link-leaves-repository`, `not-a-folder`, `missing`, `unreadable`, `not-a-next-app`) and `details.suggestions`, `NEXT_STOP_NOT_SEALED` gains `details.reason` `outside-package` (with `details.files` and `details.packageRoot`) and `SIGN_IN_REQUIRED` gains `details.reason` `package-root-fresh-session`; the run resource of a nested run reports `savedSessionSkipped: "package-root"` (a run below the root never loads the repository's saved sign-in session); `SERVICE_WORKER_NOT_ATTACHED` carries `details.workerStartSends` and `details.wakeBoundMs`; a nested run is saved as study format 9 (`.study.v9.json`, retained configuration with `packageRoot`), while a root run keeps the format it takes today (3 to 8). An older Codebook refuses `packageRoot` as an unknown key and lists a format 9 study as saved by a newer Codebook.
  * 1.17 is additive: Pages Router data-function server stops (configuration version 3). A `participant: "server"` stop in the entry page's `getServerSideProps` or `getStaticProps`, or in a module they call, pauses the real Next server. The live pause names its data function in `observations[].dataFunction` (`getServerSideProps` or `getStaticProps`, no saved-study field). A Pages run that declares a server stop adds to the run resource `nextVersion` and `attributionSummary` (`{ taken: { frame, request }, unconfirmed, resumed: { <reason>: count } }`: the pauses taken by their evidence, where `request` stays 0 because the browser's request alone never takes a pause, the pauses labelled `unconfirmed`, and the resumed hits by reason `other-route`, `outside-data-function` or `unattributed-resumed`). Every Next run adds `readinessRequest` (`{ state: "open", sentAtMs }`, then `{ state: "closed", sentAtMs, status }` or `{ state: "closed", sentAtMs, outcome }` with `outcome` `timeout`, `aborted` or `connection-lost`) for Codebook's own readiness request, which runs the entry page's server code once unobserved and is journaled as `readiness.entry-request`; a readiness check that fails with an error of its own after the request was sent (no answer, or in an App Router run an answer that is not OK) fails the run with `RUNTIME_FAILED`, `details.sideEffects` `unknown` and `details.readinessRequest`, and a setup deadline after the request was sent (`NEXT_SETUP_DEADLINE`, or `RUNTIME_FAILED` with the uncoded deadline text) carries `details.sideEffects` `unknown` and `details.readinessRequest` too (closed with `outcome` `timeout` when the deadline came before an answer), `details.router` `pages` once the entry resolved as a Pages route, and a recovery that asks the learner before another start. The journal gains `breakpoint.outside-data-function`, `breakpoint.unconfirmed` (`reason`, `cause`, `logId`) and `pages.renderer-unrecognised`, and Pages hits also use `breakpoint.other-route` and `breakpoint.unattributed-resumed`. The failure details gain `router` (`pages` on every refusal of a stop in a Pages run, on `ENTRY_LOAD_TIMEOUT` and on a Pages entry refusal after the readiness request), `resumedHits`, `attributionMode` (`async-chain`) and `nextVersion` (on `SERVER_STOP_NOT_REACHED` of a Pages run) and `requiredVersion` (on the refusal of a version 2 Pages server stop); a Pages run's failures after the readiness request report `sideEffects` `unknown`. `NEXT_SERVER_ONLY_STOP` and `NEXT_STOP_NOT_SEALED` also answer the Pages server-stop refusals. The journal also gains a `seal.evidence` entry (`client-mapping-unverified`) for a server stop on a page-component line whose client mapping Codebook could not read within its size limit, the run resource's `message` names the reason of an unconfirmed pause, and `serverRenderQuickStart.supportedCode` is an object `{ app, pages }` and was a string in 1.16 (a change of the help's shape). Saved studies: format 8 is unchanged and gains no field, so every Codebook that opens format 8 opens and replays a Pages server run. Live features: a Pages server stop needs Codebook 0.2.74.0 with this API.
  * 1.16 is additive: Next App Router server-render stops (`participant: "server"` with `afterOperation: 0`, `operations` omitted), run pauses reporting `execution`, `attribution`, `operationIndex`, `declaredIndex` and `executionIndex`, `firstExecutionObserved`, and the codes `SERVER_STOP_NOT_REACHED` and `ENTRY_LOAD_TIMEOUT`; `NEXT_STOP_NOT_SEALED` also answers a server stop in a client component.
  * 1.15 is additive: saved-session web app runs, their confirmation and withheld images. Lane A: `codebook_status.savedSession` is `{ available, state, setupAt? }`, with `state` one of `none`, `setup-open`, `saved`, `unconfirmed` or `unusable`; the codes `SIGN_IN_REQUIRED`, `SIGN_IN_IN_PROGRESS`, `SIGN_IN_PROFILE_IN_USE` and `SIGN_IN_PROFILE_UNUSABLE` and `BUSY` with reason `profile-in-use` are added, and `BUSY` details carry `heldBy`.
@@ -19,8 +20,29 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.9 is additive: a node-server run is saved as a Server replay. `codebook_explain_node_history` accepts a server history's material (steps citing the request, a stop, output, the response or the request failure), the server run resource gains `nodeServer.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing` and `captureMissing`, `nextActions` offers `save-node-learning`, and `codebook://help/node-server` has a save section.
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
-export const API_VERSION = '1.17'
-export const EXTENSION_VERSION = '0.2.74'
+export const API_VERSION = '1.18'
+
+/** The Codebook version that first serves a Next app below the repository root (API 1.18, skill 1.0.67). */
+export const NEXT_PACKAGE_ROOT_MINIMUM_EXTENSION = '0.2.75.0'
+/** The API that first accepts `packageRoot` in a version 3 `next-dev-webpack` configuration. */
+export const NEXT_PACKAGE_ROOT_MINIMUM_API = '1.18'
+
+/**
+ * The one sentence that states what running a Next app below the repository root covers and what it does not.
+ *
+ * Defined once: `codebook://help/repository-browser` serves it as `nextPackageRoot.envelope`, `extension/README.md` repeats it word for word, the CHANGELOG entry of the release repeats it, and a docs test holds help and README equal to this constant.
+ */
+export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
+  "A Next app in a folder below the repository root runs from the repository root, not from the app's folder: its own code is runnable and learnable when Next resolves inside the repository and every stop lies in the app's own files, a stop in a shared package outside the app's folder is refused before anything starts, and no saved sign-in session is used below the root, so an app that needs a sign-in cannot run there yet."
+
+/**
+ * The selection rule for a Next question, shared word for word by the repository-browser help (`startHere`, `nextQuickStart.callOrder`, `nextPackageRoot`) and the MCP initial instructions; the bundled skill paraphrases it and a test pins the paraphrase.
+ *
+ * Why it exists: a hoisted `node_modules/next` at the root makes the root look usable although the question is about an app below it, so the chat must choose the app the question is about, never "the one that is ready".
+ */
+export const NEXT_APP_SELECTION_RULE =
+  "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
+export const EXTENSION_VERSION = '0.2.75'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -823,6 +845,30 @@ export const PLAYBACK_PAGE_STEP_MS = 10_000
 export const REPLAY_VIEWPORT_RECEIPT_LIMIT = 12
 export const REPOSITORY_GIT_TIMEOUT_MS = 5_000
 
+/** How many characters of a refused `packageRoot` declaration the schema message echoes. */
+export const PACKAGE_ROOT_ECHO_CHARS = 80
+
+/** How many `package.json` manifests the status discovery of Next apps below the repository root reads at most; more are not read and make the list truncated (`manifest-cap`). */
+export const NEXT_PACKAGE_DISCOVERY_MANIFEST_LIMIT = 500
+/** How many bytes of one `package.json` the discovery reads; a larger manifest is skipped. */
+export const NEXT_PACKAGE_DISCOVERY_MANIFEST_BYTES = 256 * 1024
+/** How many Next apps below the repository root `codebook_status` lists at most; more make the list truncated (`limit`). */
+export const NEXT_PACKAGE_DISCOVERY_APP_LIMIT = 50
+/** The deepest folder (in path segments) the discovery reads a manifest of: `examples/react/nextjs` is 3. */
+export const NEXT_PACKAGE_DISCOVERY_MAX_DEPTH = 4
+/** The longest path (in characters) the discovery lists; a longer one is skipped. */
+export const NEXT_PACKAGE_DISCOVERY_MAX_PATH_CHARS = 256
+/** How many manifests the discovery works on at once. */
+export const NEXT_PACKAGE_DISCOVERY_CONCURRENCY = 8
+/** The output cap of the discovery's `git ls-files`; an overflow ends the discovery as `git-failed`. */
+export const NEXT_PACKAGE_DISCOVERY_GIT_BYTES = 8 * 1024 * 1024
+/** The `maxBuffer` of the one `git rev-parse --show-toplevel` that decides where the opened folder lies (a path, far below this). */
+export const REPOSITORY_GIT_TOPLEVEL_BYTES = 65_536
+/** How long a refusal waits for the discovered `packageRoot` suggestions. */
+export const NEXT_PACKAGE_SUGGESTION_TIMEOUT_MS = 2_000
+/** How many discovered `packageRoot` values a refusal carries as `details.suggestions`. */
+export const NEXT_PACKAGE_SUGGESTION_LIMIT = 5
+
 /** The bound of the repository revision read a server history's header carries: a slow Git costs the header its revision (read as unknown), never the history. */
 export const REPOSITORY_REVISION_BOUND_MS = 500
 /** The `maxBuffer` of source discovery's Git commands: 32 MiB holds the NUL-separated `ls-files -z` listing of {@link REPOSITORY_MAX_TRACKED_FILES} entries even when each ASCII path is near {@link REPOSITORY_PATH_LIMIT_CHARS} characters, so the entry cap refuses an oversized repository of typical names; a listing of longer or multi-byte names overflows the buffer first and is refused the same way (`LIMIT_EXCEEDED`). */
@@ -1578,13 +1624,14 @@ export const SIGN_IN_PATH_LIMIT = 4
 export const SIGN_IN_REPOSITORY_NAME_FALLBACK = 'this repository'
 /**
  * Why a saved-session run answers `SIGN_IN_REQUIRED`, in the order the help lists them.
- * `no-saved-session`: none is set up, or the run declared `session: "fresh"`; `setup-not-finished`: the last setup was closed without Done; `redirected-to-sign-in`: the run used the saved session and the app still asked for sign-in; `session-cookie-only`: the app keeps its sign-in only while the browser stays open, so a saved session cannot keep it.
+ * `no-saved-session`: none is set up, or the run declared `session: "fresh"`; `setup-not-finished`: the last setup was closed without Done; `redirected-to-sign-in`: the run used the saved session and the app still asked for sign-in; `session-cookie-only`: the app keeps its sign-in only while the browser stays open, so a saved session cannot keep it; `package-root-fresh-session`: the run declared a `packageRoot` other than `"."`, so it started fresh and never used the repository's saved session, which was set up for the root app.
  */
 export const SIGN_IN_REQUIRED_REASONS = [
   'no-saved-session',
   'setup-not-finished',
   'redirected-to-sign-in',
   'session-cookie-only',
+  'package-root-fresh-session',
 ] as const
 /** The reason a saved-session run answers `SIGN_IN_REQUIRED` with, as {@link SIGN_IN_REQUIRED_REASONS} lists it. @example const reason: SignInRequiredReason = 'no-saved-session' */
 export type SignInRequiredReason = (typeof SIGN_IN_REQUIRED_REASONS)[number]
@@ -1677,8 +1724,10 @@ export const RECORDED_LOCATION_STUDY_VERSION = 6
 export const OPERATIONS_STUDY_VERSION = 7
 /** The format of a study saved from a version 3 configuration that declares a server stop, a stop with `afterOperation: 0` or no `operations`: its observations carry `execution`, `declaredIndex` and `executionIndex`. A version 3 configuration of browser stops only keeps {@link OPERATIONS_STUDY_VERSION}. The suffix `.study.v8.json` makes 0.2.72.0 list such a study as saved by a newer Codebook and keep it. */
 export const SERVER_RENDER_STUDY_VERSION = 8
+/** The format of a study saved from a version 3 `next-dev-webpack` configuration whose `packageRoot` is a folder other than `"."`: its evidence follows the format 7 rules (browser-only stops) or the format 8 rules (any server stop), derived from the configuration by {@link evidenceFormatOfStudy}. The suffix `.study.v9.json` makes 0.2.73.0 and older list such a study as saved by a newer Codebook and keep it. */
+export const PACKAGE_ROOT_STUDY_VERSION = 9
 /** The highest study format this Codebook reads; a saved study above it is listed as saved by a newer Codebook. */
-export const READABLE_STUDY_VERSION = SERVER_RENDER_STUDY_VERSION
+export const READABLE_STUDY_VERSION = PACKAGE_ROOT_STUDY_VERSION
 /** The replay's operation marks closer than this many pixels stack vertically instead of overlapping. */
 export const OPERATION_MARK_STACK_PX = 24
 /** Below this webview width in pixels the operation marks show their numbers only. */
@@ -1690,6 +1739,12 @@ export const CONFIGURED_STUDY_METADATA_SUFFIX = '.study.meta.v3.json'
 // Highest existing version owns a logical study, including when its bytes are corrupt.
 // A change of the saved study format that an older Codebook cannot read takes the next format number and its own `.study.v<n>.json` suffix in this table; an older Codebook then lists such a study as saved by a newer one and keeps it, instead of failing on its schema.
 export const STUDY_STORAGE_FORMATS = [
+  {
+    version: PACKAGE_ROOT_STUDY_VERSION,
+    format: 'v9',
+    archiveSuffix: '.study.v9.json',
+    metadataSuffix: '.study.meta.v9.json',
+  },
   {
     version: SERVER_RENDER_STUDY_VERSION,
     format: 'v8',
@@ -2533,6 +2588,8 @@ export const EXTENSION_STEP_REQUEST_TIMEOUT_MS = 20_000
 export const EXTENSION_BROWSER_START_BOUND_MS = 30_000
 /** Interval at which the owned launch polls the browser's files and targets. */
 export const EXTENSION_BROWSER_POLL_MS = 100
+/** While the extension's worker target is not listed, the owned browser sends `ServiceWorker.startWorker` again this often: Chrome answers the command at once and discards whether the worker started, so a dropped start is only seen by the missing target. */
+export const EXTENSION_WORKER_START_RESEND_MS = 1_000
 /** Each command on the owned browser's CDP connection has this deadline unless the caller names another. */
 export const EXTENSION_CDP_COMMAND_TIMEOUT_MS = 10_000
 /** After `ServiceWorker.startWorker`, the popup opens only once the worker has had this long to apply the extension's own state (task 0). */

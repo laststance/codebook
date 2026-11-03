@@ -213,7 +213,7 @@ test('the bundled skill declares flows as operations, keeps secrets with the lea
         part.startsWith('**Operations (configuration version 3).**'),
       ) ?? ''
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.66"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.67"\n'))
   assert.ok(paragraph.includes('ordered v3 `operations`'))
   assert.ok(paragraph.includes('`afterOperation`'))
   assert.ok(paragraph.includes('always `secret: "ask-learner"`'))
@@ -250,7 +250,7 @@ test('the README names operations, ask-learner, the masking behavior change and 
   assert.ok(section.includes('`[pending]`'))
   assert.ok(section.includes('`isError: true`'))
   assert.ok(section.includes('`NAVIGATION_NOT_SETTLED`'))
-  assert.ok(readme.includes('**MCP API 1.17**'))
+  assert.ok(readme.includes('**MCP API 1.18**'))
 })
 
 // protects=DX-11/DES-4: the help says when a saved-session run asks, what a decline does, how Review again works, the confirmation values, the learner-only setting and why a fresh run shows no dialog; fails_when=a rule leaves the section; no_claim=the wording's quality

@@ -13,6 +13,7 @@ import {
   KEY_LENGTH_LIMIT,
   MAX_EXPLANATIONS,
   OPERATIONS_STUDY_VERSION,
+  PACKAGE_ROOT_STUDY_VERSION,
   SERVER_RENDER_STUDY_VERSION,
   REPOSITORY_OPERATION_LIMIT,
   MAX_UI_TEXT_CHARS,
@@ -28,7 +29,7 @@ import { sourceSchema, studyIdSchema } from './legacyStudySchemas'
 import { replayDebugSnapshotSchema } from './replayDebugSchemas'
 import {
   inspectionPathSchema,
-  retainedRepositoryConfigSchema,
+  studyConfigurationSchema,
 } from './repositoryConfigSchemas'
 import {
   bookDocumentSchema,
@@ -177,6 +178,7 @@ export const configuredStudySchema = z.strictObject({
     z.literal(RECORDED_LOCATION_STUDY_VERSION),
     z.literal(OPERATIONS_STUDY_VERSION),
     z.literal(SERVER_RENDER_STUDY_VERSION),
+    z.literal(PACKAGE_ROOT_STUDY_VERSION),
   ]),
   workspaceKey: repositoryHashSchema,
   id: studyIdSchema,
@@ -195,7 +197,8 @@ export const configuredStudySchema = z.strictObject({
   ]),
   reason: z.string().max(MAX_UI_TEXT_CHARS).optional(),
   materialSignature: repositoryHashSchema,
-  configuration: retainedRepositoryConfigSchema,
+  // Formats 3 to 8 hold a retained configuration; format 9 holds the package-root variant. The pairing is checked by validateConfiguredStudyEvidence.
+  configuration: studyConfigurationSchema,
   configurationHash: repositoryHashSchema,
   descriptor: configuredDescriptorSchema.optional(),
   // The Vite version a `vite-dev` run started on (read from the resolved `vite/package.json`); a Next study has none.

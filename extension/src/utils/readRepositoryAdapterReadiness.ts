@@ -22,8 +22,22 @@ import {
   readViteWorkspaceGaps,
   type ViteDevScriptReadiness,
 } from './readViteWorkspaceGaps'
+import type { NextPackageTruncationReason } from './scanNextPackages'
 
 export type { NextDevPreparation, NextRouterKind, ViteDevScriptReadiness }
+
+/** One Next app below the repository root as `codebook_status` lists it (`packages[]`); see {@link discoverNextPackages}. */
+export type NextPackageReadiness = {
+  /** The repository-relative folder: the exact value to declare as `packageRoot`. */
+  packageRoot: string
+  routerKind: NextRouterKind
+  /** Whether Next resolves for this package ({@link resolveNextPackage}). */
+  installed: boolean
+  /** What a start with this `packageRoot` would decide on the package alone; the environment joins the shared Node and Chrome prerequisites and a managed run. */
+  ready: boolean
+  version?: string
+  missing: string[]
+}
 
 /** The Next prerequisite of one workspace. */
 export type NextAdapterReadiness = {
@@ -37,6 +51,14 @@ export type NextAdapterReadiness = {
   missing: string[]
   /** Sentences to tell the learner that never change `ready`: the folders searched for router kind `none`, skipped or unread preparation, unapplied environment settings by name. Present when there is one. */
   notes?: string[]
+  /** Status only: whether the root is itself the Next app (its `package.json` names `next` and it has a route folder); a hoisted root `node_modules/next` alone is not. */
+  rootIsApp?: boolean
+  /** Status only: the Next apps below the root from tracked `package.json` files, each with the readiness a start with its `packageRoot` decides. Empty below the Git root. */
+  packages?: NextPackageReadiness[]
+  /** Status only: whether `packages` is incomplete. */
+  packagesTruncated?: boolean
+  /** Status only: why `packages` is incomplete. */
+  packagesTruncatedReason?: NextPackageTruncationReason
 }
 
 /** The Vite prerequisite of one workspace. */
@@ -71,6 +93,7 @@ const nextPackageSchema = z.object({ version: z.string() })
  * Called by {@link readNextReadiness}, which adds the router kind and preparation labels of an installed Next, and by the configured browser run, which names the Next version in a Pages refusal or launch failure.
  *
  * @param workspace - The package root.
+ * @param nextFolder - The Next folder {@link resolveNextPackage} resolved; defaults to `<workspace>/node_modules/next`.
  * @returns
  * - `installed: false` with the install sentence when the executable is missing
  * - `installed: true` with `ready: false` and the reinstall sentence when `node_modules/next/package.json` does not parse
@@ -81,12 +104,15 @@ const nextPackageSchema = z.object({ version: z.string() })
  * // a manifest whose version is 'latest' or longer than 64 characters:
  * await readNextInstallation('/repo') // => { installed: true, ready: true, missing: [] }
  */
-export async function readNextInstallation(workspace: string): Promise<
+export async function readNextInstallation(
+  workspace: string,
+  nextFolder: string = join(workspace, 'node_modules/next'),
+): Promise<
   Pick<NextAdapterReadiness, 'ready' | 'version' | 'missing'> & {
     installed: boolean
   }
 > {
-  const installed = await hasNextExecutable(workspace)
+  const installed = await hasNextExecutable(workspace, nextFolder)
   if (!installed)
     return {
       installed: false,
@@ -95,10 +121,9 @@ export async function readNextInstallation(workspace: string): Promise<
         'Install the selected workspace dependencies, including Next, before using next-dev-webpack.',
       ],
     }
-  const text = await readFile(
-    join(workspace, 'node_modules/next/package.json'),
-    'utf8',
-  ).catch(() => undefined)
+  const text = await readFile(join(nextFolder, 'package.json'), 'utf8').catch(
+    () => undefined,
+  )
   if (text === undefined) return { installed: true, ready: true, missing: [] }
   // A manifest that does not parse is Next's failure alone: it never rejects the whole report
   const manifest = (() => {

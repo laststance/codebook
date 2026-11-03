@@ -28,6 +28,7 @@ import {
 import { findNextClientReferenceStub } from './findNextClientReferenceStub'
 import { readRepositoryBuildText } from './readRepositoryBuildText'
 import { resolveNextClientManifest } from './resolveNextClientManifest'
+import { rootNextPackage, type ResolvedNextPackage } from './resolveNextPackage'
 
 /** Which webpack layer a server stop was sealed from: `action-browser` or `rsc` in the entry route's App Router server chunk ({@link readDevelopmentBundle}), `pages-dir-node` in a Pages page's server compile or the server chunks it loads ({@link readPagesServerBundle}). */
 export type DevelopmentServerLayer = 'action-browser' | 'rsc' | 'pages-dir-node'
@@ -39,18 +40,36 @@ const clientManifestSchema = z.object({
   ),
 })
 
-/** Seals selected-route source for runtime preparation; a server stop uses its `(action-browser)` module, else the `(rsc)` module of the same route chunk, and reports which layer it sealed (a client component's reference stub is refused), rather than an SSR reference. @example await readDevelopmentBundle(workspace, selected, signal, '/login', 'server-action') */
+/**
+ * Seals selected-route source for runtime preparation; a server stop uses its `(action-browser)` module, else the `(rsc)` module of the same route chunk, and reports which layer it sealed (a client component's reference stub is refused), rather than an SSR reference.
+ *
+ * Build files (`.next/dev/…`) are read below the Next package root and the module is found by the stop's package-relative path; the sealed source keeps its absolute path and the accepted SHA-256, so the recorded identity does not depend on `packageRoot`.
+ * @param workspace - The opened repository's root (the Next package root of a root app).
+ * @param selected - The stop's source (repository-relative path) and accepted hash.
+ * @param signal - Ends the read with the run.
+ * @param entryPath - The configured entry path.
+ * @param execution - `server-action` for a server stop, else a browser stop.
+ * @param nextPackage - The Next app the run resolved; absent for a root app ({@link rootNextPackage} of `workspace`).
+ * @returns The sealed module, its layer for a server stop and what the discovery measured.
+ * @throws When the stop lies outside the package, the source differs from the accepted article, a build file is unreadable or absent, or the module is not in the selected route's code.
+ * @example await readDevelopmentBundle(workspace, selected, signal, '/login', 'server-action', run.resolvedNextPackage)
+ */
 export async function readDevelopmentBundle(
   workspace: string,
   selected: RepositoryConfiguration['source'],
   signal?: AbortSignal,
   entryPath = '/',
   execution: 'browser' | 'server-action' = 'browser',
+  nextPackage: ResolvedNextPackage = rootNextPackage(workspace),
 ) {
   repositoryEntryPathSchema.parse(entryPath)
+  // Next names a module by its package-relative path; a stop outside the package is no module of this package's build.
+  const packageRelative = nextPackage.toPackageRelative(selected.path)
+  if (packageRelative === undefined)
+    throw new Error('Selected source is outside the Next package')
   const started = performance.now(),
     deadline = started + REPOSITORY_DISCOVERY_TIMEOUT_MS,
-    root = await realpath(workspace)
+    root = await realpath(nextPackage.packageRoot)
   let readBytes = 0
   const read = async (path: string, limit: number) => {
     signal?.throwIfAborted()
@@ -71,7 +90,7 @@ export async function readDevelopmentBundle(
     readBytes += Buffer.byteLength(text)
     return text
   }
-  const sourcePath = join(root, selected.path),
+  const sourcePath = join(root, packageRelative),
     source = await read(sourcePath, REPOSITORY_SOURCE_LIMIT_BYTES)
   if (sha256(source) !== selected.hash)
     throw new Error('Selected source differs from the accepted article')
@@ -110,11 +129,11 @@ export async function readDevelopmentBundle(
     let bundle = selectEvaluatedModule(
       moduleTexts,
       identity,
-      `webpack-internal:///(action-browser)/./${selected.path}`,
+      `webpack-internal:///(action-browser)/./${packageRelative}`,
       deadline,
     )
     if (!bundle) {
-      const rscScriptUrl = `webpack-internal:///(rsc)/./${selected.path}`
+      const rscScriptUrl = `webpack-internal:///(rsc)/./${packageRelative}`
       // A client component's `(rsc)` module is a reference stub: its code runs only in the browser.
       if (findNextClientReferenceStub(moduleTexts, rscScriptUrl))
         throw clientComponentRefusal(selected)
@@ -163,7 +182,7 @@ export async function readDevelopmentBundle(
   if (!candidates.size)
     throw new Error('No declared selected-route client chunks')
   const bundles: BundleSource[] = [],
-    scriptUrl = `webpack-internal:///(app-pages-browser)/./${selected.path}`
+    scriptUrl = `webpack-internal:///(app-pages-browser)/./${packageRelative}`
   for (const candidate of candidates) {
     const buildRoot = resolve(root, '.next/dev'),
       chunkPath = resolve(buildRoot, candidate)

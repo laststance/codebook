@@ -90,7 +90,10 @@ export async function pagesServerRun(
     additionalStops ?? [],
     {
       participant: 'server',
-      sourcePath: PAGES_SERVER_PAGE_PATH,
+      // A nested app's page lies below its package folder.
+      sourcePath: extra.packageRoot
+        ? `${extra.packageRoot}/${PAGES_SERVER_PAGE_PATH}`
+        : PAGES_SERVER_PAGE_PATH,
       fixture: {
         source: PAGES_SERVER_PAGE_SOURCE,
         citationEndLine: 7,

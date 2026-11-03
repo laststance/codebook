@@ -23,6 +23,7 @@ import {
   type RepositorySource,
 } from './repositorySchemas'
 import { sha256 } from './runtimeSupport/utils/sha256'
+import { describeNestedWorkspaceRefusal } from './utils/describeNestedWorkspace'
 import { gitEnvironmentWithoutInherited } from './utils/gitEnvironmentWithoutInherited'
 import { gitExecutablePath } from './utils/gitExecutablePath'
 import { sourceExclusion } from './utils/sourceExclusion'
@@ -463,11 +464,9 @@ export class RepositorySourceService {
         )
       }
       const top = await git(['rev-parse', '--show-toplevel'])
-      if ((await realpath(top.stdout.replace(/\n$/, ''))) !== root)
-        throw new StudyError(
-          'PREREQUISITE_MISSING',
-          'Open the repository root itself for source authoring; a nested workspace folder is not supported.',
-        )
+      const gitRoot = await realpath(top.stdout.replace(/\n$/, ''))
+      // Adapter-aware refusal naming the Git root's folder and the exact packageRoot (DX-13).
+      if (gitRoot !== root) throw describeNestedWorkspaceRefusal(gitRoot, root)
       this.assertActive(control)
       const index = await git([
         'rev-parse',

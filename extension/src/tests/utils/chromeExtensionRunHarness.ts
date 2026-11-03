@@ -212,7 +212,7 @@ export function createRunHarness(behaviour: HarnessBehaviour = {}) {
     closedDuplicateSurfacePages: behaviour.closedDuplicateSurfacePages ?? 0,
     controlSessionId: 'control-session',
     profile: '/tmp/codebook-browser-fake',
-    startWorker: async () => undefined,
+    startWorker: async () => ({ listed: true, sends: 1 }),
     stopWorkers: async () => undefined,
     attachSurface: async () => {
       log.push('browser.attachSurface')

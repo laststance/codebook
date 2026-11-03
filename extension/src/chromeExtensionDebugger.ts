@@ -3,6 +3,7 @@ import type {
   ExtensionPhaseReporter,
   ExtensionStopContext,
   ResolvedExtensionRun,
+  WorkerStart,
 } from './chromeExtensionContracts'
 import type { StudyError } from './errors'
 import type { CdpTargetInfo } from './runtimeSupport/utils/cdpFieldReaders'
@@ -128,9 +129,9 @@ export type ExtensionDebuggerInput = {
   /** Target id of the open surface; the page child is adopted only while this is the single page target matching the surface URL (js-debug's child sessions carry their own session ids, so the session cannot name its target). */
   surfaceTargetId: string
   /** Reads the owned browser's targets over Codebook's own connection (`Target.getTargets`), to tie js-debug's child sessions to the surface and the extension's worker. */
-  readTargets(): Promise<readonly CdpTargetInfo[]>
-  /** Starts the extension's service worker (`ServiceWorker.startWorker`). */
-  startWorker(): Promise<void>
+  readTargets(timeoutMs?: number): Promise<readonly CdpTargetInfo[]>
+  /** Starts the extension's service worker and waits for its target until `deadlineAt` (`performance.now()` reading); same contract as the owned browser's startWorker. */
+  startWorker(deadlineAt: number, signal?: AbortSignal): Promise<WorkerStart>
   /** Refuses (`SOURCE_CHANGED`) while the disk or an open editor document differs from the pinned bytes (ER20). */
   assertSourcesUnchanged(): void | Promise<void>
   /** Private roots hidden from journaled output. */

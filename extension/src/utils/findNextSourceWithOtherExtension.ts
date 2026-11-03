@@ -19,10 +19,10 @@ const NON_PAGE_INFIXES = ['.test.', '.spec.', '.stories.'] as const
 /**
  * Finds a page source that Next reads only with a custom `pageExtensions`: a regular file beside a source candidate, with the candidate's stem and another extension (`page.mdx` beside the missing `page.tsx`), so a route whose source Codebook cannot read is told apart from a stale listing whose source is gone.
  * Called by {@link findNextPagesSource} for a Pages page without a `.tsx`, `.ts`, `.jsx` or `.js` source and by {@link nextAppPageSourceKindOf} for such an App page. The stem comes from untrusted manifest data: only a path of plain segments (no empty, `.` or `..` segment, no backslash or NUL) is looked at, its folder only when every component is a real folder reached without a link, and only a regular file in it counts. A style, declaration, source map, test, spec or stories file with the stem (`page.module.css`, `page.test.tsx`) is no page source ({@link isNonPageSuffix}), so it never keeps a gone page's listing from being called stale.
- * @param workspace - The opened workspace (the Next project root).
- * @param stem - The workspace-relative candidate without its extension, e.g. `app/about/page` or `src/pages/posts/index`.
+ * @param workspace - The package root (the Next project root; the repository root for a root app).
+ * @param stem - The package-relative candidate without its extension, e.g. `app/about/page` or `src/pages/posts/index`.
  * @param signal - Ends the lookup with the abort reason when the run is cancelled.
- * @returns The workspace-relative path of the first such file in name order, e.g. `app/about/page.mdx`; `undefined` when none exists (only non-page files such as `page.module.css` carry the stem), its folder cannot be listed, or the stem is not a plain path.
+ * @returns The package-relative path of the first such file in name order, e.g. `app/about/page.mdx`; `undefined` when none exists (only non-page files such as `page.module.css` carry the stem), its folder cannot be listed, or the stem is not a plain path.
  * @throws The abort reason when `signal` aborts before or while the folder is listed.
  * @example
  * await findNextSourceWithOtherExtension('/repo', 'app/about/page') // => 'app/about/page.mdx' in a project with app/about/page.mdx
@@ -81,10 +81,10 @@ function isNonPageSuffix(suffix: string): boolean {
 }
 
 /**
- * Says whether every component of a workspace-relative path is a real folder, none of them a link, asking only `lstat` one component at a time, as {@link isUnlinkedRegularFile} does; called by {@link findNextSourceWithOtherExtension} before it lists the folder, so no listing ever passes a link.
+ * Says whether every component of a package-relative path is a real folder, none of them a link, asking only `lstat` one component at a time, as {@link isUnlinkedRegularFile} does; called by {@link findNextSourceWithOtherExtension} before it lists the folder, so no listing ever passes a link.
  * The walk stops at the first component that is missing, no folder or a link, so a deep stem from untrusted manifest data costs one `lstat` per component up to there, never one per prefix of the whole path at once.
- * @param workspace - The opened workspace.
- * @param relativePath - A workspace-relative folder with `/` separators.
+ * @param workspace - The package root.
+ * @param relativePath - A package-relative folder with `/` separators.
  * @returns `true` when each component is a folder that is no link; `false` otherwise, also when a component cannot be read.
  * @example
  * await isUnlinkedFolder('/repo', 'src/pages')     // => true for a real src/pages folder

@@ -26,6 +26,8 @@ export class ControlledOperationsRuntime extends ControlledConfiguredRuntime {
   session?: 'saved' | 'fresh'
   /** `kept` for a run that started with the saved session. */
   appState?: 'kept'
+  /** `package-root` for a run that declared a `packageRoot` other than "." and skipped the saved session. */
+  savedSessionSkipped?: ConfiguredRuntimeView['savedSessionSkipped']
   /** The saved-session status the run read at its start. */
   savedSession?: ConfiguredRuntimeView['savedSession']
   /** What the page read returns for the saved-session confirmation. */
@@ -113,6 +115,9 @@ export class ControlledOperationsRuntime extends ControlledConfiguredRuntime {
       ...(this.failure ? { operationFailure: this.failure } : {}),
       ...(this.session ? { session: this.session } : {}),
       ...(this.appState ? { appState: this.appState } : {}),
+      ...(this.savedSessionSkipped
+        ? { savedSessionSkipped: this.savedSessionSkipped }
+        : {}),
       ...(this.savedSession ? { savedSession: this.savedSession } : {}),
       nextAction:
         this.status === 'ready' &&

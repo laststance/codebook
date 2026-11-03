@@ -69,7 +69,7 @@ export type NextManifestTextReader = (
 
 /** What {@link readNextRouteManifests} needs; `now`, `sleep` and `readText` are seams that default to the real clock, timer and bounded workspace reader. */
 export type NextRouteManifestsRequest = {
-  /** The opened workspace (the Next project root). */
+  /** The package root (the Next project root; the repository root for a root app). */
   workspace: string
   /** The configured entry path the readiness GET asked for. */
   entryPath: string
@@ -148,7 +148,7 @@ export async function readNextRouteManifests(
 
 /**
  * Builds the production reader of {@link readNextRouteManifests}: bounded, contained, link-refusing reads inside the workspace ({@link readRepositoryBuildText}), with an absent file as `undefined`.
- * @param workspace - The opened workspace.
+ * @param workspace - The package root.
  * @returns The reader.
  * @example
  * await workspaceManifestReader('/repo')('.next/dev/server/pages-manifest.json', 1024) // => '{"/":"pages/index.js"}'
@@ -214,7 +214,7 @@ async function readManifestRound(
 /**
  * Reads and parses one manifest for a round of the poll, keeping a failure as a result: a cold compile may be writing the file, and the next round may read it whole.
  * @param readText - The manifest reader.
- * @param file - The manifest's workspace-relative path.
+ * @param file - The manifest's package-relative path.
  * @param schema - The fields read from it.
  * @param signal - Aborts the read; an abort is thrown, never kept.
  * @returns The parsed manifest, `absent`, or the failure as a {@link nextManifestError}.
@@ -330,7 +330,7 @@ function throwFailedRead(round: ManifestRound): void {
  * Decides which router serves an entry path both route manifests match, for {@link classifyRound}: the more specific route as Next decides ({@link compareNextRouterMatches}), but only while its source still exists, so a stale listing left in `.next/dev` stays a conflict whose refusal names it as stale. A source with another extension (a custom `pageExtensions`) is no stale listing: the route wins and the Pages run refuses it for that extension. Called by {@link readNextRouteManifests} once {@link throwFailedRead} found every read whole.
  * @param round - The last round.
  * @param entryPath - The configured entry path.
- * @param workspace - The opened workspace, where the winning source is looked up.
+ * @param workspace - The package root, where the winning source is looked up.
  * @param signal - Ends the source lookups with the abort reason when the run is cancelled.
  * @returns
  * - `undefined` when at most one router matches

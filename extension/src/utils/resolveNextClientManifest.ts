@@ -5,7 +5,7 @@ import { mostSpecificNextRouteOf } from './mostSpecificNextRouteOf'
 type NextClientManifest = {
   /** The App paths manifest key, e.g. `/login/page`. */
   key: string
-  /** The client reference manifest, workspace-relative, e.g. `.next/dev/server/app/login/page_client-reference-manifest.js`. */
+  /** The client reference manifest, relative to the Next package root (where `.next` lives), e.g. `.next/dev/server/app/login/page_client-reference-manifest.js`. */
   path: string
 }
 

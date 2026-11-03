@@ -1,5 +1,5 @@
-import { mkdir, realpath, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { mkdir, realpath, symlink, writeFile } from 'node:fs/promises'
+import { dirname, join, posix, resolve } from 'node:path'
 import type { TestContext } from 'node:test'
 import { runInNewContext } from 'node:vm'
 
@@ -75,6 +75,7 @@ import {
   type RuntimeConstantOverrides,
 } from './loadConstantsWith'
 import { loadModule } from './loadModule'
+import { writeDecoyNextApp, writeNestedPackage } from './nestedNextWorkspace'
 import {
   writeNextPagesWorkspace,
   type NextPagesHarnessOptions,
@@ -126,6 +127,25 @@ function relocateFirstSource(
   reference.configuration.source.path = path
   descriptor.anchors[0]!.path = path
   descriptor.sources[0]!.path = path
+  descriptor.citationContext = citationContext(descriptor.anchors)
+}
+
+/**
+ * Moves every cited source of a configured study into a package folder below the repository root, keeping text and hash, as the repository-relative paths of a nested Next app read.
+ * @param reference - The study {@link createConfiguredStudy} made; changed in place.
+ * @param packageRoot - The repository-relative package folder.
+ * @example nestSources(reference, 'examples/web') // src/theme.ts becomes examples/web/src/theme.ts
+ */
+function nestSources(
+  reference: ReturnType<typeof createConfiguredStudy>,
+  packageRoot: string,
+): void {
+  const descriptor = reference.descriptor!
+  reference.configuration.source.path = `${packageRoot}/${reference.configuration.source.path}`
+  for (const anchor of descriptor.anchors)
+    anchor.path = `${packageRoot}/${anchor.path}`
+  for (const source of descriptor.sources)
+    source.path = `${packageRoot}/${source.path}`
   descriptor.citationContext = citationContext(descriptor.anchors)
 }
 
@@ -206,8 +226,23 @@ export async function configuredRuntimeHarness(
     reloadDuringEntryLoad?: boolean
     /** Runs the Next configuration in a workspace with a Pages folder: the stand-in server answers the structured entry check, the `.next/dev` build is written around the cited source, and the page reports `window.next.router` ({@link NextPagesHarnessOptions}). */
     nextPages?: NextPagesHarnessOptions
-    /** Moves the first cited source, and the stop declared in it, to this workspace-relative path (such as a file under `src/pages`). */
+    /** Moves the first cited source, and the stop declared in it, to this repository-relative path (such as a file under `src/pages`; with `packageRoot` a file inside that folder). */
     sourcePath?: string
+    /**
+     * Runs a nested Next app at this repository-relative folder (Issue 192), the one way to declare a nested package in this harness: the version 3 configuration (with `operations`) declares `packageRoot` last, the folder gets a `package.json` and a Next installation, the first cited source moves below it (unless `sourcePath` names one, which must then lie inside it), and with `nextPages` the Pages project (`.next/dev`, chunks) is written under it instead of at the repository root. Module ids Next prints name the package-relative path; stops keep their repository-relative path.
+     */
+    packageRoot?: string
+    /** Variations of the nested app declared by `packageRoot`. */
+    packageApp?: {
+      /** Writes a different Next app at the repository root: `pages/`, `app/`, `package.json` (another port and `dev` script), `node_modules/next` and `.next` whose contents differ from the package's, so a read of the wrong root yields another value. */
+      decoyRoot?: boolean
+      /** Where `node_modules/next` is installed: in the package folder (default) or hoisted to the repository root, as a workspace install does. */
+      next?: 'package' | 'hoisted'
+      /** Declares this value instead of `packageRoot` while the app lives in `packageRoot` (a symlinked alias inside the repository points at it). */
+      declared?: string
+      /** Leaves the cited sources at their repository-relative path outside the package folder, as a stop in a shared workspace package is. */
+      stopsOutside?: boolean
+    }
     /** Declares the first stop for this participant in a version 2 (cross-runtime) configuration, as a start that names `participant` does, or in a version 3 configuration when `operations` is given; only without additional stops in the version 2 form, whose form differs. */
     participant?: 'browser' | 'server'
     /** The configuration's initial inputs; the stand-in page has one editable control for each selector. */
@@ -309,13 +344,34 @@ export async function configuredRuntimeHarness(
   if (fixture?.declaredColumn)
     reference.configuration.source.column = fixture.declaredColumn
   if (options.sourcePath) relocateFirstSource(reference, options.sourcePath)
+  // A nested Next app: the stops keep repository-relative paths, the package-relative path is what Next prints.
+  const packageFolder = options.packageRoot
+  const packageRootDeclared = packageFolder
+    ? (options.packageApp?.declared ?? packageFolder)
+    : undefined
+  let packageSourcePath = reference.configuration.source.path
+  if (packageFolder && !options.packageApp?.stopsOutside) {
+    // A named source already lies inside the package; the default one moves below it.
+    if (options.sourcePath) {
+      // Next module ids and script URLs are POSIX paths on every OS, so the logical path is taken with posix.
+      packageSourcePath = posix.relative(packageFolder, options.sourcePath)
+      if (
+        packageSourcePath === '..' ||
+        packageSourcePath.startsWith('../') ||
+        posix.isAbsolute(packageSourcePath)
+      )
+        throw new Error(
+          `sourcePath ${options.sourcePath} must lie inside packageRoot ${packageFolder}.`,
+        )
+    } else nestSources(reference, packageFolder)
+  }
   if (options.entryPath ?? options.nextPages?.entryPath)
     reference.configuration.entryPath =
       options.entryPath ?? options.nextPages?.entryPath
   if (options.initialInputs)
     reference.configuration.initialInputs = options.initialInputs
   // A version 2 configuration names the first stop's participant; its other fields are the version 1 ones.
-  const configuration = options.operations
+  const unnestedConfiguration = options.operations
     ? {
         version: 3 as const,
         adapter: reference.configuration.adapter,
@@ -366,8 +422,17 @@ export async function configuredRuntimeHarness(
           participant: options.participant,
         }
       : reference.configuration
+  // A nested app declares its folder; the field exists only in a version 3 configuration.
+  if (packageRootDeclared && unnestedConfiguration.version !== 3)
+    throw new Error('A nested Next app needs a version 3 configuration')
+  const configuration = (
+    packageRootDeclared
+      ? { ...unnestedConfiguration, packageRoot: packageRootDeclared }
+      : unnestedConfiguration
+  ) as typeof unnestedConfiguration
   // Each of these changes makes the frozen intent hash stale.
   if (
+    packageFolder ||
     additionalStops.length ||
     options.before ||
     options.after ||
@@ -385,13 +450,44 @@ export async function configuredRuntimeHarness(
   for (const source of reference.descriptor!.sources)
     await repository.track(source.path, source.text)
   // A Pages project around the cited source: its Pages folder, Next, the `.next/dev` build and the module the page executes.
+  // The package folder holds the app's own files: the Next app of a nested run is written there, the root keeps a decoy.
+  const packageDirectory = packageFolder
+    ? join(repository.directory, packageFolder)
+    : repository.directory
+  if (options.packageApp?.decoyRoot)
+    await writeDecoyNextApp(
+      repository.directory,
+      options.packageApp?.next !== 'hoisted',
+    )
+  // The package-relative path of the first cited source: the module id Next prints and the seal compares.
+  const nextCited = {
+    path: packageSourcePath,
+    text: reference.descriptor!.sources[0]!.text,
+  }
   const pagesBuild = options.nextPages
     ? await writeNextPagesWorkspace(
-        repository.directory,
-        reference.descriptor!.sources[0]!,
+        packageDirectory,
+        nextCited,
         options.nextPages,
       )
     : undefined
+  if (packageFolder)
+    await writeNestedPackage({
+      repositoryDirectory: repository.directory,
+      packageDirectory,
+      withNext: !options.nextPages,
+      next: options.packageApp?.next ?? 'package',
+    })
+  // A declared alias is a link inside the repository that points at the folder holding the app.
+  if (packageFolder && packageRootDeclared !== packageFolder) {
+    await mkdir(dirname(join(repository.directory, packageRootDeclared!)), {
+      recursive: true,
+    })
+    await symlink(
+      join(repository.directory, packageFolder),
+      join(repository.directory, packageRootDeclared!),
+    )
+  }
   const definition = configuredDefinitionSchema.parse({
     configuration,
     configurationHash: reference.configurationHash,
@@ -417,7 +513,7 @@ export async function configuredRuntimeHarness(
       pagesBuild?.moduleJavascript ??
       (fixture ? source : 'const nextTheme = "dark";'),
     javascript = options.serverModuleSourceUrl
-      ? `${baseJavascript}\n//# sourceURL=webpack-internal:///(${options.serverSeal === 'rsc' ? 'rsc' : 'action-browser'})/./${definition.configuration.source.path}`
+      ? `${baseJavascript}\n//# sourceURL=webpack-internal:///(${options.serverSeal === 'rsc' ? 'rsc' : 'action-browser'})/./${packageSourcePath}`
       : baseJavascript
   const bundle: BundleSource = {
     sourcePath,
@@ -435,11 +531,16 @@ export async function configuredRuntimeHarness(
     scriptUrl: options.adapter
       ? 'http://127.0.0.1:4321/src/theme.ts'
       : options.nextPages
-        ? `webpack-internal:///(pages-dir-browser)/./${definition.configuration.source.path}`
-        : 'webpack-internal:///(app-pages-browser)/./src/theme.ts',
-    chunkPath: join(repository.directory, '.next/dev/chunk.js'),
+        ? `webpack-internal:///(pages-dir-browser)/./${packageSourcePath}`
+        : `webpack-internal:///(app-pages-browser)/./${packageSourcePath}`,
+    chunkPath: join(packageDirectory, '.next/dev/chunk.js'),
     chunkHash: '0'.repeat(64),
   }
+  // The folder each Next reader of the mocked seam received, so a nested run proves the package root reached it.
+  const developmentBundleRoots: string[] = [],
+    assertedWorkspaceRoots: string[] = [],
+    declaredPortRoots: string[] = [],
+    launchRequests: unknown[] = []
   const releases: string[] = [],
     mouse: { type?: string; timeout?: number }[] = [],
     commands: string[] = [],
@@ -1247,7 +1348,7 @@ export async function configuredRuntimeHarness(
           return {
             result: { value: evaluateInspection(parameters?.expression) },
           }
-        } catch {
+        } catch (error) {
           return {
             result: { type: 'undefined' },
             exceptionDetails: {
@@ -1255,6 +1356,17 @@ export async function configuredRuntimeHarness(
               text: 'Unavailable test local',
               lineNumber: 0,
               columnNumber: currentColumn - 1,
+              // An EvalError stands in for V8's side-effect refusal under throwOnSideEffect, which names itself this way.
+              ...(error instanceof EvalError
+                ? {
+                    exception: {
+                      type: 'object' as const,
+                      subtype: 'error' as const,
+                      className: 'EvalError',
+                      description: `EvalError: ${error.message}`,
+                    },
+                  }
+                : {}),
             },
           }
         }
@@ -1356,8 +1468,8 @@ export async function configuredRuntimeHarness(
   // A Pages run seals its server stops from the page's server compile, so the Next server executes that `(pages-dir-node)` module.
   const isPagesServer = Boolean(options.nextPages && options.serverRuntime)
   const serverScriptUrl = isPagesServer
-    ? `webpack-internal:///(pages-dir-node)/./${definition.configuration.source.path}`
-    : `webpack-internal:///(${options.serverSeal === 'rsc' ? 'rsc' : 'action-browser'})/./${definition.configuration.source.path}`
+    ? `webpack-internal:///(pages-dir-node)/./${packageSourcePath}`
+    : `webpack-internal:///(${options.serverSeal === 'rsc' ? 'rsc' : 'action-browser'})/./${packageSourcePath}`
   const serverParticipant = options.serverRuntime
     ? createServerParticipant({
         run: () => run,
@@ -1365,7 +1477,7 @@ export async function configuredRuntimeHarness(
         javascript: pagesBuild?.serverModuleJavascript ?? javascript,
         scriptUrl: serverScriptUrl,
         sourceMap: bundle.sourceMap,
-        workspace: repository.directory,
+        workspace: packageDirectory,
         defaultRoute: options.serverRuntime.route ?? null,
         evaluateOnCallFrame: evaluateInspection,
         breakpoints,
@@ -1378,7 +1490,7 @@ export async function configuredRuntimeHarness(
     const entryPathname = (options.entryPath ?? '/').split(/[?#]/)[0]!
     const stem = entryPathname === '/' ? '' : entryPathname.replace(/\/$/, '')
     const manifestPath = join(
-      repository.directory,
+      packageDirectory,
       '.next/dev/server/app-paths-manifest.json',
     )
     await mkdir(dirname(manifestPath), { recursive: true })
@@ -1723,12 +1835,15 @@ export async function configuredRuntimeHarness(
       },
       './utils/readDevelopmentBundle': {
         readDevelopmentBundle: async (
-          _workspace: string,
+          workspaceRoot: string,
           source: Parameters<typeof clientComponentRefusal>[0],
           signal: AbortSignal,
           _entryPath?: string,
           execution?: string,
+          nextPackage?: { packageRoot: string },
         ) => {
+          // A nested app is read below its package root; the first argument stays the repository root.
+          developmentBundleRoots.push(nextPackage?.packageRoot ?? workspaceRoot)
           // A hung `.next/dev` read ends only when the run is cancelled.
           if (options.sealHangs)
             await new Promise<never>((_resolve, reject) =>
@@ -1790,13 +1905,15 @@ export async function configuredRuntimeHarness(
           }
         : {}),
       './utils/assertDevelopmentWorkspace': {
-        assertDevelopmentWorkspace: async () => undefined,
+        assertDevelopmentWorkspace: async (workspaceRoot: string) => {
+          assertedWorkspaceRoots.push(workspaceRoot)
+        },
       },
       './utils/readDeclaredDevelopmentPort': {
-        readDeclaredDevelopmentPort: async () => ({
-          port: 4321,
-          source: 'the dev script in package.json',
-        }),
+        readDeclaredDevelopmentPort: async (workspaceRoot: string) => {
+          declaredPortRoots.push(workspaceRoot)
+          return { port: 4321, source: 'the dev script in package.json' }
+        },
       },
       './utils/assertDevelopmentPortFree': {
         assertDevelopmentPortFree: async () => undefined,
@@ -1818,7 +1935,8 @@ export async function configuredRuntimeHarness(
         },
       },
       './utils/launchDevelopmentServer': {
-        launchDevelopmentServer: () => {
+        launchDevelopmentServer: (...launchArguments: unknown[]) => {
+          launchRequests.push(launchArguments[0])
           developmentServerLaunches += 1
           return fakeApplication
         },
@@ -1962,6 +2080,13 @@ export async function configuredRuntimeHarness(
     emitCdpPause,
     /** The scripted Node participant of a run opened with `serverRuntime` (see {@link createServerParticipant}); `undefined` otherwise. */
     server: serverParticipant?.api,
+    /** The folder each mocked Next reader received: `readDevelopmentBundle`, `assertDevelopmentWorkspace`, `readDeclaredDevelopmentPort` and the first argument of each `launchDevelopmentServer` call. */
+    readerRoots: {
+      developmentBundle: developmentBundleRoots,
+      assertedWorkspace: assertedWorkspaceRoots,
+      declaredPort: declaredPortRoots,
+      launchRequests,
+    },
     /** The configuration of each server debug session the run started, in order. */
     serverLaunches,
     /** Changes what `document.readyState` answers from now on, so a test lets the entry page finish loading once its server stops were continued. @example harness.setDocumentReadyState('complete') */

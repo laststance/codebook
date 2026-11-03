@@ -2,7 +2,6 @@ import { configuredObservationSchema } from '../configuredStudySchemas'
 import {
   REPOSITORY_BROWSER_ACTION,
   REPOSITORY_BROWSER_PROFILE,
-  SERVER_RENDER_STUDY_VERSION,
 } from '../constants'
 import { EvidenceIntegrityError, StudyError } from '../errors'
 import { readResource } from '../resources'
@@ -10,13 +9,17 @@ import type { RetainedStudy } from '../retainedStudySchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import type { StudyRecord, StudyService } from '../service'
 
+import { withCanonicalPackageRoot } from './canonicalDefinition'
 import { decodeRetainedStudy } from './decodeRetainedStudy'
 import { describeStudy } from './describeStudy'
 import { maskLearningSummaryText } from './maskLearningSummaryText'
 import { observationOfFormat } from './observationOfFormat'
 import { projectSavedOperations } from './projectSavedOperations'
 import { redactPreparedConfiguration } from './redactPreparedConfiguration'
-import { studyFormatOfConfiguration } from './studyFormatOfConfiguration'
+import {
+  studyFormatOfConfiguration,
+  usesServerRenderEvidence,
+} from './studyFormatOfConfiguration'
 
 /** Copies only committed canonical evidence for {@link StudyWorkspace}; a changed read is discarded. @example await captureStudy(service, record, workspaceKey) */
 export async function captureStudy(
@@ -192,10 +195,16 @@ export async function captureStudy(
   // The saved study carries the canonical redacted configuration (secret and unresolved prepared texts masked), never the declared texts.
   // The states are frozen at the first capture: a text still unresolved then stays masked in every later checkpoint, so the saved configuration and its hash never change (ENG-3).
   record.canonicalTextStates ??= [...(runtime?.preparedTextStates ?? [])]
-  const canonicalConfiguration = redactPreparedConfiguration(
+  const redactedConfiguration = redactPreparedConfiguration(
     record.configuration,
     record.canonicalTextStates,
     'canonical',
+  )
+  // E10: a nested run saves the canonical repository-relative real path of its folder (a symlinked alias saves its target); the declared value stays in the run's evidence journal.
+  // A declared alias that resolved to the repository root (runtime value ".") is a root run: its saved configuration drops the field and keeps the root run's format.
+  const canonicalConfiguration = withCanonicalPackageRoot(
+    redactedConfiguration,
+    runtime?.nextPackageRoot,
   )
   // Fixed by the sealed configuration; the runtime's format 8 pause fields are written only in format 8.
   const studyVersion = studyFormatOfConfiguration(canonicalConfiguration)
@@ -214,8 +223,10 @@ export async function captureStudy(
             ? { viteVersion: runtime.viteVersion }
             : {}),
           // A format 8 study says the first execution of the page was not observed.
-          ...(studyVersion === SERVER_RENDER_STUDY_VERSION &&
-          runtime?.firstExecutionObserved === false
+          ...(usesServerRenderEvidence({
+            version: studyVersion,
+            configuration: canonicalConfiguration,
+          }) && runtime?.firstExecutionObserved === false
             ? { firstExecutionObserved: false as const }
             : {}),
           operation:
@@ -253,7 +264,10 @@ export async function captureStudy(
         ) || undefined,
       learningSummary,
       observations: observations.map((observation) =>
-        observationOfFormat(observation, studyVersion),
+        observationOfFormat(observation, {
+          version: studyVersion,
+          configuration: canonicalConfiguration,
+        }),
       ),
       captures,
       links: [],

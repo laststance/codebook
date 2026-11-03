@@ -104,6 +104,7 @@ import type {
 import type { RecordingSeal } from './recordingSchemas'
 import type { RecordingStore, RecordingWriter } from './recordingStore'
 import type { RepositoryBookStore } from './repositoryBook'
+import { dropDefaultPackageRoot } from './repositoryConfigSchemas'
 import type {
   SourceListInput,
   SourceReadInput,
@@ -145,6 +146,7 @@ import {
 import type { StudyWorkspace } from './studyWorkspace'
 import { buildRecordingContext } from './utils/buildRecordingContext'
 import { canonicalDefinition } from './utils/canonicalDefinition'
+import { canonicalPackageRootOfConfiguration } from './utils/canonicalPackageRootOfConfiguration'
 import { causeRootsFor } from './utils/causeRootsFor'
 import { configuredStops } from './utils/configuredStops'
 import { createChromeExtensionJournal } from './utils/createChromeExtensionJournal'
@@ -206,6 +208,7 @@ import { numberSourceLines } from './utils/numberSourceLines'
 import { parseChromeExtensionConfiguration } from './utils/parseChromeExtensionConfiguration'
 import { pauseLabelOf } from './utils/pauseLabelOf'
 import type { NodeTestExecutionPlan } from './utils/planNodeTestExecution'
+import { pointRootStartToPackages } from './utils/pointRootStartToPackages'
 import { prepareNodeServerStudy } from './utils/prepareNodeServerStudy'
 import { prepareNodeTestStudy } from './utils/prepareNodeTestStudy'
 import { prepareRepositoryStudy } from './utils/prepareRepositoryStudy'
@@ -224,7 +227,11 @@ import { redactExtensionInputs } from './utils/redactExtensionInputs'
 import type { PreparedTextState } from './utils/redactPreparedTexts'
 import { refusalFailureOf } from './utils/refusalFailureOf'
 import { releaseVitestListings } from './utils/releaseVitestListings'
-import { repositoryBrowserStartPrerequisites } from './utils/repositoryBrowserStartPrerequisites'
+import {
+  isRootNextStart,
+  repositoryBrowserStartPrerequisites,
+  selectedNextPackageStartPrerequisites,
+} from './utils/repositoryBrowserStartPrerequisites'
 import { resolveCapturedFactPaths } from './utils/resolveCapturedFactPaths'
 import { sameAcceptedDefinition } from './utils/sameAcceptedDefinition'
 import {
@@ -935,6 +942,19 @@ export class StudyService {
                 missing: prerequisite.adapters['next-dev-webpack'].missing.map(
                   (sentence) => this.sanitizedCause(sentence),
                 ),
+                // Each nested app's gaps are sentences too (a file error, a folder name), so they pass the same sanitizer.
+                ...(prerequisite.adapters['next-dev-webpack'].packages
+                  ? {
+                      packages: prerequisite.adapters[
+                        'next-dev-webpack'
+                      ].packages.map((entry) => ({
+                        ...entry,
+                        missing: entry.missing.map((sentence) =>
+                          this.sanitizedCause(sentence),
+                        ),
+                      })),
+                    }
+                  : {}),
               },
               'vite-dev': {
                 ...prerequisite.adapters['vite-dev'],
@@ -1078,10 +1098,13 @@ export class StudyService {
   /** Describes actual capabilities before an agent chooses an operation; called by discovery. @example await service.status() */
   async status() {
     const [reportedPrerequisites, repository] = await Promise.all([
-      this.environment.prerequisites().catch((error) => ({
-        ready: false,
-        missing: [this.sanitizedCause(error)],
-      })),
+      // Status alone discovers the Next apps below the root (AC 4); a start judges its own package.
+      this.environment
+        .prerequisites({ discoverPackages: true })
+        .catch((error) => ({
+          ready: false,
+          missing: [this.sanitizedCause(error)],
+        })),
       this.repository
         ? this.sources({ instanceId: this.instanceId }).then(
             () => ({ ready: true, reason: undefined }),
@@ -1692,6 +1715,30 @@ export class StudyService {
       : undefined
   }
 
+  /**
+   * Hashes a start's accepted intent into the key's signature.
+   *
+   * A repository-browser configuration is hashed with the canonical real path of `packageRoot`, so a symlinked alias and its target are one key (E10); the run itself keeps the declared value.
+   * @param intent - The parsed start with `"."` already dropped.
+   * @returns The SHA-256 signature compared against an earlier start of the same key.
+   * @example this.startSignature(intent) // => '9f2c…'
+   */
+  private startSignature(intent: StartIntent): string {
+    return sha256(
+      JSON.stringify(
+        intent.profile === REPOSITORY_BROWSER_PROFILE
+          ? {
+              ...intent,
+              configuration: canonicalPackageRootOfConfiguration(
+                intent.configuration,
+                this.environment.workspace,
+              ),
+            }
+          : intent,
+      ),
+    )
+  }
+
   /** Reserves intent before prerequisite I/O so duplicate starts cannot create two runtimes. @example service.start(input).runUri */
   start(input: StartInput) {
     this.assertMutable(input.instanceId)
@@ -1716,8 +1763,15 @@ export class StudyService {
         'Start arguments do not match the selected profile or accepted intent.',
         parsed.error.message,
       )
-    const intent = parsed.data,
-      signature = sha256(JSON.stringify(intent))
+    // Absent and "." packageRoot are one configuration: drop "." before the signature and the record are taken.
+    const intent =
+        parsed.data.profile === REPOSITORY_BROWSER_PROFILE
+          ? {
+              ...parsed.data,
+              configuration: dropDefaultPackageRoot(parsed.data.configuration),
+            }
+          : parsed.data,
+      signature = this.startSignature(intent)
     if (previous) {
       if (previous.signature !== signature)
         throw new StudyError(
@@ -3148,6 +3202,8 @@ export class StudyService {
     return canonicalDefinition(
       definition,
       record.canonicalTextStates ?? record.runtime?.view().preparedTextStates,
+      // The saved study carries the canonical packageRoot (E10): the run resource and the reference hash that same configuration.
+      record.runtime?.view().nextPackageRoot,
     ).configurationHash
   }
 
@@ -3844,6 +3900,9 @@ export class StudyService {
         ? {
             session: runtime.session,
             ...(runtime.appState ? { appState: runtime.appState } : {}),
+            ...(runtime.savedSessionSkipped
+              ? { savedSessionSkipped: runtime.savedSessionSkipped }
+              : {}),
             ...(runtime.savedSession
               ? { savedSession: runtime.savedSession }
               : {}),
@@ -4614,8 +4673,16 @@ export class StudyService {
         this.environment.nodeTestStartPrerequisites
           ? await this.environment.nodeTestStartPrerequisites()
           : await this.environment.prerequisites().then(
-              // Shared Node/Chrome availability alone cannot authorize an unsupported selected profile.
-              (prerequisites) =>
+              async (prerequisites) =>
+                // A nested Next app is judged by its own package, never by the root's readiness.
+                (await selectedNextPackageStartPrerequisites(
+                  prerequisites,
+                  record.profile,
+                  record.configuration,
+                  this.environment.workspace,
+                  record.cancellation.signal,
+                )) ??
+                // Shared Node/Chrome availability alone cannot authorize an unsupported selected profile.
                 repositoryBrowserStartPrerequisites(
                   prerequisites,
                   record.profile,
@@ -4627,7 +4694,13 @@ export class StudyService {
       if (!selectedPrerequisites.ready)
         throw new StudyError(
           'PREREQUISITE_MISSING',
-          selectedPrerequisites.missing.join('; '),
+          (isRootNextStart(record.profile, record.configuration)
+            ? await pointRootStartToPackages(
+                selectedPrerequisites.missing,
+                this.environment.workspace,
+              )
+            : selectedPrerequisites.missing
+          ).join('; '),
         )
       if (this.stopping || record.stopping) return
       if (record.profile === NODE_TEST_PROFILE) {

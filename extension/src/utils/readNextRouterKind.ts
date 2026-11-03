@@ -13,7 +13,7 @@ export const NEXT_ROUTE_FOLDER_NOT_FOUND_NOTE =
  * Why it exists: `codebook_status` labels the `next-dev-webpack` readiness with the router kind, so an agent knows before a start whether the workspace has App Router pages, Pages Router pages or both. Called by {@link readRepositoryAdapterReadiness}. It is a label, never a readiness failure.
  * Each router's folder is found the way Next finds it ({@link findNextRouteFolder}: the root folder first, then `src/`); for the kind it is enough that one exists. Only existence is checked: nothing in the folders is read.
  *
- * @param workspace - The workspace root, which is the package root.
+ * @param workspace - The package root (the repository root for a root app).
  * @returns
  * - `'app'` when only `app/` or `src/app/` exists
  * - `'pages'` when only `pages/` or `src/pages/` exists

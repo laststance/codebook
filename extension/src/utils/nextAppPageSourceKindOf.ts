@@ -10,7 +10,7 @@ export type NextAppPageSourceKind = 'found' | 'otherExtension' | 'gone'
 /**
  * Says what the source of a listed App page is, so the Pages run tells a stale App listing (no file with the page's stem) apart from a source with a custom `pageExtensions` extension, which is no stale listing.
  * Called by the router contest of {@link readNextRouteManifests} for a more specific App route and by the Pages run's conflict refusal ({@link resolveNextPagesEntry}). The key is untrusted: {@link hasNextAppPageSource} and {@link findNextSourceWithOtherExtension} each look only at a plain path, never through a link.
- * @param workspace - The opened workspace (the Next project root).
+ * @param workspace - The package root (the Next project root; the repository root for a root app).
  * @param appKey - The App paths manifest key, e.g. `/about/page`.
  * @param signal - Ends the lookup with the abort reason when the run is cancelled.
  * @returns

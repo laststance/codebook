@@ -537,6 +537,8 @@ export type ConfiguredRuntimeView = {
   definition: ConfiguredDefinition
   /** How far the run resolved each `initialInputs` text (`pending`, `secret` or `plain`); the texts themselves are never in the view. A view without it counts every text as unresolved. */
   preparedTextStates?: PreparedTextState[]
+  /** The canonical repository-relative folder of a Next app below the repository root (E10: a symlinked alias reads as its target); `.` for a declared alias that resolved to the repository root, absent for any other run at the root. The study writer saves it as the configuration's `packageRoot` and drops `.` (a root run saves without the field). */
+  nextPackageRoot?: string
   manifest?: {
     hash: string
     configurationHash: string
@@ -562,6 +564,8 @@ export type ConfiguredRuntimeView = {
   session?: 'saved' | 'fresh'
   /** `kept` for a run that started with the saved session: the app data the profile already had stays (such a run never writes `initialStorage`: a configuration that declares it is refused). */
   appState?: 'kept'
+  /** `package-root` for a run that declared a `packageRoot` other than "." and so never loaded the repository's saved session; the run resource serves it as `savedSessionSkipped`. */
+  savedSessionSkipped?: 'package-root'
   /** The saved-session status the run read at admission; the run resource serves it as `savedSession`. */
   savedSession?: SavedSessionStatus
   /** The saved-session confirmation of a version 3 run; the service fills it, not the runtime. */
@@ -638,7 +642,10 @@ export interface StudyEnvironment {
   readonly remoteName?: string
   readonly build: { revision: string; dirty: boolean; sourceHash: string }
   assertWorkspace?(): void
-  prerequisites(): Promise<{
+  /**
+   * @param options.discoverPackages - Also discover the Next apps below the repository root (`codebook_status` only); a start leaves it off and judges its own package.
+   */
+  prerequisites(options?: { discoverPackages?: boolean }): Promise<{
     ready: boolean
     missing: string[]
     profiles?: Partial<

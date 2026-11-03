@@ -4,13 +4,13 @@ import { join } from 'node:path'
 /** The two Next routers, named by the folder each reads its routes from. */
 export type NextRouterName = 'app' | 'pages'
 
-/** The workspace-relative folder one Next router reads: the root one or the one under `src/`. */
+/** The package-relative folder one Next router reads: the root one or the one under `src/`. */
 export type NextRouteFolder<Name extends NextRouterName> = Name | `src/${Name}`
 
 /**
  * Finds the folder a Next router reads its routes from, by Next's own rule (`findDir`): the root folder wins over the one under `src/`.
  * Called by {@link readNextRouteManifests} to know which routers a project has, and by {@link findNextPagesSource} to know where a page's source lives.
- * @param workspace - The opened workspace (the Next project root).
+ * @param workspace - The package root (the Next project root; the repository root for a root app).
  * @param name - The router whose folder is asked.
  * @returns `name` when the root folder exists, else `src/<name>` when that exists, else `undefined`.
  * @example

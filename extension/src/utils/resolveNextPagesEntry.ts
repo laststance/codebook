@@ -25,6 +25,7 @@ import type {
   NextRouteSettings,
 } from './readNextRouteManifests'
 import { redactNextEntryPath } from './redactNextEntryPath'
+import type { ResolvedNextPackage } from './resolveNextPackage'
 import { stripTerminalControls } from './stripTerminalControls'
 
 /** The extensions a Pages refusal names, in Next's order: `.tsx, .ts, .jsx, .js`. */
@@ -41,15 +42,18 @@ export type NextPagesEntry = {
   route: string
   /** The manifest value, e.g. `pages/posts/[id].js`. */
   compiledPath: string
-  /** The page's source, workspace-relative, e.g. `src/pages/posts/[id].tsx`. */
+  /** The page's source, package-relative (the root Next reads), e.g. `src/pages/posts/[id].tsx`; map it with {@link ResolvedNextPackage.toRepositoryRelative} before it leaves the Next path. */
   source: string
+  /** The Pages folder, package-relative. */
   folder: NextRouteFolder<'pages'>
 }
 
 /** What {@link resolveNextPagesEntry} judges: the entry path, what the server answered, what the manifests say, and how to quote the server's output. */
 export type NextPagesEntryFacts = {
-  /** The opened workspace (the Next project root). */
+  /** The package root (the Next project root every Next-path reader reads); for a root run it is the repository root. */
   workspace: string
+  /** The resolved Next package: a refusal that names a source or folder maps it back to its repository-relative path through it. Absent only where the caller has no package (the paths are then named as read, which is the repository root's own). */
+  nextPackage?: ResolvedNextPackage
   /** The configured entry path. */
   entryPath: string
   /** The structured answer to `GET entryPath` ({@link describeNextEntryResponse}). */
@@ -78,6 +82,7 @@ export async function resolveNextPagesEntry(
   facts: NextPagesEntryFacts,
 ): Promise<NextPagesEntry> {
   const { manifests } = facts
+  const shown = repositoryPathNamer(facts.nextPackage)
   const unsupported = unsupportedSettingRefusal(
     manifests.settings,
     facts.nextVersion,
@@ -91,24 +96,39 @@ export async function resolveNextPagesEntry(
   if (manifests.kind === 'conflict')
     throw await conflictRefusal(facts.workspace, facts.entryPath, manifests)
   if (manifests.kind === 'unresolved')
-    throw await unresolvedRefusal(facts, manifests.manifests.app)
+    throw await unresolvedRefusal(facts, manifests.manifests.app, shown)
   // The App route Next serves exists only with another extension, which Codebook does not read.
   if (manifests.kind === 'appCustomExtension')
     throw customPageExtensionsRefusal(
       'App',
       manifests.appKey,
       facts.entryPath,
-      (await findNextRouteFolder(facts.workspace, 'app')) ?? 'app',
+      shown((await findNextRouteFolder(facts.workspace, 'app')) ?? 'app'),
     )
   const resolved = await pagesEntryOf(
     facts.workspace,
     facts.entryPath,
     manifests,
+    shown,
   )
   // A listed page can still answer the entry request with an error, which the browser would only show as a missing click target.
   const failed = await errorAnswerRefusal(facts, resolved.route)
   if (failed) throw failed
   return resolved
+}
+
+/**
+ * Makes the function that names a package-relative path the way a book and a stop write it (repository-relative), so a refusal never shows the package-relative path of a nested app as if it were the repository's.
+ * Called once by {@link resolveNextPagesEntry}; a root run (or no package) names every path as read, which is today's text.
+ * @param nextPackage - The resolved Next package, when the caller has one.
+ * @returns The namer.
+ * @example
+ * repositoryPathNamer(nested)('src/pages') // => 'examples/app/src/pages' for a package at examples/app
+ */
+function repositoryPathNamer(
+  nextPackage: ResolvedNextPackage | undefined,
+): (path: string) => string {
+  return (path) => nextPackage?.toRepositoryRelative(path) ?? path
 }
 
 /**
@@ -217,7 +237,7 @@ async function serverOutputSentences(
 
 /**
  * Refuses an entry path both route manifests list, saying "stale" when one of the two pages has no source any more (no file with its stem: a source with another extension, a custom `pageExtensions`, still exists); called by {@link resolveNextPagesEntry}.
- * @param workspace - The opened workspace.
+ * @param workspace - The package root.
  * @param entryPath - The configured entry path.
  * @param conflict - The App key and the Pages route both listing it.
  * @returns The `NEXT_ROUTE_CONFLICT` refusal.
@@ -247,8 +267,9 @@ async function conflictRefusal(
 
 /**
  * Refuses an entry path no manifest lists, naming what was searched (the Pages manifest, or both), the Pages folder and the extensions tried; called by {@link resolveNextPagesEntry}.
- * @param facts - The workspace, the entry path and the server's answer.
+ * @param facts - The package root, the entry path and the server's answer.
  * @param appManifestRead - Whether the App paths manifest was read too.
+ * @param shown - Names a package-relative path repository-relative.
  * @returns The `NEXT_ROUTE_NOT_FOUND` refusal.
  * @example
  * (await unresolvedRefusal(facts, false)).message
@@ -257,9 +278,11 @@ async function conflictRefusal(
 async function unresolvedRefusal(
   facts: NextPagesEntryFacts,
   appManifestRead: boolean,
+  shown: (path: string) => string,
 ): Promise<StudyError> {
-  const folder =
-    (await findNextRouteFolder(facts.workspace, 'pages')) ?? 'src/pages'
+  const folder = shown(
+    (await findNextRouteFolder(facts.workspace, 'pages')) ?? 'src/pages',
+  )
   const searched = appManifestRead
     ? 'the Pages and the App route manifests'
     : 'the Pages route manifest'
@@ -271,9 +294,10 @@ async function unresolvedRefusal(
 
 /**
  * Finds the source of the resolved Pages route, refusing a route whose source is missing (a custom `pageExtensions`) or is an API route, which renders no page; called by {@link resolveNextPagesEntry} once the manifests resolved a route, before the status check of {@link errorAnswerRefusal}.
- * @param workspace - The opened workspace.
+ * @param workspace - The package root.
  * @param entryPath - The configured entry path.
  * @param resolved - The Pages route and its compiled page.
+ * @param shown - Names a package-relative path repository-relative, for the text of a refusal.
  * @returns The Pages route the run continues with.
  * @throws `NEXT_ROUTE_NOT_FOUND` for a missing source or an API route.
  * @example
@@ -284,6 +308,7 @@ async function pagesEntryOf(
   workspace: string,
   entryPath: string,
   resolved: Extract<NextPagesManifests, { kind: 'pages' }>,
+  shown: (path: string) => string,
 ): Promise<NextPagesEntry> {
   const lookup = await findNextPagesSource(workspace, resolved.compiledPath)
   if (lookup.kind === 'missing')
@@ -291,13 +316,13 @@ async function pagesEntryOf(
       'Pages',
       resolved.compiledPath,
       entryPath,
-      lookup.folder,
+      shown(lookup.folder),
     )
   // An API route answers requests but renders no page the browser could open.
   if (nextServerOnlyFileReason(lookup.path, lookup.folder) === 'api-route')
     throw nextRefusal(
       'NEXT_ROUTE_NOT_FOUND',
-      `The entry path ${redactNextEntryPath(entryPath)} is the API route ${lookup.path}, not a page: it renders nothing the browser can open. Set entryPath to the page the question is about.`,
+      `The entry path ${redactNextEntryPath(entryPath)} is the API route ${shown(lookup.path)}, not a page: it renders nothing the browser can open. Set entryPath to the page the question is about.`,
     )
   return {
     route: resolved.route,
@@ -312,7 +337,7 @@ async function pagesEntryOf(
  * @param router - Which route manifest lists the route.
  * @param listed - What that manifest lists: the compiled page of a Pages route (`pages/index.js`) or the App key (`/about/page`).
  * @param entryPath - The configured entry path.
- * @param folder - The router's folder that was searched, e.g. `src/pages` or `app`.
+ * @param folder - The router's folder that was searched, repository-relative, e.g. `src/pages`, `app` or `examples/app/app`.
  * @returns The `NEXT_ROUTE_NOT_FOUND` refusal.
  * @example
  * customPageExtensionsRefusal('App', '/about/page', '/about', 'app').message

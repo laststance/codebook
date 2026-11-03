@@ -47,7 +47,10 @@ export function describeSignInRequiredDetails(input: {
               : { setupAt: input.savedSession.setupAt }),
           },
         }),
-    command: SET_UP_SAVED_SESSION_COMMAND,
+    // A package below the root has no setup to offer, so it names no command.
+    ...(input.reason === 'package-root-fresh-session'
+      ? {}
+      : { command: SET_UP_SAVED_SESSION_COMMAND }),
     ...(input.operationIndex === undefined
       ? {}
       : { operationIndex: input.operationIndex }),
@@ -75,6 +78,8 @@ function setUpRetryOf(input: {
   session?: 'saved' | 'fresh'
   savedSession?: SavedSessionStatus
 }): string {
+  if (input.reason === 'package-root-fresh-session')
+    return 'Do not set up a saved session: this app cannot sign in below the root in this version. Change the flow to one that needs no sign-in, then start one new run.'
   // A fresh run without the status read at admission declared its fresh profile: a setup would not change its next run.
   if (input.session === 'fresh' && input.savedSession === undefined)
     return 'Remove session: "fresh" from the configuration, then start one new run.'

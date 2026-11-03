@@ -5,8 +5,9 @@ import { DiscoveryBudgetError } from './discoveryBudgetError'
 import { selectEvaluatedModule } from './extractDevelopmentModule'
 import type { NextRouteFolder } from './findNextRouteFolder'
 import { lineMappingOf } from './lineMappingOf'
-import { nextServerOnlyFileReason } from './nextServerOnlyFileReason'
+import { nextServerOnlyFileReasonOfStop } from './nextServerOnlyFileReason'
 import { readNextChunkModules } from './readNextChunkModules'
+import type { ResolvedNextPackage } from './resolveNextPackage'
 import type { NextPagesRoute } from './resolveNextPagesRoute'
 import { spendNextPagesDiscovery } from './spendNextPagesDiscovery'
 
@@ -17,9 +18,9 @@ export type NextServerOnlyReason =
 
 /** What {@link readNextServerOnlyReason} needs about one declared stop that the browser run could not seal or map. */
 export type NextServerOnlyRequest = {
-  /** The opened workspace (the Next project root). */
-  workspace: string
-  /** The stop's source, workspace-relative, e.g. `src/pages/index.tsx`. */
+  /** The run's Next app: its package root holds the server compile (`.next`), and it maps the stop's repository-relative source to the package-relative module path Next names. */
+  nextPackage: ResolvedNextPackage
+  /** The stop's source, repository-relative as a book cites it, e.g. `examples/app/src/pages/index.tsx` (`src/pages/index.tsx` for the root app). */
   path: string
   /** The declared one-based line. */
   line: number
@@ -44,21 +45,28 @@ export type NextServerOnlyRequest = {
  * - `unknown` otherwise, also when the server compile is absent, does not carry the module, or carries another original
  * @throws When the run is aborted, or a {@link DiscoveryBudgetError} when its discovery budget is spent; a server compile that is unreadable, replaced during the read or ambiguous establishes nothing (`unknown`), also when its error carries the budget's words.
  * @example
- * await readNextServerOnlyReason({ workspace, path: 'src/pages/index.tsx', line: 17, folder: 'src/pages', compiledPath: 'pages/index.js', clientBundle, cache })
+ * await readNextServerOnlyReason({ nextPackage, path: 'examples/app/src/pages/index.tsx', line: 17, folder: 'src/pages', compiledPath: 'pages/index.js', clientBundle, cache })
  * // => { kind: 'server-only', reason: 'server-compile' } for a getStaticProps body line
  */
 export async function readNextServerOnlyReason(
   request: NextServerOnlyRequest,
 ): Promise<NextServerOnlyReason> {
-  const byFile = nextServerOnlyFileReason(request.path, request.folder)
+  const byFile = nextServerOnlyFileReasonOfStop(
+    request.nextPackage,
+    request.path,
+    request.folder,
+  )
   if (byFile) return { kind: 'server-only', reason: byFile }
+  // Next names modules relative to the package root; a stop outside the package establishes nothing here.
+  const packagePath = request.nextPackage.toPackageRelative(request.path)
+  if (packagePath === undefined) return { kind: 'unknown' }
   const { clientBundle } = request
   // Without a sealed browser module, absence from the browser is not established (the module may load lazily).
   if (!clientBundle || lineMappingOf(clientBundle, request.line) !== 'unmapped')
     return { kind: 'unknown' }
   const serverMapsLine = await spendNextPagesDiscovery(
     request.cache,
-    request.workspace,
+    request.nextPackage.packageRoot,
     request.signal,
     async (step) => {
       try {
@@ -77,7 +85,7 @@ export async function readNextServerOnlyReason(
             chunkPath: chunk.chunkPath,
             chunkHash: chunk.chunkHash,
           },
-          `webpack-internal:///(pages-dir-node)/./${request.path}`,
+          `webpack-internal:///(pages-dir-node)/./${packagePath}`,
           step.deadline,
         )
         return Boolean(

@@ -12,6 +12,7 @@ import {
 import { DiscoveryBudgetError } from '../utils/discoveryBudgetError'
 import { readNextServerOnlyReason } from '../utils/readNextServerOnlyReason'
 import { readPagesDevelopmentBundle } from '../utils/readPagesDevelopmentBundle'
+import { rootNextPackage } from '../utils/resolveNextPackage'
 
 import {
   PAGE_SOURCE,
@@ -66,7 +67,7 @@ test('a stop in _document is server-only by Next’s file rule', async (context)
   const workspace = await emptyWorkspace(context)
   // Act
   const reason = await readNextServerOnlyReason({
-    workspace,
+    nextPackage: rootNextPackage(workspace),
     path: 'src/pages/_document.tsx',
     line: 4,
     folder: 'src/pages',
@@ -83,7 +84,7 @@ for (const path of ['pages/api/posts/[id].ts', 'pages/api.js'])
     const workspace = await emptyWorkspace(context)
     // Act
     const reason = await readNextServerOnlyReason({
-      workspace,
+      nextPackage: rootNextPackage(workspace),
       path,
       line: 1,
       folder: 'pages',
@@ -99,7 +100,7 @@ test('a line the page’s server compile maps and its browser module does not is
   const { build, clientBundle } = await sealedPageWithServerCompile(context, 5)
   // Act
   const reason = await readNextServerOnlyReason({
-    workspace: build.workspace,
+    nextPackage: rootNextPackage(build.workspace),
     path: 'src/pages/index.tsx',
     line: 5,
     folder: 'src/pages',
@@ -119,7 +120,7 @@ test('an unmapped line without a server compile stays unknown, never server-only
   )
   // Act
   const reason = await readNextServerOnlyReason({
-    workspace: build.workspace,
+    nextPackage: rootNextPackage(build.workspace),
     path: 'src/pages/index.tsx',
     line: 5,
     folder: 'src/pages',
@@ -136,7 +137,7 @@ test('a line neither the browser module nor the server compile maps stays unknow
   const { build, clientBundle } = await sealedPageWithServerCompile(context, 4)
   // Act
   const reason = await readNextServerOnlyReason({
-    workspace: build.workspace,
+    nextPackage: rootNextPackage(build.workspace),
     path: 'src/pages/index.tsx',
     line: 5,
     folder: 'src/pages',
@@ -153,7 +154,7 @@ test('a line the browser module maps is not server-only, though the server compi
   const { build, clientBundle } = await sealedPageWithServerCompile(context, 5)
   // Act
   const reason = await readNextServerOnlyReason({
-    workspace: build.workspace,
+    nextPackage: rootNextPackage(build.workspace),
     path: 'src/pages/index.tsx',
     line: 2,
     folder: 'src/pages',
@@ -170,7 +171,7 @@ test('a stop whose browser module was never sealed stays unknown, since a lazily
   const { build } = await sealedPageWithServerCompile(context, 5)
   // Act
   const reason = await readNextServerOnlyReason({
-    workspace: build.workspace,
+    nextPackage: rootNextPackage(build.workspace),
     path: 'src/pages/index.tsx',
     line: 5,
     folder: 'src/pages',
@@ -198,7 +199,7 @@ test('a server compile built from an older version of the source establishes not
   )
   // Act
   const reason = await readNextServerOnlyReason({
-    workspace: build.workspace,
+    nextPackage: rootNextPackage(build.workspace),
     path: 'src/pages/index.tsx',
     line: 5,
     folder: 'src/pages',
@@ -222,7 +223,7 @@ test('a server compile that cannot be read establishes nothing instead of failin
   })
   // Act
   const reason = await readNextServerOnlyReason({
-    workspace: build.workspace,
+    nextPackage: rootNextPackage(build.workspace),
     path: 'src/pages/index.tsx',
     line: 5,
     folder: 'src/pages',
@@ -241,7 +242,7 @@ test('an aborted run still rejects while the server compile is read', async (con
   controller.abort()
   // Act
   const outcome = readNextServerOnlyReason({
-    workspace: build.workspace,
+    nextPackage: rootNextPackage(build.workspace),
     path: 'src/pages/index.tsx',
     line: 5,
     folder: 'src/pages',
@@ -272,7 +273,7 @@ test('an unrelated server compile failure that carries the budget’s words esta
   }
   // Act
   const reason = await readNextServerOnlyReason({
-    workspace: build.workspace,
+    nextPackage: rootNextPackage(build.workspace),
     path: 'src/pages/index.tsx',
     line: 5,
     folder: 'src/pages',
@@ -293,7 +294,7 @@ test('a server compile larger than the run’s remaining discovery bytes ends th
   cache.readBytes = REPOSITORY_DISCOVERY_LIMIT_BYTES - 64
   // Act
   const outcome = readNextServerOnlyReason({
-    workspace: build.workspace,
+    nextPackage: rootNextPackage(build.workspace),
     path: 'src/pages/index.tsx',
     line: 5,
     folder: 'src/pages',

@@ -1,0 +1,605 @@
+import assert from 'node:assert/strict'
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { test, type TestContext } from 'node:test'
+
+import { LearningLibrary } from '../learningLibrary'
+import type { RepositoryOperation } from '../repositoryConfigSchemas'
+import { sha256 } from '../runtimeSupport/utils/sha256'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { decodeConfiguredStudy } from '../utils/decodeConfiguredStudy'
+
+import { capturePagesServerRun } from './utils/capturePagesServerStudy'
+import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
+import { armedEntry, entryRenderHarness } from './utils/entryRenderHarness'
+import {
+  hitOnLine,
+  PAGES_SERVER_PAGE_PATH,
+  PAGES_SERVER_PAGE_SOURCE,
+  PAGES_SERVER_RETURN_LINE,
+  pagesServerRun,
+  type PagesServerRunOptions,
+} from './utils/pagesServerRunHarness'
+import { replaySavedServerStop } from './utils/replaySavedServerStop'
+
+/** The folder of the nested Next app, shaped like P02's `examples/react/nextjs`. */
+const PACKAGE_ROOT = 'examples/react/nextjs'
+
+/** The page of P02's example: a Pages page whose data function is `getStaticProps` (the stand-in keeps the line layout of the `getServerSideProps` page: `const count = 3` on line 5, the return on line 6). */
+const GET_STATIC_PROPS_PAGE = PAGES_SERVER_PAGE_SOURCE.replace(
+  'getServerSideProps({ query })',
+  'getStaticProps()',
+)
+
+const OPERATION_ACTION = 'repository-operation'
+
+/** A click the stand-in page answers. */
+const CLICK: RepositoryOperation = {
+  kind: 'click',
+  title: 'Toggle',
+  selector: '#toggle',
+}
+
+/** Harness options of the nested Pages server run: the page, `packageRoot` below a decoy root. */
+function nestedPagesOptions(
+  packageApp: NonNullable<PagesServerRunOptions['packageApp']> = {
+    decoyRoot: true,
+  },
+): PagesServerRunOptions {
+  return {
+    packageRoot: PACKAGE_ROOT,
+    packageApp,
+    fixture: {
+      source: GET_STATIC_PROPS_PAGE,
+      citationEndLine: 7,
+      declaredLine: PAGES_SERVER_RETURN_LINE,
+    },
+  }
+}
+
+/** Copies a value out of the run module's realm. @example plain(view.snapshots) */
+function plain<Value>(value: Value): Value {
+  return JSON.parse(JSON.stringify(value))
+}
+
+/**
+ * Lists the files a study written to a library folder leaves there.
+ * @param context - The test, which removes the folder.
+ * @param study - The study to save.
+ * @returns The file names in the library folder.
+ * @example await savedFileNames(context, study) // => ['<id>.study.v9.json', …]
+ */
+async function savedFileNames(
+  context: TestContext,
+  study: Awaited<ReturnType<typeof capturePagesServerRun>>['study'],
+): Promise<string[]> {
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-nested-save-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  await new LearningLibrary(directory, study.workspaceKey).saveStudy(study)
+  return readdir(directory)
+}
+
+// protects=AC 1/E12: a Pages server stop in getStaticProps of an app below a decoy root runs, saves as format 9 with packageRoot, and the saved study replays its recorded values, also after the package folder is removed; fails_when=the entry/route/seal read the decoy root (the run fails or pauses elsewhere), the study is saved without packageRoot or as another format, or the replay needs the folder; no_claim=a real Next server or editor (scripted inspector, stand-in launcher)
+test('a getStaticProps stop of a Pages app below the repository root saves as format 9 and replays after the app folder is removed', async (context) => {
+  // Arrange
+  const { study, run } = await capturePagesServerRun(
+    context,
+    nestedPagesOptions(),
+    'getStaticProps',
+  )
+  const packageDirectory = join(run.harness.directory, PACKAGE_ROOT)
+  // Act
+  const files = await savedFileNames(context, study)
+  const replayedBefore = await replaySavedServerStop(context, study)
+  await rm(packageDirectory, { recursive: true, force: true })
+  const replayedAfter = await replaySavedServerStop(context, study)
+  // Assert
+  assert.equal(study.version, 9)
+  assert.equal(
+    'packageRoot' in study.configuration && study.configuration.packageRoot,
+    'examples/react/nextjs',
+  )
+  assert.equal(
+    files.some((file) => file.endsWith('.study.v9.json')),
+    true,
+  )
+  assert.equal(
+    study.configuration.version === 3 && study.configuration.source.path,
+    `${PACKAGE_ROOT}/${PAGES_SERVER_PAGE_PATH}`,
+  )
+  for (const replayed of [replayedBefore, replayedAfter]) {
+    assert.equal(replayed.study.version, 9)
+    assert.equal(replayed.topFrameName, 'getStaticProps')
+    assert.equal(replayed.topFrameLine, 6)
+    assert.deepEqual(replayed.variables, [{ name: 'count', value: '3' }])
+  }
+  assert.deepEqual(replayedAfter.variables, replayedBefore.variables)
+})
+
+// protects=help step "verify the manifest's configurationHash and accepted configuration before input" for an aliased packageRoot: the run resource serves the canonical folder, so its configuration hashes to configurationHash and the manifest body to its hash; fails_when=the served configuration keeps the declared alias while configurationHash covers the target path (an agent that verifies them refuses a valid run); no_claim=configurations with prepared texts, whose served form shows view marks by design
+test('a symlinked alias packageRoot run serves the target folder, so the served configuration and manifest match their hashes', async (context) => {
+  // Arrange
+  const options = nestedPagesOptions({
+    decoyRoot: true,
+    declared: 'links/web',
+  })
+  // Act
+  const { run } = await capturePagesServerRun(
+    context,
+    options,
+    'getStaticProps',
+  )
+  const view = run.service.record(run.receipt).runtime!.view()
+  const { hash: manifestHash, ...manifestBody } = view.manifest!
+  // Assert
+  assert.equal(
+    'packageRoot' in view.definition.configuration &&
+      view.definition.configuration.packageRoot,
+    'examples/react/nextjs',
+  )
+  assert.equal(
+    sha256(JSON.stringify(view.definition.configuration)),
+    view.definition.configurationHash,
+  )
+  assert.equal(sha256(JSON.stringify(manifestBody)), manifestHash)
+})
+
+// protects=the same agreement for an alias of the repository root, which is a root run: the served configuration carries no packageRoot, as its hash and the saved format 8 study; fails_when=the served configuration keeps the alias while the hash covers the configuration without the field; no_claim=nested aliases (test above)
+test('a packageRoot that links to the repository root serves no packageRoot, so the served configuration and manifest match their hashes', async (context) => {
+  // Arrange
+  const options: PagesServerRunOptions = {
+    packageRoot: '.',
+    packageApp: { declared: 'links/root' },
+    sourcePath: PAGES_SERVER_PAGE_PATH,
+  }
+  // Act
+  const { run } = await capturePagesServerRun(
+    context,
+    options,
+    'getServerSideProps',
+  )
+  const view = run.service.record(run.receipt).runtime!.view()
+  const { hash: manifestHash, ...manifestBody } = view.manifest!
+  // Assert
+  assert.equal('packageRoot' in view.definition.configuration, false)
+  assert.equal(
+    sha256(JSON.stringify(view.definition.configuration)),
+    view.definition.configurationHash,
+  )
+  assert.equal(sha256(JSON.stringify(manifestBody)), manifestHash)
+})
+
+// protects=AC 3/E10: a packageRoot that is a symlinked alias inside the repository runs and the study saves the target's canonical path; fails_when=the alias is refused, the stop is judged outside the package, or the alias is saved; no_claim=an alias that leaves the repository (resolver tests)
+test('a symlinked alias packageRoot runs the target app and saves the target path in format 9', async (context) => {
+  // Arrange
+  const options = nestedPagesOptions({
+    decoyRoot: true,
+    declared: 'links/web',
+  })
+  // Act
+  const { study } = await capturePagesServerRun(
+    context,
+    options,
+    'getStaticProps',
+  )
+  // Assert
+  assert.equal(study.version, 9)
+  assert.equal(
+    'packageRoot' in study.configuration && study.configuration.packageRoot,
+    'examples/react/nextjs',
+  )
+})
+
+// protects=E10 / review S1: an aliased packageRoot run publishes an observed terminal learning step and the saved study still decodes, because the run resource, the terminal reference and the saved study carry one configuration hash; fails_when=the resource and the reference hash the declared alias while the study saves the target path (the saved study is refused with 'Learning summary result lacks verified terminal evidence.'); no_claim=the replay of the study (test above)
+test('a symlinked alias packageRoot run with an observed terminal learning step saves a study that decodes', async (context) => {
+  // Arrange
+  const options = nestedPagesOptions({
+    decoyRoot: true,
+    declared: 'links/web',
+  })
+  // Act
+  const { study, run } = await capturePagesServerRun(
+    context,
+    options,
+    'getStaticProps',
+    { terminalSummary: true },
+  )
+  const decoded = decodeConfiguredStudy(
+    JSON.parse(JSON.stringify(study)),
+    study.workspaceKey,
+  )
+  // Assert
+  assert.equal(study.version, 9)
+  assert.equal(
+    run.state().configurationHash,
+    sha256(JSON.stringify(study.configuration)),
+  )
+  assert.equal(decoded.learningSummary?.content.steps[0]?.evidence, 'observed')
+})
+
+// protects=AC 6 / E10 / review S1: an alias that links to the repository root is a root run, so its resource, terminal reference and saved format 8 study agree on the hash of the configuration without packageRoot; fails_when=the saved study is refused for a hash that differs from the reference; no_claim=nested aliases (test above)
+test('a packageRoot that links to the repository root with an observed terminal learning step saves a study that decodes', async (context) => {
+  // Arrange
+  const options: PagesServerRunOptions = {
+    packageRoot: '.',
+    packageApp: { declared: 'links/root' },
+    sourcePath: PAGES_SERVER_PAGE_PATH,
+  }
+  // Act
+  const { study, run } = await capturePagesServerRun(
+    context,
+    options,
+    'getServerSideProps',
+    { terminalSummary: true },
+  )
+  const decoded = decodeConfiguredStudy(
+    JSON.parse(JSON.stringify(study)),
+    study.workspaceKey,
+  )
+  // Assert
+  assert.equal(study.version, 8)
+  assert.equal(
+    run.state().configurationHash,
+    sha256(JSON.stringify(study.configuration)),
+  )
+  assert.equal(decoded.learningSummary?.content.steps[0]?.evidence, 'observed')
+})
+
+// protects=AC 6 / review OCR low: a packageRoot that is a link to the repository root is a root run, so its study keeps the root run's format 8 and carries no packageRoot; fails_when=the declared alias stays in the saved configuration and the study saves as format 9; no_claim=the format of a nested app (test above)
+test('a packageRoot that links to the repository root saves the root run format without packageRoot', async (context) => {
+  // Arrange
+  const options: PagesServerRunOptions = {
+    packageRoot: '.',
+    packageApp: { declared: 'links/root' },
+    // The page lies at the root, not below a "." folder.
+    sourcePath: PAGES_SERVER_PAGE_PATH,
+  }
+  // Act
+  const { study } = await capturePagesServerRun(context, options)
+  // Assert
+  assert.equal(study.version, 8)
+  assert.equal('packageRoot' in study.configuration, false)
+})
+
+// protects=AC 2/AC 15: a server stop of an App Router app below a decoy root is sealed through the package, and every Next reader and the debugger attach receive the package folder, never the repository root; fails_when=a reader or the attach takes the repository root (launch cwd, source map override, bundle read, port read, workspace check); no_claim=the real readers of the mocked seam (their own decoy-root tests)
+test('a server stop of an App Router app below the repository root reaches the readers and the debugger with the package folder', async (context) => {
+  // Arrange
+  const harness = await entryRenderHarness(context, {
+    packageRoot: PACKAGE_ROOT,
+    packageApp: { decoyRoot: true },
+  })
+  const packageDirectory = await realpath(join(harness.directory, PACKAGE_ROOT))
+  const prepared = harness.run.prepare()
+  // Act
+  await armedEntry(harness)
+  harness.server!.hit({ route: '/dashboard' })
+  const pause = await waitUntil(
+    () => harness.run.view().participants.server?.snapshot,
+    'the published entry-render pause',
+  )
+  harness.setDocumentReadyState('complete')
+  await harness.run.continue('server', pause.pause)
+  await prepared
+  await waitUntil(() => harness.run.view().status === 'completed', 'completed')
+  // Assert
+  const roots = harness.readerRoots
+  assert.deepEqual(roots.developmentBundle, [packageDirectory])
+  assert.deepEqual(roots.assertedWorkspace, [packageDirectory])
+  assert.deepEqual(roots.declaredPort, [packageDirectory])
+  assert.equal(roots.launchRequests[0], packageDirectory)
+  const attach = harness.serverLaunches[0]
+  assert.equal(attach?.cwd, packageDirectory)
+  assert.deepEqual(plain(attach?.sourceMapPathOverrides), {
+    'webpack://_N_E/./*': `${packageDirectory}/*`,
+  })
+  // The package-relative module the server sealed maps to <packageRoot>/<file> on disk.
+  const sealed = harness.run.view().snapshots[0]?.source
+  assert.equal(sealed?.scriptUrl, 'webpack-internal:///(rsc)/./src/theme.ts')
+  assert.equal(
+    join(packageDirectory, 'src/theme.ts'),
+    join(await realpath(harness.directory), PACKAGE_ROOT, 'src/theme.ts'),
+  )
+})
+
+// protects=AC 2/E7: a browser stop of an App Router app below a decoy root, reached by a declared operation (afterOperation 1), pauses on the package-relative module and completes; fails_when=the browser stop is refused or sealed against the repository root; no_claim=a real browser
+test('a browser stop reached by an operation in an app below the repository root pauses and completes', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, [], {
+    packageRoot: PACKAGE_ROOT,
+    packageApp: { decoyRoot: true },
+    operations: { operations: [CLICK], stopOperations: [1] },
+  })
+  await harness.run.prepare()
+  // Act
+  harness.run.action('op-1', OPERATION_ACTION)
+  const stop = await waitUntil(
+    () => harness.run.view().participants.browser.snapshot,
+    'the browser stop',
+  )
+  await harness.run.continue('browser', stop.pause)
+  await waitUntil(() => harness.run.view().status === 'completed', 'completed')
+  await harness.run.stop()
+  // Assert
+  assert.equal(harness.run.view().finalOutcome, 'demonstrated')
+  assert.equal(
+    harness.definition.configuration.source.path,
+    `${PACKAGE_ROOT}/src/theme.ts`,
+  )
+  assert.equal(
+    stop.source.scriptUrl,
+    'webpack-internal:///(app-pages-browser)/./src/theme.ts',
+  )
+  assert.deepEqual(harness.readerRoots.developmentBundle.length > 0, true)
+  for (const root of harness.readerRoots.developmentBundle)
+    assert.equal(root, await realpath(join(harness.directory, PACKAGE_ROOT)))
+})
+
+// protects=AC 3: a stop file outside the package folder is refused NEXT_STOP_NOT_SEALED outside-package before any process starts; fails_when=the server is launched, or the stop is sealed against a package file; no_claim=every other refusal row (resolver tests)
+test('a stop outside the package folder is refused before any server starts', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, [], {
+    packageRoot: PACKAGE_ROOT,
+    packageApp: { decoyRoot: true, stopsOutside: true },
+    operations: { operations: [CLICK], stopOperations: [1] },
+  })
+  // Act
+  const failure = await harness.run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // Assert
+  assert.equal(Reflect.get(Object(failure), 'code'), 'NEXT_STOP_NOT_SEALED')
+  assert.equal(
+    plain(Reflect.get(Object(failure), 'details')).reason,
+    'outside-package',
+  )
+  assert.equal(harness.developmentServerLaunches(), 0)
+})
+
+// protects=E4 / review OCR medium: a stop declared through a link outside the package that points inside is refused outside-package before any process starts, because every reader maps lexically; fails_when=the gate judges by real path only, so the alias passes and fails later with an unclassified error; no_claim=a file inside the package that links out (real-path rule, resolver tests)
+test('a stop declared through a symlink alias outside the package is refused before any server starts', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, [], {
+    packageRoot: PACKAGE_ROOT,
+    packageApp: { decoyRoot: true, stopsOutside: true },
+    sourcePath: 'shared/theme.ts',
+    operations: { operations: [CLICK], stopOperations: [1] },
+  })
+  const target = join(harness.directory, PACKAGE_ROOT, 'src/theme.ts')
+  await mkdir(dirname(target), { recursive: true })
+  await writeFile(target, 'export const theme = 1\n')
+  await rm(join(harness.directory, 'shared/theme.ts'))
+  await symlink(target, join(harness.directory, 'shared/theme.ts'))
+  // Act
+  const failure = await harness.run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // Assert
+  assert.equal(Reflect.get(Object(failure), 'code'), 'NEXT_STOP_NOT_SEALED')
+  assert.equal(
+    plain(Reflect.get(Object(failure), 'details')).reason,
+    'outside-package',
+  )
+  assert.equal(harness.developmentServerLaunches(), 0)
+})
+
+// protects=AC 3: Next hoisted to the repository root node_modules runs the nested app; fails_when=the run demands node_modules/next inside the package folder; no_claim=a hoisted Next outside the repository (resolver tests)
+test('a nested app whose Next is hoisted to the repository root runs', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, [], {
+    packageRoot: PACKAGE_ROOT,
+    packageApp: { next: 'hoisted' },
+    operations: { operations: [CLICK], stopOperations: [1] },
+  })
+  // Act
+  await harness.run.prepare()
+  // Assert
+  assert.equal(harness.run.view().status, 'ready')
+  assert.equal(harness.developmentServerLaunches(), 1)
+})
+
+/**
+ * Runs the Pages server entry-load fixture of nextPagesServerRun.test.ts (a stop on the return line of getServerSideProps) at the repository root or below a decoy root, and reads the evidence its pause carries without the path prefix.
+ * @param context - The test.
+ * @param nested - Whether the app lives in {@link PACKAGE_ROOT} with `packageRoot` declared.
+ * @returns The pause's evidence with the path relative to the app.
+ * @example await pagesServerEvidence(context, true)
+ */
+async function pagesServerEvidence(context: TestContext, nested: boolean) {
+  const harness = await pagesServerRun(
+    context,
+    nested
+      ? { packageRoot: PACKAGE_ROOT, packageApp: { decoyRoot: true } }
+      : {},
+  )
+  const prepared = harness.run.prepare()
+  await armedEntry(harness)
+  harness.server!.hit(
+    hitOnLine(PAGES_SERVER_RETURN_LINE, {
+      fixture: 'get-server-side-props-before-await',
+    }),
+  )
+  const pause = await waitUntil(() => {
+    const view = harness.run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.participants.server?.snapshot
+  }, 'the published server pause')
+  const evidence = plain({
+    execution: pause.execution,
+    attribution: pause.attribution,
+    declaredIndex: pause.declaredIndex,
+    executionIndex: pause.executionIndex,
+    count: pause.values['value:count'],
+    scriptUrl: pause.source.scriptUrl,
+    line: pause.source.line,
+    dataFunctions: harness.run.view().dataFunctions,
+  })
+  harness.setDocumentReadyState('complete')
+  await harness.run.continue('server', pause.pause)
+  await prepared
+  return evidence
+}
+
+// protects=E17: the Pages server entry-load fixture moved below a decoy root with packageRoot yields the same evidence apart from the path prefix; fails_when=a reader takes the decoy root (another route, module or value) or the module id keeps the prefix; no_claim=the other fixtures of E17 (App browser and App server above)
+test('the Pages server entry-load fixture below a decoy root yields the root run evidence apart from the path prefix', async (context) => {
+  // Arrange / Act
+  const atRoot = await pagesServerEvidence(context, false)
+  const nested = await pagesServerEvidence(context, true)
+  // Assert
+  assert.deepEqual(nested, atRoot)
+})
+
+/** The evidence a pause carries that must not depend on where the app lives. @example pauseEvidence(view.snapshots[0]) */
+function pauseEvidence(pause: {
+  participant: string
+  execution?: string
+  attribution?: string
+  declaredIndex?: number
+  executionIndex?: number
+  values: Record<string, unknown>
+  source: { scriptUrl: string; line: number }
+}) {
+  return plain({
+    participant: pause.participant,
+    execution: pause.execution,
+    attribution: pause.attribution,
+    declaredIndex: pause.declaredIndex,
+    executionIndex: pause.executionIndex,
+    values: pause.values,
+    scriptUrl: pause.source.scriptUrl,
+    line: pause.source.line,
+  })
+}
+
+/** Options that place a harness app at the repository root or below a decoy root. */
+function placement(nested: boolean) {
+  return nested
+    ? { packageRoot: PACKAGE_ROOT, packageApp: { decoyRoot: true } }
+    : {}
+}
+
+/**
+ * Runs the App server entry-render fixture at the root or below a decoy root and reads its pause evidence.
+ * @example await appServerEvidence(context, true)
+ */
+async function appServerEvidence(context: TestContext, nested: boolean) {
+  const harness = await entryRenderHarness(context, placement(nested))
+  const prepared = harness.run.prepare()
+  await armedEntry(harness)
+  harness.server!.hit({ route: '/dashboard' })
+  const pause = await waitUntil(
+    () => harness.run.view().participants.server?.snapshot,
+    'the published entry-render pause',
+  )
+  const evidence = pauseEvidence(pause)
+  harness.setDocumentReadyState('complete')
+  await harness.run.continue('server', pause.pause)
+  await prepared
+  return evidence
+}
+
+/**
+ * Runs a browser stop reached by a click on the App stand-in, at the root or below a decoy root, and reads its pause evidence.
+ * @example await appBrowserStopEvidence(context, true)
+ */
+async function appBrowserStopEvidence(context: TestContext, nested: boolean) {
+  const harness = await configuredRuntimeHarness(context, undefined, [], {
+    ...placement(nested),
+    operations: { operations: [CLICK], stopOperations: [1] },
+  })
+  await harness.run.prepare()
+  harness.run.action('op-1', OPERATION_ACTION)
+  const stop = await waitUntil(() => {
+    const view = harness.run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.participants.browser.snapshot
+  }, 'the browser stop')
+  const evidence = pauseEvidence(stop)
+  await harness.run.continue('browser', stop.pause)
+  return evidence
+}
+
+/**
+ * Runs the Pages run of a server stop at the entry load and a browser stop in the page component after a click (the fixture of nextPagesServerRun.test.ts), at the root or below a decoy root, and reads the browser pause evidence.
+ * @example await pagesBrowserStopEvidence(context, true)
+ */
+async function pagesBrowserStopEvidence(context: TestContext, nested: boolean) {
+  const click: RepositoryOperation = {
+    kind: 'click',
+    title: 'Next page',
+    selector: 'a[href="/?page=2"]',
+  }
+  const harness = await pagesServerRun(context, {
+    ...placement(nested),
+    additionalStops: [
+      {
+        line: 2,
+        column: 1,
+        inspections: [{ path: 'count', mode: 'value', required: true }],
+      },
+    ],
+    operations: {
+      operations: [click],
+      stopOperations: [0, 1],
+      stopParticipants: ['server', 'browser'],
+    },
+  })
+  const prepared = harness.run.prepare()
+  await armedEntry(harness)
+  harness.server!.hit(
+    hitOnLine(PAGES_SERVER_RETURN_LINE, {
+      fixture: 'get-server-side-props-before-await',
+    }),
+  )
+  const serverPause = await waitUntil(
+    () => harness.run.view().participants.server?.snapshot,
+    'the server pause',
+  )
+  harness.setDocumentReadyState('complete')
+  await harness.run.continue('server', serverPause.pause)
+  await prepared
+  harness.run.action('op-1', OPERATION_ACTION)
+  const stop = await waitUntil(() => {
+    const view = harness.run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.participants.browser?.snapshot
+  }, 'the browser pause')
+  return pauseEvidence(stop)
+}
+
+// protects=E17: the App server entry-render fixture below a decoy root yields the root run evidence apart from the path prefix; fails_when=a reader takes the decoy root or the module id keeps the prefix; no_claim=the Pages fixtures
+test('the App server entry-render fixture below a decoy root yields the root run evidence apart from the path prefix', async (context) => {
+  // Arrange / Act
+  const atRoot = await appServerEvidence(context, false)
+  const nested = await appServerEvidence(context, true)
+  // Assert
+  assert.deepEqual(nested, atRoot)
+})
+
+// protects=E17: the App browser stop reached by a click below a decoy root yields the root run evidence apart from the path prefix; fails_when=a reader takes the decoy root or the module id keeps the prefix; no_claim=the Pages fixtures
+test('the App browser stop reached by an operation below a decoy root yields the root run evidence apart from the path prefix', async (context) => {
+  // Arrange / Act
+  const atRoot = await appBrowserStopEvidence(context, false)
+  const nested = await appBrowserStopEvidence(context, true)
+  // Assert
+  assert.deepEqual(nested, atRoot)
+})
+
+// protects=E17: the Pages browser stop in the page component below a decoy root yields the root run evidence apart from the path prefix; fails_when=a reader takes the decoy root or the module id keeps the prefix; no_claim=the Pages server fixture
+test('the Pages browser stop reached by an operation below a decoy root yields the root run evidence apart from the path prefix', async (context) => {
+  // Arrange / Act
+  const atRoot = await pagesBrowserStopEvidence(context, false)
+  const nested = await pagesBrowserStopEvidence(context, true)
+  // Assert
+  assert.deepEqual(nested, atRoot)
+})

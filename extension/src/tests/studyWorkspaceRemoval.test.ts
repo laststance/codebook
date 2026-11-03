@@ -4717,16 +4717,16 @@ test('after a removal refused because nothing was left of the study, a run refus
 
 // Value: protects=a study a newer Codebook saved is shown with the sentence that says what to do, is no storage failure, and is not half deleted by a Codebook that does not know its files; fails_when=its note counts as an error Retry storage should answer, or a delete request opens the Trash dialog for it (RT-1, DX-15, PC-4.1); why_new=the reader never listed a newer format; seam=the library directory, into which the test writes a file as a newer Codebook would name it
 test('a saved study in a newer format is listed with its note, adds no storage error and is refused when the learner asks to delete it', async () => {
-  // Arrange: one saved study, saved again in format 9 by a newer Codebook.
+  // Arrange: one saved study, saved again in format 10 by a newer Codebook.
   const harness = await workspaceHarness()
   try {
     const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
     await writeFile(
       join(
         harness.reader.inspect().libraryDirectory!,
-        `${study.id}.study.v9.json`,
+        `${study.id}.study.v10.json`,
       ),
-      JSON.stringify({ ...study, version: 9 }),
+      JSON.stringify({ ...study, version: 10 }),
     )
     await harness.reader.action('retry')
     // Act
@@ -4743,7 +4743,7 @@ test('a saved study in a newer format is listed with its note, adds no storage e
         [
           study.id,
           'newer',
-          'This study was saved in format 9 by a newer Codebook; this Codebook reads formats up to 8. Update the extension to open it. The study is kept as it is.',
+          'This study was saved in format 10 by a newer Codebook; this Codebook reads formats up to 9. Update the extension to open it. The study is kept as it is.',
         ],
       ],
     )
@@ -4779,9 +4779,9 @@ test('a reader that starts with a study of a newer Codebook as its newest entry 
     await writeFile(
       join(
         harness.reader.inspect().libraryDirectory!,
-        `${savedAgainByNewer.id}.study.v9.json`,
+        `${savedAgainByNewer.id}.study.v10.json`,
       ),
-      JSON.stringify({ ...savedAgainByNewer, version: 9 }),
+      JSON.stringify({ ...savedAgainByNewer, version: 10 }),
     )
     const restarted = harness.createReader()
     try {

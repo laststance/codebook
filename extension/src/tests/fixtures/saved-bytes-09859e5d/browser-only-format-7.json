@@ -1,0 +1,212 @@
+{
+  "version": 7,
+  "workspaceKey": "0000000000000000000000000000000000000000000000000000000000000000",
+  "id": "<run-specific>",
+  "instanceId": "<run-specific>",
+  "runId": "<run-specific>",
+  "profile": "repository-browser",
+  "createdAt": "<run-specific>",
+  "savedAt": "<run-specific>",
+  "state": "paused-browser",
+  "terminal": false,
+  "finalOutcome": "pending-teardown",
+  "materialSignature": "<run-specific>",
+  "configuration": {
+    "version": 3,
+    "adapter": "next-dev-webpack",
+    "book": {
+      "bookId": "interface",
+      "revision": 1,
+      "nodeId": "theme",
+      "anchorIndex": 0
+    },
+    "source": {
+      "path": "src/theme.ts",
+      "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
+      "line": 1,
+      "column": 1
+    },
+    "participant": "browser",
+    "afterOperation": 1,
+    "before": [
+      {
+        "kind": "visible",
+        "selector": "button"
+      }
+    ],
+    "after": [
+      {
+        "kind": "text",
+        "selector": "label",
+        "equals": "Dark"
+      }
+    ],
+    "operations": [
+      {
+        "kind": "click",
+        "title": "Create Invoice",
+        "selector": "#submit"
+      }
+    ],
+    "inspections": [
+      {
+        "path": "nextTheme",
+        "mode": "value",
+        "required": true
+      },
+      {
+        "path": "setTheme",
+        "mode": "type",
+        "required": true
+      },
+      {
+        "path": "enabled",
+        "mode": "value",
+        "required": false
+      },
+      {
+        "path": "selection",
+        "mode": "value",
+        "required": false
+      },
+      {
+        "path": "renderLocal",
+        "mode": "value",
+        "required": false
+      }
+    ]
+  },
+  "configurationHash": "69da041b9e11b2185dfb929b06261d563d05552bdab133b97b1892c7be667a28",
+  "descriptor": {
+    "itemId": "repository/interface/theme",
+    "bookTitle": "Interface",
+    "nodeTitle": "Theme",
+    "anchors": [
+      {
+        "path": "src/theme.ts",
+        "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
+        "startLine": 1,
+        "endLine": 1
+      },
+      {
+        "path": "src/mode.ts",
+        "hash": "f6d4386593d51ec67ad6d6811031238456f33ee12b3fa92a9df833159a355501",
+        "startLine": 1,
+        "endLine": 1
+      }
+    ],
+    "citationContext": {
+      "kind": "citations",
+      "hash": "610d563bfd8797cd1e9d513afaac0a3a4ab0f48274d009544bb24d2203c52c07",
+      "anchors": [
+        {
+          "path": "src/mode.ts",
+          "hash": "f6d4386593d51ec67ad6d6811031238456f33ee12b3fa92a9df833159a355501",
+          "startLine": 1,
+          "endLine": 1
+        },
+        {
+          "path": "src/theme.ts",
+          "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
+          "startLine": 1,
+          "endLine": 1
+        }
+      ]
+    },
+    "sources": [
+      {
+        "path": "src/theme.ts",
+        "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
+        "text": "const nextTheme = \"dark\";\n",
+        "lineCount": 2
+      },
+      {
+        "path": "src/mode.ts",
+        "hash": "f6d4386593d51ec67ad6d6811031238456f33ee12b3fa92a9df833159a355501",
+        "text": "export const mode = \"display\";\n",
+        "lineCount": 2
+      }
+    ]
+  },
+  "operation": {
+    "id": "<run-specific>",
+    "key": "op-1",
+    "inputDispatched": true,
+    "inputAcknowledged": true,
+    "afterVerified": false
+  },
+  "operations": [
+    {
+      "index": 1,
+      "kind": "click",
+      "title": "Create Invoice",
+      "atMs": "<run-specific>",
+      "state": "paused",
+      "ack": "pending",
+      "valueCheck": "n/a",
+      "effect": "pending"
+    }
+  ],
+  "observations": [
+    {
+      "id": "<run-specific>",
+      "itemId": "repository/interface/theme",
+      "actionId": "repository-click",
+      "capturePhase": "paused-browser",
+      "snapshotUri": "<run-specific>",
+      "participant": "browser",
+      "capturedAt": "<run-specific>",
+      "elapsedMs": "<run-specific>",
+      "pause": {
+        "sessionId": "browser-session",
+        "threadId": 1,
+        "generation": 1
+      },
+      "source": {
+        "text": "const nextTheme = \"dark\";\n",
+        "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
+        "line": 1,
+        "column": 1,
+        "javascriptHash": "<run-specific>",
+        "mapHash": "<run-specific>",
+        "scriptId": "17",
+        "scriptUrl": "webpack-internal:///(app-pages-browser)/src/theme.ts",
+        "generated": {
+          "line": 8,
+          "column": 2
+        }
+      },
+      "values": {
+        "value:nextTheme": "dark",
+        "type:setTheme": "function",
+        "value:enabled": false,
+        "value:selection": null
+      },
+      "unavailableValues": [
+        {
+          "path": "value:renderLocal",
+          "reason": "Optimized out at this frame."
+        }
+      ],
+      "interpretations": []
+    }
+  ],
+  "captures": [
+    {
+      "phase": "before",
+      "status": "absent",
+      "reason": "No confirmed image for this phase."
+    },
+    {
+      "phase": "paused-browser",
+      "status": "absent",
+      "reason": "No confirmed image for this phase."
+    },
+    {
+      "phase": "after",
+      "status": "absent",
+      "reason": "No confirmed image for this phase."
+    }
+  ],
+  "links": []
+}
