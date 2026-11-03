@@ -14,6 +14,7 @@ import {
 } from '../nextRefusals'
 import { mapSchema, type BundleSource } from '../repositoryBundle'
 
+import { builtEntryOfMap } from './builtEntryOfMap'
 import type {
   NextPagesChunkModules,
   NextPagesDiscoveryCache,
@@ -50,7 +51,7 @@ export type LibraryServerStopSealRequest = {
  * The module's inline map must carry `sourcesContent` for the built file equal to the file frozen before the start ({@link FrozenLibraryBuild.matchesBuiltText}); the bundle is in built terms (its original is the built JavaScript).
  * @param request - The app, the frozen library build, the route and the run's cache.
  * @returns The sealed module in built terms, its repository-relative built path and the discovery measures.
- * @throws `NEXT_STOP_NOT_SEALED` (`library-not-in-build`) when not exactly one candidate is in the page's server build; `RUNTIME_FAILED` (`library-build-changed`) when the module's built text differs from the frozen one; `RUNTIME_FAILED` with the Pages details for any other failure; the run's abort unchanged.
+ * @throws `NEXT_STOP_NOT_SEALED` (`library-not-in-build`) when not exactly one candidate is in the page's server build or the module's inline map keeps no entry for the built file;`RUNTIME_FAILED` (`library-build-changed`) when the module's built text differs from the frozen one; `RUNTIME_FAILED` with the Pages details for any other failure; the run's abort unchanged.
  * @example
  * await sealLibraryServerStop({ nextPackage, library, route: '/', cache })
  * // => { bundle: { scriptUrl: 'webpack-internal:///(pages-dir-node)/../../packages/lib/build/modern/core.js', … }, builtPath: 'packages/lib/build/modern/core.js', discovery: { … }, layer: 'pages-dir-node' }
@@ -132,9 +133,17 @@ async function sealWithin(
         )
       const { builtPath, bundle } = present[0]!
       const map = mapSchema.parse(JSON.parse(bundle.sourceMap))
-      const content = map.sourcesContent[map.sources.indexOf(bundle.sourcePath)]
+      const content = builtEntryOfMap(map, bundle.sourcePath, realRoot)
+      // No retained entry for the built file is a module the seal cannot read, not a changed build.
+      if (content === undefined)
+        throw libraryNotInBuildRefusal(
+          packageRootRelative,
+          frozen.library.name,
+          frozen.stopPath,
+          [builtPath],
+        )
       // A build updated between the freeze and the seal no longer is the frozen file.
-      if (content === undefined || !frozen.matchesBuiltText(builtPath, content))
+      if (!frozen.matchesBuiltText(builtPath, content))
         throw libraryBuildChangedFailure(
           packageRootRelative,
           frozen.library.name,
