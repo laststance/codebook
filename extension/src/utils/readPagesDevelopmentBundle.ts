@@ -13,21 +13,19 @@ import { sha256 } from '../runtimeSupport/utils/sha256'
 import type { NextPagesDiscoveryCache } from './createNextPagesDiscoveryCache'
 import { selectEvaluatedModule } from './extractDevelopmentModule'
 import { parseNextManifest } from './parseNextManifest'
-import { readAcceptedPagesSource } from './readAcceptedPagesSource'
+import { spendOnAcceptedPagesSource } from './readAcceptedPagesSource'
 import type { readDevelopmentBundle } from './readDevelopmentBundle'
 import { readNextChunkModules } from './readNextChunkModules'
 import { redactNextEntryPath } from './redactNextEntryPath'
 import {
-  rootNextPackage,
   type PackageRelativePath,
   type ResolvedNextPackage,
 } from './resolveNextPackage'
 import type { NextPagesRoute } from './resolveNextPagesRoute'
 import { singleBundleOf } from './singleBundleOf'
-import {
-  spendNextPagesDiscovery,
-  type NextPagesChunkFetcher,
-  type NextPagesDiscoveryStep,
+import type {
+  NextPagesChunkFetcher,
+  NextPagesDiscoveryStep,
 } from './spendNextPagesDiscovery'
 
 const BUILD_MANIFEST = '.next/dev/build-manifest.json'
@@ -47,7 +45,7 @@ type DevelopmentDiscovery = Awaited<
 export type PagesDevelopmentBundleRequest = {
   /** The opened repository's root; the Next package root of a root app. Read only through {@link PagesDevelopmentBundleRequest.nextPackage} when that is given. */
   workspace: string
-  /** The Next app the run resolved: build files are read below its package root and the stop is matched by its package-relative path. Absent for a root app (the package is then {@link rootNextPackage} of `workspace`). */
+  /** The Next app the run resolved: build files are read below its package root and the stop is matched by its package-relative path. Absent for a root app (the package is then the root app of `workspace`, as {@link spendOnAcceptedPagesSource} resolves it). */
   nextPackage?: ResolvedNextPackage
   /** The declared stop's source (repository-relative path), with the hash the configuration accepted. */
   selected: RepositoryConfiguration['source']
@@ -85,21 +83,11 @@ export type PagesDevelopmentBundleResult =
 export async function readPagesDevelopmentBundle(
   request: PagesDevelopmentBundleRequest,
 ): Promise<PagesDevelopmentBundleResult> {
-  const { cache, selected, route } = request
-  const nextPackage = request.nextPackage ?? rootNextPackage(request.workspace)
-  const started = performance.now(),
-    bytesBefore = cache.readBytes
-  return spendNextPagesDiscovery(
-    cache,
-    nextPackage.packageRoot,
-    request.signal,
-    async (step) => {
-      // Throws for a stop outside the package: its module is never one of this package's chunks.
-      const original = await readAcceptedPagesSource(
-        step,
-        selected,
-        nextPackage,
-      )
+  const { route } = request
+  // Throws for a stop outside the package: its module is never one of this package's chunks.
+  return spendOnAcceptedPagesSource(
+    request,
+    async ({ step, original, measure }) => {
       const manifest = await step.readBuildText(
         BUILD_MANIFEST,
         REPOSITORY_JAVASCRIPT_LIMIT_BYTES,
@@ -115,8 +103,7 @@ export async function readPagesDevelopmentBundle(
         kind: 'sealed',
         bundle,
         discovery: {
-          readBytes: cache.readBytes - bytesBefore,
-          durationMs: performance.now() - started,
+          ...measure(),
           candidates,
           manifestHash: sha256(manifest),
         },

@@ -17,7 +17,7 @@ import type {
 } from './createNextPagesDiscoveryCache'
 import { selectEvaluatedModule } from './extractDevelopmentModule'
 import { parseNextManifest } from './parseNextManifest'
-import { readAcceptedPagesSource } from './readAcceptedPagesSource'
+import { spendOnAcceptedPagesSource } from './readAcceptedPagesSource'
 import type { readDevelopmentBundle } from './readDevelopmentBundle'
 import { readNextChunkModules } from './readNextChunkModules'
 import {
@@ -31,10 +31,7 @@ import {
 } from './resolveNextPagesRoute'
 import { singleBundleOf } from './singleBundleOf'
 import { sourceExclusion } from './sourceExclusion'
-import {
-  spendNextPagesDiscovery,
-  type NextPagesDiscoveryStep,
-} from './spendNextPagesDiscovery'
+import type { NextPagesDiscoveryStep } from './spendNextPagesDiscovery'
 
 const PAGES_MANIFEST = '.next/dev/server/pages-manifest.json'
 
@@ -84,7 +81,7 @@ export type PagesServerBundleResult =
  * Seals one declared server stop of a Pages route from the page's server compile and the server chunks it requires, before the browser opens, so the Next server's debugger can bind it when the server parses the module.
  *
  * Why it exists: the App Router reader ({@link readDevelopmentBundle}) reads only `app-paths-manifest.json` and the `rsc` and `action-browser` layers, and a Pages page's server code lives elsewhere: `pages-manifest.json` names the page's compile (`.next/dev/server/pages/index.js`), whose `(pages-dir-node)` modules are the page and the workspace code it imports. Called by {@link sealPagesServerStop} for each server stop of a Pages run.
- * It verifies the stop's source against the accepted hash (the source keeps its absolute path and SHA-256 whichever package it is in), resolves the route in `.next/dev/server/pages-manifest.json` below the package root to the compile, and takes the eval module `webpack-internal:///(pages-dir-node)/./<package-relative path>` from the compile, else from the server chunks the compile's startup call requires (never a `vendor-chunks/` chunk: it holds `node_modules` code, never a tracked workspace source), without executing any of it. The compile and each server chunk are read and decoded once per run through the cache; the Pages manifest and the stop's source are read again for each stop. Every read is charged to the run's discovery budget ({@link spendNextPagesDiscovery}). A module the sealed map does not attribute to the exact workspace original is no match, so Next's own code and a `node_modules` module are never sealed.
+ * It verifies the stop's source against the accepted hash (the source keeps its absolute path and SHA-256 whichever package it is in), resolves the route in `.next/dev/server/pages-manifest.json` below the package root to the compile, and takes the eval module `webpack-internal:///(pages-dir-node)/./<package-relative path>` from the compile, else from the server chunks the compile's startup call requires (never a `vendor-chunks/` chunk: it holds `node_modules` code, never a tracked workspace source), without executing any of it. The compile and each server chunk are read and decoded once per run through the cache; the Pages manifest and the stop's source are read again for each stop. Every read is charged to the run's discovery budget ({@link spendOnAcceptedPagesSource}). A module the sealed map does not attribute to the exact workspace original is no match, so Next's own code and a `node_modules` module are never sealed.
  * @param request - The repository, the Next package, the stop's source (repository-relative), the route and the run's cache.
  * @returns
  * - `sealed` with the module, the layer `pages-dir-node` and what its discovery measured
@@ -98,7 +95,7 @@ export type PagesServerBundleResult =
 export async function readPagesServerBundle(
   request: PagesServerBundleRequest,
 ): Promise<PagesServerBundleResult> {
-  const { cache, selected, route } = request
+  const { selected, route } = request
   const nextPackage = request.nextPackage ?? rootNextPackage(request.workspace)
   // A file under node_modules, a hidden path or a name Codebook never reads is no tracked workspace source: nothing is read for it.
   if (sourceExclusion(selected.path) !== undefined)
@@ -106,18 +103,9 @@ export async function readPagesServerBundle(
   // A file outside the package (a `../` module of Next) is no module of this package's compile: it never seals one.
   if (nextPackage.toPackageRelative(selected.path) === undefined)
     return { kind: 'not-a-workspace-source' }
-  const started = performance.now(),
-    bytesBefore = cache.readBytes
-  return spendNextPagesDiscovery(
-    cache,
-    nextPackage.packageRoot,
-    request.signal,
-    async (step) => {
-      const original = await readAcceptedPagesSource(
-        step,
-        selected,
-        nextPackage,
-      )
+  return spendOnAcceptedPagesSource(
+    request,
+    async ({ step, original, measure }) => {
       const { manifestHash, compilePath } = await compileOfRoute(step, route)
       // A route the Pages manifest does not list has no compile to search.
       const found = compilePath
@@ -130,8 +118,7 @@ export async function readPagesServerBundle(
         bundle: found.bundle,
         layer: 'pages-dir-node',
         discovery: {
-          readBytes: cache.readBytes - bytesBefore,
-          durationMs: performance.now() - started,
+          ...measure(),
           candidates: found.searched,
           manifestHash,
         },
