@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
 import fsPromises, { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
-import { mock, test } from 'node:test'
+import { mock, test, type TestContext } from 'node:test'
 
 import { ExtensionHistoryFrameWriter } from '../chromeExtensionHistoryFrames'
 import type { ChromeExtensionHistoryWriter } from '../chromeExtensionHistoryWriter'
@@ -15,9 +15,60 @@ import {
   pngOf,
 } from './utils/chromeExtensionHistoryFixture'
 
-/** Opens a store with a controllable clock and starts a history on it. */
-async function framesOver(context: Parameters<typeof openExtensionStore>[0]) {
+/**
+ * The shared release barrier and cleanup state of one {@link framesOver} store.
+ * Why: a test that holds a write in flight must not leave it hanging when the store folder is removed, so cleanup flips `started`, resolves `barrier` and only then waits for the writer.
+ */
+type CleanupBarrier = {
+  /** Whether the store's cleanup began; a held call that arrives later ends at once instead of waiting. */
+  started: boolean
+  /** Held writes (frame entry appends, blob folder creations) that have not settled yet. */
+  unsettled: number
+  /** Settles when cleanup releases every held write. */
+  barrier: Promise<void>
+  release: () => void
+}
+
+/** Creates a {@link CleanupBarrier} before any store exists, so holders and the cleanup hook share it. */
+function createCleanupBarrier(): CleanupBarrier {
+  let release: () => void = () => undefined
+  const barrier = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  return { started: false, unsettled: 0, barrier, release }
+}
+
+/**
+ * Opens a store with a controllable clock and starts a history on it.
+ *
+ * Registers one cleanup hook BEFORE the store's own folder removal (node:test runs `after` hooks in registration order): it releases every write the test held, drains the frame queue and fails, naming the pending write count, when the queue did not complete.
+ * @param context - The test whose end runs the cleanup.
+ * @param options - `settleOnCleanup: false` leaves out the hook, to show what removal does to an unsettled write (the reproduction control).
+ * @returns The frame writer, its history writer, the store, the header, the clock, the store folder and the shared {@link CleanupBarrier}.
+ * @example const { frames, cleanup } = await framesOver(context)
+ */
+async function framesOver(
+  context: Parameters<typeof openExtensionStore>[0],
+  options: { settleOnCleanup?: boolean } = {},
+) {
   const clock = { nowMs: 0 }
+  const cleanup = createCleanupBarrier()
+  // Late-bound: the hook is registered first, the frame writer exists only after the store opened.
+  let framesToSettle: ExtensionHistoryFrameWriter | undefined
+  if (options.settleOnCleanup !== false)
+    context.after(async () => {
+      cleanup.started = true
+      cleanup.release()
+      if (framesToSettle === undefined) return
+      await framesToSettle.drain(10_000)
+      // drain also returns on its timeout, so the queue itself is asserted.
+      const pendingBytes = framesToSettle['pendingBytes']
+      assert.equal(
+        pendingBytes + cleanup.unsettled,
+        0,
+        `The frame queue did not complete at cleanup: ${cleanup.unsettled} held write(s) unsettled, ${pendingBytes} byte(s) pending.`,
+      )
+    })
   const { store, learningDirectory } = await openExtensionStore(
     context,
     () => clock.nowMs,
@@ -25,7 +76,79 @@ async function framesOver(context: Parameters<typeof openExtensionStore>[0]) {
   const header = extensionHistoryHeader(EXTENSION_WORKSPACE_KEY)
   const writer: ChromeExtensionHistoryWriter = await store.start(header)
   const frames = new ExtensionHistoryFrameWriter(writer)
-  return { frames, writer, store, header, clock, learningDirectory }
+  framesToSettle = frames
+  return { frames, writer, store, header, clock, learningDirectory, cleanup }
+}
+
+/**
+ * Replaces the history writer's `appendFrame` with one that waits for the cleanup release instead of never settling.
+ * @param writer - The history writer of a {@link framesOver} store.
+ * @param cleanup - The store's barrier; a call arriving after cleanup started ends at once.
+ * @param events - Optional order record: `append-waiting`, `append-settled`, `append-ended-late`.
+ * @returns `reached` resolves when the first call is waiting.
+ */
+function holdAppendFrame(
+  writer: ChromeExtensionHistoryWriter,
+  cleanup: CleanupBarrier,
+  events: string[] = [],
+): { reached: Promise<void> } {
+  let markReached: () => void = () => undefined
+  const reached = new Promise<void>((resolve) => {
+    markReached = resolve
+  })
+  writer.appendFrame = async (): Promise<void> => {
+    cleanup.unsettled += 1
+    try {
+      // A call that arrives after cleanup began must not wait for a release that already happened.
+      if (cleanup.started) {
+        events.push('append-ended-late')
+        return
+      }
+      events.push('append-waiting')
+      markReached()
+      await cleanup.barrier
+      events.push('append-settled')
+    } finally {
+      cleanup.unsettled -= 1
+    }
+  }
+  return { reached }
+}
+
+/**
+ * Holds the blob write of a frame at its folder creation until the cleanup release. The writer reaches `mkdir` as `promises_1.mkdir(...)` in `dist/chromeExtensionHistoryFrames.js`, a property read at call time, so the mock intercepts it without a production seam.
+ * @param cleanup - The store's barrier.
+ * @param events - Order record: `blob-write-held`, `blob-write-resumed`.
+ * @returns `reached` resolves when a blob write is held; `restore` puts the real `mkdir` back (call it after the cleanup hook ran).
+ */
+function holdBlobWrite(
+  cleanup: CleanupBarrier,
+  events: string[],
+): { reached: Promise<void>; restore: () => void } {
+  const realMkdir = fsPromises.mkdir.bind(fsPromises)
+  let markReached: () => void = () => undefined
+  const reached = new Promise<void>((resolve) => {
+    markReached = resolve
+  })
+  const mkdirMock = mock.method(
+    fsPromises,
+    'mkdir',
+    async (...args: Parameters<typeof realMkdir>) => {
+      cleanup.unsettled += 1
+      try {
+        if (!cleanup.started) {
+          events.push('blob-write-held')
+          markReached()
+          await cleanup.barrier
+          events.push('blob-write-resumed')
+        }
+        return await realMkdir(...args)
+      } finally {
+        cleanup.unsettled -= 1
+      }
+    },
+  )
+  return { reached, restore: (): void => mkdirMock.mock.restore() }
 }
 
 /** The frame entries of a history, read back after its writer settled. */
@@ -190,9 +313,9 @@ test('a frame that is not a PNG is dropped synchronously and marks the filmstrip
 // protects=the pending queue is bounded at MAX_RECORDING_PENDING_BYTES: a burst against a blocked disk drops the excess, remembers it, and never grows memory without bound; fails_when=every frame is queued or the drop is not remembered; no_claim=the real disk speed
 test('a burst of frames against a blocked disk is dropped past the pending byte bound and remembered', async (context) => {
   // Arrange
-  const { frames, writer, clock } = await framesOver(context)
+  const { frames, writer, clock, cleanup } = await framesOver(context)
   clock.nowMs = 10_000
-  writer.appendFrame = (): Promise<void> => new Promise<void>(() => undefined)
+  holdAppendFrame(writer, cleanup)
   const bigSalt = 'x'.repeat(3 * 1024 * 1024)
 
   // Act
@@ -212,9 +335,9 @@ test('a burst of frames against a blocked disk is dropped past the pending byte 
 // protects=E-D: a pin is queued even when stream frames fill the pending byte bound, since the pending bound is for stream frames; fails_when=a pin is dropped because stream frames wait on a slow disk; no_claim=the pin's own reserve
 test('a pin is queued while stream frames fill the pending byte bound', async (context) => {
   // Arrange
-  const { frames, writer, clock } = await framesOver(context)
+  const { frames, writer, clock, cleanup } = await framesOver(context)
   clock.nowMs = 10_000
-  writer.appendFrame = (): Promise<void> => new Promise<void>(() => undefined)
+  holdAppendFrame(writer, cleanup)
   const bigSalt = 'x'.repeat(3 * 1024 * 1024)
   for (const index of [0, 1, 2])
     frames.offer({
@@ -348,4 +471,103 @@ test('a store whose temporary file the cleanup removed does not report a failure
   // Assert
   assert.equal(frames.failure, undefined)
   assert.deepEqual(await readdir(join(writer.historyDirectory, 'frames')), [])
+})
+
+/**
+ * Runs one frame held in flight through a subtest's end and returns the recorded order of events.
+ * @param context - The parent test; the held frame lives in a subtest so its cleanup runs before this returns.
+ * @param held - `append`: appendFrame already waiting at cleanup; `blob`: the blob write is held and appendFrame not yet called.
+ * @param hasCleanupHook - `true` uses the {@link framesOver} hook; `false` removes the store folder first, as the unfixed order did.
+ * @returns The events in the order they happened.
+ */
+async function recordCleanupOrder(
+  context: TestContext,
+  held: 'append' | 'blob',
+  hasCleanupHook: boolean,
+): Promise<string[]> {
+  const events: string[] = []
+  let isRecordingRemoval = true
+  const realRm = fsPromises.rm.bind(fsPromises)
+  const rmMock = mock.method(
+    fsPromises,
+    'rm',
+    async (...args: Parameters<typeof realRm>) => {
+      // Only the recursive removal of a store folder is the cleanup under test.
+      const [path, options] = args
+      if (
+        isRecordingRemoval &&
+        options?.recursive === true &&
+        String(path).includes('codebook-extension-history-')
+      )
+        events.push('folder-removal-started')
+      return realRm(...args)
+    },
+  )
+  await context.test(`${held} held`, async (inner) => {
+    const { frames, writer, clock, cleanup, learningDirectory } =
+      await framesOver(inner, { settleOnCleanup: hasCleanupHook })
+    clock.nowMs = 100
+    const append = holdAppendFrame(writer, cleanup, events)
+    const blob = held === 'blob' ? holdBlobWrite(cleanup, events) : undefined
+    frames.offer({
+      data: pngOf(720, 640, 'held').toString('base64'),
+      kind: 'stream',
+      capturedAtMs: 100,
+    })
+    await (blob ?? append).reached
+    // Registered after the cleanup hook, so the real mkdir returns once the hook finished.
+    if (blob) inner.after(() => blob.restore())
+    if (!hasCleanupHook) {
+      // The unfixed order: the folder goes while the write is pending, then the write resumes.
+      await fsPromises.rm(learningDirectory, { recursive: true, force: true })
+      cleanup.started = true
+      cleanup.release()
+      await frames.drain(10_000)
+      isRecordingRemoval = false
+      blob?.restore()
+      // A resumed folder creation re-made the folder; remove it again.
+      await realRm(learningDirectory, { recursive: true, force: true })
+    }
+  })
+  rmMock.mock.restore()
+  return events
+}
+
+// protects=E18: the cleanup hook settles a frame held in flight before the store folder is removed, in both orders (appendFrame already waiting; blob write held and appendFrame not yet called), and the control without the hook shows the removal starting while the write is pending; fails_when=the folder removal starts while a write is pending (the ENOTEMPTY rmdir of the frames folder seen on main); no_claim=a real disk stall
+test('cleanup settles a held appendFrame before the store folder is removed', async (context) => {
+  // Act
+  const withHook = await recordCleanupOrder(context, 'append', true)
+  const withoutHook = await recordCleanupOrder(context, 'append', false)
+
+  // Assert
+  assert.deepEqual(withHook, [
+    'append-waiting',
+    'append-settled',
+    'folder-removal-started',
+  ])
+  assert.deepEqual(withoutHook, [
+    'append-waiting',
+    'folder-removal-started',
+    'append-settled',
+  ])
+})
+
+test('cleanup settles a held blob write, and the late appendFrame ends, before the store folder is removed', async (context) => {
+  // Act
+  const withHook = await recordCleanupOrder(context, 'blob', true)
+  const withoutHook = await recordCleanupOrder(context, 'blob', false)
+
+  // Assert
+  assert.deepEqual(withHook, [
+    'blob-write-held',
+    'blob-write-resumed',
+    'append-ended-late',
+    'folder-removal-started',
+  ])
+  assert.deepEqual(withoutHook, [
+    'blob-write-held',
+    'folder-removal-started',
+    'blob-write-resumed',
+    'append-ended-late',
+  ])
 })
