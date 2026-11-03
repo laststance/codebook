@@ -206,12 +206,12 @@ export async function configuredRuntimeHarness(
     reloadDuringEntryLoad?: boolean
     /** Runs the Next configuration in a workspace with a Pages folder: the stand-in server answers the structured entry check, the `.next/dev` build is written around the cited source, and the page reports `window.next.router` ({@link NextPagesHarnessOptions}). */
     nextPages?: NextPagesHarnessOptions
-    /** Runs the version 3 configuration (with `operations`) for the Next app at this repository-relative folder: the config declares `packageRoot`, the folder gets a `package.json` and a Next installation, and the first cited source moves below it (unless `sourcePath` names one). Every other file of the repository stays the root's. */
+    /**
+     * Runs a nested Next app at this repository-relative folder: the version 3 configuration (with `operations`) declares `packageRoot`, the folder gets a `package.json` and a Next installation, the first cited source moves below it (unless `sourcePath` names one, which must then lie inside it), and with `nextPages` the Pages project (Next, `.next/dev`, chunks) is written under it instead of at the repository root. Every other file of the repository stays the root's.
+     */
     packageRoot?: string
     /** Moves the first cited source, and the stop declared in it, to this workspace-relative path (such as a file under `src/pages`). */
     sourcePath?: string
-    /** Runs a nested Next app: the configuration declares this `packageRoot` (version 3, with `operations`), and the Pages project (Next, `.next/dev`, chunks) is written under it instead of at the repository root, so `sourcePath` must lie inside it. */
-    packageRoot?: string
     /** Declares the first stop for this participant in a version 2 (cross-runtime) configuration, as a start that names `participant` does, or in a version 3 configuration when `operations` is given; only without additional stops in the version 2 form, whose form differs. */
     participant?: 'browser' | 'server'
     /** The configuration's initial inputs; the stand-in page has one editable control for each selector. */
@@ -357,7 +357,6 @@ export async function configuredRuntimeHarness(
         ...(reference.configuration.entryPath
           ? { entryPath: reference.configuration.entryPath }
           : {}),
-        ...(options.packageRoot ? { packageRoot: options.packageRoot } : {}),
         // The schema's key order, which the intent hash reads: initialStorage before signInPaths and session.
         ...(options.operations.initialStorage
           ? { initialStorage: options.operations.initialStorage }
@@ -368,6 +367,7 @@ export async function configuredRuntimeHarness(
         ...(options.operations.session
           ? { session: options.operations.session }
           : {}),
+        // packageRoot comes last in the version 3 shape.
         ...(options.packageRoot ? { packageRoot: options.packageRoot } : {}),
       }
     : options.participant
