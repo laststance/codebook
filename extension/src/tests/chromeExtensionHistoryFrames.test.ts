@@ -552,6 +552,7 @@ test('cleanup settles a held appendFrame before the store folder is removed', as
   ])
 })
 
+// protects=E18 second order: a blob write held before appendFrame is called is released by the cleanup hook, the late appendFrame ends at once, and only then does the store folder removal start; fails_when=the folder removal starts while the held blob write is pending; no_claim=a real disk stall (fsPromises.mkdir is mocked to hold the write)
 test('cleanup settles a held blob write, and the late appendFrame ends, before the store folder is removed', async (context) => {
   // Act
   const withHook = await recordCleanupOrder(context, 'blob', true)
