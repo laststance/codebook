@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readdir } from 'node:fs/promises'
+import fsPromises, { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { mock, test } from 'node:test'
 
@@ -58,6 +58,61 @@ function stallAppendFrame(writer: ChromeExtensionHistoryWriter): Promise<void> {
       return new Promise<void>(() => undefined)
     }
   })
+}
+
+/** The longest the first blob write may take to reach `appendFrame` or to fail, in a test. */
+const FIRST_FRAME_WRITE_BOUND_MS = 10_000
+
+/** How often {@link settleFirstFrameWrite} reads the frame writer's own failure record. */
+const FIRST_FRAME_WRITE_POLL_MS = 5
+
+/**
+ * Waits until the first blob write is over: the stalled `appendFrame` was called, or the frame writer recorded that the write failed.
+ *
+ * Why: when the blob write fails, the frame writer never reaches `appendFrame`, so waiting for that call alone would hang. Either way no blob write is in flight afterwards.
+ * Called by the stalled-storage tests of this file after they offer their first frame.
+ *
+ * @param frames - The frame writer whose first write is awaited; its `failure` is the record of a failed write.
+ * @param firstAppend - The promise {@link stallAppendFrame} returned for the same writer.
+ * @returns Which of the two ended the write.
+ * @throws When neither happened within {@link FIRST_FRAME_WRITE_BOUND_MS}, naming both.
+ * @example await settleFirstFrameWrite(frames, stallAppendFrame(writer))
+ */
+async function settleFirstFrameWrite(
+  frames: ExtensionHistoryFrameWriter,
+  firstAppend: Promise<void>,
+): Promise<'appended' | 'write-failed'> {
+  let poll: ReturnType<typeof setTimeout> | undefined
+  let bound: ReturnType<typeof setTimeout> | undefined
+  const failed = new Promise<'write-failed'>((resolve) => {
+    const check = (): void => {
+      // The writer sets `failure` once, when a store fails; that is the observable of a failed write.
+      if (frames.failure !== undefined) resolve('write-failed')
+      else poll = setTimeout(check, FIRST_FRAME_WRITE_POLL_MS)
+    }
+    check()
+  })
+  const timedOut = new Promise<never>((_resolve, reject) => {
+    bound = setTimeout(
+      () =>
+        reject(
+          new Error(
+            `The first frame write neither reached appendFrame nor recorded a failure within ${FIRST_FRAME_WRITE_BOUND_MS} ms`,
+          ),
+        ),
+      FIRST_FRAME_WRITE_BOUND_MS,
+    )
+  })
+  try {
+    return await Promise.race([
+      firstAppend.then(() => 'appended' as const),
+      failed,
+      timedOut,
+    ])
+  } finally {
+    clearTimeout(poll)
+    clearTimeout(bound)
+  }
 }
 
 /** Opens the pause a pin names, as the recorder does before its pin. */
@@ -267,7 +322,7 @@ test('resized frames offered at a high rate against stalled storage stay within 
   )
 
   // The serial queue calls appendFrame only after the first blob is renamed, so no write is in flight past this
-  await firstAppend
+  await settleFirstFrameWrite(frames, firstAppend)
 
   // Assert
   assert.equal(results.filter((result) => result === 'queued').length, 7)
@@ -284,7 +339,7 @@ test('a drain against a queue that never finishes returns at its deadline and re
   const firstAppend = stallAppendFrame(writer)
   frames.offer(streamOf('stalled', 100))
   // The blob write settles before the deadline starts, so no write is in flight when the test ends
-  await firstAppend
+  await settleFirstFrameWrite(frames, firstAppend)
   mock.timers.enable({ apis: ['setTimeout'] })
   context.after(() => mock.timers.reset())
 
@@ -294,5 +349,28 @@ test('a drain against a queue that never finishes returns at its deadline and re
   await draining
 
   // Assert
+  assert.equal(frames.isIncomplete, true)
+})
+
+// protects=a blob write that fails before appendFrame ends the wait with the writer's failure instead of hanging the stalled-storage tests; fails_when=the wait is only for the first appendFrame call, so a failed blob write hangs until the test timeout; no_claim=which fs error a real disk raises
+test('a first blob write that fails settles the wait as a failed write instead of hanging', async (context) => {
+  // Arrange
+  const { writer, clock } = await framesOver(context)
+  const frames = new ExtensionHistoryFrameWriter(writer)
+  clock.nowMs = 1_000
+  const firstAppend = stallAppendFrame(writer)
+  // Only frame blobs fail; journal and ledger renames keep working
+  mock.method(fsPromises, 'rename', async (_from: string, to: string) => {
+    if (String(to).endsWith('.png'))
+      throw new Error('simulated blob write failure')
+  })
+  context.after(() => mock.restoreAll())
+  frames.offer(streamOf('write fails', 100))
+
+  // Act
+  const outcome = await settleFirstFrameWrite(frames, firstAppend)
+
+  // Assert
+  assert.equal(outcome, 'write-failed')
   assert.equal(frames.isIncomplete, true)
 })
