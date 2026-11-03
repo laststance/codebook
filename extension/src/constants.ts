@@ -1954,6 +1954,16 @@ export const SOURCE_MAP_NAMED_SEGMENT_FIELDS = 5
 export const REPOSITORY_DISCOVERY_LIMIT_BYTES = 134_217_728
 export const REPOSITORY_DISCOVERY_CANDIDATE_LIMIT = 2_048
 export const REPOSITORY_DISCOVERY_TIMEOUT_MS = 30_000
+/** The most build maps one library stop's discovery reads below the library folder ({@link freezeLibraryBuild}); more is refused as `library-build-unmapped` with cause `bound`. */
+export const LIBRARY_BUILD_MAP_LIMIT_COUNT = 2_000
+/** The most bytes of maps and built files one library stop's discovery reads in total ({@link freezeLibraryBuild}); the run's own {@link REPOSITORY_DISCOVERY_LIMIT_BYTES} applies besides. */
+export const LIBRARY_BUILD_TOTAL_LIMIT_BYTES = 134_217_728
+/** The most directory entries one library stop's discovery lists below `build/`, `dist/` and `lib/` of the library folder ({@link freezeLibraryBuild}). */
+export const LIBRARY_BUILD_ENTRY_LIMIT_COUNT = 50_000
+/** How long one library stop's discovery may run, in milliseconds ({@link freezeLibraryBuild}); the run's remaining discovery time applies besides. */
+export const LIBRARY_BUILD_DISCOVERY_TIMEOUT_MS = 5_000
+/** The most bytes of a library's `package.json` {@link detectLibraryPackage} reads. */
+export const LIBRARY_PACKAGE_JSON_LIMIT_BYTES = 1_048_576
 export const REPOSITORY_APPLICATION_LOG_LIMIT_BYTES = 262_144
 export const REPOSITORY_APPLICATION_EXIT_TIMEOUT_MS = 10_000
 /** Next's own development port, used when the dev script declares no port. */

@@ -95,6 +95,75 @@ export function outsidePackageRefusal(
   })
 }
 
+/** The static recovery of a `library-build-stale` refusal: fields only, because a recovery override reaches MCP unsanitized. */
+const LIBRARY_BUILD_STALE_RECOVERY =
+  "A workspace library's build does not match its checked-out source (details.library names the package, details.file the stop file). Tell the learner to rebuild that library themselves (the message names the build command) and ask for a new start; never run the build yourself, and never declare another stop to make the run succeed. Nothing was started: no server, no browser and no input (details.sideEffects is none). See codebook://help/repository-browser#NEXT_STOP_NOT_SEALED."
+
+/** The static recovery of a `library-build-unmapped` refusal: fields only, because a recovery override reaches MCP unsanitized. */
+const LIBRARY_BUILD_UNMAPPED_RECOVERY =
+  "A workspace library's build carries no usable source map for the stop file (details.cause says why: no-map, no-content, no-line, malformed, bound or deadline; details.library names the package, details.file the stop file). Tell the learner the stop cannot be observed until the library is built with source maps that include sourcesContent, or declare a stop in the Next app's own folder; never run the build yourself. Nothing was started: no server, no browser and no input (details.sideEffects is none). See codebook://help/repository-browser#NEXT_STOP_NOT_SEALED."
+
+/** Why a library's build could not be matched to a stop file; the `details.cause` of a `library-build-unmapped` refusal. */
+export type LibraryBuildUnmappedCause =
+  'no-map' | 'no-content' | 'no-line' | 'malformed' | 'bound' | 'deadline'
+
+/**
+ * Builds the refusal of a library stop whose build is older than (or otherwise differs from) the checked-out source, raised by {@link freezeLibraryBuild} before any process starts.
+ * @param packageRoot - The Next app's canonical repository-relative package root.
+ * @param libraryName - The library's package name (`package.json` `name`).
+ * @param file - The repository-relative stop file.
+ * @returns The `NEXT_STOP_NOT_SEALED` error: `details.reason: "library-build-stale"`, `sideEffects: "none"`, a message that names the build to run.
+ * @example
+ * throw libraryBuildStaleRefusal('examples/react/nextjs', '@scope/core', 'packages/core/src/a.ts')
+ */
+export function libraryBuildStaleRefusal(
+  packageRoot: string,
+  libraryName: string,
+  file: string,
+): StudyError {
+  const message = `The build of library ${libraryName} does not match the checked-out ${file} (its source map's sourcesContent differs), so a stop there was refused before the server started for packageRoot ${packageRoot}. Run the library's build yourself, for example \`pnpm --filter ${libraryName} build\`, then start again; Codebook never builds.`
+  return nextRefusal('NEXT_STOP_NOT_SEALED', message, {
+    details: {
+      reason: 'library-build-stale',
+      packageRoot,
+      library: libraryName,
+      file,
+      sideEffects: 'none',
+    },
+    recovery: LIBRARY_BUILD_STALE_RECOVERY,
+  })
+}
+
+/**
+ * Builds the refusal of a library stop whose build has no source map that can carry the stop, raised by {@link freezeLibraryBuild} before any process starts.
+ * @param packageRoot - The Next app's canonical repository-relative package root.
+ * @param libraryName - The library's package name (`package.json` `name`).
+ * @param file - The repository-relative stop file.
+ * @param cause - Why the build cannot carry the stop.
+ * @returns The `NEXT_STOP_NOT_SEALED` error: `details.reason: "library-build-unmapped"`, `details.cause`, `sideEffects: "none"`.
+ * @example
+ * throw libraryBuildUnmappedRefusal('examples/react/nextjs', '@scope/core', 'packages/core/src/a.ts', 'no-map')
+ */
+export function libraryBuildUnmappedRefusal(
+  packageRoot: string,
+  libraryName: string,
+  file: string,
+  cause: LibraryBuildUnmappedCause,
+): StudyError {
+  const message = `The build of library ${libraryName} has no usable source map for ${file} (${cause}), so a stop there was refused before the server started for packageRoot ${packageRoot}. Codebook never builds; the library must be built with source maps that include sourcesContent.`
+  return nextRefusal('NEXT_STOP_NOT_SEALED', message, {
+    details: {
+      reason: 'library-build-unmapped',
+      cause,
+      packageRoot,
+      library: libraryName,
+      file,
+      sideEffects: 'none',
+    },
+    recovery: LIBRARY_BUILD_UNMAPPED_RECOVERY,
+  })
+}
+
 /**
  * The structured fields every Pages stop refusal after the owned server started carries: `router: "pages"` tells an agent a Pages `client-component` refusal from the App Router one without parsing prose, and `sideEffects: "unknown"` says the page's data function already ran once during Codebook's readiness request, so another start is the learner's decision when that function writes.
  * Spread into the `details` of {@link nextRefusal} by the seal and the stop checks of a Pages run.
