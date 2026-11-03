@@ -4,6 +4,11 @@ import { test } from 'node:test'
 import { NEXT_SETUP_STEPS } from '../constants'
 import { ERROR_RECOVERY } from '../errors'
 import {
+  libraryBuildChangedFailure,
+  libraryBuildStaleRefusal,
+  libraryBuildUnmappedRefusal,
+  libraryNotInBuildRefusal,
+  libraryPlaceAmbiguousRefusal,
   NEXT_REFUSAL_CODES,
   nextHelpAnchor,
   nextRefusal,
@@ -383,4 +388,79 @@ test('every Next refusal recovery names exactly one recovery class', () => {
     // Assert
     assert.equal(named.length, 1, code)
   }
+})
+
+// protects=each of the five library refusals gives the agent its own static recovery that ends at the per-reason help anchor, so describe().recovery is never the generic RUNTIME_FAILED or NEXT_STOP_NOT_SEALED text; fails_when=a builder sets no recovery override, or one reason shares another's text or anchor; no_claim=the help fix wording
+test('each library refusal describes its own recovery ending at its own help anchor', () => {
+  // Arrange
+  const refusals = [
+    [
+      'library-build-stale',
+      libraryBuildStaleRefusal('examples/app', 'lib', 'packages/lib/src/a.ts'),
+    ],
+    [
+      'library-build-unmapped',
+      libraryBuildUnmappedRefusal(
+        'examples/app',
+        'lib',
+        'packages/lib/src/a.ts',
+        'no-line',
+      ),
+    ],
+    [
+      'library-not-in-build',
+      libraryNotInBuildRefusal('examples/app', 'lib', 'packages/lib/src/a.ts', [
+        'packages/lib/build/a.js',
+      ]),
+    ],
+    [
+      'library-place-ambiguous',
+      libraryPlaceAmbiguousRefusal(
+        'examples/app',
+        'lib',
+        'packages/lib/src/a.ts',
+        3,
+        'several source lines',
+      ),
+    ],
+    [
+      'library-build-changed',
+      libraryBuildChangedFailure(
+        'examples/app',
+        'lib',
+        'packages/lib/src/a.ts',
+      ),
+    ],
+  ] as const
+  const seen = new Set<string>()
+  for (const [reason, error] of refusals) {
+    // Act
+    const { recovery } = error.describe()
+    // Assert
+    assert.ok(
+      recovery.endsWith(`See codebook://help/repository-browser#${reason}.`),
+      reason,
+    )
+    assert.equal(carriesValue(recovery), false, reason)
+    assert.equal(recovery.includes('pnpm'), false, reason)
+    assert.equal(seen.has(recovery), false, reason)
+    seen.add(recovery)
+  }
+})
+
+// protects=the unmapped recovery stays neutral: it points to details.cause and the help instead of telling the agent to rebuild with source maps, which cannot help no-line, bound or deadline; fails_when=the text advises a rebuild with source maps again; no_claim=the per-cause help
+test('the library-build-unmapped recovery points to details.cause and promises no rebuild fix', () => {
+  // Arrange
+  const refusal = libraryBuildUnmappedRefusal(
+    'examples/app',
+    'lib',
+    'packages/lib/src/a.ts',
+    'deadline',
+  )
+  // Act
+  const { recovery } = refusal.describe()
+  // Assert
+  assert.ok(recovery.includes('details.cause'))
+  assert.equal(recovery.includes('source maps'), false)
+  assert.equal(recovery.includes('sourcesContent'), false)
 })

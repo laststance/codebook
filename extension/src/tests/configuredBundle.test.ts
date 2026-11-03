@@ -610,3 +610,38 @@ test('a line whose only mapping points at a comment the generated module kept is
     complete: true,
   })
 })
+
+test('library module URLs differing in webpack layer or ../ depth are different scripts', () => {
+  // value card: protects=a stop never binds to another layer's or depth's module; fails_when=identity collapses ../ or drops (layer); no_claim=runtime pause matching end to end
+  // Arrange
+  const nodeDeep =
+    'webpack-internal:///(pages-dir-node)/../../../packages/q/build/modern/a.js'
+  const browserDeep =
+    'webpack-internal:///(pages-dir-browser)/../../../packages/q/build/modern/a.js'
+  const nodeShallow =
+    'webpack-internal:///(pages-dir-node)/../../packages/q/build/modern/a.js'
+  // Act / Assert
+  assert.equal(sameScriptUrl(nodeDeep, browserDeep), false)
+  assert.equal(sameScriptUrl(nodeDeep, nodeShallow), false)
+  assert.equal(sameScriptUrl(browserDeep, nodeShallow), false)
+  assert.equal(sameScriptUrl(nodeDeep, nodeDeep), true)
+  assert.equal(
+    sameScriptUrl(nodeDeep, nodeDeep.replace('/../', '/./../')),
+    true,
+  )
+})
+
+test('webpack-internal URLs differing only in query or hash are different scripts', () => {
+  // value card: protects=a stop never binds to a module spelled with another ?query or #hash; fails_when=identity drops search or hash; no_claim=runtime pause matching end to end
+  // Arrange
+  const base = 'webpack-internal:///(ssr)/./a.js'
+  // Act / Assert
+  assert.equal(sameScriptUrl(`${base}?x=1`, `${base}?x=2`), false)
+  assert.equal(sameScriptUrl(`${base}#h1`, `${base}#h2`), false)
+  assert.equal(sameScriptUrl(`${base}?x=1`, base), false)
+  assert.equal(sameScriptUrl(`${base}?x=1#h`, `${base}?x=1#h`), true)
+  assert.equal(
+    sameScriptUrl(`${base}?x=1`, 'webpack-internal:///(ssr)/a.js?x=1'),
+    true,
+  )
+})

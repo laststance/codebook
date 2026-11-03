@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.2.76.0] - 2026-11-04 (development candidate)
+
+Cycle 0075 ([Issue #196](https://github.com/laststance/codebook/issues/196)), a feature cycle. A library's own Example can now take you **into the checked-out library's source**. A server stop in a workspace library pauses there, for example in TanStack Query's `packages/query-core` when its `examples/react/nextjs` page prefetches. The library is one that a Next Pages app below the repository root imports. You see the library's real values, and the run saves and replays with the library's source.
+
+**Stop in the library an Example imports.**
+- **Where this works:** a version 3 `next-dev-webpack` run with a Pages Router `packageRoot` other than `"."`. A `participant: "server"` stop may lie in the checked-out source of a workspace library that the app reaches through links inside the repository: directly, or through other workspace libraries, as Node's resolution follows them (TanStack Query's Example reaches `query-core` through `react-query`).
+- **Two maps, no build by Codebook:** Codebook ties the stop to the library's built file through the build's own source maps, then to the running server module through Next's map. It never builds anything.
+- **What you see:** the chat and the replay show the library source line. The native debugger may show the built file (`build/…/*.js`) at the pause, since that is what the server runs.
+- **What is saved:** the saved study keeps its run's format (9 for an app below the root), with no new field, and records the library file's path, hash and line.
+
+**Clear refusals, before anything starts where the build already tells.** Each refusal carries its own `details.reason`, recovery and help anchor.
+- **Refused before start (`details.sideEffects: "none"`):**
+  - `library-build-stale`: the build's `sourcesContent` differs from the checked-out file. Rebuild the library yourself.
+  - `library-build-unmapped`, whose `details.cause` is `no-map`, `no-content`, `no-line`, `malformed`, `bound` or `deadline`. The help says whether a rebuild can help.
+- **Refused once the server compile is known:**
+  - `library-not-in-build`: the page's server does not load that build, or loads two flavours of it.
+  - `library-place-ambiguous`: the stop cannot be tied to one source position, for example on a built line that holds several source lines. Declare the stop on a line that holds a single statement.
+- **During the run:** `library-build-changed` (`RUNTIME_FAILED`) means the build changed while the run was open.
+- **Still outside this:** App Router Examples, browser-side library stops and libraries Next compiles from source (`transpilePackages`). Every stop outside the app's folder that is no such library keeps the `outside-package` refusal.
+
+**Native checks (development evidence, no final-row credit).** Both ran on TanStack Query at `84f5b0f5b` in the macOS Space, with the repository root open.
+- **VS Code 1.144.1** (Copilot Chat, GPT-6.1 Terra): the chat paused the real Next server in `query-core`'s `QueryCache.build` and `Query.fetch`. It read the query hash `["posts","list",10]`, `status: "pending"` and 10 fetched posts.
+- **Cursor 3.28.7** (Agent, Grok 4.6 High Fast): the chat paused in `QueryClient.query` and `dehydrateQuery`, with `status: "success"` and the same hash, and the native debugger showed the values at the library pause.
+- **In both:** the run reached the rendered list and saved as format 9. The replay then opened from the library with the library source, the recorded values and the call stack, after the app had stopped and the chat had closed.
+
+**Compatibility.** MCP API 1.19 is additive: the five library `details.reason` values, `details.cause` and the help texts. Bundled skill 1.0.68 adds one rule. A question that leads from an Example into the library may declare a server stop in the library's source. The chat names the build to run on `library-build-stale` and never runs it. A study saved by this version opens in 0.2.75.0.
+
 ## [0.2.75.0] - 2026-11-03 (development candidate)
 
 Cycle 0074 ([Issue #192](https://github.com/laststance/codebook/issues/192)), a bug-fix cycle. A **Next app in a folder below the repository root** (a monorepo example, such as TanStack Query's `examples/react/nextjs`) can now be run, paused in its own code and saved as a replay, with the repository root open. The Chrome extension worker start and a history cleanup test, which made checks fail at random, are fixed.

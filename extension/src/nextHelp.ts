@@ -1,4 +1,9 @@
 import {
+  BYTES_PER_MIB,
+  LIBRARY_BUILD_DISCOVERY_TIMEOUT_MS,
+  LIBRARY_BUILD_ENTRY_LIMIT_COUNT,
+  LIBRARY_BUILD_MAP_LIMIT_COUNT,
+  LIBRARY_BUILD_TOTAL_LIMIT_BYTES,
   MILLISECONDS_PER_SECOND,
   NEXT_APP_SELECTION_RULE,
   NEXT_MANIFEST_POLL_MS,
@@ -11,7 +16,9 @@ import {
   NEXT_PAGES_SOURCE_EXTENSIONS,
   NEXT_SETUP_STEPS,
   NEXT_WEBPACK_COMPATIBILITY_SENTENCE,
+  REPOSITORY_DISCOVERY_TIMEOUT_MS,
   REPOSITORY_GIT_TIMEOUT_MS,
+  REPOSITORY_MAP_LIMIT_BYTES,
   REPOSITORY_SETUP_TIMEOUT_MS,
 } from './constants'
 import { ERROR_RECOVERY } from './errors'
@@ -219,6 +226,35 @@ const PACKAGE_ROOT_REFUSALS = {
       'A stop file lies outside packageRoot (a shared package the app imports, for example); details.files lists every such stop and details.packageRoot the app folder. Refused before the server starts: nothing ran.',
     fix: 'Declare stops only in files inside details.packageRoot, or tell the learner that code outside the app folder cannot be observed in this version. Do not start another run with the same stops.',
   },
+  'library-build-stale': {
+    code: 'NEXT_STOP_NOT_SEALED',
+    meaning:
+      "A server stop lies in the checked-out source of a workspace library, and a build map that names the file carries source text that differs from the checked-out file: the library was edited after it was built. details.sideEffects is none: refused before anything started. The message names the library's package name and the build to run.",
+    fix: "Tell the learner which build to run for that library (for example the build script of the library's package) and that only the learner runs it; Codebook never builds and you never run it. After the learner has rebuilt, start the run again with the same stop. Do not move the stop to another file to make the run start.",
+  },
+  'library-build-unmapped': {
+    code: 'NEXT_STOP_NOT_SEALED',
+    meaning: `A server stop lies in the checked-out source of a workspace library, but its build cannot be tied to that file; details.cause says why: no-map (no build map names the file), no-content (a map names it without the source text), no-line (no build mapping lies on the stop's line or within its citation after it), malformed (a map cannot be parsed), bound (a limit was hit: more than ${LIBRARY_BUILD_MAP_LIMIT_COUNT} build maps, more than ${LIBRARY_BUILD_ENTRY_LIMIT_COUNT} entries in the build folders, a map larger than ${REPOSITORY_MAP_LIMIT_BYTES / BYTES_PER_MIB} MiB, more than ${LIBRARY_BUILD_TOTAL_LIMIT_BYTES / BYTES_PER_MIB} MiB read in total, or a search that did not finish) or deadline (the search ran out of time: the smaller of ${LIBRARY_BUILD_DISCOVERY_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s and what is left of the run's ${REPOSITORY_DISCOVERY_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s discovery time). details.sideEffects is none: refused before anything started.`,
+    fix: 'Tell the learner the cause. For no-map, no-content and malformed the learner can rebuild the library with source maps that include the source text; for no-line declare the stop on a line that runs; for bound and deadline this version cannot search that library, so a rebuild does not help. Codebook never builds. Do not retry with the same stop.',
+  },
+  'library-not-in-build': {
+    code: 'NEXT_STOP_NOT_SEALED',
+    meaning:
+      "The library's build matches its checked-out source, but none of the built files that map to the stop, or more than one, is a module of the page's server compile; the message names the candidates. details.sideEffects is unknown: Codebook's readiness request for the entry had already been sent.",
+    fix: "Tell the learner the page's server code does not load that library file (another build, such as a legacy build, may be the one it loads), or choose a stop on a line the page's server code runs. Do not start another run with the same stop.",
+  },
+  'library-place-ambiguous': {
+    code: 'NEXT_STOP_NOT_SEALED',
+    meaning:
+      'The debugger placed the library stop at a position that maps back to more than one source position or to a source Codebook does not allow, so the pause could not be tied to the declared line. A library stop on a line that itself declares a binding a required inspection reads is refused the same way: unlike a stop in the app, it is not moved to the next line. details.sideEffects is unknown: the entry had been requested.',
+    fix: 'Tell the learner the stop could not be placed on one source position; declare the stop on a line that holds a single statement, after the line that declares the value it reads. Do not start another run with the same stop.',
+  },
+  'library-build-changed': {
+    code: 'RUNTIME_FAILED',
+    meaning:
+      "The library's build or the server module changed between the check before the start and the seal (a rebuild, a recompile that shifted lines). details.sideEffects is unknown: the entry had been requested.",
+    fix: 'Tell the learner the library was rebuilt during the run; ask the learner to finish the rebuild and start the run again. Do not run the build yourself.',
+  },
   'package-root-fresh-session': {
     code: 'SIGN_IN_REQUIRED',
     meaning:
@@ -233,8 +269,17 @@ const PACKAGE_ROOT_REFUSALS = {
   },
 } as const
 
+/** The refusal reasons of a library stop, in the order the help lists them (API 1.19); each has a row in {@link PACKAGE_ROOT_REFUSALS}. */
+const LIBRARY_STOP_REASONS = [
+  'library-build-stale',
+  'library-build-unmapped',
+  'library-not-in-build',
+  'library-place-ambiguous',
+  'library-build-changed',
+] as const
+
 /**
- * Builds the `nextPackageRoot` key of `codebook://help/repository-browser`: how to run a Next app that lives below the repository root (API 1.18).
+ * Builds the `nextPackageRoot` key of `codebook://help/repository-browser`: how to run a Next app that lives below the repository root (API 1.18, library stops API 1.19).
  *
  * Why it exists: before API 1.18 a Next app below the repository root could not run, and a chat that meets one (a monorepo, an `examples/` folder) needs the selection rule, the exact configuration shape, the refusal fixes, the cross-adapter difference and the limits before it reads the long sections. Called by {@link nextHelp}, which serves its result as one key.
  *
@@ -258,6 +303,11 @@ function nextPackageRootHelp() {
       packages: `Array of the Next apps below the root that tracked package.json files name (depth ${NEXT_PACKAGE_DISCOVERY_MAX_DEPTH} or less, at most ${NEXT_PACKAGE_DISCOVERY_APP_LIMIT}): { packageRoot, routerKind, installed, ready, version?, missing[] }. packageRoot is the exact value to declare; ready and missing are what a start with that packageRoot checks. Entries carry no preparation or notes: a start reports them. Untracked apps are not listed.`,
       packagesTruncated: `true when the list is incomplete; packagesTruncatedReason says why: limit (more than ${NEXT_PACKAGE_DISCOVERY_APP_LIMIT} apps), manifest-cap (more than ${NEXT_PACKAGE_DISCOVERY_MANIFEST_LIMIT} manifests), deadline (the ${NEXT_PACKAGE_DISCOVERY_DEADLINE_SECONDS} s discovery bound), skipped-path (a path was skipped) or git-failed.`,
       whenTruncated: `When packagesTruncated is true and the app the question names is not listed, declare its packageRoot from the repository's files (the folder that holds its package.json); the start checks it, and an unlisted depth ${NEXT_PACKAGE_DISCOVERY_MAX_DEPTH + 1} or untracked folder runs when it passes.`,
+    },
+    libraryStops: {
+      anchor: packageRootAnchor('library-stops'),
+      rule: "A server stop in the checked-out source of a workspace library the app reaches through links inside the repository (directly or through other workspace libraries) pauses when the library's build carries source maps with sourcesContent equal to the checked-out source. Codebook never builds: when the build is stale or unmapped the run is refused before anything starts and the learner runs the build. The native debugger may show the library's built file at the pause, while the chat, the recorded source and the replay use the library's source.",
+      reasons: LIBRARY_STOP_REASONS,
     },
     configurationNestedServerStop: NEXT_NESTED_SERVER_STOP_CONFIGURATION,
     configurationNestedBrowserStop: NEXT_NESTED_BROWSER_STOP_CONFIGURATION,
@@ -299,7 +349,7 @@ function nextPackageRootHelp() {
       'A nested run is saved as study format 9 (.study.v9.json) with packageRoot in its configuration, so the saved study names the app that ran; recorded sources and book citations stay repository-relative. A run without packageRoot (or with ".") keeps the format it takes today. Codebook 0.2.74.0 lists a format 9 study as saved by a newer Codebook; update Codebook to open it. Format 9 replays from recorded evidence, also after the app\'s folder is removed.',
     limits: [
       NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE,
-      "Library or shared packages the app imports (a workspace package Next compiles through transpilePackages) stay outside the stop range: a stop there is refused with NEXT_STOP_NOT_SEALED (outside-package), so a question whose answer needs that code is outside this version's claim.",
+      "A server stop in the checked-out source of a workspace library the app reaches through links inside the repository (directly or through other workspace libraries) can pause (see libraryStops). A library that Next compiles from source through transpilePackages has no build of its own to match: when no build map names the stop file, the stop is refused as library-build-unmapped (cause no-map); browser-side library stops, App Router Examples and a library outside the repository stay outside the stop range, and a stop in a file the app does not link to is refused with NEXT_STOP_NOT_SEALED (outside-package). A question whose answer needs such code is outside this version's claim.",
       "Next resolves as Node would from the app's folder: the first node_modules/next found from packageRoot up to the repository root, never above it, whose real path is inside the repository (a pnpm link into the root's node_modules/.pnpm and a hoisted workspace install qualify; Yarn PnP and NODE_PATH count as not installed). A missing Next names the install command of the repository's lockfile as the learner's decision; Codebook never runs it.",
       'One run at a time per window: a root run beside a nested run is refused with BUSY.',
     ],

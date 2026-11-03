@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { lstat } from 'node:fs/promises'
+import { lstat, readFile, realpath } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
@@ -87,6 +87,9 @@ import {
 } from './errors'
 import {
   NEXT_PAGES_FAILURE_VARIANT,
+  libraryBuildChangedFailure,
+  libraryFailureText,
+  libraryPlaceAmbiguousRefusal,
   nextRefusal,
   outsidePackageRefusal,
   PAGES_STOP_REFUSAL_DETAILS,
@@ -164,6 +167,7 @@ import {
   assertDevelopmentWorkspace,
   type DevelopmentLockIdentity,
 } from './utils/assertDevelopmentWorkspace'
+import { assertFrameAtBoundPosition } from './utils/assertFrameAtBoundPosition'
 import { assertSavedSessionOrigin } from './utils/assertSavedSessionOrigin'
 import { refuseViteMisroute } from './utils/assessViteWorkspace'
 import { boundColumnOfInstance } from './utils/boundColumnOfInstance'
@@ -221,7 +225,6 @@ import {
 } from './utils/inspectConfiguredValues'
 import { isBlankOrCommentLine } from './utils/isBlankOrCommentLine'
 import { isBrowserOnEntryRoute } from './utils/isBrowserOnEntryRoute'
-import { isFrameAtPosition } from './utils/isFrameAtPosition'
 import type { GeneratedPosition } from './utils/isGeneratedPositionBefore'
 import { isHotUpdateScriptUrl } from './utils/isHotUpdateScriptUrl'
 import { isModuleEntryPause } from './utils/isModuleEntryPause'
@@ -238,6 +241,11 @@ import { isRscScriptUrl } from './utils/isRscScriptUrl'
 import { isSameGeneratedPosition } from './utils/isSameGeneratedPosition'
 import { lastSourceUrlOf } from './utils/lastSourceUrlOf'
 import { launchDevelopmentServer } from './utils/launchDevelopmentServer'
+import {
+  detectLibraryPackage,
+  freezeLibraryBuild,
+  type FrozenLibraryBuild,
+} from './utils/libraryBuildStop'
 import { maskLearnerSecretText } from './utils/maskLearnerSecretText'
 import { maskNextServerOutput } from './utils/maskNextServerOutput'
 import { maskSourceMapText } from './utils/maskSourceMapText'
@@ -319,6 +327,7 @@ import {
 import { sameScriptUrl } from './utils/sameScriptUrl'
 import { sanitizeCause } from './utils/sanitizeCause'
 import { suggestNextPackageRoots } from './utils/scanNextPackages'
+import { sealLibraryServerStop } from './utils/sealLibraryServerStop'
 import { sealPagesServerStop } from './utils/sealPagesServerStop'
 import { selfDeclaredInspectionHint } from './utils/selfDeclaredInspectionHint'
 import { serverExecutionOfScriptUrl } from './utils/serverExecutionOfScriptUrl'
@@ -442,6 +451,15 @@ const NEXT_DEV_WEBPACK_ADAPTER: DevelopmentServerAdapter = {
   readBundle: (request) => {
     const { nextRoute } = request
     // A server stop of a Pages run is sealed from the page's server compile and the chunks it requires.
+    // A server stop in a workspace library is sealed from its verified build artifact.
+    if (nextRoute && request.library && request.nextPackage)
+      return sealLibraryServerStop({
+        nextPackage: request.nextPackage,
+        library: request.library,
+        route: nextRoute.route,
+        signal: request.signal,
+        cache: nextRoute.cache,
+      })
     if (nextRoute && request.execution === 'server-action')
       return sealPagesServerStop({
         workspace: request.workspace,
@@ -554,7 +572,38 @@ const PAGE_REQUEST_END_EVENTS = [
   'Network.loadingFailed',
   'Network.loadingFinished',
 ] as const
+/** Keys a stop's library freeze by its declared place. @example libraryFreezeKey({ path: 'a.ts', line: 3, column: 1 }) // 'a.ts:3:1' */
+function libraryFreezeKey(source: {
+  path: string
+  line: number
+  column: number
+}): string {
+  return `${source.path}:${source.line}:${source.column}`
+}
+
+/** What a run keeps per server stop in a workspace library, frozen before any process starts ({@link ConfiguredBrowserRun.resolveNextPackageOfRun}). */
+type LibraryFreeze = {
+  frozen: FrozenLibraryBuild
+  /** The checked-out library source text, read once and equal to the accepted hash. */
+  sourceText: string
+  /** The real (symlink-free) repository root. */
+  realRoot: string
+}
+
+/** The library part of a prepared stop: the stop is run in built terms (the sealed bundle is the built file), and these fields translate back to the library source. */
+type LibraryStopState = LibraryFreeze & {
+  /** The repository-relative built file the page's server compile holds. */
+  builtPath: string
+  /** The built line the stop is armed at ({@link FrozenLibraryBuild.toBuilt} of the armed source line). */
+  builtLine: number
+  /** The stop as declared, in source terms. */
+  declared: { line: number; column: number }
+  /** The module path Next prints for the built file, relative to the app. */
+  runtimePath: string
+}
 type PreparedStop = ReturnType<typeof configuredStops>[number] & {
+  /** Set for a stop in a workspace library: `source.line` and `armed` are built-file lines, and {@link LibraryStopState} translates them. */
+  library?: LibraryStopState
   /** The stop's place in the declared stop list, fixed when it was sealed; the run reorders the stops of a server set into the order they pause, so this index names the declaration, never the position in {@link ConfiguredBrowserRun.stops}. */
   declaredIndex: number
   bundle: BundleSource
@@ -590,6 +639,66 @@ type PreparedStop = ReturnType<typeof configuredStops>[number] & {
     scriptId?: string
   }
 }
+
+/**
+ * Gives the line a prepared stop was declared on, in the terms of the file it names.
+ *
+ * Why: a library stop runs in built terms (`source.line` is the built file's line) while its `source.path` names the library source, so a name or journal entry that pairs the two must take the declared source line. Called by the agent-facing stop names and the seal journal of {@link ConfiguredBrowserRun}.
+ * @param stop - A prepared stop.
+ * @returns The declared source line of a library stop; otherwise `source.line`.
+ * @example declaredLineOf(libraryStop) // 7 (the library source line), while libraryStop.source.line is 30 (built)
+ */
+function declaredLineOf(stop: PreparedStop): number {
+  return stop.library ? stop.library.declared.line : stop.source.line
+}
+
+/**
+ * Gives the declared and the armed place of a prepared stop in the terms of the file its `source.path` names, for the journal entries and texts that pair the path with lines.
+ *
+ * Why: for a library stop `source` and `armed` are built-file places, which the agent cannot find in the library source it declared the stop in ({@link declaredLineOf}). The armed built place is translated through the frozen build; one the build cannot translate is not named apart from the declared place. Any other stop keeps its own places. Called by the evidence entries of {@link ConfiguredBrowserRun} that record {@link declaredAndArmedPlace}.
+ * @param stop - A prepared stop.
+ * @returns The `declared` and `armed` positions to give {@link declaredAndArmedPlace}.
+ * @example sourceTermsOf(libraryStop) // => { declared: { line: 7, column: 3 }, armed: { line: 7, column: 3 } } while libraryStop.armed is built line 30
+ */
+function sourceTermsOf(stop: PreparedStop): {
+  declared: { line: number; column: number }
+  armed: { line: number; column: number }
+} {
+  const { library } = stop
+  // A stop outside a library runs in its own source terms.
+  if (!library) return { declared: stop.source, armed: stop.armed }
+  const armed =
+    library.frozen.toSource(
+      library.builtPath,
+      stop.armed.line,
+      stop.armed.column,
+    ) ??
+    // The armed built line is the declared one's build: it names the armed source line.
+    (stop.armed.line === library.builtLine
+      ? {
+          line: library.frozen.armedSourceLine,
+          column: library.declared.column,
+        }
+      : library.declared)
+  return { declared: library.declared, armed }
+}
+
+/**
+ * Gives the source line of a built line of a library stop for an agent-facing text; any other stop's line is already a source line.
+ * @param stop - A prepared stop.
+ * @param line - A one-based line in the stop's own terms (built for a library stop).
+ * @returns The library source line the built line maps to, else the stop's declared line (a built line is never named); `line` for a stop outside a library.
+ * @example sourceLineOf(libraryStop, 31) // => 8 for built line 31 mapping to source line 8
+ */
+function sourceLineOf(stop: PreparedStop, line: number): number {
+  const { library } = stop
+  if (!library) return line
+  return (
+    library.frozen.toSource(library.builtPath, line, undefined)?.line ??
+    library.declared.line
+  )
+}
+
 /**
  * Names the bindings of a stop's required inspections that its own declared line declares; called by {@link ConfiguredBrowserRun.requestAfterSelfDeclaringLine} at preparation.
  * @param stop - The declared stop, as {@link configuredStops} gives it.
@@ -746,6 +855,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private ownedDevelopmentLock?: DevelopmentLockIdentity
   /** The Next app this run uses, resolved once at the start of preparation (a `next-dev-webpack` run only); later lanes read every Next-path file through it. */
   private nextPackage?: ResolvedNextPackage
+  /** The frozen library builds of the run's library stops, by `path:line:column`, taken before any process starts. */
+  private readonly libraryFreezes = new Map<string, LibraryFreeze>()
+  /** The discovery budget every library stop's freeze charges, so N library stops cannot multiply the bounds. */
+  private readonly libraryBudget = { readBytes: 0, spentMs: 0 }
   /** The adapter of the configuration, chosen at the start of preparation. */
   private adapter?: DevelopmentServerAdapter
   /** The setup step reached, named when the setup deadline expires. */
@@ -1185,11 +1298,67 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         (nextPackage.toPackageRelative(stop.source.path) === undefined ||
           (await nextPackage.toPackageRelativeByRealPath(stop.source.path)) ===
             undefined)
-      )
-        outside.push(stop.source.path)
+      ) {
+        // A server stop of a nested version 3 Pages run in a workspace library is frozen against the library's build; anything else outside stays refused.
+        if (!(await this.freezeLibraryStop(stop, nextPackage)))
+          outside.push(stop.source.path)
+      }
     if (outside.length)
       throw outsidePackageRefusal(nextPackage.packageRootRelative, outside)
     return nextPackage
+  }
+
+  /**
+   * Freezes the build of a server stop that lies outside the Next app in a workspace library, before any process starts.
+   * Called by {@link resolveNextPackageOfRun} for each stop outside the package; the library source text is read once here and checked against the accepted hash, and kept for the capture.
+   * @param stop - A stop whose file lies outside the package.
+   * @param nextPackage - The resolved nested Next app.
+   * @returns `true` when the stop was frozen as a library stop; `false` when it stays an `outside-package` stop (not a server stop, not a version 3 run, no linked workspace library, or an app whose router kind is not `pages`).
+   * @throws `NEXT_STOP_NOT_SEALED` (`library-build-stale`, `library-build-unmapped`; `sideEffects: "none"`) from {@link freezeLibraryBuild}; an error when the checked-out file differs from the accepted hash.
+   * @example
+   * if (!(await this.freezeLibraryStop(stop, nextPackage))) outside.push(stop.source.path)
+   */
+  private async freezeLibraryStop(
+    stop: ReturnType<typeof configuredStops>[number],
+    nextPackage: ResolvedNextPackage,
+  ): Promise<boolean> {
+    if (
+      stop.participant !== 'server' ||
+      this.definition.configuration.version !== OPERATIONS_CONFIG_VERSION
+    )
+      return false
+    const library = await detectLibraryPackage(
+      this.options.workspace,
+      nextPackage,
+      stop.source.path,
+      this.abort.signal,
+    )
+    if (!library) return false
+    // Only a Pages app runs a Pages route, so only there is a library build frozen; an App Router app (or one with no route folder) keeps the outside-package refusal before anything starts. An app with both routers is refused too: its entry route is known only after the server started.
+    if ((await readNextRouterKind(nextPackage.packageRoot)) !== 'pages')
+      return false
+    const key = libraryFreezeKey(stop.source)
+    if (this.libraryFreezes.has(key)) return true
+    const frozen = await freezeLibraryBuild({
+      repositoryRoot: this.options.workspace,
+      packageRootRelative: nextPackage.packageRootRelative,
+      library,
+      stop: {
+        path: stop.source.path,
+        sha256: stop.source.hash,
+        line: stop.source.line,
+        citationEndLine:
+          this.definition.descriptor.anchors[stop.anchorIndex]!.endLine,
+      },
+      signal: this.abort.signal,
+      budget: this.libraryBudget,
+    })
+    const realRoot = await realpath(this.options.workspace)
+    const sourceText = await readFile(join(realRoot, stop.source.path), 'utf8')
+    if (sha256(sourceText) !== stop.source.hash)
+      throw new Error('Selected source differs from the accepted article')
+    this.libraryFreezes.set(key, { frozen, sourceText, realRoot })
+    return true
   }
 
   /** Retains one preparation barrier for service cancellation and final cleanup. @example await run.prepare() */
@@ -3488,9 +3657,19 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     // A version 2 server stop, or a browser stop in `_document` or an API route, is refused before its own chunks are read; a version 3 server stop is sealed from the page's server build below.
     if (this.pagesRun) this.refuseServerOnlyPagesStop(stop, this.pagesRun)
     const citation = this.definition.descriptor.anchors[stop.anchorIndex]!
+    const freeze = this.libraryFreezes.get(libraryFreezeKey(stop.source))
     const acquired = await adapter.readBundle({
       workspace: this.options.workspace,
       ...(this.nextPackage ? { nextPackage: this.nextPackage } : {}),
+      ...(freeze && this.nextPackage
+        ? {
+            library: {
+              frozen: freeze.frozen,
+              packageRootRelative: this.nextPackage.packageRootRelative,
+              realRoot: freeze.realRoot,
+            },
+          }
+        : {}),
       source: stop.source,
       citationEndLine: citation.endLine,
       signal: this.abort.signal,
@@ -3512,29 +3691,20 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         : {}),
     })
     this.alive()
-    const verifier = createBundleVerifier(acquired.bundle)
-    // The sealed map is scanned once per stop, from its declared line to the end of its citation; the place, the rule and the refusal below read that scan, and the pause handler only compares lines.
-    const scan = verifier.mappedPositions(stop.source.line, citation.endLine),
-      // A renewal reaches the decisions of the first seal again, so only the first seal journals them.
-      isFirstSeal = generation === undefined,
-      taken = this.takeDeclaredPosition(stop, index, isFirstSeal),
-      afterDeclaration = this.requestAfterSelfDeclaringLine(
-        stop,
-        acquired.bundle.source.split(/\r\n|\r|\n/),
-        scan,
-        citation.endLine,
-        isFirstSeal,
-      ),
-      // A stop whose own line declares a binding it requires is requested after that declaration's statement; otherwise the debugger verifies no breakpoint on a line without a mapped position, so such a stop is requested at the first mapped position after it. The rule is measured from there.
-      armed = afterDeclaration.armed ?? resolveArmedPlace(taken, scan)
-    const bindingRule = createBindingLineRule(
-      stop.source.line,
-      citation,
+    // A renewal reaches the decisions of the first seal again, so only the first seal journals them.
+    const isFirstSeal = generation === undefined
+    const {
+      verifier,
+      sealedStop,
+      library,
       scan,
-      armed.line,
-    )
+      armed,
+      afterDeclaration,
+      bindingRule,
+    } = this.placeSealedStop(stop, index, acquired, freeze, isFirstSeal)
     const prepared: PreparedStop = {
-      ...stop,
+      ...sealedStop,
+      ...(library ? { library } : {}),
       declaredIndex: index,
       bundle: acquired.bundle,
       verifier,
@@ -3547,18 +3717,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       unusableInstances: new Map(),
       ...(acquired.layer ? { sealedLayer: acquired.layer } : {}),
     }
-    // Only the first seal journals the layer: a renewal reaches the same layer again.
-    if (isFirstSeal && acquired.layer)
-      this.evidence.record('seal.layer', {
-        stop: `${prepared.source.path}:${prepared.source.line}`,
-        layer: acquired.layer,
-      })
-    // A server stop of a Pages run accepted on evidence the seal could not read to its end says so in the journal, so a reader knows the line was not established as server-only.
-    if (isFirstSeal && acquired.evidence)
-      this.evidence.record('seal.evidence', {
-        stop: `${prepared.source.path}:${prepared.source.line}`,
-        evidence: acquired.evidence,
-      })
+    if (isFirstSeal) this.journalSealDecisions(prepared, acquired)
     // A renewal keeps the first seal's files, so each journal entry names the bytes of its own files.
     const fileStem = isFirstSeal
       ? `sealed-${index}`
@@ -3651,10 +3810,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         (!scanComplete &&
           !isBlankOrCommentLine(stop.bundle.source, stop.source.line)) ||
         // The debugger verifies nothing on a line without a mapped position, so such a stop is requested at the first mapped position after it within its citation; only a stop with no such place can never bind.
-        this.canLaterLineBind(
-          stop,
-          this.definition.descriptor.anchors[stop.anchorIndex]!.endLine,
-        ),
+        this.canLaterLineBind(stop, this.citationOf(stop).endLine),
     )
   }
 
@@ -3995,6 +4151,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     })
     this.alive()
     if (manifests.kind === 'app') {
+      this.refuseLibraryStopsOfAppRoute()
       // The route is known once the manifests resolved it, so it is recorded before the App verdict: a setup deadline during that verdict keeps an App run's uncoded text ({@link setupDeadlineText}).
       this.nextRoute = { router: 'app', route: manifests.route.key }
       // An App route keeps today's readiness verdict, judged on the answer already read; an entry behind sign-in was proven by the saved session's own load instead.
@@ -4123,6 +4280,33 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         nextServerOnlyStopMessage(place, reason),
         { details: PAGES_STOP_REFUSAL_DETAILS },
       )
+  }
+
+  /**
+   * Ends a run whose frozen library server stop cannot be sealed because the entry path resolved to an App Router route.
+   * Called by {@link resolvePagesCapableRoute} when the manifests resolve an App route; the server already started, so the refusal reports `sideEffects` `unknown`.
+   * @throws `NEXT_STOP_NOT_SEALED` with `details.reason` `outside-package` when any library stop was frozen; nothing otherwise.
+   * @example
+   * this.refuseLibraryStopsOfAppRoute() // throws for a library stop frozen before an App entry
+   */
+  private refuseLibraryStopsOfAppRoute(): void {
+    if (this.libraryFreezes.size === 0) return
+    const files = [...this.libraryFreezes.values()].map(
+      (freeze) => freeze.frozen.stopPath,
+    )
+    const packageRoot = this.nextPackageOrRoot.packageRootRelative
+    throw nextRefusal(
+      'NEXT_STOP_NOT_SEALED',
+      `Stop file${files.length === 1 ? '' : 's'} ${files.join(', ')} lie${files.length === 1 ? 's' : ''} outside packageRoot ${packageRoot}, and the entry path resolves to an App Router route; Codebook seals stops outside the Next app's folder only for a Pages Router route.`,
+      {
+        details: {
+          reason: 'outside-package',
+          files,
+          packageRoot,
+          sideEffects: 'unknown',
+        },
+      },
+    )
   }
 
   /**
@@ -4328,6 +4512,297 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     return formatRefusalFailure(
       'SOURCE_CHANGED',
       `${stop.source.path} changed during the run, so Codebook stopped it. Earlier captured observations remain readable.${clickUnverified ? " The click's result was not verified." : ''}`,
+    )
+  }
+
+  /**
+   * Journals what the first seal of a stop decided: the webpack layer it was sealed from, and the evidence the seal accepted without reading it to its end.
+   * Called by {@link sealDeclaredStop} for the first seal only: a renewal reaches the same layer again.
+   * @param prepared - The sealed stop.
+   * @param acquired - What the adapter sealed.
+   * @example
+   * this.journalSealDecisions(prepared, acquired) // records seal.layer for a Pages server stop
+   */
+  private journalSealDecisions(
+    prepared: PreparedStop,
+    acquired: DevelopmentBundle,
+  ): void {
+    const stop = `${prepared.source.path}:${declaredLineOf(prepared)}`
+    if (acquired.layer)
+      this.evidence.record('seal.layer', { stop, layer: acquired.layer })
+    // A server stop of a Pages run accepted on evidence the seal could not read to its end says so in the journal, so a reader knows the line was not established as server-only.
+    if (acquired.evidence)
+      this.evidence.record('seal.evidence', {
+        stop,
+        evidence: acquired.evidence,
+      })
+  }
+
+  /**
+   * Scans a sealed bundle once and places a stop in it: its armed position, request floor and binding rule.
+   * Called by {@link sealDeclaredStop}. A library stop runs in built terms (its sealed bundle is the built file), so its line, scan, rule and citation are the armed built line's; any other stop is placed by its declared line and citation.
+   * @param stop - The configured stop.
+   * @param index - Its zero-based place among the declared stops.
+   * @param acquired - What the adapter's `readBundle` sealed.
+   * @param freeze - The stop's frozen library build, when it is a library stop.
+   * @param isFirstSeal - Whether the seal journals the position decisions.
+   * @returns The bundle's verifier, the stop as sealed (built line for a library stop), its library state, the scan, the armed place, the declaring-line decision and the binding rule.
+   * @throws The refusals of {@link libraryStateOf}.
+   * @example
+   * const { armed } = this.placeSealedStop(stop, 0, acquired, undefined, true)
+   */
+  private placeSealedStop(
+    stop: ReturnType<typeof configuredStops>[number],
+    index: number,
+    acquired: DevelopmentBundle,
+    freeze: LibraryFreeze | undefined,
+    isFirstSeal: boolean,
+  ) {
+    const verifier = createBundleVerifier(acquired.bundle)
+    const library =
+      freeze && acquired.libraryBuiltPath
+        ? this.libraryStateOf(stop, freeze, acquired.libraryBuiltPath)
+        : undefined
+    const sealedStop = library
+      ? {
+          ...stop,
+          source: { ...stop.source, line: library.builtLine, column: 1 },
+        }
+      : stop
+    const citation = library
+      ? { startLine: library.builtLine, endLine: library.builtLine }
+      : this.definition.descriptor.anchors[stop.anchorIndex]!
+    // The sealed map is scanned once per stop, from its declared line to the end of its citation; the place, the rule and the refusal read that scan, and the pause handler only compares lines.
+    const scan = verifier.mappedPositions(
+      sealedStop.source.line,
+      citation.endLine,
+    )
+    // The declared position is taken before the declaring-line rule runs, as the journal has always ordered them.
+    const taken = library
+      ? sealedStop.source
+      : this.takeDeclaredPosition(stop, index, isFirstSeal)
+    const afterDeclaration: {
+      armed?: { line: number; column: number }
+      earliestLine: number
+    } = library
+      ? { earliestLine: library.builtLine }
+      : this.requestAfterSelfDeclaringLine(
+          stop,
+          acquired.bundle.source.split(/\r\n|\r|\n/),
+          scan,
+          citation.endLine,
+          isFirstSeal,
+        )
+    // A stop whose own line declares a binding it requires is requested after that declaration's statement; otherwise the debugger verifies no breakpoint on a line without a mapped position, so such a stop is requested at the first mapped position after it. The rule is measured from there.
+    const armed = afterDeclaration.armed ?? resolveArmedPlace(taken, scan)
+    const bindingRule = createBindingLineRule(
+      sealedStop.source.line,
+      citation,
+      scan,
+      armed.line,
+    )
+    return {
+      verifier,
+      sealedStop,
+      library,
+      scan,
+      armed,
+      afterDeclaration,
+      bindingRule,
+    }
+  }
+
+  /**
+   * Gives the citation a stop's lines are measured against: the cited range for an ordinary stop, the single armed built line for a library stop (which runs in built terms).
+   * Called wherever a prepared stop's citation bounds a binding, a hint or a break location search.
+   * @param stop - A stop with its citation anchor; a library stop also carries its built line.
+   * @returns The first and last line of the citation, in the terms of the stop's sealed bundle.
+   * @example
+   * this.citationOf(stop) // => { startLine: 12, endLine: 15 } for a stop cited on lines 12 to 15
+   */
+  private citationOf(stop: {
+    anchorIndex: number
+    library?: Pick<LibraryStopState, 'builtLine'>
+  }): { startLine: number; endLine: number } {
+    if (stop.library)
+      return {
+        startLine: stop.library.builtLine,
+        endLine: stop.library.builtLine,
+      }
+    const anchor = this.definition.descriptor.anchors[stop.anchorIndex]!
+    return { startLine: anchor.startLine, endLine: anchor.endLine }
+  }
+
+  /**
+   * Builds the library part of a stop sealed from a library build: its armed built line, and the refusal of a stop whose declared source line declares a binding the stop requires (the existing self-declared-binding rule, applied to the library source text).
+   * Called by {@link sealDeclaredStop} for a stop with a frozen library build.
+   * @param stop - The configured stop.
+   * @param freeze - The stop's frozen build and checked-out source.
+   * @param builtPath - The built file the page's server compile holds.
+   * @returns The library state of the prepared stop.
+   * @throws `NEXT_STOP_NOT_SEALED` (`library-place-ambiguous`) when the build has no line for the armed source line, or the armed source line declares a required binding.
+   * @example
+   * this.libraryStateOf(stop, freeze, 'packages/lib/build/modern/core.js') // => { builtLine: 12, … }
+   */
+  private libraryStateOf(
+    stop: ReturnType<typeof configuredStops>[number],
+    freeze: LibraryFreeze,
+    builtPath: string,
+  ): LibraryStopState {
+    const { frozen } = freeze
+    const packageRootRelative = this.nextPackageOrRoot.packageRootRelative
+    const builtPlaces = frozen
+      .toBuilt(frozen.armedSourceLine)
+      .filter((place) => place.builtPath === builtPath)
+    // One source line built into several lines of the file: arming the first would be a guess.
+    if (builtPlaces.length > 1)
+      throw libraryPlaceAmbiguousRefusal(
+        packageRootRelative,
+        frozen.library.name,
+        frozen.stopPath,
+        frozen.armedSourceLine,
+        'the source line builds into several lines of the built file',
+      )
+    const builtLine = builtPlaces[0]?.builtLine
+    if (builtLine === undefined)
+      throw libraryPlaceAmbiguousRefusal(
+        packageRootRelative,
+        frozen.library.name,
+        frozen.stopPath,
+        frozen.armedSourceLine,
+        'the build has no line for it',
+      )
+    // A binding the armed line declares has no value before its statement ran; the library stop is refused instead of silently moved.
+    const declares = requiredBindingsDeclaredOn(
+      {
+        ...stop,
+        source: { ...stop.source, line: frozen.armedSourceLine },
+      },
+      freeze.sourceText.split(/\r\n|\r|\n/),
+    )
+    if (declares.length)
+      throw libraryPlaceAmbiguousRefusal(
+        packageRootRelative,
+        frozen.library.name,
+        frozen.stopPath,
+        frozen.armedSourceLine,
+        'the line declares a binding the stop requires',
+      )
+    return {
+      ...freeze,
+      builtPath,
+      builtLine,
+      declared: { line: stop.source.line, column: stop.source.column },
+      runtimePath: frozen.runtimePath(builtPath, packageRootRelative),
+    }
+  }
+
+  /**
+   * Gives the source place a pause is recorded at: for an ordinary stop the sealed original at the paused frame, for a library stop the checked-out library source at the place the paused built line translates to.
+   * Called by {@link inspect} for the replay snapshot, the observation's source and its binding receipt, which must agree (the saved study's validation reads them).
+   * @param stop - The paused stop.
+   * @param frame - The paused DAP top frame (built terms for a library stop).
+   * @returns The recorded text, hash, line and column; the receipt of how the declared line became the bound one; the capture options that translate a library stop's frames (empty for any other stop); and the source the typescript resource serves for a bundle.
+   * @throws `NEXT_STOP_NOT_SEALED` (`library-place-ambiguous`) for a library stop whose frame does not map to its armed source line.
+   * @example
+   * this.recordedPlaceOf(stop, frame) // => { text, hash, line: 3, column: 3, binding: { declaredLine: 3, boundLine: 3, mappedLinesBetween: 0 }, frames: {}, bundleOf }
+   */
+  private recordedPlaceOf(stop: PreparedStop, frame: DebugProtocol.StackFrame) {
+    const { library } = stop
+    const libraryPlace = this.assertLibraryPlace(stop, {
+      line: frame.line,
+      column: frame.column,
+    })
+    const line = libraryPlace?.line ?? frame.line,
+      declaredLine = library?.declared.line ?? stop.source.line,
+      requestedLine = library?.frozen.armedSourceLine ?? stop.armed.line
+    return {
+      text: library?.sourceText ?? stop.bundle.source,
+      hash: library?.frozen.sourceSha256 ?? stop.verifier.hashes.typescript,
+      line,
+      column: libraryPlace?.column ?? frame.column,
+      binding: {
+        declaredLine,
+        ...(requestedLine === declaredLine ? {} : { requestedLine }),
+        boundLine: line,
+        mappedLinesBetween: 0 as const,
+      },
+      frames: library
+        ? {
+            topFrame: { line, column: libraryPlace!.column },
+            translateFrame: (other: DebugProtocol.StackFrame) =>
+              this.translateLibraryFrame(stop, other),
+          }
+        : {},
+      bundleOf: (bundle: BundleSource): BundleSource =>
+        library ? { ...bundle, source: library.sourceText } : bundle,
+    }
+  }
+
+  /**
+   * Translates a caller frame of a library stop's stack to the library source when the frozen maps cover it.
+   * Called by the replay snapshot capture for every frame below the top one.
+   * @param stop - The paused library stop.
+   * @param frame - A DAP stack frame.
+   * @returns The library source name, repository-relative path, line and column for a frame in the stop's built file at a uniquely mapped line; `undefined` otherwise (the frame keeps its built file, as the debugger reported it).
+   * @example
+   * this.translateLibraryFrame(stop, { id: 2, name: 'double', source: { path: builtAbsolutePath }, line: 9, column: 1 }) // => { name: 'core.ts', path: 'packages/lib/src/core.ts', line: 3, column: 1 }
+   */
+  private translateLibraryFrame(
+    stop: PreparedStop,
+    frame: DebugProtocol.StackFrame,
+  ): { name: string; path: string; line: number; column: number } | undefined {
+    const { library } = stop
+    if (
+      !library ||
+      !frame.source?.path ||
+      resolve(frame.source.path) !== stop.bundle.sourcePath
+    )
+      return undefined
+    const place = library.frozen.toSource(
+      library.builtPath,
+      frame.line,
+      undefined,
+    )
+    return place
+      ? {
+          name: library.frozen.stopPath.split('/').at(-1)!,
+          path: library.frozen.stopPath,
+          ...place,
+        }
+      : undefined
+  }
+
+  /**
+   * Refuses a library stop whose bound built place does not map back to exactly its armed source line.
+   * Called by {@link bindBoundPlace} for a stop with a library state.
+   * @param stop - The stop with its library state.
+   * @param place - The built place the debugger bound.
+   * @returns The library source place of the built place (also used to record the capture); `undefined` for a stop that is no library stop.
+   * @throws `NEXT_STOP_NOT_SEALED` (`library-place-ambiguous`) when the place maps to several source lines, to another source, or to another line than the armed one.
+   * @example
+   * this.assertLibraryPlace(stop, { line: 12, column: 1 }) // => { line: 3, column: 3 }
+   */
+  private assertLibraryPlace(
+    stop: PreparedStop,
+    place: { line: number; column: number },
+  ): { line: number; column: number } | undefined {
+    const { library } = stop
+    if (!library) return undefined
+    const source = library.frozen.toSource(
+      library.builtPath,
+      place.line,
+      undefined,
+    )
+    if (source?.line === library.frozen.armedSourceLine) return source
+    throw libraryPlaceAmbiguousRefusal(
+      this.nextPackageOrRoot.packageRootRelative,
+      library.frozen.library.name,
+      library.frozen.stopPath,
+      library.frozen.armedSourceLine,
+      source
+        ? `the bound place maps to source line ${source.line}`
+        : 'the bound place maps to several source positions or another source',
     )
   }
 
@@ -4609,7 +5084,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     stop.breakpoint = this.requestBreakpoint(stop)
     this.evidence.record('breakpoint.requested-again-after-break-locations', {
       participant: stop.participant,
-      ...declaredAndArmedPlace(stop.source, stop.armed),
+      ...declaredAndArmedPlace(
+        sourceTermsOf(stop).declared,
+        sourceTermsOf(stop).armed,
+      ),
       refusedPlace: { line: place.line, column: place.column },
     })
     return this.serverAcknowledgement(stop)
@@ -4876,13 +5354,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const { armed, source, firstRequest } = stop
     // A second request names the column it replaced on its line.
     if (firstRequest)
-      return `requested again at ${armed.line}:${armed.column}, the line's break location before the first requested column ${firstRequest.column}`
+      return `requested again at ${sourceLineOf(stop, armed.line)}:${armed.column}, the line's break location before the first requested column ${firstRequest.column}`
     if (armed.line === source.line) return `requested column ${source.column}`
     // A map too large to scan left the place to the debugger's break locations.
     const chosenBy = stop.scan.complete
       ? 'the first mapped position after the declared line'
       : 'the first place the debugger can pause at after the declared line'
-    return `requested at ${armed.line}:${armed.column}, ${chosenBy}`
+    return `requested at ${sourceLineOf(stop, armed.line)}:${armed.column}, ${chosenBy}`
   }
 
   /**
@@ -5108,7 +5586,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     stop: PreparedStop,
     line: number,
   ): Promise<void> {
-    const citation = this.definition.descriptor.anchors[stop.anchorIndex]!
+    const citation = this.citationOf(stop)
     // A parsed module can be asked at once; a line before the requested one or after the citation is refused whatever the debugger lists.
     if (stop.script || line <= stop.armed.line || line > citation.endLine)
       return
@@ -5159,12 +5637,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /** Names a declared stop by its file and line in the failures an agent reads, so it can tell which of its stops to change; stops that share one line (a line that runs twice) are told apart by their place in the declared order. @example this.declaredAt(stop) // 'app/lib/actions.ts:36', or 'app/lib/actions.ts:36 (stop 2 of 3)' when another stop names that line */
   private declaredAt(stop: PreparedStop): string {
-    const place = `${stop.source.path}:${stop.source.line}`,
+    const place = `${stop.source.path}:${declaredLineOf(stop)}`,
       sharesLine = this.stops.some(
         (other) =>
           other !== stop &&
           other.source.path === stop.source.path &&
-          other.source.line === stop.source.line,
+          declaredLineOf(other) === declaredLineOf(stop),
       )
     return sharesLine
       ? `${place} (stop ${stop.declaredIndex + 1} of ${this.stops.length})`
@@ -5286,6 +5764,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         stop,
         `Declared stops ${this.declaredAt(earlier)} and ${this.declaredAt(stop)} both bound at ${place.line}:${place.column}; one bound place is one stop, so declare it once`,
       )
+    // A library stop is accepted only where the built place maps back to its armed source line.
+    this.assertLibraryPlace(stop, place)
     stop.bound = { line: place.line, column: place.column }
   }
 
@@ -5314,7 +5794,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (!this.hasPausableColumn(pausableColumns)) return
     this.evidence.record('breakpoint.slid-past-pausable-line', {
       participant: stop.participant,
-      ...declaredAndArmedPlace(stop.source, stop.armed),
+      ...declaredAndArmedPlace(
+        sourceTermsOf(stop).declared,
+        sourceTermsOf(stop).armed,
+      ),
       bound: { line: bound.line, column: bound.column },
       pausableColumn: this.nearestPausableColumn(
         pausableColumns,
@@ -5362,17 +5845,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): Error {
     const { armed, source } = stop,
       requestedColumn = (firstRequest ?? armed).column
+    // A library stop's lines are built lines: the texts name the library source lines.
     const pausableLine =
         armed.line === source.line
-          ? `the declared line ${source.line}`
-          : `line ${armed.line}, where the stop was requested`,
+          ? `the declared line ${declaredLineOf(stop)}`
+          : `line ${sourceLineOf(stop, armed.line)}, where the stop was requested`,
       secondRequest = firstRequest
-        ? `, and a second request at ${armed.line}:${armed.column} was bound on line ${binding.line} again`
+        ? `, and a second request at ${sourceLineOf(stop, armed.line)}:${armed.column} was bound on line ${sourceLineOf(stop, binding.line)} again`
         : ''
     const advice = this.slideAdvice(stop)
     return this.bindingFailure(
       stop,
-      `Declared stop ${this.declaredAt(stop)} bound at ${binding.line}:${binding.column}, refused: the debugger can pause on ${pausableLine}, so requested column ${requestedColumn} lies after its statement${secondRequest}; ${advice}`,
+      `Declared stop ${this.declaredAt(stop)} bound at ${sourceLineOf(stop, binding.line)}:${binding.column}, refused: the debugger can pause on ${pausableLine}, so requested column ${requestedColumn} lies after its statement${secondRequest}; ${advice}`,
     )
   }
 
@@ -5491,7 +5975,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (this.armsInsideDeclarationUnasked(stop))
       throw this.bindingFailure(stop, this.insideUnloadedDeclarationText(stop))
     if (this.keepsPlaceUnasked(stop)) return
-    const citation = this.definition.descriptor.anchors[stop.anchorIndex]!,
+    const citation = this.citationOf(stop),
       first = (await this.mappedBreakLocations(stop))
         ?.filter(
           (place) =>
@@ -5549,13 +6033,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         stop.bundle.source.split(/\r\n|\r|\n/),
       ),
       names = bindings.join(' and '),
-      firstLine = stop.earliestRequestLine,
+      declaredLine = declaredLineOf(stop),
+      // A library stop's lines are built lines: the text names the library source lines.
+      firstLine = sourceLineOf(stop, stop.earliestRequestLine),
       statementEnd = firstLine - 1
     // A statement that ends on its own line needs no second line number.
     const declaration =
-      statementEnd === stop.source.line
-        ? `which line ${stop.source.line} declares`
-        : `which line ${stop.source.line} declares in a statement that ends on line ${statementEnd}`
+      statementEnd === declaredLine
+        ? `which line ${declaredLine} declares`
+        : `which line ${declaredLine} declares in a statement that ends on line ${statementEnd}`
     return `Declared stop ${this.declaredAt(stop)} requires ${names}, ${declaration}, so ${names} ${bindings.length === 1 ? 'has' : 'have'} no value before line ${firstLine}; the sealed map was too large to scan completely and the server has not loaded the module yet, so Codebook cannot find where the debugger can pause from line ${firstLine} on. Declare this stop on line ${firstLine} or a later line, within a citation that covers that line (${this.declaredField(stop)})`
   }
 
@@ -5600,7 +6086,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const pausedThere = this.pausedOnLine(stop, bound.line, pausedAt)
     const module = this.moduleOf(stop, pausedAt?.scriptId)
     if (this.acceptsAsJudged(stop, bound.line, pausedThere, module)) return true
-    const citation = this.definition.descriptor.anchors[stop.anchorIndex]!
+    const citation = this.citationOf(stop)
     if (
       this.keepsMapRuleUnasked(stop, bound.line, citation) ||
       this.isRefusalJudged(stop, bound, pausedThere, module)
@@ -5939,7 +6425,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const lines = 'lines' in counted ? [...counted.lines, boundLine] : counted
     this.evidence.record('breakpoint.rule-from-break-locations', {
       participant: stop.participant,
-      ...declaredAndArmedPlace(stop.source, stop.armed),
+      ...declaredAndArmedPlace(
+        sourceTermsOf(stop).declared,
+        sourceTermsOf(stop).armed,
+      ),
       boundLine,
       breakLocationLines: [...new Set(lines)]
         .sort((left, right) => left - right)
@@ -6339,7 +6828,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    */
   private bindingFailure(stop: PreparedStop, message: string): Error {
     const position = stop.source,
-      anchor = this.definition.descriptor.anchors[stop.anchorIndex]!
+      anchor = this.citationOf(stop)
     try {
       const mapped = stop.verifier.mappedPositions(
         anchor.startLine,
@@ -6452,7 +6941,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.journalStopModule('stop.module-parsed', {
         participant: name,
         source: stop.source.path,
-        line: stop.source.line,
+        line: declaredLineOf(stop),
         scriptId: event.scriptId,
         scriptUrl: event.url,
       })
@@ -6529,7 +7018,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const journaled = {
       participant: name,
       source: stop.source.path,
-      line: stop.source.line,
+      line: declaredLineOf(stop),
       scriptId: event.scriptId,
       scriptUrl: event.url,
     }
@@ -6589,7 +7078,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): void {
     // The module at its own address holds another original than the frozen one: the source changed, which needs no hit to be known.
     if (coexisting && isChangedOriginalError(error)) {
-      this.fail(this.sourceChangedText(stop))
+      // A library module whose built text moved is a changed build, not a changed source.
+      this.fail(
+        stop.library
+          ? (libraryFailureText(
+              libraryBuildChangedFailure(
+                this.nextPackageOrRoot.packageRootRelative,
+                stop.library.frozen.library.name,
+                stop.library.frozen.stopPath,
+              ),
+            ) ?? this.sourceChangedText(stop))
+          : this.sourceChangedText(stop),
+      )
       return
     }
     const reason = this.journalCauseOf(error)
@@ -7201,6 +7701,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * ```
    */
   private nextModulePathOf(stop: PreparedStop): string {
+    // A library stop's module is the built file Next bundled, named by its path relative to the app.
+    if (stop.library) return stop.library.runtimePath
     return (
       this.nextPackage?.toPackageRelative(stop.source.path) ?? stop.source.path
     )
@@ -9647,6 +10149,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         declaredLine: stop.source.line,
         bound: stop.bound,
         acceptsBoundLine: stop.acceptsBoundLine,
+        // A library stop's built file has a line-granular map: its columns are not stable.
+        lineOnly: Boolean(stop.library),
       })
     )
       throw new Error(
@@ -10279,7 +10783,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         column: stop.source.column,
         path: stop.bundle.sourcePath,
       },
-      ...declaredAndArmedPlace(stop.source, stop.armed),
+      ...declaredAndArmedPlace(
+        sourceTermsOf(stop).declared,
+        sourceTermsOf(stop).armed,
+      ),
       returned: this.describeAnswer(answered, receipt.success),
       observed: receipt.success ? receipt.data : undefined,
       // The editor answered no column: the entry says where the run took it from.
@@ -10425,10 +10932,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       callFrame = stopped.event.callFrames[0]!,
       position = stop.source
     // The paused frame must be the position the debugger bound, which may differ from the requested column and, by the stop's rule, from the declared line.
-    if (!isFrameAtPosition(frame, stop.bundle.sourcePath, stop.bound))
-      throw new Error(
-        'DAP frame differs from the bound configured source position',
-      )
+    // A library stop pauses in a built file whose eval map is line-granular, so only file and line are compared; the generated-position checks below stay exact.
+    assertFrameAtBoundPosition(
+      frame,
+      stop.bundle.sourcePath,
+      stop.bound,
+      Boolean(stop.library),
+    )
     await this.verifySources()
     current()
     const executed = await participant.cdp!.request(
@@ -10445,6 +10955,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       executedModule.script!.scriptId,
       frame.line,
       frame.column,
+      { lineOnly: Boolean(stop.library) },
     )
     // The refused-getter list only words a failure message; the snapshot (and the study it saves into) keeps values and unavailability alone.
     const { sideEffectRefused = [], ...facts } = await inspectConfiguredValues(
@@ -10456,14 +10967,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.maskRunText,
     )
     current()
+    // A library stop pauses in the built file; the record names the library source at the translated place.
+    const recorded = this.recordedPlaceOf(stop, frame)
     const debuggerSnapshot = await captureReplayDebugSnapshot({
       stack,
       verifiedSource: {
         name: position.path,
-        text: stop.bundle.source,
-        hash: stop.verifier.hashes.typescript,
-        line: frame.line,
+        text: recorded.text,
+        hash: recorded.hash,
+        line: recorded.line,
       },
+      ...recorded.frames,
       request: (command, arguments_) =>
         participant.selected!.customRequest(command, arguments_),
       assertCurrent: current,
@@ -10490,7 +11004,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
               stop.bundle.source,
               frame.line,
               missing.path,
-              this.definition.descriptor.anchors[stop.anchorIndex]!.endLine,
+              this.citationOf(stop).endLine,
               stop.source.line,
             ),
           ),
@@ -10533,10 +11047,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       elapsedMs: receipt.elapsedMs,
       debugger: debuggerSnapshot,
       source: {
-        text: stop.bundle.source,
-        hash: stop.verifier.hashes.typescript,
-        line: frame.line,
-        column: frame.column,
+        text: recorded.text,
+        hash: recorded.hash,
+        line: recorded.line,
+        column: recorded.column,
         javascriptHash: executedModule.verifier.hashes.javascript,
         mapHash: executedModule.verifier.hashes.sourceMap,
         scriptId: executedModule.script!.scriptId,
@@ -10546,19 +11060,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           column: callFrame.location.columnNumber ?? 0,
         },
         // The stop's rule accepted this bound line: no line between it and the requested one has a mapped position (or, once the debugger listed its break locations, a break location between the two generated places), and the requested line is the declared one or the first mapped line after it.
-        binding: {
-          declaredLine: position.line,
-          ...(stop.armed.line === position.line
-            ? {}
-            : { requestedLine: stop.armed.line }),
-          boundLine: frame.line,
-          mappedLinesBetween: 0,
-        },
+        binding: recorded.binding,
       },
       ...facts,
     }
     this.snapshotCaptures[snapshot.id] = { ...this.captures[phase] }
-    this.snapshotBundles.set(snapshot.id, executedModule.bundle)
+    // The typescript resource of a library snapshot is the library source its hash names; the generated code and map stay the executed module's.
+    this.snapshotBundles.set(
+      snapshot.id,
+      recorded.bundleOf(executedModule.bundle),
+    )
     try {
       // A stop captured in another layer's instance keeps that instance's generated code and map, which its hashes name, beside the sealed ones.
       if (executedModule !== stop) {
@@ -12042,7 +12553,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         if (this.cleaning) return
         // An operation's refusal keeps its code and fields; any other failure keeps its text.
         if (error instanceof OperationRefusal) this.failOperation(error)
-        else this.fail(String(error))
+        else this.fail(libraryFailureText(error) ?? String(error))
       })
       .finally(() => this.activities.delete(tracked))
     this.activities.add(tracked)

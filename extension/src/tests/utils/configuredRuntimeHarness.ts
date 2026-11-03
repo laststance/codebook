@@ -70,6 +70,7 @@ import { createManualClock } from './createManualClock'
 import { createSourceBoundWaitHold } from './createSourceBoundWaitHold'
 import { debuggerPausedEvent } from './debuggerPausedEvent'
 import { fakePageContext, type FakePageElement } from './fakePageContext'
+import type { libraryFixture } from './libraryBuildHarness'
 import {
   loadConstantsWith,
   type RuntimeConstantOverrides,
@@ -226,6 +227,10 @@ export async function configuredRuntimeHarness(
     reloadDuringEntryLoad?: boolean
     /** Runs the Next configuration in a workspace with a Pages folder: the stand-in server answers the structured entry check, the `.next/dev` build is written around the cited source, and the page reports `window.next.router` ({@link NextPagesHarnessOptions}). */
     nextPages?: NextPagesHarnessOptions
+    /**
+     * Stages a server stop in a workspace library ({@link libraryFixture}): called with the repository after it exists, it writes the library and its builds and gives the eval modules of the server compile. The debugger's frames, breakpoint file and script then name the built file, as js-debug reports Next's eval map (the built file's own map is not chained).
+     */
+    libraryStop?: ReturnType<typeof libraryFixture>
     /** Moves the first cited source, and the stop declared in it, to this repository-relative path (such as a file under `src/pages`; with `packageRoot` a file inside that folder). */
     sourcePath?: string
     /**
@@ -464,11 +469,30 @@ export async function configuredRuntimeHarness(
     path: packageSourcePath,
     text: reference.descriptor!.sources[0]!.text,
   }
+  // A library stop: the writer lays out the workspace library (sources' builds, link) and gives the eval modules the page's server compile holds.
+  const library = options.libraryStop
+    ? await options.libraryStop({
+        directory: repository.directory,
+        realRoot: await realpath(repository.directory),
+      })
+    : undefined
   const pagesBuild = options.nextPages
     ? await writeNextPagesWorkspace(
         packageDirectory,
         nextCited,
-        options.nextPages,
+        library
+          ? {
+              ...options.nextPages,
+              citedInPageChunk: false,
+              serverCompile: {
+                ...(typeof options.nextPages.serverCompile === 'object'
+                  ? options.nextPages.serverCompile
+                  : {}),
+                holdsCited: false,
+                extraModules: library.serverModules,
+              },
+            }
+          : options.nextPages,
       )
     : undefined
   if (packageFolder)
@@ -505,7 +529,9 @@ export async function configuredRuntimeHarness(
     options.nextPages && options.serverRuntime
       ? await realpath(repository.directory)
       : repository.directory
-  const sourcePath = join(sourceRoot, definition.configuration.source.path),
+  const sourcePath = library
+      ? join(sourceRoot, library.builtPath)
+      : join(sourceRoot, definition.configuration.source.path),
     source = reference.descriptor!.sources[0]!.text,
     // With a fixture the executed module mirrors the source line for line, so a pause can be placed on any of its lines; a Pages page executes the eval module of its chunk.
     baseJavascript =
@@ -1468,15 +1494,20 @@ export async function configuredRuntimeHarness(
   // A Pages run seals its server stops from the page's server compile, so the Next server executes that `(pages-dir-node)` module.
   const isPagesServer = Boolean(options.nextPages && options.serverRuntime)
   const serverScriptUrl = isPagesServer
-    ? `webpack-internal:///(pages-dir-node)/./${packageSourcePath}`
+    ? library
+      ? `webpack-internal:///(pages-dir-node)/${library.runtimePath}`
+      : `webpack-internal:///(pages-dir-node)/./${packageSourcePath}`
     : `webpack-internal:///(${options.serverSeal === 'rsc' ? 'rsc' : 'action-browser'})/./${packageSourcePath}`
   const serverParticipant = options.serverRuntime
     ? createServerParticipant({
         run: () => run,
         sourcePath,
-        javascript: pagesBuild?.serverModuleJavascript ?? javascript,
+        javascript:
+          library?.moduleJavascript ??
+          pagesBuild?.serverModuleJavascript ??
+          javascript,
         scriptUrl: serverScriptUrl,
-        sourceMap: bundle.sourceMap,
+        sourceMap: library?.moduleMap ?? bundle.sourceMap,
         workspace: packageDirectory,
         defaultRoute: options.serverRuntime.route ?? null,
         evaluateOnCallFrame: evaluateInspection,

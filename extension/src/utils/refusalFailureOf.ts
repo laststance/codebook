@@ -4,6 +4,8 @@ import {
 } from '../constants'
 import { PACKAGE_ROOT_FRESH_SESSION_RECOVERY, type ErrorCode } from '../errors'
 import {
+  libraryDetailsOfFailure,
+  libraryRecoveryOf,
   NEXT_PAGES_FAILURE_VARIANT,
   NEXT_REFUSAL_CODES,
   nextSetupDeadlineRecovery,
@@ -31,6 +33,8 @@ const CODED_FAILURE_CODES = [
   // A server-render stop the page never reached, and an entry page that did not load after the last pause (Cycle 0071).
   'SERVER_STOP_NOT_REACHED',
   'ENTRY_LOAD_TIMEOUT',
+  // A library stop's build that changed after the freeze, only with its `library-build-changed` variant ({@link refusalFailureOf}).
+  'RUNTIME_FAILED',
 ] as const satisfies readonly ErrorCode[]
 
 /** A code a run's failure text can lead with, so the service restores it as a coded error. */
@@ -41,16 +45,35 @@ export type RefusalFailureCode =
 export type RefusalFailure = {
   code: RefusalFailureCode
   message: string
-  /** Present only for a known variant of a code that has variants (`NEXT_SETUP_DEADLINE`, and `SIGN_IN_REQUIRED` led by `package-root-fresh-session`). */
+  /** Present only for a known variant of a code that has variants (`NEXT_SETUP_DEADLINE`, `SIGN_IN_REQUIRED` led by `package-root-fresh-session`, and a library reason variant). */
   recoveryOverride?: string
   /** Present only for `SIGN_IN_REQUIRED` led by a known reason: the fields the agent reads as `details.reason`. */
   details?: { reason: SignInRequiredReason }
   /** Present only for `NEXT_ENTRY_REDIRECTED` led by the `pages` variant ({@link NEXT_PAGES_FAILURE_VARIANT}): the fields of a Pages entry refusal after the readiness request, which the agent reads as `details`. */
   pagesDetails?: typeof PAGES_STOP_REFUSAL_DETAILS
+  /** Present only for a library refusal raised at a pause or an event (`NEXT_STOP_NOT_SEALED(library-place-ambiguous)`, `RUNTIME_FAILED(library-build-changed)`): the Pages fields with the library `reason`. */
+  libraryDetails?: NonNullable<ReturnType<typeof libraryDetailsOfFailure>>
 }
 
 /** The lead of a coded failure text: `<CODE>: ` or `<CODE>(<variant>): `; a variant holds no parenthesis and no line break. */
 const CODED_FAILURE_LEAD = /^([A-Z][A-Z_]*)(?:\(([^()\n]*)\))?: /
+
+/**
+ * Finds the coded failure a failure text's lead names.
+ *
+ * Why: `RUNTIME_FAILED` counts as coded only as a library build change ({@link libraryDetailsOfFailure}), so any other run failure text keeps today's uncoded handling. Called by {@link refusalFailureOf}.
+ * @param lead - The match of the coded-failure lead, or `null` when the text has none.
+ * @returns The known code, or `undefined` for no lead, an unknown code or a `RUNTIME_FAILED` without the `library-build-changed` variant.
+ * @example codedFailureCodeOf(CODED_FAILURE_LEAD.exec('RUNTIME_FAILED: The run failed.')) // => undefined
+ */
+function codedFailureCodeOf(
+  lead: RegExpExecArray | null,
+): (typeof CODED_FAILURE_CODES)[number] | undefined {
+  const code = CODED_FAILURE_CODES.find((known) => known === lead?.[1])
+  return code === 'RUNTIME_FAILED' && !libraryDetailsOfFailure(code, lead?.[2])
+    ? undefined
+    : code
+}
 
 /**
  * Restores the refusal a run's failure text leads with, for the service that turns a failed run's reason into the error an agent reads.
@@ -73,7 +96,7 @@ export function refusalFailureOf(text: string): RefusalFailure | undefined {
   const viteFailure = viteFailureOf(text)
   if (viteFailure) return viteFailure
   const lead = CODED_FAILURE_LEAD.exec(text)
-  const code = CODED_FAILURE_CODES.find((known) => known === lead?.[1])
+  const code = codedFailureCodeOf(lead)
   if (!lead || !code) return undefined
   const message = text.slice(lead[0].length),
     variant = lead[2]
@@ -96,6 +119,15 @@ export function refusalFailureOf(text: string): RefusalFailure | undefined {
     return variant === NEXT_PAGES_FAILURE_VARIANT
       ? { code, message, pagesDetails: { ...PAGES_STOP_REFUSAL_DETAILS } }
       : { code, message }
+  // A library refusal after the readiness request carries its reason as the variant.
+  const libraryDetails = libraryDetailsOfFailure(code, variant)
+  if (libraryDetails)
+    return {
+      code,
+      message,
+      recoveryOverride: libraryRecoveryOf(libraryDetails.reason),
+      libraryDetails,
+    }
   // Of the other codes only a deadline has variants, and only a known name selects its static recovery.
   const recoveryOverride =
     code === 'NEXT_SETUP_DEADLINE' && variant !== undefined
