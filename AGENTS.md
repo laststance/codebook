@@ -314,7 +314,7 @@ Formatting: `pnpm --dir extension format` / `format:check` and the lint-staged h
 **Reader DOM** (`reader-dom.yml`).
 
 - Five checks: `study-bootstrap-qa.mjs`, `wiki-reader-dom-qa.mjs` (Wiki reader rail with its end sentences, 640–1200 px; at 960 × 600 they fit a rail ≤ 45vh), `study-reading-pose-qa.mjs`, `understanding-focus-qa.mjs`, `repository-return-qa.mjs`. Each `extension/scripts/*-qa.mjs` runs in a workflow or is listed retired in `workflowPins.test.mjs`.
-- Setup once per checkout or worktree (`npm ci` again after lockfile changes): `(cd .github/reader-dom && npm ci --ignore-scripts)` (pins `playwright-cli` 0.1.22); `export PATH="$PWD/.github/reader-dom/node_modules/.bin:$PATH"`; `playwright-cli install-browser ffmpeg`; installed Chrome (or `PLAYWRIGHT_MCP_EXECUTABLE_PATH`).
+- Setup once per checkout or worktree, before the gate (its five Reader DOM checks) or a Reader DOM check runs there (`npm ci` again after lockfile changes): `(cd .github/reader-dom && npm ci --ignore-scripts)` (pins `playwright-cli` 0.1.22); `export PATH="$PWD/.github/reader-dom/node_modules/.bin:$PATH"`; `playwright-cli install-browser ffmpeg`; installed Chrome (or `PLAYWRIGHT_MCP_EXECUTABLE_PATH`).
 - Run `node extension/scripts/<check>-qa.mjs verify <folder>` after a build, one folder per concurrent run. A check passes its flow to the browser CLI as a file (arguments > 131,072 bytes fail with `spawn E2BIG`).
 - New case: uses only `page`, `options` and its own definitions (no import; `page.evaluate` takes values as arguments); writes revisions as `revisionAt(n)` (Saved studies: `savedRevision`); fails first under `red <folder>` (all five checks take it).
 
@@ -473,7 +473,7 @@ ffmpeg -hide_banner -loglevel error -i "$QA_ORIGINAL_VIDEO" -map 0:v:0 -c copy -
 
 ### Issue tracker
 
-GitHub Issues on laststance/codebook via the `gh` CLI for every operation (`gh` infers the repo from `git remote -v` inside a clone). This file's [Where things live](#where-things-live), [Cycle rule](#cycle-rule) and [GitHub](#github) rules win: cycle Issue (label `cycle`, title `Cycle NNNN: <outcome>`, four body sections), goal Issue #1, the `goal` label; open an Issue from evidence, never from a planning tool's need; the repository is public (everything posted is world-readable, a security defect before its fix too).
+Issues and specs live as GitHub Issues on laststance/codebook, via the `gh` CLI for every operation (`gh` infers the repo from `git remote -v` inside a clone). This file's [Where things live](#where-things-live), [Cycle rule](#cycle-rule) and [GitHub](#github) rules win: cycle Issue (label `cycle`, title `Cycle NNNN: <outcome>`, four body sections), goal Issue #1, the `goal` label; open an Issue from evidence, never from a planning tool's need; the repository is public (everything posted is world-readable, a security defect before its fix too).
 
 - Create: `gh issue create --title "..." --body "..."` (a heredoc for multi-line bodies). A skill's "publish to the issue tracker" = create a GitHub issue.
 - Read: `gh issue view <number> --json number,title,body,labels,comments`; a skill's "fetch the relevant ticket" = this.
@@ -507,6 +507,7 @@ Single-context: one root `GLOSSARY.md`, created lazily. Product outcomes live in
 - Absent → proceed silently: never flag the absence or suggest creating it upfront. `mattpocock-skills:domain-modeling` (reached via `mattpocock-skills:grilling` and `mattpocock-skills:codebase-design`) creates it lazily when terms actually get resolved.
 - Name a domain concept (issue title, refactor proposal, hypothesis, test name) with the glossary's term; no synonym it avoids. A concept it lacks = invented language (reconsider) or a real gap (note it for `mattpocock-skills:domain-modeling`).
 - No ADRs and no `docs/adr/`: no decision log ([Standing directions](#standing-directions)).
+- Output contradicting a recorded owner decision (a cycle Issue's Owner decisions) names the conflict explicitly instead of silently overriding it.
 
 ## Codex compaction hook
 
