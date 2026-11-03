@@ -252,6 +252,35 @@ test('freezes both build flavours of a stop file whose maps carry the checked-ou
   assert.match(frozen.candidates[0]!.mapSha256, /^[0-9a-f]{64}$/)
 })
 
+// protects=AC 1 on a real library layout (P02's query-core builds core.d.ts.map and core.d.cts.map beside core.js.map): a declaration map that names the source without sourcesContent is no build candidate; fails_when=a type declaration map turns a correct build into a no-content refusal; no_claim=CSS or other non-JavaScript maps, which the same rule skips
+test('ignores the declaration maps beside the JavaScript build when it freezes a library build', async () => {
+  // Arrange
+  const { request, root } = await createFixture()
+  for (const flavour of ['modern', 'legacy']) {
+    const folder = join(root, 'packages/core/build', flavour)
+    const declarationMap = JSON.stringify({
+      version: 3,
+      file: 'core.d.ts',
+      sources: ['../../src/core.ts'],
+      names: [],
+      mappings: 'AAAA',
+    })
+    await writeFile(join(folder, 'core.d.ts'), 'export {}\n')
+    await writeFile(join(folder, 'core.d.ts.map'), declarationMap)
+    await writeFile(join(folder, 'core.d.cts.map'), declarationMap)
+  }
+  // Act
+  const frozen = await freezeLibraryBuild(request)
+  // Assert
+  assert.deepEqual(
+    frozen.candidates.map((candidate) => candidate.builtPath),
+    [
+      'packages/core/build/legacy/core.js',
+      'packages/core/build/modern/core.js',
+    ],
+  )
+})
+
 // protects=AC 3: a build older than the checked-out source is refused before start; fails_when=a stale build is frozen; no_claim=the rebuild itself
 test('refuses a build whose sourcesContent differs from the checked-out file as library-build-stale', async () => {
   // Arrange

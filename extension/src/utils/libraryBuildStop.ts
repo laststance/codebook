@@ -332,13 +332,26 @@ async function readFolderEntries(folder: string) {
   }
 }
 
-/** Gives a map entry's real path, or `undefined` for a map that is no file or a link that leaves the repository. */
+/** The map file endings of a JavaScript build; a `.d.ts.map`, `.d.cts.map` or `.d.mts.map` ends in `.ts.map` and is skipped. */
+const LIBRARY_JAVASCRIPT_MAP_SUFFIXES = [
+  '.js.map',
+  '.cjs.map',
+  '.mjs.map',
+] as const
+
+/** Gives a JavaScript build map entry's real path, or `undefined` for another file, a map that is no file or a link that leaves the repository. */
 async function realMapPath(
   root: string,
   path: string,
   entry: { name: string; isFile(): boolean; isSymbolicLink(): boolean },
 ): Promise<string | undefined> {
-  if (!entry.name.endsWith('.map')) return undefined
+  // Only a JavaScript build's map can hold the code Next bundles; type declaration maps (core.d.ts.map) name the same source without its content.
+  if (
+    !LIBRARY_JAVASCRIPT_MAP_SUFFIXES.some((suffix) =>
+      entry.name.endsWith(suffix),
+    )
+  )
+    return undefined
   if (entry.isFile()) return path
   if (!entry.isSymbolicLink()) return undefined
   try {
