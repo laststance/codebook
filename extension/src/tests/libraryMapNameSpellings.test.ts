@@ -91,6 +91,24 @@ async function freezeWithSpelling(
   })
 }
 
+// protects=AC 1 on a real library layout: a percent-encoded sources entry names its file; fails_when=`my%20core.ts` is never decoded and the library is refused as no-map; no_claim=names that really contain a percent sign (read raw first)
+test('freezes a build whose map names a source with a space as a percent-encoded entry', async () => {
+  // Arrange
+  const identity = (json: string) => json
+  // Act
+  const frozen = await freezeWithSpelling(
+    'my core.ts',
+    '../../src/my%20core.ts',
+    identity,
+  )
+  // Assert
+  assert.deepEqual(
+    frozen.candidates.map((candidate) => candidate.builtPath),
+    ['packages/core/build/modern/core.js'],
+  )
+  assert.equal(frozen.armedSourceLine, 2)
+})
+
 // protects=AC 1 on a real library layout: a map whose sources entry writes a non-ASCII letter as a JSON unicode escape still names its file for the pre-filter; fails_when=the library is refused as no-map because `café.ts` is skipped as unrelated; no_claim=normalization differences between NFC and NFD names
 test('freezes a build whose map writes a non-ASCII source name with a unicode escape', async () => {
   // Arrange

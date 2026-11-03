@@ -439,15 +439,36 @@ function resolveMapSource(
   return resolve(mapFolder, sourceRoot, source)
 }
 
-/** Finds the index of the one `sources` entry that names the stop's real file; two names for it make the map malformed. */
-async function indexOfStopSource(
+/**
+ * Decodes a percent-encoded `sources` entry, as a map may spell a URL.
+ * @returns The decoded entry, or `undefined` when it does not differ or does not decode (no match, never a throw).
+ * @example
+ * ```ts
+ * percentDecoded('../src/my%20core.ts') // => '../src/my core.ts'
+ * percentDecoded('../src/core.ts') // => undefined
+ * ```
+ */
+function percentDecoded(source: string): string | undefined {
+  try {
+    const decoded = decodeURIComponent(source)
+    return decoded === source ? undefined : decoded
+  } catch {
+    return undefined
+  }
+}
+
+/** Finds the indexes of the `sources` entries that name the stop's real file when each entry is read through `spell`. */
+async function matchingSourceIndexes(
   parsed: ParsedMap,
   mapFolder: string,
   stopRealFile: string,
-): Promise<number | undefined> {
+  spell: (source: string) => string | undefined,
+): Promise<number[]> {
   const found: number[] = []
   for (const [index, source] of parsed.sources.entries()) {
-    const absolute = resolveMapSource(mapFolder, parsed.sourceRoot, source)
+    const spelled = spell(source)
+    if (spelled === undefined) continue
+    const absolute = resolveMapSource(mapFolder, parsed.sourceRoot, spelled)
     // The basename test spares a real-path lookup for every other file of the map.
     if (absolute === undefined || basename(absolute) !== basename(stopRealFile))
       continue
@@ -457,6 +478,29 @@ async function indexOfStopSource(
       // A source that does not exist names no checked-out file.
     }
   }
+  return found
+}
+
+/** Finds the index of the one `sources` entry that names the stop's real file; two names for it make the map malformed. Entries are read raw first; only when none matches are they read percent-decoded. */
+async function indexOfStopSource(
+  parsed: ParsedMap,
+  mapFolder: string,
+  stopRealFile: string,
+): Promise<number | undefined> {
+  let found = await matchingSourceIndexes(
+    parsed,
+    mapFolder,
+    stopRealFile,
+    (source) => source,
+  )
+  // No raw match: a URL-style entry such as `my%20core.ts` may name the file once decoded.
+  if (found.length === 0)
+    found = await matchingSourceIndexes(
+      parsed,
+      mapFolder,
+      stopRealFile,
+      percentDecoded,
+    )
   if (found.length > 1) throw new UnmappedCause('malformed')
   return found[0]
 }
