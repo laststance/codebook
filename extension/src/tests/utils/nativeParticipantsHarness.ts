@@ -17,6 +17,8 @@ import { citationContext } from '../../utils/citationContext'
 import { configuredDomExpression } from '../../utils/configuredDomExpression'
 import { configuredStops } from '../../utils/configuredStops'
 import { pausePlace } from '../../utils/pausePlace'
+import * as resolveNextPackageModule from '../../utils/resolveNextPackage'
+import type { ResolvedNextPackage } from '../../utils/resolveNextPackage'
 
 import {
   answerBreakLocationRequest,
@@ -90,6 +92,8 @@ export async function nativeParticipantsHarness(
     otherOriginal?: Partial<Record<Participant, boolean>>
     /** Replaces runtime bounds in the run's own module and in the constants it reads ({@link loadConstantsWith}), so a test can move one bound and see which other bound follows it. The modules the run requires (the owned breakpoint, `waitUntil`) keep the real bounds. */
     runtimeConstants?: RuntimeConstantOverrides
+    /** Gives the run a resolved Next package whose root is a folder of the repository, so a stop's repository-relative file is announced by Next as a package-relative module path (the form of a nested app); by default the run has none and the page's stub carries the stop's path unchanged. */
+    nextPackage?: Pick<ResolvedNextPackage, 'toPackageRelative'>
   } = {},
 ) {
   let owned: ConfiguredBrowserRun | undefined
@@ -971,6 +975,18 @@ export async function nativeParticipantsHarness(
           }
         },
       },
+      // A nested app's modules are named from the package: the run's root package gets the test's mapper (the adapter of this harness resolves a root package, as no packageRoot is declared).
+      ...(options.nextPackage
+        ? {
+            './utils/resolveNextPackage': {
+              ...resolveNextPackageModule,
+              rootNextPackage: (repositoryRoot: string) => ({
+                ...resolveNextPackageModule.rootNextPackage(repositoryRoot),
+                ...options.nextPackage,
+              }),
+            },
+          }
+        : {}),
       './utils/pausePlace': {
         pausePlace: (...placeArguments: Parameters<typeof pausePlace>) => {
           if (pausePlaceFailure) throw new Error(pausePlaceFailure)
@@ -1066,7 +1082,7 @@ export async function nativeParticipantsHarness(
   const emitStubScriptParsed = (): void => {
     listeners.browser.get('Debugger.scriptParsed')?.({
       scriptId: SERVER_MODULE_STUB_ID,
-      url: `webpack-internal:///(app-pages-browser)/./${server.source.path}`,
+      url: `webpack-internal:///(app-pages-browser)/./${options.nextPackage?.toPackageRelative(server.source.path) ?? server.source.path}`,
       executionContextId: 1,
     })
   }

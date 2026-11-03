@@ -5,6 +5,7 @@ import { z } from 'zod'
 
 import { SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION } from '../constants'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import type { PackageRelativePath } from '../utils/resolveNextPackage'
 
 import { nativeParticipantsHarness } from './utils/nativeParticipantsHarness'
 
@@ -1873,6 +1874,43 @@ test('a page pause in the stub of a declared server stop’s module whose stoppe
     journaled(harness, 'cdp.browser-adapter-pause-retired').length,
     1,
   )
+})
+
+// protects=E2/AC 4: a nested app's server-action stub pause (Next names the module from the package, `./mode.ts`, while the stop is declared repository-relative, `src/mode.ts`) is known as the adapter's stub, so the run resumes it and reaches the declared server stop; fails_when=the stop's repository path is compared with Next's package path, so the pause keeps the 250 ms bound of a pause nobody owns and ends the run with "Unowned browser stop remained paused"; no_claim=a real Next package or real webpack addresses (the root case is the test above)
+test('a nested app’s page pause in its stub of a server-action module whose stopped event is read 300 ms later is resumed by the run, and the server stop is captured', async (context) => {
+  // Arrange: the package root is the repository's src folder, so Next prints the stop file src/mode.ts as ./mode.ts.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    manualClock: true,
+    nextPackage: {
+      toPackageRelative: (path) =>
+        path.startsWith('src/')
+          ? (path.slice('src/'.length) as PackageRelativePath)
+          : undefined,
+    },
+  })
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  // Act: the page pauses in its stub of the server module; 300 ms pass before the adapter reports the stop that names the server breakpoint.
+  const stub = harness.pauseBrowserInServerStub(harness.breakpoints[0]!)
+  harness.advance(300)
+  const failuresBeforeTheStop = harness.run.view().failures.join('; ')
+  stub.stopped()
+  await waitUntil(() => {
+    const view = harness.run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return journaled(harness, 'dap.server-breakpoint-browser-stop-resumed')
+      .length
+  }, 'the run resumed the page')
+  harness.emitPause('server')
+  const server = await pauseReady(harness, 'server')
+  // Assert
+  assert.equal(failuresBeforeTheStop, '')
+  assert.deepEqual([server.source.line, server.source.column], [1, 1])
 })
 
 // Cycle 0046 (row 209): the stub's pause is bounded too, by the 3,000 ms the debug adapter may take for a pause of its own; red if it had no bound, or another one.

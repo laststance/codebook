@@ -7103,13 +7103,29 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     event: Protocol.Debugger.PausedEvent,
   ): number {
     const scriptUrl = this.pageScriptUrlOf(event),
-      sourcePaths = this.stops.map((stop) => stop.source.path)
+      sourcePaths = this.stops.map((stop) => this.nextModulePathOf(stop))
     const isAdaptersOwn =
       sourcePaths.some((path) => isPageStubOfSource(scriptUrl, path)) ||
       isModuleEntryPause(event, scriptUrl, sourcePaths)
     return isAdaptersOwn
       ? REPOSITORY_ADAPTER_PAUSE_LIMIT_MS
       : REPOSITORY_UNOWNED_PAGE_PAUSE_LIMIT_MS
+  }
+
+  /**
+   * Gives the path Next prints for a declared stop's module: the stop's repository-relative file mapped once to the package-relative path, the form of every webpack module address ({@link isPageStubOfSource}, {@link isModuleEntryPause}).
+   * Called wherever a stop's file is compared with a module address the page or server announced. Stop files outside the package are refused before any process starts, so the mapping always succeeds for a Next run; a Vite run has no resolved package and keeps the repository-relative path (its addresses are not webpack module paths).
+   * @param stop - The declared stop.
+   * @returns The stop file's path from the package root; the repository-relative path for a root app, a Vite run, or a path the package does not contain.
+   * @example
+   * ```ts
+   * this.nextModulePathOf(stop) // 'src/actions.ts' for a stop in examples/app/src/actions.ts of the package examples/app
+   * ```
+   */
+  private nextModulePathOf(stop: PreparedStop): string {
+    return (
+      this.nextPackage?.toPackageRelative(stop.source.path) ?? stop.source.path
+    )
   }
 
   /** Gives the address the page's runtime announced for the script a page pause is in, for {@link unownedPagePauseLimitMs}, {@link answeredResumeOfOpenPause}, {@link isPageEntryPause} and {@link isPagePauseInServerStub}; `undefined` for a pause without a frame and for a script the page never announced. @example this.pageScriptUrlOf(event) // 'webpack-internal:///(app-pages-browser)/./app/lib/actions.ts' */
@@ -7163,7 +7179,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (!answered || !open) return undefined
     return isPageStubOfSource(
       this.pageScriptUrlOf(open.event),
-      answered.source.path,
+      this.nextModulePathOf(answered),
     )
       ? answered
       : undefined
@@ -7553,7 +7569,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     return this.stops.some(
       (stop) =>
         stop.participant === 'server' &&
-        isPageStubOfSource(scriptUrl, stop.source.path),
+        isPageStubOfSource(scriptUrl, this.nextModulePathOf(stop)),
     )
   }
 
@@ -7567,7 +7583,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       isModuleEntryPause(
         event,
         this.pageScriptUrlOf(event),
-        this.stops.map((stop) => stop.source.path),
+        this.stops.map((stop) => this.nextModulePathOf(stop)),
       )
     )
   }
