@@ -173,7 +173,7 @@ test('the README states the library-stop rule in the nested-app section with API
   )
   // Act / Assert
   for (const phrase of [
-    "A server stop in the checked-out source of a workspace library the app imports through a link inside the repository pauses when the library's build carries source maps with `sourcesContent` equal to the checked-out source.",
+    "A server stop in the checked-out source of a workspace library the app reaches through links inside the repository (directly or through other workspace libraries) pauses when the library's build carries source maps with `sourcesContent` equal to the checked-out source.",
     'Codebook never builds',
     "The native debugger may show the library's built file at the pause",
     'a rebuild of the library, run by you, fixes it',

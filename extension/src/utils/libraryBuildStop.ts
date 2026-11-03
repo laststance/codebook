@@ -32,6 +32,7 @@ import {
 } from '../nextRefusals'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 
+import { appReachesLibrary } from './appReachesLibrary'
 import type { NextPagesDiscoveryCache } from './createNextPagesDiscoveryCache'
 import { readRepositoryBuildText } from './readRepositoryBuildText'
 import { resolveArmedPlace } from './resolveArmedPlace'
@@ -223,7 +224,7 @@ async function linksTo(
  * @param nextPackage - The resolved Next app.
  * @param stopPath - The repository-relative stop file.
  * @param signal - The run's abort signal, checked between ancestor folders.
- * @returns The library when the file lies outside the app, inside the repository both lexically and by real path, inside a folder with a named `package.json` that the app folder's or the repository root's `node_modules/<name>` resolves to by real path; `undefined` otherwise (the caller keeps the `outside-package` refusal).
+ * @returns The library when the file lies outside the app, inside the repository both lexically and by real path, inside a folder with a named `package.json` that the repository root's `node_modules/<name>`, or one of a package the app reaches through workspace links (see {@link appReachesLibrary}), resolves to by real path; `undefined` otherwise (the caller keeps the `outside-package` refusal).
  * @example
  * const library = await detectLibraryPackage(root, nextPackage, 'packages/core/src/a.ts')
  * library?.name // => '@scope/core'
@@ -273,8 +274,14 @@ async function libraryOfFile(
     const name = await readPackageName(folder)
     if (name !== undefined) {
       const linked =
-        (await linksTo(nextPackage.packageRoot, name, folder)) ||
-        (await linksTo(root, name, folder))
+        (await linksTo(root, name, folder)) ||
+        (await appReachesLibrary(
+          root,
+          nextPackage.packageRoot,
+          name,
+          folder,
+          signal,
+        ))
       return linked
         ? {
             name,
