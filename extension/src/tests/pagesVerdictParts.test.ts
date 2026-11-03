@@ -122,12 +122,14 @@ test('a folder index page and a page named index compile to the path Next lists 
   )
 })
 
-// Value: protects=the page of a hit inside a folder index page's data function: the page-module frame `pages/products/index.tsx` is found in `pages-manifest.json` under `/products`, so the hit reads as that page (not the entry page's) and the Pages verdict resumes it; fails_when=the compiled path keeps `/index`, the manifest has no such value, and the hit reads as unreadable instead of the page it renders; no_claim=the verdict built on it (the verdict tests)
+// Value: protects=the page of a hit inside a folder index page's data function: the page-module frame `pages/products/index.tsx` is found in `pages-manifest.json` under `/products`, and the browser's one outstanding page request for `/products` backs it, so the hit reads as that page (not the entry page's) and the Pages verdict resumes it; fails_when=the compiled path keeps `/index`, the manifest has no such value, and the hit reads as unreadable instead of the page it renders; no_claim=the verdict built on it (the verdict tests)
 test('a page-module frame of a folder index page reads as that page through the manifest', async () => {
   // Arrange
   const { reader } = scriptedPagesReader({
     manifest: { '/': 'pages/index.js', '/products': 'pages/products.js' },
-    requests: [],
+    requests: [
+      { url: 'http://localhost:3000/products', resourceType: 'Document' },
+    ],
   })
 
   // Act

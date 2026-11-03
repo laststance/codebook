@@ -256,7 +256,7 @@ test('the page module nearest the call frame names the page when its data functi
   })
 })
 
-// Value: protects=AC 2 re-export + request evidence: an entry page that re-exports its getServerSideProps has no page-module frame, so after an await the page comes from the browser's one outstanding page request (a Next data request here, assets ignored) and the manifest is not read; fails_when=the verdict gives up without the request source, counts the script and image requests as page requests, or reads the manifest with no page-module frame; no_claim=the browser participant's real request tracking (requests are scripted)
+// Value: protects=AC 2 re-export + request evidence: an entry page that re-exports its getServerSideProps has no page-module frame, so after an await the page comes from the browser's one outstanding page request (a Next data request here, assets ignored), resolved to its route through the manifest in a single read; fails_when=the verdict gives up without the request source, counts the script and image requests as page requests, or reads the manifest more than once; no_claim=the browser participant's real request tracking (requests are scripted)
 test('a hit in a re-exported getServerSideProps after an await takes its page from the one outstanding data request', async () => {
   // Arrange
   const fixture = pagesPausedFixtureOf('get-server-side-props-after-await')
@@ -295,10 +295,10 @@ test('a hit in a re-exported getServerSideProps after an await takes its page fr
     dataFunction: 'getServerSideProps',
     evidence: 'request',
   })
-  assert.equal(calls.manifestReads, 0)
+  assert.equal(calls.manifestReads, 1)
 })
 
-// Value: protects=AC 16 page by request evidence for a dynamic route: the one outstanding document request `/products/1` is the entry route `/products/[id]`; fails_when=the request path is compared as text with the route pattern, so a dynamic entry route never matches; no_claim=the router's precedence for competing patterns (isBrowserOnEntryRoute's own tests)
+// Value: protects=AC 16 page by request evidence for a dynamic route: the one outstanding document request `/products/1` resolves through the manifest to the entry route `/products/[id]` even though a static sibling `/products/new` is listed; fails_when=the request path is compared as text with the route pattern, so a dynamic entry route never matches, or the static sibling takes the request of an id; no_claim=the router's precedence for competing patterns (resolveNextPagesRoute's own tests)
 test('the one outstanding document request of a dynamic route names the entry page', async () => {
   // Arrange
   const fixture = pagesPausedFixtureOf('get-server-side-props-after-await')
@@ -310,6 +310,10 @@ test('the one outstanding document request of a dynamic route names the entry pa
   fixture.scriptUrls['7002'] =
     'webpack-internal:///(pages-dir-node)/./lib/ssr.js'
   const { reader } = readerFor(fixture, {
+    manifest: {
+      '/products/[id]': 'pages/products/[id].js',
+      '/products/new': 'pages/products/new.js',
+    },
     requests: [
       { url: 'http://localhost:3000/products/1', resourceType: 'Document' },
     ],
@@ -382,6 +386,76 @@ test('the one outstanding request for another route does not name the entry page
     requests: [
       { url: 'http://localhost:3000/other', resourceType: 'Document' },
     ],
+  })
+
+  // Act
+  const verdict = await pagesDataFunctionHitVerdictOf(
+    hitOf(fixture.event),
+    reader,
+    openBudget(),
+  )
+
+  // Assert
+  assert.deepEqual(verdict, {
+    action: 'pause',
+    attribution: 'unconfirmed',
+    reason: 'route-unreadable',
+  })
+})
+
+// Value: protects=request source resolved by route precedence (finding 1): a dynamic entry `/products/[id]` and a static sibling `/products/new` that re-exports the same data function; the only outstanding request is the sibling's data request, which Next serves from `/products/new`, so the hit is not proven to be the entry page's and pauses unconfirmed; fails_when=the request path is matched against the entry pattern alone, so another page's stop is published as the entry page's proof with request evidence; no_claim=the browser participant's real request tracking (requests are scripted)
+test("a data request that a static sibling page serves is not taken for the dynamic entry page's stop", async () => {
+  // Arrange
+  const fixture = pagesPausedFixtureOf('get-server-side-props-after-await')
+  fixture.event.callFrames[0] = syncFrameIn(
+    'frame-0',
+    '7002',
+    'getServerSideProps',
+  )
+  fixture.scriptUrls['7002'] =
+    'webpack-internal:///(pages-dir-node)/./lib/ssr.js'
+  const { reader } = readerFor(fixture, {
+    manifest: {
+      '/products/[id]': 'pages/products/[id].js',
+      '/products/new': 'pages/products/new.js',
+    },
+    requests: [
+      {
+        url: 'http://localhost:3000/_next/data/b1/products/new.json',
+        resourceType: 'Fetch',
+      },
+    ],
+  })
+
+  // Act
+  const verdict = await pagesDataFunctionHitVerdictOf(
+    hitOf(fixture.event, { entryRoute: '/products/[id]' }),
+    reader,
+    openBudget(),
+  )
+
+  // Assert
+  assert.deepEqual(verdict, {
+    action: 'pause',
+    attribution: 'unconfirmed',
+    reason: 'route-unreadable',
+  })
+})
+
+// Value: protects=request source needs the manifest (finding 1): when `pages-manifest.json` cannot be read, the one outstanding request cannot be resolved to its route, so the page stays unreadable instead of being guessed as the entry page; fails_when=an unreadable manifest falls back to matching the request against the entry pattern, which is a guess; no_claim=a manifest that is read but lists no route for the request
+test('an outstanding page request is no evidence of the entry page while the manifest cannot be read', async () => {
+  // Arrange
+  const fixture = pagesPausedFixtureOf('get-server-side-props-after-await')
+  fixture.event.callFrames[0] = syncFrameIn(
+    'frame-0',
+    '7002',
+    'getServerSideProps',
+  )
+  fixture.scriptUrls['7002'] =
+    'webpack-internal:///(pages-dir-node)/./lib/ssr.js'
+  const { reader } = readerFor(fixture, {
+    manifest: undefined,
+    requests: [{ url: 'http://localhost:3000/', resourceType: 'Document' }],
   })
 
   // Act
@@ -473,11 +547,18 @@ test("a hit in another page's data function is resumed as other-route with that 
   })
 })
 
-// Value: protects=AC 14 another page's data function (route from the page module): after an await the other page is named by the page-module frame through the manifest; fails_when=the module-frame source resumes with the wrong route or pauses; no_claim=none beyond protects
+// Value: protects=AC 14 another page's data function (route from the page module): after an await the other page is named by the page-module frame through the manifest once the browser's one outstanding page request is for that same page; fails_when=the module-frame source resumes with the wrong route or pauses; no_claim=a module frame with no request to back it (it is unconfirmed, see the re-export tests)
 test("a hit under another page's module after an await is resumed as other-route with the manifest route", async () => {
   // Arrange
   const fixture = pagesPausedFixtureOf('get-static-props-helper-after-await')
-  const { reader } = readerFor(fixture)
+  const { reader } = readerFor(fixture, {
+    requests: [
+      {
+        url: 'http://localhost:3000/_next/data/b1/static-helper.json',
+        resourceType: 'Fetch',
+      },
+    ],
+  })
 
   // Act
   const verdict = await pagesDataFunctionHitVerdictOf(
@@ -491,6 +572,97 @@ test("a hit under another page's module after an await is resumed as other-route
     action: 'resume',
     event: 'breakpoint.other-route',
     route: '/static-helper',
+  })
+})
+
+// Value: protects=defining module is not the running route (finding 2): `/alias` re-exports `/original`'s getServerSideProps, so after an await the only page frame is `pages/original.js`; the browser's one outstanding request is for `/alias`, which contradicts the module frame, so the hit pauses unconfirmed instead of being resumed as another route (which would end the run SERVER_STOP_NOT_REACHED); fails_when=the page-module frame is taken for the running page even when the outstanding request names another page; no_claim=the stop being proven the entry page's (it is only unconfirmed)
+test("a re-exported data function's defining module does not resume the entry page's own stop as another route", async () => {
+  // Arrange
+  const fixture = pagesPausedFixtureOf('get-server-side-props-after-await')
+  fixture.scriptUrls['1498'] = '(pages-dir-node)/./pages/original.js'
+  const { reader } = readerFor(fixture, {
+    manifest: {
+      '/original': 'pages/original.js',
+      '/alias': 'pages/alias.js',
+    },
+    requests: [
+      {
+        url: 'http://localhost:3000/_next/data/b1/alias.json',
+        resourceType: 'Fetch',
+      },
+    ],
+  })
+
+  // Act
+  const verdict = await pagesDataFunctionHitVerdictOf(
+    hitOf(fixture.event, { entryRoute: '/alias' }),
+    reader,
+    openBudget(),
+  )
+
+  // Assert
+  assert.deepEqual(verdict, {
+    action: 'pause',
+    attribution: 'unconfirmed',
+    reason: 'route-unreadable',
+  })
+})
+
+// Value: protects=a module frame alone never names another route (finding 2): the page-module frame names `/original` but no outstanding page request backs it, and `/alias` could re-export its data function, so the hit pauses unconfirmed (browser on the entry route) instead of being resumed as a confident other-route; fails_when=an unbacked module frame resumes the hit as other-route and the entry page's real stop ends SERVER_STOP_NOT_REACHED; no_claim=the export relation itself (Codebook does not read the modules' source)
+test("a page-module frame that no outstanding request backs does not resume the hit as another page's", async () => {
+  // Arrange
+  const fixture = pagesPausedFixtureOf('get-server-side-props-after-await')
+  fixture.scriptUrls['1498'] = '(pages-dir-node)/./pages/original.js'
+  const { reader } = readerFor(fixture, {
+    manifest: {
+      '/original': 'pages/original.js',
+      '/alias': 'pages/alias.js',
+    },
+    requests: [],
+  })
+
+  // Act
+  const verdict = await pagesDataFunctionHitVerdictOf(
+    hitOf(fixture.event, { entryRoute: '/alias' }),
+    reader,
+    openBudget(),
+  )
+
+  // Assert
+  assert.deepEqual(verdict, {
+    action: 'pause',
+    attribution: 'unconfirmed',
+    reason: 'route-unreadable',
+  })
+})
+
+// Value: protects=the entry's module frame is not enough against a contradicting request (finding 2, inverse): `/alias` re-exports the entry `/original`'s data function, the frame names `/original`'s module, and the only outstanding page request is for `/alias`, so the stop is another page's run of the entry's function and must not be published as the entry page's proof; fails_when=a module frame that names the entry's module accepts a stop whose only outstanding page request resolves to another route; no_claim=none beyond protects
+test("a stop in the entry page's module is not accepted when the only outstanding page request is another page's", async () => {
+  // Arrange
+  const fixture = pagesPausedFixtureOf('get-server-side-props-after-await')
+  fixture.scriptUrls['1498'] = '(pages-dir-node)/./pages/original.js'
+  const { reader } = readerFor(fixture, {
+    manifest: {
+      '/original': 'pages/original.js',
+      '/alias': 'pages/alias.js',
+    },
+    requests: [
+      { url: 'http://localhost:3000/alias', resourceType: 'Document' },
+    ],
+  })
+
+  // Act
+  const verdict = await pagesDataFunctionHitVerdictOf(
+    hitOf(fixture.event, { entryRoute: '/original' }),
+    reader,
+    openBudget(),
+  )
+
+  // Assert
+  assert.deepEqual(verdict, {
+    action: 'pause',
+    attribution: 'unconfirmed',
+    reason: 'route-unreadable',
   })
 })
 
