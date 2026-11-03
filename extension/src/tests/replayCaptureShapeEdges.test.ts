@@ -438,3 +438,43 @@ test('a saved snapshot serves the cut value after a Cookie name masked', () => {
   // Assert
   assert.equal(JSON.stringify(masked).includes(SESSION_VALUE), false)
 })
+
+// protects=every string local longer than the saved text limit (a large JSON string, an HTML string, a SQL text), which the capture cuts with its trim mark and every later serving masks again (Cycle 0073 pt1: such a cut value was served as [masked]); fails_when=the capture or the second masking replaces a benign cut string by the mask, or drops its readable start or its trim mark; no_claim=a long string that holds a credential shape, which the other tests cover
+test('a 5,000-character benign string local keeps its readable start and its trim mark when it is captured and served from a saved snapshot', async () => {
+  // Arrange
+  const benignStrings = {
+    json: `{"items":[${'{"id":7,"name":"item"},'.repeat(300)}]}`.slice(
+      0,
+      5_000,
+    ),
+    html: `<ul class="list">${'<li class="row"><a href="/items?id=3">item</a></li>'.repeat(100)}`.slice(
+      0,
+      5_000,
+    ),
+    sql: `SELECT id, name FROM orders WHERE total > 100 ${'AND status = 1 '.repeat(400)}`.slice(
+      0,
+      5_000,
+    ),
+  }
+  const frame = pausedFrame({
+    1: Object.entries(benignStrings).map(([name, value]) => ({
+      name,
+      value: `'${value}'`,
+      type: 'string',
+      variablesReference: 0,
+    })),
+  })
+
+  // Act
+  const captured = await capture(frame, 'depth-first')
+  const served = maskSavedDebugSnapshot(captured)
+
+  // Assert
+  for (const [name, value] of Object.entries(benignStrings)) {
+    const savedValue = savedLocal(served, name).value
+    assert.equal(savedValue.length, 4_096)
+    assert.equal(savedValue.startsWith(`'${value.slice(0, 60)}`), true)
+    assert.equal(savedValue.endsWith('… [truncated]'), true)
+    assert.equal(savedLocal(captured, name).value, savedValue)
+  }
+})

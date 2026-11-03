@@ -416,6 +416,9 @@ test('a long preview of nested unclosed members is scanned in linear time', () =
 /** The mask placeholder, kept out of `label: [masked]` literals so the repository's secret scanner does not read them as credential assignments. */
 const MASK = '[masked]'
 
+/** The mark the capture's own cut leaves at the end of a saved text. */
+const TRUNCATION_MARK = '… [truncated]'
+
 // The scripted secrets are made-up opaque strings; they are split so no scanner reads them as a real credential.
 const OPAQUE_SESSION = ['OPAQUE', 'SESSION', 'VALUE', '7c1e4b92'].join('_')
 
@@ -469,8 +472,8 @@ test('a line of many long quoted strings is masked in linear time', () => {
   })
 })
 
-// protects=an element cut by the 4,096-character cap: it ends in the trim mark and has no closing quote (Cycle 0073 pt1 /ship pass 1: `Array(8) ['Cookie', 'sid=…… [truncated]` stayed unchanged when a saved history was served); fails_when=an unterminated element after a credential header name, or one that ends in a trim mark, is skipped because no closing quote follows it; no_claim=an unterminated quote in prose, which opens no element
-test('an unterminated element after a credential header name or ending in a trim mark is masked to its end', () => {
+// protects=an element cut by the 4,096-character cap: it ends in the trim mark and has no closing quote (Cycle 0073 pt1 /ship pass 1: `Array(8) ['Cookie', 'sid=…… [truncated]` stayed unchanged when a saved history was served); fails_when=an unterminated element after a credential header name, or a cookie header cut by a trim mark, is skipped because no closing quote follows it; no_claim=an unterminated quote in prose, which opens no element
+test('an unterminated element after a credential header name, or a cookie header cut by a trim mark, is masked to its end', () => {
   // Arrange
   const afterHeaderName = `Array(8) ['Cookie', 'sid=${OPAQUE_SESSION}… [truncated]`
   const afterHeaderNameWithoutMark = `['Authorization', 'Basic ${OPAQUE_SESSION}`
@@ -502,4 +505,64 @@ test('a closed literal of 20,000 characters after a Cookie name is masked whole'
   // Assert
   assert.equal(masked.text, `['Cookie', ${MASK}]`)
   assert.equal(masked.afterHeaderName, false)
+})
+
+// protects=an element cut by a size cap is judged by the shape rules of a closed element on its visible text (the first 4,096-character cap served every long string as [masked]); fails_when=a cookie pair, an Authorization credential or a secret URL query value left in the visible part is printed, a visible secret prefix survives the cut, or the whole cut element is masked although nothing in it is a credential; no_claim=an element that follows a secret header name, which is masked whole
+test('an element cut by a trim mark is masked only where its visible text holds a credential shape', () => {
+  // Arrange
+  const secretPrefix = ['SECRET', '9abc'].join('')
+  const credentialPrefix = ['dXNlcjpT', 'M2Ny'].join('')
+  const cutCookie = `'theme=dark; sid=${secretPrefix}${TRUNCATION_MARK}`
+  const cutCookieAfterName = `'theme=dark; sid=${TRUNCATION_MARK}`
+  const cutAuthorization = `'Basic ${credentialPrefix}${TRUNCATION_MARK}`
+  const cutAuthorizationEarly = `'Basic ${credentialPrefix.slice(0, 4)}${TRUNCATION_MARK}`
+  const cutQueryValue = `'https://shop.example/cb?page=2&code=${secretPrefix}${TRUNCATION_MARK}`
+  const cutQueryValueWithAdapterMark = `'https://shop.example/cb?code=${secretPrefix}…`
+  const cutQueryName = `'https://shop.example/cb?page=2&code=${TRUNCATION_MARK}`
+  const cutFragmentName = `'https://shop.example/cb#access_token=${TRUNCATION_MARK}`
+  const benign = [
+    `'{"items":[1,2,3],"note":"hello ${'w'.repeat(40)}${TRUNCATION_MARK}`,
+    `'<div class="row"><a href="/items?id=3">${'x'.repeat(40)}${TRUNCATION_MARK}`,
+    `'SELECT id, name FROM orders WHERE total > 100 ORDER BY id; ${TRUNCATION_MARK}`,
+    `'Basic usage of the cart${TRUNCATION_MARK}`,
+  ]
+  // Act
+  const masked = [
+    cutCookie,
+    cutCookieAfterName,
+    cutAuthorization,
+    cutAuthorizationEarly,
+    cutQueryValue,
+    cutQueryValueWithAdapterMark,
+    cutQueryName,
+    cutFragmentName,
+    ...benign,
+  ].map((preview) => redactValuePreview(preview))
+  // Assert
+  assert.deepEqual(masked, [
+    MASK,
+    MASK,
+    MASK,
+    MASK,
+    `'https://shop.example/cb?page=2&code=${MASK}${TRUNCATION_MARK}`,
+    `'https://shop.example/cb?code=${MASK}…`,
+    cutQueryName,
+    cutFragmentName,
+    ...benign,
+  ])
+  assert.equal(masked.join('').includes(secretPrefix), false)
+  assert.equal(masked.join('').includes(credentialPrefix.slice(0, 4)), false)
+})
+
+// protects=a second pass over an element already cut and masked changes nothing; fails_when=masking the saved result of a cut query value again lengthens it, masks its readable start or drops its trim mark; no_claim=the first pass's wording
+test('masking an element cut by a trim mark again leaves it unchanged', () => {
+  // Arrange
+  const secretPrefix = ['SECRET', '9abc'].join('')
+  const once = redactValuePreview(
+    `'https://shop.example/cb?page=2&code=${secretPrefix}${TRUNCATION_MARK}`,
+  )
+  // Act
+  const twice = redactValuePreview(once)
+  // Assert
+  assert.equal(twice, once)
 })

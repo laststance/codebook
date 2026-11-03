@@ -664,23 +664,57 @@ export function findQuotedElement(
   }
 }
 
+/** A scheme and the first characters of its credential, fewer than {@link AUTHORIZATION_CREDENTIAL_MIN_CHARS}: what a cap leaves of `Basic dXNlcjpwYXNz` when it cuts early in the credential, which no closed Authorization value is short enough to be. */
+const CUT_AUTHORIZATION_CREDENTIAL = new RegExp(
+  `^(?:basic|negotiate|ntlm|token)[ \\t]+[A-Za-z0-9._~+/=-]{1,${AUTHORIZATION_CREDENTIAL_MIN_CHARS - 1}}$`,
+  'i',
+)
+
 /**
- * Tells whether an element that lost its closing quote ends in the mark of a trimmed text (`…` or {@link REPLAY_DEBUG_TRUNCATION_MARKER}), so a cap cut it.
- * Called by {@link elementReplacement}.
+ * Masks the secret query and fragment values in the visible part of a text that a cap cut, leaving a secret value the cut elided entirely as it is.
+ * Called by {@link cutElementReplacement}.
+ * @param visible - The text before the trim mark.
+ * @returns The text with each secret value in it masked; a last `name=` with nothing after it keeps reading `name=`, since the cut left no value to hide.
+ * @example
+ * maskVisibleUrlParts('/cb?page=2&code=abc') // => '/cb?page=2&code=[masked]'
+ * maskVisibleUrlParts('/cb?page=2&code=') // => '/cb?page=2&code='
+ */
+function maskVisibleUrlParts(visible: string): string {
+  const masked = maskSecretUrlParts(visible)
+  return visible.endsWith('=') && masked.endsWith(`=${REDACTION_MASK}`)
+    ? masked.slice(0, -REDACTION_MASK.length)
+    : masked
+}
+
+/**
+ * Decides what an element becomes whose closing quote is missing because a cap cut the text there and left a trim mark (`…` or {@link REPLAY_DEBUG_TRUNCATION_MARKER}).
+ * Why: the capture cuts every saved text above 4,096 characters, so every long string, a large JSON, an HTML or a SQL text among them, ends this way; its visible part is judged like a closed element, so a benign string keeps its readable start and its mark and a credential does not survive the cut. Called by {@link elementReplacement}.
  * @param text - The text.
  * @param element - An unterminated element.
- * @returns `true` when the element's end carries a trim mark.
- * @example endsInTrimMark("['Cookie', 'sid=abc… [truncated]", { start: 11, end: 31, isUnterminated: true }) // => true
+ * @param mask - What replaces a masked element.
+ * @returns `mask` when the visible part is a Cookie header (a last pair or attribute cut anywhere is tolerated) or an Authorization value, also one cut after fewer credential characters than a closed value needs; the element with the secret query and fragment values of its visible part masked, its opening quote and its trim mark kept, when it holds a URL with such values; `undefined` for an element with no trim mark, for one that holds no credential shape, and for one whose only secret value was elided (`code=… [truncated]`).
+ * @example
+ * cutElementReplacement("'sid=abc; theme=dark… [truncated]", { start: 0, end: 32, isUnterminated: true }, '[masked]') // => '[masked]'
+ * cutElementReplacement("'/cb?page=2&code=abc… [truncated]", { start: 0, end: 32, isUnterminated: true }, '[masked]') // => "'/cb?page=2&code=[masked]… [truncated]"
+ * cutElementReplacement("'{\"items\":[1,2… [truncated]", { start: 0, end: 25, isUnterminated: true }, '[masked]') // => undefined
  */
-function endsInTrimMark(text: string, element: QuotedElement): boolean {
-  const tail = text.slice(
-    Math.max(
-      element.start + 1,
-      element.end - 2 * REPLAY_DEBUG_TRUNCATION_MARKER.length,
-    ),
-    element.end,
+function cutElementReplacement(
+  text: string,
+  element: QuotedElement,
+  mask: string,
+): string | undefined {
+  const inner = text.slice(element.start + 1, element.end)
+  const cut = withoutTrimMark(inner.trimEnd())
+  if (!cut.wasTrimmed) return undefined
+  if (
+    isCookieHeaderShape(inner.trimEnd()) ||
+    CUT_AUTHORIZATION_CREDENTIAL.test(cut.text) ||
+    (isAuthorizationShape(cut.text) && !BEARER_CREDENTIAL.test(cut.text.trim()))
   )
-  return withoutTrimMark(tail.trimEnd()).wasTrimmed
+    return mask
+  const maskedVisible = maskVisibleUrlParts(cut.text)
+  if (maskedVisible === cut.text) return undefined
+  return `${text.charAt(element.start)}${maskedVisible}${inner.slice(cut.text.length)}`
 }
 
 /**
@@ -690,7 +724,7 @@ function endsInTrimMark(text: string, element: QuotedElement): boolean {
  * @param element - The element.
  * @param isValue - Whether the element is the value of a secret header name or sits inside its array.
  * @param mask - What replaces a masked element.
- * @returns `mask` for a value (whatever its length, and also when its closing quote is missing), for an element the scan does not read because it is longer than {@link SECRET_SHAPE_SCAN_LIMIT_CHARS} (a literal that is not read cannot be shown to hold no credential), and for an unterminated element that ends in a trim mark; the replacement of {@link shapedReplacement} for any other closed element; `undefined` to keep it.
+ * @returns `mask` for a value (whatever its length, and also when its closing quote is missing) and for an element the scan does not read because it is longer than {@link SECRET_SHAPE_SCAN_LIMIT_CHARS} (a literal that is not read cannot be shown to hold no credential); the replacement of {@link cutElementReplacement} for an element cut off before its closing quote; the replacement of {@link shapedReplacement} for any other closed element; `undefined` to keep it.
  * @example elementReplacement("['Cookie', 'sid=abc']", { start: 11, end: 20, isUnterminated: false }, true, '[masked]') // => '[masked]'
  */
 function elementReplacement(
@@ -700,8 +734,7 @@ function elementReplacement(
   mask: string,
 ): string | undefined {
   if (isValue) return mask
-  if (element.isUnterminated)
-    return endsInTrimMark(text, element) ? mask : undefined
+  if (element.isUnterminated) return cutElementReplacement(text, element, mask)
   if (element.end - element.start > SECRET_SHAPE_SCAN_LIMIT_CHARS) return mask
   return shapedReplacement(text.slice(element.start, element.end), mask)
 }
@@ -746,7 +779,7 @@ function readElement(
 
 /**
  * Finds every quoted element of a text that holds a credential: a Cookie header, an Authorization value, the element that follows a quoted secret header name (`['Cookie', 'sid=abc']`, a logged `rawHeaders`, also an array of values), and a quoted URL with secret query or fragment values.
- * Why: one rule, run once over the original text, for a debugger's value preview and for a development server's output, so a credential reads the same masked wherever the capture, the history or the log shows it. Called by {@link maskShapedLiterals} and {@link redactValuePreview}. The scan is linear: a quote with no closing quote on its line is remembered, so the quotes after it on that line are not tried. An element longer than {@link SECRET_SHAPE_SCAN_LIMIT_CHARS} is not read, so it is masked whole; an element cut off before its closing quote is masked to the end of its line when it follows a secret header name or ends in a trim mark, which a size cap leaves.
+ * Why: one rule, run once over the original text, for a debugger's value preview and for a development server's output, so a credential reads the same masked wherever the capture, the history or the log shows it. Called by {@link maskShapedLiterals} and {@link redactValuePreview}. The scan is linear: a quote with no closing quote on its line is remembered, so the quotes after it on that line are not tried. An element longer than {@link SECRET_SHAPE_SCAN_LIMIT_CHARS} is not read, so it is masked whole; an element cut off before its closing quote is masked to the end of its line when it follows a secret header name, and otherwise judged by its visible part when a size cap left a trim mark on it ({@link cutElementReplacement}).
  * @param text - A preview or a text of one or more lines.
  * @param afterHeaderName - Whether the text before this one ended right after a quoted secret header name, so a stream split into chunks keeps the pairing.
  * @param mask - What replaces a masked element.
