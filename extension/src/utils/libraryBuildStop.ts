@@ -528,11 +528,20 @@ function tabulate(mappings: string, sourceIndex: number): MappingTable {
   let complete: boolean
   try {
     complete = walkSourceMapSegments(mappings, (segment) => {
-      // A segment without an original carries no place.
-      if (!segment.original) return
+      const segments = table.byGeneratedLine.get(segment.generatedLine) ?? []
+      // A segment without an original is generated code of no source: kept as not-the-source, so a line without a column that holds it is not unique.
+      if (!segment.original) {
+        segments.push({
+          column: segment.generatedColumn,
+          source: false,
+          line: 0,
+          originalColumn: 0,
+        })
+        table.byGeneratedLine.set(segment.generatedLine, segments)
+        return
+      }
       const isSource = segment.original.sourceIndex === sourceIndex
       const line = segment.original.line + 1
-      const segments = table.byGeneratedLine.get(segment.generatedLine) ?? []
       segments.push({
         column: segment.generatedColumn,
         source: isSource,
