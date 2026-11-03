@@ -132,8 +132,8 @@ test('a process that prints more than 32 KiB keeps its first 32 KiB for the anno
   assert.equal(capture.tail().includes('HEAD'), false)
 })
 
-// Value: protects=output keeps its arrival order across channels (pt1 Step 11 Codex structured finding: a partial line held by the redactor was delivered after later output, moving it past a debugger stop), for one word, for several, for a prompt that ends in one letter and for a question; fails_when=a plain partial line, one word or several, a prompt ending in the one letter `A`, or `Ready?`, is delivered after the other channel's later line; why_new=no test interleaved channels around a partial line; seam=none; no_claim=a partial line ending in the first letters of a Cookie or Authorization label, or one word that may be a scheme or a secret cookie name, which still wait
-for (const partialLine of ['before', 'before the stop', 'Type A', 'Ready?']) {
+// Value: protects=output keeps its arrival order across channels (pt1 Step 11 Codex structured finding: a partial line held by the redactor was delivered after later output, moving it past a debugger stop), for one word, for several, for a prompt that ends in a letter that begins no label and for a question; fails_when=a plain partial line, one word or several, a prompt ending in the letter `X`, or `Ready?`, is delivered after the other channel's later line; why_new=no test interleaved channels around a partial line; seam=none; no_claim=a partial line ending in the first letters of a Cookie or Authorization label (also the one letter c, a, s or p), or one word that may be a scheme or a secret cookie name, which still wait
+for (const partialLine of ['before', 'before the stop', 'Type X', 'Ready?']) {
   test(`a partial plain line "${partialLine}" on stdout is delivered before a later stderr line`, async () => {
     // Arrange
     const child = fakeChild()

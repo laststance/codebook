@@ -36,7 +36,7 @@ test('a quoted session pair longer than the scan limit is released masked', () =
   assert.equal(released, `${MASK}\n`)
 })
 
-// protects=a Cookie or Authorization label cut by a chunk boundary after other text on its line (Cycle 0073 pt1 /ship pass 1: `[info] Coo` + `kie: sid=…` released the pair); fails_when=an unfinished line that shows no quote, equals sign or Cookie word yet is released, so the label that completes in the next write is never judged with its value; no_claim=a label cut in a line longer than the 8 KiB hold, or after its first letter alone (`-> C` + `ookie:`), which is released at once
+// protects=a Cookie or Authorization label cut by a chunk boundary after other text on its line (Cycle 0073 pt1 /ship pass 1: `[info] Coo` + `kie: sid=…` released the pair); fails_when=an unfinished line that shows no quote, equals sign or Cookie word yet is released, so the label that completes in the next write is never judged with its value; no_claim=a label cut in a line longer than the 8 KiB hold
 test('the output redactor masks a Cookie or Authorization header whose label is cut by a chunk boundary after other text on its line', () => {
   // Arrange
   const digest = 'Digest username="u", realm="r", nonce="n"'
@@ -47,8 +47,8 @@ test('the output redactor masks a Cookie or Authorization header whose label is 
     },
     {
       chunks: [
-        'request headers -> Co',
-        `okie: sid=${SESSION_VALUE}; theme=dark\n`,
+        'request headers -> C',
+        `ookie: sid=${SESSION_VALUE}; theme=dark\n`,
       ],
       expected: `request headers -> Cookie: ${MASK}\n`,
     },
@@ -307,10 +307,10 @@ test('a request path whose query is cut by a chunk boundary is masked, and a pro
   assert.equal(prompt, 'Continue? ')
 })
 
-// protects=output keeps its arrival order around a debugger stop for a prompt that ends in one letter, a question mark or a hash (Cycle 0073 pt1 /ship pass 2: `Option C`, `Type A`, `Press s`, `Ready?` and `C#` waited for the next write, so they were delivered after later output); fails_when=a partial line whose last word is one letter, or whose last word holds a `?` or `#` with no `/` before it, is held; no_claim=a line that holds a quote, an equals sign or a semicolon, which waits for its break by design
-test('a partial line that ends in one letter, a question mark or a hash is released at once', () => {
+// protects=output keeps its arrival order around a debugger stop for a prompt that ends in a letter that begins no label, a question mark or a hash (Cycle 0073 pt1 /ship pass 2: `Ready?` and `C#` waited for the next write, so they were delivered after later output); fails_when=a partial line whose last word is a letter outside c, a, s and p, or whose last word holds a `?` or `#` with no `/` before it, is held; no_claim=a trailing c, a, s or p letter (own test), and a line that holds a quote, an equals sign or a semicolon, which waits for its break by design
+test('a partial line that ends in a letter that begins no label, a question mark or a hash is released at once', () => {
   // Arrange
-  const prompts = ['Type A', 'Option C', 'Press s', 'Ready?', 'Use C#']
+  const prompts = ['Type X', 'Option B', 'Press z', 'Ready?', 'Use C#']
 
   // Act
   const released = prompts.map((prompt) => createOutputRedactor().write(prompt))
@@ -319,7 +319,7 @@ test('a partial line that ends in one letter, a question mark or a hash is relea
   assert.deepEqual(released, prompts)
 })
 
-// protects=the cut-label and cut-query leaks stay closed after the hold is narrowed (Cycle 0073 pt1 /ship pass 2: a label needs two of its letters, a query mark needs a slash before it); fails_when=`[x] Co`, `GET /cb?` or `see https://idp.example/cb#` is released before the next write, or the Cookie value that completes `[x] Co` is printed; no_claim=a label cut after its first letter alone (`[x] C`), which is released
+// protects=the cut-label and cut-query leaks stay closed after the hold is narrowed (Cycle 0073 pt1 /ship pass 2: a query mark needs a slash before it); fails_when=`[x] Co`, `GET /cb?` or `see https://idp.example/cb#` is released before the next write, or the Cookie value that completes `[x] Co` is printed; no_claim=a label cut after its first letter alone (own test)
 test('a line cut after two letters of a label or after the query mark of a path still waits for the next write', () => {
   // Arrange
   const labelRedactor = createOutputRedactor()
@@ -343,4 +343,29 @@ test('a line cut after two letters of a label or after the query mark of a path 
   assert.equal(queryRest, `/cb?code=${MASK} 200\n`)
   assert.equal(fragmentStart, 'see ')
   assert.equal(fragmentRest, `https://idp.example/cb#access_token=${MASK}\n`)
+})
+
+// protects=a Cookie or Authorization label cut after its first letter (Cycle 0073 pt1 /ship pass 2: a one-letter prefix had been released, so `Option C` + `ookie: sid=…` printed the pair); fails_when=a line that ends in `c`, `a`, `s` or `p`, any case, is released before the next write, or the value of the header it completes is printed; no_claim=the delay this costs, accepted: a prompt that ends in one of those four letters (`Option C`, `Type A`) waits until the next write or the line break, while a prompt ending in any other letter is released at once
+test('a line that ends in the first letter of a label waits for the next write, and the header it completes is masked', () => {
+  // Arrange
+  const waiting = ['Option C', 'Type A', 'Press s', 'Run P']
+  const cutCookie = ['Option C', `ookie: sid=${SESSION_VALUE}; theme=dark\n`]
+  const cutAuthorization = [
+    'Type A',
+    `uthorization: Basic ${BASIC_CREDENTIAL}\n`,
+  ]
+
+  // Act
+  const released = waiting.map((prompt) => createOutputRedactor().write(prompt))
+  const releasedCookie = releaseAll(cutCookie)
+  const releasedAuthorization = releaseAll(cutAuthorization)
+
+  // Assert
+  assert.deepEqual(released, ['', '', '', ''])
+  assert.equal(releasedCookie, `Option Cookie: ${MASK}\n`)
+  assert.equal(releasedAuthorization, `Type Authorization: ${MASK}\n`)
+  for (const text of [releasedCookie, releasedAuthorization]) {
+    assert.equal(text.includes(SESSION_VALUE), false)
+    assert.equal(text.includes(BASIC_CREDENTIAL), false)
+  }
 })

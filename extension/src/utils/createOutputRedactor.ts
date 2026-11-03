@@ -128,13 +128,13 @@ function startsAnyWord(words: readonly string[], candidate: string): boolean {
 
 /**
  * Says whether a line ends in the first letters of a Cookie or Authorization label, so the next chunk may complete it.
- * Why: `[info] Coo` + `kie: sid=…` is one header; the line shows no quote, `=`, `;` or label word yet, so nothing else holds it. At least {@link OUTPUT_REDACTION_PREFIX_HOLD_MIN_CHARS} letters must show: a prompt such as `Type A`, `Option C` or `Press s` ends in one and is released at once. Called by {@link mayBecomeShapedLine}.
+ * Why: `[info] Coo` + `kie: sid=…` is one header; the line shows no quote, `=`, `;` or label word yet, so nothing else holds it. A single trailing letter holds the line only when it can begin a label (`c`, `a`, `s` or `p`, so `request headers -> C` waits and a leak of `ookie: sid=…` is closed, at the cost of a prompt such as `Option C` waiting for the next write); a letter that begins no label (`Type X`) is released at once. Called by {@link mayBecomeShapedLine}.
  * @param line - The text after the last line break.
- * @returns `true` when its trailing letters and hyphens, or what follows a hyphen in them, are at least {@link OUTPUT_REDACTION_PREFIX_HOLD_MIN_CHARS} characters long and begin `cookie`, `set-cookie`, `authorization` or `proxy-authorization` in any letter case.
+ * @returns `true` when its trailing letters and hyphens, or what follows a hyphen in them, begin `cookie`, `set-cookie`, `authorization` or `proxy-authorization` in any letter case.
  * @example
- * endsInLabelStart('request headers -> Co') // => true
+ * endsInLabelStart('request headers -> C') // => true
  * endsInLabelStart('x-api-Authori') // => true
- * endsInLabelStart('request headers -> C') // => false
+ * endsInLabelStart('Type X') // => false
  * endsInLabelStart('compiled 12 modules') // => false
  */
 function endsInLabelStart(line: string): boolean {
@@ -148,13 +148,9 @@ function endsInLabelStart(line: string): boolean {
     runStart--
   const words = line.slice(runStart).toLowerCase().split('-')
   // A label starts the run or follows a hyphen in it.
-  return words.some((_word, position) => {
-    const candidate = words.slice(position).join('-')
-    return (
-      candidate.length >= OUTPUT_REDACTION_PREFIX_HOLD_MIN_CHARS &&
-      startsAnyWord(CREDENTIAL_LABEL_WORDS, candidate)
-    )
-  })
+  return words.some((_word, position) =>
+    startsAnyWord(CREDENTIAL_LABEL_WORDS, words.slice(position).join('-')),
+  )
 }
 
 /**
@@ -179,7 +175,7 @@ function isOneShortWord(partialLine: string): boolean {
  * Says whether an unfinished line may still become a Cookie or Authorization line once the rest of it arrives.
  * Why: such a line waits for its break, so a pair, a label or an element split over writes is judged whole; called by {@link holdStart}. A line of plain words, or one plain word, is not held: it is released at once, so output keeps its order around a debugger stop.
  * @param partialLine - The text after the last line break.
- * @returns `true` when it holds a quote, `=` or `;`, a Cookie or Authorization word or scheme ({@link PARTIAL_LINE_MAY_BE_SHAPED}), when it ends in at least two letters of a header label ({@link endsInLabelStart}), or when its only word begins an Authorization scheme or is a secret cookie name that an `=` may follow.
+ * @returns `true` when it holds a quote, `=` or `;`, a Cookie or Authorization word or scheme ({@link PARTIAL_LINE_MAY_BE_SHAPED}), when it ends in the first letters of a header label ({@link endsInLabelStart}), or when its only word begins an Authorization scheme or is a secret cookie name that an `=` may follow.
  * @example
  * mayBecomeShapedLine('port=3000') // => true
  * mayBecomeShapedLine('[info] Coo') // => true
@@ -219,7 +215,7 @@ function hasQueryMarkAfterSlash(run: string): boolean {
 }
 
 /**
- * Says whether a trailing run without whitespace may still become a secret: it contains a secret start, ends in the first characters of one (at least {@link OUTPUT_REDACTION_PREFIX_HOLD_MIN_CHARS}), ends in a URL scheme, or is a URL or a path that holds the `?` or `#` of a query or fragment, whose `code=…` or `token=…` may follow ({@link hasQueryMarkAfterSlash}).
+ * Says whether a trailing run without whitespace may still become a secret: it contains a secret start, ends in the first characters of one (at least {@link OUTPUT_REDACTION_PREFIX_HOLD_MIN_CHARS} of them), ends in a URL scheme, or is a URL or a path that holds the `?` or `#` of a query or fragment, whose `code=…` or `token=…` may follow ({@link hasQueryMarkAfterSlash}).
  * Why: only such a run waits for the next chunk; any other text is released at once, so output keeps its arrival order and time around a debugger stop.
  * @param run - The trailing run of the text seen so far.
  * @returns `true` when the run must wait for more text.
