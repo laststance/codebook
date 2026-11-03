@@ -474,3 +474,27 @@ function outsideNext(shown: string, searched: readonly string[]): StudyError {
     { packageRoot: shown, searched, sideEffects: 'none' },
   )
 }
+
+/**
+ * Re-resolves a nested package at launch time and refuses when its package root or executable real path differs from the preflight's, so a folder or link replaced between the two is never launched.
+ * Called by the Next adapter's start (E5).
+ * @param resolved - The package {@link resolveNextPackage} returned earlier.
+ * @throws The resolver's own refusal, or `PREREQUISITE_MISSING` when the real paths changed.
+ * @example await assertNextPackageUnchanged(resolved) // resolves when nothing moved
+ */
+export async function assertNextPackageUnchanged(
+  resolved: ResolvedNextPackage,
+): Promise<void> {
+  const again = await resolveNextPackage(
+    resolved.repositoryRoot,
+    resolved.packageRootRelative,
+  )
+  if (
+    again.packageRoot !== resolved.packageRoot ||
+    again.nextExecutable !== resolved.nextExecutable
+  )
+    throw new StudyError(
+      'PREREQUISITE_MISSING',
+      `The Next app folder or its Next executable for ${sanitizeDeclaredPath(resolved.packageRootRelative)} changed since the preflight; nothing was started. Start again once.`,
+    )
+}

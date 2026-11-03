@@ -225,7 +225,10 @@ import { redactExtensionInputs } from './utils/redactExtensionInputs'
 import type { PreparedTextState } from './utils/redactPreparedTexts'
 import { refusalFailureOf } from './utils/refusalFailureOf'
 import { releaseVitestListings } from './utils/releaseVitestListings'
-import { repositoryBrowserStartPrerequisites } from './utils/repositoryBrowserStartPrerequisites'
+import {
+  repositoryBrowserStartPrerequisites,
+  selectedNextPackageStartPrerequisites,
+} from './utils/repositoryBrowserStartPrerequisites'
 import { resolveCapturedFactPaths } from './utils/resolveCapturedFactPaths'
 import { sameAcceptedDefinition } from './utils/sameAcceptedDefinition'
 import {
@@ -4622,8 +4625,16 @@ export class StudyService {
         this.environment.nodeTestStartPrerequisites
           ? await this.environment.nodeTestStartPrerequisites()
           : await this.environment.prerequisites().then(
-              // Shared Node/Chrome availability alone cannot authorize an unsupported selected profile.
-              (prerequisites) =>
+              async (prerequisites) =>
+                // A nested Next app is judged by its own package, never by the root's readiness.
+                (await selectedNextPackageStartPrerequisites(
+                  prerequisites,
+                  record.profile,
+                  record.configuration,
+                  this.environment.workspace,
+                  record.cancellation.signal,
+                )) ??
+                // Shared Node/Chrome availability alone cannot authorize an unsupported selected profile.
                 repositoryBrowserStartPrerequisites(
                   prerequisites,
                   record.profile,

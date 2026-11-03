@@ -91,7 +91,7 @@ async function observedReadinessRequest(
   }
 }
 
-/** Acquires one owned process group synchronously for {@link ConfiguredBrowserRun}, exposing cancellable readiness and bounded shutdown. @param inspectServer - Whether to open the native server inspector. @param port - The project's own port ({@link readDeclaredDevelopmentPort}); required, so no caller can skip the lookup and the app is never started on another port. @param outputMask - For the Next server only (no `spec`): masks values the shared redactor leaves in the output it journals and quotes, such as cookie and query values ({@link maskNextServerOutput}); a Next run passes it for a workspace with a Pages folder. @example const app = launchDevelopmentServer(target, node, record, false, 3165); await app.ready(signal) */
+/** Acquires one owned process group synchronously for {@link ConfiguredBrowserRun}, exposing cancellable readiness and bounded shutdown. @param inspectServer - Whether to open the native server inspector. @param port - The project's own port ({@link readDeclaredDevelopmentPort}); required, so no caller can skip the lookup and the app is never started on another port. @param nextExecutable - The verified `dist/bin/next` the launch runs ({@link ResolvedNextPackage.nextExecutable}); defaults to the one under `target`'s own `node_modules`, today's launch. @param outputMask - For the Next server only (no `spec`): masks values the shared redactor leaves in the output it journals and quotes, such as cookie and query values ({@link maskNextServerOutput}); a Next run passes it for a workspace with a Pages folder. @example const app = launchDevelopmentServer(target, node, record, false, 3165); await app.ready(signal) */
 export function launchDevelopmentServer(
   target: string,
   node: string,
@@ -100,10 +100,11 @@ export function launchDevelopmentServer(
   port: number,
   spec?: DevelopmentLaunchSpec,
   outputMask?: (text: string) => string,
+  nextExecutable: string = join(target, 'node_modules/next/dist/bin/next'),
 ) {
   const environment = spec?.environment ?? buildDevelopmentServerEnvironment()
   const arguments_ = spec?.arguments ?? [
-    join(target, 'node_modules/next/dist/bin/next'),
+    nextExecutable,
     ...nextDevArguments(port),
   ]
   // A launcher's own mask wins; the Next server takes the caller's output mask.

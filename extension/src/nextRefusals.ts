@@ -66,6 +66,35 @@ export function nextRefusal(
   )
 }
 
+/** The static recovery of a `NEXT_STOP_NOT_SEALED` whose `details.reason` is `outside-package`: it names fields, never values, because a recovery override reaches MCP unsanitized. */
+export const OUTSIDE_PACKAGE_RECOVERY =
+  'Declare stops only in files inside details.packageRoot (every file in details.files lies outside it), or tell the learner a file outside the Next app folder cannot be observed in this version; library or shared packages the app imports are not supported. Recovery: fix the configuration, then one new start. Nothing was started: no server, no browser and no input (details.sideEffects is none). See codebook://help/repository-browser#NEXT_STOP_NOT_SEALED.'
+
+/**
+ * Builds the refusal of stop files that lie outside the Next app's `packageRoot`, raised at configuration resolution before any process starts.
+ * Called by {@link ConfiguredBrowserRun} after the package resolved.
+ * @param packageRoot - The package root's canonical repository-relative path.
+ * @param files - Every offending repository-relative stop file, in declared order, without repeats.
+ * @returns The `NEXT_STOP_NOT_SEALED` error: `details.reason: "outside-package"`, `files`, `packageRoot`, `sideEffects: "none"` and no `router`.
+ * @example
+ * throw outsidePackageRefusal('examples/react/nextjs', ['packages/ui/src/button.tsx'])
+ */
+export function outsidePackageRefusal(
+  packageRoot: string,
+  files: readonly string[],
+): StudyError {
+  const message = `Stop file${files.length === 1 ? '' : 's'} ${files.join(', ')} lie${files.length === 1 ? 's' : ''} outside packageRoot ${packageRoot}; Codebook seals stops inside the Next app's own folder only, so the run was refused before the server started.`
+  return nextRefusal('NEXT_STOP_NOT_SEALED', message, {
+    details: {
+      reason: 'outside-package',
+      files: [...files],
+      packageRoot,
+      sideEffects: 'none',
+    },
+    recovery: OUTSIDE_PACKAGE_RECOVERY,
+  })
+}
+
 /**
  * The structured fields every Pages stop refusal after the owned server started carries: `router: "pages"` tells an agent a Pages `client-component` refusal from the App Router one without parsing prose, and `sideEffects: "unknown"` says the page's data function already ran once during Codebook's readiness request, so another start is the learner's decision when that function writes.
  * Spread into the `details` of {@link nextRefusal} by the seal and the stop checks of a Pages run.

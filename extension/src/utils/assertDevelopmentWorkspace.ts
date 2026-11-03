@@ -6,15 +6,23 @@ import { StudyError } from '../errors'
 /** The device and the inode number of the Next development lock a run owns, read with exact numbers: a file id of an NTFS volume can pass 2^53, where two ids that differ only below a `number`'s precision would be one value. */
 export type DevelopmentLockIdentity = { dev: bigint; ino: bigint }
 
-/** Rejects missing Next/default-build ownership before the configured runtime acquires a process; existing locks remain untouched. @example await assertDevelopmentWorkspace(root, signal) */
+/**
+ * Rejects missing Next/default-build ownership before the configured runtime acquires a process; existing locks remain untouched.
+ * @param root - The package root, whose `.next/dev` output is checked.
+ * @param signal - Ends the check when the run is cancelled.
+ * @param ownedLock - The lock identity the run itself owns, which is permitted.
+ * @param nextFolder - The Next folder {@link resolveNextPackage} resolved; defaults to `<root>/node_modules/next`, today's check.
+ * @example await assertDevelopmentWorkspace(root, signal)
+ */
 export async function assertDevelopmentWorkspace(
   root: string,
   signal: AbortSignal,
   ownedLock?: DevelopmentLockIdentity,
+  nextFolder: string = join(root, 'node_modules/next'),
 ): Promise<void> {
   signal.throwIfAborted()
   try {
-    await access(join(root, 'node_modules/next/dist/bin/next'))
+    await access(join(nextFolder, 'dist/bin/next'))
   } catch {
     throw new StudyError(
       'PREREQUISITE_MISSING',

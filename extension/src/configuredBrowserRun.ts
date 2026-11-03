@@ -88,6 +88,7 @@ import {
 import {
   NEXT_PAGES_FAILURE_VARIANT,
   nextRefusal,
+  outsidePackageRefusal,
   PAGES_STOP_REFUSAL_DETAILS,
   READINESS_FAILURE_RECOVERY,
   UNCODED_SETUP_DEADLINE_TEXT,
@@ -300,6 +301,11 @@ import { renderedRouteOf } from './utils/renderedRouteOf'
 import { resolveArmedPlace } from './utils/resolveArmedPlace'
 import { resolveNextClientManifest } from './utils/resolveNextClientManifest'
 import {
+  assertNextPackageUnchanged,
+  resolveNextPackage,
+  type ResolvedNextPackage,
+} from './utils/resolveNextPackage'
+import {
   resolveNextPagesEntry,
   type NextPagesEntry,
 } from './utils/resolveNextPagesEntry'
@@ -375,9 +381,14 @@ async function readNextPagesStopBundle(
  */
 const NEXT_DEV_WEBPACK_ADAPTER: DevelopmentServerAdapter = {
   name: 'next-dev-webpack',
-  async assertWorkspace(workspace, _node, signal) {
+  async assertWorkspace(workspace, _node, signal, nextPackage) {
     try {
-      await assertDevelopmentWorkspace(workspace, signal)
+      await assertDevelopmentWorkspace(
+        workspace,
+        signal,
+        undefined,
+        nextPackage?.nextFolder,
+      )
     } catch (error) {
       // A Vite app without Next is told which adapter to use instead of "install Next".
       await refuseViteMisroute(workspace)
@@ -385,6 +396,9 @@ const NEXT_DEV_WEBPACK_ADAPTER: DevelopmentServerAdapter = {
     }
   },
   async start(request) {
+    // The launch re-checks the package root and the executable by real path: the folder may have changed since the preflight (E5).
+    if (request.nextPackage && !request.nextPackage.isRoot)
+      await assertNextPackageUnchanged(request.nextPackage)
     const declaredPort = await readDeclaredDevelopmentPort(request.workspace)
     request.onDeclaredPort(declaredPort)
     await request.assertPortFree(declaredPort)
@@ -397,6 +411,7 @@ const NEXT_DEV_WEBPACK_ADAPTER: DevelopmentServerAdapter = {
       declaredPort.port,
       undefined,
       request.outputMask,
+      request.nextPackage?.nextExecutable,
     )
     request.onApp(app)
     return { app, port: declaredPort.port }
@@ -718,6 +733,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   >
   private app?: ReturnType<typeof launchDevelopmentServer>
   private ownedDevelopmentLock?: DevelopmentLockIdentity
+  /** The Next app this run uses, resolved once at the start of preparation (a `next-dev-webpack` run only); later lanes read every Next-path file through it. */
+  private nextPackage?: ResolvedNextPackage
   /** The adapter of the configuration, chosen at the start of preparation. */
   private adapter?: DevelopmentServerAdapter
   /** The setup step reached, named when the setup deadline expires. */
@@ -1087,6 +1104,54 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (this.cleaning)
       this.track(Promise.resolve(vscode.debug.stopDebugging(session)))
   }
+  /**
+   * The folder Next runs in and every Next-path reader roots at: the resolved package root of a nested Next app, else the opened workspace.
+   * Repository-level services (source authoring, book, storage, Git) keep `options.workspace`.
+   * @example run.packageRoot // '/repo/examples/react/nextjs' for packageRoot "examples/react/nextjs"
+   */
+  get packageRoot(): string {
+    return this.nextPackage?.packageRoot ?? this.options.workspace
+  }
+
+  /** The Next app this run resolved (with its path mappers), or `undefined` before preparation resolves it and for a Vite run. @example run.resolvedNextPackage?.toPackageRelative('examples/react/nextjs/src/pages/index.tsx') // 'src/pages/index.tsx' */
+  get resolvedNextPackage(): ResolvedNextPackage | undefined {
+    return this.nextPackage
+  }
+
+  /**
+   * Resolves the Next app once, then refuses stop files outside it, both before any process starts.
+   * Called at the start of preparation for a `next-dev-webpack` run; the refusal order is the real path, the Next installation, then stops outside the package.
+   * @returns The resolved package.
+   * @throws `INVALID_CONFIGURATION` or `PREREQUISITE_MISSING` from {@link resolveNextPackage}; `NEXT_STOP_NOT_SEALED` (reason `outside-package`) for stops outside the package.
+   * @example this.nextPackage = await this.resolveNextPackageOfRun()
+   */
+  private async resolveNextPackageOfRun(): Promise<ResolvedNextPackage> {
+    const configuration = this.definition.configuration
+    const declared =
+      'packageRoot' in configuration ? configuration.packageRoot : undefined
+    const nextPackage = await resolveNextPackage(
+      this.options.workspace,
+      declared,
+    ).catch(async (error: unknown) => {
+      // A Vite app without Next is told which adapter to use instead of "install Next" (root app only).
+      if (declared === undefined || declared === '.')
+        await refuseViteMisroute(this.options.workspace)
+      throw error
+    })
+    if (nextPackage.isRoot) return nextPackage
+    const outside: string[] = []
+    for (const stop of configuredStops(configuration))
+      if (
+        !outside.includes(stop.source.path) &&
+        (await nextPackage.toPackageRelativeByRealPath(stop.source.path)) ===
+          undefined
+      )
+        outside.push(stop.source.path)
+    if (outside.length)
+      throw outsidePackageRefusal(nextPackage.packageRootRelative, outside)
+    return nextPackage
+  }
+
   /** Retains one preparation barrier for service cancellation and final cleanup. @example await run.prepare() */
   prepare(): Promise<void> {
     return (this.preparation ??= this.prepareOwned())
@@ -1133,10 +1198,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.definition.configuration.adapter,
     )
     this.adapter = adapter
+    // One shared resolver judges the selected package before any process starts: real path, Next installation, then stops outside the package.
+    if (adapter.name === 'next-dev-webpack') {
+      this.nextPackage = await this.resolveNextPackageOfRun()
+      this.alive()
+    }
     await adapter.assertWorkspace(
-      this.options.workspace,
+      this.packageRoot,
       this.options.node,
       this.abort.signal,
+      this.nextPackage,
     )
     this.alive()
     const needsServer = configuredStops(this.definition.configuration).some(
@@ -1152,7 +1223,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     // The app runs on the port the project declares (its auth origin points there); a busy port refuses the start instead of moving the app.
     const started = await adapter.start({
       ...(hasPagesFolder ? { outputMask: maskNextServerOutput } : {}),
-      workspace: this.options.workspace,
+      workspace: this.packageRoot,
+      ...(this.nextPackage ? { nextPackage: this.nextPackage } : {}),
       node: this.options.node,
       record: (type, detail) => this.evidence.record(type, detail),
       inspectServer: needsServer,
@@ -1190,9 +1262,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.ipv6Forwarder = await startIpv6LoopbackForwarder(declaredPort.port)
     this.ownsIpv6Loopback = this.ipv6Forwarder !== undefined
     this.alive()
-    this.ownedDevelopmentLock = await adapter.readOwnedLock(
-      this.options.workspace,
-    )
+    this.ownedDevelopmentLock = await adapter.readOwnedLock(this.packageRoot)
     // An entry behind sign-in compiles only for a request that carries the session: the saved-session browser loads it once, before the seal reads the compiled route.
     await this.warmEntryBehindSignIn(adapter)
     // A workspace with a Pages folder learns which router serves such an entry only now that it compiled.
@@ -3100,7 +3170,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           type: 'pwa-chrome',
           request: 'launch',
           url: 'about:blank',
-          ...adapter.browserDebugFields(this.options.workspace),
+          ...adapter.browserDebugFields(this.packageRoot),
           timeout: ACTIVE_TIMEOUT_MS,
         },
         this.abort.signal,
@@ -3846,7 +3916,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           `Codebook's own request for the entry path ${redactNextEntryPath(entryPath)}, which carries no saved session, was redirected to the sign-in path ${entry.redirectsToSignIn}, and the route manifests do not resolve the entry path as an App Router page; a Pages Router page behind sign-in is not supported in this version, so the run stopped before it sent anything.`,
         ),
       )
-    const nextVersion = (await readNextInstallation(workspace)).version
+    const nextVersion = (
+      await readNextInstallation(workspace, this.nextPackage?.nextFolder)
+    ).version
     this.nextVersion = nextVersion
     const resolved = await resolveNextPagesEntry({
       workspace,
@@ -3887,7 +3959,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const workspace = this.options.workspace
     const notes = await describeNextLaunchFailure({
       workspace,
-      nextVersion: (await readNextInstallation(workspace)).version,
+      nextVersion: (
+        await readNextInstallation(workspace, this.nextPackage?.nextFolder)
+      ).version,
       port,
     })
     return notes.length
@@ -7522,13 +7596,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           type: 'pwa-node',
           request: 'attach',
           websocketAddress: endpoint,
-          cwd: this.options.workspace,
+          cwd: this.packageRoot,
           restart: false,
           autoAttachChildProcesses: false,
           continueOnAttach: false,
           sourceMaps: true,
           sourceMapPathOverrides: {
-            'webpack://_N_E/./*': `${this.options.workspace}/*`,
+            'webpack://_N_E/./*': `${this.packageRoot}/*`,
           },
           timeout: ACTIVE_TIMEOUT_MS,
         },

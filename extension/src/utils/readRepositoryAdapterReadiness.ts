@@ -71,6 +71,7 @@ const nextPackageSchema = z.object({ version: z.string() })
  * Called by {@link readNextReadiness}, which adds the router kind and preparation labels of an installed Next, and by the configured browser run, which names the Next version in a Pages refusal or launch failure.
  *
  * @param workspace - The package root.
+ * @param nextFolder - The Next folder {@link resolveNextPackage} resolved; defaults to `<workspace>/node_modules/next`.
  * @returns
  * - `installed: false` with the install sentence when the executable is missing
  * - `installed: true` with `ready: false` and the reinstall sentence when `node_modules/next/package.json` does not parse
@@ -81,12 +82,15 @@ const nextPackageSchema = z.object({ version: z.string() })
  * // a manifest whose version is 'latest' or longer than 64 characters:
  * await readNextInstallation('/repo') // => { installed: true, ready: true, missing: [] }
  */
-export async function readNextInstallation(workspace: string): Promise<
+export async function readNextInstallation(
+  workspace: string,
+  nextFolder: string = join(workspace, 'node_modules/next'),
+): Promise<
   Pick<NextAdapterReadiness, 'ready' | 'version' | 'missing'> & {
     installed: boolean
   }
 > {
-  const installed = await hasNextExecutable(workspace)
+  const installed = await hasNextExecutable(workspace, nextFolder)
   if (!installed)
     return {
       installed: false,
@@ -95,10 +99,9 @@ export async function readNextInstallation(workspace: string): Promise<
         'Install the selected workspace dependencies, including Next, before using next-dev-webpack.',
       ],
     }
-  const text = await readFile(
-    join(workspace, 'node_modules/next/package.json'),
-    'utf8',
-  ).catch(() => undefined)
+  const text = await readFile(join(nextFolder, 'package.json'), 'utf8').catch(
+    () => undefined,
+  )
   if (text === undefined) return { installed: true, ready: true, missing: [] }
   // A manifest that does not parse is Next's failure alone: it never rejects the whole report
   const manifest = (() => {
