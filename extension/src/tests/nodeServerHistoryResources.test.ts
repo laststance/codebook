@@ -3,6 +3,7 @@ import { before, test } from 'node:test'
 
 import { StudyError } from '../errors'
 import { readResource } from '../resources'
+import { buildServerReplayModel } from '../utils/buildServerReplayModel'
 
 import { createHarness } from './helpers'
 import {
@@ -312,70 +313,119 @@ test('output appended between two pages of one events read does not change the p
   built.writer.abandon()
 })
 
+/** The callback code a history saved before the path mask hid an OAuth `code` holds in its declared request path. */
+const SAVED_CALLBACK_CODE = ['opaque', 'code', '1234'].join('-')
+const SAVED_CALLBACK_PATH = `/login/callback?code=${SAVED_CALLBACK_CODE}&state=xyz`
+const MASKED_CALLBACK_PATH = '/login/callback?code=[masked]&state=xyz'
+
+/**
+ * Writes a sealed server history whose header holds the callback code in its declared request path, as an older version saved it before the path mask hid `code`.
+ * @param repository - The repository whose server store receives the history.
+ * @returns The header as saved.
+ * @example const header = await writeHistoryWithSavedCallbackCode(repository)
+ */
+async function writeHistoryWithSavedCallbackCode(
+  repository: Awaited<ReturnType<typeof openServerRepository>>['repository'],
+) {
+  const masked = nodeServerHistoryHeader(SERVER_WORKSPACE_KEY)
+  const header = {
+    ...masked,
+    configuration: {
+      ...masked.configuration,
+      request: { ...masked.configuration.request, path: SAVED_CALLBACK_PATH },
+    },
+    declaredRequest: { ...masked.declaredRequest, path: SAVED_CALLBACK_PATH },
+  }
+  const writer = await repository.serverHistories.start(header)
+  await writer.appendRequest({
+    elapsedMs: 1,
+    attempt: 1,
+    method: 'POST',
+    path: '/api/items',
+    bodyBytes: 14,
+  })
+  await writer.appendRequestSent({ elapsedMs: 2, attempt: 1 })
+  await writer.appendStop(
+    serverStopCapture({ declaredStopIndex: 0, hit: 1, line: 2, elapsedMs: 10 }),
+  )
+  await writer.appendResponse({
+    elapsedMs: 20,
+    status: 201,
+    contentType: 'application/json',
+    body: '{"id":7}',
+    bodyBytes: 8,
+    readCut: false,
+    location: null,
+    requestDurationMs: 10,
+  })
+  await writer.seal({ elapsedMs: 30, reason: 'stopped' })
+  return header
+}
+
 // protects=the history page of a Node server history saved before the callback code was masked serves its declared request path without the code, in the configuration and in the declared request; fails_when=the page serves the header's request path as stored; no_claim=the request entries and their paths (savedHistoryServingMasks tests) and the catalog's request line
 test('a Node server history saved with a callback code in its declared request path serves its page without the code', async (context) => {
-  // Arrange: the header an older version wrote, before the path mask hid an OAuth `code`.
-  const callbackCode = ['opaque', 'code', '1234'].join('-')
-  const savedPath = `/login/callback?code=${callbackCode}&state=xyz`
-  const { service, built } = await serviceWith(context, async (repository) => {
-    const masked = nodeServerHistoryHeader(SERVER_WORKSPACE_KEY)
-    const header = {
-      ...masked,
-      configuration: {
-        ...masked.configuration,
-        request: { ...masked.configuration.request, path: savedPath },
-      },
-      declaredRequest: { ...masked.declaredRequest, path: savedPath },
-    }
-    const writer = await repository.serverHistories.start(header)
-    await writer.appendRequest({
-      elapsedMs: 1,
-      attempt: 1,
-      method: 'POST',
-      path: '/api/items',
-      bodyBytes: 14,
-    })
-    await writer.appendRequestSent({ elapsedMs: 2, attempt: 1 })
-    await writer.appendStop(
-      serverStopCapture({
-        declaredStopIndex: 0,
-        hit: 1,
-        line: 2,
-        elapsedMs: 10,
-      }),
-    )
-    await writer.appendResponse({
-      elapsedMs: 20,
-      status: 201,
-      contentType: 'application/json',
-      body: '{"id":7}',
-      bodyBytes: 8,
-      readCut: false,
-      location: null,
-      requestDurationMs: 10,
-    })
-    await writer.seal({ elapsedMs: 30, reason: 'stopped' })
-    return header
-  })
+  // Arrange
+  const { service, built } = await serviceWith(
+    context,
+    writeHistoryWithSavedCallbackCode,
+  )
 
   // Act
   const page = await pageOf(service, `codebook://node-history/${built.studyId}`)
 
   // Assert
   assert.equal(page.complete, true)
-  assert.equal(page.content.includes(callbackCode), false)
+  assert.equal(page.content.includes(SAVED_CALLBACK_CODE), false)
   const served = JSON.parse(page.content) as {
     header: {
       configuration: { request: { path: string } }
       declaredRequest: { path: string }
     }
   }
-  assert.equal(
-    served.header.configuration.request.path,
-    '/login/callback?code=[masked]&state=xyz',
+  assert.equal(served.header.configuration.request.path, MASKED_CALLBACK_PATH)
+  assert.equal(served.header.declaredRequest.path, MASKED_CALLBACK_PATH)
+})
+
+// protects=the node-history catalog and the Saved studies row of a Node server history saved before the callback code was masked show its request line without the code; fails_when=the summary's request line is built from the header's path as stored; no_claim=the history page's header (the test above)
+test('the node-history catalog lists a Node server history saved with a callback code with its request line masked', async (context) => {
+  // Arrange
+  const { service, repository } = await serviceWith(
+    context,
+    writeHistoryWithSavedCallbackCode,
   )
-  assert.equal(
-    served.header.declaredRequest.path,
-    '/login/callback?code=[masked]&state=xyz',
+
+  // Act
+  const { value } = await wholeJson(service, 'codebook://node-history')
+  const summaries = await repository.list()
+
+  // Assert
+  assert.equal(JSON.stringify(value).includes(SAVED_CALLBACK_CODE), false)
+  const [entry] = value as Array<Record<string, unknown>>
+  assert.equal(entry?.requestLine, `POST ${MASKED_CALLBACK_PATH}`)
+  assert.equal(JSON.stringify(summaries).includes(SAVED_CALLBACK_CODE), false)
+})
+
+// protects=the replay model the Study pane's Application title reads for a Node server history saved before the callback code was masked holds the declared request path without the code; fails_when=the model keeps the header as stored; no_claim=the title's wording (projectServerApplication tests)
+test('the replay model of a Node server history saved with a callback code holds its declared request path masked', async (context) => {
+  // Arrange
+  const { repository, built } = await serviceWith(
+    context,
+    writeHistoryWithSavedCallbackCode,
   )
+  const stored = await repository.serverHistories.read(built.studyId)
+
+  // Act
+  const model = buildServerReplayModel(stored, {
+    saved: true,
+    captureComplete: true,
+    learningCoverage: 'complete',
+  })
+
+  // Assert
+  assert.equal(
+    JSON.stringify(model.header).includes(SAVED_CALLBACK_CODE),
+    false,
+  )
+  assert.equal(model.header.declaredRequest.path, MASKED_CALLBACK_PATH)
+  assert.equal(model.header.configuration.request.path, MASKED_CALLBACK_PATH)
 })
