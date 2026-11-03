@@ -41,12 +41,19 @@ const stackTraceIdSchema = z.object({
   debuggerId: z.string().optional(),
 })
 
+/**
+ * A 0-based line or column of a script position: a non-negative integer.
+ *
+ * The numbers come from the debuggee, and the verdict slices the renderer's text at them ({@link nextPagesDataFunctionCallAt}): a negative column would slice from the end of the line and could match a call that is not the frame's, and a fraction names no position. Such a frame makes the whole event malformed, which the verdict records as `verdict-error`.
+ */
+const scriptPositionSchema = z.number().int().nonnegative()
+
 const asyncCallFrameSchema = z.object({
   functionName: z.string().default(''),
   scriptId: z.string(),
   url: z.string().default(''),
-  lineNumber: z.number(),
-  columnNumber: z.number().default(0),
+  lineNumber: scriptPositionSchema,
+  columnNumber: scriptPositionSchema.default(0),
 })
 
 /**
@@ -68,8 +75,8 @@ const syncCallFrameSchema = z.object({
   functionName: z.string().default(''),
   location: z.object({
     scriptId: z.string(),
-    lineNumber: z.number(),
-    columnNumber: z.number().default(0),
+    lineNumber: scriptPositionSchema,
+    columnNumber: scriptPositionSchema.default(0),
   }),
   url: z.string().default(''),
 })
@@ -85,11 +92,12 @@ const pausedEventSchema = z.object({
  *
  * Why it exists: the event comes through js-debug's proxy from a Next version Codebook did not write, so a changed shape must become a recorded `verdict-error` instead of a `TypeError` in the middle of the verdict. Called by {@link pagesDataFunctionHitVerdictOf} first.
  * @param event - The `params` of the `Debugger.paused` event as received.
- * @returns The event with `callFrames`, `asyncStackTrace` and `asyncStackTraceId` (other fields such as `scopeChain` are dropped), or `undefined` when a frame lacks its script id or location, or a list is not a list.
+ * @returns The event with `callFrames`, `asyncStackTrace` and `asyncStackTraceId` (other fields such as `scopeChain` are dropped), or `undefined` when a frame lacks its script id or location, a line or column is not a non-negative integer, or a list is not a list.
  * @example
  * parsePagesPausedEvent({ callFrames: [{ callFrameId: '1', functionName: 'getServerSideProps', location: { scriptId: '7', lineNumber: 21 }, url: '' }] })
  * // => { callFrames: [{ callFrameId: '1', functionName: 'getServerSideProps', location: { scriptId: '7', lineNumber: 21, columnNumber: 0 }, url: '' }] }
  * parsePagesPausedEvent({ callFrames: 'x' }) // => undefined
+ * parsePagesPausedEvent({ callFrames: [{ functionName: 'f', location: { scriptId: '7', lineNumber: 21, columnNumber: -19 }, url: '' }] }) // => undefined
  */
 export function parsePagesPausedEvent(
   event: unknown,

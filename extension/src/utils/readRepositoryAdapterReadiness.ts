@@ -3,10 +3,11 @@ import { join } from 'node:path'
 
 import { z } from 'zod'
 
-import { VITE_SUPPORTED_MAJOR } from '../constants'
+import { NEXT_VERSION_MAX_CHARS, VITE_SUPPORTED_MAJOR } from '../constants'
 
 import { describeNextDevPreparation } from './describeNextDevPreparation'
 import { hasNextExecutable } from './hasNextExecutable'
+import { isSemverLikeVersion } from './isSemverLikeVersion'
 import {
   readNextDevPreparation,
   type NextDevPreparation,
@@ -31,7 +32,7 @@ export type NextAdapterReadiness = {
   routerKind?: NextRouterKind
   /** What Codebook leaves out of `scripts.dev` ({@link readNextDevPreparation}); present when Next is installed and the reading is not a plain `none`. */
   preparation?: NextDevPreparation
-  /** The `next` package version, when it is installed and readable. */
+  /** The `next` package version, when it is installed and readable: a semantic version of at most {@link NEXT_VERSION_MAX_CHARS} characters, since the studied repository chose the text and it is published. */
   version?: string
   missing: string[]
   /** Sentences to tell the learner that never change `ready`: the folders searched for router kind `none`, skipped or unread preparation, unapplied environment settings by name. Present when there is one. */
@@ -74,8 +75,11 @@ const nextPackageSchema = z.object({ version: z.string() })
  * - `installed: false` with the install sentence when the executable is missing
  * - `installed: true` with `ready: false` and the reinstall sentence when `node_modules/next/package.json` does not parse
  * - `installed: true`, `ready: true` and the version when it is readable
+ * - `installed: true`, `ready: true` and no version when the manifest's `version` is not a semantic version of at most {@link NEXT_VERSION_MAX_CHARS} characters: the studied repository chose that text and the run publishes it, so it reads as unread, never as it is
  * @example
  * await readNextInstallation('/repo') // => { installed: true, ready: true, missing: [], version: '16.4.3' }
+ * // a manifest whose version is 'latest' or longer than 64 characters:
+ * await readNextInstallation('/repo') // => { installed: true, ready: true, missing: [] }
  */
 export async function readNextInstallation(workspace: string): Promise<
   Pick<NextAdapterReadiness, 'ready' | 'version' | 'missing'> & {
@@ -112,6 +116,9 @@ export async function readNextInstallation(workspace: string): Promise<
         'node_modules/next/package.json is not a valid package manifest. Reinstall the workspace dependencies before using next-dev-webpack.',
       ],
     }
+  // A version that is no short semantic version is unread: the run publishes it, so the repository's text never goes out raw.
+  if (!isSemverLikeVersion(manifest.version, NEXT_VERSION_MAX_CHARS))
+    return { installed: true, ready: true, missing: [] }
   return {
     installed: true,
     ready: true,

@@ -2091,8 +2091,10 @@ export const NEXT_PAGES_PAGE_EXPRESSION = 'pathname'
 export const PAGES_STACK_TRACE_READ_LIMIT = 4
 /** How many hits of one Pages server stop the run resumes (`breakpoint.other-route`, `breakpoint.outside-data-function`, `breakpoint.unattributed-resumed`) before it disarms the stop and ends the run `SERVER_STOP_NOT_REACHED`: a helper that many requests or the page's render call (a formatter in a list) would otherwise pause and resume without end. */
 export const PAGES_STOP_RESUMED_HIT_LIMIT = 500
-/** The most scripts of the server other than Next's renderer whose text one Pages run reads among the synchronous frames' scripts the proxy never announced (parsed before the debugger attached), to find the renderer and the addresses of the others; a stack of a data function holds about six distinct scripts. Only a read that answered counts (a failed one is made again by a later hit); past this bound a run no longer reads new ones, so a renderer frame among them reads as `no-renderer-frame` and a page module's frame names no page. */
+/** The most scripts of the server other than Next's renderer whose text one Pages hit reads among the synchronous frames' scripts the proxy never announced (parsed before the debugger attached), to find the renderer and the addresses of the others; a stack of a data function holds about six distinct scripts. A hit past this bound reads the rest at a later hit (the scripts already read are skipped, so a deep stack advances by this many scripts each time), which is why a renderer behind many other scripts is still found. A read that answered is kept for the run, and {@link PAGES_UNANNOUNCED_SCRIPT_RUN_READ_LIMIT} bounds those; a failed read is made again by a later hit. */
 export const PAGES_UNANNOUNCED_SCRIPT_READ_LIMIT = 16
+/** The most scripts of the server other than Next's renderer whose text one Pages run keeps read (an answered read each): the ceiling that bounds the whole run's reads however many hits there are, 16 hits' worth of {@link PAGES_UNANNOUNCED_SCRIPT_READ_LIMIT}, far above the scripts the stacks of a run hold (about six per data-function stack), so a renderer is found long before it. Past it a run no longer reads new ones, so a renderer frame among them reads as `no-renderer-frame` and a page module's frame names no page. */
+export const PAGES_UNANNOUNCED_SCRIPT_RUN_READ_LIMIT = 256
 /** The most outstanding page requests of the browser the run keeps for the Pages page read; a page loads a handful, so a run that sees more has no single page request to name (the oldest are dropped). */
 export const PAGES_OUTSTANDING_REQUEST_LIMIT = 64
 /** The address prefix of the data requests Next's client sends for a Pages navigation (`/_next/data/<build id>/<route>.json`). */
@@ -2727,6 +2729,9 @@ export const DEVELOPMENT_SERVER_MESSAGE_QUEUE_LIMIT = 32
 
 /** The longest a `vite/package.json` version may be (the study schema's `viteVersion` limit). */
 export const VITE_VERSION_MAX_CHARS = 64
+
+/** The longest a `next/package.json` version may be to be published (the run resource's `nextVersion`, the journal, the Output line and the failure details): the studied repository chose that text, so a longer one reads as a version that could not be read. */
+export const NEXT_VERSION_MAX_CHARS = 64
 
 /** The longest a Vite config's thrown error line is carried in a refusal. */
 export const VITE_ERROR_LINE_LIMIT_CHARS = 200

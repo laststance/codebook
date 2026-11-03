@@ -314,6 +314,48 @@ test('an event keeps the fields the verdict reads and refuses a broken stack', (
   assert.equal(parsePagesPausedEvent(null), undefined)
 })
 
+// Value: protects=a script position is a non-negative integer: a negative or fractional line or column in a synchronous frame's location or in an async frame is a broken event (undefined), while column 0 and a missing column still parse; fails_when=a negative column is accepted (the verdict would slice the renderer's line from its end), a fraction is accepted, or a valid position is refused; why_new=Cycle 0073 adversarial review (line and column were any number); seam=none; no_claim=what the verdict does with the refusal (the verdict tests pin verdict-error)
+test('an event refuses a negative or fractional line or column in any frame and keeps a column of 0', () => {
+  // Arrange
+  const syncFrame = (lineNumber: number, columnNumber: number) => ({
+    callFrames: [
+      {
+        functionName: 'f',
+        location: { scriptId: '7', lineNumber, columnNumber },
+        url: '',
+      },
+    ],
+  })
+  const asyncFrame = (lineNumber: number, columnNumber: number) => ({
+    callFrames: [],
+    asyncStackTrace: {
+      callFrames: [
+        { functionName: 'g', scriptId: '7', lineNumber, columnNumber },
+      ],
+    },
+  })
+
+  // Act
+  const accepted = parsePagesPausedEvent(syncFrame(0, 0))
+  const negativeColumn = parsePagesPausedEvent(syncFrame(3, -19))
+  const negativeLine = parsePagesPausedEvent(syncFrame(-1, 4))
+  const fractionalColumn = parsePagesPausedEvent(syncFrame(3, 1.5))
+  const asyncNegativeColumn = parsePagesPausedEvent(asyncFrame(3, -1))
+  const asyncFractionalLine = parsePagesPausedEvent(asyncFrame(0.5, 4))
+
+  // Assert
+  assert.deepEqual(accepted?.callFrames[0]?.location, {
+    scriptId: '7',
+    lineNumber: 0,
+    columnNumber: 0,
+  })
+  assert.equal(negativeColumn, undefined)
+  assert.equal(negativeLine, undefined)
+  assert.equal(fractionalColumn, undefined)
+  assert.equal(asyncNegativeColumn, undefined)
+  assert.equal(asyncFractionalLine, undefined)
+})
+
 // Value: protects=budgeted reads: a read that answers is returned, a read that rejects or throws is `failed`, and a spent budget wins even over a read that answers at once; fails_when=a rejection escapes into the verdict, or a spent budget lets a ready read through so a hit exceeds its one budget; no_claim=wall-clock timing (the budget is a promise the test settles)
 test('a budgeted read reports its answer, a failure or the spent budget', async () => {
   // Arrange

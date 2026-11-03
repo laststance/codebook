@@ -57,6 +57,8 @@ export type NextPagesHarnessOptions = {
   readinessUnanswered?: boolean
   /** Adds an App folder (`src/app/page.tsx`), so the workspace has both routers. */
   withAppFolder?: boolean
+  /** The `version` the written `node_modules/next/package.json` holds; `16.4.3` by default. A hostile repository chooses this text, so a test sets what it is not allowed to publish. */
+  nextVersion?: string
   /** The masked output tail the stand-in server reports. */
   outputTail?: string
 }
@@ -101,7 +103,7 @@ export async function writeNextPagesWorkspace(
   if (options.withAppFolder) await write('src/app/page.tsx', STAND_IN_PAGE)
   await write(
     'node_modules/next/package.json',
-    JSON.stringify({ name: 'next', version: '16.4.3' }),
+    JSON.stringify({ name: 'next', version: options.nextVersion ?? '16.4.3' }),
   )
   await write('node_modules/next/dist/bin/next', '')
   const buildManifest = await readFile(

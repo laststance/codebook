@@ -55,6 +55,7 @@ import {
   ENTRY_LOAD_POLL_MS,
   PAGES_STOP_RESUMED_HIT_LIMIT,
   PAGES_UNANNOUNCED_SCRIPT_READ_LIMIT,
+  PAGES_UNANNOUNCED_SCRIPT_RUN_READ_LIMIT,
   NEXT_PAGES_RENDERER_SCRIPT_PATH,
   SERVER_RENDER_CLASSIFICATION_MS,
   SERVER_RENDER_PAUSE_POLL_MS,
@@ -2519,7 +2520,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Finds Next's Pages renderer among the synchronous frames' scripts the proxy never announced, by their text, and takes the address of each other such script from its last `sourceURL` comment.
-   * Why it exists: the readiness request compiles the page and loads the renderer before the debugger attaches, and the proxy forwards only scripts parsed after its subscription, so a synchronous frame of the renderer or of the page module would otherwise carry no address: every hit would read as `no-renderer-frame`, and a hit after the data function's `await` could not name its page from the page module. Only the frames of an event of the expected shape ({@link parsePagesPausedEvent}) are read, so a malformed frame is left to the verdict's `verdict-error`. Each unknown script is read once per hit within the hit's budget, and by later hits until one read answers; a text that holds the renderer's call site ({@link holdsNextPagesRendererPatterns}) is kept as the renderer, any other is read once per run (at most {@link PAGES_UNANNOUNCED_SCRIPT_READ_LIMIT} of them) and only its address kept. Called by {@link classifyPagesHit} before the verdict.
+   * Why it exists: the readiness request compiles the page and loads the renderer before the debugger attaches, and the proxy forwards only scripts parsed after its subscription, so a synchronous frame of the renderer or of the page module would otherwise carry no address: every hit would read as `no-renderer-frame`, and a hit after the data function's `await` could not name its page from the page module. Only the frames of an event of the expected shape ({@link parsePagesPausedEvent}) are read, so a malformed frame is left to the verdict's `verdict-error`. Each unknown script is read once per hit within the hit's budget, and by later hits until one read answers; a text that holds the renderer's call site ({@link holdsNextPagesRendererPatterns}) is kept as the renderer, any other is read once per run and only its address kept. The reads are bounded twice: a hit starts at most {@link PAGES_UNANNOUNCED_SCRIPT_READ_LIMIT} of them, and a run keeps at most {@link PAGES_UNANNOUNCED_SCRIPT_RUN_READ_LIMIT} non-renderer scripts read. The per-hit bound is what lets a renderer behind many other scripts (Node's internals, `next/dist/server/*`, modules parsed before the attach) be found: a run-wide count of 16 would be spent on the first hits' scripts, and every later hit would read as `no-renderer-frame`, whereas a deep stack now advances by 16 unread scripts per hit. Called by {@link classifyPagesHit} before the verdict.
    * @param event - The paused event, as received.
    * @param budget - The hit's single time budget.
    * @example await this.identifyUnannouncedScripts(event, budget)
@@ -2532,14 +2533,19 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const frames = parsePagesPausedEvent(event)?.callFrames ?? []
     // A script is read at most once per hit, however many frames of it the stack holds.
     const scriptIds = new Set(frames.map((frame) => frame.location.scriptId))
-    for (const scriptId of scriptIds) {
-      if (
-        known.has(scriptId) ||
-        this.rendererScriptIds.has(scriptId) ||
-        this.unannouncedScriptsRead.has(scriptId) ||
-        this.unannouncedScriptsRead.size >= PAGES_UNANNOUNCED_SCRIPT_READ_LIMIT
-      )
-        continue
+    const unread = [...scriptIds].filter(
+      (scriptId) =>
+        !known.has(scriptId) &&
+        !this.rendererScriptIds.has(scriptId) &&
+        !this.unannouncedScriptsRead.has(scriptId),
+    )
+    // The hit's own bound ends its reads (a later hit goes on with the scripts still unread); the run's ceiling ends them for the run. An answered read adds one script to the run's count, so the run never keeps more than the ceiling.
+    const allowance = Math.min(
+      PAGES_UNANNOUNCED_SCRIPT_READ_LIMIT,
+      PAGES_UNANNOUNCED_SCRIPT_RUN_READ_LIMIT -
+        this.unannouncedScriptsRead.size,
+    )
+    for (const scriptId of unread.slice(0, allowance)) {
       const read = await readWithinVerdictBudget(
         () => this.scriptTextOf(scriptId),
         budget,

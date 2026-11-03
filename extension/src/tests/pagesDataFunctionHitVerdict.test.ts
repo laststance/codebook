@@ -1059,6 +1059,32 @@ test('an event of an unexpected shape is a verdict-error that holds no value', a
   assert.doesNotMatch(JSON.stringify(verdicts), /SECRET/)
 })
 
+// Value: protects=a position the debuggee reports with a negative column is a malformed frame (verdict-error), never a slice from the end of the renderer's line: the call arrow's frame at line 0, column -19 of a renderer line that ends with `getServerSideProps(` would otherwise read as that call and the hit would pause as the data function; fails_when=the negative column is accepted and the hit pauses entry-load; why_new=Cycle 0073 adversarial review (line and column were any number); seam=none; no_claim=a real renderer text (the line is scripted to end with the call text)
+test('a renderer frame with a negative column is a verdict-error and never matches the call text at the end of its line', async () => {
+  // Arrange
+  const fixture = pagesPausedFixtureOf('get-server-side-props-after-await')
+  const callArrow = fixture.event.asyncStackTrace!.callFrames[0]!
+  callArrow.lineNumber = 0
+  callArrow.columnNumber = -19
+  const rendererText =
+    '/* trace_constants.RenderSpan.getServerSideProps */ return getServerSideProps('
+  const { reader } = readerFor(fixture, {
+    scriptSources: { [RENDERER_SCRIPT_ID]: rendererText },
+  })
+
+  // Act
+  const verdict = await pagesDataFunctionHitVerdictOf(
+    hitOf(fixture.event),
+    reader,
+    openBudget(),
+  )
+
+  // Assert
+  assert.equal(verdict.action, 'pause')
+  assert.equal(verdict.attribution, 'unconfirmed')
+  assert.equal('reason' in verdict && verdict.reason, 'verdict-error')
+})
+
 // Value: protects=AC 16 never throws: a reader that throws where the verdict does not expect it (the script address lookup) becomes a verdict-error, not a rejection into the run; fails_when=an unexpected exception escapes the verdict and fails the run; no_claim=every possible bug (only this seam)
 test('an unexpected failure inside the verdict becomes a verdict-error', async () => {
   // Arrange
