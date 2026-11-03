@@ -680,7 +680,7 @@ export const retainedRepositoryConfigSchema = liveRepositoryConfigSchema.refine(
  * The configuration a format 9 study retains: the version 3 `next-dev-webpack` shape with a required `packageRoot` other than `"."`.
  * Read by {@link studyConfigurationSchema}; a run whose package root is `"."` saves the formats 7 or 8 it always did, without the field.
  */
-export const packageRootRepositoryConfigSchema = operationsConfigurationShape
+const packageRootRepositoryConfigSchema = operationsConfigurationShape
   .extend({
     adapter: z.literal('next-dev-webpack'),
     packageRoot: repositoryPathSchema.refine(
@@ -697,9 +697,6 @@ export const studyConfigurationSchema = z.union([
   retainedRepositoryConfigSchema,
   packageRootRepositoryConfigSchema,
 ])
-export type PackageRootRepositoryConfiguration = z.infer<
-  typeof packageRootRepositoryConfigSchema
->
 export type RepositoryConfiguration = z.infer<typeof repositoryConfigSchema>
 export type RetainedRepositoryConfiguration = z.infer<
   typeof retainedRepositoryConfigSchema

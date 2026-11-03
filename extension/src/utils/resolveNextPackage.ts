@@ -29,7 +29,7 @@ export type PackageRelativePath = string & {
 }
 
 /** Why a declared `packageRoot` is no folder inside the repository (`details.reason`), plus `not-a-next-app` for a folder whose `package.json` does not name `next`. */
-export type PackageRootRefusalReason =
+type PackageRootRefusalReason =
   | 'outside-repository'
   | 'link-leaves-repository'
   | 'not-a-folder'

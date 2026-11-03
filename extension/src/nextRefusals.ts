@@ -67,7 +67,7 @@ export function nextRefusal(
 }
 
 /** The static recovery of a `NEXT_STOP_NOT_SEALED` whose `details.reason` is `outside-package`: it names fields, never values, because a recovery override reaches MCP unsanitized. */
-export const OUTSIDE_PACKAGE_RECOVERY =
+const OUTSIDE_PACKAGE_RECOVERY =
   'Declare stops only in files inside details.packageRoot (every file in details.files lies outside it), or tell the learner a file outside the Next app folder cannot be observed in this version; library or shared packages the app imports are not supported. Recovery: fix the configuration, then one new start. Nothing was started: no server, no browser and no input (details.sideEffects is none). See codebook://help/repository-browser#NEXT_STOP_NOT_SEALED.'
 
 /**
