@@ -258,7 +258,7 @@ Delivery commands (`--help` prints usage, exit codes 0/1/2/3/4/64 as each docume
 | Command | When |
 | --- | --- |
 | `node extension/scripts/bump-version.mjs <v>` / `--check` | release commit, after `/ship` Step 12 |
-| `node extension/scripts/qa-candidate.mjs` (`--status`) | on the clean commit a native check installs |
+| `node extension/scripts/qa-build.mjs` (`--status`) | on the clean commit whose VSIX a native check installs |
 | `node extension/scripts/post-trial-evidence.mjs <run-log.md> --manifest artifacts/<cycle>/<host>-<run>` | after a native check |
 | `node extension/scripts/merge-pr.mjs <n>` (`--dry-run`) | merge, after CI and the exact-HEAD gate |
 
@@ -315,7 +315,7 @@ Formatting: `pnpm --dir extension format` / `format:check` and the lint-staged h
 ## Native QA
 
 - Native checks are part of `/ship`, not a phase of their own: the VS Code and Cursor checks a cycle owes run as `/ship` Step 9.2.1's required plan checks (its QA step), beside its smoke probes. gstack's browser QA alone proves no native behavior.
-- Candidate and evidence: build the VSIX with `qa-candidate.mjs` on the clean commit `/ship` reviews and install it in each host; no review of the candidate (retired). A Critical/Major finding of a check is fixed in that `/ship` pass (new commit, new candidate, check repeated). Post each run's log with `post-trial-evidence.mjs --manifest`, quoting its exit line.
+- Build and evidence: build the VSIX with `qa-build.mjs` from the clean commit `/ship` reviews and install it in each host; the build gets no review of its own. A Critical/Major finding of a check is fixed in that `/ship` pass (new commit, new build, check repeated). Post each run's log with `post-trial-evidence.mjs --manifest`, quoting its exit line.
 - Observing a native check (state checks, screenshots, evidence stills): [docs/agents/native-trial-observation.md](docs/agents/native-trial-observation.md).
 - UI changes: view the PNG again; compare real screenshots with its region at the normal desktop baseline; record differences and interaction.
 - Motion needs recorded interaction + inspected frames; generated pixels or renderer assertions prove no native behavior.

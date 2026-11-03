@@ -60,7 +60,7 @@ Read before any work on the WSL desktop or in the macOS Space (setup, repair, a 
    - another app in front without minimizing: the target keeps updating, the other stays out;
    - before native input (brief activation allowed): check focus and stale-target errors; never type into an unverified palette or submit a terminal draft;
    - stop; check metadata and frames; reject black, frozen, wrong-window or cropped output; tell input from recorder failures; diagnose no product from them.
-6. Take: new recording; stable source, host, candidate, geometry; action times logged; the whole transition with loading and gaps; finalization confirmed. A recreated target needs reselection + a new preflight.
+6. Take: new recording; stable source, host, VSIX build, geometry; action times logged; the whole transition with loading and gaps; finalization confirmed. A recreated target needs reselection + a new preflight.
 
 ### Control and evidence
 
