@@ -7,12 +7,16 @@ import { isSecretName } from './isSecretName'
  * Called by {@link maskSecretQueryValues} for request paths and {@link maskNodeServerRequestBody} for form bodies.
  * @param pairs - The text after `?`, or a form body.
  * @param isSecretParameter - Says whether a decoded parameter name hides its value; {@link isSecretName} unless a caller widens it (the saved-snapshot rule also hides an OAuth `code`, {@link maskShapedLiterals}).
- * @returns The pairs with each secret-named value replaced by the redaction mask; pairs without `=` unchanged.
- * @example maskSecretFormPairs('id=3&api_key=k') // => 'id=3&api_key=[masked]'
+ * @param mask - What replaces a secret value; {@link REDACTION_MASK} unless the caller keeps another marker ({@link maskNextServerOutput}).
+ * @returns The pairs with each secret-named value replaced by the mask; pairs without `=` unchanged.
+ * @example
+ * maskSecretFormPairs('id=3&api_key=k') // => 'id=3&api_key=[masked]'
+ * maskSecretFormPairs('id=3&api_key=k', undefined, '<redacted>') // => 'id=3&api_key=<redacted>'
  */
 export function maskSecretFormPairs(
   pairs: string,
   isSecretParameter: (name: string) => boolean = isSecretName,
+  mask: string = REDACTION_MASK,
 ): string {
   return pairs
     .split('&')
@@ -22,10 +26,10 @@ export function maskSecretFormPairs(
       const name = pair.slice(0, separator)
       try {
         return isSecretParameter(decodeURIComponent(name.replace(/\+/g, ' ')))
-          ? `${name}=${REDACTION_MASK}`
+          ? `${name}=${mask}`
           : pair
       } catch {
-        return `${name}=${REDACTION_MASK}`
+        return `${name}=${mask}`
       }
     })
     .join('&')

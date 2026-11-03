@@ -412,3 +412,90 @@ test('a logged request path masks the code and secret query values, in the query
   ])
   assert.equal(released.join('').includes(callbackCode), false)
 })
+
+// protects=the marker a caller keeps for its own output (Cycle 0073 pt1 /ship pass 2: the URL mask always wrote `[masked]`, so Next's `<redacted>` pass peeled the `]` and printed `?code=<redacted>] 200`); fails_when=a secret query or fragment value of a logged request line, a quoted URL or a cut quoted URL carries any other marker than the one the caller passed, or the line keeps a stray bracket or more than one marker; no_claim=the masking of the secret-named assignments and the other query values of Next output (nextPagesMessageParts)
+test('Next server output ends a masked request path with one marker and no stray bracket when the secret pair is last before a blank', () => {
+  // Arrange
+  const callbackCode = ['callback', 'code', '8e1b3a65'].join('-')
+  const lines = [
+    `GET /cb?code=${callbackCode} 200\n`,
+    `GET /cb?state=xyz&code=${callbackCode} 200 in 12ms\n`,
+    `GET /login?next=/cb?code=${callbackCode} 302\n`,
+    `redirect https://idp.example/cb#access_token=${callbackCode} 302\n`,
+    `{"url":"/cb?code=${callbackCode}"}\n`,
+  ]
+
+  // Act
+  const masked = lines.map((line) => maskNextServerOutput(line))
+
+  // Assert
+  assert.deepEqual(masked, [
+    'GET /cb?code=<redacted> 200\n',
+    'GET /cb?state=<redacted>&code=<redacted> 200 in 12ms\n',
+    'GET /login?next=<redacted> 302\n',
+    'redirect https://idp.example/cb#access_token=<redacted> 302\n',
+    '{"url":"/cb?code=<redacted>"}\n',
+  ])
+  for (const line of masked) {
+    assert.equal(line.includes(callbackCode), false)
+    assert.equal(line.includes(']'), false)
+    assert.equal(line.includes(MASK), false)
+  }
+})
+
+// protects=the URL mask of a line whose Cookie or Set-Cookie label masked something (Cycle 0073 pt1 /ship pass 2: the labelled result was returned at once, so a callback code before or after the header stayed visible); fails_when=a line with both a secret URL query value and a labelled cookie value prints either one, or a quoted label value (`cookie: "theme=dark" then …`) drops the URL mask for the text after its closing quote; no_claim=a URL inside the masked cookie value, which the label mask covers whole
+test('a line with a callback code and a Cookie header masks both values', () => {
+  // Arrange
+  const callbackCode = ['callback', 'code', '8e1b3a65'].join('-')
+  const lines = [
+    `GET /cb?code=${callbackCode} cookie: sid=${COOKIE_VALUE}`,
+    `cookie: "theme=dark" then GET /cb?code=${callbackCode} 200`,
+    `redirect /cb#access_token=${callbackCode} Set-Cookie: sid=${COOKIE_VALUE}; Path=/`,
+  ]
+
+  // Act
+  const masked = lines.map((line) => maskSecretShapesInOutput(line).text)
+
+  // Assert
+  assert.deepEqual(masked, [
+    `GET /cb?code=${MASK} cookie: ${MASK}`,
+    `cookie: "${MASK}" then GET /cb?code=${MASK} 200`,
+    `redirect /cb#access_token=${MASK} Set-Cookie: ${MASK}`,
+  ])
+  for (const line of masked) {
+    assert.equal(line.includes(callbackCode), false)
+    assert.equal(line.includes(COOKIE_VALUE), false)
+  }
+})
+
+// protects=the marker a caller passes to the output masking reaches every URL rule (Cycle 0073 pt1 /ship pass 2: the bare line, a quoted URL and a URL in a cut element wrote the default marker whatever the caller passed); fails_when=a secret query or fragment value in a bare line, a quoted URL, an element a cap cut or a line with a Cookie label reads `[masked]` instead of the caller's `<redacted>`; no_claim=the default marker, which every other test of this file covers
+test('a caller that keeps its own marker gets it for every secret URL value of an output line', () => {
+  // Arrange
+  const callbackCode = ['callback', 'code', '8e1b3a65'].join('-')
+  const ownMarker = '<redacted>'
+  const lines = [
+    `GET /cb?code=${callbackCode} 200`,
+    `{"url":"/cb?code=${callbackCode}"}`,
+    `'/cb?code=${callbackCode}&page=2… [truncated]`,
+    `redirect /cb#access_token=${callbackCode} 302`,
+    `GET /cb?code=${callbackCode} cookie: sid=${COOKIE_VALUE}`,
+  ]
+
+  // Act
+  const masked = lines.map(
+    (line) => maskSecretShapesInOutput(line, false, ownMarker).text,
+  )
+
+  // Assert
+  assert.deepEqual(masked, [
+    'GET /cb?code=<redacted> 200',
+    '{"url":"/cb?code=<redacted>"}',
+    "'/cb?code=<redacted>&page=2… [truncated]",
+    'redirect /cb#access_token=<redacted> 302',
+    'GET /cb?code=<redacted> cookie: <redacted>',
+  ])
+  for (const line of masked) {
+    assert.equal(line.includes(callbackCode), false)
+    assert.equal(line.includes(MASK), false)
+  }
+})

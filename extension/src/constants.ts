@@ -2366,6 +2366,9 @@ export const OUTPUT_REDACTION_HOLD_LIMIT_CHARS = 8_192
 /** The characters kept back when an over-long run shows no secret shape is released, so a secret marker cut by the release is still seen whole ({@link createOutputRedactor}). */
 export const OUTPUT_REDACTION_CARRY_CHARS = 16
 
+/** The fewest characters of a secret start (`gh`, `Bea`) or of a Cookie or Authorization label (`Co`, `Authori`) that a trailing run or line must already show before an output redactor holds it for the next write; one letter (`Type A`, `Option C`, `Press s`) is far more often a word, and holding it moves a prompt behind later output or a debugger stop ({@link createOutputRedactor}). */
+export const OUTPUT_REDACTION_PREFIX_HOLD_MIN_CHARS = 2
+
 /** The longest single word of an unfinished output line that an output redactor holds back while it may be the start of an Authorization scheme or a secret cookie name before its `=`, and keeps as context once it is released, so the rest of its line is judged with it ({@link createOutputRedactor}); a cookie name is shorter than this. */
 export const OUTPUT_REDACTION_FIRST_WORD_HOLD_CHARS = 64
 

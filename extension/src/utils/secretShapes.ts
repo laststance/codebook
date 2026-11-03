@@ -51,8 +51,8 @@ const CREDENTIAL_TOKEN_MARK = /[\d_~+/=-]|\./
 /** A `Bearer` credential: {@link redactSecretText} masks its token and keeps the word, so the literal masker leaves it to that shape. */
 const BEARER_CREDENTIAL = /^bearer[ \t]/i
 
-/** How many characters "Bearer " takes: the part of a value read to tell a Bearer credential from any other scheme. */
-const BEARER_PREFIX_CHARS = 'Bearer '.length
+/** The word `Bearer` and the blanks after it at the start of a value, matched at `lastIndex` only (sticky): a labelled Bearer value keeps this part and has the rest masked ({@link findLabelledAuthorizations}). */
+const BEARER_WORD = /bearer[ \t]+/iy
 
 /** An `Authorization` label, also as the end of `Proxy-Authorization` or `X-Authorization`, with `:` or `=` as its separator (the key may be quoted: `"authorization":`). Group 1 holds the opening quote of the value, empty when the value is bare. A label with no separator (`Authorization header missing`) is prose, and a longer word (`authorization_endpoint`, `userAuthorization`) is another name. */
 const AUTHORIZATION_LABEL = /\bauthorization["']?[ \t]*[:=][ \t]*(["']?)/gi
@@ -337,14 +337,14 @@ function endOfQuotedAuthorizationValue(
 
 /**
  * Finds the value after each Authorization or Proxy-Authorization label that has a `:` or an `=` after it, whatever the scheme of the credential.
- * Why: the label alone proves the value is a credential, so `ApiKey 8f3a…`, `AWS4-HMAC-SHA256 Credential=…,Signature=…` and `Basic YTpi` are masked although no scheme list names them; the unlabelled shape rule ({@link isAuthorizationShape}) keeps its prose guard for a bare `Token expired`. A `Bearer` value is left to {@link redactSecretText}, which masks its token and keeps the word, so there is one masking for it. A quoted value is masked up to its closing quote; a bare value up to the line's end, or a closing bracket that nothing in the value opened, so the object or call that holds the label keeps its shape. Called by {@link maskShapedLiterals} for output and by {@link redactValuePreview} for a debugger preview and a fact string.
+ * Why: the label alone proves the value is a credential, so `ApiKey 8f3a…`, `AWS4-HMAC-SHA256 Credential=…,Signature=…` and `Basic YTpi` are masked although no scheme list names them; the unlabelled shape rule ({@link isAuthorizationShape}) keeps its prose guard for a bare `Token expired`. A `Bearer` value keeps its word and has everything after it masked, a short token (`Bearer short`) or one with a bar or a colon (`Bearer 12|abc…`) included, which the token rule of {@link redactSecretText} (eight token characters) would leave; a value that already reads `Bearer <mask>` is no replacement, so a second pass changes nothing. A quoted value is masked up to its closing quote; a bare value up to the line's end, or a closing bracket that nothing in the value opened, so the object or call that holds the label keeps its shape. Called by {@link maskShapedLiterals} for output and by {@link redactValuePreview} for a debugger preview and a fact string.
  * @param text - A preview or a text of one or more lines.
  * @param mask - What replaces a value.
  * @param limitOf - Tells the index a value never passes for the label at a given index, so a header line held in a quoted string ends before the string's closing quote. Called with indexes that do not decrease. Defaults to the text's end.
- * @returns One replacement per value, in order of position; a label inside a value already replaced belongs to that value, and an empty value is no replacement.
+ * @returns One replacement per value, in order of position; it starts where the value starts and, for a Bearer value, carries the word again before the mask. A label inside a value already replaced belongs to that value, and an empty value is no replacement.
  * @example
  * findLabelledAuthorizations('Authorization: ApiKey abc', '[masked]') // => [{ start: 15, end: 25, text: '[masked]' }]
- * findLabelledAuthorizations('Authorization: Bearer abc', '[masked]') // => []
+ * findLabelledAuthorizations('Authorization: Bearer abc', '[masked]') // => [{ start: 15, end: 25, text: 'Bearer [masked]' }]
  * findLabelledAuthorizations('Authorization header missing', '[masked]') // => []
  */
 export function findLabelledAuthorizations(
@@ -358,23 +358,25 @@ export function findLabelledAuthorizations(
     // A label inside a value that is already masked belongs to that value.
     if (label.index < maskedUntil) continue
     const valueStart = label.index + label[0].length
-    // A Bearer value keeps its word and gets its token masked by `redactSecretText`.
-    if (
-      BEARER_CREDENTIAL.test(
-        text.slice(valueStart, valueStart + BEARER_PREFIX_CHARS),
-      )
-    )
-      continue
+    // A Bearer value keeps its word: only what follows it is the credential.
+    BEARER_WORD.lastIndex = valueStart
+    const credentialStart = BEARER_WORD.test(text)
+      ? BEARER_WORD.lastIndex
+      : valueStart
     const limit = Math.min(limitOf?.(label.index) ?? text.length, text.length)
     const quote = label[1] ?? ''
     const end =
       quote === ''
-        ? endOfBareAuthorizationValue(text, valueStart, limit)
-        : endOfQuotedAuthorizationValue(text, valueStart, quote, limit)
-    const value = text.slice(valueStart, end)
+        ? endOfBareAuthorizationValue(text, credentialStart, limit)
+        : endOfQuotedAuthorizationValue(text, credentialStart, quote, limit)
+    const credential = text.slice(credentialStart, end)
     // A label with nothing after it, or with the mask of an earlier pass, has nothing to mask.
-    if (value.trim() === '' || value === mask) continue
-    replacements.push({ start: valueStart, end, text: mask })
+    if (credential.trim() === '' || credential === mask) continue
+    replacements.push({
+      start: valueStart,
+      end,
+      text: text.slice(valueStart, credentialStart) + mask,
+    })
     maskedUntil = end
   }
   return replacements
@@ -384,17 +386,18 @@ export function findLabelledAuthorizations(
  * Masks the values of the secret parameters in the pairs of a query or a fragment, split at `&` and at `;`.
  * Called by {@link maskSecretUrlQueries} and {@link maskSecretUrlFragments}.
  * @param pairs - The text after a `?` or a `#`.
- * @returns The pairs with each secret value (a secret name, or `code`) replaced by {@link REDACTION_MASK}; separators and other pairs unchanged.
- * @example maskQueryPairs('a=1;token=abc&page=2') // => 'a=1;token=[masked]&page=2'
+ * @param mask - What replaces a secret value.
+ * @returns The pairs with each secret value (a secret name, or `code`) replaced by the mask; separators and other pairs unchanged.
+ * @example maskQueryPairs('a=1;token=abc&page=2', '[masked]') // => 'a=1;token=[masked]&page=2'
  */
-function maskQueryPairs(pairs: string): string {
+function maskQueryPairs(pairs: string, mask: string): string {
   // The capture group keeps each separator at an odd position.
   return pairs
     .split(/([&;])/)
     .map((part, position) =>
       position % 2 === 1
         ? part
-        : maskSecretFormPairs(part, isSecretQueryParameter),
+        : maskSecretFormPairs(part, isSecretQueryParameter, mask),
     )
     .join('')
 }
@@ -403,15 +406,16 @@ function maskQueryPairs(pairs: string): string {
  * Masks the value of each secret query parameter (a secret name, or `code`) in a URL-shaped text, keeping the rest readable; every `?` opens a query, so `/login?next=/cb?code=abc` is masked in the nested one too.
  * Why: `req.url`, `resolvedUrl` and a `referer` carry the callback code or the reset token of the request; called by {@link maskBareShape}.
  * @param text - A URL, a path with a query, or text holding one.
- * @returns The text with each such value replaced by {@link REDACTION_MASK}; unchanged when it names none.
+ * @param mask - What replaces a secret value.
+ * @returns The text with each such value replaced by the mask; unchanged when it names none.
  * @example
- * maskSecretUrlQueries('/cb?code=abc&page=2') // => '/cb?code=[masked]&page=2'
- * maskSecretUrlQueries('/login?next=/cb?code=abc') // => '/login?next=/cb?code=[masked]'
+ * maskSecretUrlQueries('/cb?code=abc&page=2', '[masked]') // => '/cb?code=[masked]&page=2'
+ * maskSecretUrlQueries('/login?next=/cb?code=abc', '[masked]') // => '/login?next=/cb?code=[masked]'
  */
-function maskSecretUrlQueries(text: string): string {
+function maskSecretUrlQueries(text: string, mask: string): string {
   return text.replace(
     URL_QUERY,
-    (_query, pairs: string) => `?${maskQueryPairs(pairs)}`,
+    (_query, pairs: string) => `?${maskQueryPairs(pairs, mask)}`,
   )
 }
 
@@ -419,14 +423,15 @@ function maskSecretUrlQueries(text: string): string {
  * Masks the secret parameters of a URL fragment that holds `name=value` pairs, the way the OAuth implicit flow returns `#access_token=…`.
  * Called by {@link maskBareShape}.
  * @param text - A URL, or text holding one.
- * @returns The text with each such value replaced by {@link REDACTION_MASK}; a fragment without `=` (`#section`, `#42`) and the rest unchanged.
+ * @param mask - What replaces a secret value.
+ * @returns The text with each such value replaced by the mask; a fragment without `=` (`#section`, `#42`) and the rest unchanged.
  * @example
- * maskSecretUrlFragments('/cb#access_token=abc&state=1') // => '/cb#access_token=[masked]&state=1'
- * maskSecretUrlFragments('/docs#install') // => '/docs#install'
+ * maskSecretUrlFragments('/cb#access_token=abc&state=1', '[masked]') // => '/cb#access_token=[masked]&state=1'
+ * maskSecretUrlFragments('/docs#install', '[masked]') // => '/docs#install'
  */
-function maskSecretUrlFragments(text: string): string {
+function maskSecretUrlFragments(text: string, mask: string): string {
   return text.replace(URL_FRAGMENT, (fragment, pairs: string) =>
-    pairs.includes('=') ? `#${maskQueryPairs(pairs)}` : fragment,
+    pairs.includes('=') ? `#${maskQueryPairs(pairs, mask)}` : fragment,
   )
 }
 
@@ -434,13 +439,18 @@ function maskSecretUrlFragments(text: string): string {
  * Masks the secret query and fragment values of every URL or path inside a text: `GET /cb?code=abc 200` and `redirect https://idp/cb#access_token=abc`.
  * Why: a development server's request log prints the callback code or reset token of the request in plain text; called by {@link maskBareShape} and the output line masking ({@link maskSecretShapesInOutput}). Each query and fragment run is scanned once, so the time is linear.
  * @param text - A URL, a path with a query, or a line of text holding one.
- * @returns The text with each secret-named or `code` value replaced by {@link REDACTION_MASK}; unchanged when it holds none.
+ * @param mask - What replaces a secret value; {@link REDACTION_MASK} unless the caller keeps another marker ({@link maskNextServerOutput} reads its own marker after this pass and must not meet the default one).
+ * @returns The text with each secret-named or `code` value replaced by the mask; unchanged when it holds none.
  * @example
  * maskSecretUrlParts('GET /cb?code=abc&page=2 200') // => 'GET /cb?code=[masked]&page=2 200'
+ * maskSecretUrlParts('GET /cb?code=abc 200', '<redacted>') // => 'GET /cb?code=<redacted> 200'
  * maskSecretUrlParts('GET /items?page=2 200') // => 'GET /items?page=2 200'
  */
-export function maskSecretUrlParts(text: string): string {
-  return maskSecretUrlFragments(maskSecretUrlQueries(text))
+export function maskSecretUrlParts(
+  text: string,
+  mask: string = REDACTION_MASK,
+): string {
+  return maskSecretUrlFragments(maskSecretUrlQueries(text, mask), mask)
 }
 
 /**
@@ -521,7 +531,7 @@ export function maskBareShape(
     (isAuthorizationShape(text) && !BEARER_CREDENTIAL.test(text.trim()))
   )
     return mask
-  return maskSecretUrlParts(text)
+  return maskSecretUrlParts(text, mask)
 }
 
 /**
@@ -674,15 +684,16 @@ const CUT_AUTHORIZATION_CREDENTIAL = new RegExp(
  * Masks the secret query and fragment values in the visible part of a text that a cap cut, leaving a secret value the cut elided entirely as it is.
  * Called by {@link cutElementReplacement}.
  * @param visible - The text before the trim mark.
+ * @param mask - What replaces a secret value.
  * @returns The text with each secret value in it masked; a last `name=` with nothing after it keeps reading `name=`, since the cut left no value to hide.
  * @example
- * maskVisibleUrlParts('/cb?page=2&code=abc') // => '/cb?page=2&code=[masked]'
- * maskVisibleUrlParts('/cb?page=2&code=') // => '/cb?page=2&code='
+ * maskVisibleUrlParts('/cb?page=2&code=abc', '[masked]') // => '/cb?page=2&code=[masked]'
+ * maskVisibleUrlParts('/cb?page=2&code=', '[masked]') // => '/cb?page=2&code='
  */
-function maskVisibleUrlParts(visible: string): string {
-  const masked = maskSecretUrlParts(visible)
-  return visible.endsWith('=') && masked.endsWith(`=${REDACTION_MASK}`)
-    ? masked.slice(0, -REDACTION_MASK.length)
+function maskVisibleUrlParts(visible: string, mask: string): string {
+  const masked = maskSecretUrlParts(visible, mask)
+  return visible.endsWith('=') && masked.endsWith(`=${mask}`)
+    ? masked.slice(0, -mask.length)
     : masked
 }
 
@@ -712,7 +723,7 @@ function cutElementReplacement(
     (isAuthorizationShape(cut.text) && !BEARER_CREDENTIAL.test(cut.text.trim()))
   )
     return mask
-  const maskedVisible = maskVisibleUrlParts(cut.text)
+  const maskedVisible = maskVisibleUrlParts(cut.text, mask)
   if (maskedVisible === cut.text) return undefined
   return `${text.charAt(element.start)}${maskedVisible}${inner.slice(cut.text.length)}`
 }

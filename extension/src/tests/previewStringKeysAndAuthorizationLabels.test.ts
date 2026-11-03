@@ -116,7 +116,7 @@ test('output masks the whole value after an Authorization or Proxy-Authorization
     assert.equal(masked.includes(secret), false)
 })
 
-// protects=one masking for a Bearer value after an Authorization label; fails_when=the labelled rule also masks the Bearer value, so the word is lost or the token is masked twice; no_claim=a Bearer value shorter than eight characters, which the secret text rule does not take for a token
+// protects=one masking for a Bearer value after an Authorization label; fails_when=the word `Bearer` is lost, or the token is masked twice (`Bearer [masked]` becomes `[masked] [masked]` or a second pass changes the line); no_claim=a Bearer token of other shapes (own test)
 test('an Authorization label with a Bearer value keeps the word and masks the token once', () => {
   // Arrange
   const line = `Authorization: Bearer ${API_KEY_VALUE}\n`
@@ -125,7 +125,7 @@ test('an Authorization label with a Bearer value keeps the word and masks the to
   const released = createOutputRedactor()
   const viaRedactor = released.write(line) + released.end()
   // Assert
-  assert.equal(shapesOnly, line)
+  assert.equal(shapesOnly, `Authorization: Bearer ${MASK}\n`)
   assert.equal(viaRedactor, `Authorization: Bearer ${MASK}\n`)
 })
 
@@ -292,4 +292,64 @@ test('a record whose name member is prose with a secret word keeps its value rea
   assert.equal(secretVerdict, true)
   assert.equal(redactedReadable, readable)
   assert.equal(redactedSecret, `{name: 'session', value: ${MASK}}`)
+})
+
+// protects=a Bearer value after an Authorization label whose token the text rule for Bearer tokens does not take for one (Cycle 0073 pt1 /ship pass 2: `Bearer 12|abcdefgh`, `Bearer v2:abcdefgh` and `Bearer short` stayed visible, against the README sentence that any scheme after the label is masked); fails_when=such a token is printed in a line, through the output redactor, in a fact string or in a quoted preview element, or the word `Bearer` is lost, or a second pass changes the masked text; no_claim=a Bearer word with no Authorization label before it (`Bearer short` alone), which stays prose
+test('an Authorization label masks everything after a Bearer word, a short or punctuated token included, and keeps the word', () => {
+  // Arrange
+  const tokens = [
+    ['12', 'abcdefgh'].join('|'),
+    ['v2', 'abcdefgh'].join(':'),
+    'short',
+  ]
+  const lines = tokens.map((token) => `Authorization: Bearer ${token}`)
+  const proxyLine = `Proxy-Authorization: Bearer ${tokens[0]}`
+  const quotedValue = `{ authorization: "Bearer ${tokens[2]}", n: 1 }`
+  // Act
+  const masked = lines.map((line) => maskSecretShapesInOutput(line).text)
+  const maskedAgain = masked.map((line) => maskSecretShapesInOutput(line).text)
+  const proxyMasked = maskSecretShapesInOutput(proxyLine).text
+  const quotedMasked = maskSecretShapesInOutput(quotedValue).text
+  const viaRedactor = lines.map((line) => {
+    const redactor = createOutputRedactor()
+    return redactor.write(`${line}\n`) + redactor.end()
+  })
+  const previews = tokens.map((token) =>
+    redactValuePreview(`{ h: 'Authorization: Bearer ${token}', n: 1 }`),
+  )
+  const facts = lines.map((line) => maskFactString(line))
+  // Assert
+  assert.deepEqual(masked, [
+    `Authorization: Bearer ${MASK}`,
+    `Authorization: Bearer ${MASK}`,
+    `Authorization: Bearer ${MASK}`,
+  ])
+  assert.deepEqual(maskedAgain, masked)
+  assert.equal(proxyMasked, `Proxy-Authorization: Bearer ${MASK}`)
+  assert.equal(quotedMasked, `{ authorization: "Bearer ${MASK}", n: 1 }`)
+  assert.deepEqual(viaRedactor, [
+    `Authorization: Bearer ${MASK}\n`,
+    `Authorization: Bearer ${MASK}\n`,
+    `Authorization: Bearer ${MASK}\n`,
+  ])
+  assert.deepEqual(previews, [
+    `{ h: 'Authorization: Bearer ${MASK}', n: 1 }`,
+    `{ h: 'Authorization: Bearer ${MASK}', n: 1 }`,
+    `{ h: 'Authorization: Bearer ${MASK}', n: 1 }`,
+  ])
+  // The member rule of a fact masks the Bearer word too, as it did before the label rule.
+  assert.deepEqual(facts, [
+    `Authorization: ${MASK}`,
+    `Authorization: ${MASK}`,
+    `Authorization: ${MASK}`,
+  ])
+  for (const text of [
+    ...masked,
+    proxyMasked,
+    quotedMasked,
+    ...viaRedactor,
+    ...previews,
+    ...facts,
+  ])
+    for (const token of tokens) assert.equal(text.includes(token), false)
 })

@@ -36,7 +36,7 @@ test('a quoted session pair longer than the scan limit is released masked', () =
   assert.equal(released, `${MASK}\n`)
 })
 
-// protects=a Cookie or Authorization label cut by a chunk boundary after other text on its line (Cycle 0073 pt1 /ship pass 1: `[info] Coo` + `kie: sid=…` released the pair); fails_when=an unfinished line that shows no quote, equals sign or Cookie word yet is released, so the label that completes in the next write is never judged with its value; no_claim=a label cut in a line longer than the 8 KiB hold
+// protects=a Cookie or Authorization label cut by a chunk boundary after other text on its line (Cycle 0073 pt1 /ship pass 1: `[info] Coo` + `kie: sid=…` released the pair); fails_when=an unfinished line that shows no quote, equals sign or Cookie word yet is released, so the label that completes in the next write is never judged with its value; no_claim=a label cut in a line longer than the 8 KiB hold, or after its first letter alone (`-> C` + `ookie:`), which is released at once
 test('the output redactor masks a Cookie or Authorization header whose label is cut by a chunk boundary after other text on its line', () => {
   // Arrange
   const digest = 'Digest username="u", realm="r", nonce="n"'
@@ -47,8 +47,8 @@ test('the output redactor masks a Cookie or Authorization header whose label is 
     },
     {
       chunks: [
-        'request headers -> C',
-        `ookie: sid=${SESSION_VALUE}; theme=dark\n`,
+        'request headers -> Co',
+        `okie: sid=${SESSION_VALUE}; theme=dark\n`,
       ],
       expected: `request headers -> Cookie: ${MASK}\n`,
     },
@@ -289,7 +289,7 @@ test('ending the output during the drop of an over-long header line releases not
   assert.equal(afterEnd, 'fresh line\n')
 })
 
-// protects=a callback code or token in the query of a request path that a chunk boundary cuts (Cycle 0073 pt1 /ship pass 1: the query mask reads released lines, and a line is released at once when it holds no quote, equals sign or semicolon); fails_when=`GET /cb?co` is released before `de=…`, so the code is judged without its name; no_claim=a prompt that ends in a question mark with no blank after it, which waits for the next write
+// protects=a callback code or token in the query of a request path that a chunk boundary cuts (Cycle 0073 pt1 /ship pass 1: the query mask reads released lines, and a line is released at once when it holds no quote, equals sign or semicolon); fails_when=`GET /cb?co` is released before `de=…`, so the code is judged without its name; no_claim=a word with a question mark or a hash that no slash comes before (own test), which is released at once
 test('a request path whose query is cut by a chunk boundary is masked, and a prompt followed by a blank is released at once', () => {
   // Arrange
   const redactor = createOutputRedactor()
@@ -305,4 +305,42 @@ test('a request path whose query is cut by a chunk boundary is masked, and a pro
   assert.equal(releaseAll(cutInValue), `GET /cb?code=${MASK} 200\n`)
   assert.equal(releaseAll(cutAtFragment), `redirect /cb#access_token=${MASK}\n`)
   assert.equal(prompt, 'Continue? ')
+})
+
+// protects=output keeps its arrival order around a debugger stop for a prompt that ends in one letter, a question mark or a hash (Cycle 0073 pt1 /ship pass 2: `Option C`, `Type A`, `Press s`, `Ready?` and `C#` waited for the next write, so they were delivered after later output); fails_when=a partial line whose last word is one letter, or whose last word holds a `?` or `#` with no `/` before it, is held; no_claim=a line that holds a quote, an equals sign or a semicolon, which waits for its break by design
+test('a partial line that ends in one letter, a question mark or a hash is released at once', () => {
+  // Arrange
+  const prompts = ['Type A', 'Option C', 'Press s', 'Ready?', 'Use C#']
+
+  // Act
+  const released = prompts.map((prompt) => createOutputRedactor().write(prompt))
+
+  // Assert
+  assert.deepEqual(released, prompts)
+})
+
+// protects=the cut-label and cut-query leaks stay closed after the hold is narrowed (Cycle 0073 pt1 /ship pass 2: a label needs two of its letters, a query mark needs a slash before it); fails_when=`[x] Co`, `GET /cb?` or `see https://idp.example/cb#` is released before the next write, or the Cookie value that completes `[x] Co` is printed; no_claim=a label cut after its first letter alone (`[x] C`), which is released
+test('a line cut after two letters of a label or after the query mark of a path still waits for the next write', () => {
+  // Arrange
+  const labelRedactor = createOutputRedactor()
+  const queryRedactor = createOutputRedactor()
+  const fragmentRedactor = createOutputRedactor()
+
+  // Act
+  const labelStart = labelRedactor.write('[x] Co')
+  const labelRest = labelRedactor.write(
+    `okie: sid=${SESSION_VALUE}; theme=dark\n`,
+  )
+  const queryStart = queryRedactor.write('GET /cb?')
+  const queryRest = queryRedactor.write(`code=${SESSION_VALUE} 200\n`)
+  const fragmentStart = fragmentRedactor.write('see https://idp.example/cb#')
+  const fragmentRest = fragmentRedactor.write(`access_token=${SESSION_VALUE}\n`)
+
+  // Assert
+  assert.equal(labelStart, '')
+  assert.equal(labelRest, `[x] Cookie: ${MASK}\n`)
+  assert.equal(queryStart, 'GET ')
+  assert.equal(queryRest, `/cb?code=${MASK} 200\n`)
+  assert.equal(fragmentStart, 'see ')
+  assert.equal(fragmentRest, `https://idp.example/cb#access_token=${MASK}\n`)
 })

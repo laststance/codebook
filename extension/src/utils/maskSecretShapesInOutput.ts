@@ -103,7 +103,7 @@ function maskLabelledCredentials(line: string, mask: string): string {
  * Called by {@link maskSecretShapesInOutput} for each line.
  * @param line - One line without its break.
  * @param mask - What replaces a masked value.
- * @returns The line with the credential replaced by the mask; unchanged when it holds none. A line that is one secret-named assignment (`API_KEY=…`) keeps its name; the secret query and fragment values of a URL or path in any other line are masked.
+ * @returns The line with the credential replaced by the mask; unchanged when it holds none. A line that is one secret-named assignment (`API_KEY=…`) keeps its name; the secret query and fragment values of a URL or path in any other line, also in a line that holds a labelled credential, are masked with the same mask.
  * @example
  * maskBareLine('Cookie: sid=abc; theme=dark', '[masked]') // => 'Cookie: [masked]'
  * maskBareLine('  Basic dXNlcjpwYXNz,', '[masked]') // => '  [masked],'
@@ -111,7 +111,8 @@ function maskLabelledCredentials(line: string, mask: string): string {
  */
 function maskBareLine(line: string, mask: string): string {
   const labelled = maskLabelledCredentials(line, mask)
-  if (labelled !== line) return labelled
+  // The text around a labelled value may hold a secret URL value too (`GET /cb?code=… cookie: sid=…`).
+  if (labelled !== line) return maskSecretUrlParts(labelled, mask)
   // `console.log(req.headers.cookie)` prints the value alone, and a logged list ends its items with a comma.
   const trimmedEnd = line.trimEnd()
   const textStart = line.length - line.trimStart().length
@@ -129,7 +130,7 @@ function maskBareLine(line: string, mask: string): string {
   if (isAuthorizationShape(text) && !BEARER_VALUE.test(text))
     return `${kept}${mask}${ending}`
   // A request log prints the callback code or reset token of a path or a fragment in plain text.
-  return maskSecretUrlParts(line)
+  return maskSecretUrlParts(line, mask)
 }
 
 /**
