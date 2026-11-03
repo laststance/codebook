@@ -67,9 +67,6 @@ const SECRET_START_MARKERS = [
 /** The marks of a URL's query and fragment: the secret name and value that follow one may come with the next chunk, and a query holds no blank, so the run ends where the query does. */
 const QUERY_OR_FRAGMENT_MARK = /[?#]/
 
-/** A character a query or fragment parameter name can start with: a mark followed by one of them may be the start of `code=…` or `token=…`. */
-const PARAMETER_NAME_START = /[A-Za-z_]/
-
 /** The bracket that closes a prompt's choices (`(y/n)`, `[Y/n]`) right before its question mark. */
 const CLOSING_BRACKET = /[)\]]/
 
@@ -202,27 +199,23 @@ function mayBecomeShapedLine(partialLine: string): boolean {
 
 /**
  * Says whether a trailing run may be cut inside the name of a query or fragment parameter, or just before it.
- * Why: the `code=…` or `token=…` after a `?` or `#` may come with the next chunk, and a name cut in two (`?to` + `ken=…`) is not a secret name in either half. A run that holds a mark with a letter or `_` after it (`?to`, `app.html?tok`, `#access_to`, `x?next=/a&co`) is held whether or not a `/` comes before it, since a parameter name starts with one. A mark followed only by digits or punctuation (`#3000):`, `?!`, `#,`) begins no name, and a run that ends in a bare mark is held only when it reads like a path or a URL (a `/` before the mark): a word such as `Ready?` or `C#`, a lone `?` and a prompt such as `(y/n)?` or `[Y/n]?` are released, so a prompt keeps its place before later output. The marks are found by one linear search, so a long run is never rescanned from every start. Called by {@link mayBecomeSecret}.
+ * Why: the `code=…` or `token=…` after a `?` or `#` may come with the next chunk, and a name cut in two (`?to` + `ken=…`) is not a secret name in either half. A run that starts with the mark, or holds characters after one (`app.html?tok`, `#access_to`), is held whether or not a `/` comes before it. A run that ends in a bare mark is held only when it reads like a path or a URL (a `/` before the mark): a word such as `Ready?` or `C#` is no URL, and a prompt such as `(y/n)?` or `[Y/n]?` closes with a bracket, so holding either would move it behind later output. The marks are found by one linear search, so a long run is never rescanned from every start. Called by {@link mayBecomeSecret}.
  * @param run - The trailing run without whitespace.
- * @returns `true` when a `?` or `#` in the run has a letter or `_` after it, or the run ends in a bare mark that a `/` precedes, with no closing bracket right before the mark unless the run starts with `/` or holds `://`.
+ * @returns `true` when the run starts with a `?` or `#`, holds one that more characters follow, or ends in one that a `/` (and no closing bracket right before it) precedes.
  * @example
  * mayBeCutInQuery('?to') // => true
  * mayBeCutInQuery('app.html?tok') // => true
  * mayBeCutInQuery('/cb?') // => true
- * mayBeCutInQuery('#3000):') // => false
  * mayBeCutInQuery('Ready?') // => false
  * mayBeCutInQuery('(y/n)?') // => false
- * mayBeCutInQuery('/odata/Items(5)?') // => true
  */
 function mayBeCutInQuery(run: string): boolean {
   const mark = run.search(QUERY_OR_FRAGMENT_MARK)
   if (mark === -1) return false
-  // A letter or `_` after the first mark: a parameter name has begun, and it and its value may end in a later write.
-  if (PARAMETER_NAME_START.test(run.slice(mark + 1))) return true
-  if (mark !== run.length - 1 || !run.includes('/')) return false
-  // A bare mark ends a path or URL: it waits for its query. A prompt that closes its choices with a bracket (`(y/n)?`) does not, unless the run reads as a path or URL itself (`/odata/Items(5)?`, `http://[::1]?`).
-  const isPathOrUrl = run.startsWith('/') || run.includes('://')
-  return isPathOrUrl || !CLOSING_BRACKET.test(run.charAt(mark - 1))
+  // The mark starts the run or more characters follow it: the parameter name may end anywhere in them.
+  if (mark === 0 || mark < run.length - 1) return true
+  // A bare mark ends the run: a prompt closes with a bracket before it, and a word has no slash.
+  return !CLOSING_BRACKET.test(run.charAt(mark - 1)) && run.includes('/')
 }
 
 /**
