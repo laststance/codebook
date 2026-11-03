@@ -245,7 +245,7 @@ import {
 } from './utils/nextEntryLeftMessage'
 import { nextPathnameOf } from './utils/nextPathnameOf'
 import { nextServedChunkFetcher } from './utils/nextServedChunkFetcher'
-import { nextServerOnlyFileReason } from './utils/nextServerOnlyFileReason'
+import { nextServerOnlyFileReasonOfStop } from './utils/nextServerOnlyFileReason'
 import { nextServerOnlyStopMessage } from './utils/nextServerOnlyStopMessage'
 import { OperationAfterTimeoutError } from './utils/operationAfterTimeoutError'
 import { operationRefusalText } from './utils/operationRefusalText'
@@ -1112,6 +1112,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    */
   get packageRoot(): string {
     return this.nextPackage?.packageRoot ?? this.options.workspace
+  }
+
+  /**
+   * The Next app the Next-path readers of this run use: the resolved package, else the root app of the opened workspace (a run whose preparation has not resolved one yet reads exactly as 0.2.74.0 did).
+   * Called by the launch-failure notes and the server-only checks of a Pages run.
+   * @example this.nextPackageOrRoot.packageRoot // '/repo/examples/web' for packageRoot "examples/web"
+   */
+  private get nextPackageOrRoot(): ResolvedNextPackage {
+    return this.nextPackage ?? rootNextPackage(this.options.workspace)
   }
 
   /** The Next app this run resolved (with its path mappers), or `undefined` before preparation resolves it and for a Vite run. @example run.resolvedNextPackage?.toPackageRelative('examples/react/nextjs/src/pages/index.tsx') // 'src/pages/index.tsx' */
@@ -3927,7 +3936,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       nextVersion,
       outputTail: () => this.app!.outputTail(),
       compileFailureSentences: () =>
-        describeNextLaunchFailure({ workspace, nextVersion, port }),
+        describeNextLaunchFailure({
+          nextPackage: this.nextPackageOrRoot,
+          nextVersion,
+          port,
+        }),
     }).catch((error: unknown) => {
       throw this.pagesRefusalAfterReadiness(error)
     })
@@ -3955,11 +3968,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     port: number,
   ): Promise<unknown> {
     if (this.abort.signal.aborted || error instanceof StudyError) return error
-    const workspace = this.options.workspace
+    const nextPackage = this.nextPackageOrRoot
     const notes = await describeNextLaunchFailure({
-      workspace,
+      nextPackage,
       nextVersion: (
-        await readNextInstallation(workspace, this.nextPackage?.nextFolder)
+        await readNextInstallation(
+          nextPackage.packageRoot,
+          nextPackage.nextFolder,
+        )
       ).version,
       port,
     })
@@ -4005,7 +4021,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         throw pagesServerStopRefusal({ kind: 'version-2', place })
       return
     }
-    const reason = nextServerOnlyFileReason(stop.source.path, pagesRun.folder)
+    const reason = nextServerOnlyFileReasonOfStop(
+      this.nextPackageOrRoot,
+      stop.source.path,
+      pagesRun.folder,
+    )
     if (reason)
       throw nextRefusal(
         'NEXT_SERVER_ONLY_STOP',
@@ -4032,7 +4052,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.alive()
     for (const stop of configuredStops(this.definition.configuration)) {
       if (stop.participant !== 'server') continue
-      const reason = nextServerOnlyFileReason(stop.source.path, folder)
+      const reason = nextServerOnlyFileReasonOfStop(
+        this.nextPackageOrRoot,
+        stop.source.path,
+        folder,
+      )
       if (reason)
         throw pagesServerStopRefusal({
           kind: 'lexical',
@@ -4064,7 +4088,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       // A blank, comment or type-only line holds no code to run on either side, so it binds to the next mapped line without a server read.
       if (isBlankOrCommentLine(stop.bundle.source, stop.source.line)) continue
       const established = await readNextServerOnlyReason({
-        workspace: this.options.workspace,
+        nextPackage: this.nextPackageOrRoot,
         path: stop.source.path,
         line: stop.source.line,
         folder: pagesRun.folder,

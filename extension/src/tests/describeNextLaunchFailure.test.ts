@@ -11,6 +11,7 @@ import { launchDevelopmentServer } from '../utils/launchDevelopmentServer'
 import { maskNextServerOutput } from '../utils/maskNextServerOutput'
 import { readDeclaredDevelopmentPort } from '../utils/readDeclaredDevelopmentPort'
 import { readRepositoryAdapterReadiness } from '../utils/readRepositoryAdapterReadiness'
+import { rootNextPackage } from '../utils/resolveNextPackage'
 
 /**
  * Creates a temporary project whose `package.json` has this `dev` script.
@@ -37,7 +38,7 @@ test('a Pages launch failure of a Turbopack dev script with a preparation step n
   })
   // Act
   const notes = await describeNextLaunchFailure({
-    workspace,
+    nextPackage: rootNextPackage(workspace),
     nextVersion: '16.4.3',
     port: 3000,
   })
@@ -57,7 +58,7 @@ test('a Pages launch failure of a dev script that only sets NODE_OPTIONS names t
   })
   // Act
   const notes = await describeNextLaunchFailure({
-    workspace,
+    nextPackage: rootNextPackage(workspace),
     nextVersion: '16.4.3',
     port: 3000,
   })
@@ -77,7 +78,7 @@ test('a Pages launch failure of a plain webpack dev script adds no note', async 
   })
   // Act
   const notes = await describeNextLaunchFailure({
-    workspace,
+    nextPackage: rootNextPackage(workspace),
     nextVersion: '16.4.3',
     port: 3000,
   })
@@ -159,7 +160,7 @@ test('a secret passed in a dev script flag reaches no port refusal, readiness no
     new AbortController().signal,
   )
   const launchFailure = await describeNextLaunchFailure({
-    workspace,
+    nextPackage: rootNextPackage(workspace),
     nextVersion: '16.0.1',
     port: declared.port,
   })
