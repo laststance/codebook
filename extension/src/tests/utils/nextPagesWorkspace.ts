@@ -1,12 +1,16 @@
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
+import { REPOSITORY_MAPPED_POSITION_MAX_GENERATED_LINES } from '../../constants'
 import type { NextRouteManifests } from '../../utils/readNextRouteManifests'
 
 import {
   browserChunk,
+  PAGES_MANIFEST,
   pagesEvalModule,
-  serverChunk,
+  withMappings,
+  writePagesServerBuild,
+  type NextPagesServerCompile,
 } from './nextPagesBuildHarness'
 
 /** What the stand-in page reports of `window.next.router` and its location at one read. */
@@ -39,21 +43,20 @@ export type NextPagesHarnessOptions = {
   citedInPageChunk?: boolean
   /** How many lines, from line 1, the browser module of the cited source maps, or the ascending lines it maps; 1 by default. */
   mappedLines?: number | readonly number[]
-  /** Writes the page's server compile, whose `(pages-dir-node)` module of the cited source maps every line. */
-  serverCompile?: boolean
+  /** Gives the browser module of the cited source a map whose scan stops at its size limit before it reaches any line (the generated-lines limit), so the client mapping of every line reads `unknown`. */
+  browserMapScanStopsAtLimit?: boolean
+  /**
+   * Writes the page's server compile (`.next/dev/server/pages/index.js`), whose `(pages-dir-node)` module of the cited source maps every line. `true` is a compile that holds the cited module; an object stages where the module is and which server chunks the compile requires ({@link NextPagesServerCompile}).
+   */
+  serverCompile?: boolean | NextPagesServerCompile
   /** Adds an App folder (`src/app/page.tsx`), so the workspace has both routers. */
   withAppFolder?: boolean
   /** The masked output tail the stand-in server reports. */
   outputTail?: string
 }
 
-/** The Pages manifest of the stand-in project: Next's own entries and the page `/`. */
-const PAGES_MANIFEST = {
-  '/_app': 'pages/_app.js',
-  '/_error': 'pages/_error.js',
-  '/_document': 'pages/_document.js',
-  '/': 'pages/index.js',
-}
+/** The page `/` of the stand-in project. */
+const ENTRY_PAGE_PATH = 'src/pages/index.tsx'
 
 /** A stand-in page file (never application code), which makes `src/pages` the Pages folder Next reads. */
 const STAND_IN_PAGE = 'export default function Home() {\n  return null\n}\n'
@@ -81,7 +84,9 @@ export async function writeNextPagesWorkspace(
     await writeFile(join(workspace, path), text)
   }
   const root = await realpath(workspace)
-  await write('src/pages/index.tsx', STAND_IN_PAGE)
+  // A stop cited in the entry page itself keeps its own file: the cited text is the page.
+  if (cited.path !== ENTRY_PAGE_PATH)
+    await write(ENTRY_PAGE_PATH, STAND_IN_PAGE)
   if (options.withAppFolder) await write('src/app/page.tsx', STAND_IN_PAGE)
   await write(
     'node_modules/next/package.json',
@@ -104,13 +109,19 @@ export async function writeNextPagesWorkspace(
     '.next/dev/server/pages-manifest.json',
     JSON.stringify(PAGES_MANIFEST),
   )
-  const moduleJavascript = pagesEvalModule(
+  const mappedModule = pagesEvalModule(
     root,
     cited.path,
     cited.text,
     'pages-dir-browser',
     options.mappedLines ?? 1,
   )
+  const moduleJavascript = options.browserMapScanStopsAtLimit
+    ? withMappings(
+        mappedModule,
+        ';'.repeat(REPOSITORY_MAPPED_POSITION_MAX_GENERATED_LINES + 1),
+      )
+    : mappedModule
   if (options.chunks ?? true) {
     await write(
       '.next/dev/static/chunks/pages/index.js',
@@ -127,17 +138,11 @@ export async function writeNextPagesWorkspace(
     )
   }
   if (options.serverCompile)
-    await write(
-      '.next/dev/server/pages/index.js',
-      serverChunk({
-        [`./${cited.path}`]: pagesEvalModule(
-          root,
-          cited.path,
-          cited.text,
-          'pages-dir-node',
-          cited.text.trimEnd().split('\n').length,
-        ),
-      }),
+    await writePagesServerBuild(
+      write,
+      root,
+      cited,
+      options.serverCompile === true ? {} : options.serverCompile,
     )
   return { moduleJavascript, buildManifest }
 }

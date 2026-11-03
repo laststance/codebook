@@ -483,6 +483,8 @@ export async function configuredRuntimeHarness(
   }[] = []
   // The entry path of each structured entry check the run asked the stand-in server for.
   const entryChecks: string[] = []
+  // How many times the run launched the development server (`launchDevelopmentServer`), so a refusal that comes before the server starts can say none was.
+  let developmentServerLaunches = 0
   // The text of each initial input the run sent to the page, in order.
   const insertedTexts: string[] = []
   // The method of every `Input.*` CDP request the run sent to the page, in order (no parameters, so no typed value is kept).
@@ -1741,7 +1743,10 @@ export async function configuredRuntimeHarness(
         },
       },
       './utils/launchDevelopmentServer': {
-        launchDevelopmentServer: () => fakeApplication,
+        launchDevelopmentServer: () => {
+          developmentServerLaunches += 1
+          return fakeApplication
+        },
       },
       './viteDevAdapter': {
         VITE_DEV_ADAPTER: {
@@ -1975,6 +1980,8 @@ export async function configuredRuntimeHarness(
     readyEntryPaths,
     /** The entry path of each structured entry check (`app.readyEntry`) of a Pages-capable run, in order. */
     entryChecks,
+    /** How many times the run launched the development server (the Next adapter calls `launchDevelopmentServer`); 0 for a run refused before its server starts. */
+    developmentServerLaunches: (): number => developmentServerLaunches,
     /** The text of each initial input the run sent to the page (`Input.insertText`), in order. */
     insertedTexts,
     /** The method of every `Input.*` request the run sent to the page (`Input.insertText`, `Input.dispatchMouseEvent`, …), in order; the saved-session lanes assert that a refusal or a facts read sends none. */

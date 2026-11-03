@@ -83,6 +83,7 @@ import {
 } from './errors'
 import {
   nextRefusal,
+  PAGES_STOP_REFUSAL_DETAILS,
   nextSetupDeadlineRecovery,
   nextSetupDeadlineSentence,
   nextSetupDeadlineVariantOf,
@@ -197,6 +198,7 @@ import { describeRenderRunMessage } from './utils/describeRenderRunMessage'
 import { elapsedMsSince } from './utils/elapsedMsSince'
 import { entryRoutePatternOf } from './utils/entryRoutePatternOf'
 import { bundleOfEvaluatedModule } from './utils/extractDevelopmentModule'
+import { findNextRouteFolder } from './utils/findNextRouteFolder'
 import { findUnmappedDeclaredStop } from './utils/findUnmappedDeclaredStop'
 import { formatRefusalFailure } from './utils/formatRefusalFailure'
 import { inspectConfiguredValues } from './utils/inspectConfiguredValues'
@@ -243,6 +245,7 @@ import {
   pagePauseUnderResumeText,
   type PagePauseUnderResume,
 } from './utils/pagePauseUnderResumeText'
+import { pagesServerStopRefusal } from './utils/pagesServerStopRefusal'
 import { pathnameLeftFromEntry } from './utils/pathnameLeftFromEntry'
 import { pausePlace } from './utils/pausePlace'
 import { placeAfterDeclaringLine } from './utils/placeAfterDeclaringLine'
@@ -275,6 +278,7 @@ import {
 } from './utils/resolveNextPagesEntry'
 import { sameScriptUrl } from './utils/sameScriptUrl'
 import { sanitizeCause } from './utils/sanitizeCause'
+import { sealPagesServerStop } from './utils/sealPagesServerStop'
 import { selfDeclaredInspectionHint } from './utils/selfDeclaredInspectionHint'
 import { serverExecutionOfScriptUrl } from './utils/serverExecutionOfScriptUrl'
 import { serverRenderAttributionOf } from './utils/serverRenderAttributionOf'
@@ -334,11 +338,12 @@ async function readNextPagesStopBundle(
   throw nextRefusal(
     'NEXT_STOP_NOT_SEALED',
     `${request.source.path} is not in the code the page ${redactNextEntryPath(sealed.route)} loads at start; a module loaded later (for example through next/dynamic) cannot be sealed before input.`,
+    { details: PAGES_STOP_REFUSAL_DETAILS },
   )
 }
 
 /**
- * The Next webpack development server behind {@link DevelopmentServerAdapter}: today's workspace check, port reading, launch, `.next/dev` bundle sealing and webpack source-map paths; a browser stop of a Pages run is sealed from the page's entry chunks ({@link readNextPagesStopBundle}).
+ * The Next webpack development server behind {@link DevelopmentServerAdapter}: today's workspace check, port reading, launch, `.next/dev` bundle sealing and webpack source-map paths; a browser stop of a Pages run is sealed from the page's entry chunks ({@link readNextPagesStopBundle}) and a server stop of a Pages run from the page's server build ({@link sealPagesServerStop}).
  * Selected by {@link developmentServerAdapterOf} for `adapter: "next-dev-webpack"`.
  */
 const NEXT_DEV_WEBPACK_ADAPTER: DevelopmentServerAdapter = {
@@ -383,17 +388,30 @@ const NEXT_DEV_WEBPACK_ADAPTER: DevelopmentServerAdapter = {
       return { dev: developmentLock.dev, ino: developmentLock.ino }
     return undefined
   },
-  readBundle: (request) =>
+  readBundle: (request) => {
+    const { nextRoute } = request
+    // A server stop of a Pages run is sealed from the page's server compile and the chunks it requires.
+    if (nextRoute && request.execution === 'server-action')
+      return sealPagesServerStop({
+        workspace: request.workspace,
+        selected: request.source,
+        route: nextRoute.route,
+        entrySource: nextRoute.entrySource,
+        signal: request.signal,
+        cache: nextRoute.cache,
+        fetchChunk: nextServedChunkFetcher(request.ownedOrigin),
+      })
     // A browser stop of a Pages run is sealed from the page's entry chunks; every other stop as before.
-    request.nextRoute && request.execution === 'browser'
-      ? readNextPagesStopBundle(request, request.nextRoute)
+    return nextRoute
+      ? readNextPagesStopBundle(request, nextRoute)
       : readDevelopmentBundle(
           request.workspace,
           request.source,
           request.signal,
           request.entryPath,
           request.execution,
-        ),
+        )
+  },
   browserDebugFields: (workspace) => ({
     webRoot: workspace,
     sourceMaps: true,
@@ -1053,6 +1071,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const hasPagesFolder = await this.hasNextPagesFolder(adapter)
     this.pagesCapable = hasPagesFolder
     this.alive()
+    // A server stop in `_document` or an API route is refused before any process starts: no server stop is valid there in either router.
+    if (hasPagesFolder) await this.refuseLexicalPagesServerStops()
     this.nextSetupStep = NEXT_SETUP_STEPS.startingNext
     // The app runs on the port the project declares (its auth origin points there); a busy port refuses the start instead of moving the app.
     const started = await adapter.start({
@@ -2767,7 +2787,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     ownedOrigin: string,
     generation?: number,
   ): Promise<PreparedStop> {
-    // A Pages run observes only the page's client code: a server stop, a `_document` or an API route never runs there, so it is refused before its own chunks are read.
+    // A version 2 server stop, or a browser stop in `_document` or an API route, is refused before its own chunks are read; a version 3 server stop is sealed from the page's server build below.
     if (this.pagesRun) this.refuseServerOnlyPagesStop(stop, this.pagesRun)
     const acquired = await adapter.readBundle({
       workspace: this.options.workspace,
@@ -2781,6 +2801,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         ? {
             nextRoute: {
               route: this.pagesRun.route,
+              entrySource: this.pagesRun.source,
               cache: this.pagesRun.cache,
             },
           }
@@ -2828,6 +2849,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.evidence.record('seal.layer', {
         stop: `${prepared.source.path}:${prepared.source.line}`,
         layer: acquired.layer,
+      })
+    // A server stop of a Pages run accepted on evidence the seal could not read to its end says so in the journal, so a reader knows the line was not established as server-only.
+    if (isFirstSeal && acquired.evidence)
+      this.evidence.record('seal.evidence', {
+        stop: `${prepared.source.path}:${prepared.source.line}`,
+        evidence: acquired.evidence,
       })
     // A renewal keeps the first seal's files, so each journal entry names the bytes of its own files.
     const fileStem = isFirstSeal
@@ -2906,13 +2933,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /**
    * Finds the first sealed stop whose declared line can never bind: its sealed map has no position on the line and no later place within its citation ({@link findUnmappedDeclaredStop}).
    * Called by {@link freezeSealedStops}, which refuses it, and before that by {@link refuseUnmappedPagesStop} for a Pages run, which names what is established about the line first.
+   * @param stops - The stops to judge; every sealed stop by default, the browser stops for a Pages run's browser-mapping check.
    * @returns The stop, or `undefined` when every stop can bind.
    * @example
    * this.unbindableStop() // => the stop declared on a getStaticProps line its browser module does not map
    */
-  private unbindableStop(): PreparedStop | undefined {
+  private unbindableStop(
+    stops: readonly PreparedStop[] = this.stops,
+  ): PreparedStop | undefined {
     return findUnmappedDeclaredStop(
-      this.stops,
+      stops,
       (stop, scanComplete) =>
         // When the scan stopped at its size limit, the sealed source says whether the line holds code.
         (!scanComplete &&
@@ -3318,36 +3348,60 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Refuses a declared stop of a Pages run that cannot pause in the page's client code, before its own chunks are read and before the browser opens: a server stop, since a Pages run observes only the page's client code in the browser, or a browser stop in a file Next never runs in the browser (`_document`, an API route).
-   * Called by {@link sealDeclaredStop} for each stop of a Pages run.
+   * Refuses a declared stop of a Pages run that its participant cannot observe, before its own chunks are read and before the browser opens: a server stop of a configuration version 2 run (entry-render and after-operation stops, which a data function needs, exist only in version 3), or a browser stop in a file Next never runs in the browser (`_document`, an API route).
+   * Called by {@link sealDeclaredStop} for each stop of a Pages run. A server stop in `_document` or an API route never gets here: {@link refuseLexicalPagesServerStops} refused it before the development server started. A version 3 server stop passes, and its module is sealed from the page's server build ({@link sealPagesServerStop}).
    * @param stop - The declared stop.
    * @param pagesRun - The resolved Pages route, whose folder the file rule reads.
-   * @throws `NEXT_SERVER_ONLY_STOP` naming the server stop, or the file's reason.
+   * @throws `NEXT_SERVER_ONLY_STOP` naming configuration version 3 for a version 2 server stop (`details.requiredVersion` 3), or the file's reason for a browser stop; both carry `details.router` `pages` and `details.sideEffects` `unknown`.
    * @example
-   * this.refuseServerOnlyPagesStop(stop, this.pagesRun) // throws for src/pages/api/hello.ts, and for any stop with participant "server"
+   * this.refuseServerOnlyPagesStop(stop, this.pagesRun) // throws for a browser stop in src/pages/api/hello.ts, and for a server stop of a version 2 run
    */
   private refuseServerOnlyPagesStop(
     stop: ReturnType<typeof configuredStops>[number],
     pagesRun: NextPagesEntry,
   ): void {
     const place = `${stop.source.path}:${stop.source.line}`
-    // A Pages run debugs the browser only, so a server stop is refused wherever its file is.
-    if (stop.participant !== 'browser')
-      throw nextRefusal(
-        'NEXT_SERVER_ONLY_STOP',
-        `Declared stop ${place} is a server stop (participant "server"), but a Pages Router run observes only the page's client code in the browser; Codebook does not pause the Next server in a Pages run. Move the stop to the client code of the page that serves the same question, with participant "browser".`,
-      )
+    if (stop.participant === 'server') {
+      // Only a version 3 configuration declares the entry-render and after-operation stops a Pages data function needs.
+      if (!this.operationsConfiguration)
+        throw pagesServerStopRefusal({ kind: 'version-2', place })
+      return
+    }
     const reason = nextServerOnlyFileReason(stop.source.path, pagesRun.folder)
     if (reason)
       throw nextRefusal(
         'NEXT_SERVER_ONLY_STOP',
         nextServerOnlyStopMessage(place, reason),
+        { details: PAGES_STOP_REFUSAL_DETAILS },
       )
   }
 
   /**
+   * Refuses a server stop in `_document` or under the Pages folder's `api/` before the development server starts: no server stop is valid there in either router, so nothing needs to run to know it, and the refusal reports `details.sideEffects` `none`.
+   * Called by {@link prepareOwned} for a Next run in a workspace with a Pages folder, before {@link DevelopmentServerAdapter.start}. A browser stop in these files is refused later, after the route resolved ({@link refuseServerOnlyPagesStop}).
+   * @throws `NEXT_SERVER_ONLY_STOP` saying API routes and `_document` are not supported in this version (an API route adds the pointer to the page's data function), with `details.router` `pages` and `details.sideEffects` `none`.
+   * @example
+   * await this.refuseLexicalPagesServerStops() // throws for a server stop in src/pages/api/hello.ts
+   */
+  private async refuseLexicalPagesServerStops(): Promise<void> {
+    const folder = await findNextRouteFolder(this.options.workspace, 'pages')
+    this.alive()
+    if (!folder) return
+    for (const stop of configuredStops(this.definition.configuration)) {
+      if (stop.participant !== 'server') continue
+      const reason = nextServerOnlyFileReason(stop.source.path, folder)
+      if (reason)
+        throw pagesServerStopRefusal({
+          kind: 'lexical',
+          place: `${stop.source.path}:${stop.source.line}`,
+          reason,
+        })
+    }
+  }
+
+  /**
    * Refuses a sealed browser stop of a Pages run whose declared line is established as server-only (the page's server compile maps it and the browser module does not), also when a later line of its citation could bind; then a stop whose line can never bind as not sealed, which says it is not thereby server-only.
-   * Called by {@link prepareOwned} after the seal and before {@link freezeSealedStops}, which keeps the general refusal for every other stop.
+   * Called by {@link prepareOwned} after the seal and before {@link freezeSealedStops}, which keeps the general refusal for every other stop. It reads browser stops only: a server stop is sealed from the server build, and its line is judged against the page's client compile when it is sealed ({@link sealPagesServerStop}).
    * @param pagesRun - The resolved Pages route and the run's discovery cache.
    * @throws `NEXT_SERVER_ONLY_STOP` or `NEXT_STOP_NOT_SEALED`.
    * @example
@@ -3358,8 +3412,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     compiledPath: string
     cache: NextPagesDiscoveryCache
   }): Promise<void> {
-    // Every stop is checked, not only one no later line can bind: a server-only line (getServerSideProps above the component) is never moved to the client code after it. Each is a browser stop, as the seal refused every server stop of a Pages run ({@link refuseServerOnlyPagesStop}).
-    for (const stop of this.stops) {
+    // Every browser stop is checked, not only one no later line can bind: a server-only line (getServerSideProps above the component) is never moved to the client code after it.
+    const browserStops = this.stops.filter(
+      (stop) => stop.participant === 'browser',
+    )
+    for (const stop of browserStops) {
       // A blank, comment or type-only line holds no code to run on either side, so it binds to the next mapped line without a server read.
       if (isBlankOrCommentLine(stop.bundle.source, stop.source.line)) continue
       const established = await readNextServerOnlyReason({
@@ -3377,13 +3434,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         throw nextRefusal(
           'NEXT_SERVER_ONLY_STOP',
           nextServerOnlyStopMessage(this.declaredAt(stop), established.reason),
+          { details: PAGES_STOP_REFUSAL_DETAILS },
         )
     }
-    const unmapped = this.unbindableStop()
+    const unmapped = this.unbindableStop(browserStops)
     if (!unmapped) return
     throw nextRefusal(
       'NEXT_STOP_NOT_SEALED',
       `Codebook could not verify a browser source mapping for ${this.declaredAt(unmapped)}. This does not establish that the code is server-only.`,
+      { details: PAGES_STOP_REFUSAL_DETAILS },
     )
   }
 

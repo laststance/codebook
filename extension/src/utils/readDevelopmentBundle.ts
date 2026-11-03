@@ -29,8 +29,8 @@ import { findNextClientReferenceStub } from './findNextClientReferenceStub'
 import { readRepositoryBuildText } from './readRepositoryBuildText'
 import { resolveNextClientManifest } from './resolveNextClientManifest'
 
-/** Which webpack layer of the entry route's server chunk a server stop was sealed from. */
-export type DevelopmentServerLayer = 'action-browser' | 'rsc'
+/** Which webpack layer a server stop was sealed from: `action-browser` or `rsc` in the entry route's App Router server chunk ({@link readDevelopmentBundle}), `pages-dir-node` in a Pages page's server compile or the server chunks it loads ({@link readPagesServerBundle}). */
+export type DevelopmentServerLayer = 'action-browser' | 'rsc' | 'pages-dir-node'
 
 const clientManifestSchema = z.object({
   clientModules: z.record(

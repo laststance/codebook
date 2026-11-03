@@ -1772,6 +1772,12 @@ export const NEXT_MANIFEST_POLL_MS = 10_000
 export const NEXT_MANIFEST_POLL_INTERVAL_MS = 250
 /** The source extensions Next tries for a Pages Router page, in its own order (its default `pageExtensions`); a custom `pageExtensions` is not read. */
 export const NEXT_PAGES_SOURCE_EXTENSIONS = ['tsx', 'ts', 'jsx', 'js'] as const
+/** Where Next's webpack server build writes a Pages page's compile and the chunks it requires, relative to `.next/dev`: the page's `compiledPath` (`pages/index.js`) and each required chunk id (`vendor-chunks/next`) live under it. */
+export const NEXT_SERVER_BUILD_DIRECTORY = 'server'
+/** The prefix of the server chunks Next's webpack build splits `node_modules` code into; a tracked workspace source never lives in one, so the Pages server reader ({@link readPagesServerBundle}) does not read them (they are the framework-sized chunks of a page's compile). */
+export const NEXT_SERVER_VENDOR_CHUNK_PREFIX = 'vendor-chunks/'
+/** How many characters at the end of a server compile {@link serverChunkIdsRequiredBy} searches for the startup call that lists the chunks the compile requires; the call follows every module, so it is at the very end, and its chunk ids stay well inside this bound. */
+export const NEXT_SERVER_STARTUP_SCAN_CHARS = 65_536
 export const REPOSITORY_PAUSE_HOLD_TIMEOUT_MS = 300_000
 /** The longest private observation hold a native Node test trial accepts (`CODEBOOK_NODE_TEST_HOLD_MS`, `CODEBOOK_NODE_TEST_HOLD_AFTER_MS`), so a recording can show the state the trial reached. */
 export const NATIVE_TRIAL_HOLD_LIMIT_MS = 60_000

@@ -198,9 +198,9 @@ export function serverRenderHelp() {
         NEXT_STOP_NOT_SEALED: {
           anchor: 'codebook://help/repository-browser#NEXT_STOP_NOT_SEALED',
           meaning:
-            'For a server stop: the stop is in a client component (details.reason client-component, details.stop path:line), whose code Codebook cannot pause in the server render. Nothing was sent and no browser stays open.',
+            "For a server stop: the stop is in a client component (details.reason client-component, details.stop path:line), whose code Codebook cannot pause in the server render. In a Pages run (details.router pages) the same reason means the line is in the entry page's own module and its client compile maps it: the page component and getInitialProps lines also run in the page's server render and in the browser, where Codebook observes them. Nothing was sent and no browser stays open; in a Pages run the page's data function already ran once during Codebook's readiness request (details.sideEffects unknown).",
           recovery:
-            'Move the stop to a server component or to a server function the page calls, or ask a client question with a browser stop.',
+            'Move the stop to a server component or to a server function the page calls, or ask a client question with a browser stop. In a Pages run, declare the line with participant "browser" (a getInitialProps line pauses in the browser only after a client navigation), or for the page\'s data use a line of its getServerSideProps or getStaticProps.',
         },
       },
     },

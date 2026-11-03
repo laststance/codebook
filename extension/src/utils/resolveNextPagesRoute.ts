@@ -52,14 +52,14 @@ export function resolveNextPagesRoute(
 }
 
 /**
- * Says whether a manifest value is a compiled page path Codebook may follow: under `pages/`, a `.js` file, without `..` or `.` segments or backslashes. Called by {@link resolveNextPagesRoute} for every manifest entry.
+ * Says whether a manifest value is a compiled page path Codebook may follow: under `pages/`, a `.js` file, without `..` or `.` segments or backslashes. Called by {@link resolveNextPagesRoute} for every manifest entry and by {@link readPagesServerBundle} before it reads a page's server compile.
  * @param compiledPath - A value of the Pages manifest.
  * @returns Whether the value is safe to keep.
  * @example
  * isSafeCompiledPagePath('pages/index.js')       // => true
  * isSafeCompiledPagePath('pages/../../secret.js') // => false
  */
-function isSafeCompiledPagePath(compiledPath: string): boolean {
+export function isSafeCompiledPagePath(compiledPath: string): boolean {
   return (
     compiledPath.startsWith('pages/') &&
     compiledPath.endsWith('.js') &&

@@ -45,16 +45,35 @@ export function nextHelpAnchor(code: NextRefusalCode): string {
  * Why it exists: the recovery never carries a value, because a recovery override reaches MCP unsanitized; every dynamic value (the entry path, a setting, the step, a file, quoted development-server output) goes into the message and the cause, which the service sanitizes and bounds. Called by the configured browser run before input, where a thrown refusal reaches the service's preparation error with its code.
  * @param code - The refusal code.
  * @param message - What was refused, naming the path, file, setting or value, ending with the fix or the limit; it is the cause as well.
+ * @param extras - Structured `details` an agent decides by (a Pages stop refusal carries {@link PAGES_STOP_REFUSAL_DETAILS}) and a recovery that replaces the code's static one when it would mislead (a refusal before the server started). Both are static or value-free: a recovery override reaches MCP unsanitized.
  * @returns The error to throw.
  * @example
  * throw nextRefusal('NEXT_UNSUPPORTED_SETTING', 'This Next 16.4.3 project sets basePath (/docs); Codebook\'s browser run does not support basePath or i18n routing.')
+ * throw nextRefusal('NEXT_STOP_NOT_SEALED', message, { details: PAGES_STOP_REFUSAL_DETAILS })
  */
 export function nextRefusal(
   code: NextRefusalCode,
   message: string,
+  extras?: { details?: StudyError['details']; recovery?: string },
 ): StudyError {
-  return new StudyError(code, message)
+  return new StudyError(
+    code,
+    message,
+    message,
+    extras?.recovery,
+    undefined,
+    extras?.details,
+  )
 }
+
+/**
+ * The structured fields every Pages stop refusal after the owned server started carries: `router: "pages"` tells an agent a Pages `client-component` refusal from the App Router one without parsing prose, and `sideEffects: "unknown"` says the page's data function already ran once during Codebook's readiness request, so another start is the learner's decision when that function writes.
+ * Spread into the `details` of {@link nextRefusal} by the seal and the stop checks of a Pages run.
+ */
+export const PAGES_STOP_REFUSAL_DETAILS = {
+  router: 'pages',
+  sideEffects: 'unknown',
+} as const
 
 /** The side-effect sentence of a Pages setup deadline once the browser Codebook opened was closed: no input and no click went out. */
 const BROWSER_CLOSED_NOTHING_SENT =

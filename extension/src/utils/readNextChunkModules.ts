@@ -10,6 +10,7 @@ import type {
   NextPagesDiscoveryCache,
 } from './createNextPagesDiscoveryCache'
 import { evaluatedModuleTexts } from './extractDevelopmentModule'
+import { serverChunkIdsRequiredBy } from './serverChunkIdsRequiredBy'
 import type {
   NextPagesChunkFetcher,
   NextPagesDiscoveryStep,
@@ -17,7 +18,7 @@ import type {
 
 /**
  * Reads one chunk of the Next build and decodes its eval modules, once per run and chunk generation: a second stop in the same unchanged chunk takes the cached modules without reading the file again.
- * Called by {@link readPagesDevelopmentBundle} for the page and `_app` chunks (with the owned server as fallback when no file exists) and by {@link readNextServerOnlyReason} for the page's server compile.
+ * Called by {@link readPagesDevelopmentBundle} for the page and `_app` chunks (with the owned server as fallback when no file exists), by {@link readNextServerOnlyReason} for the page's server compile and by {@link readPagesServerBundle} for the compile and the server chunks it requires.
  * @param step - The discovery step, which charges reads to the run's budget.
  * @param cache - The run's discovery cache.
  * @param chunkPath - The chunk's path in `.next/dev`, e.g. `static/chunks/pages/index.js`.
@@ -78,6 +79,7 @@ async function decodeOnce(
     chunkPath: location.absolutePath,
     chunkHash: sha256(text),
     moduleTexts: [...evaluatedModuleTexts(text, step.deadline)],
+    requiredChunks: serverChunkIdsRequiredBy(text),
   }
   cache.chunks.set(location.chunkPath, chunk)
   return chunk
