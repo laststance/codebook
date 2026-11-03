@@ -27,6 +27,6 @@ export interface PagesHitReader {
   readonly ownDebuggerId: string | undefined
   /** `pages-manifest.json` of the development build; `undefined` when it could not be read. */
   pagesManifest(): Promise<PagesManifest | undefined>
-  /** The requests the browser participant has sent and not yet received an answer for, at this moment. */
+  /** The application's own page requests (the main frame's document and Next's data requests to the run's application origin) that the browser participant has sent and not yet received an answer for, at this moment. */
   outstandingRequests(): readonly OutstandingPageRequest[]
 }

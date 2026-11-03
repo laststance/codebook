@@ -30,7 +30,7 @@ export type PagesUnconfirmedReason =
   | { reason: 'no-async-chain' }
   /** No frame of Next's page renderer is in reach, or the renderer's text holds none of the known patterns: recognition itself failed. */
   | { reason: 'no-renderer-frame' }
-  /** The data-function call was found but the page it renders could not be read. */
+  /** The data-function call was found but the page it renders could not be confirmed: no frame named it (or none could be read), and the browser's request, when it names the entry page, is no proof. */
   | { reason: 'route-unreadable' }
   /** The async chain could not be read to its end. */
   | { reason: 'chain-incomplete'; cause: PagesChainIncompleteCause }
@@ -44,7 +44,8 @@ export type PagesDataFunctionHitVerdict =
       action: 'pause'
       attribution: 'entry-load' | 'after-operation'
       dataFunction: PagesDataFunctionName
-      evidence: 'frame' | 'request'
+      /** The stack named the page; the browser's outstanding request alone never takes a pause (it is `unconfirmed`). */
+      evidence: 'frame'
     }
   /** Not proven: published labelled `unconfirmed`, and never counted as proof. */
   | ({ action: 'pause'; attribution: 'unconfirmed' } & PagesUnconfirmedReason)
@@ -103,9 +104,10 @@ type RendererScan =
  * @param reader - Supplies script addresses and texts, `pathname`, stack continuations, the manifest and the outstanding requests.
  * @param budget - The hit's single time budget ({@link createVerdictBudget}); a spent budget is `chain-incomplete` with cause `timeout`.
  * @returns
- * - pause `entry-load` (group 0) or `after-operation` (group k >= 1) with the data function and the evidence (`frame` or `request`) when the hit is inside the entry page's data function
+ * - pause `entry-load` (group 0) or `after-operation` (group k >= 1) with the data function and the evidence (`frame`) when the hit is inside the entry page's data function and the stack names the entry page
  * - resume `breakpoint.other-route` (with the route) when the page it renders is another page
  * - resume `breakpoint.outside-data-function` only on positive evidence
+ * - pause `unconfirmed` with `route-unreadable` when no frame names the page and only the browser's one outstanding page request is for the entry route: the request is no proof that the paused work serves the entry page
  * - for an unreadable page: pause `unconfirmed` with `route-unreadable` while the browser shows the entry route, else resume `breakpoint.unattributed-resumed`
  * - pause `unconfirmed` with `no-async-chain`, `no-renderer-frame`, `chain-incomplete` (and its cause) or `verdict-error` (and a value-free shape summary) otherwise; incomplete evidence is never `outside-data-function`
  * The returned promise never rejects.
@@ -295,6 +297,9 @@ async function judgeInsideDataFunction(
   )
   if (page.state === 'timed-out')
     return unconfirmed({ reason: 'chain-incomplete', cause: 'timeout' })
+  // The browser's request alone is no proof: the entry page's data function can fetch another page of the same server, whose data function pauses while the browser sees only the entry request.
+  if (page.state === 'named-by-request')
+    return unconfirmed({ reason: 'route-unreadable' })
   if (page.state === 'unreadable')
     // An unreadable page pauses only while the browser shows the entry route; another page's hit must not pause the learner.
     return hit.browserOnEntryRoute

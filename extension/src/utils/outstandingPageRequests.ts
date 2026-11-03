@@ -8,24 +8,42 @@ import {
 } from './pagesRequestPathOf'
 
 /**
- * Keeps the page requests the browser has sent and not yet received an answer for, so the Pages verdict can name the page a server hit renders when its stack cannot.
+ * Keeps the page requests the application's own page has sent and not yet received an answer for, so the Pages verdict can check a page-module frame against the browser's request.
  *
- * Why it exists: Codebook sends no request of its own after the readiness one, so the browser's `Network` events are the only record of which page the server is working for. Only document requests and Next's `/_next/data/…json` requests are kept; images, scripts and API calls are no page request. Created once per run by {@link ConfiguredBrowserRun}, fed by the browser participant's `Network.requestWillBeSent` and the three events that end a request.
+ * Why it exists: Codebook sends no request of its own after the readiness one, so the browser's `Network` events are the only record of which page the browser waits for. Only the main frame's document request and Next's `/_next/data/…json` request from the main frame are kept, and only when the request goes to the run's application origin: images, scripts, API calls, an iframe's requests and a request to another site are no page request of the application. The server work that is paused may serve a page the browser never asked for (the entry page's data function can fetch another page of the same Next server), so a kept request is a hint that backs or contradicts a stack's page, never proof by itself. Created once per run by {@link ConfiguredBrowserRun}, fed by the browser participant's `Network.requestWillBeSent`, its frame events and the three events that end a request.
  * @example
- * const requests = new OutstandingPageRequests()
- * requests.start({ requestId: '7', request: { url: 'http://localhost:3000/' }, type: 'Document' })
+ * const requests = new OutstandingPageRequests((origin) => origin === 'http://localhost:3000')
+ * requests.start({ requestId: '7', frameId: 'main', request: { url: 'http://localhost:3000/' }, type: 'Document' })
  * requests.list() // => [{ url: 'http://localhost:3000/', resourceType: 'Document' }]
  */
 export class OutstandingPageRequests {
   private readonly requests = new Map<string, OutstandingPageRequest>()
+  private readonly childFrames = new Set<string>()
+
+  /**
+   * @param isApplicationOrigin - Says whether an origin (`http://localhost:3000`) is the run's application origin; a request to any other origin is not kept.
+   */
+  constructor(
+    private readonly isApplicationOrigin: (origin: string) => boolean,
+  ) {}
+
+  /**
+   * Notes a frame that is not the page's main frame, so its requests are not the page's.
+   * @param frameId - The id of a frame the browser attached under another frame (`Page.frameAttached`, sent for every child frame and never for the main frame).
+   * @example requests.noteChildFrame('A1B2')
+   */
+  noteChildFrame(frameId: string): void {
+    this.childFrames.add(frameId)
+  }
 
   /**
    * Notes a request the browser sent; a redirect of the same request replaces its address.
-   * @param event - The `Network.requestWillBeSent` event (only the id, the URL and the resource type are read).
-   * @example requests.start({ requestId: '7', request: { url: 'http://localhost:3000/_next/data/b/index.json?page=2' }, type: 'Fetch' })
+   * @param event - The `Network.requestWillBeSent` event (only the id, the frame, the URL and the resource type are read).
+   * @example requests.start({ requestId: '7', frameId: 'main', request: { url: 'http://localhost:3000/_next/data/b/index.json?page=2' }, type: 'Fetch' })
    */
   start(event: {
     requestId: string
+    frameId?: string
     request: { url: string }
     type?: Protocol.Network.ResourceType
   }): void {
@@ -33,8 +51,12 @@ export class OutstandingPageRequests {
       url: event.request.url,
       resourceType: event.type ?? 'Other',
     }
-    // A request that is no page request is not kept, so a busy page cannot fill the list.
-    if (pagesRequestPathOf(request) === undefined) {
+    // A request that is no page request of the application's main frame is not kept, so a busy page cannot fill the list.
+    if (
+      !this.isMainFrameRequest(event.frameId) ||
+      !this.isApplicationUrl(request.url) ||
+      pagesRequestPathOf(request) === undefined
+    ) {
       this.requests.delete(event.requestId)
       return
     }
@@ -63,5 +85,20 @@ export class OutstandingPageRequests {
    */
   list(): readonly OutstandingPageRequest[] {
     return [...this.requests.values()]
+  }
+
+  /** A request with no frame (a worker's) or from a child frame (an iframe's) is not the page's own. */
+  private isMainFrameRequest(frameId: string | undefined): boolean {
+    return frameId !== undefined && !this.childFrames.has(frameId)
+  }
+
+  /** A URL that does not parse, or that goes to another origin than the application's, is not the page's own. */
+  private isApplicationUrl(url: string): boolean {
+    try {
+      return this.isApplicationOrigin(new URL(url).origin)
+    } catch {
+      // A URL that does not parse names no origin.
+      return false
+    }
   }
 }

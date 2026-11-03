@@ -78,28 +78,40 @@ test('the ledger summary keeps frame evidence, request evidence and unconfirmed 
   })
 })
 
-// Value: protects=the outstanding page requests: a document request and a Next data request are kept until they are answered, failed or finished, and images, scripts and API calls are no page request; fails_when=a script request makes the browser look busy, an answered request stays, or a redirect of the same request is kept twice; no_claim=the Network events js-debug forwards
+/** The run's application origin in the tests below. */
+const APPLICATION_ORIGIN = 'http://localhost:3000'
+
+/** The request list of a run whose application origin is {@link APPLICATION_ORIGIN}. @example outstandingRequestsOfApplication() */
+function outstandingRequestsOfApplication(): OutstandingPageRequests {
+  return new OutstandingPageRequests((origin) => origin === APPLICATION_ORIGIN)
+}
+
+// Value: protects=the outstanding page requests: a document request and a Next data request of the application's main frame are kept until they are answered, failed or finished, and images, scripts and API calls are no page request; fails_when=a script request makes the browser look busy, an answered request stays, or a redirect of the same request is kept twice; no_claim=the Network events js-debug forwards
 test('the outstanding page requests keep document and data requests until they end and ignore other requests', () => {
   // Arrange
-  const requests = new OutstandingPageRequests()
+  const requests = outstandingRequestsOfApplication()
   // Act
   requests.start({
     requestId: '1',
+    frameId: 'main',
     request: { url: 'http://localhost:3000/' },
     type: 'Document',
   })
   requests.start({
     requestId: '2',
+    frameId: 'main',
     request: { url: 'http://localhost:3000/_next/data/b/index.json?page=2' },
     type: 'Fetch',
   })
   requests.start({
     requestId: '3',
+    frameId: 'main',
     request: { url: 'http://localhost:3000/_next/static/chunks/main.js' },
     type: 'Script',
   })
   requests.start({
     requestId: '1',
+    frameId: 'main',
     request: { url: 'http://localhost:3000/login' },
     type: 'Document',
   })
@@ -110,14 +122,107 @@ test('the outstanding page requests keep document and data requests until they e
   ])
 })
 
+// Value: protects=only the application's own page requests count (Codex finding, Blocks: yes): a Document request to another site, a data-shaped request to another site, and a request to another port of the same host are no page request of the run, so a page of another origin never backs or contradicts the page a hit renders; fails_when=requests are judged by their pathname only, so `https://external.example/` is taken for the entry route `/`; no_claim=which names the run treats as its application origin (the run tests)
+test('a page request to another origin than the run application is not kept', () => {
+  // Arrange
+  const requests = outstandingRequestsOfApplication()
+  // Act
+  requests.start({
+    requestId: '1',
+    frameId: 'main',
+    request: { url: 'https://external.example/' },
+    type: 'Document',
+  })
+  requests.start({
+    requestId: '2',
+    frameId: 'main',
+    request: { url: 'https://external.example/_next/data/b/index.json' },
+    type: 'Fetch',
+  })
+  requests.start({
+    requestId: '3',
+    frameId: 'main',
+    request: { url: 'http://localhost:4000/' },
+    type: 'Document',
+  })
+  // Assert
+  assert.deepEqual(requests.list(), [])
+})
+
+// Value: protects=a redirect that leaves the application drops the request: the same request id that first asked the application's page and then follows a redirect to another site is no longer an outstanding page request of the application; fails_when=the first address stays after the redirect moved the request to another origin; no_claim=a redirect inside the application (the first test keeps the latest address)
+test('a request that is redirected to another origin is no longer kept', () => {
+  // Arrange
+  const requests = outstandingRequestsOfApplication()
+  requests.start({
+    requestId: '1',
+    frameId: 'main',
+    request: { url: 'http://localhost:3000/login' },
+    type: 'Document',
+  })
+  // Act
+  requests.start({
+    requestId: '1',
+    frameId: 'main',
+    request: { url: 'https://accounts.example/sign-in' },
+    type: 'Document',
+  })
+  // Assert
+  assert.deepEqual(requests.list(), [])
+})
+
+// Value: protects=only the page's main frame counts (Codex finding, Blocks: yes): the document of an iframe the page embeds, announced by Page.frameAttached, and a data request that the iframe makes are no page request, even to the application's own origin; fails_when=requests of a child frame are kept, so an embedded page of the application backs or contradicts the page the entry load renders; no_claim=an iframe in another process (its events do not reach this channel)
+test('a document or data request of an iframe is not kept', () => {
+  // Arrange
+  const requests = outstandingRequestsOfApplication()
+  requests.noteChildFrame('child-1')
+  // Act
+  requests.start({
+    requestId: '1',
+    frameId: 'child-1',
+    request: { url: 'http://localhost:3000/embedded' },
+    type: 'Document',
+  })
+  requests.start({
+    requestId: '2',
+    frameId: 'child-1',
+    request: { url: 'http://localhost:3000/_next/data/b/embedded.json' },
+    type: 'Fetch',
+  })
+  requests.start({
+    requestId: '3',
+    frameId: 'main',
+    request: { url: 'http://localhost:3000/products' },
+    type: 'Document',
+  })
+  // Assert
+  assert.deepEqual(requests.list(), [
+    { url: 'http://localhost:3000/products', resourceType: 'Document' },
+  ])
+})
+
+// Value: protects=a request with no frame is no page request: a request that a worker or the browser itself makes carries no frame id and cannot be told from the main frame's, so it is not kept; fails_when=a request without a frame id is taken for the main frame's; no_claim=a request of the main frame whose id the browser omits (not seen on the Network events of a page)
+test('a request that names no frame is not kept', () => {
+  // Arrange
+  const requests = outstandingRequestsOfApplication()
+  // Act
+  requests.start({
+    requestId: '1',
+    request: { url: 'http://localhost:3000/' },
+    type: 'Document',
+  })
+  // Assert
+  assert.deepEqual(requests.list(), [])
+})
+
 // Value: protects=the outstanding page requests are bounded: past the limit the oldest are dropped; fails_when=a page that never answers its requests grows the list without end; no_claim=a real page's request count
 test('the outstanding page requests drop the oldest past the limit', () => {
   // Arrange
-  const requests = new OutstandingPageRequests()
+  const requests = outstandingRequestsOfApplication()
   // Act
   for (let index = 0; index < PAGES_OUTSTANDING_REQUEST_LIMIT + 3; index++)
     requests.start({
       requestId: String(index),
+      frameId: 'main',
       request: { url: `http://localhost:3000/page-${index}` },
       type: 'Document',
     })

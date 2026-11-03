@@ -38,7 +38,7 @@ function routeOfDataAssetPath(assetPath: string): string {
 /**
  * Gives the page path a request asks for when it is a page request, the document or Next's data request of a navigation, and nothing for any other request.
  *
- * Why it exists: when the page of a hit cannot be read from the stack, the browser's one outstanding page request says which page the server is rendering, but images, scripts and API calls must not count as page requests. Called by {@link readPagesRenderedPage} for each outstanding request.
+ * Why it exists: when the stack of a hit names no page, the browser's one outstanding page request says which page the browser waits for, which backs or contradicts a page-module frame, but images, scripts and API calls must not count as page requests. Called by {@link readPagesRenderedPage} for each outstanding request.
  * @param request - An outstanding request: its URL and its resource type.
  * @returns The path of a document request (`/products/1`); the route a data request stands for, with Next's extra `index` segment taken off (`/_next/data/b1/products/1.json` is `/products/1`, `…/index.json` is `/`, `…/index/index.json` is `/index`, `…/index/index/foo.json` is `/index/foo`); `undefined` for every other request and for a URL that does not parse.
  * @example

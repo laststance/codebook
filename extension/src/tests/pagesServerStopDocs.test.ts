@@ -21,8 +21,11 @@ import {
   ReadinessEntryRecord,
   readinessOutcomeOfError,
 } from '../utils/readinessEntryRecord'
+import { readPagesRenderedPage } from '../utils/readPagesRenderedPage'
 
 import { createHarness } from './helpers'
+import { manualVerdictBudget } from './utils/manualVerdictBudget'
+import { scriptedPagesReader } from './utils/scriptedPagesReader'
 
 /**
  * Reads a packaged file relative to the extension folder.
@@ -1160,4 +1163,55 @@ test('the help, the README and the chain reader name no other-debugger cause, an
       'a stack trace id the debugger cannot resolve ends the chain as `fetch-failed`',
     ),
   )
+})
+
+// Value: protects=the help, the README and the API note do not promise a confirmed pause where only the browser's request names the page: a page that no frame names but the browser's one outstanding request names is `named-by-request`, the help and the README call such a pause unconfirmed (route-unreadable), and `attributionSummary.taken.request` is said to stay 0; fails_when=a sentence says a request confirms a pause or counts as proof, or the unconfirmed sentence leaves the help or the README while the code still never reads a page from the request alone; no_claim=the verdict's own cases (the verdict tests) and the run's request tracking (the run tests)
+test("the help and the README call a pause that only the browser's request names unconfirmed and keep taken.request at 0", async () => {
+  // Arrange
+  const { serverRenderQuickStart, serverRenderErrors } = serverRenderHelp()
+  const section = await readServerRendersReadmeSection()
+  const { reader } = scriptedPagesReader({
+    manifest: { '/': 'pages/index.js' },
+    requests: [{ url: 'http://localhost:3000/', resourceType: 'Document' }],
+  })
+  // Act
+  const page = await readPagesRenderedPage(
+    {
+      pathnameCallFrameId: undefined,
+      insideFrameUrls: [],
+      entryRoute: '/',
+    },
+    reader,
+    manualVerdictBudget().budget,
+  )
+  // Assert
+  assert.deepEqual(page, { state: 'named-by-request' })
+  for (const phrase of [
+    "only the browser's one outstanding page request (the application's own main-frame document or Next data request) is for the entry route (reason route-unreadable)",
+    'not proof that the paused work serves the entry page',
+  ])
+    assert.ok(serverRenderQuickStart.pagesUnconfirmed.includes(phrase), phrase)
+  assert.ok(
+    serverRenderQuickStart.pagesAttribution.includes(
+      "request stays 0, because the browser's outstanding page request alone never takes a pause",
+    ),
+  )
+  assert.equal(
+    serverRenderQuickStart.pagesAttribution.includes(
+      'frame or request, both count as proof',
+    ),
+    false,
+  )
+  assert.ok(
+    serverRenderErrors.pagesReasons['route-unreadable'].meaning.includes(
+      'not proof that the paused work serves the entry page',
+    ),
+  )
+  for (const phrase of [
+    "A pause whose page only the browser's request names is `unconfirmed` too (`route-unreadable`)",
+    "the application's own main-frame document or Next data request, never an iframe's or another site's",
+    'A page-module frame of another page is resumed as `other-route` only when that request is for the same page.',
+    "`request` stays 0 because the browser's request alone never takes a pause",
+  ])
+    assert.ok(section.includes(phrase), phrase)
 })

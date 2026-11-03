@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 
 import {
   ACTIVE_TIMEOUT_MS,
@@ -270,8 +270,8 @@ test('a renderer script the proxy never announced is found by its text and the s
   await continueAndComplete(harness, prepared, pause)
 })
 
-// Value: protects=AC 1 page by request: a hit whose page the stack cannot name (a helper in a module of its own, called after an await) is attributed to the entry page when the browser has exactly one outstanding page request, the entry document, and it is counted as request evidence, not frame evidence; fails_when=the Network events of the browser are not followed, so the hit pauses unconfirmed, or the evidence is counted as frame; no_claim=js-debug forwarding Network events through its proxy (the run asks the page's Network domain to be enabled and takes what arrives), and the verdict's own request cases (the verdict tests)
-test("a hit the stack cannot place is attributed to the entry page by the browser's one outstanding page request", async (context) => {
+// Value: protects=the browser's request is no proof (Codex finding, Blocks: yes): a hit whose page the stack cannot name (a helper in a module of its own, called after an await) while the browser has exactly one outstanding page request, the entry document, pauses labelled unconfirmed (route-unreadable), is counted as unconfirmed and not as taken, because the entry page's data function can fetch another page of the same server and the browser sees only the entry request; fails_when=the entry document request alone takes the pause as the entry page's data function (attribution entry-load, a taken count), or the unconfirmed pause is not journaled; no_claim=js-debug forwarding Network events through its proxy (the run asks the page's Network domain to be enabled and takes what arrives), and the verdict's own request cases (the verdict tests)
+test("a hit the stack cannot place pauses unconfirmed although the browser's one outstanding page request is the entry document", async (context) => {
   // Arrange
   const harness = await pagesServerRun(context, {
     sourcePath: 'src/lib/helper.ts',
@@ -287,11 +287,14 @@ test("a hit the stack cannot place is attributed to the entry page by the browse
   )
   const pause = await publishedPause(harness)
   // Assert
-  assert.equal(pause.attribution, 'entry-load')
-  assert.deepEqual(journaled(harness, 'breakpoint.unconfirmed'), [])
-  assert.deepEqual(plain(harness.run.view().attributionSummary?.taken), {
-    frame: 0,
-    request: 1,
+  assert.equal(pause.attribution, 'unconfirmed')
+  assert.deepEqual(journaled(harness, 'breakpoint.unconfirmed'), [
+    { reason: 'route-unreadable' },
+  ])
+  assert.deepEqual(plain(harness.run.view().attributionSummary), {
+    taken: { frame: 0, request: 0 },
+    unconfirmed: 1,
+    resumed: {},
   })
   await continueAndComplete(harness, prepared, pause)
 })
@@ -882,6 +885,89 @@ test("another page's data-function hit of a shared helper is resumed as other-ro
     ),
     [{ reason: 'other-route', route: '/other', count: 1 }],
   )
+})
+
+/** The hit of a helper that the data function of `pages/other.js` runs after an await: the page-module frame names another page, so only the browser's request can back it. */
+const OTHER_PAGE_MODULE_HIT: PagesHitScript = {
+  fixture: 'get-server-side-props-after-await',
+  prepend: true,
+  edit: (_event, scriptUrls): void => {
+    scriptUrls['1498'] = '(pages-dir-node)/./pages/other.js'
+  },
+}
+
+/** Opens the run of a helper stop beside an `/other` page, armed, for the tests of which browser requests back a page-module frame. @example const { harness, prepared } = await openOtherPageHelperRun(context) */
+async function openOtherPageHelperRun(context: TestContext) {
+  const harness = await pagesServerRun(context, {
+    sourcePath: 'src/lib/helper.ts',
+    nextPages: {
+      mappedLines: 3,
+      serverCompile: true,
+      pagesManifest: { '/other': 'pages/other.js' },
+    },
+  })
+  const prepared = harness.run.prepare().catch(() => undefined)
+  await armedEntry(harness)
+  return { harness, prepared }
+}
+
+// Value: protects=the browser's own request still backs a page-module frame of another page (control of the next two tests): the main frame's document request to the run's application for `/other` backs the module frame `pages/other.js`, so the hit is resumed as other-route and the learner is not paused; fails_when=the origin or frame rule drops the application's own main-frame request, so the module frame has nothing to back it and the hit pauses unconfirmed; no_claim=js-debug's real Network events (scripted)
+test("the application's own main-frame request backs a page-module frame of another page, so the hit is resumed as other-route", async (context) => {
+  // Arrange
+  const { harness } = await openOtherPageHelperRun(context)
+  harness.pageRequest.start('document-1', 'http://localhost:4321/other')
+  // Act
+  harness.server!.hit(
+    hitOnLine(PAGES_SERVER_RETURN_LINE, OTHER_PAGE_MODULE_HIT),
+  )
+  await resumesReceived(harness, 1)
+  // Assert
+  assert.deepEqual(journaled(harness, 'breakpoint.other-route'), [
+    { route: '/other' },
+  ])
+  assert.deepEqual(journaled(harness, 'breakpoint.unconfirmed'), [])
+})
+
+// Value: protects=only the application's own page requests count (Codex finding, Blocks: yes): a document request to another site for the path `/other` is no page request of the run, so it does not back the module frame of another page and the hit pauses unconfirmed instead of being resumed as that page's; fails_when=requests are judged by pathname only, so `https://external.example/other` backs `pages/other.js`; no_claim=which origins the run owns (the origin helper's own tests)
+test('a document request to another site does not back a page-module frame of another page', async (context) => {
+  // Arrange
+  const { harness } = await openOtherPageHelperRun(context)
+  harness.pageRequest.start('document-1', 'https://external.example/other')
+  // Act
+  harness.server!.hit(
+    hitOnLine(PAGES_SERVER_RETURN_LINE, OTHER_PAGE_MODULE_HIT),
+  )
+  const pause = await publishedPause(harness)
+  // Assert
+  assert.equal(pause.attribution, 'unconfirmed')
+  assert.deepEqual(journaled(harness, 'breakpoint.unconfirmed'), [
+    { reason: 'route-unreadable' },
+  ])
+  assert.deepEqual(journaled(harness, 'breakpoint.other-route'), [])
+})
+
+// Value: protects=only the main frame's page requests count (Codex finding, Blocks: yes): the document request of an iframe the page embeds, announced by Page.frameAttached, is no page request even to the application's origin, so it does not back the module frame of another page and the hit pauses unconfirmed; fails_when=requests are collected without their frame, so an embedded page of the application backs `pages/other.js`; no_claim=an iframe in another process (its events do not reach the page's channel)
+test("an iframe's document request does not back a page-module frame of another page", async (context) => {
+  // Arrange
+  const { harness } = await openOtherPageHelperRun(context)
+  harness.pageRequest.attachChildFrame('child-1')
+  harness.pageRequest.start(
+    'document-1',
+    'http://localhost:4321/other',
+    'Document',
+    'child-1',
+  )
+  // Act
+  harness.server!.hit(
+    hitOnLine(PAGES_SERVER_RETURN_LINE, OTHER_PAGE_MODULE_HIT),
+  )
+  const pause = await publishedPause(harness)
+  // Assert
+  assert.equal(pause.attribution, 'unconfirmed')
+  assert.deepEqual(journaled(harness, 'breakpoint.unconfirmed'), [
+    { reason: 'route-unreadable' },
+  ])
+  assert.deepEqual(journaled(harness, 'breakpoint.other-route'), [])
 })
 
 // Value: protects=AC 15 module re-announcement (contract 6): the entry page's server compile announced again during the run (a recompile) keeps the Pages server stop's seal and the stop pauses in the new script, with the re-announced module journaled as coexisting and the run not failed with SOURCE_CHANGED; fails_when=a re-announced server module ends the run as a changed source, or the hit in the new script id is not taken; no_claim=a Pages browser stop on a re-announced module, which keeps failing (the Fast Refresh test of nextPagesRun)

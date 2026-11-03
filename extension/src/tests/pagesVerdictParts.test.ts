@@ -153,6 +153,29 @@ test('a page-module frame of a folder index page reads as that page through the 
   })
 })
 
+// Value: protects=the browser's request never reads a page by itself: with no pathname frame and no page-module frame, the one outstanding page request for the entry route makes the page `named-by-request`, which is a hint the verdict labels unconfirmed, and never `read` with request evidence; fails_when=the request alone reads the entry page (state read), so a hit of another page that the entry page's server code fetched is published as the entry page's confirmed values; no_claim=how the verdict words the hint (the verdict tests)
+test("the browser's one outstanding request for the entry route alone names the page only as named-by-request", async () => {
+  // Arrange
+  const { reader } = scriptedPagesReader({
+    manifest: { '/': 'pages/index.js', '/other': 'pages/other.js' },
+    requests: [{ url: 'http://localhost:3000/', resourceType: 'Document' }],
+  })
+
+  // Act
+  const page = await readPagesRenderedPage(
+    {
+      pathnameCallFrameId: undefined,
+      insideFrameUrls: ['webpack-internal:///(pages-dir-node)/./lib/shared.js'],
+      entryRoute: '/',
+    },
+    reader,
+    manualVerdictBudget().budget,
+  )
+
+  // Assert
+  assert.deepEqual(page, { state: 'named-by-request' })
+})
+
 // Value: protects=page requests only: the document and Next's data request name the page path, `index.json` is the root, and an image, script or API call names none; fails_when=an asset request counts as the outstanding page request, or a data request keeps its prefix and suffix; no_claim=i18n locale prefixes in data requests
 test('only a document or a Next data request names a page path', () => {
   // Arrange, Act, Assert

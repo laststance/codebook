@@ -863,8 +863,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private nextVersion?: string
   /** What happened to the hits of the Pages server stops: resumed hits by stop, the attribution summary of the run resource. */
   private readonly pagesLedger = new PagesHitLedger()
-  /** The browser's page requests that have no answer yet, which name the page of a Pages hit when its stack cannot. */
-  private readonly outstandingPageRequests = new OutstandingPageRequests()
+  /** The application's own page requests of the browser's main frame that have no answer yet, which back or contradict the page a Pages hit's stack names (a request alone confirms no hit). */
+  private readonly outstandingPageRequests = new OutstandingPageRequests(
+    (origin) =>
+      this.origin !== undefined &&
+      isOwnedApplicationOrigin(origin, this.origin, this.ownsIpv6Loopback),
+  )
   /** The text of the Pages renderer by script id, read once and kept; a script announced again is read again. */
   private readonly rendererTexts = new Map<
     string,
@@ -6779,13 +6783,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Listens to the browser's page requests and keeps the ones that have no answer yet, for the Pages page read ({@link PagesHitReader.outstandingRequests}).
-   * Called by {@link observeParticipant} for the browser of a Pages run that declares a server stop.
+   * Listens to the application's page requests of the browser's main frame and keeps the ones that have no answer yet, for the Pages page read ({@link PagesHitReader.outstandingRequests}).
+   * Called by {@link observeParticipant} for the browser of a Pages run that declares a server stop. `Page.frameAttached` is sent for every frame under another frame, so it tells which frames are children of the page (an iframe's requests are not the page's); the origin check lives in {@link OutstandingPageRequests}.
    * @param cdp - The page's channel.
    * @returns The event names to subscribe.
-   * @example this.trackOutstandingPageRequests(cdp) // ['Network.requestWillBeSent', 'Network.responseReceived', …]
+   * @example this.trackOutstandingPageRequests(cdp) // ['Page.frameAttached', 'Network.requestWillBeSent', 'Network.responseReceived', …]
    */
   private trackOutstandingPageRequests(cdp: Cdp): string[] {
+    cdp.on('Page.frameAttached', (event) =>
+      this.outstandingPageRequests.noteChildFrame(event.frameId),
+    )
     cdp.on('Network.requestWillBeSent', (event) =>
       this.outstandingPageRequests.start(event),
     )
@@ -6793,7 +6800,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       cdp.on(ending, (event) =>
         this.outstandingPageRequests.finish(event.requestId),
       )
-    return ['Network.requestWillBeSent', ...PAGE_REQUEST_END_EVENTS]
+    return [
+      'Page.frameAttached',
+      'Network.requestWillBeSent',
+      ...PAGE_REQUEST_END_EVENTS,
+    ]
   }
 
   /**

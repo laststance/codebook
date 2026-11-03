@@ -256,8 +256,8 @@ test('the page module nearest the call frame names the page when its data functi
   })
 })
 
-// Value: protects=AC 2 re-export + request evidence: an entry page that re-exports its getServerSideProps has no page-module frame, so after an await the page comes from the browser's one outstanding page request (a Next data request here, assets ignored), resolved to its route through the manifest in a single read; fails_when=the verdict gives up without the request source, counts the script and image requests as page requests, or reads the manifest more than once; no_claim=the browser participant's real request tracking (requests are scripted)
-test('a hit in a re-exported getServerSideProps after an await takes its page from the one outstanding data request', async () => {
+// Value: protects=AC 2 re-export + request hint: an entry page that re-exports its getServerSideProps has no page-module frame, so after an await only the browser's one outstanding page request (a Next data request here, assets ignored, resolved to its route through the manifest in a single read) names the entry page, and a request alone is no proof, so the hit pauses unconfirmed (route-unreadable) even while the browser still shows the previous page after the operation; fails_when=the request alone confirms the stop with request evidence, the browser's position decides a request that names the entry page, the script and image requests count as page requests, or the manifest is read more than once; no_claim=the browser participant's real request tracking (requests are scripted)
+test("a hit in a re-exported getServerSideProps after an await is unconfirmed when only the browser's one data request names the entry page", async () => {
   // Arrange
   const fixture = pagesPausedFixtureOf('get-server-side-props-after-await')
   fixture.event.callFrames[0] = syncFrameIn(
@@ -283,7 +283,7 @@ test('a hit in a re-exported getServerSideProps after an await takes its page fr
 
   // Act
   const verdict = await pagesDataFunctionHitVerdictOf(
-    hitOf(fixture.event, { group: 1 }),
+    hitOf(fixture.event, { group: 1, browserOnEntryRoute: false }),
     reader,
     openBudget(),
   )
@@ -291,15 +291,68 @@ test('a hit in a re-exported getServerSideProps after an await takes its page fr
   // Assert
   assert.deepEqual(verdict, {
     action: 'pause',
-    attribution: 'after-operation',
-    dataFunction: 'getServerSideProps',
-    evidence: 'request',
+    attribution: 'unconfirmed',
+    reason: 'route-unreadable',
   })
   assert.equal(calls.manifestReads, 1)
 })
 
-// Value: protects=AC 16 page by request evidence for a dynamic route: the one outstanding document request `/products/1` resolves through the manifest to the entry route `/products/[id]` even though a static sibling `/products/new` is listed; fails_when=the request path is compared as text with the route pattern, so a dynamic entry route never matches, or the static sibling takes the request of an id; no_claim=the router's precedence for competing patterns (resolveNextPagesRoute's own tests)
-test('the one outstanding document request of a dynamic route names the entry page', async () => {
+// Value: protects=the browser's request is no proof of the paused work's page (Codex finding, Blocks: yes): the entry page's data function fetches another page of the same Next server over HTTP, and that page's data function, re-exported from a shared module, pauses after an await; the browser sees only the entry page's own document request, so the stack names no page and the request for the entry route must not publish the other page's values as the entry page's confirmed ones; fails_when=a stack that names no page is confirmed as the entry page's stop (evidence request) because the one outstanding page request is for the entry route; no_claim=a module frame that names the entry page (the next tests), or that the server really made the internal fetch (scripted)
+test("an internal fetch of another page does not confirm the entry page's stop on the entry page's own request", async () => {
+  // Arrange
+  const fixture = pagesPausedFixtureOf('get-server-side-props-after-await')
+  fixture.event.callFrames[0] = syncFrameIn(
+    'frame-0',
+    '7002',
+    'getServerSideProps',
+  )
+  fixture.scriptUrls['7002'] =
+    'webpack-internal:///(pages-dir-node)/./lib/shared-data.js'
+  const { reader } = readerFor(fixture, {
+    requests: [{ url: 'http://localhost:3000/', resourceType: 'Document' }],
+  })
+
+  // Act
+  const verdict = await pagesDataFunctionHitVerdictOf(
+    hitOf(fixture.event),
+    reader,
+    openBudget(),
+  )
+
+  // Assert
+  assert.deepEqual(verdict, {
+    action: 'pause',
+    attribution: 'unconfirmed',
+    reason: 'route-unreadable',
+  })
+})
+
+// Value: protects=the module-frame row that a request still backs: the page-module frame names the entry page's own module and the browser's one outstanding request is for the entry route, so the stack names the page and the stop stays the entry page's confirmed pause with frame evidence; fails_when=the request-only rule also rejects a stack that names the entry page, so a page's own data function is published unconfirmed; no_claim=a module frame that another page re-exports (the finding 2 tests)
+test("a page-module frame of the entry page stays the entry page's confirmed pause when the browser's request is for the entry route", async () => {
+  // Arrange
+  const fixture = pagesPausedFixtureOf('get-server-side-props-after-await')
+  const { reader } = readerFor(fixture, {
+    requests: [{ url: 'http://localhost:3000/', resourceType: 'Document' }],
+  })
+
+  // Act
+  const verdict = await pagesDataFunctionHitVerdictOf(
+    hitOf(fixture.event),
+    reader,
+    openBudget(),
+  )
+
+  // Assert
+  assert.deepEqual(verdict, {
+    action: 'pause',
+    attribution: 'entry-load',
+    dataFunction: 'getServerSideProps',
+    evidence: 'frame',
+  })
+})
+
+// Value: protects=AC 16 request hint for a dynamic route: the one outstanding document request `/products/1` resolves through the manifest to the entry route `/products/[id]` even though a static sibling `/products/new` is listed, so with the browser elsewhere it is a request that names the entry page and the hit pauses unconfirmed, not resumed as unattributed and not confirmed; fails_when=the request path is compared as text with the route pattern, so a dynamic entry route never matches and the hit is resumed, or the request alone confirms the stop; no_claim=the router's precedence for competing patterns (resolveNextPagesRoute's own tests)
+test('the one outstanding document request of a dynamic route names the entry page but leaves the stop unconfirmed', async () => {
   // Arrange
   const fixture = pagesPausedFixtureOf('get-server-side-props-after-await')
   fixture.event.callFrames[0] = syncFrameIn(
@@ -321,7 +374,10 @@ test('the one outstanding document request of a dynamic route names the entry pa
 
   // Act
   const verdict = await pagesDataFunctionHitVerdictOf(
-    hitOf(fixture.event, { entryRoute: '/products/[id]' }),
+    hitOf(fixture.event, {
+      entryRoute: '/products/[id]',
+      browserOnEntryRoute: false,
+    }),
     reader,
     openBudget(),
   )
@@ -329,9 +385,8 @@ test('the one outstanding document request of a dynamic route names the entry pa
   // Assert
   assert.deepEqual(verdict, {
     action: 'pause',
-    attribution: 'entry-load',
-    dataFunction: 'getServerSideProps',
-    evidence: 'request',
+    attribution: 'unconfirmed',
+    reason: 'route-unreadable',
   })
 })
 
@@ -371,7 +426,7 @@ test('outstanding page requests for two routes leave the page unreadable and the
   })
 })
 
-// Value: protects=AC 16 request for another route: the browser's one outstanding page request is for a different route, which names no entry page, so the page stays unreadable (not other-route); fails_when=a request for another route is taken as the entry page, or is reported as a resumed other-route hit on weak evidence; no_claim=none beyond protects
+// Value: protects=AC 16 request for another route: the browser's one outstanding page request is for a different route, which names no entry page, so the page stays unreadable (not other-route) and, with the browser elsewhere, the hit is resumed as unattributed instead of pausing the learner; fails_when=a request for another route is taken as the entry page (it would pause unconfirmed), or is reported as a resumed other-route hit on weak evidence; no_claim=none beyond protects
 test('the one outstanding request for another route does not name the entry page', async () => {
   // Arrange
   const fixture = pagesPausedFixtureOf('get-server-side-props-after-await')
@@ -390,20 +445,19 @@ test('the one outstanding request for another route does not name the entry page
 
   // Act
   const verdict = await pagesDataFunctionHitVerdictOf(
-    hitOf(fixture.event),
+    hitOf(fixture.event, { browserOnEntryRoute: false }),
     reader,
     openBudget(),
   )
 
   // Assert
   assert.deepEqual(verdict, {
-    action: 'pause',
-    attribution: 'unconfirmed',
-    reason: 'route-unreadable',
+    action: 'resume',
+    event: 'breakpoint.unattributed-resumed',
   })
 })
 
-// Value: protects=request source resolved by route precedence (finding 1): a dynamic entry `/products/[id]` and a static sibling `/products/new` that re-exports the same data function; the only outstanding request is the sibling's data request, which Next serves from `/products/new`, so the hit is not proven to be the entry page's and pauses unconfirmed; fails_when=the request path is matched against the entry pattern alone, so another page's stop is published as the entry page's proof with request evidence; no_claim=the browser participant's real request tracking (requests are scripted)
+// Value: protects=request source resolved by route precedence (finding 1): a dynamic entry `/products/[id]` and a static sibling `/products/new` that re-exports the same data function; the only outstanding request is the sibling's data request, which Next serves from `/products/new`, so it does not name the entry page and, with the browser elsewhere, the hit is resumed as unattributed instead of pausing; fails_when=the request path is matched against the entry pattern alone, so the sibling's request names the entry page and its stop pauses as the entry page's; no_claim=the browser participant's real request tracking (requests are scripted)
 test("a data request that a static sibling page serves is not taken for the dynamic entry page's stop", async () => {
   // Arrange
   const fixture = pagesPausedFixtureOf('get-server-side-props-after-await')
@@ -429,21 +483,23 @@ test("a data request that a static sibling page serves is not taken for the dyna
 
   // Act
   const verdict = await pagesDataFunctionHitVerdictOf(
-    hitOf(fixture.event, { entryRoute: '/products/[id]' }),
+    hitOf(fixture.event, {
+      entryRoute: '/products/[id]',
+      browserOnEntryRoute: false,
+    }),
     reader,
     openBudget(),
   )
 
   // Assert
   assert.deepEqual(verdict, {
-    action: 'pause',
-    attribution: 'unconfirmed',
-    reason: 'route-unreadable',
+    action: 'resume',
+    event: 'breakpoint.unattributed-resumed',
   })
 })
 
-// Value: protects=request source needs the manifest (finding 1): when `pages-manifest.json` cannot be read, the one outstanding request cannot be resolved to its route, so the page stays unreadable instead of being guessed as the entry page; fails_when=an unreadable manifest falls back to matching the request against the entry pattern, which is a guess; no_claim=a manifest that is read but lists no route for the request
-test('an outstanding page request is no evidence of the entry page while the manifest cannot be read', async () => {
+// Value: protects=request source needs the manifest (finding 1): when `pages-manifest.json` cannot be read, the one outstanding request cannot be resolved to its route, so it names no page and, with the browser elsewhere, the hit is resumed as unattributed instead of being guessed as the entry page's; fails_when=an unreadable manifest falls back to matching the request against the entry pattern, which is a guess that pauses the hit; no_claim=a manifest that is read but lists no route for the request
+test('an outstanding page request names no page while the manifest cannot be read', async () => {
   // Arrange
   const fixture = pagesPausedFixtureOf('get-server-side-props-after-await')
   fixture.event.callFrames[0] = syncFrameIn(
@@ -460,16 +516,15 @@ test('an outstanding page request is no evidence of the entry page while the man
 
   // Act
   const verdict = await pagesDataFunctionHitVerdictOf(
-    hitOf(fixture.event),
+    hitOf(fixture.event, { browserOnEntryRoute: false }),
     reader,
     openBudget(),
   )
 
   // Assert
   assert.deepEqual(verdict, {
-    action: 'pause',
-    attribution: 'unconfirmed',
-    reason: 'route-unreadable',
+    action: 'resume',
+    event: 'breakpoint.unattributed-resumed',
   })
 })
 

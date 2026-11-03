@@ -2088,13 +2088,26 @@ export async function configuredRuntimeHarness(
     },
     /** How many screenshots the run asked the stand-in page for. */
     screenshotRequests: () => screenshotCount,
-    /** Reports the page's network events for the requests a Pages hit may be working for, as the browser does. @example harness.pageRequest.start('7', 'http://localhost:4321/_next/data/build/index.json?page=2', 'Fetch') */
+    /** Reports the page's network events for the requests a Pages hit may be working for, as the browser does; a request comes from the main frame (`main`) unless a test names the frame. @example harness.pageRequest.start('7', 'http://localhost:4321/_next/data/build/index.json?page=2', 'Fetch') */
     pageRequest: {
-      start(requestId: string, url: string, type = 'Document'): void {
+      start(
+        requestId: string,
+        url: string,
+        type = 'Document',
+        frameId = 'main',
+      ): void {
         listeners.get('Network.requestWillBeSent')?.({
           requestId,
+          frameId,
           request: { url },
           type,
+        })
+      },
+      /** Reports that the page attached an iframe under its main frame, as `Page.frameAttached` does. @example harness.pageRequest.attachChildFrame('child-1') */
+      attachChildFrame(frameId: string): void {
+        listeners.get('Page.frameAttached')?.({
+          frameId,
+          parentFrameId: 'main',
         })
       },
       finish(requestId: string): void {
