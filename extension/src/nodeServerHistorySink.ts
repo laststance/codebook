@@ -18,6 +18,7 @@ import type { NodeServerResponse } from './runtime'
 import { cutTextToLength } from './utils/cutTextToLength'
 import { hideTrailingRootPrefix } from './utils/hideTrailingRootPrefix'
 import { maskSavedDebugSnapshot } from './utils/maskSavedDebugSnapshot'
+import { maskSavedFacts } from './utils/maskSavedFacts'
 import { redactSecretText } from './utils/redactSecretText'
 import { resolveServerStopFrame } from './utils/resolveServerStopFrame'
 import type { CauseRoots } from './utils/sanitizeCause'
@@ -275,11 +276,14 @@ export class NodeServerHistorySinkImpl implements NodeServerHistorySink {
       const hit = (this.hits.get(index) ?? 0) + 1
       this.hits.set(index, hit)
       const { column, frameName } = resolveServerStopFrame(read)
-      const facts = Object.fromEntries(
-        read.facts.map((fact) => [
-          this.hide(`${fact.mode}:${fact.path}`),
-          this.hide(fact.display),
-        ]),
+      // The shape rules run here too, so a fact that did not come through the capture's masks is stored masked.
+      const facts = maskSavedFacts(
+        Object.fromEntries(
+          read.facts.map((fact) => [
+            this.hide(`${fact.mode}:${fact.path}`),
+            this.hide(fact.display),
+          ]),
+        ),
       )
       return this.input.writer.appendStop({
         elapsedMs: at,

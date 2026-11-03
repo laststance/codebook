@@ -7,6 +7,7 @@ import type { ResourceContent } from '../resources'
 
 import { answerUnreadableHistoryEntry } from './answerUnreadableHistoryEntry'
 import { maskSavedFacts } from './maskSavedFacts'
+import { maskSavedServerEntries } from './maskSavedServerEntries'
 import { readHistoryResourceTail } from './readHistoryResourceTail'
 import { readJsonPage } from './readJsonPage'
 import { rehydrateNodeServerEntries } from './rehydrateServerStopSnapshot'
@@ -22,7 +23,7 @@ type LeanServerEvent = Record<string, unknown> & {
 /**
  * Reduces one journal entry to its lean, citable form, or to nothing for an entry no learning step may cite (`source`, `end`, the send marks and `output-truncated`).
  * Called by {@link readServerHistoryResource} for the events list; the whole entry, snapshot and body included, is {@link readServerHistoryResource}'s per-entry detail. A stop's facts are masked again by {@link maskSavedFacts}, so a history saved before the shape rules serves no Cookie, Authorization or secret URL query value.
- * @param entry - A server journal entry as stored.
+ * @param entry - A server journal entry whose output, request path and location were masked again ({@link maskSavedServerEntries}).
  * @returns The lean event, or `undefined` for a storage-only entry.
  * @example leanServerEvent(stopEntry) // => { sequence: 4, type: 'stop', elapsedMs: 60, declaredStopIndex: 0, hit: 1, path: 'src/handler.ts', line: 2, sourceHash: '…', facts: { 'value:id': '7' } }
  */
@@ -74,7 +75,7 @@ function leanServerEvent(
 /**
  * The page a server history's events list reads: every page of one read is pinned to the prefix that existed at its first page, so a history still recording reads consistently; the first read pins the last sequence it sees and returns `through` in its `nextUri`.
  * @param baseUri - `codebook://node-history/<id>`.
- * @param entries - The journal's entries as stored.
+ * @param entries - The journal's entries as stored; the pinned prefix is masked again ({@link maskSavedServerEntries}) before it is served, so a history saved before the shape rules serves no Cookie line, Authorization value or `?code=` URL in its output, request path or stops.
  * @param through - The pinned last sequence, or `undefined` for a first read, which pins the journal's current end.
  * @param page - The returned page cursor, `pages/<hash>/<offset>`, absent for the first page.
  * @returns One page of the lean list of events with sequence up to `through`.
@@ -89,9 +90,10 @@ function readServerEventsPage(
   // A pin past the journal's end (or beyond the safe integers) is the journal's own end: the pin never names what does not exist.
   const end = entries.at(-1)?.sequence ?? 0
   const last = Math.min(through ?? end, end)
-  const events = entries
-    .filter((entry) => entry.sequence <= last)
-    .flatMap((entry) => leanServerEvent(entry) ?? [])
+  // The mask reads the pinned prefix as one stream, so every page of one read sees the same texts however far the journal has grown.
+  const events = maskSavedServerEntries(
+    entries.filter((entry) => entry.sequence <= last),
+  ).flatMap((entry) => leanServerEvent(entry) ?? [])
   return readJsonPage(`${baseUri}/events/through/${last}`, events, page)
 }
 
@@ -117,7 +119,7 @@ function serverVerdicts(
 }
 
 /**
- * Answers one entry's detail page: the stop restored to its whole snapshot, or the entry as stored.
+ * Answers one entry's detail page: the stop restored to its whole snapshot, or the entry; output, request path and redirect location are masked again ({@link maskSavedServerEntries}) so a history saved before the shape rules serves no credential in them.
  * Called by {@link readServerHistoryResource} for `events/<sequence>`; only the restoration of the entries is turned into the coded answer, so another failure keeps its own cause.
  * @param baseUri - The history's resource address.
  * @param studyId - The history's study id.

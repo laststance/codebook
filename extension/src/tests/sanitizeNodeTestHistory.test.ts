@@ -215,3 +215,58 @@ test('a stored Cookie-shaped fact display is shown masked and a non-secret displ
   assert.equal(JSON.stringify(displays).includes('opaque-session-value'), false)
   assert.equal(displays[1], "'theme=dark'")
 })
+
+// Value: protects=a test replay saved before the shape rules prints no Cookie line, Authorization value or secret in its output entries and its result's output tail, also when a line is split over two entries or holds a terminal control; fails_when=sanitizeNodeTestHistory strips controls but prints the stored output and tail as recorded; why_new=Cycle 0073 task 0 review: the Study pane prints the output and outputTail of a replay; seam=none; no_claim=the lean events list and entry detail the chat reads (savedHistoryServingMasks tests)
+test('a stored Cookie line split over two output entries, with a control inside, and a stored output tail are shown masked', () => {
+  // Arrange
+  const history = forgedHistory()
+  const stop = history.entries[2]
+  assert.equal(stop?.type, 'stop')
+  history.entries = [
+    {
+      type: 'output',
+      sequence: 1,
+      elapsedMs: 10,
+      outputSequence: 1,
+      channel: 'stdout',
+      text: 'Cookie: sid=opaque-sess\u001b[0m',
+    },
+    {
+      type: 'output',
+      sequence: 2,
+      elapsedMs: 20,
+      outputSequence: 2,
+      channel: 'stdout',
+      text: 'ion-value-4f9c2d71; theme=dark\nok\n',
+    },
+    ...(stop ? [stop] : []),
+    {
+      type: 'result',
+      sequence: 4,
+      elapsedMs: 40,
+      exitCode: 1,
+      signal: null,
+      outputTail:
+        'not ok\nAuthorization: Basic dXNlcjpwYXNzd29yZHZhbHVl\nCookie: sid=opaque-session-value-4f9c2d71; theme=light',
+    },
+  ]
+
+  // Act
+  const shown = sanitizeNodeTestHistory(history)
+
+  // Assert
+  const served = JSON.stringify(shown.entries)
+  assert.equal(served.includes('opaque-session-value-4f9c2d71'), false)
+  assert.equal(served.includes('dXNlcjpwYXNzd29yZHZhbHVl'), false)
+  assert.deepEqual(
+    shown.entries.flatMap((entry) =>
+      entry.type === 'output' ? [entry.text] : [],
+    ),
+    ['', 'Cookie: [masked]\nok\n'],
+  )
+  const result = shown.entries[3]
+  assert.equal(
+    result?.type === 'result' ? result.outputTail : undefined,
+    'not ok\nAuthorization: [masked]\nCookie: [masked]',
+  )
+})

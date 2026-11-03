@@ -1,6 +1,7 @@
 import {
   NODE_SERVER_HISTORY_FORMAT_VERSION,
   NODE_SERVER_HISTORY_LIMIT_BYTES,
+  NODE_SERVER_HISTORY_LOCATION_LIMIT_CHARS,
   NODE_SERVER_HISTORY_MAX_ENTRIES,
   NODE_SERVER_HISTORY_SEAL_LIMIT_BYTES,
   NODE_SERVER_OUTPUT_BUDGET_BYTES,
@@ -26,6 +27,7 @@ import type { NodeServerHistoryTypes } from './nodeServerHistoryTypes'
 import type { ReplayDebugSnapshot } from './replayDebugSchemas'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { cutHistoryReason } from './utils/cutHistoryReason'
+import { cutTextToLength } from './utils/cutTextToLength'
 import { dehydrateServerStopSnapshot } from './utils/dehydrateServerStopSnapshot'
 import {
   describeLastNodeServerEntry,
@@ -279,7 +281,7 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
   }
 
   /**
-   * Records that Codebook opens a send attempt; the path is stored with secret-named query values masked.
+   * Records that Codebook opens a send attempt; the path is stored with the values of secret-named query parameters and of `code` masked ({@link maskSecretQueryValues}).
    * @param attempt - The attempt's number, counted from 1.
    * @example await writer.appendRequest({ elapsedMs: 40, attempt: 1, method: 'POST', path: '/api/x?token=abc', bodyBytes: 12 })
    */
@@ -293,7 +295,11 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
     return this.appendEntry({
       type: 'request',
       ...input,
-      path: maskSecretQueryValues(input.path),
+      // The mask can lengthen a value (`[masked]`), so the bound is applied after it.
+      path: cutTextToLength(
+        maskSecretQueryValues(input.path),
+        NODE_SERVER_HISTORY_LOCATION_LIMIT_CHARS,
+      ),
     })
   }
 
@@ -364,13 +370,24 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
     return { ...base, text }
   }
 
-  /** Records the response the run shows: its status, content type, the shown body, its size, whether the read was cut, the redirect and the request's duration. @example await writer.appendResponse({ elapsedMs: 90, status: 200, contentType: 'application/json', body: '{}', bodyBytes: 2, readCut: false, location: null, requestDurationMs: 50 }) */
+  /** Records the response the run shows: its status, content type, the shown body, its size, whether the read was cut, the redirect (with the values of secret query parameters and of `code` masked, {@link maskSecretQueryValues}) and the request's duration. @example await writer.appendResponse({ elapsedMs: 90, status: 200, contentType: 'application/json', body: '{}', bodyBytes: 2, readCut: false, location: null, requestDurationMs: 50 }) */
   appendResponse(
     input: EntryInputOf<'response'> extends infer Entry
       ? Omit<Entry, 'type'>
       : never,
   ): Promise<void> {
-    return this.appendEntry({ type: 'response', ...input })
+    return this.appendEntry({
+      type: 'response',
+      ...input,
+      location:
+        input.location === null
+          ? null
+          : // The mask can lengthen a value (`[masked]`), so the bound is applied after it.
+            cutTextToLength(
+              maskSecretQueryValues(input.location),
+              NODE_SERVER_HISTORY_LOCATION_LIMIT_CHARS,
+            ),
+    })
   }
 
   /** Records that the request failed, with its code and a message that already passed the run's redaction. @example await writer.appendRequestFailed({ elapsedMs: 95, code: 'REQUEST_TIMEOUT', message: 'No answer.' }) */

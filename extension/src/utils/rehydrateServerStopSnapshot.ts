@@ -10,6 +10,7 @@ import {
 
 import { maskSavedDebugSnapshot } from './maskSavedDebugSnapshot'
 import { maskSavedFacts } from './maskSavedFacts'
+import { maskSavedServerEntries } from './maskSavedServerEntries'
 import { nodeServerSourceKey } from './nodeServerJournalRules'
 
 /**
@@ -50,16 +51,16 @@ function rehydrateServerStopSnapshot(
 }
 
 /**
- * Lists a journal's entries with every stop's snapshot restored and its facts masked again ({@link maskSavedFacts}), which is the one place the read path rehydrates; `source` entries are kept as storage-only entries.
+ * Lists a journal's entries with every stop's snapshot restored and its facts masked again ({@link maskSavedFacts}), and the output, request paths and redirect locations masked again too ({@link maskSavedServerEntries}), which is the one place the read path rehydrates; `source` entries are kept as storage-only entries.
  * @param entries - The verified journal's entries in order.
- * @returns The same entries, each stop carrying its full, masked snapshot and its masked facts.
+ * @returns The same entries, each stop carrying its full, masked snapshot and its masked facts, each output, request and response without a credential a history saved before the shape rules kept in it.
  * @example rehydrateNodeServerEntries(history.entries).filter((entry) => entry.type === 'stop')
  */
 export function rehydrateNodeServerEntries(
   entries: readonly NodeServerHistoryEntry[],
 ): NodeServerHistoryEntry[] {
   const sources = new Map<string, NodeServerSourceEntry>()
-  return entries.map((entry) => {
+  return maskSavedServerEntries(entries).map((entry) => {
     if (entry.type === 'source')
       sources.set(nodeServerSourceKey(entry.path, entry.hash), entry)
     if (entry.type !== 'stop') return entry
