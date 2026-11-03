@@ -33,6 +33,11 @@ const REASONS = [
   'unreadable',
   'not-a-next-app',
   'outside-package',
+  'library-build-stale',
+  'library-build-unmapped',
+  'library-not-in-build',
+  'library-place-ambiguous',
+  'library-build-changed',
   'package-root-fresh-session',
   'nested-workspace',
 ]
@@ -171,8 +176,8 @@ test('the help has one fix anchor per packageRoot reason and a cross-adapter tab
   )
 })
 
-// protects=API 1.18 is served and its note names the packageRoot fields; fails_when=the version or a field of the note drifts; no_claim=the behavior of other lanes
-test('API_VERSION is 1.18 and its note names the packageRoot fields', async () => {
+// protects=API 1.19 is served and the 1.18 note names the packageRoot fields; fails_when=the version or a field of the note drifts; no_claim=the behavior of other lanes
+test('API_VERSION is 1.19 and its 1.18 note names the packageRoot fields', async () => {
   // Arrange
   const constants = await readPackaged('src/constants.ts')
   // Act
@@ -181,7 +186,7 @@ test('API_VERSION is 1.18 and its note names the packageRoot fields', async () =
       .split('\n')
       .find((line) => line.startsWith(' * 1.18 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.18')
+  assert.equal(API_VERSION, '1.19')
   for (const phrase of [
     '`packageRoot`',
     '`rootIsApp`',
@@ -193,12 +198,12 @@ test('API_VERSION is 1.18 and its note names the packageRoot fields', async () =
     assert.ok(note.includes(phrase), phrase)
 })
 
-// protects=skill 1.0.67 gates packageRoot on API 1.18, chooses the app the question is about, never opens a nested folder and says which package runs; fails_when=a rule leaves the skill; no_claim=how a chat follows it
-test('the bundled skill 1.0.67 gates packageRoot on API 1.18 and never opens a nested folder', async () => {
+// protects=skill 1.0.68 gates packageRoot on API 1.18, chooses the app the question is about, never opens a nested folder and says which package runs; fails_when=a rule leaves the skill; no_claim=how a chat follows it
+test('the bundled skill 1.0.68 gates packageRoot on API 1.18 and never opens a nested folder', async () => {
   // Arrange
   const skill = await readPackaged('skills/codebook/SKILL.md')
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.67"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.68"\n'))
   for (const phrase of [
     'only when `codebook_status` reports API 1.18 or later',
     'refuses `packageRoot` as an unknown key',
@@ -219,7 +224,7 @@ test('the README replaces the nested-app limitation with the root-open entry', a
   // Act / Assert
   assert.equal(readme.includes('cannot run yet'), false)
   assert.ok(readme.includes('## Run a Next app below the repository root'))
-  assert.ok(readme.includes('**MCP API 1.18**'))
+  assert.ok(readme.includes('**MCP API 1.19**'))
   assert.ok(readme.includes('format 9 (`.study.v9.json`)'))
   assert.ok(
     readme.includes(
