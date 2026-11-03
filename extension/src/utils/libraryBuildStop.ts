@@ -1,4 +1,5 @@
-import { readdir, readFile, realpath, stat } from 'node:fs/promises'
+import { constants, type Dirent } from 'node:fs'
+import { open, opendir, readFile, realpath, stat } from 'node:fs/promises'
 import { SourceMap } from 'node:module'
 import {
   basename,
@@ -291,10 +292,7 @@ async function listLibraryMaps(
   while (pending.length > 0) {
     signal.throwIfAborted()
     const folder = pending.pop()!
-    const entries = await readFolderEntries(folder)
-    spend.entries += entries.length
-    if (spend.entries > LIBRARY_BUILD_ENTRY_LIMIT_COUNT)
-      throw new UnmappedCause('bound')
+    const entries = await readFolderEntries(folder, signal, spend)
     pending.push(...subfoldersOf(folder, entries))
     for (const entry of entries) {
       const real = await realMapPath(root, join(folder, entry.name), entry)
@@ -303,6 +301,7 @@ async function listLibraryMaps(
     if (maps.length > LIBRARY_BUILD_MAP_LIMIT_COUNT)
       throw new UnmappedCause('bound')
   }
+  // The found maps (not every entry) are sorted, so the order of the freeze does not depend on the listing order.
   return maps.sort()
 }
 
@@ -316,11 +315,25 @@ function subfoldersOf(
     .map((entry) => join(folder, entry.name))
 }
 
-/** Lists a folder's entries by name; a folder that does not exist is empty, because a library without that build folder is normal. */
-async function readFolderEntries(folder: string) {
+/**
+ * Lists a folder's entries one by one and counts each against the discovery's entry bound, so a huge folder is refused before it is loaded whole; a folder that does not exist is empty, because a library without that build folder is normal.
+ * @throws `UnmappedCause('bound')` as soon as the counted entries pass {@link LIBRARY_BUILD_ENTRY_LIMIT_COUNT}.
+ */
+async function readFolderEntries(
+  folder: string,
+  signal: AbortSignal,
+  spend: Spend,
+) {
+  const entries: Dirent[] = []
   try {
-    const entries = await readdir(folder, { withFileTypes: true })
-    return entries.sort((left, right) => left.name.localeCompare(right.name))
+    for await (const entry of await opendir(folder)) {
+      signal.throwIfAborted()
+      spend.entries += 1
+      // Stop at the bound; the rest of the folder is never read.
+      if (spend.entries > LIBRARY_BUILD_ENTRY_LIMIT_COUNT)
+        throw new UnmappedCause('bound')
+      entries.push(entry)
+    }
   } catch (error) {
     if (
       error instanceof Error &&
@@ -330,6 +343,7 @@ async function readFolderEntries(folder: string) {
       return []
     throw error
   }
+  return entries
 }
 
 /** The map file endings of a JavaScript build; a `.d.ts.map`, `.d.cts.map` or `.d.mts.map` ends in `.ts.map` and is skipped. */
@@ -546,6 +560,88 @@ function charge(
   request.budget.readBytes += bytes
 }
 
+/** Escapes a file name the way JSON text writes it inside a string. */
+function jsonEscaped(name: string): string {
+  return JSON.stringify(name).slice(1, -1)
+}
+
+/** Tells whether a map's raw text mentions the stop file's name, as a cheap check before the strict parse. */
+function mentionsFile(text: string, name: string): boolean {
+  return text.includes(name) || text.includes(jsonEscaped(name))
+}
+
+/**
+ * Scans a map larger than the per-map limit for the stop file's name in chunks, without holding it in memory, so an unrelated oversized map can be skipped.
+ * @returns `true` when the name occurs in the file; every scanned byte is charged to the discovery and the run's budget.
+ */
+async function oversizedMapMentions(
+  request: FreezeLibraryBuildRequest,
+  root: string,
+  mapPath: string,
+  name: string,
+  signal: AbortSignal,
+  spend: Spend,
+): Promise<boolean> {
+  const needles = [Buffer.from(name), Buffer.from(jsonEscaped(name))]
+  const overlap = Math.max(...needles.map((needle) => needle.length)) - 1
+  const handle = await open(
+    join(await realpath(root), relative(root, mapPath)),
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  )
+  try {
+    const chunk = Buffer.alloc(1_048_576)
+    let tail = Buffer.alloc(0)
+    for (;;) {
+      signal.throwIfAborted()
+      const left = takeBytes(request, spend, chunk.length)
+      const { bytesRead } = await handle.read(chunk, 0, left, null)
+      if (bytesRead === 0) return false
+      spend.totalBytes += bytesRead
+      request.budget.readBytes += bytesRead
+      const window = Buffer.concat([tail, chunk.subarray(0, bytesRead)])
+      if (needles.some((needle) => window.includes(needle))) return true
+      tail = window.subarray(Math.max(0, window.length - overlap))
+    }
+  } finally {
+    await handle.close()
+  }
+}
+
+/**
+ * Reads one map for {@link findStopMaps} and returns its text only when the map can name the stop file.
+ *
+ * Why it exists: one unrelated index map, an unreadable one or an oversized one must not refuse every stop of the library. A map that does name the file keeps the strict refusals; the discovery's total-bytes, entry, count and deadline bounds still refuse.
+ * @returns The text, or `undefined` for a map to skip.
+ * @throws `UnmappedCause('bound')` for a map over the limit that names the file, or when the remaining byte allowance is smaller than the per-map limit and the map does not fit.
+ */
+async function readCandidateMapText(
+  request: FreezeLibraryBuildRequest,
+  root: string,
+  mapPath: string,
+  relativePath: string,
+  stopRealFile: string,
+  signal: AbortSignal,
+  spend: Spend,
+): Promise<string | undefined> {
+  const allowance = takeBytes(request, spend, REPOSITORY_MAP_LIMIT_BYTES)
+  const name = basename(stopRealFile)
+  let text: string
+  try {
+    text = await readMapText(request, root, relativePath, allowance, signal)
+  } catch (error) {
+    if (!(error instanceof UnmappedCause)) throw error
+    if (error.cause === 'malformed') return undefined
+    // The remaining total allowance, not the per-map limit, was too small: the discovery's bound.
+    if (allowance < REPOSITORY_MAP_LIMIT_BYTES) throw error
+    // Over the per-map limit: refuse only a map that names the file.
+    if (await oversizedMapMentions(request, root, mapPath, name, signal, spend))
+      throw error
+    return undefined
+  }
+  charge(request, spend, text)
+  return mentionsFile(text, name) ? text : undefined
+}
+
 /** Reads every map below the library and keeps those that name the stop's file. */
 async function findStopMaps(
   request: FreezeLibraryBuildRequest,
@@ -563,14 +659,17 @@ async function findStopMaps(
   )) {
     signal.throwIfAborted()
     const relativePath = relative(root, mapPath)
-    const text = await readMapText(
+    const text = await readCandidateMapText(
       request,
       root,
+      mapPath,
       relativePath,
-      takeBytes(request, spend, REPOSITORY_MAP_LIMIT_BYTES),
+      stopRealFile,
       signal,
+      spend,
     )
-    charge(request, spend, text)
+    // A map that cannot be shown to name the stop's file is not this stop's map.
+    if (text === undefined) continue
     const parsed = parseMap(text)
     const sourceIndex = await indexOfStopSource(
       parsed,
@@ -701,7 +800,8 @@ function createFrozen(
     },
     runtimePath(builtPath, packageRootRelative) {
       const path = posix.relative(packageRootRelative, builtPath)
-      return path.startsWith('.') ? path : `./${path}`
+      // Only a real parent step is a relative path already; `.libs/x` is a folder name and still needs `./`.
+      return path === '..' || path.startsWith('../') ? path : `./${path}`
     },
     matchesBuiltText(builtPath, text) {
       const entry = byPath.get(builtPath)

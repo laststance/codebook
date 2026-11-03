@@ -14,6 +14,11 @@ import { after, test } from 'node:test'
 
 import ts from 'typescript'
 
+import {
+  LIBRARY_BUILD_ENTRY_LIMIT_COUNT,
+  REPOSITORY_DISCOVERY_LIMIT_BYTES,
+  REPOSITORY_MAP_LIMIT_BYTES,
+} from '../constants'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import {
   detectLibraryPackage,
@@ -371,7 +376,7 @@ test('refuses a build map that cannot be parsed as malformed', async () => {
   const { request, root } = await createFixture()
   await writeFile(
     join(root, 'packages/core/build/modern/core.js.map'),
-    '{not json',
+    '{not json "../../src/core.ts"',
   )
   // Act
   const refusal = await refusalOf(freezeLibraryBuild(request))
@@ -526,4 +531,96 @@ test('recognizes only the frozen built text', async () => {
   assert.equal(same, true)
   assert.equal(changed, false)
   assert.equal(unknown, false)
+})
+
+// protects=OCR M1 runtime path: a built folder whose name starts with a dot still gets "./"; fails_when=".libs/x/build/a.js" is written without "./" (Next would read a package name); no_claim=Next's layer prefix
+test('writes ./ before a built path that sits in a folder named like .libs', async () => {
+  // Arrange
+  const { request } = await createFixture()
+  const frozen = await freezeLibraryBuild(request)
+  // Act
+  const path = frozen.runtimePath('.libs/x/build/a.js', '.')
+  // Assert
+  assert.equal(path, './.libs/x/build/a.js')
+})
+
+// protects=OCR M2 unrelated index map: a sections map beside the good one does not refuse the stop; fails_when=an unrelated unparsable-by-rule map makes every stop malformed; no_claim=the map that names the file being malformed
+test('freezes a stop when an unrelated index map with sections sits beside the good maps', async () => {
+  // Arrange
+  const { request, root } = await createFixture()
+  await writeFile(
+    join(root, 'packages/core/build/modern/other.js.map'),
+    JSON.stringify({ version: 3, sections: [], sources: [null] }),
+  )
+  // Act
+  const frozen = await freezeLibraryBuild(request)
+  // Assert
+  assert.equal(frozen.candidates.length, 2)
+})
+
+// protects=OCR M2 unrelated oversized map: a map over the per-map limit that does not name the file is skipped; fails_when=it refuses every stop as bound; no_claim=timing of the scan
+test('skips an oversized map that does not name the stop file', async () => {
+  // Arrange
+  const { request, root } = await createFixture()
+  await writeFile(
+    join(root, 'packages/core/build/modern/big.js.map'),
+    Buffer.alloc(REPOSITORY_MAP_LIMIT_BYTES + 1, 'x'),
+  )
+  // Act
+  const frozen = await freezeLibraryBuild(request)
+  // Assert
+  assert.equal(frozen.candidates.length, 2)
+})
+
+// protects=OCR M2 oversized map naming the file: the strict bound refusal stays; fails_when=a too-large map that names the file is skipped; no_claim=nothing
+test('refuses an oversized map that names the stop file as bound', async () => {
+  // Arrange
+  const { request, root } = await createFixture()
+  const padding = Buffer.alloc(REPOSITORY_MAP_LIMIT_BYTES + 1, ' ')
+  await writeFile(
+    join(root, 'packages/core/build/modern/big.js.map'),
+    Buffer.concat([padding, Buffer.from('"../../src/core.ts"')]),
+  )
+  // Act
+  const refusal = await refusalOf(freezeLibraryBuild(request))
+  // Assert
+  assert.equal(refusal.details.cause, 'bound')
+  assert.equal(refusal.details.sideEffects, 'none')
+})
+
+// protects=OCR4 M1 total bytes: an exhausted shared byte allowance refuses as bound; fails_when=reads go on past the run's discovery limit; no_claim=the exact limit
+test('refuses as bound when the run budget has no bytes left for the next map', async () => {
+  // Arrange
+  const { request } = await createFixture()
+  const spent = {
+    ...request,
+    budget: { readBytes: REPOSITORY_DISCOVERY_LIMIT_BYTES - 10, spentMs: 0 },
+  }
+  // Act
+  const refusal = await refusalOf(freezeLibraryBuild(spent))
+  // Assert
+  assert.equal(refusal.details.cause, 'bound')
+  assert.equal(refusal.details.sideEffects, 'none')
+})
+
+// protects=OCR4 M1 entry count: more than 50,000 directory entries are refused; fails_when=the listing goes on past the bound; no_claim=timing
+test('refuses a library folder with more than 50000 entries as bound', async () => {
+  // Arrange
+  const { request, root } = await createFixture()
+  const folder = join(root, 'packages/core/lib')
+  await mkdir(folder, { recursive: true })
+  for (let start = 0; start <= LIBRARY_BUILD_ENTRY_LIMIT_COUNT; start += 1000)
+    await Promise.all(
+      Array.from(
+        {
+          length: Math.min(1000, LIBRARY_BUILD_ENTRY_LIMIT_COUNT + 1 - start),
+        },
+        (_, index) => writeFile(join(folder, `n${start + index}.txt`), ''),
+      ),
+    )
+  // Act
+  const refusal = await refusalOf(freezeLibraryBuild(request))
+  // Assert
+  assert.equal(refusal.details.cause, 'bound')
+  assert.equal(refusal.details.sideEffects, 'none')
 })
