@@ -152,6 +152,8 @@ export function serverChunk(
 
 /** Where a page's server build holds the cited source's `(pages-dir-node)` module, and which server chunks the compile requires. */
 export type NextPagesServerCompile = {
+  /** Further eval modules the compile holds, by webpack module id (a workspace library's built module in a library stop's run). */
+  extraModules?: Readonly<Record<string, string>>
   /** Whether the compile itself holds the cited module; `true` by default. */
   holdsCited?: boolean
   /** How many lines, from line 1, the server module of the cited source maps, or the ascending lines it maps (a comment or blank line has no code, so no server position); every line of the cited text by default. */
@@ -195,7 +197,10 @@ export async function writePagesServerBuild(
   await write(
     '.next/dev/server/pages/index.js',
     serverChunk(
-      (compile.holdsCited ?? true) ? citedModule : {},
+      {
+        ...((compile.holdsCited ?? true) ? citedModule : {}),
+        ...compile.extraModules,
+      },
       Object.keys(chunks),
     ),
   )

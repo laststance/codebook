@@ -5,6 +5,7 @@ import type { PortCheckOptions } from './utils/assertDevelopmentPortFree'
 import type { DevelopmentLockIdentity } from './utils/assertDevelopmentWorkspace'
 import type { NextPagesDiscoveryCache } from './utils/createNextPagesDiscoveryCache'
 import type { launchDevelopmentServer } from './utils/launchDevelopmentServer'
+import type { FrozenLibraryBuild } from './utils/libraryBuildStop'
 import type { DeclaredDevelopmentPort } from './utils/readDeclaredDevelopmentPort'
 import type { DevelopmentServerLayer } from './utils/readDevelopmentBundle'
 import type { ResolvedNextPackage } from './utils/resolveNextPackage'
@@ -69,6 +70,16 @@ export type DevelopmentBundleRequest = {
     entrySource: string
     cache: NextPagesDiscoveryCache
   }
+  /** Set for a server stop in a workspace library: the frozen build the stop is sealed through ({@link sealLibraryServerStop}) instead of the stop file's own module. Absent for every other stop. */
+  library?: LibraryStopSealInput
+}
+
+/** What the library seal needs besides the stop: the frozen build, the app's package root (repository-relative) and the real repository root. */
+export type LibraryStopSealInput = {
+  frozen: FrozenLibraryBuild
+  packageRootRelative: string
+  /** The real (symlink-free) repository root the built files are named below. */
+  realRoot: string
 }
 
 /** The sealed module of one stop with what the discovery measured, as {@link readDevelopmentBundle} returns it. */
@@ -79,6 +90,8 @@ export type DevelopmentBundle = {
   layer?: DevelopmentServerLayer
   /** What the seal could not establish and accepted anyway, journaled as `seal.evidence`: `client-mapping-unverified` for a server stop on a line of the entry page's own module whose client mapping the scan could not read to its end. Absent otherwise. */
   evidence?: 'client-mapping-unverified'
+  /** Set for a library stop: the repository-relative built file whose module the bundle holds (the bundle is in built terms). */
+  libraryBuiltPath?: string
 }
 
 /** The js-debug launch fields that depend on how the development server serves its modules. */

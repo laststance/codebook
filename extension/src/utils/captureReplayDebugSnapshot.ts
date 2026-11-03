@@ -58,6 +58,12 @@ const variableResponse = z.object({
 interface CaptureInput {
   stack: DebugProtocol.StackTraceResponse['body']
   verifiedSource: NonNullable<ReplayDebugSnapshot['frames'][number]['source']>
+  /** The top frame's recorded line and column when they differ from the debugger's (a library stop paused in its built file records the library source place). */
+  topFrame?: { line: number; column: number }
+  /** Translates a caller frame the frozen maps cover to its source name, path, line and column; a frame it leaves `undefined` keeps what the debugger reported. */
+  translateFrame?(
+    frame: DebugProtocol.StackFrame,
+  ): { name: string; path: string; line: number; column: number } | undefined
   request(
     command: 'scopes' | 'variables',
     arguments_: Record<string, number>,
@@ -437,18 +443,28 @@ export async function captureReplayDebugSnapshot(
   for (const [index, frame] of input.stack.stackFrames
     .slice(0, maxFrames)
     .entries()) {
+    const translated = index === 0 ? undefined : input.translateFrame?.(frame)
+    const place =
+      index === 0 ? (input.topFrame ?? frame) : (translated ?? frame)
     const saved: ReplayDebugSnapshot['frames'][number] = {
       name: shorten(frame.name),
-      line: Math.max(1, frame.line),
-      column: Math.max(1, frame.column),
+      line: Math.max(1, place.line),
+      column: Math.max(1, place.column),
       scopes: [],
       ...(index === 0
         ? { source: input.verifiedSource }
         : {
             sourceUnavailable:
               'Executed source was not verified for this frame.',
-            // The location the debugger itself reported is kept so the replay Call Stack can name the file; nothing is invented when the debugger gave none.
-            ...recordedLocationOf(frame.source, shorten, input.workspaceRoot),
+            ...(translated
+              ? {
+                  recordedLocation: {
+                    name: shorten(translated.name),
+                    path: shorten(translated.path),
+                  },
+                }
+              : // The location the debugger itself reported is kept so the replay Call Stack can name the file; nothing is invented when the debugger gave none.
+                recordedLocationOf(frame.source, shorten, input.workspaceRoot)),
           }),
     }
     snapshot.frames.push(saved)

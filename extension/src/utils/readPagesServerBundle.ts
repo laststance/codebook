@@ -136,7 +136,7 @@ export async function readPagesServerBundle(
  * @example
  * await compileOfRoute(step, '/') // => { manifestHash: '9f2c…', compilePath: 'server/pages/index.js' }
  */
-async function compileOfRoute(
+export async function compileOfRoute(
   step: NextPagesDiscoveryStep,
   route: NextPagesRoute['route'],
 ): Promise<{ manifestHash: string; compilePath?: string }> {

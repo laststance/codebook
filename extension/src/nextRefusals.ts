@@ -164,6 +164,147 @@ export function libraryBuildUnmappedRefusal(
   })
 }
 
+/** The `details.reason` values of the library refusals that come after Codebook's readiness request (`sideEffects: "unknown"`). */
+export const LIBRARY_RUNTIME_REASONS = [
+  'library-not-in-build',
+  'library-place-ambiguous',
+  'library-build-changed',
+] as const
+
+/** One of {@link LIBRARY_RUNTIME_REASONS}. */
+export type LibraryRuntimeReason = (typeof LIBRARY_RUNTIME_REASONS)[number]
+
+/**
+ * Builds the refusal of a library stop whose page server compile holds none, or more than one, of the built files that map the stop, raised by the library seal after the readiness request.
+ * @param packageRoot - The Next app's canonical repository-relative package root.
+ * @param libraryName - The library's package name.
+ * @param file - The repository-relative stop file.
+ * @param candidates - The built files that map the stop, repository-relative; named in the message.
+ * @returns The `NEXT_STOP_NOT_SEALED` error: `details.reason: "library-not-in-build"`, `details.candidates`, the Pages details (`sideEffects: "unknown"`).
+ * @example
+ * throw libraryNotInBuildRefusal('examples/app', 'lib', 'packages/lib/src/core.ts', ['packages/lib/build/modern/core.js', 'packages/lib/build/legacy/core.js'])
+ */
+export function libraryNotInBuildRefusal(
+  packageRoot: string,
+  libraryName: string,
+  file: string,
+  candidates: readonly string[],
+): StudyError {
+  const message = `The build of library ${libraryName} matches ${file}, but the server compile of the page does not hold exactly one of its candidates (${candidates.join(', ') || 'none'}), so a stop there cannot be sealed for packageRoot ${packageRoot}. The page's server code may load another build, or may not run that file.`
+  return nextRefusal('NEXT_STOP_NOT_SEALED', message, {
+    details: {
+      reason: 'library-not-in-build',
+      packageRoot,
+      library: libraryName,
+      file,
+      candidates: [...candidates],
+      ...PAGES_STOP_REFUSAL_DETAILS,
+    },
+  })
+}
+
+/**
+ * Builds the refusal of a library stop whose bound place cannot be tied to the declared source line, raised when the debugger binds the stop.
+ * @param packageRoot - The Next app's canonical repository-relative package root.
+ * @param libraryName - The library's package name.
+ * @param file - The repository-relative stop file.
+ * @param line - The declared (armed) source line.
+ * @param why - A short value-free reason for the message.
+ * @returns The `NEXT_STOP_NOT_SEALED` error: `details.reason: "library-place-ambiguous"`, the Pages details (`sideEffects: "unknown"`).
+ * @example
+ * throw libraryPlaceAmbiguousRefusal('examples/app', 'lib', 'packages/lib/src/core.ts', 3, 'the bound line maps to several source lines')
+ */
+export function libraryPlaceAmbiguousRefusal(
+  packageRoot: string,
+  libraryName: string,
+  file: string,
+  line: number,
+  why: string,
+): StudyError {
+  const message = `The stop at ${file}:${line} in library ${libraryName} could not be tied to one source position (${why}) for packageRoot ${packageRoot}. Declare the stop on a line that holds a single statement.`
+  return nextRefusal('NEXT_STOP_NOT_SEALED', message, {
+    details: {
+      reason: 'library-place-ambiguous',
+      packageRoot,
+      library: libraryName,
+      file,
+      ...PAGES_STOP_REFUSAL_DETAILS,
+    },
+  })
+}
+
+/**
+ * Builds the failure of a library whose build changed after the freeze: a module instance carries built text other than the frozen one.
+ * @param packageRoot - The Next app's canonical repository-relative package root.
+ * @param libraryName - The library's package name.
+ * @param file - The repository-relative stop file.
+ * @returns The `RUNTIME_FAILED` error: `details.reason: "library-build-changed"`, the Pages details (`sideEffects: "unknown"`).
+ * @example
+ * throw libraryBuildChangedFailure('examples/app', 'lib', 'packages/lib/src/core.ts')
+ */
+export function libraryBuildChangedFailure(
+  packageRoot: string,
+  libraryName: string,
+  file: string,
+): StudyError {
+  const message = `The build of library ${libraryName} changed while the run was open (a module instance for ${file} carries other built text than the one checked before the start), so Codebook stopped it for packageRoot ${packageRoot}. Finish the rebuild yourself and start again; Codebook never builds.`
+  return new StudyError(
+    'RUNTIME_FAILED',
+    message,
+    message,
+    undefined,
+    undefined,
+    {
+      reason: 'library-build-changed',
+      packageRoot,
+      library: libraryName,
+      file,
+      ...PAGES_STOP_REFUSAL_DETAILS,
+    },
+  )
+}
+
+/**
+ * Writes the failure text a run records for a library refusal raised at a pause or an event, the form {@link refusalFailureOf} restores with its `details.reason`.
+ * @param error - The error a library check threw.
+ * @returns `<CODE>(<reason>): <message>` for a library refusal of {@link LIBRARY_RUNTIME_REASONS}; `undefined` for any other error.
+ * @example
+ * libraryFailureText(libraryBuildChangedFailure('examples/app', 'lib', 'a.ts')) // => 'RUNTIME_FAILED(library-build-changed): The build of library lib changed …'
+ */
+export function libraryFailureText(error: unknown): string | undefined {
+  if (!(error instanceof StudyError)) return undefined
+  const reason = LIBRARY_RUNTIME_REASONS.find(
+    (known) => known === error.details?.reason,
+  )
+  return reason === undefined
+    ? undefined
+    : `${error.code}(${reason}): ${error.message}`
+}
+
+/**
+ * Restores the details of a coded failure text led by a library reason variant.
+ * @param code - The text's code.
+ * @param variant - The text's variant.
+ * @returns The Pages details with the library reason when the code and variant are a library refusal; `undefined` otherwise.
+ * @example
+ * libraryDetailsOfFailure('RUNTIME_FAILED', 'library-build-changed') // => { reason: 'library-build-changed', router: 'pages', sideEffects: 'unknown' }
+ */
+export function libraryDetailsOfFailure(
+  code: string,
+  variant: string | undefined,
+):
+  | (typeof PAGES_STOP_REFUSAL_DETAILS & { reason: LibraryRuntimeReason })
+  | undefined {
+  const reason = LIBRARY_RUNTIME_REASONS.find((known) => known === variant)
+  const expected =
+    reason === 'library-build-changed'
+      ? 'RUNTIME_FAILED'
+      : 'NEXT_STOP_NOT_SEALED'
+  return reason !== undefined && code === expected
+    ? { reason, ...PAGES_STOP_REFUSAL_DETAILS }
+    : undefined
+}
+
 /**
  * The structured fields every Pages stop refusal after the owned server started carries: `router: "pages"` tells an agent a Pages `client-component` refusal from the App Router one without parsing prose, and `sideEffects: "unknown"` says the page's data function already ran once during Codebook's readiness request, so another start is the learner's decision when that function writes.
  * Spread into the `details` of {@link nextRefusal} by the seal and the stop checks of a Pages run.

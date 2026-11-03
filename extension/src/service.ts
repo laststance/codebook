@@ -3573,7 +3573,7 @@ export class StudyService {
         refusal.message,
         refusal.recoveryOverride,
         undefined,
-        refusal.pagesDetails,
+        refusal.pagesDetails ?? refusal.libraryDetails,
       )
     return new StudyError(
       'RUNTIME_FAILED',
@@ -5110,7 +5110,7 @@ export class StudyService {
             refusal.message,
             refusal.recoveryOverride,
             undefined,
-            refusal.pagesDetails,
+            refusal.pagesDetails ?? refusal.libraryDetails,
           )
     // A saved-session refusal of the run's start gets the fields that decide a retry (DX-5).
     if (error instanceof StudyError)

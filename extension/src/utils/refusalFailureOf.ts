@@ -4,6 +4,7 @@ import {
 } from '../constants'
 import { PACKAGE_ROOT_FRESH_SESSION_RECOVERY, type ErrorCode } from '../errors'
 import {
+  libraryDetailsOfFailure,
   NEXT_PAGES_FAILURE_VARIANT,
   NEXT_REFUSAL_CODES,
   nextSetupDeadlineRecovery,
@@ -31,6 +32,8 @@ const CODED_FAILURE_CODES = [
   // A server-render stop the page never reached, and an entry page that did not load after the last pause (Cycle 0071).
   'SERVER_STOP_NOT_REACHED',
   'ENTRY_LOAD_TIMEOUT',
+  // A library stop's build that changed after the freeze; its variant carries the details.
+  'RUNTIME_FAILED',
 ] as const satisfies readonly ErrorCode[]
 
 /** A code a run's failure text can lead with, so the service restores it as a coded error. */
@@ -47,6 +50,8 @@ export type RefusalFailure = {
   details?: { reason: SignInRequiredReason }
   /** Present only for `NEXT_ENTRY_REDIRECTED` led by the `pages` variant ({@link NEXT_PAGES_FAILURE_VARIANT}): the fields of a Pages entry refusal after the readiness request, which the agent reads as `details`. */
   pagesDetails?: typeof PAGES_STOP_REFUSAL_DETAILS
+  /** Present only for a library refusal raised at a pause or an event (`NEXT_STOP_NOT_SEALED(library-place-ambiguous)`, `RUNTIME_FAILED(library-build-changed)`): the Pages fields with the library `reason`. */
+  libraryDetails?: NonNullable<ReturnType<typeof libraryDetailsOfFailure>>
 }
 
 /** The lead of a coded failure text: `<CODE>: ` or `<CODE>(<variant>): `; a variant holds no parenthesis and no line break. */
@@ -96,6 +101,9 @@ export function refusalFailureOf(text: string): RefusalFailure | undefined {
     return variant === NEXT_PAGES_FAILURE_VARIANT
       ? { code, message, pagesDetails: { ...PAGES_STOP_REFUSAL_DETAILS } }
       : { code, message }
+  // A library refusal after the readiness request carries its reason as the variant.
+  const libraryDetails = libraryDetailsOfFailure(code, variant)
+  if (libraryDetails) return { code, message, libraryDetails }
   // Of the other codes only a deadline has variants, and only a known name selects its static recovery.
   const recoveryOverride =
     code === 'NEXT_SETUP_DEADLINE' && variant !== undefined
