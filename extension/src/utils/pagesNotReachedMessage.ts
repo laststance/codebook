@@ -1,7 +1,7 @@
 import type { PagesResumedHitCount } from './pagesHitLedger'
 
 /** What {@link pagesNotReachedMessage} words. */
-export type PagesNotReachedFacts = {
+export type PagesNotReachedWordingFacts = {
   /** The declared stop, `<path>:<line>`. */
   place: string
   /** `entry-render` for a stop of the entry load, `after-operation` for a render observed after an operation. */
@@ -32,7 +32,9 @@ const OUTSIDE_REASONS: ReadonlySet<PagesResumedHitCount['reason']> = new Set([
  * pagesNotReachedMessage({ place: 'src/lib/stats.ts:3', phase: 'entry-render', how: 'not-hit', seconds: 20, resumedHits: [] })
  * // => "The page did not reach declared stop src/lib/stats.ts:3 inside the entry page's data function (getServerSideProps or getStaticProps) for the observed request within 20 s of the entry navigation. …"
  */
-export function pagesNotReachedMessage(facts: PagesNotReachedFacts): string {
+export function pagesNotReachedMessage(
+  facts: PagesNotReachedWordingFacts,
+): string {
   const where =
     facts.phase === 'after-operation'
       ? `Declared stop ${facts.place} was not reached inside the entry page's data function (getServerSideProps or getStaticProps) for the request operation ${facts.operationIndex} made within ${facts.seconds} s after it.`
