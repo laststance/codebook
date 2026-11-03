@@ -200,7 +200,7 @@ const PACKAGE_ROOT_REFUSALS = {
     fix: 'Tell the learner the folder is not readable and which error code the refusal names; only the learner can change its permissions. Do not retry with the same value. Nothing started.',
   },
   'not-a-next-app': {
-    code: 'INVALID_CONFIGURATION (read the code the refusal carries)',
+    code: 'INVALID_CONFIGURATION',
     meaning:
       'The folder has no package.json that names next in dependencies, devDependencies or peerDependencies.',
     fix: 'Declare the folder whose package.json names next (a packages entry), or tell the learner this folder is not a Next app. Nothing started.',
