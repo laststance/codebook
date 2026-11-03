@@ -792,6 +792,45 @@ test('every reader of saved debugger history is classified and each serving read
   assert.equal(serverResourceRehydrates, true)
 })
 
+// protects=every module that serves saved test or server output, a result's output tail, a request path or a redirect location applies the output masks before it serves it; fails_when=a serving reader stops calling maskSavedOutputEntries or maskSavedServerEntries, a new module pages output entries without them, or the server entries mask stops covering the output, the request path or the location; no_claim=that the masks are correct (the serving tests of savedHistoryServingMasks and maskSavedOutputEntries)
+test('each module that serves saved output, a request path or a redirect location applies the output masks', async () => {
+  // Arrange
+  const sourceRoot = join(__dirname, '..', '..', 'src')
+  const files = await listSourceFiles(sourceRoot)
+  const texts = new Map<string, string>()
+  for (const file of files)
+    texts.set(file, await readFile(join(sourceRoot, file), 'utf8'))
+  /** Serve saved output, a result's tail or a server entry's path or location to the chat or the Study pane. */
+  const outputServingModules = [
+    'utils/readServerHistoryResource.ts',
+    'utils/readTestHistoryEvents.ts',
+    'utils/rehydrateServerStopSnapshot.ts',
+    'utils/sanitizeNodeTestHistory.ts',
+  ]
+  const outputMask = /\bmaskSaved(?:Output|Server)Entries\b/
+
+  // Act
+  const unmaskedOutputServing = outputServingModules.filter(
+    (file) => !outputMask.test(texts.get(file) ?? ''),
+  )
+  const pagedOutputWithoutMask = files.filter((file) => {
+    const text = texts.get(file)!
+    return (
+      /\b(?:readJsonPage|readMaskedJsonPage)\(/.test(text) &&
+      /(?:case|===) 'output'/.test(text) &&
+      !outputMask.test(text)
+    )
+  })
+  const serverEntriesMask = texts.get('utils/maskSavedServerEntries.ts') ?? ''
+
+  // Assert
+  assert.deepEqual(unmaskedOutputServing, [])
+  assert.deepEqual(pagedOutputWithoutMask, [])
+  assert.match(serverEntriesMask, /\bmaskSavedOutputEntries\(/)
+  assert.match(serverEntriesMask, /\bmaskSecretQueryValues\(entry\.path\)/)
+  assert.match(serverEntriesMask, /\bmaskSecretQueryValues\(entry\.location\)/)
+})
+
 // protects=the recorded source text, which the replay checks by SHA-256; fails_when=a source whose text quotes a Cookie header is changed by the mask, so its hash no longer matches and the replay refuses it; no_claim=a secret written into the source text itself, which is the learner's own code
 test('a recorded source text that quotes a Cookie header is kept byte for byte while the values beside it are masked', () => {
   // Arrange
