@@ -11,14 +11,14 @@ import { isUnlinkedRegularFile } from './isUnlinkedRegularFile'
 export type NextPagesSourceLookup =
   | {
       kind: 'found'
-      /** The page's source, workspace-relative with `/` separators, e.g. `src/pages/posts/[id].tsx`. */
+      /** The page's source, package-relative with `/` separators, e.g. `src/pages/posts/[id].tsx`. */
       path: string
       folder: NextRouteFolder<'pages'>
     }
   | {
       kind: 'missing'
       folder: NextRouteFolder<'pages'>
-      /** Every workspace-relative candidate, in the order Next tries them. */
+      /** Every package-relative candidate, in the order Next tries them. */
       tried: string[]
       /** A file with a candidate's stem and another extension, e.g. `pages/about.mdx`: a custom `pageExtensions` source, so the listing is not stale. Absent when no such file exists. */
       otherExtension?: string
@@ -27,7 +27,7 @@ export type NextPagesSourceLookup =
 /**
  * Finds the source file of a compiled Pages page the way Next does (`findPageFile`): in the root `pages/` folder when it exists, else in `src/pages/`, trying `.tsx`, `.ts`, `.jsx`, `.js` and, for each, the page file before its folder's `index` file.
  * Called by the Pages run after {@link resolveNextPagesRoute} matched the entry path, to name the page's source, or the candidates tried when none exists, and by the router contest of {@link readNextRouteManifests} for a more specific Pages route. Only `lstat` is asked; a link, or a file under a linked folder, is never followed and never found.
- * @param workspace - The opened workspace (the Next project root).
+ * @param workspace - The package root (the Next project root; the repository root for a root app).
  * @param compiledPath - The Pages manifest value of the route, e.g. `pages/posts/[id].js`.
  * @param signal - Ends the lookup with the abort reason when the run is cancelled.
  * @returns

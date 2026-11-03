@@ -1,5 +1,5 @@
 import { mkdir, realpath, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import type { TestContext } from 'node:test'
 import { runInNewContext } from 'node:vm'
 
@@ -208,6 +208,8 @@ export async function configuredRuntimeHarness(
     nextPages?: NextPagesHarnessOptions
     /** Moves the first cited source, and the stop declared in it, to this workspace-relative path (such as a file under `src/pages`). */
     sourcePath?: string
+    /** Runs a nested Next app: the configuration declares this `packageRoot` (version 3, with `operations`), and the Pages project (Next, `.next/dev`, chunks) is written under it instead of at the repository root, so `sourcePath` must lie inside it. */
+    packageRoot?: string
     /** Declares the first stop for this participant in a version 2 (cross-runtime) configuration, as a start that names `participant` does, or in a version 3 configuration when `operations` is given; only without additional stops in the version 2 form, whose form differs. */
     participant?: 'browser' | 'server'
     /** The configuration's initial inputs; the stand-in page has one editable control for each selector. */
@@ -348,6 +350,7 @@ export async function configuredRuntimeHarness(
         ...(reference.configuration.entryPath
           ? { entryPath: reference.configuration.entryPath }
           : {}),
+        ...(options.packageRoot ? { packageRoot: options.packageRoot } : {}),
         // The schema's key order, which the intent hash reads: initialStorage before signInPaths and session.
         ...(options.operations.initialStorage
           ? { initialStorage: options.operations.initialStorage }
@@ -374,6 +377,7 @@ export async function configuredRuntimeHarness(
     fixture ||
     options.adapter ||
     options.sourcePath ||
+    options.packageRoot ||
     options.nextPages?.entryPath ||
     options.entryPath ||
     options.initialInputs ||
@@ -387,8 +391,17 @@ export async function configuredRuntimeHarness(
   // A Pages project around the cited source: its Pages folder, Next, the `.next/dev` build and the module the page executes.
   const pagesBuild = options.nextPages
     ? await writeNextPagesWorkspace(
-        repository.directory,
-        reference.descriptor!.sources[0]!,
+        join(repository.directory, options.packageRoot ?? '.'),
+        {
+          ...reference.descriptor!.sources[0]!,
+          // The project is written under the package root, so the cited path is the package-relative one.
+          path: options.packageRoot
+            ? relative(
+                options.packageRoot,
+                reference.descriptor!.sources[0]!.path,
+              )
+            : reference.descriptor!.sources[0]!.path,
+        },
         options.nextPages,
       )
     : undefined

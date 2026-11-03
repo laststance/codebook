@@ -3424,7 +3424,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         ? {
             nextRoute: {
               route: this.pagesRun.route,
-              entrySource: this.pagesRun.source,
+              // The seal compares the entry page with the stop's repository-relative path; `pagesRun.source` is package-relative.
+              entrySource: this.nextPackageOrRoot.toRepositoryRelative(
+                this.pagesRun.source,
+              ),
               cache: this.pagesRun.cache,
             },
           }
@@ -3851,7 +3854,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     adapter: DevelopmentServerAdapter,
   ): Promise<boolean> {
     if (adapter.name !== 'next-dev-webpack') return false
-    const routerKind = await readNextRouterKind(this.options.workspace)
+    // The router folders belong to the Next package, not to the repository.
+    const routerKind = await readNextRouterKind(this.packageRoot)
     return routerKind === 'pages' || routerKind === 'both'
   }
 
@@ -3898,7 +3902,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     entry: NextEntryResponse,
     port: number,
   ): Promise<void> {
-    const workspace = this.options.workspace,
+    // Every Next-path read below (manifests, route folders, page sources) starts at the package root; the repository root only names a path leaving the Next path.
+    const workspace = this.packageRoot,
       entryPath = this.definition.configuration.entryPath ?? '/'
     // After the warm load the browser is open: the load's step stays, so a deadline here does not say the browser was never opened.
     if (!this.browserLaunched)
@@ -3934,6 +3939,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.nextVersion = nextVersion
     const resolved = await resolveNextPagesEntry({
       workspace,
+      ...(this.nextPackage ? { nextPackage: this.nextPackage } : {}),
       entryPath,
       entry,
       manifests,
@@ -3953,7 +3959,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.nextRoute = {
       router: 'pages',
       route: resolved.route,
-      source: resolved.source,
+      // The run resource and the evidence name the source the way a book does (repository-relative); `pagesRun.source` stays package-relative for the readers of Next's output.
+      source: this.nextPackage
+        ? this.nextPackage.toRepositoryRelative(resolved.source)
+        : resolved.source,
     }
     this.evidence.record('next.route-resolved', this.nextRoute)
   }
@@ -4047,12 +4056,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * await this.refuseLexicalPagesServerStops() // throws for a server stop in src/pages/api/hello.ts
    */
   private async refuseLexicalPagesServerStops(): Promise<void> {
-    const folder = await findNextRouteFolder(this.options.workspace, 'pages')
+    const folder = await findNextRouteFolder(this.packageRoot, 'pages')
     this.alive()
     if (!folder) return
     // With an App folder beside the Pages folder the entry may be an App route, which has no Pages data function to point at.
-    const pagesRun =
-      (await readNextRouterKind(this.options.workspace)) === 'pages'
+    const pagesRun = (await readNextRouterKind(this.packageRoot)) === 'pages'
     this.alive()
     for (const stop of configuredStops(this.definition.configuration)) {
       if (stop.participant !== 'server') continue
