@@ -3,12 +3,32 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import type { DebugSession } from 'vscode'
 
 import type { ConfiguredBrowserRun } from '../../configuredBrowserRun'
-import { SERVER_RENDER_ROUTE_EXPRESSION } from '../../constants'
+import {
+  NEXT_PAGES_PAGE_EXPRESSION,
+  SERVER_RENDER_ROUTE_EXPRESSION,
+} from '../../constants'
+import { isNextPagesRendererUrl } from '../../utils/isNextPagesRendererUrl'
+import type { PagesPausedEvent } from '../../utils/parsePagesPausedEvent'
 
 import { debuggerPausedEvent } from './debuggerPausedEvent'
+import { pagesPausedFixtureOf } from './pagesPausedFixture'
+import { pagesRuntimeTextOf } from './pagesRuntimeText'
 
 /** The adapter id of the first editor breakpoint the server session acknowledges; later ones count up from it. */
 const FIRST_SERVER_ADAPTER_BREAKPOINT_ID = 40
+
+/** The `variablesReference` of the local scope the participant answers; its members come from {@link createServerParticipant}'s `setScope`. */
+const LOCAL_SCOPE_REFERENCE = 601
+/** The first reference of an object member in a scripted scope. */
+const FIRST_SCRIPTED_VARIABLE_REFERENCE = 700
+
+/** One variable of a DAP `variables` answer. */
+interface ScriptedVariable {
+  name: string
+  value: string
+  type: string
+  variablesReference: number
+}
 
 /** What the stand-in work store answers when the run reads the route of a paused frame. */
 export type ServerRouteAnswer =
@@ -22,8 +42,44 @@ export type ServerRouteAnswer =
   /** The answer comes after this many milliseconds, then reads as the route. */
   | { route: string; afterMs: number }
 
+/**
+ * The stack of a Pages server hit, built from an E0b payload that js-debug's proxy forwarded (`fixtures/next-pages-paused`): the fixture's frames and async chain stand for Next's renderer, the hit's own place for the stop's line.
+ * Synchronous frames carry an empty `url`, as the proxy sends them; the script addresses come from `Debugger.scriptParsed`, which the participant sends for the fixture's scripts the first time a hit names them.
+ */
+export interface PagesHitScript {
+  /** The recorded payload: `get-server-side-props-before-await`, `get-server-side-props-after-await`, `get-static-props-after-await` or `get-static-props-helper-after-await`. */
+  fixture: string
+  /** Puts the hit's own frame before the fixture's synchronous frames (a helper or a handler that the data function calls) instead of in place of the first one (the data function itself). */
+  prepend?: boolean
+  /** What `pathname` evaluates to on the renderer's `renderToHTMLImpl` frame: a route, or `null` for an evaluation that throws (an unreadable page). The route `/` by default. */
+  pathname?: string | null
+  /** Changes the event before it is sent: drop frames, cut the async chain, replace the script address of a frame. */
+  edit?: (event: PagesPausedEvent, scriptUrls: Record<string, string>) => void
+  /** The answers of `Debugger.getStackTrace` by stack trace id: a `Runtime.StackTrace`, or `'fail'` for a rejected read. */
+  stackTraces?: Record<string, object | 'fail'>
+  /** The fixture scripts the proxy never announces (parsed before the debugger attached, as the readiness request's compile does): `'all'`, or their ids. Their texts can still be read: the renderer's is the vendored runtime, a webpack module's ends with its `sourceURL` comment, a file loaded by Node's own loader has none. */
+  unannounced?: 'all' | readonly string[]
+  /** The text `Debugger.getScriptSource` answers for a fixture script, by id, in place of the default above: a page module that declares its data function, or a renderer whose call sites Next changed. */
+  scriptTexts?: Readonly<Record<string, string>>
+}
+
+/**
+ * Gives the text a fixture script the proxy never announced answers: a webpack module (`webpack-internal:///…`, `(pages-dir-node)/…`) is evaluated with its address in a closing `sourceURL` comment, a file Node's own loader read (`file:///…`) has none.
+ * @param url - The script's address in the recorded payload.
+ * @returns A stand-in module text.
+ * @example
+ * unannouncedModuleTextOf('(pages-dir-node)/./pages/index.js').endsWith('\n//# sourceURL=(pages-dir-node)/./pages/index.js') // => true
+ * unannouncedModuleTextOf('file:///app/node_modules/next/dist/server/base-server.js').includes('sourceURL') // => false
+ */
+function unannouncedModuleTextOf(url: string): string {
+  const body = '/* module parsed before the debugger attached */'
+  return url.startsWith('file:') ? body : `${body}\n//# sourceURL=${url}`
+}
+
 /** One hit of an armed server breakpoint, as the spike's logs show it. */
 export interface ServerHit {
+  /** A Pages data-function hit: the stack the hit pauses with ({@link PagesHitScript}). Without it the pause has the one frame of the stop. */
+  pages?: PagesHitScript
   /** The script the top frame is in; a script not announced yet is announced at the sealed address. Default `server`. */
   scriptId?: string
   /** The generated place of the pause (zero-based); default 0:0, which the harness's default map sends to source 1:1. */
@@ -89,6 +145,8 @@ export function createServerParticipant(parts: ServerParticipantParts) {
   const announced = new Map<string, string>()
   const scriptTexts = new Map<string, string>()
   const heldScriptReads = new Map<string, Promise<void>>()
+  /** The scripts whose next text read fails, as a transient `Debugger.getScriptSource` error does. */
+  const failingScriptReads = new Set<string>()
   const routes = new Map<number, ServerRouteAnswer>()
   const frames = new Map<number, { line: number; column: number }>()
   let currentHit = 0
@@ -117,6 +175,21 @@ export function createServerParticipant(parts: ServerParticipantParts) {
   let closed = false
   /** Holds the answer of the next `stackTrace` until released, as an adapter that is slow to read a stack. */
   let heldStackAnswer: Promise<void> | undefined
+  /** The name the DAP stack frame of a hit reports; `serverStep` unless a test sets another. */
+  let frameName = 'serverStep'
+  /** The variables the DAP `variables` request answers by reference, when a test scripted the scope; the default scope (`nextTheme`) otherwise. */
+  const scriptedVariables = new Map<number, ScriptedVariable[]>()
+  let nextVariableReference = FIRST_SCRIPTED_VARIABLE_REFERENCE
+  /** Every method the run sent through the server's inspector proxy, in order. */
+  const inspectorMethods: string[] = []
+  /** The methods of {@link inspectorMethods} sent with `request`, which the real channel journals as `cdp.sent` and `cdp.response`; a `requestQuietly` send is not listed. */
+  const journaledInspectorMethods: string[] = []
+  /** The script id of every `Debugger.getScriptSource` the run sent through the proxy, in order, also a read still held or one that fails. */
+  const scriptReads: string[] = []
+  /** What `pathname` evaluates to on a Pages hit's `renderToHTMLImpl` frame, by call frame id (`null`: an evaluation that throws). */
+  const pagesPathnames = new Map<string, string | null>()
+  /** The answers of `Debugger.getStackTrace`, by stack trace id. */
+  const stackTraces = new Map<string, object | 'fail'>()
 
   const session: DebugSession = {
     id: 'server-session',
@@ -137,7 +210,7 @@ export function createServerParticipant(parts: ServerParticipantParts) {
           stackFrames: [
             {
               id: currentHit,
-              name: 'serverStep',
+              name: frameName,
               source: { path: parts.sourcePath },
               line: frame.line,
               column: frame.column,
@@ -146,8 +219,16 @@ export function createServerParticipant(parts: ServerParticipantParts) {
         }
       }
       if (command === 'scopes')
-        return { scopes: [{ name: 'Local', variablesReference: 601 }] }
-      if (command === 'variables')
+        return {
+          scopes: [
+            { name: 'Local', variablesReference: LOCAL_SCOPE_REFERENCE },
+          ],
+        }
+      if (command === 'variables') {
+        const reference = (arguments_ as { variablesReference?: number })
+          .variablesReference
+        const scripted = scriptedVariables.get(reference ?? -1)
+        if (scripted) return { variables: scripted }
         return {
           variables: [
             {
@@ -158,6 +239,7 @@ export function createServerParticipant(parts: ServerParticipantParts) {
             },
           ],
         }
+      }
       if (command === 'evaluate') {
         const request = arguments_ as { expression?: string; frameId?: number }
         if (request.expression !== SERVER_RENDER_ROUTE_EXPRESSION)
@@ -243,18 +325,65 @@ export function createServerParticipant(parts: ServerParticipantParts) {
       parts.released('server proxy')
       this.onClose?.()
     },
+    /** Sends a request the real channel journals (`cdp.sent`, `cdp.response`). */
     async request(
       method: string,
       parameters?: {
         expression?: string
         scriptId?: string
+        callFrameId?: string
+        stackTraceId?: { id: string }
       },
     ) {
+      journaledInspectorMethods.push(method)
+      return this.answer(method, parameters)
+    },
+    /** Answers a request of either path as the server's inspector does. */
+    async answer(
+      method: string,
+      parameters?: {
+        expression?: string
+        scriptId?: string
+        callFrameId?: string
+        stackTraceId?: { id: string }
+      },
+    ) {
+      inspectorMethods.push(method)
       if (method === 'Runtime.evaluate') return { result: { value: undefined } }
+      if (method === 'Debugger.getStackTrace') {
+        const answer = stackTraces.get(parameters?.stackTraceId?.id ?? '')
+        if (answer === undefined || answer === 'fail')
+          throw new Error('Unknown stack trace id')
+        return { stackTrace: answer }
+      }
       if (method === 'Debugger.getScriptSource') {
         const scriptId = parameters?.scriptId ?? ''
+        scriptReads.push(scriptId)
         await heldScriptReads.get(scriptId)
+        if (failingScriptReads.delete(scriptId))
+          throw new Error(
+            `Debugger.getScriptSource: No script for id: ${scriptId}`,
+          )
         return { scriptSource: scriptTexts.get(scriptId) ?? parts.javascript }
+      }
+      if (
+        method === 'Debugger.evaluateOnCallFrame' &&
+        parameters?.expression === NEXT_PAGES_PAGE_EXPRESSION &&
+        parameters.callFrameId !== undefined &&
+        pagesPathnames.has(parameters.callFrameId)
+      ) {
+        const pathname = pagesPathnames.get(parameters.callFrameId)
+        return pathname === null
+          ? {
+              result: { type: 'undefined' },
+              exceptionDetails: {
+                exceptionId: 2,
+                text: 'pathname is not defined',
+                lineNumber: 0,
+                columnNumber: 0,
+              },
+            }
+          : { result: { type: 'string', value: pathname } }
       }
       if (method === 'Debugger.evaluateOnCallFrame') {
         try {
@@ -282,7 +411,7 @@ export function createServerParticipant(parts: ServerParticipantParts) {
       method: string,
       parameters?: Record<string, unknown>,
     ): Promise<unknown> {
-      return this.request(method, parameters)
+      return this.answer(method, parameters)
     },
   }
 
@@ -328,17 +457,78 @@ export function createServerParticipant(parts: ServerParticipantParts) {
       hit.route === undefined ? parts.defaultRoute : hit.route,
     )
     frames.set(currentHit, hit.source ?? { line: 1, column: 1 })
+    const own = debuggerPausedEvent({
+      callFrameId: `server-frame-${currentHit}`,
+      scriptId,
+      lineNumber: hit.generated?.line ?? 0,
+      columnNumber: hit.generated?.column ?? 0,
+      hitBreakpoints: ['native'],
+      ...(hit.stopReason === undefined ? {} : { reason: hit.stopReason }),
+    })
     listeners.get('Debugger.paused')?.(
-      debuggerPausedEvent({
-        callFrameId: `server-frame-${currentHit}`,
-        scriptId,
-        lineNumber: hit.generated?.line ?? 0,
-        columnNumber: hit.generated?.column ?? 0,
-        hitBreakpoints: ['native'],
-        ...(hit.stopReason === undefined ? {} : { reason: hit.stopReason }),
-      }),
+      hit.pages ? pagesEventOf(hit.pages, own, currentHit) : own,
     )
     return currentHit
+  }
+
+  /**
+   * Builds the paused event of a Pages data-function hit from an E0b payload: the hit's own frame in place of the data function's frame (or before the fixture's frames), the fixture's other frames and async chain, and the scripts they name announced.
+   * @param script - The fixture and its edits.
+   * @param own - The event of the hit's own frame.
+   * @param hitNumber - The hit's number, which keeps call frame ids apart.
+   * @returns The `Debugger.paused` params the proxy forwards: synchronous frames with an empty `url`.
+   */
+  const pagesEventOf = (
+    script: PagesHitScript,
+    own: ReturnType<typeof debuggerPausedEvent>,
+    hitNumber: number,
+  ) => {
+    const fixture = pagesPausedFixtureOf(script.fixture)
+    const scriptUrls = { ...fixture.scriptUrls }
+    const event = fixture.event
+    const ownFrame = own.callFrames[0]!
+    const fixtureFrames = event.callFrames.map((frame) => ({
+      ...frame,
+      callFrameId: `${hitNumber}-${frame.callFrameId}`,
+    }))
+    event.callFrames = [
+      { ...ownFrame, functionName: '', url: '' },
+      ...fixtureFrames.slice(script.prepend ? 0 : 1),
+    ]
+    script.edit?.(event, scriptUrls)
+    // The scripts the stack names are announced once, the renderer's with its text.
+    for (const [scriptId, url] of Object.entries(scriptUrls)) {
+      if (announced.has(scriptId)) continue
+      const isUnannounced =
+        script.unannounced === 'all' || script.unannounced?.includes(scriptId)
+      const text =
+        script.scriptTexts?.[scriptId] ??
+        (isNextPagesRendererUrl(url)
+          ? pagesRuntimeTextOf(
+              fixture.nextVersion === '16.4.4' ? '16.4.4' : '16.1.4',
+            )
+          : isUnannounced
+            ? unannouncedModuleTextOf(url)
+            : undefined)
+      if (text !== undefined) scriptTexts.set(scriptId, text)
+      if (!isUnannounced) announce(scriptId, url)
+    }
+    // `pathname` is a parameter of the renderer's `renderToHTMLImpl`, the frame that holds the traced call.
+    for (const frame of event.callFrames)
+      if (frame.functionName === 'renderToHTMLImpl' && frame.callFrameId)
+        pagesPathnames.set(frame.callFrameId, script.pathname ?? '/')
+    for (const [id, trace] of Object.entries(script.stackTraces ?? {}))
+      stackTraces.set(id, trace)
+    return {
+      ...own,
+      callFrames: event.callFrames,
+      ...(event.asyncStackTrace
+        ? { asyncStackTrace: event.asyncStackTrace }
+        : {}),
+      ...(event.asyncStackTraceId
+        ? { asyncStackTraceId: event.asyncStackTraceId }
+        : {}),
+    }
   }
 
   const stopDap = (): void => {
@@ -458,6 +648,10 @@ export function createServerParticipant(parts: ServerParticipantParts) {
     setScriptText(scriptId: string, text: string): void {
       scriptTexts.set(scriptId, text)
     },
+    /** Makes the run's next read of a script's text fail, as a transient `Debugger.getScriptSource` error; the read after it answers. */
+    failNextScriptRead(scriptId: string): void {
+      failingScriptReads.add(scriptId)
+    },
     /** Keeps the run's read of a script's text open until the returned function is called. */
     holdScriptRead(scriptId: string): () => void {
       let release = (): void => {}
@@ -550,8 +744,53 @@ export function createServerParticipant(parts: ServerParticipantParts) {
     verifyRegistrationsOnLines(lines: number[]): void {
       verifiedRegistrationLines = lines
     },
+    /**
+     * Scripts the locals the debugger shows at the next hits: the members of the local scope, an object or array expanding into its own members, as js-debug answers `variables` (a string value is quoted).
+     * @example harness.server.setScope({ count: 3, req: { headers: { cookie: 'sid=abc' } } })
+     */
+    setScope(values: Record<string, unknown>): void {
+      scriptedVariables.clear()
+      nextVariableReference = FIRST_SCRIPTED_VARIABLE_REFERENCE
+      const describe = (name: string, value: unknown): ScriptedVariable => {
+        if (value !== null && typeof value === 'object') {
+          const reference = nextVariableReference++
+          scriptedVariables.set(
+            reference,
+            Object.entries(value).map(([member, memberValue]) =>
+              describe(member, memberValue),
+            ),
+          )
+          return {
+            name,
+            value: Array.isArray(value) ? `Array(${value.length})` : 'Object',
+            type: 'object',
+            variablesReference: reference,
+          }
+        }
+        return {
+          name,
+          value: typeof value === 'string' ? `'${value}'` : String(value),
+          type: typeof value,
+          variablesReference: 0,
+        }
+      }
+      scriptedVariables.set(
+        LOCAL_SCOPE_REFERENCE,
+        Object.entries(values).map(([name, value]) => describe(name, value)),
+      )
+    },
+    /** Sets the name the DAP stack frame of the next hits reports (`getServerSideProps`). @example harness.server.setFrameName('getServerSideProps') */
+    setFrameName(name: string): void {
+      frameName = name
+    },
     /** Every DAP command the run sent the server session, in order. */
     commands,
+    /** Every method the run sent through the server's inspector proxy, in order: the Pages verdict sends read-only `Debugger` commands only. */
+    inspectorMethods,
+    /** The methods the run sent with the journaled `request` path, in order; the real channel writes a `cdp.sent` and a `cdp.response` entry for each one, and none for a successful `requestQuietly`. */
+    journaledInspectorMethods,
+    /** The script id of every text read (`Debugger.getScriptSource`) the run sent, in order, a read that is still held included. @example harness.server!.scriptReads.filter((id) => id.startsWith('extra-')) */
+    scriptReads,
     /** Every resume the run sent the server session, with the hit it resumed. */
     continues,
     /** The hit each route read asked about, in order. */

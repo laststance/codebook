@@ -1,12 +1,16 @@
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
+import { REPOSITORY_MAPPED_POSITION_MAX_GENERATED_LINES } from '../../constants'
 import type { NextRouteManifests } from '../../utils/readNextRouteManifests'
 
 import {
   browserChunk,
+  PAGES_MANIFEST,
   pagesEvalModule,
-  serverChunk,
+  withMappings,
+  writePagesServerBuild,
+  type NextPagesServerCompile,
 } from './nextPagesBuildHarness'
 
 /** What the stand-in page reports of `window.next.router` and its location at one read. */
@@ -39,21 +43,28 @@ export type NextPagesHarnessOptions = {
   citedInPageChunk?: boolean
   /** How many lines, from line 1, the browser module of the cited source maps, or the ascending lines it maps; 1 by default. */
   mappedLines?: number | readonly number[]
-  /** Writes the page's server compile, whose `(pages-dir-node)` module of the cited source maps every line. */
-  serverCompile?: boolean
+  /** Gives the browser module of the cited source a map whose scan stops at its size limit before it reaches any line (the generated-lines limit), so the client mapping of every line reads `unknown`. */
+  browserMapScanStopsAtLimit?: boolean
+  /**
+   * Writes the page's server compile (`.next/dev/server/pages/index.js`), whose `(pages-dir-node)` module of the cited source maps every line. `true` is a compile that holds the cited module; an object stages where the module is and which server chunks the compile requires ({@link NextPagesServerCompile}).
+   */
+  serverCompile?: boolean | NextPagesServerCompile
+  /** Further entries of the written `pages-manifest.json` (route to compiled page, such as `/other` to `pages/other.js`), so a hit can be read as another page's. */
+  pagesManifest?: Record<string, string>
+  /** Makes Codebook's readiness request for the entry end without an answer, as a data function that writes and then never answers does: the stand-in launcher sends it, then fails with this outcome. */
+  readinessFailure?: 'timeout' | 'connection-lost'
+  /** Makes Codebook's readiness request for the entry stay unanswered after it was sent, as a data function that hangs on a database call does: the stand-in launcher ends it only when the run is cancelled, and then closes the record as the real launcher does. */
+  readinessUnanswered?: boolean
   /** Adds an App folder (`src/app/page.tsx`), so the workspace has both routers. */
   withAppFolder?: boolean
+  /** The `version` the written `node_modules/next/package.json` holds; `16.4.3` by default. A hostile repository chooses this text, so a test sets what it is not allowed to publish. */
+  nextVersion?: string
   /** The masked output tail the stand-in server reports. */
   outputTail?: string
 }
 
-/** The Pages manifest of the stand-in project: Next's own entries and the page `/`. */
-const PAGES_MANIFEST = {
-  '/_app': 'pages/_app.js',
-  '/_error': 'pages/_error.js',
-  '/_document': 'pages/_document.js',
-  '/': 'pages/index.js',
-}
+/** The page `/` of the stand-in project. */
+const ENTRY_PAGE_PATH = 'src/pages/index.tsx'
 
 /** A stand-in page file (never application code), which makes `src/pages` the Pages folder Next reads. */
 const STAND_IN_PAGE = 'export default function Home() {\n  return null\n}\n'
@@ -75,17 +86,24 @@ export async function writeNextPagesWorkspace(
   workspace: string,
   cited: { path: string; text: string },
   options: NextPagesHarnessOptions,
-): Promise<{ moduleJavascript: string; buildManifest: string }> {
+): Promise<{
+  moduleJavascript: string
+  buildManifest: string
+  /** The text of the cited source's `(pages-dir-node)` module, when the server compile was written. */
+  serverModuleJavascript?: string
+}> {
   const write = async (path: string, text: string): Promise<void> => {
     await mkdir(dirname(join(workspace, path)), { recursive: true })
     await writeFile(join(workspace, path), text)
   }
   const root = await realpath(workspace)
-  await write('src/pages/index.tsx', STAND_IN_PAGE)
+  // A stop cited in the entry page itself keeps its own file: the cited text is the page.
+  if (cited.path !== ENTRY_PAGE_PATH)
+    await write(ENTRY_PAGE_PATH, STAND_IN_PAGE)
   if (options.withAppFolder) await write('src/app/page.tsx', STAND_IN_PAGE)
   await write(
     'node_modules/next/package.json',
-    JSON.stringify({ name: 'next', version: '16.4.3' }),
+    JSON.stringify({ name: 'next', version: options.nextVersion ?? '16.4.3' }),
   )
   await write('node_modules/next/dist/bin/next', '')
   const buildManifest = await readFile(
@@ -100,17 +118,24 @@ export async function writeNextPagesWorkspace(
     '.next/dev/routes-manifest.json',
     JSON.stringify({ ...routesManifest, ...options.routesManifest }),
   )
+  const pagesManifest = { ...PAGES_MANIFEST, ...options.pagesManifest }
   await write(
     '.next/dev/server/pages-manifest.json',
-    JSON.stringify(PAGES_MANIFEST),
+    JSON.stringify(pagesManifest),
   )
-  const moduleJavascript = pagesEvalModule(
+  const mappedModule = pagesEvalModule(
     root,
     cited.path,
     cited.text,
     'pages-dir-browser',
     options.mappedLines ?? 1,
   )
+  const moduleJavascript = options.browserMapScanStopsAtLimit
+    ? withMappings(
+        mappedModule,
+        ';'.repeat(REPOSITORY_MAPPED_POSITION_MAX_GENERATED_LINES + 1),
+      )
+    : mappedModule
   if (options.chunks ?? true) {
     await write(
       '.next/dev/static/chunks/pages/index.js',
@@ -126,18 +151,14 @@ export async function writeNextPagesWorkspace(
       browserChunk('pages/_app', {}),
     )
   }
-  if (options.serverCompile)
-    await write(
-      '.next/dev/server/pages/index.js',
-      serverChunk({
-        [`./${cited.path}`]: pagesEvalModule(
-          root,
-          cited.path,
-          cited.text,
-          'pages-dir-node',
-          cited.text.trimEnd().split('\n').length,
-        ),
-      }),
-    )
-  return { moduleJavascript, buildManifest }
+  const serverModuleJavascript = options.serverCompile
+    ? await writePagesServerBuild(
+        write,
+        root,
+        cited,
+        options.serverCompile === true ? {} : options.serverCompile,
+        pagesManifest,
+      )
+    : undefined
+  return { moduleJavascript, buildManifest, serverModuleJavascript }
 }

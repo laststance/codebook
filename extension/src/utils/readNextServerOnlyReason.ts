@@ -1,10 +1,10 @@
 import type { BundleSource } from '../repositoryBundle'
 
-import { createBundleVerifier } from './createBundleVerifier'
 import type { NextPagesDiscoveryCache } from './createNextPagesDiscoveryCache'
 import { DiscoveryBudgetError } from './discoveryBudgetError'
 import { selectEvaluatedModule } from './extractDevelopmentModule'
 import type { NextRouteFolder } from './findNextRouteFolder'
+import { lineMappingOf } from './lineMappingOf'
 import { nextServerOnlyFileReason } from './nextServerOnlyFileReason'
 import { readNextChunkModules } from './readNextChunkModules'
 import type { NextPagesRoute } from './resolveNextPagesRoute'
@@ -96,22 +96,4 @@ export async function readNextServerOnlyReason(
   return serverMapsLine
     ? { kind: 'server-only', reason: 'server-compile' }
     : { kind: 'unknown' }
-}
-
-/**
- * Says whether a sealed module's map maps a source line; called by {@link readNextServerOnlyReason} for the browser and the server module.
- * @param bundle - The sealed module.
- * @param line - The one-based source line.
- * @returns `mapped` when the map places code on the line; `unmapped` only when the map was read whole and does not; `unknown` when the scan stopped at a size limit first.
- * @throws When the map's original differs from the module's frozen source ({@link createBundleVerifier}).
- * @example
- * lineMappingOf(bundle, 3) // => 'unmapped'
- */
-function lineMappingOf(
-  bundle: BundleSource,
-  line: number,
-): 'mapped' | 'unmapped' | 'unknown' {
-  const scan = createBundleVerifier(bundle).mappedPositions(line, line)
-  if (scan.positions.length) return 'mapped'
-  return scan.complete ? 'unmapped' : 'unknown'
 }

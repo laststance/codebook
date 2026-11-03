@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, realpath, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import type { TestContext } from 'node:test'
 import { runInNewContext } from 'node:vm'
@@ -51,6 +51,10 @@ import {
   type NextEntryResponse,
 } from '../../utils/describeNextEntryResponse'
 import { maskEnvValues, maskKnownValues } from '../../utils/maskKnownValues'
+import {
+  readinessOutcomeOfError,
+  type ReadinessObserver,
+} from '../../utils/readinessEntryRecord'
 import { NEXT_PAGES_STATE_EXPRESSION } from '../../utils/readNextPagesState'
 import { readPagesDevelopmentBundle } from '../../utils/readPagesDevelopmentBundle'
 import * as viteDevAdapter from '../../viteDevAdapter'
@@ -223,6 +227,8 @@ export async function configuredRuntimeHarness(
     launchFailure?: string
     /** Makes the stand-in server's structured entry check (`readyEntry`) never answer until the run is cancelled, as a first compile that is still running does. */
     entryHangs?: boolean
+    /** The HTTP status the stand-in server answers to the App readiness check (`ready`), 200 by default; any other status closes the readiness record with it and rejects with the launcher's own sentence, as `ready` does for an answer that is not OK. */
+    readyAnswer?: number
     /**
      * Binds a stand-in saved-session store to the run, as `createRuntime` does for a version 3 run: `admission` is what the store answers (the saved session with a lease, or a fresh profile with the reason), `refuse` makes it throw a coded refusal instead, `refuseAtLaunch` makes the lease's last check at the launch throw one (a Chrome that took the folder meanwhile), and `appCookies` is the lease's cookie kind.
      * The stand-in browser then takes the lease like the real one (`prepareForLaunch` at launch, `recordBrowser` after it), and the page reports its navigations.
@@ -398,10 +404,12 @@ export async function configuredRuntimeHarness(
       : { after: definition.configuration.after, selector: '#unused' }
   const afterExpression = configuredDomExpression(declaredAction.after)
   const scrollExpression = configuredScrollExpression(declaredAction.selector)
-  const sourcePath = join(
-      repository.directory,
-      definition.configuration.source.path,
-    ),
+  // A Pages server stop is sealed from the build's real path (its maps name the canonical workspace), so the editor's breakpoints and the debugger's frames name that path too.
+  const sourceRoot =
+    options.nextPages && options.serverRuntime
+      ? await realpath(repository.directory)
+      : repository.directory
+  const sourcePath = join(sourceRoot, definition.configuration.source.path),
     source = reference.descriptor!.sources[0]!.text,
     // With a fixture the executed module mirrors the source line for line, so a pause can be placed on any of its lines; a Pages page executes the eval module of its chunk.
     baseJavascript =
@@ -483,6 +491,8 @@ export async function configuredRuntimeHarness(
   }[] = []
   // The entry path of each structured entry check the run asked the stand-in server for.
   const entryChecks: string[] = []
+  // How many times the run launched the development server (`launchDevelopmentServer`), so a refusal that comes before the server starts can say none was.
+  let developmentServerLaunches = 0
   // The text of each initial input the run sent to the page, in order.
   const insertedTexts: string[] = []
   // The method of every `Input.*` CDP request the run sent to the page, in order (no parameters, so no typed value is kept).
@@ -1343,12 +1353,16 @@ export async function configuredRuntimeHarness(
     },
   ]
   // The scripted Node participant of a run that declares server stops (opt in with `serverRuntime`).
-  const serverScriptUrl = `webpack-internal:///(${options.serverSeal === 'rsc' ? 'rsc' : 'action-browser'})/./${definition.configuration.source.path}`
+  // A Pages run seals its server stops from the page's server compile, so the Next server executes that `(pages-dir-node)` module.
+  const isPagesServer = Boolean(options.nextPages && options.serverRuntime)
+  const serverScriptUrl = isPagesServer
+    ? `webpack-internal:///(pages-dir-node)/./${definition.configuration.source.path}`
+    : `webpack-internal:///(${options.serverSeal === 'rsc' ? 'rsc' : 'action-browser'})/./${definition.configuration.source.path}`
   const serverParticipant = options.serverRuntime
     ? createServerParticipant({
         run: () => run,
         sourcePath,
-        javascript,
+        javascript: pagesBuild?.serverModuleJavascript ?? javascript,
         scriptUrl: serverScriptUrl,
         sourceMap: bundle.sourceMap,
         workspace: repository.directory,
@@ -1359,8 +1373,8 @@ export async function configuredRuntimeHarness(
       })
     : undefined
   const serverLaunches: DebugSession['configuration'][] = []
-  // The compiled App paths manifest the run reads to know the entry route's pattern.
-  if (options.serverRuntime) {
+  // The compiled App paths manifest the run reads to know the entry route's pattern; a Pages run reads the Pages manifest the build harness wrote.
+  if (options.serverRuntime && !isPagesServer) {
     const entryPathname = (options.entryPath ?? '/').split(/[?#]/)[0]!
     const stem = entryPathname === '/' ? '' : entryPathname.replace(/\/$/, '')
     const manifestPath = join(
@@ -1472,11 +1486,69 @@ export async function configuredRuntimeHarness(
   }
   // The entry path the run passed to each readiness check of the stand-in server, in order.
   const readyEntryPaths: (string | undefined)[] = []
+  /**
+   * Plays the launcher's readiness request for the run's record: it is sent, then it ends with the scripted answer or without one (`readinessFailure`).
+   * @param observer - The run's record, as the launcher gets it.
+   * @param status - The status the stand-in server answers.
+   * @throws The error a request that ended without an answer rejects with.
+   */
+  const playReadinessRequest = (
+    observer: ReadinessObserver | undefined,
+    status: number,
+  ): void => {
+    observer?.sent()
+    const failure = options.nextPages?.readinessFailure
+    if (!failure) {
+      observer?.closed({ status })
+      return
+    }
+    observer?.closed({ outcome: failure })
+    const error = new Error(
+      failure === 'timeout'
+        ? 'The operation was aborted due to timeout'
+        : 'fetch failed',
+    )
+    if (failure === 'timeout') error.name = 'TimeoutError'
+    throw error
+  }
+  /**
+   * Plays a readiness request that was sent and gets no answer (`nextPages.readinessUnanswered`): it ends only when the run is cancelled, and its record closes with the outcome the real launcher names for that rejection.
+   * @param observer - The run's record, as the launcher gets it.
+   * @param signal - The run's stop signal, which the request carries.
+   * @throws The signal's reason once the run is cancelled.
+   */
+  const holdReadinessRequestUnanswered = (
+    observer: ReadinessObserver | undefined,
+    signal: AbortSignal,
+  ): Promise<never> => {
+    observer?.sent()
+    return new Promise<never>((_resolve, reject) =>
+      signal.addEventListener('abort', () => {
+        observer?.closed({
+          outcome: readinessOutcomeOfError(signal.reason, signal),
+        })
+        reject(signal.reason)
+      }),
+    )
+  }
   const fakeApplication = {
-    ready: async (_signal: AbortSignal, entryPath?: string) => {
+    ready: async (
+      _signal: AbortSignal,
+      entryPath?: string,
+      observer?: ReadinessObserver,
+    ) => {
       readyEntryPaths.push(entryPath)
       if (options.launchFailure) throw new Error(options.launchFailure)
       releases.push('application acquired')
+      const status = options.readyAnswer ?? 200
+      playReadinessRequest(observer, status)
+      // An answer that is not OK rejects with the launcher's own sentence, after the record closed with its status.
+      if (status !== 200)
+        throw new Error(
+          entryPath === undefined || entryPath === '/'
+            ? `Application root failed: ${status}: ${options.nextPages?.outputTail ?? ''}`
+            : `Selected application page failed or redirected: ${status}. Select the actual entry path and prerequisites.`,
+        )
       return serverOrigin
     },
     // The structured entry check of a Pages-capable run: the scripted answer, described by the real code, never fetched.
@@ -1484,8 +1556,12 @@ export async function configuredRuntimeHarness(
       signal: AbortSignal,
       entryPath: string,
       signInPaths?: readonly string[],
+      observer?: ReadinessObserver,
     ) => {
       entryChecks.push(entryPath)
+      // A data function that hangs keeps the sent request unanswered until the run is cancelled.
+      if (options.nextPages?.readinessUnanswered)
+        await holdReadinessRequestUnanswered(observer, signal)
       // A first compile that has not finished answers only when the run is cancelled.
       if (options.entryHangs)
         await new Promise<never>((_resolve, reject) =>
@@ -1496,6 +1572,7 @@ export async function configuredRuntimeHarness(
       const origin = serverOrigin,
         answer = options.entryAnswer ??
           options.nextPages?.entry ?? { status: 200 }
+      playReadinessRequest(observer, answer.status)
       return {
         origin,
         entry: describeNextEntryResponse(
@@ -1741,7 +1818,10 @@ export async function configuredRuntimeHarness(
         },
       },
       './utils/launchDevelopmentServer': {
-        launchDevelopmentServer: () => fakeApplication,
+        launchDevelopmentServer: () => {
+          developmentServerLaunches += 1
+          return fakeApplication
+        },
       },
       './viteDevAdapter': {
         VITE_DEV_ADAPTER: {
@@ -1975,6 +2055,8 @@ export async function configuredRuntimeHarness(
     readyEntryPaths,
     /** The entry path of each structured entry check (`app.readyEntry`) of a Pages-capable run, in order. */
     entryChecks,
+    /** How many times the run launched the development server (the Next adapter calls `launchDevelopmentServer`); 0 for a run refused before its server starts. */
+    developmentServerLaunches: (): number => developmentServerLaunches,
     /** The text of each initial input the run sent to the page (`Input.insertText`), in order. */
     insertedTexts,
     /** The method of every `Input.*` request the run sent to the page (`Input.insertText`, `Input.dispatchMouseEvent`, …), in order; the saved-session lanes assert that a refusal or a facts read sends none. */
@@ -2006,6 +2088,32 @@ export async function configuredRuntimeHarness(
     },
     /** How many screenshots the run asked the stand-in page for. */
     screenshotRequests: () => screenshotCount,
+    /** Reports the page's network events for the requests a Pages hit may be working for, as the browser does; a request comes from the main frame (`main`) unless a test names the frame. @example harness.pageRequest.start('7', 'http://localhost:4321/_next/data/build/index.json?page=2', 'Fetch') */
+    pageRequest: {
+      start(
+        requestId: string,
+        url: string,
+        type = 'Document',
+        frameId = 'main',
+      ): void {
+        listeners.get('Network.requestWillBeSent')?.({
+          requestId,
+          frameId,
+          request: { url },
+          type,
+        })
+      },
+      /** Reports that the page attached an iframe under its main frame, as `Page.frameAttached` does. @example harness.pageRequest.attachChildFrame('child-1') */
+      attachChildFrame(frameId: string): void {
+        listeners.get('Page.frameAttached')?.({
+          frameId,
+          parentFrameId: 'main',
+        })
+      },
+      finish(requestId: string): void {
+        listeners.get('Network.responseReceived')?.({ requestId })
+      },
+    },
     /** The answers the run asked the stand-in server to judge the App way (`app.confirmAppEntry`), in order. */
     appEntryConfirmations,
     /** Every Pages seal the run asked for, with its discovery cache and the bytes read before and after. */

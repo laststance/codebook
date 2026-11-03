@@ -5,6 +5,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 /**
  * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ * 1.17 is additive: Pages Router data-function server stops (configuration version 3). A `participant: "server"` stop in the entry page's `getServerSideProps` or `getStaticProps`, or in a module they call, pauses the real Next server. The live pause names its data function in `observations[].dataFunction` (`getServerSideProps` or `getStaticProps`, no saved-study field). A Pages run that declares a server stop adds to the run resource `nextVersion` and `attributionSummary` (`{ taken: { frame, request }, unconfirmed, resumed: { <reason>: count } }`: the pauses taken by their evidence, where `request` stays 0 because the browser's request alone never takes a pause, the pauses labelled `unconfirmed`, and the resumed hits by reason `other-route`, `outside-data-function` or `unattributed-resumed`). Every Next run adds `readinessRequest` (`{ state: "open", sentAtMs }`, then `{ state: "closed", sentAtMs, status }` or `{ state: "closed", sentAtMs, outcome }` with `outcome` `timeout`, `aborted` or `connection-lost`) for Codebook's own readiness request, which runs the entry page's server code once unobserved and is journaled as `readiness.entry-request`; a readiness check that fails with an error of its own after the request was sent (no answer, or in an App Router run an answer that is not OK) fails the run with `RUNTIME_FAILED`, `details.sideEffects` `unknown` and `details.readinessRequest`, and a setup deadline after the request was sent (`NEXT_SETUP_DEADLINE`, or `RUNTIME_FAILED` with the uncoded deadline text) carries `details.sideEffects` `unknown` and `details.readinessRequest` too (closed with `outcome` `timeout` when the deadline came before an answer), `details.router` `pages` once the entry resolved as a Pages route, and a recovery that asks the learner before another start. The journal gains `breakpoint.outside-data-function`, `breakpoint.unconfirmed` (`reason`, `cause`, `logId`) and `pages.renderer-unrecognised`, and Pages hits also use `breakpoint.other-route` and `breakpoint.unattributed-resumed`. The failure details gain `router` (`pages` on every refusal of a stop in a Pages run, on `ENTRY_LOAD_TIMEOUT` and on a Pages entry refusal after the readiness request), `resumedHits`, `attributionMode` (`async-chain`) and `nextVersion` (on `SERVER_STOP_NOT_REACHED` of a Pages run) and `requiredVersion` (on the refusal of a version 2 Pages server stop); a Pages run's failures after the readiness request report `sideEffects` `unknown`. `NEXT_SERVER_ONLY_STOP` and `NEXT_STOP_NOT_SEALED` also answer the Pages server-stop refusals. The journal also gains a `seal.evidence` entry (`client-mapping-unverified`) for a server stop on a page-component line whose client mapping Codebook could not read within its size limit, the run resource's `message` names the reason of an unconfirmed pause, and `serverRenderQuickStart.supportedCode` is an object `{ app, pages }` and was a string in 1.16 (a change of the help's shape). Saved studies: format 8 is unchanged and gains no field, so every Codebook that opens format 8 opens and replays a Pages server run. Live features: a Pages server stop needs Codebook 0.2.74.0 with this API.
  * 1.16 is additive: Next App Router server-render stops (`participant: "server"` with `afterOperation: 0`, `operations` omitted), run pauses reporting `execution`, `attribution`, `operationIndex`, `declaredIndex` and `executionIndex`, `firstExecutionObserved`, and the codes `SERVER_STOP_NOT_REACHED` and `ENTRY_LOAD_TIMEOUT`; `NEXT_STOP_NOT_SEALED` also answers a server stop in a client component.
  * 1.15 is additive: saved-session web app runs, their confirmation and withheld images. Lane A: `codebook_status.savedSession` is `{ available, state, setupAt? }`, with `state` one of `none`, `setup-open`, `saved`, `unconfirmed` or `unusable`; the codes `SIGN_IN_REQUIRED`, `SIGN_IN_IN_PROGRESS`, `SIGN_IN_PROFILE_IN_USE` and `SIGN_IN_PROFILE_UNUSABLE` and `BUSY` with reason `profile-in-use` are added, and `BUSY` details carry `heldBy`.
  * 1.15, lane B: version 3 configurations accept `signInPaths` (1 to 4 paths) and `session: "fresh"`; the run resource of a version 3 run reports `session`, `appState` and `savedSession`; `SIGN_IN_REQUIRED` carries `details.reason`; the run-start refusals gain `runUri`, `sideEffects`, `retry` and `logId`; `SIGN_IN_ORIGIN_REFUSED` is new.
@@ -18,8 +19,8 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.9 is additive: a node-server run is saved as a Server replay. `codebook_explain_node_history` accepts a server history's material (steps citing the request, a stop, output, the response or the request failure), the server run resource gains `nodeServer.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing` and `captureMissing`, `nextActions` offers `save-node-learning`, and `codebook://help/node-server` has a save section.
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
-export const API_VERSION = '1.16'
-export const EXTENSION_VERSION = '0.2.73'
+export const API_VERSION = '1.17'
+export const EXTENSION_VERSION = '0.2.74'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -1772,6 +1773,12 @@ export const NEXT_MANIFEST_POLL_MS = 10_000
 export const NEXT_MANIFEST_POLL_INTERVAL_MS = 250
 /** The source extensions Next tries for a Pages Router page, in its own order (its default `pageExtensions`); a custom `pageExtensions` is not read. */
 export const NEXT_PAGES_SOURCE_EXTENSIONS = ['tsx', 'ts', 'jsx', 'js'] as const
+/** Where Next's webpack server build writes a Pages page's compile and the chunks it requires, relative to `.next/dev`: the page's `compiledPath` (`pages/index.js`) and each required chunk id (`vendor-chunks/next`) live under it. */
+export const NEXT_SERVER_BUILD_DIRECTORY = 'server'
+/** The prefix of the server chunks Next's webpack build splits `node_modules` code into; a tracked workspace source never lives in one, so the Pages server reader ({@link readPagesServerBundle}) does not read them (they are the framework-sized chunks of a page's compile). */
+export const NEXT_SERVER_VENDOR_CHUNK_PREFIX = 'vendor-chunks/'
+/** How many characters at the end of a server compile {@link serverChunkIdsRequiredBy} searches for the startup call that lists the chunks the compile requires; the call follows every module, so it is at the very end, and its chunk ids stay well inside this bound. */
+export const NEXT_SERVER_STARTUP_SCAN_CHARS = 65_536
 export const REPOSITORY_PAUSE_HOLD_TIMEOUT_MS = 300_000
 /** The longest private observation hold a native Node test trial accepts (`CODEBOOK_NODE_TEST_HOLD_MS`, `CODEBOOK_NODE_TEST_HOLD_AFTER_MS`), so a recording can show the state the trial reached. */
 export const NATIVE_TRIAL_HOLD_LIMIT_MS = 60_000
@@ -2054,6 +2061,52 @@ export const SERVER_RENDER_ROUTE_EXPRESSION =
 export const REACT_SERVER_COPY_URL_PREFIX = 'about://React/Server/'
 /** How many resumed hits (`breakpoint.other-route`, `breakpoint.unattributed-resumed`, `breakpoint.repeat-hit`, `breakpoint.react-copy`) one run journals, each event type up to it; past it only their count is kept. */
 export const SERVER_RENDER_RESUMED_HIT_JOURNAL_LIMIT = 100
+/** The path tail of Next 16's compiled Pages renderer under `next dev --webpack` (chosen in `next/dist/server/route-modules/pages/module.compiled.js`); a frame whose script address ends with it is a renderer frame of a Pages hit. */
+export const NEXT_PAGES_RENDERER_SCRIPT_PATH =
+  'next/dist/compiled/next-server/pages.runtime.dev.js'
+/**
+ * The texts that identify a data-function call in the Pages renderer's source, versioned data taken from the runtime of the listed Next versions (E0b, Issue 188).
+ * `callText` is what the source starts with at the location of the frame that calls the data function (`async()=>getServerSideProps({req:req,…`, `()=>getStaticProps({…`); `tracedAwaitText` is what the source holds at the location of the frame that awaits the traced call (`trace(trace_constants.RenderSpan.getServerSideProps,{…`). V8 keeps the call arrow in the async chain, so the traced await has not been needed so far; it identifies the same call from the frame that wraps it.
+ * Only `tracedAwaitText` recognises the renderer ({@link holdsNextPagesRendererPatterns}): it is the renderer's own call site, while the tracer-constants enum that every compiled Next runtime bundles (`RenderSpan.getStaticProps="Render.getStaticProps"`) lacks the `trace_constants.` prefix, and a page module that declares its data function holds `callText`. A runtime text that holds neither `tracedAwaitText` is unrecognised, which makes every hit whose call frame is not found `no-renderer-frame`.
+ */
+export const NEXT_PAGES_RENDERER_PATTERNS = [
+  {
+    dataFunction: 'getServerSideProps',
+    callText: 'getServerSideProps(',
+    tracedAwaitText: 'trace_constants.RenderSpan.getServerSideProps',
+    nextVersions: ['16.1.4', '16.4.4'],
+  },
+  {
+    dataFunction: 'getStaticProps',
+    callText: 'getStaticProps(',
+    tracedAwaitText: 'trace_constants.RenderSpan.getStaticProps',
+    nextVersions: ['16.1.4', '16.4.4'],
+  },
+] as const
+/** How many characters of the renderer's source from a frame's location are searched for a traced-await text; the traced call opens with `trace(` before the text. */
+export const NEXT_PAGES_TRACED_AWAIT_WINDOW_CHARS = 64
+/** The constant expression a Pages hit evaluates on the synchronous frame of the traced call to read the page Next renders: `pathname` is a parameter of the renderer's `renderToHTMLImpl`, the page pattern of the manifest key (`/`, `/products/[id]`). It is a plain identifier, never the request, headers or cookies. */
+export const NEXT_PAGES_PAGE_EXPRESSION = 'pathname'
+/** The most `Debugger.getStackTrace` reads one Pages hit spends on async-chain continuations (a `parentId` or a start from `asyncStackTraceId`); past it the chain is incomplete (`continuation-limit`). */
+export const PAGES_STACK_TRACE_READ_LIMIT = 4
+/** How many hits of one Pages server stop the run resumes (`breakpoint.other-route`, `breakpoint.outside-data-function`, `breakpoint.unattributed-resumed`) before it disarms the stop and ends the run `SERVER_STOP_NOT_REACHED`: a helper that many requests or the page's render call (a formatter in a list) would otherwise pause and resume without end. */
+export const PAGES_STOP_RESUMED_HIT_LIMIT = 500
+/** The most scripts of the server other than Next's renderer whose text one Pages hit reads among the synchronous frames' scripts the proxy never announced (parsed before the debugger attached), to find the renderer and the addresses of the others; a stack of a data function holds about six distinct scripts. A hit past this bound reads the rest at a later hit (the scripts already read are skipped, so a deep stack advances by this many scripts each time), which is why a renderer behind many other scripts is still found. A read that answered is kept for the run, and {@link PAGES_UNANNOUNCED_SCRIPT_RUN_READ_LIMIT} bounds those; a failed read is made again by a later hit. */
+export const PAGES_UNANNOUNCED_SCRIPT_READ_LIMIT = 16
+/** The most scripts of the server other than Next's renderer whose text one Pages run keeps read (an answered read each): the ceiling that bounds the whole run's reads however many hits there are, 16 hits' worth of {@link PAGES_UNANNOUNCED_SCRIPT_READ_LIMIT}, far above the scripts the stacks of a run hold (about six per data-function stack), so a renderer is found long before it. Past it a run no longer reads new ones, so a renderer frame among them reads as `no-renderer-frame` and a page module's frame names no page. */
+export const PAGES_UNANNOUNCED_SCRIPT_RUN_READ_LIMIT = 256
+/** The most outstanding page requests of the browser the run keeps for the Pages page read; a page loads a handful, so a run that sees more has no single page request to name (the oldest are dropped). */
+export const PAGES_OUTSTANDING_REQUEST_LIMIT = 64
+/** The address prefix of the data requests Next's client sends for a Pages navigation (`/_next/data/<build id>/<route>.json`). */
+export const NEXT_DATA_REQUEST_PATH_PREFIX = '/_next/data/'
+/** How deep a value-free shape summary ({@link valueShapeSummaryOf}) descends into nested objects and arrays. */
+export const VALUE_SHAPE_DEPTH_LIMIT = 3
+/** How many properties of one object a shape summary names. */
+export const VALUE_SHAPE_KEY_LIMIT = 12
+/** The longest property name a shape summary keeps; a longer or not identifier-like name is shown as `?`. */
+export const VALUE_SHAPE_KEY_LIMIT_CHARS = 40
+/** The longest shape summary; a longer one is cut, so a malformed payload cannot grow the Output line that names it. */
+export const VALUE_SHAPE_SUMMARY_LIMIT_CHARS = 300
 /** The longest a pause no debugger stop announced may last for its resume to count as the debug adapter's own; the adapter resumes its pauses within milliseconds, and a pause that outlasts the wait for a stop's own pause is taken as announced, so this bound is that wait's bound ({@link CAPTURE_TIMEOUT_MS}) and follows it. */
 export const REPOSITORY_ADAPTER_PAUSE_LIMIT_MS = CAPTURE_TIMEOUT_MS
 /** The longest a page pause may last in a run that declares no browser stop before the run ends as "Unowned browser stop remained paused": the debug adapter resumes a pause of its own within milliseconds, and nobody else may pause the page of such a run. A pause in the page's stub of a declared server stop's module has {@link REPOSITORY_ADAPTER_PAUSE_LIMIT_MS} instead, because the adapter first reports that pause as a stop, which the run then resumes itself. */
@@ -2676,6 +2729,9 @@ export const DEVELOPMENT_SERVER_MESSAGE_QUEUE_LIMIT = 32
 
 /** The longest a `vite/package.json` version may be (the study schema's `viteVersion` limit). */
 export const VITE_VERSION_MAX_CHARS = 64
+
+/** The longest a `next/package.json` version may be to be published (the run resource's `nextVersion`, the journal, the Output line and the failure details): the studied repository chose that text, so a longer one reads as a version that could not be read. */
+export const NEXT_VERSION_MAX_CHARS = 64
 
 /** The longest a Vite config's thrown error line is carried in a refusal. */
 export const VITE_ERROR_LINE_LIMIT_CHARS = 200

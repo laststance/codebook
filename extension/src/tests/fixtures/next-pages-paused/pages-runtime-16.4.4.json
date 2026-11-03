@@ -1,0 +1,17 @@
+{
+  "nextVersion": "16.4.4",
+  "file": "next/dist/compiled/next-server/pages.runtime.dev.js",
+  "license": "MIT, (c) Vercel, Inc.; short fragments kept at their real line and column (0-based), the rest of the file is not vendored",
+  "fragments": [
+    {
+      "line": 20,
+      "column": 210,
+      "text": "trace(trace_constants.RenderSpan.getServerSideProps,{spanName:`getServerSideProps ${pathname}`,attributes:{\"next.route\":pathname}},async()=>getServerSideProps({req:req,res:resOrProxy,query,resolvedUrl:renderOpts.resolvedUrl,...pageIsDynamic"
+    },
+    {
+      "line": 12,
+      "column": 5985,
+      "text": "trace(trace_constants.RenderSpan.getStaticProps,{spanName:`getStaticProps ${pathname}`,attributes:{\"next.route\":pathname}},()=>getStaticProps({...pageIsDynamic?{params}:void 0,...isPreview?{draftMode:!0,preview:!0,previewData:prev"
+    }
+  ]
+}

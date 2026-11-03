@@ -7,7 +7,10 @@ import { ERROR_RECOVERY } from '../errors'
 import { readResource } from '../resources'
 import { formatRefusalFailure } from '../utils/formatRefusalFailure'
 
-import { configuredServiceHarness } from './utils/configuredServiceHarness'
+import {
+  configuredServiceHarness,
+  ControlledConfiguredRuntime,
+} from './utils/configuredServiceHarness'
 
 /** The error object of a run resource, as an agent reads it. */
 const runErrorSchema = z.object({
@@ -16,6 +19,7 @@ const runErrorSchema = z.object({
     message: z.string(),
     cause: z.string(),
     recovery: z.string(),
+    details: z.record(z.string(), z.unknown()).optional(),
   }),
 })
 
@@ -178,6 +182,36 @@ test('a sealed module replaced during a Pages preparation shows SOURCE_CHANGED i
   })
 })
 
+// Value: protects=a Pages run that ended on a redirect after its readiness request reaches the agent with details router pages and sideEffects unknown whether the runtime failed after its preparation or while it prepared; fails_when=the run resource's error carries no details for the pages variant, or carries them for the same text without it; no_claim=the run raising the text (nextPagesServerRun tests)
+test('a Pages entry redirect recorded as a failure text shows router pages and sideEffects unknown in the run resource, and the same text without the variant shows none', async (context) => {
+  // Arrange
+  const message = 'The page left the entry path / for /login.'
+  // Act
+  const afterPreparation = await runResourceErrorAfterRuntimeFailure(
+    context,
+    formatRefusalFailure('NEXT_ENTRY_REDIRECTED', message, 'pages'),
+  )
+  const duringPreparation = await runResourceErrorAfterPreparationFailure(
+    context,
+    formatRefusalFailure('NEXT_ENTRY_REDIRECTED', message, 'pages'),
+  )
+  const withoutVariant = await runResourceErrorAfterRuntimeFailure(
+    context,
+    formatRefusalFailure('NEXT_ENTRY_REDIRECTED', message),
+  )
+  // Assert
+  const pagesError = {
+    code: 'NEXT_ENTRY_REDIRECTED',
+    message,
+    cause: message,
+    recovery: ERROR_RECOVERY.NEXT_ENTRY_REDIRECTED,
+    details: { router: 'pages', sideEffects: 'unknown' },
+  }
+  assert.deepEqual(afterPreparation, pagesError)
+  assert.deepEqual(duringPreparation, pagesError)
+  assert.equal(withoutVariant.details, undefined)
+})
+
 // Value: protects=a secret in a Next refusal's message never reaches its recovery, which is static and passes no sanitizer; records that the service's sanitizedError masks no key=value or query token, so the message's producer must redact them; fails_when=the recovery carries a value from the message, or the sanitizer's handling of these tokens changes unnoticed; why_new=Cycle 0065 secrets requirement (Issue 166); seam=environment.createRuntime and runtime.prepare
 test('a Next refusal whose message carries a token keeps it out of the static recovery, and the cause sanitizer leaves key=value tokens to the message producer', async (context) => {
   // Arrange
@@ -196,4 +230,112 @@ test('a Next refusal whose message carries a token keeps it out of the static re
   // The sanitizer hides private roots and secret shapes (Bearer, JWT, provider keys, URL passwords) only; these tokens pass unchanged.
   assert.equal(error.message, message)
   assert.equal(error.cause, message)
+})
+
+/** The error object of a run resource with its details, as an agent reads it. */
+const runErrorWithDetailsSchema = z.object({
+  error: z.object({
+    code: z.string(),
+    message: z.string(),
+    recovery: z.string(),
+    details: z.record(z.string(), z.unknown()).optional(),
+  }),
+})
+
+/** The sentence a setup deadline's recovery starts with once Codebook's readiness request was sent. */
+const SETUP_DEADLINE_AFTER_READINESS_SENTENCE =
+  "Codebook's own readiness request for the entry path ran the page's server code (a data function, server components) before this deadline, so details.sideEffects is unknown, not none (details.readinessRequest holds the HTTP status, or outcome timeout when the deadline came before an answer). When that code writes or sends (a database write, a counter, an email, a payment call), tell the learner and ask before any new start, and never start again unasked; the rest of this recovery applies once the learner agrees, or when that code writes and sends nothing."
+
+/**
+ * Starts a configured run on the service harness whose runtime view holds a sent readiness request (and, when given, the route the entry resolved to), as a Next run's does; `endsIn` decides whether the runtime records the failure text during its preparation (and then rejects with a closed transport) or after it.
+ * @returns The run resource's error object with its details.
+ */
+async function runResourceErrorAfterReadiness(
+  context: Parameters<typeof configuredServiceHarness>[0],
+  failureText: string,
+  facts: {
+    endsIn: 'preparation' | 'run'
+    nextRoute?: { router: 'app' | 'pages'; route: string }
+  },
+) {
+  let created: ControlledConfiguredRuntime | undefined
+  const { service, configuration } = await configuredServiceHarness(
+    context,
+    Date.now,
+    (directory, definition) => {
+      const runtime = new ControlledConfiguredRuntime(directory, definition),
+        view = runtime.view.bind(runtime)
+      runtime.view = () => ({
+        ...view(),
+        readinessRequest: { state: 'closed', sentAtMs: 12.5, status: 200 },
+        ...(facts.nextRoute ? { nextRoute: facts.nextRoute } : {}),
+      })
+      if (facts.endsIn === 'preparation')
+        runtime.prepare = async () => {
+          runtime.failures.push(failureText)
+          runtime.status = 'failed'
+          throw new Error('CDP disconnected')
+        }
+      created = runtime
+      return runtime
+    },
+  )
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: ['next', 'deadline', 'after', 'readiness'].join('-'),
+    configuration,
+  })
+  await service.record(receipt).preparation
+  if (facts.endsIn === 'run') {
+    created!.failures.push(failureText)
+    created!.status = 'failed'
+  }
+  const resource = await readResource(service, receipt.runUri)
+  assert.ok('text' in resource)
+  return runErrorWithDetailsSchema.parse(JSON.parse(resource.text)).error
+}
+
+// Value: protects=the uncoded setup deadline of an App Router run that ends its preparation after Codebook's readiness request ran the page's server components reports details.sideEffects unknown and the readiness record, and its recovery asks the learner before another start; fails_when=the RUNTIME_FAILED of the deadline carries no details or keeps only the general recovery; no_claim=that the run records the request (the run tests)
+test('an App setup deadline after the readiness request shows RUNTIME_FAILED with sideEffects unknown and the readiness record', async (context) => {
+  // Arrange and act
+  const error = await runResourceErrorAfterReadiness(
+    context,
+    'Repository setup deadline exceeded',
+    { endsIn: 'preparation', nextRoute: { router: 'app', route: '/page' } },
+  )
+  // Assert
+  assert.deepEqual(error, {
+    code: 'RUNTIME_FAILED',
+    message: 'Repository setup deadline exceeded',
+    recovery: `${SETUP_DEADLINE_AFTER_READINESS_SENTENCE} Read the terminal reason and captured history. Stop owned resources; do not retry the click automatically.`,
+    details: {
+      sideEffects: 'unknown',
+      readinessRequest: { state: 'closed', sentAtMs: 12.5, status: 200 },
+    },
+  })
+})
+
+// Value: protects=a Pages setup deadline that the runtime records after the entry resolved as a Pages route, read before the preparation's own error exists, names details.router pages beside sideEffects unknown and the readiness record, and its step's recovery is preceded by the question to the learner; fails_when=the run resource's error of the runtime failure lacks the router, the side effects or the readiness record, or keeps only the step's one-retry recovery; no_claim=the step the run reached (the run tests)
+test('a Pages setup deadline the runtime records names router pages, sideEffects unknown and the readiness record in the run resource', async (context) => {
+  // Arrange
+  const message =
+    'Repository setup deadline (90 s) exceeded while arming the first stop. Codebook stopped the server it started; the browser Codebook opened was closed and no click was sent.'
+  // Act
+  const error = await runResourceErrorAfterReadiness(
+    context,
+    formatRefusalFailure('NEXT_SETUP_DEADLINE', message, 'arming'),
+    { endsIn: 'run', nextRoute: { router: 'pages', route: '/' } },
+  )
+  // Assert
+  assert.deepEqual(error, {
+    code: 'NEXT_SETUP_DEADLINE',
+    message,
+    recovery: `${SETUP_DEADLINE_AFTER_READINESS_SENTENCE} Start once more with a new key (the first compile of the page is warm after it); a second deadline means the page does not get ready in time to arm the first stop, so tell the learner. Recovery: one retry, then the learner. Every declared initial input was written (or there were none) and no click was sent; the browser Codebook opened was closed and Codebook stops the server it started (read resourcesReleased in the run resource). See codebook://help/repository-browser#NEXT_SETUP_DEADLINE.`,
+    details: {
+      sideEffects: 'unknown',
+      readinessRequest: { state: 'closed', sentAtMs: 12.5, status: 200 },
+      router: 'pages',
+    },
+  })
 })

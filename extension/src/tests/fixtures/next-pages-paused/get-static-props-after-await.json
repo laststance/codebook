@@ -1,0 +1,431 @@
+{
+  "description": "getStaticProps itself stopped on a line after an await (Next 16.1.4): the call arrow is in the async chain, level 0. The recording has 15 async levels; the levels after `renderToResponse` (level 6) hold no renderer frame and are dropped to keep the fixture small.",
+  "nextVersion": "16.1.4",
+  "scriptUrls": {
+    "223": "file:///workspace/app/node_modules/next/dist/server/lib/trace/tracer.js",
+    "226": "file:///workspace/app/node_modules/next/dist/compiled/@opentelemetry/api/index.js",
+    "935": "file:///workspace/app/node_modules/next/dist/server/next-server.js",
+    "941": "file:///workspace/app/node_modules/next/dist/server/base-server.js",
+    "1477": "file:///workspace/app/node_modules/next/dist/compiled/next-server/pages.runtime.dev.js",
+    "2116": "webpack-internal:///(pages-dir-node)/./node_modules/next/dist/server/lib/trace/tracer.js",
+    "2119": "webpack-internal:///(pages-dir-node)/./node_modules/next/dist/compiled/@opentelemetry/api/index.js",
+    "2127": "(pages-dir-node)/./pages/static-helper.js",
+    "2129": "webpack-internal:///(pages-dir-node)/./node_modules/next/dist/server/route-modules/pages/pages-handler.js"
+  },
+  "event": {
+    "callFrames": [
+      {
+        "callFrameId": "frame-0",
+        "functionName": "getStaticProps",
+        "location": {
+          "scriptId": "2127",
+          "lineNumber": 20,
+          "columnNumber": 61
+        },
+        "url": ""
+      }
+    ],
+    "reason": "other",
+    "hitBreakpoints": ["4:20:4:2127"],
+    "asyncStackTrace": {
+      "description": "await",
+      "callFrames": [
+        {
+          "functionName": "",
+          "scriptId": "1477",
+          "url": "file:///workspace/app/node_modules/next/dist/compiled/next-server/pages.runtime.dev.js",
+          "lineNumber": 12,
+          "columnNumber": 7088
+        },
+        {
+          "functionName": "",
+          "scriptId": "223",
+          "url": "file:///workspace/app/node_modules/next/dist/server/lib/trace/tracer.js",
+          "lineNumber": 184,
+          "columnNumber": 35
+        },
+        {
+          "functionName": "with",
+          "scriptId": "226",
+          "url": "file:///workspace/app/node_modules/next/dist/compiled/@opentelemetry/api/index.js",
+          "lineNumber": 0,
+          "columnNumber": 7061
+        },
+        {
+          "functionName": "with",
+          "scriptId": "226",
+          "url": "file:///workspace/app/node_modules/next/dist/compiled/@opentelemetry/api/index.js",
+          "lineNumber": 0,
+          "columnNumber": 517
+        },
+        {
+          "functionName": "startActiveSpan",
+          "scriptId": "226",
+          "url": "file:///workspace/app/node_modules/next/dist/compiled/@opentelemetry/api/index.js",
+          "lineNumber": 0,
+          "columnNumber": 18092
+        },
+        {
+          "functionName": "startActiveSpan",
+          "scriptId": "226",
+          "url": "file:///workspace/app/node_modules/next/dist/compiled/@opentelemetry/api/index.js",
+          "lineNumber": 0,
+          "columnNumber": 18853
+        },
+        {
+          "functionName": "",
+          "scriptId": "223",
+          "url": "file:///workspace/app/node_modules/next/dist/server/lib/trace/tracer.js",
+          "lineNumber": 153,
+          "columnNumber": 102
+        },
+        {
+          "functionName": "with",
+          "scriptId": "226",
+          "url": "file:///workspace/app/node_modules/next/dist/compiled/@opentelemetry/api/index.js",
+          "lineNumber": 0,
+          "columnNumber": 7061
+        },
+        {
+          "functionName": "with",
+          "scriptId": "226",
+          "url": "file:///workspace/app/node_modules/next/dist/compiled/@opentelemetry/api/index.js",
+          "lineNumber": 0,
+          "columnNumber": 517
+        },
+        {
+          "functionName": "trace",
+          "scriptId": "223",
+          "url": "file:///workspace/app/node_modules/next/dist/server/lib/trace/tracer.js",
+          "lineNumber": 153,
+          "columnNumber": 27
+        },
+        {
+          "functionName": "renderToHTMLImpl",
+          "scriptId": "1477",
+          "url": "file:///workspace/app/node_modules/next/dist/compiled/next-server/pages.runtime.dev.js",
+          "lineNumber": 12,
+          "columnNumber": 6961
+        }
+      ],
+      "parent": {
+        "description": "await",
+        "callFrames": [
+          {
+            "functionName": "render",
+            "scriptId": "1477",
+            "url": "file:///workspace/app/node_modules/next/dist/compiled/next-server/pages.runtime.dev.js",
+            "lineNumber": 23,
+            "columnNumber": 1110
+          },
+          {
+            "functionName": "doRender",
+            "scriptId": "2129",
+            "url": "webpack-internal:///(pages-dir-node)/./node_modules/next/dist/server/route-modules/pages/pages-handler.js",
+            "lineNumber": 130,
+            "columnNumber": 53
+          },
+          {
+            "functionName": "responseGenerator",
+            "scriptId": "2129",
+            "url": "webpack-internal:///(pages-dir-node)/./node_modules/next/dist/server/route-modules/pages/pages-handler.js",
+            "lineNumber": 331,
+            "columnNumber": 27
+          },
+          {
+            "functionName": "get",
+            "scriptId": "1477",
+            "url": "file:///workspace/app/node_modules/next/dist/compiled/next-server/pages.runtime.dev.js",
+            "lineNumber": 0,
+            "columnNumber": 94576
+          },
+          {
+            "functionName": "handleResponse",
+            "scriptId": "1477",
+            "url": "file:///workspace/app/node_modules/next/dist/compiled/next-server/pages.runtime.dev.js",
+            "lineNumber": 0,
+            "columnNumber": 157639
+          }
+        ],
+        "parent": {
+          "description": "await",
+          "callFrames": [
+            {
+              "functionName": "handleResponse",
+              "scriptId": "2129",
+              "url": "webpack-internal:///(pages-dir-node)/./node_modules/next/dist/server/route-modules/pages/pages-handler.js",
+              "lineNumber": 333,
+              "columnNumber": 49
+            },
+            {
+              "functionName": "eval",
+              "scriptId": "2116",
+              "url": "webpack-internal:///(pages-dir-node)/./node_modules/next/dist/server/lib/trace/tracer.js",
+              "lineNumber": 176,
+              "columnNumber": 35
+            },
+            {
+              "functionName": "with",
+              "scriptId": "2119",
+              "url": "webpack-internal:///(pages-dir-node)/./node_modules/next/dist/compiled/@opentelemetry/api/index.js",
+              "lineNumber": 0,
+              "columnNumber": 7061
+            },
+            {
+              "functionName": "with",
+              "scriptId": "2119",
+              "url": "webpack-internal:///(pages-dir-node)/./node_modules/next/dist/compiled/@opentelemetry/api/index.js",
+              "lineNumber": 0,
+              "columnNumber": 517
+            },
+            {
+              "functionName": "startActiveSpan",
+              "scriptId": "2119",
+              "url": "webpack-internal:///(pages-dir-node)/./node_modules/next/dist/compiled/@opentelemetry/api/index.js",
+              "lineNumber": 0,
+              "columnNumber": 18092
+            },
+            {
+              "functionName": "startActiveSpan",
+              "scriptId": "2119",
+              "url": "webpack-internal:///(pages-dir-node)/./node_modules/next/dist/compiled/@opentelemetry/api/index.js",
+              "lineNumber": 0,
+              "columnNumber": 18853
+            },
+            {
+              "functionName": "eval",
+              "scriptId": "2116",
+              "url": "webpack-internal:///(pages-dir-node)/./node_modules/next/dist/server/lib/trace/tracer.js",
+              "lineNumber": 145,
+              "columnNumber": 102
+            },
+            {
+              "functionName": "with",
+              "scriptId": "2119",
+              "url": "webpack-internal:///(pages-dir-node)/./node_modules/next/dist/compiled/@opentelemetry/api/index.js",
+              "lineNumber": 0,
+              "columnNumber": 7061
+            },
+            {
+              "functionName": "with",
+              "scriptId": "2119",
+              "url": "webpack-internal:///(pages-dir-node)/./node_modules/next/dist/compiled/@opentelemetry/api/index.js",
+              "lineNumber": 0,
+              "columnNumber": 517
+            },
+            {
+              "functionName": "trace",
+              "scriptId": "2116",
+              "url": "webpack-internal:///(pages-dir-node)/./node_modules/next/dist/server/lib/trace/tracer.js",
+              "lineNumber": 145,
+              "columnNumber": 27
+            },
+            {
+              "functionName": "eval",
+              "scriptId": "2129",
+              "url": "webpack-internal:///(pages-dir-node)/./node_modules/next/dist/server/route-modules/pages/pages-handler.js",
+              "lineNumber": 491,
+              "columnNumber": 75
+            },
+            {
+              "functionName": "with",
+              "scriptId": "2119",
+              "url": "webpack-internal:///(pages-dir-node)/./node_modules/next/dist/compiled/@opentelemetry/api/index.js",
+              "lineNumber": 0,
+              "columnNumber": 7061
+            },
+            {
+              "functionName": "with",
+              "scriptId": "2119",
+              "url": "webpack-internal:///(pages-dir-node)/./node_modules/next/dist/compiled/@opentelemetry/api/index.js",
+              "lineNumber": 0,
+              "columnNumber": 517
+            },
+            {
+              "functionName": "withPropagatedContext",
+              "scriptId": "2116",
+              "url": "webpack-internal:///(pages-dir-node)/./node_modules/next/dist/server/lib/trace/tracer.js",
+              "lineNumber": 110,
+              "columnNumber": 27
+            },
+            {
+              "functionName": "handler",
+              "scriptId": "2129",
+              "url": "webpack-internal:///(pages-dir-node)/./node_modules/next/dist/server/route-modules/pages/pages-handler.js",
+              "lineNumber": 491,
+              "columnNumber": 29
+            }
+          ],
+          "parent": {
+            "description": "await",
+            "callFrames": [
+              {
+                "functionName": "renderToResponseWithComponentsImpl",
+                "scriptId": "941",
+                "url": "file:///workspace/app/node_modules/next/dist/server/base-server.js",
+                "lineNumber": 1421,
+                "columnNumber": 38
+              }
+            ],
+            "parent": {
+              "description": "await",
+              "callFrames": [
+                {
+                  "functionName": "",
+                  "scriptId": "941",
+                  "url": "file:///workspace/app/node_modules/next/dist/server/base-server.js",
+                  "lineNumber": 1128,
+                  "columnNumber": 120
+                },
+                {
+                  "functionName": "trace",
+                  "scriptId": "223",
+                  "url": "file:///workspace/app/node_modules/next/dist/server/lib/trace/tracer.js",
+                  "lineNumber": 134,
+                  "columnNumber": 19
+                },
+                {
+                  "functionName": "renderToResponseWithComponents",
+                  "scriptId": "941",
+                  "url": "file:///workspace/app/node_modules/next/dist/server/base-server.js",
+                  "lineNumber": 1128,
+                  "columnNumber": 40
+                },
+                {
+                  "functionName": "renderPageComponent",
+                  "scriptId": "941",
+                  "url": "file:///workspace/app/node_modules/next/dist/server/base-server.js",
+                  "lineNumber": 1473,
+                  "columnNumber": 34
+                }
+              ],
+              "parent": {
+                "description": "await",
+                "callFrames": [
+                  {
+                    "functionName": "renderPageComponent",
+                    "scriptId": "935",
+                    "url": "file:///workspace/app/node_modules/next/dist/server/next-server.js",
+                    "lineNumber": 850,
+                    "columnNumber": 21
+                  },
+                  {
+                    "functionName": "renderToResponseImpl",
+                    "scriptId": "941",
+                    "url": "file:///workspace/app/node_modules/next/dist/server/base-server.js",
+                    "lineNumber": 1523,
+                    "columnNumber": 42
+                  }
+                ],
+                "parent": {
+                  "description": "await",
+                  "callFrames": [
+                    {
+                      "functionName": "",
+                      "scriptId": "941",
+                      "url": "file:///workspace/app/node_modules/next/dist/server/base-server.js",
+                      "lineNumber": 1490,
+                      "columnNumber": 24
+                    },
+                    {
+                      "functionName": "trace",
+                      "scriptId": "223",
+                      "url": "file:///workspace/app/node_modules/next/dist/server/lib/trace/tracer.js",
+                      "lineNumber": 134,
+                      "columnNumber": 19
+                    },
+                    {
+                      "functionName": "renderToResponse",
+                      "scriptId": "941",
+                      "url": "file:///workspace/app/node_modules/next/dist/server/base-server.js",
+                      "lineNumber": 1484,
+                      "columnNumber": 40
+                    },
+                    {
+                      "functionName": "pipe.req.req",
+                      "scriptId": "941",
+                      "url": "file:///workspace/app/node_modules/next/dist/server/base-server.js",
+                      "lineNumber": 1109,
+                      "columnNumber": 37
+                    },
+                    {
+                      "functionName": "pipeImpl",
+                      "scriptId": "941",
+                      "url": "file:///workspace/app/node_modules/next/dist/server/base-server.js",
+                      "lineNumber": 1017,
+                      "columnNumber": 30
+                    },
+                    {
+                      "functionName": "",
+                      "scriptId": "941",
+                      "url": "file:///workspace/app/node_modules/next/dist/server/base-server.js",
+                      "lineNumber": 1004,
+                      "columnNumber": 94
+                    },
+                    {
+                      "functionName": "trace",
+                      "scriptId": "223",
+                      "url": "file:///workspace/app/node_modules/next/dist/server/lib/trace/tracer.js",
+                      "lineNumber": 134,
+                      "columnNumber": 19
+                    },
+                    {
+                      "functionName": "pipe",
+                      "scriptId": "941",
+                      "url": "file:///workspace/app/node_modules/next/dist/server/base-server.js",
+                      "lineNumber": 1004,
+                      "columnNumber": 40
+                    },
+                    {
+                      "functionName": "renderImpl",
+                      "scriptId": "941",
+                      "url": "file:///workspace/app/node_modules/next/dist/server/base-server.js",
+                      "lineNumber": 1109,
+                      "columnNumber": 20
+                    },
+                    {
+                      "functionName": "",
+                      "scriptId": "941",
+                      "url": "file:///workspace/app/node_modules/next/dist/server/base-server.js",
+                      "lineNumber": 1059,
+                      "columnNumber": 96
+                    },
+                    {
+                      "functionName": "trace",
+                      "scriptId": "223",
+                      "url": "file:///workspace/app/node_modules/next/dist/server/lib/trace/tracer.js",
+                      "lineNumber": 134,
+                      "columnNumber": 19
+                    },
+                    {
+                      "functionName": "render",
+                      "scriptId": "941",
+                      "url": "file:///workspace/app/node_modules/next/dist/server/base-server.js",
+                      "lineNumber": 1059,
+                      "columnNumber": 40
+                    },
+                    {
+                      "functionName": "render",
+                      "scriptId": "935",
+                      "url": "file:///workspace/app/node_modules/next/dist/server/next-server.js",
+                      "lineNumber": 987,
+                      "columnNumber": 21
+                    },
+                    {
+                      "functionName": "NextNodeServer.handleCatchallRenderRequest",
+                      "scriptId": "935",
+                      "url": "file:///workspace/app/node_modules/next/dist/server/next-server.js",
+                      "lineNumber": 394,
+                      "columnNumber": 27
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "asyncLevelsInRecording": 15
+}

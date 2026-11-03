@@ -297,8 +297,8 @@ test('the Next support section names the stoppable Pages code, the server-only l
     '_app (pages/_app or src/pages/_app).',
   ])
   assert.ok(
-    support.notStoppable[0]?.includes(
-      'getServerSideProps, getStaticProps, API routes (pages/api) and _document',
+    support.notStoppable[0]?.startsWith(
+      'Pages server-side code no stop can pause in this version: API routes (pages/api) and _document',
     ),
   )
   assert.ok(support.notStoppable[0]?.includes('NEXT_SERVER_ONLY_STOP'))
@@ -367,7 +367,12 @@ test('the README Next section states the redirect rule, the stop limits, the sta
   assert.ok(redirect.includes('only when your question is about that page'))
   assert.ok(
     section.includes(
-      '`getServerSideProps`, `getStaticProps`, API routes (`pages/api`) and `_document` run on the server and cannot be stopped in',
+      'a browser stop in code that runs only on the server cannot pause in the browser',
+    ),
+  )
+  assert.ok(
+    section.includes(
+      'API routes and `_document` are not supported in this version',
     ),
   )
   assert.ok(
@@ -589,7 +594,7 @@ test('the README lists exactly the dev script forms a Pages launch failure reads
   )
 })
 
-// Value: protects=an agent reading the help learns that a server stop in a Pages run is refused as NEXT_SERVER_ONLY_STOP, and that a counted predev or delegated pre<name> script depends on the package manager that runs it (npm, Yarn 1, Bun, pnpm by version and .npmrc setting, never Yarn 2 and later) with a note when that is unknown; fails_when=the NEXT_SERVER_ONLY_STOP meaning, nextSupport.notStoppable or nextSupport.preparation keep the Cycle 0065 wording, or the preparation sentence omits Bun, a delegated script's pre<name>, the pnpm default or the value of the .npmrc setting; why_new=Cycle 0066 integration (lane C changed tasks 7 and 9, whose help sentences went stale) and task 46 (the sentence named neither Bun nor a delegated pre<name>); seam=help resource text; no_claim=the run and the readiness decide so (nextPagesRun and repositoryAdapterReadiness tests)
+// Value: protects=an agent reading the help learns which Pages server stops are refused as NEXT_SERVER_ONLY_STOP (an API route, _document, a version 2 run, each with its details) and that a counted predev or delegated pre<name> script depends on the package manager that runs it (npm, Yarn 1, Bun, pnpm by version and .npmrc setting, never Yarn 2 and later) with a note when that is unknown; fails_when=the NEXT_SERVER_ONLY_STOP meaning, nextSupport.notStoppable or nextSupport.preparation keep the Cycle 0065 wording, or the preparation sentence omits Bun, a delegated script's pre<name>, the pnpm default or the value of the .npmrc setting; why_new=Cycle 0066 integration (lane C changed tasks 7 and 9, whose help sentences went stale) and task 46 (the sentence named neither Bun nor a delegated pre<name>); seam=help resource text; no_claim=the run and the readiness decide so (nextPagesRun and repositoryAdapterReadiness tests)
 test('the help says a Pages server stop is refused as server-only and that a predev or a delegated pre script counts only when the package manager that runs it runs pre scripts', async (context) => {
   // Arrange
   const help = await readRepositoryBrowserHelp(context)
@@ -600,13 +605,18 @@ test('the help says a Pages server stop is refused as server-only and that a pre
   const quickStartPreparation = help.nextQuickStart?.prerequisites[2] ?? ''
   // Assert
   assert.ok(
+    meaning.includes(
+      'A server stop (participant server) in a file under pages/api or in _document: API routes and _document are not supported in this version, and the refusal comes before the development server starts (details.sideEffects none)',
+    ),
+  )
+  assert.ok(
     meaning.endsWith(
-      "A server stop (participant server in a version 2 configuration) is refused with it in a Pages run too, because a Pages run observes only the page's client code.",
+      "A server stop in a configuration version 2 Pages run: the page's data functions and the code they call take a server stop only in version 3 (details.requiredVersion 3; serverRenderQuickStart.configurationPagesEntryRender, Codebook 0.2.74.0 and API 1.17 or later).",
     ),
   )
   assert.ok(
     notStoppable.endsWith(
-      'A server stop (participant server) in a Pages run is refused with NEXT_SERVER_ONLY_STOP before the browser opens.',
+      'a server stop in a version 2 Pages run is refused with NEXT_SERVER_ONLY_STOP naming configuration version 3.',
     ),
   )
   assert.ok(

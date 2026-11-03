@@ -163,6 +163,35 @@ test('each Next setup deadline variant restores with its exact static recovery',
   }
 })
 
+// Value: protects=a Pages run's NEXT_ENTRY_REDIRECTED failure text keeps the Pages fields through the text, so the agent reads details router pages and sideEffects unknown for a redirect found after the readiness request ran the data function; fails_when=the pages variant restores no details, or any other variant, or none, restores them; no_claim=how the service forwards them (nextRefusalRunResource tests)
+test('a NEXT_ENTRY_REDIRECTED text led by the pages variant restores the Pages details and no other text does', () => {
+  // Arrange
+  const message = 'The page left the entry path / for /login.'
+  // Act
+  const withVariant = refusalFailureOf(
+    `NEXT_ENTRY_REDIRECTED(pages): ${message}`,
+  )
+  const withoutVariant = refusalFailureOf(`NEXT_ENTRY_REDIRECTED: ${message}`)
+  const withOtherVariant = refusalFailureOf(
+    `NEXT_ENTRY_REDIRECTED(app): ${message}`,
+  )
+  const otherCodeWithPagesVariant = refusalFailureOf(
+    `NEXT_ROUTE_NOT_FOUND(pages): ${message}`,
+  )
+  // Assert
+  assert.deepEqual(withVariant, {
+    code: 'NEXT_ENTRY_REDIRECTED',
+    message,
+    pagesDetails: { router: 'pages', sideEffects: 'unknown' },
+  })
+  assert.deepEqual(withoutVariant, { code: 'NEXT_ENTRY_REDIRECTED', message })
+  assert.deepEqual(withOtherVariant, { code: 'NEXT_ENTRY_REDIRECTED', message })
+  assert.deepEqual(otherCodeWithPagesVariant, {
+    code: 'NEXT_ROUTE_NOT_FOUND',
+    message,
+  })
+})
+
 // Value: protects=only text led by a known code becomes a coded error; fails_when=an uncoded failure, an unknown code or a code in the middle of a sentence restores a code; why_new=Cycle 0065 registry; seam=none
 test('a failure text not led by a known code restores nothing', () => {
   // Arrange

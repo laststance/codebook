@@ -1,0 +1,27 @@
+{
+  "nextVersion": "16.1.4",
+  "file": "next/dist/compiled/next-server/pages.runtime.dev.js",
+  "license": "MIT, (c) Vercel, Inc.; short fragments kept at their real line and column (0-based), the rest of the file is not vendored",
+  "fragments": [
+    {
+      "line": 20,
+      "column": 298,
+      "text": "trace(trace_constants.RenderSpan.getServerSideProps,{spanName:`getServerSideProps ${pathname}`,attributes:{\"next.route\":pathname}},async()=>getServerSideProps({req:req,res:resOrProxy,query,resolvedUrl:renderOpts.resolvedUrl,...pageIsDynamic"
+    },
+    {
+      "line": 12,
+      "column": 6961,
+      "text": "trace(trace_constants.RenderSpan.getStaticProps,{spanName:`getStaticProps ${pathname}`,attributes:{\"next.route\":pathname}},()=>getStaticProps({...pageIsDynamic?{params}:void 0,...isPreview?{draftMode:!0,preview:!0,previewData:prev"
+    },
+    {
+      "line": 23,
+      "column": 1110,
+      "text": "renderToHTMLImpl(req,res,context.page,context.query,context.renderOpts,{App:this"
+    },
+    {
+      "line": 12,
+      "column": 6447,
+      "text": "(0,jsx_runtime_namespaceObject.jsx)(AppComp,{...props})}),styles=jsxStyleRegistry.styles({nonce:options.nonce|"
+    }
+  ]
+}

@@ -47,24 +47,32 @@ export type DevelopmentServerStart = {
 export type DevelopmentBundleRequest = {
   workspace: string
   source: RepositoryConfiguration['source']
+  /** The last line of the stop's citation, up to which a stop declared on a line with no mapped position is requested at the first mapped position after it ({@link resolveArmedPlace}); a Pages server stop's seal checks that line's client mapping too ({@link sealPagesServerStop}). */
+  citationEndLine: number
   signal: AbortSignal
   entryPath: string
-  /** `server-action` is a Next server stop (sealed as the `(action-browser)` module, else the `(rsc)` module of the entry route's server chunk); a browser stop is sealed from the code the page loads. */
+  /** `server-action` is a Next server stop (sealed as the `(action-browser)` module, else the `(rsc)` module of the entry route's server chunk; in a Pages run as the `(pages-dir-node)` module of the page's server compile or its server chunks); a browser stop is sealed from the code the page loads. */
   execution: 'browser' | 'server-action'
   /** The owned origin the ready server reported (`http://127.0.0.1:<port>`). */
   ownedOrigin: string
   /** Appends to the run's evidence journal. */
   record: (type: string, detail?: unknown) => unknown
-  /** The Pages route a Next run on the Pages path resolved, with the run's one discovery cache; a browser stop is then sealed from the page's entry chunks ({@link readPagesDevelopmentBundle}). Absent for every other run. */
-  nextRoute?: { route: string; cache: NextPagesDiscoveryCache }
+  /** The Pages route a Next run on the Pages path resolved, its entry page's own source (workspace-relative), and the run's one discovery cache; a browser stop is then sealed from the page's entry chunks ({@link readPagesDevelopmentBundle}) and a server stop from the page's server build ({@link sealPagesServerStop}). Absent for every other run. */
+  nextRoute?: {
+    route: string
+    entrySource: string
+    cache: NextPagesDiscoveryCache
+  }
 }
 
 /** The sealed module of one stop with what the discovery measured, as {@link readDevelopmentBundle} returns it. */
 export type DevelopmentBundle = {
   bundle: BundleSource
   discovery: unknown
-  /** The webpack layer a Next server stop was sealed from (`action-browser` first, else `rsc`); absent for a browser stop and for a Vite run. */
+  /** The webpack layer a Next server stop was sealed from (`action-browser` first, else `rsc`; `pages-dir-node` in a Pages run); absent for a browser stop and for a Vite run. */
   layer?: DevelopmentServerLayer
+  /** What the seal could not establish and accepted anyway, journaled as `seal.evidence`: `client-mapping-unverified` for a server stop on a line of the entry page's own module whose client mapping the scan could not read to its end. Absent otherwise. */
+  evidence?: 'client-mapping-unverified'
 }
 
 /** The js-debug launch fields that depend on how the development server serves its modules. */

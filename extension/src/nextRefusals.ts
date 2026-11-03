@@ -45,16 +45,61 @@ export function nextHelpAnchor(code: NextRefusalCode): string {
  * Why it exists: the recovery never carries a value, because a recovery override reaches MCP unsanitized; every dynamic value (the entry path, a setting, the step, a file, quoted development-server output) goes into the message and the cause, which the service sanitizes and bounds. Called by the configured browser run before input, where a thrown refusal reaches the service's preparation error with its code.
  * @param code - The refusal code.
  * @param message - What was refused, naming the path, file, setting or value, ending with the fix or the limit; it is the cause as well.
+ * @param extras - Structured `details` an agent decides by (a Pages stop refusal carries {@link PAGES_STOP_REFUSAL_DETAILS}) and a recovery that replaces the code's static one when it would mislead (a refusal before the server started). Both are static or value-free: a recovery override reaches MCP unsanitized.
  * @returns The error to throw.
  * @example
  * throw nextRefusal('NEXT_UNSUPPORTED_SETTING', 'This Next 16.4.3 project sets basePath (/docs); Codebook\'s browser run does not support basePath or i18n routing.')
+ * throw nextRefusal('NEXT_STOP_NOT_SEALED', message, { details: PAGES_STOP_REFUSAL_DETAILS })
  */
 export function nextRefusal(
   code: NextRefusalCode,
   message: string,
+  extras?: { details?: StudyError['details']; recovery?: string },
 ): StudyError {
-  return new StudyError(code, message)
+  return new StudyError(
+    code,
+    message,
+    message,
+    extras?.recovery,
+    undefined,
+    extras?.details,
+  )
 }
+
+/**
+ * The structured fields every Pages stop refusal after the owned server started carries: `router: "pages"` tells an agent a Pages `client-component` refusal from the App Router one without parsing prose, and `sideEffects: "unknown"` says the page's data function already ran once during Codebook's readiness request, so another start is the learner's decision when that function writes.
+ * Spread into the `details` of {@link nextRefusal} by the seal and the stop checks of a Pages run.
+ */
+export const PAGES_STOP_REFUSAL_DETAILS = {
+  router: 'pages',
+  sideEffects: 'unknown',
+} as const
+
+/**
+ * The variant a Pages run's `NEXT_ENTRY_REDIRECTED` failure text carries (`NEXT_ENTRY_REDIRECTED(pages): …`), so the fields of {@link PAGES_STOP_REFUSAL_DETAILS} survive the text a timer or an event records.
+ * Written by {@link ConfiguredBrowserRun} when it records a redirect of a Pages entry (the entry load left the entry path, or the page left it before the click), and read by {@link refusalFailureOf} when it restores the text.
+ */
+export const NEXT_PAGES_FAILURE_VARIANT = 'pages'
+
+/** The type of {@link NEXT_PAGES_FAILURE_VARIANT}, which {@link formatRefusalFailure} accepts for `NEXT_ENTRY_REDIRECTED`. */
+export type NextPagesFailureVariant = typeof NEXT_PAGES_FAILURE_VARIANT
+
+/**
+ * The recovery of a Next run whose readiness check failed with an error of its own after the request was sent: no answer came (the connection broke), or, in an App Router run, the answer was not OK. The request runs the entry page's server code, so what it changed is not known.
+ * It names fields, never values: it is passed as the {@link StudyError} recovery override, which reaches MCP without the sanitizer.
+ */
+export const READINESS_FAILURE_RECOVERY =
+  "Codebook's own readiness request for the entry path ran the page's server code (a data function, server components) before any stop was armed, and it did not end with an OK answer: read readinessRequest in the run resource, which holds the HTTP status of an answer that is not OK, or the outcome when no answer came. When that code writes or sends (a database write, a counter, an email, a payment call), it may have run: details.sideEffects is unknown, not none. Tell the learner, ask before another start, and never start again unasked. No declared input and no click was sent; Codebook stops the server it started (read resourcesReleased in the run resource). See codebook://help/repository-browser#readiness.entry-request."
+
+/**
+ * The sentence a setup deadline's recovery starts with once Codebook's readiness request was sent: the request ran the entry page's server code before the deadline, so the learner decides another start when that code writes.
+ * It names fields, never values: {@link withSetupDeadlineSideEffects} puts it before the deadline's own static recovery in the {@link StudyError} recovery override, which reaches MCP without the sanitizer.
+ */
+export const SETUP_DEADLINE_AFTER_READINESS_RECOVERY =
+  "Codebook's own readiness request for the entry path ran the page's server code (a data function, server components) before this deadline, so details.sideEffects is unknown, not none (details.readinessRequest holds the HTTP status, or outcome timeout when the deadline came before an answer). When that code writes or sends (a database write, a counter, an email, a payment call), tell the learner and ask before any new start, and never start again unasked; the rest of this recovery applies once the learner agrees, or when that code writes and sends nothing."
+
+/** The failure text of a Next run's setup deadline that carries no Next code: a run whose entry resolved as an App route, or a workspace without a Pages folder. */
+export const UNCODED_SETUP_DEADLINE_TEXT = 'Repository setup deadline exceeded'
 
 /** The side-effect sentence of a Pages setup deadline once the browser Codebook opened was closed: no input and no click went out. */
 const BROWSER_CLOSED_NOTHING_SENT =

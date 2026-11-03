@@ -7,6 +7,8 @@ import { z } from 'zod'
 import { VITE_VERSION_MAX_CHARS } from '../constants'
 import { viteRefusal } from '../viteRefusals'
 
+import { isSemverLikeVersion } from './isSemverLikeVersion'
+
 const vitePackageSchema = z.object({
   version: z.string(),
   engines: z.object({ node: z.string().optional() }).optional(),
@@ -14,9 +16,6 @@ const vitePackageSchema = z.object({
   module: z.string().optional(),
   main: z.string().optional(),
 })
-
-/** A semver-like version: three numeric parts with an optional prerelease or build suffix. */
-const SEMVER_LIKE = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?$/
 
 /** What the app's own `vite` package says about itself. */
 export type ViteInstallation = {
@@ -77,10 +76,7 @@ export async function resolveViteInstallation(
   const manifest = vitePackageSchema.parse(
     JSON.parse(await readFile(packagePath, 'utf8')),
   )
-  if (
-    manifest.version.length > VITE_VERSION_MAX_CHARS ||
-    !SEMVER_LIKE.test(manifest.version)
-  )
+  if (!isSemverLikeVersion(manifest.version, VITE_VERSION_MAX_CHARS))
     throw viteRefusal(
       'VITE_UNSUPPORTED',
       `The installed vite/package.json version is not a semantic version of at most ${VITE_VERSION_MAX_CHARS} characters; reinstall the workspace dependencies so vite reports a real version.`,

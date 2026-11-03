@@ -1,9 +1,9 @@
 # Product goal
 
-Goal version: 10\
+Goal version: 11\
 Owner: Raphtalia\
 Initial design approved: 2026-09-18\
-Product direction: D030–D036 (2026-09-26: synchronized replay, skill-driven DeepWiki, desktop and shortcut contracts, adopted v9 visual target); target operating systems (2026-10-05)
+Product direction: D030–D036 (2026-09-26: synchronized replay, skill-driven DeepWiki, desktop and shortcut contracts, adopted v9 visual target); target operating systems (2026-10-05); approved PNG moved out of the retired docs folder (2026-11-03; outcomes unchanged)
 
 This file owns Codebook's outcomes, feature contracts, design target and acceptance. It specifies outcomes, not implementation. Every section is normative. Read `## Final acceptance protocol` and the archived [skill][skill-plan] and [Wiki-generation][gen-skill] plans when their work is selected. The active cycle Issue holds implementation state and evidence ([AGENTS.md](AGENTS.md#where-things-live)). Historical evidence and external references are reference material. These requirements live here; an Issue may repeat one but is never its only place.
 
@@ -128,7 +128,7 @@ Historical protocols and cycles keep the criteria of their time and never overri
 
 ## Design authority
 
-The [Design target](#design-target) is the visual authority. Open and visually inspect [the actual PNG](docs/designs/assets/codebook-product-spec-v9.png). The implementation loop is in [AGENTS.md](AGENTS.md#working-loop); the complete acceptance map is [below](#product-acceptance-map).
+The [Design target](#design-target) is the visual authority. Open and visually inspect [the actual PNG](assets/codebook-product-spec-v9.png). The implementation loop is in [AGENTS.md](AGENTS.md#working-loop); the complete acceptance map is [below](#product-acceptance-map).
 
 ## Contract: learning replay
 
@@ -275,7 +275,7 @@ Status: owner approved on 2026-09-26 (D036); the corrected iteration 8 is adopte
 
 ### Open this image before implementing
 
-![Approved Codebook product specification: native live explanation, synchronized learning replay, independent DeepWiki and shortcut discovery](docs/designs/assets/codebook-product-spec-v9.png)
+![Approved Codebook product specification: native live explanation, synchronized learning replay, independent DeepWiki and shortcut discovery](assets/codebook-product-spec-v9.png)
 
 **This is the product's visual target. Open the actual PNG and inspect it with an image-viewing tool.** Read the required contracts in full and record entry and verification receipts, this inspection included, in the active cycle Issue ([Mandatory entry](AGENTS.md#mandatory-entry), [Working loop](AGENTS.md#working-loop)). The image header's "Review candidate" predates adoption; the approval and D036 set its status, and its bytes are unchanged since. GStack design discovery uses this section. Read the [behavioral design][design] before runtime/capture/replay changes and the [state/interaction review][review] before UI implementation.
 
@@ -328,7 +328,7 @@ Native editor surfaces follow [VS Code Views](https://code.visualstudio.com/api/
 
 | Field | Value |
 | --- | --- |
-| Current approved file | `docs/designs/assets/codebook-product-spec-v9.png` |
+| Current approved file | `assets/codebook-product-spec-v9.png` |
 | Dimensions / bytes | 1024 × 1536 / 1,878,402 |
 | SHA-256 | `f189ee82541a72ed981e3f7a0e21bd35a19b6601df1c7208671117a335caf2aa` |
 

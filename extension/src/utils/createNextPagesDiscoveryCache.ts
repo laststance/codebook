@@ -8,6 +8,8 @@ export type NextPagesChunkModules = {
   chunkHash: string
   /** The chunk's eval modules, decoded once ({@link evaluatedModuleTexts}). */
   moduleTexts: readonly string[]
+  /** The server chunks the chunk's startup call requires ({@link serverChunkIdsRequiredBy}): ids under the server folder, empty for a chunk that starts nothing (every browser chunk). */
+  requiredChunks: readonly string[]
 }
 
 /**

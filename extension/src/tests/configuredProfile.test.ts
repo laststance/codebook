@@ -33,5 +33,8 @@ test('the public repository-browser catalog names the Next routers next-dev-webp
     scope,
     /next-dev-webpack: installed Next webpack development runtime, default \.next\/dev output, retained original source maps, serving App Router and Pages Router pages;/,
   )
-  assert.match(scope, /a Pages Router page takes client stops only\./)
+  assert.match(
+    scope,
+    /a Pages Router page takes browser stops, and, in version 3 since API 1\.17, server stops in its getServerSideProps or getStaticProps and the code they call\./,
+  )
 })

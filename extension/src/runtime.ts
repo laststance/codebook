@@ -64,7 +64,13 @@ import type {
   RetryVitestListingRelease,
   VitestListingReleaseFailure,
 } from './utils/listVitestTestFiles'
+import type { PagesDataFunctionName } from './utils/pagesDataFunctionHitVerdictOf'
+import type {
+  PagesAttributionSummary,
+  PagesResumedHitCount,
+} from './utils/pagesHitLedger'
 import type { NodeTestExecutionPlan } from './utils/planNodeTestExecution'
+import type { ReadinessEntryRequest } from './utils/readinessEntryRecord'
 import type { RepositoryAdapterReadiness } from './utils/readRepositoryAdapterReadiness'
 import type { PreparedTextState } from './utils/redactPreparedTexts'
 import type { CauseRoots } from './utils/sanitizeCause'
@@ -430,12 +436,25 @@ export type ServerRenderFailure = {
   stop: string
   pausedStops: string[]
   notReachedStops: string[]
+  /** Set only for a Pages run: what the failure adds there (`details.router`, `resumedHits`, `attributionMode`, `nextVersion`). */
+  pages?: PagesNotReachedFacts
+}
+/** The fields a Pages run adds to `SERVER_STOP_NOT_REACHED`. */
+export type PagesNotReachedFacts = {
+  /** The hits of the unreached stop the run resumed, by reason (and route). */
+  resumedHits: PagesResumedHitCount[]
+  /** How a hit was attributed to the entry page's data function: by reading the async chain of the paused event. */
+  attributionMode: 'async-chain'
+  /** The `next` package version, when readable. */
+  nextVersion?: string
 }
 /** The fields `ENTRY_LOAD_TIMEOUT` carries. */
 export type EntryLoadFailure = {
   entryRoute: string
   lastPausedStop: string
   elapsedMs: number
+  /** Set only for a Pages run. */
+  router?: 'pages'
 }
 export type RuntimeDefinition = ConfiguredDefinition
 export type RuntimeControl = Readonly<{
@@ -475,6 +494,14 @@ export type ConfiguredRuntimeView = {
   viteVersion?: string
   /** The route a Next run in a workspace with a Pages folder resolved its entry path to, once known: the router that serves it, the manifest key, and for a Pages route its workspace-relative source. Absent for a Vite run and a Next run in a workspace without a Pages folder. */
   nextRoute?: { router: 'app' | 'pages'; route: string; source?: string }
+  /** The `next` package version of a Pages run that declares server stops, once read. */
+  nextVersion?: string
+  /** What happened to the hits of a Pages run's server stops: the pauses taken (by evidence), the pauses published `unconfirmed` and the hits resumed (by reason). Present for a Pages run that declares a server stop. */
+  attributionSummary?: PagesAttributionSummary
+  /** The data function each Pages server pause was found inside, by snapshot id (`getServerSideProps` or `getStaticProps`); a live field only, never saved in a study. */
+  dataFunctions?: Record<string, PagesDataFunctionName>
+  /** Codebook's own readiness request for the entry: open from its send, closed with the HTTP status or a status-free outcome. Present for a Next run once the request was sent. */
+  readinessRequest?: ReadinessEntryRequest
   status: string
   /** Present as `false` when the configuration declares a server stop: Codebook loads the page once before it arms a stop, so the first execution (module scope, first cache fill) is not observed. */
   firstExecutionObserved?: false

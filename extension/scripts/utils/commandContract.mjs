@@ -133,7 +133,7 @@ export class CommandProgress {
 /**
  * Runs a delivery command's `main` and maps its outcome to printed lines and an exit code under the common contract.
  *
- * Why: the four commands (`bump-version.mjs`, `qa-candidate.mjs`, `merge-pr.mjs`, `post-trial-evidence.mjs`) share one refusal format, one redaction rule and one `E_INTERNAL` rule, so each script's entry point is one call.
+ * Why: the four commands (`bump-version.mjs`, `qa-build.mjs`, `merge-pr.mjs`, `post-trial-evidence.mjs`) share one refusal format, one redaction rule and one `E_INTERNAL` rule, so each script's entry point is one call.
  * Called at the end of each command script (`if (isRunAsScript(import.meta.url)) process.exitCode = await runCommandLine(main)`), and by tests with injected `print` and `environment`.
  *
  * - `main` returns its exit code (a value of {@link EXIT}); a returned non-integer counts as an internal error.

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import {
   copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -87,6 +88,10 @@ test('compaction restores the re-entry rule and the Mandatory entry and Standing
   )
   assert.ok(rulePosition >= 0, 'the re-entry rule is missing')
   assert.ok(rulePosition < 2_000, `the rule starts at ${rulePosition}`)
+  // The PNG the rule names must be the committed file, not a path left behind by a move.
+  const pngPath = context.match(/open the approved PNG \(([^)]+)\)/)?.[1]
+  assert.equal(pngPath, 'assets/codebook-product-spec-v9.png')
+  assert.ok(existsSync(join(root, pngPath)), `${pngPath} does not exist`)
   assert.ok(context.includes(agentsSection(agents, '## Mandatory entry')))
   assert.ok(context.includes(agentsSection(agents, '## Standing directions')))
   assert.match(

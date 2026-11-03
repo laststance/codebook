@@ -95,6 +95,7 @@ test('a Pages page that leaves its entry path while the click target is read rec
     code: 'NEXT_ENTRY_REDIRECTED',
     message:
       'The page left the entry path / for /login before the click was sent (a client redirect), so Codebook sent no click; the browser Codebook opened is closed with the run.',
+    pagesDetails: { router: 'pages', sideEffects: 'unknown' },
   })
   assert.equal(harness.pagesStateReads(), 4)
   assert.equal(harness.mouse.length, 0)
@@ -136,6 +137,7 @@ test('a Pages page with initial inputs that leaves its entry path before the cli
     code: 'NEXT_ENTRY_REDIRECTED',
     message:
       'The page left the entry path / for /login before the click was sent (a client redirect); the declared inputs were written and Codebook sent no click; the browser Codebook opened is closed with the run.',
+    pagesDetails: { router: 'pages', sideEffects: 'unknown' },
   })
   assert.deepEqual(harness.insertedTexts, ['learner@example.invalid'])
   assert.equal(harness.mouse.length, 0)

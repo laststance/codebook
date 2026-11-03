@@ -1,4 +1,3 @@
-import { join } from 'node:path'
 import { setImmediate } from 'node:timers/promises'
 
 import { z } from 'zod'
@@ -6,7 +5,6 @@ import { z } from 'zod'
 import {
   REPOSITORY_DISCOVERY_CANDIDATE_LIMIT,
   REPOSITORY_JAVASCRIPT_LIMIT_BYTES,
-  REPOSITORY_SOURCE_LIMIT_BYTES,
 } from '../constants'
 import type { BundleSource } from '../repositoryBundle'
 import type { RepositoryConfiguration } from '../repositoryConfigSchemas'
@@ -15,10 +13,12 @@ import { sha256 } from '../runtimeSupport/utils/sha256'
 import type { NextPagesDiscoveryCache } from './createNextPagesDiscoveryCache'
 import { selectEvaluatedModule } from './extractDevelopmentModule'
 import { parseNextManifest } from './parseNextManifest'
+import { readAcceptedPagesSource } from './readAcceptedPagesSource'
 import type { readDevelopmentBundle } from './readDevelopmentBundle'
 import { readNextChunkModules } from './readNextChunkModules'
 import { redactNextEntryPath } from './redactNextEntryPath'
 import type { NextPagesRoute } from './resolveNextPagesRoute'
+import { singleBundleOf } from './singleBundleOf'
 import {
   spendNextPagesDiscovery,
   type NextPagesChunkFetcher,
@@ -86,13 +86,7 @@ export async function readPagesDevelopmentBundle(
     request.workspace,
     request.signal,
     async (step) => {
-      const sourcePath = join(step.root, selected.path),
-        source = await step.readBuildText(
-          sourcePath,
-          REPOSITORY_SOURCE_LIMIT_BYTES,
-        )
-      if (sha256(source) !== selected.hash)
-        throw new Error('Selected source differs from the accepted article')
+      const original = await readAcceptedPagesSource(step, selected)
       const manifest = await step.readBuildText(
         BUILD_MANIFEST,
         REPOSITORY_JAVASCRIPT_LIMIT_BYTES,
@@ -101,10 +95,7 @@ export async function readPagesDevelopmentBundle(
         parseNextManifest(BUILD_MANIFEST, manifest, buildManifestSchema).pages,
         route,
       )
-      const bundle = await sealFromChunks(step, request, candidates, {
-        sourcePath,
-        source,
-      })
+      const bundle = await sealFromChunks(step, request, candidates, original)
       if (!bundle)
         return { kind: 'not-in-initial-chunks', route, chunks: candidates }
       return {
@@ -190,15 +181,5 @@ async function sealFromChunks(
     // Yield between bounded chunks so state/stop remain responsive during preparation.
     await setImmediate(undefined, { signal: request.signal })
   }
-  const [first] = bundles
-  if (
-    first &&
-    bundles.some(
-      (bundle) =>
-        bundle.javascript !== first.javascript ||
-        bundle.sourceMap !== first.sourceMap,
-    )
-  )
-    throw new Error('Ambiguous application source chunk')
-  return first
+  return singleBundleOf(bundles)
 }
