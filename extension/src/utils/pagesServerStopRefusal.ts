@@ -30,7 +30,7 @@ export type PagesServerStopRefusal =
       place: string
     }
   | {
-      /** A line of the entry page's own module that the page's client compile maps (the page component, `getInitialProps`). */
+      /** A line of the entry page's own module that the page's client compile maps (the page component, `getInitialProps`, a helper or constant of the page file the component uses), or whose breakpoint would be requested on such a line. */
       kind: 'client-component'
       place: string
     }
@@ -46,7 +46,7 @@ export type PagesServerStopRefusal =
       place: string
     }
   | {
-      /** The stop's file can never be a tracked workspace source (`node_modules`, Next's own code, a hidden or untracked name). */
+      /** The stop's file is one Codebook never reads for a stop (`node_modules`, Next's own code, an untracked, hidden, sensitive-named, build-output or lockfile path). */
       kind: 'not-workspace-source'
       place: string
     }
@@ -92,7 +92,7 @@ export function pagesServerStopRefusal(
     case 'client-component':
       return nextRefusal(
         'NEXT_STOP_NOT_SEALED',
-        `Declared stop ${refusal.place} is in the entry page's own module, and the page's client compile maps the line: the page component and getInitialProps lines also run in the page's server render and in the browser, and Codebook observes them in the browser. Declare it with participant "browser". A getInitialProps line pauses in the browser only after a client navigation (an operation), never at the entry load. For the page's data, declare a server stop in its getServerSideProps or getStaticProps.`,
+        `Declared stop ${refusal.place} is in the entry page's own module, and the page's client compile maps the line: the page component and getInitialProps lines also run in the page's server render and in the browser, and Codebook observes them in the browser. Declare it with participant "browser". A getInitialProps line pauses in the browser only after a client navigation (an operation), never at the entry load. For the page's data, declare a server stop in its getServerSideProps or getStaticProps. A helper that the data function calls can take a server stop once it lives in its own module.`,
         {
           details: {
             reason: 'client-component',
@@ -104,19 +104,19 @@ export function pagesServerStopRefusal(
     case 'server-module-absent':
       return nextRefusal(
         'NEXT_STOP_NOT_SEALED',
-        `Codebook could not find the module of ${refusal.place} in the server compile of the page ${redactNextEntryPath(refusal.route)} or in the server chunks it loads, so it cannot seal a server stop there before the browser opens. This does not establish that the code never runs in the server (a module loaded later, for example through a dynamic import, is not sealed).`,
+        `Codebook could not find the module of ${refusal.place} in the server compile of the page ${redactNextEntryPath(refusal.route)} or in the server chunks it loads, so it cannot seal a server stop there before the browser opens. This does not establish that the code never runs in the server (a module loaded later, for example through a dynamic import, is not sealed). Declare the stop in a module that the data function imports statically, or in the data function itself.`,
         { details: PAGES_STOP_REFUSAL_DETAILS },
       )
     case 'browser-module-absent':
       return nextRefusal(
         'NEXT_STOP_NOT_SEALED',
-        `Codebook could not verify the browser code of the page that holds ${refusal.place}, which it needs to tell a data-function line from a page-component line. This does not establish that the line is in the page's data function.`,
+        `Codebook could not verify the browser code of the page that holds ${refusal.place}, which it needs to tell a data-function line from a page-component line. This does not establish that the line is in the page's data function. A stop in a module that the data function imports, instead of the page's own file, needs no browser check: declare it there.`,
         { details: PAGES_STOP_REFUSAL_DETAILS },
       )
     case 'not-workspace-source':
       return nextRefusal(
         'NEXT_STOP_NOT_SEALED',
-        `Declared stop ${refusal.place} is not a tracked workspace source file (a module under node_modules, Next's own code or an untracked file), so Codebook does not seal it for a server stop. This does not establish that the code never runs in the server.`,
+        `Declared stop ${refusal.place} is in a file Codebook does not read for a stop (a module under node_modules, Next's own code, or an untracked, hidden, sensitive-named, build-output or lockfile path), so it cannot seal a server stop there. Declare the stop in a tracked source file of the project that the data function calls, or in the data function itself. This does not establish that the code never runs in the server.`,
         { details: PAGES_STOP_REFUSAL_DETAILS },
       )
   }

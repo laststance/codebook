@@ -418,6 +418,7 @@ const NEXT_DEV_WEBPACK_ADAPTER: DevelopmentServerAdapter = {
       return sealPagesServerStop({
         workspace: request.workspace,
         selected: request.source,
+        citationEndLine: request.citationEndLine,
         route: nextRoute.route,
         entrySource: nextRoute.entrySource,
         signal: request.signal,
@@ -3295,9 +3296,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): Promise<PreparedStop> {
     // A version 2 server stop, or a browser stop in `_document` or an API route, is refused before its own chunks are read; a version 3 server stop is sealed from the page's server build below.
     if (this.pagesRun) this.refuseServerOnlyPagesStop(stop, this.pagesRun)
+    const citation = this.definition.descriptor.anchors[stop.anchorIndex]!
     const acquired = await adapter.readBundle({
       workspace: this.options.workspace,
       source: stop.source,
+      citationEndLine: citation.endLine,
       signal: this.abort.signal,
       entryPath: this.definition.configuration.entryPath ?? '/',
       execution: stop.participant === 'server' ? 'server-action' : 'browser',
@@ -3314,8 +3317,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         : {}),
     })
     this.alive()
-    const verifier = createBundleVerifier(acquired.bundle),
-      citation = this.definition.descriptor.anchors[stop.anchorIndex]!
+    const verifier = createBundleVerifier(acquired.bundle)
     // The sealed map is scanned once per stop, from its declared line to the end of its citation; the place, the rule and the refusal below read that scan, and the pause handler only compares lines.
     const scan = verifier.mappedPositions(stop.source.line, citation.endLine),
       // A renewal reaches the decisions of the first seal again, so only the first seal journals them.

@@ -154,6 +154,8 @@ export function serverChunk(
 export type NextPagesServerCompile = {
   /** Whether the compile itself holds the cited module; `true` by default. */
   holdsCited?: boolean
+  /** How many lines, from line 1, the server module of the cited source maps, or the ascending lines it maps (a comment or blank line has no code, so no server position); every line of the cited text by default. */
+  mappedLines?: number | readonly number[]
   /**
    * The server chunks the compile's startup call requires, by chunk id (`chunks/shared`, `vendor-chunks/next`). A chunk holds the cited module when `holdsCited` is true, and its file `.next/dev/server/<id>.js` is written unless `written` is false.
    */
@@ -164,7 +166,7 @@ export type NextPagesServerCompile = {
  * Writes a Pages project's server build as Next 16 lays it out: `.next/dev/server/pages-manifest.json` (`/` is `pages/index.js`), the page's compile `.next/dev/server/pages/index.js` and the server chunks its startup call requires.
  * @param write - Writes a workspace-relative file.
  * @param workspace - The canonical workspace the maps name.
- * @param cited - The cited source's workspace-relative path and text; its `(pages-dir-node)` module maps every line.
+ * @param cited - The cited source's workspace-relative path and text; its `(pages-dir-node)` module maps every line, or the lines `compile.mappedLines` names.
  * @param compile - Where the cited module lives and which chunks the compile requires; the compile holds it and requires nothing by default.
  * @param pagesManifest - The Pages manifest to write; the stand-in project's (`/` is `pages/index.js`) by default.
  * @returns The text of the cited source's `(pages-dir-node)` module: what the Next server's debugger reports for the script, and what the sealed module holds.
@@ -182,7 +184,7 @@ export async function writePagesServerBuild(
     cited.path,
     cited.text,
     'pages-dir-node',
-    cited.text.trimEnd().split('\n').length,
+    compile.mappedLines ?? cited.text.trimEnd().split('\n').length,
   )
   const citedModule = { [`./${cited.path}`]: citedModuleText }
   const chunks = compile.chunks ?? {}

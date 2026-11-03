@@ -1027,7 +1027,7 @@ test('a server stop on a page component line is refused as client-component with
   assert.equal(failure.code, 'NEXT_STOP_NOT_SEALED')
   assert.equal(
     failure.message,
-    "Declared stop src/pages/index.tsx:2 is in the entry page's own module, and the page's client compile maps the line: the page component and getInitialProps lines also run in the page's server render and in the browser, and Codebook observes them in the browser. Declare it with participant \"browser\". A getInitialProps line pauses in the browser only after a client navigation (an operation), never at the entry load. For the page's data, declare a server stop in its getServerSideProps or getStaticProps.",
+    "Declared stop src/pages/index.tsx:2 is in the entry page's own module, and the page's client compile maps the line: the page component and getInitialProps lines also run in the page's server render and in the browser, and Codebook observes them in the browser. Declare it with participant \"browser\". A getInitialProps line pauses in the browser only after a client navigation (an operation), never at the entry load. For the page's data, declare a server stop in its getServerSideProps or getStaticProps. A helper that the data function calls can take a server stop once it lives in its own module.",
   )
   assert.deepEqual(failure.details, {
     reason: 'client-component',
@@ -1089,7 +1089,7 @@ test('a server stop in a module the server compile and its chunks do not hold is
   assert.equal(failure.code, 'NEXT_STOP_NOT_SEALED')
   assert.equal(
     failure.message,
-    'Codebook could not find the module of src/theme.ts:1 in the server compile of the page / or in the server chunks it loads, so it cannot seal a server stop there before the browser opens. This does not establish that the code never runs in the server (a module loaded later, for example through a dynamic import, is not sealed).',
+    'Codebook could not find the module of src/theme.ts:1 in the server compile of the page / or in the server chunks it loads, so it cannot seal a server stop there before the browser opens. This does not establish that the code never runs in the server (a module loaded later, for example through a dynamic import, is not sealed). Declare the stop in a module that the data function imports statically, or in the data function itself.',
   )
   assert.deepEqual(failure.details, PAGES_DETAILS_AFTER_READINESS)
   assert.equal(harness.launchConfigurations.length, 0)

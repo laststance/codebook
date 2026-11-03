@@ -47,6 +47,8 @@ export type DevelopmentServerStart = {
 export type DevelopmentBundleRequest = {
   workspace: string
   source: RepositoryConfiguration['source']
+  /** The last line of the stop's citation, up to which a stop declared on a line with no mapped position is requested at the first mapped position after it ({@link resolveArmedPlace}); a Pages server stop's seal checks that line's client mapping too ({@link sealPagesServerStop}). */
+  citationEndLine: number
   signal: AbortSignal
   entryPath: string
   /** `server-action` is a Next server stop (sealed as the `(action-browser)` module, else the `(rsc)` module of the entry route's server chunk; in a Pages run as the `(pages-dir-node)` module of the page's server compile or its server chunks); a browser stop is sealed from the code the page loads. */
