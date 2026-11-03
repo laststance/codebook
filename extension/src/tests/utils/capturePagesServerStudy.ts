@@ -66,7 +66,7 @@ export async function capturePagesServerRun(
     await service.explain({
       instanceId: receipt.instanceId,
       runId: receipt.runId,
-      key: 'terminal-summary',
+      key: 'summary',
       snapshotUri: observation.snapshotUri,
       sourceHash: snapshotSourceHashes(snapshot).typescript,
       valuePaths: ['value:count'],
