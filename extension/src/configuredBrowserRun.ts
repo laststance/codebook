@@ -303,6 +303,7 @@ import { resolveNextClientManifest } from './utils/resolveNextClientManifest'
 import {
   assertNextPackageUnchanged,
   resolveNextPackage,
+  rootNextPackage,
   type ResolvedNextPackage,
 } from './utils/resolveNextPackage'
 import {
@@ -1129,15 +1130,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const configuration = this.definition.configuration
     const declared =
       'packageRoot' in configuration ? configuration.packageRoot : undefined
+    // The root app keeps today's order: its Next installation is checked by the adapter's workspace check, not here.
+    if (declared === undefined || declared === '.')
+      return rootNextPackage(this.options.workspace)
     const nextPackage = await resolveNextPackage(
       this.options.workspace,
       declared,
-    ).catch(async (error: unknown) => {
-      // A Vite app without Next is told which adapter to use instead of "install Next" (root app only).
-      if (declared === undefined || declared === '.')
-        await refuseViteMisroute(this.options.workspace)
-      throw error
-    })
+    )
     if (nextPackage.isRoot) return nextPackage
     const outside: string[] = []
     for (const stop of configuredStops(configuration))

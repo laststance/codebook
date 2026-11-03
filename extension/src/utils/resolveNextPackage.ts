@@ -297,6 +297,41 @@ export async function resolveNextPackage(
   if (declared === '.') return resolveRootPackage(repositoryRoot)
   const shown = sanitizeDeclaredPath(declared)
   // Step 1: the declared folder, by real path, inside the repository.
+  const folders = await resolveDeclaredFolder(repositoryRoot, declared, options)
+  // Step 2: the folder is a Next app by its own manifest.
+  if (!(await namesNextDependency(folders.packageRoot)))
+    throw await invalidPackageRoot(declared, 'not-a-next-app', options)
+  // Step 3: the nearest node_modules/next from the package root up to the repository root, never above it.
+  const next = await resolveNearestNext(folders, shown)
+  return buildResolved({
+    repositoryRoot: folders.repositoryRoot,
+    packageRoot: folders.packageRoot,
+    packageRootRelative: repositoryPosixPath(
+      folders.repositoryRoot,
+      folders.packageRoot,
+    ),
+    declaredPackageRoot: declared,
+    isRoot: folders.packageRoot === folders.repositoryRoot,
+    nextFolder: next.folder,
+    nextExecutable: next.executable,
+  })
+}
+
+/**
+ * Checks a declared `packageRoot` by real path: a readable folder inside the repository.
+ * Called by {@link resolveNextPackage} as its first step.
+ * @param repositoryRoot - The opened repository's root.
+ * @param declared - The declared, non-root `packageRoot`.
+ * @param options - The suggestion provider for refusals.
+ * @returns The real paths of the repository and the package folder.
+ * @throws `INVALID_CONFIGURATION` with the reason (`unreadable`, `outside-repository`, `missing`, `not-a-folder`, `link-leaves-repository`).
+ * @example await resolveDeclaredFolder('/repo', 'apps/web', {}) // => { repositoryRoot: '/repo', packageRoot: '/repo/apps/web' }
+ */
+async function resolveDeclaredFolder(
+  repositoryRoot: string,
+  declared: string,
+  options: ResolveNextPackageOptions,
+): Promise<{ repositoryRoot: string; packageRoot: string }> {
   const repositoryReal = await realPathOrCode(repositoryRoot)
   if ('code' in repositoryReal)
     throw await invalidPackageRoot(
@@ -309,7 +344,9 @@ export async function resolveNextPackage(
   if (!isFolderOrInside(repositoryReal.path, lexical))
     throw await invalidPackageRoot(declared, 'outside-repository', options)
   const real = await realPathOrCode(lexical)
-  if ('code' in real)
+  if ('code' in real) {
+    // A missing component and a file used as a folder are the declaration's fault; anything else is a read failure with its errno.
+    const isDeclarationFault = real.code === 'ENOENT' || real.code === 'ENOTDIR'
     throw await invalidPackageRoot(
       declared,
       real.code === 'ENOENT'
@@ -318,30 +355,57 @@ export async function resolveNextPackage(
           ? 'not-a-folder'
           : 'unreadable',
       options,
-      real.code === 'ENOENT' || real.code === 'ENOTDIR' ? undefined : real.code,
+      isDeclarationFault ? undefined : real.code,
     )
+  }
   if (!isFolderOrInside(repositoryReal.path, real.path))
     throw await invalidPackageRoot(declared, 'link-leaves-repository', options)
   // The real path is read again as a folder now, so a path replaced since is named.
   const entry = await stat(real.path).catch(() => undefined)
   if (!entry?.isDirectory())
     throw await invalidPackageRoot(declared, 'not-a-folder', options)
-  // Step 2: the folder is a Next app by its own manifest.
-  const manifest = await readRepositoryBuildText(
-    real.path,
+  return { repositoryRoot: repositoryReal.path, packageRoot: real.path }
+}
+
+/**
+ * Reads a JSON file inside a root safely and parses it with a schema.
+ * @param root - The real root the file lies under.
+ * @param path - The root-relative path.
+ * @param schema - What the JSON must satisfy.
+ * @returns The parsed value, or `undefined` when the file is unreadable, too large, not JSON or does not satisfy the schema.
+ * @example await readJsonInside('/repo/apps/web', 'package.json', manifestSchema)
+ */
+async function readJsonInside<Schema extends z.ZodType>(
+  root: string,
+  path: string,
+  schema: Schema,
+): Promise<z.infer<Schema> | undefined> {
+  try {
+    const text = await readRepositoryBuildText(
+      root,
+      path,
+      PACKAGE_MANIFEST_LIMIT_BYTES,
+    )
+    return schema.parse(JSON.parse(text))
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Says whether the package's own `package.json` names `next` in dependencies, devDependencies or peerDependencies.
+ * Called by {@link resolveNextPackage} as its second step (E5).
+ * @param packageRoot - The package folder's real path.
+ * @returns `true` when the manifest names `next`.
+ * @example await namesNextDependency('/repo/apps/web') // => true
+ */
+async function namesNextDependency(packageRoot: string): Promise<boolean> {
+  const manifest = await readJsonInside(
+    packageRoot,
     'package.json',
-    PACKAGE_MANIFEST_LIMIT_BYTES,
-  ).then(
-    (text) => {
-      try {
-        return manifestSchema.parse(JSON.parse(text))
-      } catch {
-        return undefined
-      }
-    },
-    () => undefined,
+    manifestSchema,
   )
-  const namesNext = Boolean(
+  return Boolean(
     manifest &&
     [
       manifest.dependencies,
@@ -349,90 +413,78 @@ export async function resolveNextPackage(
       manifest.peerDependencies,
     ].some((section) => section !== undefined && 'next' in section),
   )
-  if (!namesNext)
-    throw await invalidPackageRoot(declared, 'not-a-next-app', options)
-  // Step 3: the nearest node_modules/next from the package root up to the repository root, never above it.
+}
+
+/**
+ * Finds the nearest `node_modules/next` from the package root up to the repository root and verifies it: contained by real path, a manifest named `next`, and a regular-file executable inside the repository.
+ * The nearest one decides: when it fails containment the package is not installed (no fallback to an ancestor's).
+ * Called by {@link resolveNextPackage} as its third step.
+ * @param folders - The real paths of the repository and the package folder.
+ * @param shown - The sanitized declared value for messages.
+ * @returns The Next folder and its executable, both real paths inside the repository.
+ * @throws `PREREQUISITE_MISSING` naming the folders searched.
+ * @example await resolveNearestNext({ repositoryRoot: '/repo', packageRoot: '/repo/apps/web' }, 'apps/web')
+ */
+async function resolveNearestNext(
+  folders: { repositoryRoot: string; packageRoot: string },
+  shown: string,
+): Promise<{ folder: string; executable: string }> {
+  const { repositoryRoot, packageRoot } = folders
   const searched: string[] = []
   let nearest: string | undefined
-  for (let folder = real.path; ; folder = dirname(folder)) {
+  // Walk up to the repository root and no further; Yarn PnP and NODE_PATH are never consulted.
+  for (
+    let folder = packageRoot;
+    nearest === undefined;
+    folder = dirname(folder)
+  ) {
     const candidate = join(folder, 'node_modules', 'next')
-    searched.push(repositoryPosixPath(repositoryReal.path, candidate))
+    searched.push(repositoryPosixPath(repositoryRoot, candidate))
     if (
       await access(candidate).then(
         () => true,
         () => false,
       )
-    ) {
+    )
       nearest = candidate
-      break
-    }
-    if (
-      folder === repositoryReal.path ||
-      !isInsideFolder(repositoryReal.path, folder)
+    else if (
+      folder === repositoryRoot ||
+      !isInsideFolder(repositoryRoot, folder)
     )
       break
   }
   if (nearest === undefined)
-    throw await missingNext(repositoryReal.path, shown, searched)
-  // The nearest one decides: when it fails containment the package is not installed (no fallback to an ancestor).
+    throw await missingNext(repositoryRoot, shown, searched)
   const nextReal = await realPathOrCode(nearest)
-  if (
-    'code' in nextReal ||
-    !isFolderOrInside(repositoryReal.path, nextReal.path)
-  )
+  if ('code' in nextReal || !isFolderOrInside(repositoryRoot, nextReal.path))
     throw outsideNext(shown, searched)
-  const nextManifest = await readRepositoryBuildText(
-    repositoryReal.path,
-    repositoryPosixPath(
-      repositoryReal.path,
-      join(nextReal.path, 'package.json'),
-    ),
-    PACKAGE_MANIFEST_LIMIT_BYTES,
-  ).then(
-    (text) => {
-      try {
-        return nextManifestSchema.parse(JSON.parse(text))
-      } catch {
-        return undefined
-      }
-    },
-    () => undefined,
+  const nextManifest = await readJsonInside(
+    repositoryRoot,
+    repositoryPosixPath(repositoryRoot, join(nextReal.path, 'package.json')),
+    nextManifestSchema,
   )
   if (nextManifest?.name !== 'next')
-    throw await missingNext(repositoryReal.path, shown, searched)
+    throw await missingNext(repositoryRoot, shown, searched)
   const executable = await realPathOrCode(join(nextReal.path, 'dist/bin/next'))
   if ('code' in executable)
-    throw await missingNext(repositoryReal.path, shown, searched)
+    throw await missingNext(repositoryRoot, shown, searched)
   // A contained Next folder whose executable is a link out of the repository is the same outside-the-repository case.
-  if (!isFolderOrInside(repositoryReal.path, executable.path))
+  if (!isFolderOrInside(repositoryRoot, executable.path))
     throw outsideNext(shown, searched)
   if (!(await stat(executable.path).catch(() => undefined))?.isFile())
-    throw await missingNext(repositoryReal.path, shown, searched)
-  return buildResolved({
-    repositoryRoot: repositoryReal.path,
-    packageRoot: real.path,
-    packageRootRelative: repositoryPosixPath(repositoryReal.path, real.path),
-    declaredPackageRoot: declared,
-    isRoot: real.path === repositoryReal.path,
-    nextFolder: nextReal.path,
-    nextExecutable: executable.path,
-  })
+    throw await missingNext(repositoryRoot, shown, searched)
+  return { folder: nextReal.path, executable: executable.path }
 }
 
 /**
- * The root app: today's check unchanged (`<root>/node_modules/next/dist/bin/next` exists), today's sentence, no real-path verification.
- * Called by {@link resolveNextPackage} for an absent or `"."` packageRoot so a run without `packageRoot` behaves exactly as in 0.2.74.0.
+ * Describes the root app without touching the disk: `<repositoryRoot>/node_modules/next`, as today's launch and readers name it.
+ * Called by {@link ConfiguredBrowserRun} for an absent or `"."` packageRoot, whose Next installation check stays in `assertDevelopmentWorkspace` (today's order and message), and by {@link resolveNextPackage} after its own check.
+ * @param repositoryRoot - The opened repository's root, used as given (no real-path rewrite), so a root run stays byte-identical.
+ * @returns The root package.
+ * @example rootNextPackage('/repo').nextExecutable // => '/repo/node_modules/next/dist/bin/next'
  */
-async function resolveRootPackage(
-  repositoryRoot: string,
-): Promise<ResolvedNextPackage> {
+export function rootNextPackage(repositoryRoot: string): ResolvedNextPackage {
   const nextFolder = join(repositoryRoot, 'node_modules/next')
-  const nextExecutable = join(nextFolder, 'dist/bin/next')
-  try {
-    await access(nextExecutable)
-  } catch {
-    throw new StudyError('PREREQUISITE_MISSING', INSTALL_SENTENCE)
-  }
   return buildResolved({
     repositoryRoot,
     packageRoot: repositoryRoot,
@@ -440,8 +492,24 @@ async function resolveRootPackage(
     declaredPackageRoot: '.',
     isRoot: true,
     nextFolder,
-    nextExecutable,
+    nextExecutable: join(nextFolder, 'dist/bin/next'),
   })
+}
+
+/**
+ * The root app: today's check unchanged (`<root>/node_modules/next/dist/bin/next` exists), today's sentence, no real-path verification.
+ * Called by {@link resolveNextPackage} for an absent or `"."` packageRoot so a status or preflight read of the root behaves exactly as in 0.2.74.0.
+ */
+async function resolveRootPackage(
+  repositoryRoot: string,
+): Promise<ResolvedNextPackage> {
+  const root = rootNextPackage(repositoryRoot)
+  try {
+    await access(root.nextExecutable)
+  } catch {
+    throw new StudyError('PREREQUISITE_MISSING', INSTALL_SENTENCE)
+  }
+  return root
 }
 
 /** The `PREREQUISITE_MISSING` refusal of a nested package with no Next, naming the install command as the learner's decision and the folders searched. */
