@@ -9,8 +9,8 @@ import { describeOperationFailureDetails } from './describeOperationFailureDetai
  * @param failure - The run's first failure with its `serverRender` or `entryLoad` fields.
  * @param runUri - The run's resource address, when the caller has it.
  * @returns
- * - For `SERVER_STOP_NOT_REACHED`: `phase`, `stop`, `operationIndex` (after-operation only), `pausedStops`, `notReachedStops`, `firstExecutionObserved: false`, plus the operation fields (`sent`, `sideEffects`, `retry`, `logId`, `runUri`)
- * - For `ENTRY_LOAD_TIMEOUT`: `entryRoute`, `lastPausedStop`, `elapsedMs` and the operation fields
+ * - For `SERVER_STOP_NOT_REACHED`: `phase`, `stop`, `operationIndex` (after-operation only), `pausedStops`, `notReachedStops`, `firstExecutionObserved: false`, plus the operation fields (`sent`, `sideEffects`, `retry`, `logId`, `runUri`); in a Pages run also `router: "pages"`, `resumedHits`, `attributionMode` and `nextVersion`
+ * - For `ENTRY_LOAD_TIMEOUT`: `entryRoute`, `lastPausedStop`, `elapsedMs` (and `router: "pages"` in a Pages run) and the operation fields
  * - Only the operation fields when neither group is present
  * @example
  * describeServerRenderFailureDetails({ code: 'ENTRY_LOAD_TIMEOUT', operationIndex: 0, sent: 'not-sent', sideEffects: 'none', logId: 'r1#start', entryLoad: { entryRoute: '/dashboard', lastPausedStop: 'app/lib/data.ts:91', elapsedMs: 20012 } })
@@ -23,7 +23,8 @@ export function describeServerRenderFailureDetails(
   const { operationIndex: _operationIndex, ...operationFields } =
     describeOperationFailureDetails(failure, runUri)
   if (failure.serverRender) {
-    const { phase, stop, pausedStops, notReachedStops } = failure.serverRender
+    const { phase, stop, pausedStops, notReachedStops, pages } =
+      failure.serverRender
     return {
       phase,
       stop,
@@ -34,6 +35,8 @@ export function describeServerRenderFailureDetails(
       pausedStops,
       notReachedStops,
       firstExecutionObserved: false,
+      // A Pages run says so, which hits of the stop it resumed, how hits are attributed and the Next version.
+      ...(pages ? { router: 'pages', ...pages } : {}),
       ...operationFields,
     }
   }

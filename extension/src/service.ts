@@ -3902,6 +3902,14 @@ export class StudyService {
       applicationPortSource: runtime?.applicationPortSource,
       viteVersion: runtime?.viteVersion,
       nextRoute: runtime?.nextRoute,
+      // A Pages run that declares a server stop names its Next version and what became of its hits, and every run that sent Codebook's readiness request records it.
+      ...(runtime?.nextVersion ? { nextVersion: runtime.nextVersion } : {}),
+      ...(runtime?.attributionSummary
+        ? { attributionSummary: runtime.attributionSummary }
+        : {}),
+      ...(runtime?.readinessRequest
+        ? { readinessRequest: runtime.readinessRequest }
+        : {}),
       manifestUri:
         runtime?.manifest || record.nodePrepared
           ? this.uri(record.id, 'manifest')
@@ -3926,6 +3934,10 @@ export class StudyService {
           capturePhase: snapshot.capturePhase,
           // Only the labels the snapshot carries (a server-render pause); browser-only runs gain no key.
           ...pauseLabelOf(snapshot),
+          // A live field of a Pages pause only (never saved in a study): the data function the pause is inside.
+          ...(runtime?.dataFunctions?.[snapshot.id]
+            ? { dataFunction: runtime.dataFunctions[snapshot.id] }
+            : {}),
           // Present only for a stop the debugger bound on another line than declared: the sentence that names the paused line.
           place: this.boundPlace(record, snapshot, false)?.place,
           snapshotUri: this.uri(

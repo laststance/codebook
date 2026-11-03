@@ -31,6 +31,10 @@ import {
   claimOwnedDevelopmentPort,
   releaseOwnedDevelopmentPort,
 } from './ownedDevelopmentPorts'
+import {
+  readinessOutcomeOfError,
+  type ReadinessObserver,
+} from './readinessEntryRecord'
 import { readNodeInspectorEndpoint } from './readNodeInspectorEndpoint'
 import { signalProcessGroup } from './signalProcessGroup'
 import { verifyServerInspectorOwnership } from './verifyServerInspectorOwnership'
@@ -58,6 +62,33 @@ export type DevelopmentLaunchSpec = {
 /** Tells whether an HTTP status is a success (2xx), as `Response.ok` does. @example isSuccessStatus(204) // true */
 function isSuccessStatus(status: number): boolean {
   return status >= HTTP_SUCCESS_STATUS_MIN && status < HTTP_REDIRECT_STATUS_MIN
+}
+
+/**
+ * Sends the readiness request of a Next run and tells the run's record about it: the send, then the HTTP status or the status-free way it ended.
+ *
+ * Why it exists: the request runs the entry page's server code once before any stop is armed (a data function, server components), so the run keeps a record of it that opens at the send, independent of which router the entry resolves to. Called by `ready` and `readyEntry` for the request they send.
+ * @param observer - The run's record; absent for a Vite run, which sends the same request unrecorded.
+ * @param signal - The run's stop, part of the request.
+ * @param send - Sends the request.
+ * @returns The response, unchanged.
+ * @throws What the request rejected with, after the record closed `timeout`, `aborted` or `connection-lost`.
+ * @example await observedReadinessRequest(observer, signal, () => fetch('http://127.0.0.1:3000/'))
+ */
+async function observedReadinessRequest(
+  observer: ReadinessObserver | undefined,
+  signal: AbortSignal,
+  send: () => Promise<Response>,
+): Promise<Response> {
+  observer?.sent()
+  try {
+    const response = await send()
+    observer?.closed({ status: response.status })
+    return response
+  } catch (error) {
+    observer?.closed({ outcome: readinessOutcomeOfError(error, signal) })
+    throw error
+  }
 }
 
 /** Acquires one owned process group synchronously for {@link ConfiguredBrowserRun}, exposing cancellable readiness and bounded shutdown. @param inspectServer - Whether to open the native server inspector. @param port - The project's own port ({@link readDeclaredDevelopmentPort}); required, so no caller can skip the lookup and the app is never started on another port. @param outputMask - For the Next server only (no `spec`): masks values the shared redactor leaves in the output it journals and quotes, such as cookie and query values ({@link maskNextServerOutput}); a Next run passes it for a workspace with a Pages folder. @example const app = launchDevelopmentServer(target, node, record, false, 3165); await app.ready(signal) */
@@ -343,25 +374,33 @@ export function launchDevelopmentServer(
         signal,
       )
     },
-    /** Waits for the listener on the declared port, then proves readiness through the configured entry page (the root page only when entryPath is "/"); called during preparation. @param entryPath - Configured first page; a non-root entry must answer 200 without a redirect. @example await app.ready(signal, '/login') */
-    async ready(signal: AbortSignal, entryPath = '/') {
+    /** Waits for the listener on the declared port, then proves readiness through the configured entry page (the root page only when entryPath is "/"); called during preparation. @param entryPath - Configured first page; a non-root entry must answer 200 without a redirect. @param observer - A Next run's record of its readiness request: told at the send and at the end ({@link ReadinessObserver}); absent for a Vite run. @example await app.ready(signal, '/login') */
+    async ready(
+      signal: AbortSignal,
+      entryPath = '/',
+      observer?: ReadinessObserver,
+    ) {
       repositoryEntryPathSchema.parse(entryPath)
       const listening = await waitForListener(signal)
       // A selected non-root entry proves readiness itself; an application without a root page is still usable through it.
       if (entryPath === '/') {
-        const response = await rootAnswer(listening, signal)
+        const response = await observedReadinessRequest(observer, signal, () =>
+          rootAnswer(listening, signal),
+        )
         if (!response.ok)
           throw new Error(
             `Application root failed: ${response.status}: ${publishedTail()}`,
           )
       } else {
-        const entry = await fetch(`${listening}${entryPath}`, {
-          redirect: 'manual',
-          signal: AbortSignal.any([
-            signal,
-            AbortSignal.timeout(REPOSITORY_SETUP_TIMEOUT_MS),
-          ]),
-        })
+        const entry = await observedReadinessRequest(observer, signal, () =>
+          fetch(`${listening}${entryPath}`, {
+            redirect: 'manual',
+            signal: AbortSignal.any([
+              signal,
+              AbortSignal.timeout(REPOSITORY_SETUP_TIMEOUT_MS),
+            ]),
+          }),
+        )
         await entry.body?.cancel()
         if (!entry.ok)
           throw new Error(
@@ -378,6 +417,7 @@ export function launchDevelopmentServer(
      * @param signal - Ends the wait and the request when the run is cancelled.
      * @param entryPath - The configured entry path.
      * @param signInPaths - The configuration's `signInPaths`, so a redirect to one of them is named in the answer.
+     * @param observer - The run's record of its readiness request, told at the send and at the end ({@link ReadinessObserver}).
      * @returns The origin and the structured answer.
      * @throws What the listener wait throws (an exit before listening carries the masked output tail), and a failed request.
      * @example
@@ -387,17 +427,20 @@ export function launchDevelopmentServer(
       signal: AbortSignal,
       entryPath: string,
       signInPaths?: readonly string[],
+      observer?: ReadinessObserver,
     ): Promise<{ origin: string; entry: NextEntryResponse }> {
       repositoryEntryPathSchema.parse(entryPath)
       const listening = await waitForListener(signal),
         requestUrl = `${listening}${entryPath}`
-      const response = await fetch(requestUrl, {
-        redirect: 'manual',
-        signal: AbortSignal.any([
-          signal,
-          AbortSignal.timeout(REPOSITORY_SETUP_TIMEOUT_MS),
-        ]),
-      })
+      const response = await observedReadinessRequest(observer, signal, () =>
+        fetch(requestUrl, {
+          redirect: 'manual',
+          signal: AbortSignal.any([
+            signal,
+            AbortSignal.timeout(REPOSITORY_SETUP_TIMEOUT_MS),
+          ]),
+        }),
+      )
       await response.body?.cancel()
       const entry = describeNextEntryResponse(
         response.status,

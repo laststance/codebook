@@ -53,6 +53,7 @@ import {
   REPOSITORY_STOP_MODULE_JOURNAL_LIMIT,
   ENTRY_LOAD_OPERATION_KEY,
   ENTRY_LOAD_POLL_MS,
+  PAGES_STOP_RESUMED_HIT_LIMIT,
   SERVER_RENDER_CLASSIFICATION_MS,
   SERVER_RENDER_PAUSE_POLL_MS,
   SERVER_RENDER_RESUMED_HIT_JOURNAL_LIMIT,
@@ -84,6 +85,7 @@ import {
 import {
   nextRefusal,
   PAGES_STOP_REFUSAL_DETAILS,
+  READINESS_FAILURE_RECOVERY,
   nextSetupDeadlineRecovery,
   nextSetupDeadlineSentence,
   nextSetupDeadlineVariantOf,
@@ -112,6 +114,7 @@ import type {
   ConfiguredRuntimeView,
   OperationFailure,
   OperationRecord,
+  PagesNotReachedFacts,
   RuntimeAction,
   RuntimeControl,
   RuntimeSource,
@@ -185,6 +188,7 @@ import {
   createNextPagesDiscoveryCache,
   type NextPagesDiscoveryCache,
 } from './utils/createNextPagesDiscoveryCache'
+import { createVerdictBudget } from './utils/createVerdictBudget'
 import { cutCauseForDisplay } from './utils/cutCauseForDisplay'
 import { deadlineText } from './utils/deadlineText'
 import { declarationStatementEndLine } from './utils/declarationStatementEndLine'
@@ -201,6 +205,7 @@ import { bundleOfEvaluatedModule } from './utils/extractDevelopmentModule'
 import { findNextRouteFolder } from './utils/findNextRouteFolder'
 import { findUnmappedDeclaredStop } from './utils/findUnmappedDeclaredStop'
 import { formatRefusalFailure } from './utils/formatRefusalFailure'
+import { holdsNextPagesRendererPatterns } from './utils/holdsNextPagesRendererPatterns'
 import { inspectConfiguredValues } from './utils/inspectConfiguredValues'
 import { isBlankOrCommentLine } from './utils/isBlankOrCommentLine'
 import { isBrowserOnEntryRoute } from './utils/isBrowserOnEntryRoute'
@@ -209,6 +214,8 @@ import type { GeneratedPosition } from './utils/isGeneratedPositionBefore'
 import { isHotUpdateScriptUrl } from './utils/isHotUpdateScriptUrl'
 import { isModuleEntryPause } from './utils/isModuleEntryPause'
 import { isModuleInAnotherLayer } from './utils/isModuleInAnotherLayer'
+import { isNextPagesRendererUrl } from './utils/isNextPagesRendererUrl'
+import { isPagesServerScriptUrl } from './utils/isPagesServerScriptUrl'
 import { isPageStubOfSource } from './utils/isPageStubOfSource'
 import { isPauseAtBoundColumn } from './utils/isPauseAtBoundColumn'
 import { isPauseAtStop, type PauseStopTarget } from './utils/isPauseAtStop'
@@ -236,6 +243,7 @@ import { nextServerOnlyFileReason } from './utils/nextServerOnlyFileReason'
 import { nextServerOnlyStopMessage } from './utils/nextServerOnlyStopMessage'
 import { OperationAfterTimeoutError } from './utils/operationAfterTimeoutError'
 import { operationRefusalText } from './utils/operationRefusalText'
+import { OutstandingPageRequests } from './utils/outstandingPageRequests'
 import {
   browserOriginOf,
   isOwnedApplicationOrigin,
@@ -245,6 +253,14 @@ import {
   pagePauseUnderResumeText,
   type PagePauseUnderResume,
 } from './utils/pagePauseUnderResumeText'
+import {
+  pagesDataFunctionHitVerdictOf,
+  type PagesDataFunctionHitVerdict,
+  type PagesDataFunctionName,
+} from './utils/pagesDataFunctionHitVerdictOf'
+import { PagesHitLedger } from './utils/pagesHitLedger'
+import type { PagesHitReader, PagesManifest } from './utils/pagesHitReader'
+import { pagesNotReachedMessage } from './utils/pagesNotReachedMessage'
 import { pagesServerStopRefusal } from './utils/pagesServerStopRefusal'
 import { pathnameLeftFromEntry } from './utils/pathnameLeftFromEntry'
 import { pausePlace } from './utils/pausePlace'
@@ -256,6 +272,7 @@ import {
   readDevelopmentBundle,
   type DevelopmentServerLayer,
 } from './utils/readDevelopmentBundle'
+import { ReadinessEntryRecord } from './utils/readinessEntryRecord'
 import {
   readNextPagesState,
   type NextPagesState,
@@ -490,6 +507,16 @@ type StopInstance = StopModule & {
   script: Protocol.Debugger.ScriptParsedEvent
   boundColumn?: { line: number; column: number; instanceColumn: number }
 }
+/** What a hit of an armed server stop means: App Router's verdict or a Pages data-function verdict. */
+type ServerHitVerdict = ServerRenderHitVerdict | PagesDataFunctionHitVerdict
+/** The verdicts the run resumes a hit by. */
+type ResumeHitVerdict = Extract<ServerHitVerdict, { action: 'resume' }>
+/** The `Network` events that end a request, which drops it from the outstanding page requests. */
+const PAGE_REQUEST_END_EVENTS = [
+  'Network.responseReceived',
+  'Network.loadingFailed',
+  'Network.loadingFinished',
+] as const
 type PreparedStop = ReturnType<typeof configuredStops>[number] & {
   /** The stop's place in the declared stop list, fixed when it was sealed; the run reorders the stops of a server set into the order they pause, so this index names the declaration, never the position in {@link ConfiguredBrowserRun.stops}. */
   declaredIndex: number
@@ -822,6 +849,33 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private nextSetupStep: NextSetupStep = NEXT_SETUP_STEPS.validatingProject
   /** The Pages route of a Next run on the Pages path, with the run's one discovery cache; set once the entry path resolved as a Pages route. The setup-deadline text, the seal and the Pages-only checks read it; every other run leaves it unset. */
   private pagesRun?: NextPagesEntry & { cache: NextPagesDiscoveryCache }
+  /** The `next` package version of a Pages run, once its entry resolved: quoted by a not-reached failure and by the journal entry of a renderer text the patterns do not recognise. */
+  private nextVersion?: string
+  /** What happened to the hits of the Pages server stops: resumed hits by stop, the attribution summary of the run resource. */
+  private readonly pagesLedger = new PagesHitLedger()
+  /** The browser's page requests that have no answer yet, which name the page of a Pages hit when its stack cannot. */
+  private readonly outstandingPageRequests = new OutstandingPageRequests()
+  /** The text of the Pages renderer by script id, read once and kept; a script announced again is read again. */
+  private readonly rendererTexts = new Map<
+    string,
+    Promise<string | undefined>
+  >()
+  /** Whether the journal already names a renderer text the patterns do not recognise; it is journaled once per run. */
+  private isUnrecognisedRendererJournaled = false
+  /** The data function each Pages server pause was found inside, by snapshot id; a live run resource field only. */
+  private readonly dataFunctionBySnapshot = new Map<
+    string,
+    PagesDataFunctionName
+  >()
+  /** Why each Pages pause that was published `unconfirmed` is unconfirmed, by snapshot id, for the run resource's note. */
+  private readonly unconfirmedReasonBySnapshot = new Map<string, string>()
+  /** How many hits of the run ended `verdict-error`, which numbers the log ids of their Output lines. */
+  private verdictErrorCount = 0
+  /** Codebook's own readiness request for the entry (D14): open from its send, journaled once when it closes. */
+  private readonly readiness = new ReadinessEntryRecord(
+    (detail) => this.evidence.record('readiness.entry-request', detail),
+    () => this.evidence.elapsedMs(),
+  )
   /** True once the workspace is known to have a Pages folder, before its entry resolved: a setup deadline then names `NEXT_SETUP_DEADLINE` unless the entry resolved as an App route ({@link setupDeadlineText}). */
   private pagesCapable = false
   /** The route a Next run in a workspace with a Pages folder resolved its entry path to, for the run resource. */
@@ -1460,17 +1514,25 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     port: number,
   ): Promise<string> {
     let ownedOrigin: string
-    if (hasPagesFolder) ownedOrigin = await this.readyPagesCapableEntry(port)
-    else if (
-      this.operationsConfiguration?.signInPaths &&
-      adapter.name === 'next-dev-webpack'
-    )
-      ownedOrigin = await this.readyOperationsEntry()
-    else
-      ownedOrigin = await this.app!.ready(
-        this.abort.signal,
-        this.definition.configuration.entryPath,
+    try {
+      if (hasPagesFolder) ownedOrigin = await this.readyPagesCapableEntry(port)
+      else if (
+        this.operationsConfiguration?.signInPaths &&
+        adapter.name === 'next-dev-webpack'
       )
+        ownedOrigin = await this.readyOperationsEntry()
+      else
+        ownedOrigin = await this.app!.ready(
+          this.abort.signal,
+          this.definition.configuration.entryPath,
+          // Only a Next run records its readiness request: its server code ran once before any stop was armed.
+          adapter.name === 'next-dev-webpack'
+            ? this.readiness.observer
+            : undefined,
+        )
+    } catch (error) {
+      throw this.afterReadinessFailure(error)
+    }
     // The saved session opens only on the loopback origin of the server Codebook started, and nothing is launched before this is judged.
     if (this.session === 'saved')
       try {
@@ -1487,6 +1549,58 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Adds `router: "pages"` and `sideEffects: "unknown"` to a refusal of the Pages entry (a redirect, a missing or uncompiled page, a 5xx answer) that came after the readiness request ran the page's data function, so an agent decides another start by the learner, not by itself.
+   * Called by {@link resolvePagesCapableRoute} for what {@link resolveNextPagesEntry} threw.
+   * @param error - What the entry resolution threw.
+   * @returns The refusal with the details when the request was sent and the refusal carries none; `error` otherwise.
+   * @example throw this.pagesRefusalAfterReadiness(nextRefusal('NEXT_ROUTE_NOT_COMPILED', '…')) // details { router: 'pages', sideEffects: 'unknown' }
+   */
+  private pagesRefusalAfterReadiness(error: unknown): unknown {
+    if (
+      !(error instanceof StudyError) ||
+      error.details !== undefined ||
+      !this.readiness.wasSent
+    )
+      return error
+    return new StudyError(
+      error.code,
+      error.message,
+      error.causeDetail,
+      error.recoveryOverride,
+      error.cause,
+      { ...PAGES_STOP_REFUSAL_DETAILS },
+    )
+  }
+
+  /**
+   * Words a failure of the readiness request after it was sent: the server code of the entry page ran at least partly, so the failure reports `details.sideEffects` `unknown` and a recovery that asks the learner before another start.
+   * Called by {@link proveServerReady} for whatever the readiness check threw. A refusal that already carries its own words, a failure before the request was sent and a stopped run keep what they threw.
+   * @param error - What the readiness check threw.
+   * @returns The error to throw: a `RUNTIME_FAILED` {@link StudyError} with the same message for a failure of the request itself; `error` otherwise.
+   * @example throw this.afterReadinessFailure(new Error('fetch failed')) // details { sideEffects: 'unknown' }
+   */
+  private afterReadinessFailure(error: unknown): unknown {
+    if (
+      !this.readiness.wasSent ||
+      error instanceof StudyError ||
+      this.abort.signal.aborted
+    )
+      return error
+    const message = thrownMessage(error)
+    return new StudyError(
+      'RUNTIME_FAILED',
+      message,
+      message,
+      READINESS_FAILURE_RECOVERY,
+      undefined,
+      {
+        sideEffects: 'unknown',
+        readinessRequest: this.readiness.view(),
+      },
+    )
+  }
+
+  /**
    * Proves a version 3 Next run ready when the server may answer its entry path with a redirect to a declared sign-in path, for an App-only workspace.
    *
    * Why it exists: Codebook's own server check carries no cookies, so a route behind sign-in answers it with a redirect that the plain check refuses. A run that started fresh is refused at once with `SIGN_IN_REQUIRED`, before the browser opens; a run with the saved session goes on and loads the entry once in its browser ({@link warmEntryBehindSignIn}). Any other answer keeps today's verdict. Called by {@link prepareOwned} instead of `ready`.
@@ -1500,6 +1614,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.abort.signal,
       entryPath,
       this.operationsConfiguration!.signInPaths,
+      this.readiness.observer,
     )
     this.alive()
     if (entry.redirectsToSignIn !== undefined) {
@@ -1741,6 +1856,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       isEntryRenderPaused:
         held?.execution === 'server-render' &&
         held.attribution === 'entry-load',
+      ...(held && this.unconfirmedReasonBySnapshot.has(held.id)
+        ? { unconfirmedReason: this.unconfirmedReasonBySnapshot.get(held.id) }
+        : {}),
       ...(isSetInProgress
         ? {
             waitingForNext: {
@@ -1987,7 +2105,21 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Tells whether a server pause is a render of a stop that already paused: in an `(rsc)` script, at the place of one of the given stops.
+   * Tells whether a script is the module of a server render: an `(rsc)` instance, or, in a Pages run, a Pages page's `(pages-dir-node)` module.
+   * Called by {@link isRepeatOfPausedStop}.
+   * @param scriptUrl - The script's address, if known.
+   * @returns `true` for a server-render script of this run.
+   * @example this.isServerRenderScript('webpack-internal:///(pages-dir-node)/./src/pages/index.tsx') // true in a Pages run
+   */
+  private isServerRenderScript(scriptUrl: string | undefined): boolean {
+    return (
+      isRscScriptUrl(scriptUrl) ||
+      (this.pagesRun !== undefined && isPagesServerScriptUrl(scriptUrl))
+    )
+  }
+
+  /**
+   * Tells whether a server pause is a render of a stop that already paused: see {@link isServerRenderScript} for the scripts, then the place of one of the given stops.
    * Called by {@link unexpectedHitVerdict} for the held pause and by {@link holdCopyPauseWhileIdle} to keep such a pause while the run waits for its first operation.
    * @param event - The paused event.
    * @param alreadyPaused - The stops that paused before now.
@@ -2001,7 +2133,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const location = event.callFrames[0]?.location
     return (
       location !== undefined &&
-      isRscScriptUrl(
+      this.isServerRenderScript(
         this.participants.server.scriptUrls.get(location.scriptId),
       ) &&
       alreadyPaused.some(
@@ -2160,13 +2292,242 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       stopAlreadyPaused: this.pausedRenderStops.has(stop),
       renderedRoute,
       entryPattern,
-      browserOnEntryRoute:
-        // During the entry load the main frame may not have committed before a pre-flush pause: the browser is then on its way to the entry route.
-        (this.entryLoad !== undefined && this.mainFrameUrl === undefined) ||
-        (entryPattern !== undefined &&
-          this.mainFrameUrl !== undefined &&
-          isBrowserOnEntryRoute(this.mainFrameUrl, entryPattern)),
+      browserOnEntryRoute: this.isBrowserOnEntry(entryPattern),
       group: afterOperationOf(stop) ?? 0,
+    })
+  }
+
+  /**
+   * Tells whether the browser shows the entry route, for the unreadable-route rule of a render hit: the main frame's URL against the entry route pattern, or, during the entry load before the main frame committed, a browser that is on its way to the entry route.
+   * Called by {@link classifyRenderHit} (App Router) and {@link classifyPagesHit}.
+   * @param entryPattern - The entry route's pattern; `undefined` when the run could not resolve one.
+   * @returns `true` while the browser is on (or on its way to) the entry route.
+   * @example this.isBrowserOnEntry('/dashboard') // true during the entry load before the main frame committed
+   */
+  private isBrowserOnEntry(entryPattern: string | undefined): boolean {
+    return (
+      // During the entry load the main frame may not have committed before a pre-flush pause: the browser is then on its way to the entry route.
+      (this.entryLoad !== undefined && this.mainFrameUrl === undefined) ||
+      (entryPattern !== undefined &&
+        this.mainFrameUrl !== undefined &&
+        isBrowserOnEntryRoute(this.mainFrameUrl, entryPattern))
+    )
+  }
+
+  /**
+   * Tells whether a stop is a server stop of a Pages run: sealed from the page's server compile, judged by the data-function verdict.
+   * Called by every gate that App Router keys to the `(rsc)` layer: the hit classification, the labels and the not-reached texts.
+   * @param stop - The declared stop.
+   * @returns `true` for a `participant: "server"` stop of a Pages run.
+   * @example this.isPagesServerStop(this.stops[0]!) // true for a getServerSideProps line of a Pages run
+   */
+  private isPagesServerStop(stop: PreparedStop): boolean {
+    return this.pagesRun !== undefined && stop.participant === 'server'
+  }
+
+  /**
+   * Classifies a hit of an armed server stop before anything is published: a Pages server stop by the data-function verdict, an `(rsc)` stop of an App Router run by the route read.
+   * Called by {@link inspect} once both channels of the pause matched.
+   * @param stop - The declared stop the pause was accepted for.
+   * @param pause - The pause identity.
+   * @param event - The CDP pause behind the stop.
+   * @returns The verdict, or `undefined` when the hit is not classified (a browser stop, versions 1 and 2, another layer).
+   * @example const verdict = await this.classifyHit(stop, pause, stopped.event)
+   */
+  private async classifyHit(
+    stop: PreparedStop,
+    pause: PauseIdentity,
+    event: Protocol.Debugger.PausedEvent,
+  ): Promise<ServerHitVerdict | undefined> {
+    if (this.isPagesServerStop(stop)) return this.classifyPagesHit(stop, event)
+    return this.classifyRenderHit(
+      stop,
+      pause,
+      event.callFrames[0]?.location.scriptId,
+    )
+  }
+
+  /**
+   * Judges a hit of a Pages server stop with {@link pagesDataFunctionHitVerdictOf}: inside the entry page's data function, inside another page's, outside every data function on positive evidence, or unconfirmed with its reason.
+   * Why it exists: Next runs many requests and the page's own render through the code a Pages stop sits in, but only a hit inside the entry page's `getServerSideProps` or `getStaticProps` call is the learner's pause; the stack of the paused event says which. One time budget covers every read, and the verdict never throws into the run.
+   * @param stop - The declared stop the pause was accepted for.
+   * @param event - The CDP pause behind the stop.
+   * @returns The verdict; an `unconfirmed` one is journaled here with its reason.
+   * @example await this.classifyPagesHit(stop, event) // { action: 'pause', attribution: 'entry-load', dataFunction: 'getServerSideProps', evidence: 'frame' }
+   */
+  private async classifyPagesHit(
+    stop: PreparedStop,
+    event: Protocol.Debugger.PausedEvent,
+  ): Promise<PagesDataFunctionHitVerdict | undefined> {
+    const entryRoute = this.pagesRun?.route
+    if (entryRoute === undefined || !this.participants.server.cdp)
+      return undefined
+    const budget = createVerdictBudget(
+      SERVER_RENDER_CLASSIFICATION_MS,
+      this.abort.signal,
+    )
+    try {
+      const verdict = await pagesDataFunctionHitVerdictOf(
+        {
+          event,
+          entryRoute,
+          browserOnEntryRoute: this.isBrowserOnEntry(entryRoute),
+          group: afterOperationOf(stop) ?? 0,
+        },
+        this.pagesHitReader(),
+        budget,
+      )
+      if (verdict.action === 'pause' && verdict.attribution === 'unconfirmed')
+        this.journalUnconfirmedHit(verdict)
+      return verdict
+    } finally {
+      budget.dispose()
+    }
+  }
+
+  /**
+   * Gives the verdict what it reads from the run: the script addresses and the renderer's text, the debugger's read-only commands through the server's proxy, the pages manifest and the browser's outstanding page requests.
+   * Codebook sends no state-changing `Debugger` command here (no `Debugger.enable`, no `setAsyncCallStackDepth`).
+   * @returns The reader {@link pagesDataFunctionHitVerdictOf} takes.
+   * @example this.pagesHitReader().scriptUrlOf('1477') // 'file:///workspace/node_modules/next/dist/compiled/next-server/pages.runtime.dev.js'
+   */
+  private pagesHitReader(): PagesHitReader {
+    const participant = this.participants.server
+    const cdp = participant.cdp!
+    return {
+      scriptUrlOf: (scriptId) => participant.scriptUrls.get(scriptId),
+      scriptSourceOf: (scriptId) => this.rendererTextOf(scriptId),
+      evaluateOnCallFrame: (request) =>
+        cdp.request('Debugger.evaluateOnCallFrame', request),
+      getStackTrace: async (stackTraceId) =>
+        (await cdp.request('Debugger.getStackTrace', { stackTraceId }))
+          .stackTrace,
+      // The run does not know the debugger's id; a stack trace id is fetched and the proxy answers for its own debugger only.
+      ownDebuggerId: undefined,
+      pagesManifest: () => this.readPagesManifest(),
+      outstandingRequests: () => this.outstandingPageRequests.list(),
+    }
+  }
+
+  /**
+   * Reads `pages-manifest.json` of the development build (route to compiled page), bounded like the bundle reads of sealing.
+   * @returns The manifest.
+   * @throws When the file cannot be read, is oversized or no record of strings; the verdict counts that as a failed read.
+   * @example await this.readPagesManifest() // { '/': 'pages/index.js' }
+   */
+  private async readPagesManifest(): Promise<PagesManifest> {
+    const text = await readRepositoryBuildText(
+      this.options.workspace,
+      '.next/dev/server/pages-manifest.json',
+      REPOSITORY_CHUNK_LIMIT_BYTES,
+      this.abort.signal,
+    )
+    return z.record(z.string(), z.string()).parse(JSON.parse(text))
+  }
+
+  /**
+   * Gives the text of the Pages renderer script, read once through `Debugger.getScriptSource` and kept; a read that failed is made again by the next hit.
+   * Why it exists: the renderer's source is searched for the data-function call at each frame's location, and a hit must not pay for reading about 200 KB. A text with none of the known patterns is journaled once with the Next version, and every hit is then `no-renderer-frame`.
+   * @param scriptId - The renderer script's id.
+   * @returns The text; `undefined` when it could not be read.
+   * @example await this.rendererTextOf('1477')
+   */
+  private rendererTextOf(scriptId: string): Promise<string | undefined> {
+    const known = this.rendererTexts.get(scriptId)
+    if (known) return known
+    const cdp = this.participants.server.cdp
+    const read = (async (): Promise<string | undefined> => {
+      if (!cdp) return undefined
+      try {
+        const answer = await cdp.request('Debugger.getScriptSource', {
+          scriptId,
+        })
+        if (
+          !holdsNextPagesRendererPatterns(answer.scriptSource) &&
+          !this.isUnrecognisedRendererJournaled
+        ) {
+          this.isUnrecognisedRendererJournaled = true
+          this.evidence.record('pages.renderer-unrecognised', {
+            nextVersion: this.nextVersion,
+          })
+        }
+        return answer.scriptSource
+      } catch {
+        return undefined
+      }
+    })()
+    this.rendererTexts.set(scriptId, read)
+    void read.then((text) => {
+      if (text === undefined && this.rendererTexts.get(scriptId) === read)
+        this.rendererTexts.delete(scriptId)
+    })
+    return read
+  }
+
+  /**
+   * Reads the renderer's text again because the runtime announced its script: the cached copy of that script id is dropped and read now, so the first hit finds it.
+   * Called by the `Debugger.scriptParsed` handler of {@link observeParticipant}.
+   * @param scriptId - The announced renderer script's id.
+   * @example this.refreshRendererText('1477')
+   */
+  private refreshRendererText(scriptId: string): void {
+    this.rendererTexts.delete(scriptId)
+    void this.rendererTextOf(scriptId)
+  }
+
+  /**
+   * Records what a published Pages pause was found to be: the data function it is inside (a live run resource field, never saved in a study) and the run's attribution counts, or the reason it is unconfirmed (the run resource's note for the chat).
+   * Called by {@link inspect} when the pause is committed.
+   * @param snapshotId - The id of the pause's snapshot.
+   * @param verdict - The `pause` verdict.
+   * @example this.notePagesPause('s1:1', { action: 'pause', attribution: 'entry-load', dataFunction: 'getServerSideProps', evidence: 'frame' })
+   */
+  private notePagesPause(
+    snapshotId: string,
+    verdict: Extract<ServerHitVerdict, { action: 'pause' }>,
+  ): void {
+    // A Pages verdict names its data function when the hit was taken, and its reason when it is unconfirmed.
+    if ('dataFunction' in verdict) {
+      this.pagesLedger.recordTaken(verdict.evidence)
+      this.dataFunctionBySnapshot.set(snapshotId, verdict.dataFunction)
+    } else if ('reason' in verdict) {
+      this.pagesLedger.recordUnconfirmed()
+      this.unconfirmedReasonBySnapshot.set(snapshotId, verdict.reason)
+    }
+  }
+
+  /**
+   * Journals the reason a Pages hit pauses unconfirmed, and for an event of an unexpected shape writes the one Output > Codebook line (the `RUN_FAILED_UNEXPECTEDLY` pattern: a log id the journal repeats, a shape summary without a value, the Next version).
+   * @param verdict - The `unconfirmed` verdict.
+   * @example this.journalUnconfirmedHit({ action: 'pause', attribution: 'unconfirmed', reason: 'no-async-chain' })
+   */
+  private journalUnconfirmedHit(
+    verdict: Extract<
+      PagesDataFunctionHitVerdict,
+      { attribution: 'unconfirmed' }
+    >,
+  ): void {
+    const logId =
+      verdict.reason === 'verdict-error'
+        ? `${this.options.control?.runId ?? this.id}#hit-${++this.verdictErrorCount}`
+        : undefined
+    if (logId !== undefined && verdict.reason === 'verdict-error')
+      try {
+        this.options.control?.outputLog?.({
+          level: 'error',
+          text: this.maskRunText(
+            `Run ${this.options.control.runId ?? this.id}: a server hit could not be judged (event shape ${verdict.shape}; Next ${this.nextVersion ?? 'version unread'}) [log ${logId}]`,
+          ),
+        })
+      } catch {
+        // The line is also in the run's journal; the channel has nowhere to write.
+      }
+    this.evidence.record('breakpoint.unconfirmed', {
+      reason: verdict.reason,
+      ...(verdict.reason === 'chain-incomplete'
+        ? { cause: verdict.cause }
+        : {}),
+      ...(logId === undefined ? {} : { logId }),
     })
   }
 
@@ -2278,23 +2639,59 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private async resumeClassifiedHit(
     stop: PreparedStop,
     pause: PauseIdentity,
-    verdict: Extract<ServerRenderHitVerdict, { action: 'resume' }>,
+    verdict: ResumeHitVerdict,
   ): Promise<void> {
     const participant = this.participants[stop.participant]
     this.journalResumedHit(verdict)
+    // A Pages stop counts its resumed hits: at the limit it is disarmed and the run ends not reached.
+    const resumedHits =
+      this.isPagesServerStop(stop) &&
+      verdict.event !== 'breakpoint.react-copy' &&
+      verdict.event !== 'breakpoint.repeat-hit'
+        ? this.pagesLedger.recordResumed(this.declaredAt(stop), {
+            ...verdict,
+            ...(verdict.event === 'breakpoint.other-route'
+              ? { route: this.maskRunText(verdict.route) }
+              : {}),
+          })
+        : 0
     // The pause is nobody's stop: the accepted-stop state returns to what it was before the hit.
     participant.stopped = undefined
     this.acceptedStop = false
     await this.sendOwnedResume(participant.selected!, pause.threadId)
     // The next hit of the same render is caused by the run's own resume; the stop's bound runs on from the arming or the last continue.
     this.openCausalWindow(stop.participant)
+    if (resumedHits >= PAGES_STOP_RESUMED_HIT_LIMIT) {
+      await this.endPagesStopAtResumedHitLimit(stop)
+      return
+    }
     // A hit that arrived before the answer to this resume was accepted meanwhile ({@link onEvent} set the flag again and held its pause): that pause's hold is no bound of this stop to replace, and the hit gives the bound back itself if it is resumed too.
     if (this.acceptedStop) return
     this.restoreActiveBound()
   }
 
   /**
-   * Tells whether a stop is a server-render stop of a group after an operation: a server stop sealed in the `(rsc)` layer whose group is 1 or later.
+   * Disarms a Pages server stop whose resumed hits reached {@link PAGES_STOP_RESUMED_HIT_LIMIT} and ends the run `SERVER_STOP_NOT_REACHED`, with the counts of what was resumed.
+   * Why it exists: a helper that every request or the page's render calls many times would otherwise pause and resume without end; 500 resumed hits and no data-function hit say the line is not on the entry page's data path for this request. Called by {@link resumeClassifiedHit} after the resume that reached the limit.
+   * @param stop - The Pages server stop.
+   * @example await this.endPagesStopAtResumedHitLimit(stop)
+   */
+  private async endPagesStopAtResumedHitLimit(
+    stop: PreparedStop,
+  ): Promise<void> {
+    // The breakpoint is retired so the app stops pausing for it; a retirement that fails does not hide the failure.
+    await stop.breakpoint
+      ?.retire(this.participants.server.selected!, this.abort.signal)
+      .catch(() => undefined)
+    this.fail(
+      afterOperationOf(stop) === 0
+        ? this.entryRenderNotReachedText('not-hit')
+        : this.afterOperationNotReachedText(stop),
+    )
+  }
+
+  /**
+   * Tells whether a stop is a server-render stop of a group after an operation: a server stop sealed in the `(rsc)` layer, or in a Pages page's `(pages-dir-node)` layer, whose group is 1 or later.
    * Called by the unreached-stop wording, which gives these stops the coded `SERVER_STOP_NOT_REACHED` failure and leaves every other stop its sentence.
    * @param stop - The declared stop.
    * @returns `true` for a render stop observed after operation k >= 1.
@@ -2303,7 +2700,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private isRenderStopAfterOperation(stop: PreparedStop): boolean {
     return (
       stop.participant === 'server' &&
-      stop.sealedLayer === 'rsc' &&
+      (stop.sealedLayer === 'rsc' || stop.sealedLayer === 'pages-dir-node') &&
       (afterOperationOf(stop) ?? 0) >= 1
     )
   }
@@ -2320,7 +2717,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       isOfGroup = (other: PreparedStop): boolean =>
         other.participant === 'server' &&
         afterOperationOf(other) === operationIndex,
-      place = this.declaredAt(stop)
+      place = this.declaredAt(stop),
+      isPages = this.isPagesServerStop(stop)
     this.operationFailure ??= {
       code: 'SERVER_STOP_NOT_REACHED',
       operationIndex,
@@ -2338,22 +2736,47 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           .slice(this.stopIndex)
           .filter(isOfGroup)
           .map((other) => this.declaredAt(other)),
+        ...(isPages ? { pages: this.pagesFailureFacts(place) } : {}),
       },
     }
     return formatRefusalFailure(
       'SERVER_STOP_NOT_REACHED',
-      `Declared stop ${place} was not reached within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s after operation ${operationIndex}. It may have run only while Codebook prepared the page (code at module scope, or a cached result), or this render did not reach it. Declare the stop inside the component or function that runs on every render, then start a new run.`,
+      isPages
+        ? pagesNotReachedMessage({
+            place,
+            phase: 'after-operation',
+            how: 'not-hit',
+            operationIndex,
+            seconds: ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND,
+            resumedHits: this.pagesLedger.resumedHitsOf(place),
+          })
+        : `Declared stop ${place} was not reached within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s after operation ${operationIndex}. It may have run only while Codebook prepared the page (code at module scope, or a cached result), or this render did not reach it. Declare the stop inside the component or function that runs on every render, then start a new run.`,
     )
   }
 
   /**
-   * Journals a resumed hit (`breakpoint.other-route`, `breakpoint.unattributed-resumed`, `breakpoint.repeat-hit`, `breakpoint.react-copy`), each event type up to {@link SERVER_RENDER_RESUMED_HIT_JOURNAL_LIMIT}; past it only the count is kept. Routes pass the run's masking.
+   * Gives the fields a Pages run adds to `SERVER_STOP_NOT_REACHED`: the hits of the unreached stop the run resumed, how hits are attributed, and the Next version.
+   * Called by the two not-reached texts.
+   * @param place - The unreached stop, `<path>:<line>`.
+   * @returns `resumedHits`, `attributionMode` and, when read, `nextVersion`.
+   * @example this.pagesFailureFacts('src/lib/stats.ts:3') // { resumedHits: [], attributionMode: 'async-chain', nextVersion: '16.4.3' }
+   */
+  private pagesFailureFacts(place: string): PagesNotReachedFacts {
+    return {
+      resumedHits: this.pagesLedger.resumedHitsOf(place),
+      attributionMode: 'async-chain',
+      ...(this.nextVersion === undefined
+        ? {}
+        : { nextVersion: this.nextVersion }),
+    }
+  }
+
+  /**
+   * Journals a resumed hit (`breakpoint.other-route`, `breakpoint.outside-data-function`, `breakpoint.unattributed-resumed`, `breakpoint.repeat-hit`, `breakpoint.react-copy`), each event type up to {@link SERVER_RENDER_RESUMED_HIT_JOURNAL_LIMIT}; past it only the count is kept. Routes pass the run's masking.
    * @param verdict - The resume verdict.
    * @example this.journalResumedHit({ action: 'resume', event: 'breakpoint.other-route', route: '/dashboard/invoices' })
    */
-  private journalResumedHit(
-    verdict: Extract<ServerRenderHitVerdict, { action: 'resume' }>,
-  ): void {
+  private journalResumedHit(verdict: ResumeHitVerdict): void {
     const count = (this.resumedHitCounts.get(verdict.event) ?? 0) + 1
     this.resumedHitCounts.set(verdict.event, count)
     if (count > SERVER_RENDER_RESUMED_HIT_JOURNAL_LIMIT) {
@@ -2388,11 +2811,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     | 'operationIndex'
   > {
     const group = afterOperationOf(stop)
-    // An entry-render stop (group 0) is a page-load pause whichever layer it paused in; otherwise the script's layer says what ran.
+    // An entry-render stop (group 0) is a page-load pause whichever layer it paused in, and a server pause of a Pages run is a server render also after an operation; otherwise the script's layer says what ran.
     const execution =
       stop.participant === 'browser'
         ? ('browser' as const)
-        : group === 0
+        : group === 0 || this.isPagesServerStop(stop)
           ? ('server-render' as const)
           : serverExecutionOfScriptUrl(scriptUrl)
     const isUnconfirmed = this.unconfirmedHit
@@ -2490,20 +2913,34 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         .slice(this.stopIndex)
         .filter((stop) => afterOperationOf(stop) === 0),
       stop = remaining[0] ?? this.stops[this.stopIndex]!,
-      place = this.declaredAt(stop)
+      place = this.declaredAt(stop),
+      isPages = this.isPagesServerStop(stop)
     this.operationFailure ??= {
       code: 'SERVER_STOP_NOT_REACHED',
       operationIndex: 0,
       sent: 'not-sent',
-      sideEffects: 'none',
+      // In a Pages run Codebook's own readiness request already ran the page's data function once, so what the run may have changed is not known; an App Router run keeps its text.
+      sideEffects: this.pagesRun ? 'unknown' : 'none',
       logId: `${this.options.control?.runId ?? this.id}#start`,
       serverRender: {
         phase: 'entry-render',
         stop: place,
         pausedStops: [...(this.entryLoad?.pausedStops ?? [])],
         notReachedStops: remaining.map((other) => this.declaredAt(other)),
+        ...(isPages ? { pages: this.pagesFailureFacts(place) } : {}),
       },
     }
+    if (isPages)
+      return formatRefusalFailure(
+        'SERVER_STOP_NOT_REACHED',
+        pagesNotReachedMessage({
+          place,
+          phase: 'entry-render',
+          how,
+          seconds: ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND,
+          resumedHits: this.pagesLedger.resumedHitsOf(place),
+        }),
+      )
     return formatRefusalFailure(
       'SERVER_STOP_NOT_REACHED',
       how === 'load-first'
@@ -2524,9 +2961,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       code: 'ENTRY_LOAD_TIMEOUT',
       operationIndex: 0,
       sent: 'not-sent',
-      sideEffects: 'none',
+      // In a Pages run Codebook's own readiness request already ran the page's data function once, so what the run may have changed is not known; an App Router run keeps its text.
+      sideEffects: this.pagesRun ? 'unknown' : 'none',
       logId: `${this.options.control?.runId ?? this.id}#start`,
       entryLoad: {
+        ...(this.pagesRun ? { router: 'pages' as const } : {}),
         // The route passes the URL query redaction and the run's secret masking before any sink holds it (D15).
         entryRoute: this.maskRunText(
           redactNextEntryPath(this.definition.configuration.entryPath ?? '/'),
@@ -3230,6 +3669,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.abort.signal,
       this.definition.configuration.entryPath ?? '/',
       this.operationsConfiguration?.signInPaths,
+      this.readiness.observer,
     ).catch(async (error: unknown) => {
       throw await this.withLaunchFailureNotes(error, port)
     })
@@ -3285,6 +3725,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         `Codebook's own request for the entry path ${redactNextEntryPath(entryPath)}, which carries no saved session, was redirected to the sign-in path ${entry.redirectsToSignIn}, and the route manifests do not resolve the entry path as an App Router page; a Pages Router page behind sign-in is not supported in this version, so the run stopped before it sent anything.`,
       )
     const nextVersion = (await readNextInstallation(workspace)).version
+    this.nextVersion = nextVersion
     const resolved = await resolveNextPagesEntry({
       workspace,
       entryPath,
@@ -3294,6 +3735,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       outputTail: () => this.app!.outputTail(),
       compileFailureSentences: () =>
         describeNextLaunchFailure({ workspace, nextVersion, port }),
+    }).catch((error: unknown) => {
+      throw this.pagesRefusalAfterReadiness(error)
     })
     this.alive()
     this.pagesRun = { ...resolved, cache: createNextPagesDiscoveryCache() }
@@ -5713,9 +6156,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (session) this.track(this.retakeNewsByBreakLocations(stop, session))
   }
 
-  /** Tells {@link bindParsedScript} whether a server stop's module announced again under a new script id is a coexisting instance and no change of the sealed module: a stop of a server participant in a run that is no Pages run (browser stops and Pages runs keep failing). @example this.isCoexistingModule(stop, 'server') // true for a server stop of an App Router run */
+  /** Tells {@link bindParsedScript} whether a server stop's module announced again under a new script id is a coexisting instance and no change of the sealed module: a stop of a server participant, in an App Router run and, since a recompile or HMR of a page's server compile announces it again, in a Pages run too (browser stops keep failing on a re-announced module). @example this.isCoexistingModule(stop, 'server') // true for a server stop of an App Router run or a Pages run */
   private isCoexistingModule(stop: PreparedStop, name: Participant): boolean {
-    return stop.participant === 'server' && name === 'server' && !this.pagesRun
+    return stop.participant === 'server' && name === 'server'
   }
 
   /** Tells {@link bindParsedScript} whether a stop's module was already announced under another script id than the one announced now. @example this.isSealedAsAnotherScript(stop, event) // false for the module's first announcement */
@@ -6148,6 +6591,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       if (event.url === SECRET_FRAME_SOURCE_URL) return
       // The journal lists only the first scripts; a pause in a later one still needs its URL.
       participant.scriptUrls.set(event.scriptId, event.url)
+      // The Pages renderer's text is read when it is announced (again), so the first hit finds it cached.
+      if (
+        name === 'server' &&
+        this.pagesRun &&
+        isNextPagesRendererUrl(event.url)
+      )
+        this.refreshRendererText(event.scriptId)
       if (observedScripts++ < REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT)
         this.evidence.record('script.observed', {
           participant: name,
@@ -6193,8 +6643,37 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       })
       events.push('Page.navigatedWithinDocument')
     }
+    // A Pages run that pauses its server follows the browser's page requests: they name the page of a hit whose stack cannot.
+    const tracksPageRequests =
+      name === 'browser' &&
+      this.pagesRun !== undefined &&
+      this.stops.some((stop) => stop.participant === 'server')
+    if (tracksPageRequests)
+      events.push(...this.trackOutstandingPageRequests(cdp))
     await cdp.subscribe(events)
     this.alive()
+    // The page's network events flow only when its Network domain is enabled; a refusal leaves the page read to the stack.
+    if (tracksPageRequests)
+      await cdp.request('Network.enable', {}).catch(() => undefined)
+    this.alive()
+  }
+
+  /**
+   * Listens to the browser's page requests and keeps the ones that have no answer yet, for the Pages page read ({@link PagesHitReader.outstandingRequests}).
+   * Called by {@link observeParticipant} for the browser of a Pages run that declares a server stop.
+   * @param cdp - The page's channel.
+   * @returns The event names to subscribe.
+   * @example this.trackOutstandingPageRequests(cdp) // ['Network.requestWillBeSent', 'Network.responseReceived', …]
+   */
+  private trackOutstandingPageRequests(cdp: Cdp): string[] {
+    cdp.on('Network.requestWillBeSent', (event) =>
+      this.outstandingPageRequests.start(event),
+    )
+    for (const ending of PAGE_REQUEST_END_EVENTS)
+      cdp.on(ending, (event) =>
+        this.outstandingPageRequests.finish(event.requestId),
+      )
+    return ['Network.requestWillBeSent', ...PAGE_REQUEST_END_EVENTS]
   }
 
   /**
@@ -6218,8 +6697,6 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       participant.scriptUrls.has(scriptId) ||
       participant.discoveredScriptIds?.has(scriptId) ||
       participant.discovering ||
-      // A Pages run keeps its own handling of an unknown script.
-      this.pagesRun ||
       !this.stops.some((stop) => stop.participant === 'server')
     ) {
       this.onCdpPaused(name, event)
@@ -7952,7 +8429,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     // An earlier operation of the run reached the page, so a rerun would repeat it: the side effects are unknown whatever this operation's own fact is.
     const earlierDispatched =
       Math.min(this.operationsDispatched, refusal.operationIndex - 1) >= 1
-    const sideEffects = earlierDispatched ? 'unknown' : refusal.sideEffects
+    // In a Pages run the readiness request already ran the page's data function once: whatever the operation's own fact, the side effects are unknown.
+    const sideEffects =
+      earlierDispatched || this.pagesRun ? 'unknown' : refusal.sideEffects
     this.operationFailure = {
       code: refusal.code,
       operationIndex: refusal.operationIndex,
@@ -9548,11 +10027,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     current()
     // A render hit is classified before anything is published (X15): another route's hit, a repeat and an unattributed hit are resumed.
-    const verdict = await this.classifyRenderHit(
-      stop,
-      pause,
-      stopped.event.callFrames[0]?.location.scriptId,
-    )
+    const verdict = await this.classifyHit(stop, pause, stopped.event)
     current()
     if (verdict?.action === 'resume') {
       await this.resumeClassifiedHit(stop, pause, verdict)
@@ -9670,9 +10145,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         }
     }
     // The classified hit counts only once its pause is committed: a recoverable inspect failure above leaves a later genuine hit of the stop a first hit.
-    if (verdict) {
+    if (verdict?.action === 'pause') {
       this.pausedRenderStops.add(stop)
       this.unconfirmedHit = verdict.attribution === 'unconfirmed'
+      if (this.isPagesServerStop(stop))
+        this.notePagesPause(`${pause.sessionId}:${pause.generation}`, verdict)
     }
     const receipt = this.evidence.record('snapshot.committed', {
       snapshotId: `${pause.sessionId}:${pause.generation}`,
@@ -10648,6 +11125,30 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       declaredOperationsOf(this.operationsConfiguration),
     )
   }
+  /**
+   * Gives the run resource's account of a Pages run that declares a server stop: the Next version, what became of its hits and the data function each pause was found inside.
+   * Called by {@link view}.
+   * @returns The fields; empty for every other run.
+   * @example this.pagesServerView() // { nextVersion: '16.4.3', attributionSummary: { taken: { frame: 1, request: 0 }, unconfirmed: 0, resumed: {} }, dataFunctions: { 's1:1': 'getServerSideProps' } }
+   */
+  private pagesServerView(): Pick<
+    ConfiguredRuntimeView,
+    'nextVersion' | 'attributionSummary' | 'dataFunctions'
+  > {
+    if (
+      !this.pagesRun ||
+      !this.stops.some(({ participant }) => participant === 'server')
+    )
+      return {}
+    return {
+      ...(this.nextVersion === undefined
+        ? {}
+        : { nextVersion: this.nextVersion }),
+      attributionSummary: this.pagesLedger.summary(),
+      dataFunctions: Object.fromEntries(this.dataFunctionBySnapshot),
+    }
+  }
+
   /** Exposes bounded descriptors and immutable references; service signatures never serialize full modules or maps. @example run.view().participants.browser.pause */
   view(): ConfiguredRuntimeView {
     const runtimeOutcome =
@@ -10674,6 +11175,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       applicationPortSource: this.portSource,
       viteVersion: this.viteVersion,
       nextRoute: this.nextRoute,
+      ...this.pagesServerView(),
+      ...(this.readiness.view()
+        ? { readinessRequest: this.readiness.view() }
+        : {}),
       status: this.status,
       ...(configuredStops(this.definition.configuration).some(
         (stop) => stop.participant === 'server',
@@ -10920,6 +11425,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         count: this.unjournaledStopModuleEvents,
         journalLimit: REPOSITORY_STOP_MODULE_JOURNAL_LIMIT,
       })
+    // A readiness request still open when the run ends is closed, so the journal always holds its entry.
+    this.readiness.closeIfOpen('aborted')
     this.evidence.record('cleanup.started')
     // Teardown frames are not history: the history ends at once and queued images get their verdict while the page still answers, later ones are discarded.
     const historyEnded = this.browser

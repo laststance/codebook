@@ -2087,6 +2087,10 @@ export const NEXT_PAGES_TRACED_AWAIT_WINDOW_CHARS = 64
 export const NEXT_PAGES_PAGE_EXPRESSION = 'pathname'
 /** The most `Debugger.getStackTrace` reads one Pages hit spends on async-chain continuations (a `parentId` or a start from `asyncStackTraceId`); past it the chain is incomplete (`continuation-limit`). */
 export const PAGES_STACK_TRACE_READ_LIMIT = 4
+/** How many hits of one Pages server stop the run resumes (`breakpoint.other-route`, `breakpoint.outside-data-function`, `breakpoint.unattributed-resumed`) before it disarms the stop and ends the run `SERVER_STOP_NOT_REACHED`: a helper that many requests or the page's render call (a formatter in a list) would otherwise pause and resume without end. */
+export const PAGES_STOP_RESUMED_HIT_LIMIT = 500
+/** The most outstanding page requests of the browser the run keeps for the Pages page read; a page loads a handful, so a run that sees more has no single page request to name (the oldest are dropped). */
+export const PAGES_OUTSTANDING_REQUEST_LIMIT = 64
 /** The address prefix of the data requests Next's client sends for a Pages navigation (`/_next/data/<build id>/<route>.json`). */
 export const NEXT_DATA_REQUEST_PATH_PREFIX = '/_next/data/'
 /** How deep a value-free shape summary ({@link valueShapeSummaryOf}) descends into nested objects and arrays. */

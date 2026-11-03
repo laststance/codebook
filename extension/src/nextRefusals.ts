@@ -75,6 +75,13 @@ export const PAGES_STOP_REFUSAL_DETAILS = {
   sideEffects: 'unknown',
 } as const
 
+/**
+ * The recovery of a Next run whose readiness request failed after it was sent (it timed out, was stopped or lost its connection): the request runs the entry page's server code, so what it changed is not known.
+ * It names fields, never values: it is passed as the {@link StudyError} recovery override, which reaches MCP without the sanitizer.
+ */
+export const READINESS_FAILURE_RECOVERY =
+  "Codebook's own readiness request for the entry path ran the page's server code (a data function, server components) before any stop was armed, and it did not end with an answer (read readinessRequest in the run resource: outcome timeout, aborted or connection-lost). When that code writes or sends (a database write, a counter, an email, a payment call), it may have run: details.sideEffects is unknown, not none. Tell the learner, ask before another start, and never start again unasked. No declared input and no click was sent; Codebook stops the server it started (read resourcesReleased in the run resource). See codebook://help/repository-browser#readiness.entry-request."
+
 /** The side-effect sentence of a Pages setup deadline once the browser Codebook opened was closed: no input and no click went out. */
 const BROWSER_CLOSED_NOTHING_SENT =
   'The browser Codebook opened was closed and no input or click was sent; Codebook stops the server it started (read resourcesReleased in the run resource).'
