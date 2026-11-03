@@ -2060,6 +2060,43 @@ export const SERVER_RENDER_ROUTE_EXPRESSION =
 export const REACT_SERVER_COPY_URL_PREFIX = 'about://React/Server/'
 /** How many resumed hits (`breakpoint.other-route`, `breakpoint.unattributed-resumed`, `breakpoint.repeat-hit`, `breakpoint.react-copy`) one run journals, each event type up to it; past it only their count is kept. */
 export const SERVER_RENDER_RESUMED_HIT_JOURNAL_LIMIT = 100
+/** The path tail of Next 16's compiled Pages renderer under `next dev --webpack` (chosen in `next/dist/server/route-modules/pages/module.compiled.js`); a frame whose script address ends with it is a renderer frame of a Pages hit. */
+export const NEXT_PAGES_RENDERER_SCRIPT_PATH =
+  'next/dist/compiled/next-server/pages.runtime.dev.js'
+/**
+ * The texts that identify a data-function call in the Pages renderer's source, versioned data taken from the runtime of the listed Next versions (E0b, Issue 188).
+ * `callText` is what the source starts with at the location of the frame that calls the data function (`async()=>getServerSideProps({req:req,…`, `()=>getStaticProps({…`); `tracedAwaitText` is what the source holds at the location of the frame that awaits the traced call (`trace(trace_constants.RenderSpan.getServerSideProps,{…`). V8 keeps the call arrow in the async chain, so the traced await has not been needed so far; it identifies the same call from the frame that wraps it. A runtime text that holds none of these texts makes every hit `no-renderer-frame`.
+ */
+export const NEXT_PAGES_RENDERER_PATTERNS = [
+  {
+    dataFunction: 'getServerSideProps',
+    callText: 'getServerSideProps(',
+    tracedAwaitText: 'RenderSpan.getServerSideProps',
+    nextVersions: ['16.1.4', '16.4.4'],
+  },
+  {
+    dataFunction: 'getStaticProps',
+    callText: 'getStaticProps(',
+    tracedAwaitText: 'RenderSpan.getStaticProps',
+    nextVersions: ['16.1.4', '16.4.4'],
+  },
+] as const
+/** How many characters of the renderer's source from a frame's location are searched for a traced-await text; the traced call opens with `trace(trace_constants.` before the text. */
+export const NEXT_PAGES_TRACED_AWAIT_WINDOW_CHARS = 64
+/** The constant expression a Pages hit evaluates on the synchronous frame of the traced call to read the page Next renders: `pathname` is a parameter of the renderer's `renderToHTMLImpl`, the page pattern of the manifest key (`/`, `/products/[id]`). It is a plain identifier, never the request, headers or cookies. */
+export const NEXT_PAGES_PAGE_EXPRESSION = 'pathname'
+/** The most `Debugger.getStackTrace` reads one Pages hit spends on async-chain continuations (a `parentId` or a start from `asyncStackTraceId`); past it the chain is incomplete (`continuation-limit`). */
+export const PAGES_STACK_TRACE_READ_LIMIT = 4
+/** The address prefix of the data requests Next's client sends for a Pages navigation (`/_next/data/<build id>/<route>.json`). */
+export const NEXT_DATA_REQUEST_PATH_PREFIX = '/_next/data/'
+/** How deep a value-free shape summary ({@link valueShapeSummaryOf}) descends into nested objects and arrays. */
+export const VALUE_SHAPE_DEPTH_LIMIT = 3
+/** How many properties of one object a shape summary names. */
+export const VALUE_SHAPE_KEY_LIMIT = 12
+/** The longest property name a shape summary keeps; a longer or not identifier-like name is shown as `?`. */
+export const VALUE_SHAPE_KEY_LIMIT_CHARS = 40
+/** The longest shape summary; a longer one is cut, so a malformed payload cannot grow the Output line that names it. */
+export const VALUE_SHAPE_SUMMARY_LIMIT_CHARS = 300
 /** The longest a pause no debugger stop announced may last for its resume to count as the debug adapter's own; the adapter resumes its pauses within milliseconds, and a pause that outlasts the wait for a stop's own pause is taken as announced, so this bound is that wait's bound ({@link CAPTURE_TIMEOUT_MS}) and follows it. */
 export const REPOSITORY_ADAPTER_PAUSE_LIMIT_MS = CAPTURE_TIMEOUT_MS
 /** The longest a page pause may last in a run that declares no browser stop before the run ends as "Unowned browser stop remained paused": the debug adapter resumes a pause of its own within milliseconds, and nobody else may pause the page of such a run. A pause in the page's stub of a declared server stop's module has {@link REPOSITORY_ADAPTER_PAUSE_LIMIT_MS} instead, because the adapter first reports that pause as a stop, which the run then resumes itself. */
