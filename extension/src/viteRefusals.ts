@@ -37,7 +37,7 @@ export function viteHelpAnchor(code: ViteRefusalCode): string {
 
 /** The static recovery of a `VITE_SEAL_FAILED` whose `details.reason` is `outside-package`: it names fields, never values, because a recovery override reaches MCP unsanitized. */
 const VITE_OUTSIDE_PACKAGE_RECOVERY =
-  'Declare stops only in files inside details.packageRoot (every file in details.files lies outside it), or tell the learner a file outside the Vite app folder cannot be observed in this version; library or shared packages the app imports are not supported. Recovery: fix the configuration, then one new start. Nothing was started: no server, no browser and no input (details.sideEffects is none). See codebook://help/repository-browser#VITE_SEAL_FAILED.'
+  'Declare stops only in files inside details.packageRoot (every file in details.files lies outside it), or, since API 1.21, in the checked-out source of a workspace library the app imports through links inside the repository (a browser stop; see vitePackageRoot.libraryStops in the help); otherwise tell the learner a file outside the Vite app folder cannot be observed in this version. This refusal means no workspace library the app reaches holds these files. Recovery: fix the configuration, then one new start. Nothing was started: no server, no browser and no input (details.sideEffects is none). See codebook://help/repository-browser#VITE_SEAL_FAILED.'
 
 /**
  * Builds the refusal of stop files that lie outside the Vite app's `packageRoot`, raised at configuration resolution before any process starts.

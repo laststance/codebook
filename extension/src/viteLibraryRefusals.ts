@@ -46,6 +46,13 @@ const UNMAPPED_CAUSE_SENTENCES: Record<LibraryBuildUnmappedCause, string> = {
     'the library module is not loaded by the entry page itself; only the operation loads it, so the debugger cannot be armed on it before the operation is sent',
 }
 
+/** The causes of `library-build-unmapped` that a rebuild with source maps (including sourcesContent) can fix. */
+const MAP_FIXED_BY_REBUILD: ReadonlySet<LibraryBuildUnmappedCause> = new Set([
+  'no-map',
+  'no-content',
+  'malformed',
+])
+
 /**
  * Builds the `VITE_SEAL_FAILED` refusal of a nested Vite app's library stop, raised before the browser opens (or, for `lazy-import`, when the first stop is armed).
  *
@@ -96,7 +103,12 @@ function viteLibraryMessage(
   if (request.reason === 'library-not-in-build')
     return `The modules the entry page loads do not hold exactly one served module of the library that maps ${place} (${request.candidates?.join(', ') || 'none'}), so a stop there cannot be sealed. The page may load another build of the file, or may not load it at all.`
   const cause = request.cause ? UNMAPPED_CAUSE_SENTENCES[request.cause] : ''
-  return `The library's served modules cannot be tied to ${place} (${request.cause ?? 'unknown'}: ${cause}). Codebook never builds; the library must be built with source maps that include sourcesContent.`
+  // Only a missing, malformed or contentless map is fixed by a rebuild; the other causes (no-line, prebundled, lazy-import, bound, deadline) are not.
+  const rebuild =
+    request.cause !== undefined && MAP_FIXED_BY_REBUILD.has(request.cause)
+      ? ' The library must be built with source maps that include sourcesContent.'
+      : ''
+  return `The library's served modules cannot be tied to ${place} (${request.cause ?? 'unknown'}: ${cause}). Codebook never builds.${rebuild}`
 }
 
 /**

@@ -237,3 +237,38 @@ test('restores a Vite library build change from its failure text without the Pag
     sideEffects: 'unknown',
   })
 })
+
+// protects=a library-build-unmapped message tells the learner to rebuild with source maps only for the causes a rebuild fixes (no-map, no-content, malformed); fails_when=a lazy-import, prebundled, no-line, bound or deadline refusal tells the learner to rebuild, or a no-map refusal stops saying it; no_claim=the recovery sentence (shared with the Next path) and the help rows
+test('asks for a rebuild with source maps only when a rebuild can fix the unmapped cause', () => {
+  // Arrange
+  const identity = {
+    reason: 'library-build-unmapped' as const,
+    packageRoot: 'examples/react/basic',
+    library: '@scope/core',
+    file: 'packages/core/src/a.ts',
+  }
+  const rebuildSentence =
+    'The library must be built with source maps that include sourcesContent.'
+
+  // Act
+  const noMap = viteLibraryRefusal({ ...identity, cause: 'no-map' }).message
+  const lazyImport = viteLibraryRefusal({
+    ...identity,
+    cause: 'lazy-import',
+    sideEffects: 'unknown',
+  }).message
+  const prebundled = viteLibraryRefusal({
+    ...identity,
+    cause: 'prebundled',
+  }).message
+  const deadline = viteLibraryRefusal({
+    ...identity,
+    cause: 'deadline',
+  }).message
+
+  // Assert
+  assert.ok(noMap.endsWith(`Codebook never builds. ${rebuildSentence}`))
+  assert.ok(!lazyImport.includes(rebuildSentence))
+  assert.ok(!prebundled.includes(rebuildSentence))
+  assert.ok(!deadline.includes(rebuildSentence))
+})
