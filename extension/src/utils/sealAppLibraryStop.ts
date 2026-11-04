@@ -15,6 +15,7 @@ import {
   libraryBuildChangedFailure,
   libraryNotInBuildRefusal,
   libraryPlaceAmbiguousRefusal,
+  PAGES_STOP_REFUSAL_DETAILS,
 } from '../nextRefusals'
 import { mapSchema, type BundleSource } from '../repositoryBundle'
 import { sha256 } from '../runtimeSupport/utils/sha256'
@@ -24,7 +25,7 @@ import { clientComponentRefusal } from './clientComponentRefusal'
 import type { NextPagesChunkModules } from './createNextPagesDiscoveryCache'
 import { cutTextToFit } from './cutTextToFit'
 import { inlineSourceMapOf } from './extractDevelopmentModule'
-import { findNextClientReferenceStub } from './findNextClientReferenceStub'
+import { isNextClientReferenceStub } from './isNextClientReferenceStub'
 import { isRscScriptUrl } from './isRscScriptUrl'
 import { readAppClientChunks } from './readAppClientChunks'
 import { readNextChunkModules } from './readNextChunkModules'
@@ -249,6 +250,37 @@ async function chunkSetOf(
 }
 
 /**
+ * Tells whether the module at an address is a client reference stub; called by {@link oneFlavourOf} for a server stop.
+ *
+ * Why it exists: it reads only the modules whose already computed final address matches, instead of rescanning every module text per flavour, and keeps the discovery deadline.
+ * @param files - The decoded chunks with their modules' final addresses.
+ * @param scriptUrl - The module address in the seal's layer.
+ * @param deadline - The discovery step's deadline.
+ * @returns Whether any module at that address is a stub.
+ * @throws `Module discovery deadline exceeded`.
+ * @example isClientStubIn(files, 'webpack-internal:///(rsc)/../../../packages/lib/build/modern/core.js', deadline) // => false
+ */
+function isClientStubIn(
+  files: readonly IndexedChunk[],
+  scriptUrl: string,
+  deadline: number,
+): boolean {
+  return files.some(({ file, finalUrls }) =>
+    file.moduleTexts.some((moduleText, position) => {
+      if (performance.now() >= deadline)
+        throw new Error('Module discovery deadline exceeded')
+      const finalUrl = finalUrls[position]
+      // Only the module at the address can be its stub.
+      return (
+        finalUrl !== undefined &&
+        sameScriptUrl(scriptUrl, finalUrl) &&
+        isNextClientReferenceStub(moduleText)
+      )
+    }),
+  )
+}
+
+/**
  * Finds the one frozen flavour the chunk set holds as a module in the seal's layer; called by {@link sealWithin}.
  * @param files - The decoded client chunks with their modules' final addresses.
  * @param request - The seal request.
@@ -268,16 +300,12 @@ function oneFlavourOf(
   for (const builtPath of frozenPaths) {
     const scriptUrl = `webpack-internal:///(${request.layer})/${frozen.runtimePath(builtPath, packageRootRelative)}`
     // A `'use client'` file's `(rsc)` module is only a reference stub: its code never runs on the server.
-    if (
-      request.layer === 'rsc' &&
-      files.some(({ file }) =>
-        findNextClientReferenceStub(file.moduleTexts, scriptUrl),
+    if (request.layer === 'rsc' && isClientStubIn(files, scriptUrl, deadline))
+      // The seal runs after the readiness request, so the refusal carries the App Router fields.
+      throw clientComponentRefusal(
+        { path: frozen.stopPath, line: frozen.armedSourceLine },
+        { ...PAGES_STOP_REFUSAL_DETAILS, router: 'app' },
       )
-    )
-      throw clientComponentRefusal({
-        path: frozen.stopPath,
-        line: frozen.armedSourceLine,
-      })
     const copies = files.flatMap((file) =>
       moduleCopiesIn(file, scriptUrl, join(realRoot, builtPath), deadline),
     )

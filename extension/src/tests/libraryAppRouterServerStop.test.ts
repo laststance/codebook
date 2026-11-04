@@ -946,6 +946,8 @@ test('a server stop in a library file whose (rsc) module is a client reference s
     details: {
       reason: 'client-component',
       stop: `${LIBRARY_SOURCE_PATH}:${LIBRARY_RETURN_LINE}`,
+      router: 'app',
+      sideEffects: 'unknown',
     },
   })
   assert.equal(harness.server!.breakpointsAcknowledged(), 0)
