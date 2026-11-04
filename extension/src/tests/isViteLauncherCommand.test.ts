@@ -30,3 +30,41 @@ test('accepts the listen, refuse and await-optimizer commands and rejects any ot
     false,
   ])
 })
+
+// protects=the library-modules command is accepted only with every field well-formed, so a malformed walk request never reaches the walk; fails_when=a missing or mistyped requestId, entries or libraryFolder is accepted; no_claim=the launcher's reaction to the refusal (see viteLauncher.test.ts)
+test('accepts a well-formed library-modules command and rejects one with a missing or mistyped field', () => {
+  // Arrange
+  const wellFormed = {
+    type: 'vite-library-modules',
+    requestId: 3,
+    entries: ['/src/main.tsx'],
+    libraryFolder: '/repo/lib',
+  }
+  const malformed = [
+    { ...wellFormed, requestId: '3' },
+    { ...wellFormed, requestId: 1.5 },
+    { ...wellFormed, requestId: undefined },
+    { ...wellFormed, entries: '/src/main.tsx' },
+    { ...wellFormed, entries: ['/src/main.tsx', 7] },
+    { ...wellFormed, entries: undefined },
+    { ...wellFormed, libraryFolder: 5 },
+    { ...wellFormed, libraryFolder: undefined },
+  ]
+  // Act
+  const wellFormedResult = isViteLauncherCommand(wellFormed)
+  const malformedResults = malformed.map((value) =>
+    isViteLauncherCommand(value),
+  )
+  // Assert
+  assert.equal(wellFormedResult, true)
+  assert.deepEqual(malformedResults, [
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+  ])
+})

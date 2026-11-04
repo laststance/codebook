@@ -19,9 +19,14 @@ import {
   waitForViteOptimizerIdle,
   type ViteDependencyOptimizer,
 } from './utils/waitForViteOptimizerIdle'
+import {
+  walkViteLibraryModules,
+  type ViteWalkEnvironment,
+} from './utils/walkViteLibraryModules'
 import type {
   ViteLauncherCommand,
   ViteLauncherOptions,
+  ViteLibraryModulesCommand,
   ViteLauncherPhase,
   ViteLauncherReport,
 } from './viteLauncherProtocol'
@@ -52,7 +57,9 @@ type ViteServer = {
   close(): Promise<void>
   httpServer: { address(): unknown } | null
   /** Vite 6+ environments; the client one owns the dependency optimizer. */
-  environments?: { client?: { depsOptimizer?: ViteDependencyOptimizer } }
+  environments?: {
+    client?: { depsOptimizer?: ViteDependencyOptimizer } & ViteWalkEnvironment
+  }
 }
 
 /** The part of the app's Vite module the launcher uses. */
@@ -172,6 +179,36 @@ function failedConfigFile(
 }
 
 /**
+ * Walks Vite's client module graph for one `vite-library-modules` command and sends the answer.
+ *
+ * Why it exists: the extension needs the served modules of a workspace library before the browser opens. Called by {@link run}'s message handler after the server listens.
+ *
+ * @param server - The listening Vite server.
+ * @param command - The validated command.
+ * @param send - Sends a report over the IPC channel.
+ * @example
+ * void answerLibraryModules(server, command, send)
+ */
+async function answerLibraryModules(
+  server: ViteServer,
+  command: ViteLibraryModulesCommand,
+  send: (report: ViteLauncherReport) => Promise<void>,
+): Promise<void> {
+  const environment = server.environments?.client
+  // Without a client environment there is nothing to walk: the empty answer carries no bound, and the extension refuses it as `library-not-in-build` with no candidates (decision D15), which is truthful.
+  const found = environment
+    ? await walkViteLibraryModules(environment, command).catch(() => undefined)
+    : undefined
+  await send({
+    type: VITE_LAUNCHER_MESSAGES.libraryModulesResult,
+    requestId: command.requestId,
+    modules: found?.modules ?? [],
+    optimizedLibrary: found?.optimizedLibrary ?? false,
+    ...(found?.bound === undefined ? {} : { bound: found.bound }),
+  })
+}
+
+/**
  * The owned Vite launcher: runs inside the app's package root under the run's Node, imports the app's own Vite, creates its dev server exactly as Vite's CLI `dev` does, reports the facts of the resolved config over IPC, listens only when the extension says so, and prints the URLs for the readiness check.
  *
  * Why it exists: the config is evaluated once, and the policy is judged on the config the server really uses. Spawned by {@link launchViteDevelopmentServer} with a Node IPC channel; this module runs on load and is never imported by the extension.
@@ -275,16 +312,17 @@ async function run(): Promise<void> {
     // From now on the extension may ask when the dependency optimizer is idle, before it writes its inputs.
     const listeningServer = server
     process.on('message', (message) => {
-      if (
-        !isViteLauncherCommand(message) ||
-        message.type !== VITE_LAUNCHER_MESSAGES.awaitOptimizer
-      )
-        return
-      void waitForViteOptimizerIdle(
-        listeningServer.environments?.client?.depsOptimizer,
-      )
-        .catch(() => undefined)
-        .then(() => send({ type: VITE_LAUNCHER_MESSAGES.optimizerIdle }))
+      if (!isViteLauncherCommand(message)) return
+      if (message.type === VITE_LAUNCHER_MESSAGES.awaitOptimizer) {
+        void waitForViteOptimizerIdle(
+          listeningServer.environments?.client?.depsOptimizer,
+        )
+          .catch(() => undefined)
+          .then(() => send({ type: VITE_LAUNCHER_MESSAGES.optimizerIdle }))
+      } else if (message.type === VITE_LAUNCHER_MESSAGES.libraryModules) {
+        // Async, so a long walk never blocks the other commands.
+        void answerLibraryModules(listeningServer, message, send)
+      }
     })
     const address = server.httpServer?.address()
     await send({
