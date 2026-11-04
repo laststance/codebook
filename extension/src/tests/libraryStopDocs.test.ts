@@ -126,7 +126,7 @@ test('the help states the library-stop rule and no longer says every library sta
   )
 })
 
-// protects=API 1.22 is served and its note names the five reasons as additive; fails_when=the version or a reason of the note drifts; no_claim=the behavior behind the reasons
+// protects=API 1.23 is served and the 1.19 note names the five reasons as additive; fails_when=the version or a reason of the note drifts; no_claim=the behavior behind the reasons
 test('API_VERSION is 1.23 and its note names the five library-stop reasons', async () => {
   // Arrange
   const constants = await readPackaged('src', 'constants.ts')
@@ -143,7 +143,7 @@ test('API_VERSION is 1.23 and its note names the five library-stop reasons', asy
 })
 
 // protects=skill 1.0.68 carries the library-stop sentence (declare a library server stop, tell the learner which build to run on library-build-stale, never run it) and names no sample app or function; fails_when=the sentence changes or a sample name enters the skill; no_claim=how a chat follows it
-test('the bundled skill 1.0.71 tells the chat to name the build and never run it', async () => {
+test('the bundled skill 1.0.72 tells the chat to name the build and never run it', async () => {
   // Arrange
   const skill = await readPackaged('skills/codebook/SKILL.md')
   // Act / Assert
