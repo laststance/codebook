@@ -68,7 +68,7 @@ export type DevelopmentBundleRequest = {
   citationEndLine: number
   signal: AbortSignal
   entryPath: string
-  /** `server-action` is a Next server stop (sealed as the `(action-browser)` module, else the `(rsc)` module of the entry route's server chunk; in a Pages run as the `(pages-dir-node)` module of the page's server compile or its server chunks); a browser stop is sealed from the code the page loads. */
+  /** `server-action` is a Next server stop (sealed as the `(action-browser)` module, else the `(rsc)` module of the entry route's server chunk; in a workspace library of a nested App Router app as the library's `(rsc)` module in source terms; in a Pages run as the `(pages-dir-node)` module of the page's server compile or its server chunks); a browser stop is sealed from the code the page loads. */
   execution: 'browser' | 'server-action'
   /** The owned origin the ready server reported (`http://127.0.0.1:<port>`). */
   ownedOrigin: string
@@ -99,13 +99,13 @@ export type LibraryStopSealInput = {
   packageRootRelative: string
   /** The real (symlink-free) repository root the built files are named below. */
   realRoot: string
-  /** Set for a browser stop of a nested App Router app: the stop is sealed in source terms ({@link sealAppLibraryStop}). Absent for a Pages stop. */
+  /** Set for a stop (browser or server) of a nested App Router app: the stop is sealed in source terms ({@link sealAppLibraryStop}), from the client chunks for a browser stop and the `(rsc)` modules of the server compile for a server stop. Absent for a Pages stop. */
   appBrowser?: AppBrowserLibrarySealInput
 }
 
-/** What the App Router browser library seal needs beyond the frozen build. */
+/** What the App Router library seal (either participant) needs beyond the frozen build. */
 export type AppBrowserLibrarySealInput = {
-  /** For each frozen build flavour's built path, the paths the app's browser map may name for the stop file ({@link appResolvedPathsOf}). */
+  /** For each frozen build flavour's built path, the paths the app's map may name for the stop file ({@link appResolvedPathsOf}). */
   appResolvedPaths: Readonly<Record<string, readonly string[]>>
   /** The checked-out stop file's absolute real path, which the sealed bundle and the browser's map override lead to. */
   sourceRealPath: string

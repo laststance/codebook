@@ -624,7 +624,9 @@ export async function configuredRuntimeHarness(
   const sourceRoot =
     (options.nextPages && options.serverRuntime) ||
     viteLibrary ||
-    (library && options.participant === 'browser')
+    (library && options.participant === 'browser') ||
+    // An App Router server library stop runs in the checked-out source, named by its real path.
+    (library?.appRouterServer && options.serverRuntime)
       ? await realpath(repository.directory)
       : repository.directory
   // A browser library stop of a Next Pages run: the page executes the library's `(pages-dir-browser)` module, and the debugger reports its built line.
@@ -1639,7 +1641,9 @@ export async function configuredRuntimeHarness(
     ? library
       ? `webpack-internal:///(pages-dir-node)/${library.runtimePath}`
       : `webpack-internal:///(pages-dir-node)/./${packageSourcePath}`
-    : `webpack-internal:///(${options.serverSeal === 'rsc' ? 'rsc' : 'action-browser'})/./${packageSourcePath}`
+    : library?.appRouterServer
+      ? library.appRouterServer.rscAddress
+      : `webpack-internal:///(${options.serverSeal === 'rsc' ? 'rsc' : 'action-browser'})/./${packageSourcePath}`
   const serverParticipant = options.serverRuntime
     ? createServerParticipant({
         run: () => run,

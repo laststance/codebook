@@ -104,6 +104,8 @@ export interface ServerHit {
   unannounced?: { url?: string; scriptText?: string; reactCopy?: number }
   /** The reason both channels report for the pause (default `breakpoint` for the DAP `stopped`, `other` for the CDP pause), such as `exception`. */
   stopReason?: string
+  /** The editor breakpoints (by their id in the harness) the DAP `stopped` names in `hitBreakpointIds`, as the adapter does for a breakpoint hit; none are named by default. */
+  hitBreakpoints?: readonly string[]
 }
 
 /** Which of the two channels of a pause arrives first (`both` sends the CDP pause and then the DAP `stopped`). */
@@ -160,6 +162,7 @@ export function createServerParticipant(parts: ServerParticipantParts) {
   const frames = new Map<number, { line: number; column: number }>()
   let currentHit = 0
   let currentStopReason = 'breakpoint'
+  let currentHitBreakpointIds: number[] | undefined
   const adapterIds = new Map<string, number>()
   const adapterId = (breakpoint: { id: string }): number => {
     const known = adapterIds.get(breakpoint.id)
@@ -470,6 +473,7 @@ export function createServerParticipant(parts: ServerParticipantParts) {
     } else if (!announced.has(scriptId)) announce(scriptId)
     currentHit = ++hitNumber
     currentStopReason = hit.stopReason ?? 'breakpoint'
+    currentHitBreakpointIds = hit.hitBreakpoints?.map((id) => adapterId({ id }))
     routes.set(
       currentHit,
       hit.route === undefined ? parts.defaultRoute : hit.route,
@@ -554,7 +558,13 @@ export function createServerParticipant(parts: ServerParticipantParts) {
       type: 'event',
       seq: ++sequence,
       event: 'stopped',
-      body: { reason: currentStopReason, threadId: 1 },
+      body: {
+        reason: currentStopReason,
+        threadId: 1,
+        ...(currentHitBreakpointIds
+          ? { hitBreakpointIds: currentHitBreakpointIds }
+          : {}),
+      },
     })
   }
 

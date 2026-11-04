@@ -5,7 +5,7 @@ import ts from 'typescript'
 
 import { walkSourceMapSegments } from '../../utils/walkSourceMapSegments'
 
-import { browserChunk } from './nextPagesBuildHarness'
+import { browserChunk, serverChunk } from './nextPagesBuildHarness'
 
 /** The library the fixture app imports, as its `package.json` names it. */
 export const LIBRARY_NAME = 'lib'
@@ -47,7 +47,8 @@ const BROWSER_BUILT_COLUMNS = [0, 2, 4] as const
 const APP_GENERATED_LINES_PER_SOURCE_LINE = 2
 
 /** The webpack layer of an eval module. */
-type EvalLayer = 'pages-dir-node' | 'pages-dir-browser' | 'app-pages-browser'
+type EvalLayer =
+  'pages-dir-node' | 'pages-dir-browser' | 'app-pages-browser' | 'rsc' | 'ssr'
 
 /** A build flavour of the library. */
 export type LibraryFlavour = 'modern' | 'legacy'
@@ -86,6 +87,26 @@ export type LibraryFixtureSpec = {
     mapContent?: string
     /** Adds a second module to `layout.js` whose map names the same path as the library module. */
     extraNamingModule?: boolean
+    /**
+     * Also writes the entry route's server compile (Cycle 0081), `.next/dev/server/app/page.js`, as Next 16.2.2 writes it in E1: an `(rsc)` and an `(ssr)` module of each library flavour, each with the map Next composes (one source, the library's TypeScript at the build map's entry resolved against the app's package root, with the checked-out text). An absent field leaves the fixture byte-identical to before.
+     */
+    server?: {
+      /** The flavours the `(rsc)` layer holds; `inBrowser` by default. */
+      rsc?: readonly LibraryFlavour[]
+      /** The flavours the `(ssr)` layer holds; the `(rsc)` ones by default. Empty for a compile with no `(ssr)` module. */
+      ssr?: readonly LibraryFlavour[]
+      /** Replaces the `sources` of the `(rsc)` module's map (absolute paths), or builds them from the path Next writes for the library. */
+      mapSources?:
+        readonly string[] | ((appResolved: string) => readonly string[])
+      /** Replaces the `sourcesContent` of the `(rsc)` module's map. */
+      mapContent?: string
+      /** Adds a second `(rsc)` module under another id with the same address and another wrapper size, so the compile holds differing copies. */
+      differingRscCopy?: boolean
+      /** Adds another `(rsc)` module whose map names the same path as the library module. */
+      extraNamingRscModule?: boolean
+      /** Replaces the `(rsc)` module by the reference stub Next writes for a `'use client'` file. */
+      clientStub?: boolean
+    }
   }
 }
 
@@ -307,6 +328,19 @@ export type LibraryHarnessFiles = {
   frameFile?: string
   /** For an App Router fixture: the path the module's map names, and the chunks written (chunk path below `.next/dev`, then module text by module id). */
   appRouter?: { mapSource: string; chunks: Record<string, string> }
+  /** For an App Router fixture with a server compile: the `(rsc)` and `(ssr)` modules and addresses of the first server flavour, the hit a server pause at a source line makes, and the server chunk's path below `.next/dev`. */
+  appRouterServer?: {
+    rscJavascript: string
+    ssrJavascript: string
+    rscAddress: string
+    ssrAddress: string
+    chunkPath: string
+    /** The pause at a source line in the `(rsc)` or `(ssr)` module: the generated place of its own map and the DAP frame's source place. */
+    hitAt(sourceLine: number): {
+      generated: { line: number; column: number }
+      source: { line: number; column: number }
+    }
+  }
   /** The built line of a source line in the first flavour. */
   builtLineOf(sourceLine: number): number
   /**
@@ -606,7 +640,25 @@ async function writeAppRouterBuild(input: {
   for (const [path, text] of Object.entries(chunks))
     await put(join(appFolder, '.next/dev', path), text)
   const first = input.flavours[0] ?? 'modern'
+  const server = spec.server
+    ? await writeAppRouterServerBuild({
+        ...input,
+        spec: spec.server,
+        mapSource,
+        put,
+        appFolder,
+        pageFolder,
+      })
+    : undefined
   return {
+    ...(server
+      ? {
+          // The scripted server runs the `(rsc)` module and announces its address.
+          moduleJavascript: server.rscJavascript,
+          moduleMap: server.rscMap,
+          appRouterServer: server.facts,
+        }
+      : {}),
     frameFile: LIBRARY_SOURCE_PATH,
     appRouter: { mapSource, chunks },
     browserModuleJavascript: moduleText(first),
@@ -622,5 +674,119 @@ async function writeAppRouterBuild(input: {
       },
       source: { line: sourceLine, column: 1 },
     }),
+  }
+}
+
+/**
+ * Writes the entry route's server compile of an App Router fixture (`.next/dev/server/app/page.js`): the `(rsc)` and `(ssr)` modules of the library flavours, as E1 of Cycle 0081 measured them in Next 16.2.2.
+ * @param input - The repository, the server knobs, the path the maps name, the writer and the app's folders.
+ * @returns The first flavour's `(rsc)` text and map, and the facts a server stop's test reads.
+ * @example const server = await writeAppRouterServerBuild({ directory, realRoot, spec: {}, flavours: ['modern'], runtimePathOf, mapSource, put, appFolder, pageFolder: 'app' })
+ */
+async function writeAppRouterServerBuild(input: {
+  realRoot: string
+  spec: NonNullable<NonNullable<LibraryFixtureSpec['appRouter']>['server']>
+  flavours: readonly LibraryFlavour[]
+  runtimePathOf(flavour: LibraryFlavour): string
+  mapSource: string
+  put(path: string, text: string): Promise<void>
+  appFolder: string
+  pageFolder: string
+}) {
+  const { spec } = input
+  const rscFlavours = spec.rsc ?? input.flavours
+  const ssrFlavours = spec.ssr ?? rscFlavours
+  const moduleText = (
+    layer: 'rsc' | 'ssr',
+    flavour: LibraryFlavour,
+    wrapperLines?: number,
+  ): string =>
+    libraryEvalModule({
+      realRoot: '',
+      builtPath: input.mapSource,
+      builtText: LIBRARY_SOURCE,
+      runtimePath: input.runtimePathOf(flavour),
+      layer,
+      wrapperLines,
+      generatedLinesPerBuiltLine: APP_GENERATED_LINES_PER_SOURCE_LINE,
+      mapOverride:
+        layer === 'rsc'
+          ? {
+              sources:
+                typeof spec.mapSources === 'function'
+                  ? spec.mapSources(input.mapSource)
+                  : spec.mapSources,
+              sourcesContent:
+                spec.mapContent === undefined ? undefined : [spec.mapContent],
+            }
+          : undefined,
+    })
+  // What Next writes for a `'use client'` file in the `(rsc)` layer: a proxy whose map names the proxy module.
+  const stubText = (flavour: LibraryFlavour): string => {
+    const map = {
+      version: 3,
+      sources: ['/next/dist/build/webpack/loaders/__nextjs-internal-proxy.mjs'],
+      sourcesContent: [''],
+      names: [],
+      mappings: 'AAAA',
+    }
+    return `(0,x.registerClientReference)(function(){throw new Error("client")});\n//# sourceMappingURL=data:application/json;charset=utf-8;base64,${Buffer.from(JSON.stringify(map)).toString('base64')}\n//# sourceURL=webpack-internal:///(rsc)/${input.runtimePathOf(flavour)}\n`
+  }
+  const modules: Record<string, string> = {}
+  for (const flavour of rscFlavours) {
+    const id = `(rsc)/${input.runtimePathOf(flavour)}`
+    modules[id] = spec.clientStub
+      ? stubText(flavour)
+      : moduleText('rsc', flavour)
+    if (spec.differingRscCopy)
+      modules[`(rsc)/dup/${input.runtimePathOf(flavour)}`] = moduleText(
+        'rsc',
+        flavour,
+        WRAPPER_LINE_COUNT + 1,
+      )
+  }
+  for (const flavour of ssrFlavours)
+    modules[`(ssr)/${input.runtimePathOf(flavour)}`] = moduleText(
+      'ssr',
+      flavour,
+    )
+  if (spec.extraNamingRscModule)
+    modules['(rsc)/./src/other.ts'] = libraryEvalModule({
+      realRoot: '',
+      builtPath: input.mapSource,
+      builtText: LIBRARY_SOURCE,
+      runtimePath: './src/other.ts',
+      layer: 'rsc',
+    })
+  const chunkPath = `server/${input.pageFolder}/page.js`
+  await input.put(
+    join(input.appFolder, '.next/dev', chunkPath),
+    serverChunk(modules),
+  )
+  const first = rscFlavours[0] ?? 'modern'
+  const rscJavascript = moduleText('rsc', first)
+  const ssrJavascript = moduleText('ssr', ssrFlavours[0] ?? first)
+  return {
+    rscJavascript,
+    rscMap: Buffer.from(
+      /base64,([A-Za-z\d+/=]+)/.exec(rscJavascript)![1]!,
+      'base64',
+    ).toString(),
+    facts: {
+      rscJavascript,
+      ssrJavascript,
+      rscAddress: `webpack-internal:///(rsc)/${input.runtimePathOf(first)}`,
+      ssrAddress: `webpack-internal:///(ssr)/${input.runtimePathOf(ssrFlavours[0] ?? first)}`,
+      chunkPath,
+      hitAt: (sourceLine: number) => ({
+        generated: {
+          line:
+            (sourceLine - 1) * APP_GENERATED_LINES_PER_SOURCE_LINE +
+            WRAPPER_LINE_COUNT,
+          column: 0,
+        },
+        source: { line: sourceLine, column: 1 },
+      }),
+    },
   }
 }
