@@ -271,7 +271,7 @@ test('a browser lost at a paused stop seals the history partial naming the surfa
 // protects=D16: the run tells the Application view that it records while its history writes and names the first missing part once the browser is lost; fails_when=the view keeps reading "Recording for replay" after the surface ended, or never learns the run records; no_claim=the words the view prints (chromeExtensionViewport.test.ts)
 test('a run tells its view it records and then that the recording is partial once the browser is lost', async (context) => {
   // Arrange
-  const { beginHistory } = await recordingOver(context)
+  const { kept, beginHistory } = await recordingOver(context)
   const harness = createRunHarness({ beginHistory })
   await harness.run.prepare()
   await harness.run.click()
@@ -292,6 +292,11 @@ test('a run tells its view it records and then that the recording is partial onc
     kind: 'partial',
     code: 'EXTENSION_HISTORY_SURFACE_ENDED',
   })
+  // Cleanup: the service seals the history after a run stops; this harness does not, so the test seals it before the repository folder is removed, or the frame writer can still be writing there.
+  await kept.recorder?.seal(
+    { failureCode: harness.run.view().runFailure?.code },
+    5_000,
+  )
 })
 
 // protects=D16: a run whose history could not start tells its view `not recorded` with the cause the service kept, and the run goes on; fails_when=the view says it records, or the cause is lost; no_claim=the shortening of the cause (chromeExtensionViewport.test.ts)
