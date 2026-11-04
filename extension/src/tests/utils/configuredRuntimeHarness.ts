@@ -915,10 +915,17 @@ export async function configuredRuntimeHarness(
    * @returns The adapter's id.
    * @example browserAdapterIdOf('owned-breakpoint-2') // 2 in an App Router server run, else 1
    */
-  const browserAdapterIdOf = (breakpointId: string): number =>
-    library?.appRouterServer
-      ? Number(/-(\d+)$/.exec(breakpointId)?.[1] ?? 1)
-      : 1
+  const browserAdapterIdOf = (breakpointId: string): number => {
+    if (!library?.appRouterServer) return 1
+    // `owned-breakpoint` is 1; a suffixed id carries its number. Any other id would silently share id 1 with an owned breakpoint.
+    if (breakpointId === 'owned-breakpoint') return 1
+    const suffix = /^owned-breakpoint-(\d+)$/.exec(breakpointId)?.[1]
+    if (suffix === undefined)
+      throw new Error(
+        `browserAdapterIdOf: ${breakpointId} is no owned breakpoint of an App Router server run`,
+      )
+    return Number(suffix)
+  }
   /** Sends the page session's `setBreakpoints` request and the adapter's answer for the editor's breakpoints in the library file, as the page's adapter acknowledges them. */
   const acknowledgeBrowserBreakpoints = (): void => {
     const owned = breakpoints.filter((breakpoint) =>

@@ -364,7 +364,7 @@ test('a server library stop whose two built flavours are both (rsc) modules is r
   })
 })
 
-// protects=AC 3 case 7 differing `(rsc)` copies of the module are refused library-not-in-build, not as an uncoded ambiguity, while the `(ssr)` module beside them is no copy; fails_when=the run ends with the raw ambiguity text or seals one copy; no_claim=how a bundler would come to carry two different copies
+// protects=AC 3 case 7 the fixture writes two `(rsc)` modules of the one library file, at the same address with different bytes, in the one server chunk; they are refused library-not-in-build, not as an uncoded ambiguity, while the `(ssr)` module beside them is no copy; fails_when=the run ends with the raw ambiguity text or seals one copy; no_claim=how a bundler would come to carry two different copies
 test('a server library stop whose (rsc) module differs between two copies is refused as not-in-build', async (context) => {
   // Arrange
   const staged = stageAppServer({ differingRscCopy: true })
@@ -464,14 +464,23 @@ test('a server library stop is refused as build-changed when the built file chan
   // Arrange
   const staged = stageAppServer()
   const harness = await openAppServerRun(context, staged)
-  let reads = 0
+  let didChange = false
   const original = reader.readRepositoryBuildText
   context.mock.method(
     reader,
     'readRepositoryBuildText',
     async (...args: Parameters<typeof original>) => {
       const [root, path] = args
-      if (path.endsWith('build/modern/core.js') && ++reads === 2) {
+      // The change lands on the first read after the readiness request (the seal's read), whatever the number of reads before it.
+      const isAfterReadiness = harness.run
+        .view()
+        .events.some((event) => event.type === 'readiness.entry-request')
+      if (
+        path.endsWith('build/modern/core.js') &&
+        isAfterReadiness &&
+        !didChange
+      ) {
+        didChange = true
         const fullPath = join(root, path)
         await writeFile(fullPath, `${await readFile(fullPath, 'utf8')}\n`)
       }
@@ -659,6 +668,9 @@ test('a pause in the React copy of the library module at the server stop line is
   assert.equal(stop.source.line, LIBRARY_RETURN_LINE)
 })
 
+/** How long a test waits to see that nothing was resumed. */
+const SETTLE_MS = 400
+
 /** The click operation of a run with a browser stop after it. */
 const CLICK_OPERATION = {
   kind: 'click',
@@ -833,6 +845,230 @@ test('a browser pause at the line only a server stop declares is resumed and nev
   assert.equal(harness.run.view().failures.length, 0)
   assert.equal(stop.source.line, 2)
   assert.equal(harness.run.view().snapshots.length, 2)
+})
+
+// protects=O2-1 an `(ssr)` copy announced in the resolved spelling, whose text read is still open when it pauses while the run is idle (entry-render stop done, no operation yet), is resumed through the copy route once the read answers; fails_when=the idle pause is dropped before the layer is known and its `stopped` fails the run as an unexpected server stop; no_claim=js-debug's real timing of a script read (the read is held by the harness)
+test('an (ssr) copy pause during its still-open layer read while the run is idle is resumed as a library copy', async (context) => {
+  // Arrange
+  const staged = stageAppServer()
+  const harness = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [
+      {
+        line: 2,
+        column: 1,
+        inspections: [{ path: 'count', mode: 'value', required: true }],
+      },
+    ],
+    libraryAppServerOptions(staged, {
+      inspectionScope: { doubled: 6, count: 3 },
+      operations: {
+        operations: [CLICK_OPERATION],
+        stopOperations: [0, 1],
+        stopParticipants: ['server', 'browser'],
+      },
+    }),
+  )
+  const prepared = harness.run.prepare()
+  prepared.catch(() => undefined)
+  await waitUntil(
+    () => harness.server!.breakpointsAcknowledged() > 0,
+    'the entry-render stop was registered',
+  )
+  const files = staged.files()
+  const server = files.appRouterServer!
+  announceResolved(harness, 'rsc-1', server.rscJavascript, server.rscAddress)
+  await journaledOnce(harness, 'stop.module-parsed')
+  harness.server!.hit({
+    ...server.hitAt(LIBRARY_RETURN_LINE),
+    scriptId: 'rsc-1',
+  })
+  const entry = await waitUntil(
+    () => harness.run.view().participants.server?.snapshot,
+    'the entry-render stop S',
+  )
+  harness.replaceExecutedModule(files.browserModuleJavascript)
+  harness.announceScript('browser-lib', new URL(files.browserAddress).href)
+  harness.setDocumentReadyState('complete')
+  harness.suppressInputPause()
+  await harness.run.continue('server', entry.pause)
+  await prepared
+  // The run is idle now: no operation has started. The copy's text read stays open while it pauses.
+  const releaseRead = harness.server!.holdScriptRead('ssr-1')
+  announceResolved(harness, 'ssr-1', server.ssrJavascript, server.ssrAddress)
+  // Act
+  harness.server!.hit({
+    ...server.hitAt(LIBRARY_RETURN_LINE),
+    scriptId: 'ssr-1',
+    hitBreakpoints: ['owned-breakpoint'],
+  })
+  releaseRead()
+  await waitUntil(
+    () => harness.server!.continues.length === 2,
+    'the idle copy pause was resumed after its layer read',
+  )
+  // Assert
+  assert.equal(harness.run.view().failures.length, 0)
+  assert.deepEqual(journaled(harness, 'breakpoint.library-copy'), [
+    { scriptUrl: server.ssrAddress },
+  ])
+})
+
+// protects=O2-3 a layer read that fails is journaled with the script id and the cause, and the script stays unknown; fails_when=the failure is swallowed without a journal entry; no_claim=which scripts js-debug announces in the resolved spelling
+test('a failed layer read of a resolved-spelling script is journaled with its script id and cause', async (context) => {
+  // Arrange
+  const staged = stageAppServer()
+  const { harness } = await armedAppServerRun(context, staged)
+  const files = staged.files().appRouterServer!
+  harness.server!.failNextScriptRead('ssr-1')
+  // Act
+  announceResolved(harness, 'ssr-1', files.ssrJavascript, files.ssrAddress)
+  await journaledOnce(harness, 'stop.library-identify-failed')
+  // Assert
+  const [entry] = journaled(harness, 'stop.library-identify-failed') as {
+    scriptId: string
+    cause: string
+  }[]
+  assert.equal(entry!.scriptId, 'ssr-1')
+  assert.equal(typeof entry!.cause, 'string')
+  assert.notEqual(entry!.cause, '')
+  assert.equal(harness.run.view().failures.length, 0)
+})
+
+// protects=O4-2 an `(ssr)` copy pause at the server stop's line that also names a breakpoint of the learner's is not resumed as a library copy, so the learner's pause keeps the ordinary handling; fails_when=the copy route resumes a pause the learner's breakpoint also hit; no_claim=what the ordinary handling then does with the pause (only that no library-copy resume or journal happens)
+test('an (ssr) copy pause that also names a learner breakpoint is not resumed as a library copy', async (context) => {
+  // Arrange
+  const staged = stageAppServer()
+  const { harness } = await armedAppServerRun(context, staged)
+  const files = staged.files().appRouterServer!
+  announceResolved(harness, 'ssr-1', files.ssrJavascript, files.ssrAddress)
+  announceResolved(harness, 'rsc-1', files.rscJavascript, files.rscAddress)
+  await journaledOnce(harness, 'stop.module-parsed')
+  // Act
+  harness.server!.hit({
+    ...files.hitAt(LIBRARY_RETURN_LINE),
+    scriptId: 'ssr-1',
+    hitBreakpoints: ['owned-breakpoint', 'learner-owned'],
+  })
+  await new Promise((settle) => setTimeout(settle, SETTLE_MS))
+  // Assert
+  assert.equal(harness.server!.continues.length, 0)
+  assert.deepEqual(journaled(harness, 'breakpoint.library-copy'), [])
+})
+
+// protects=O4-2 a React copy pause at the server stop's line that also names a breakpoint of the learner's is not resumed as a React copy; fails_when=the React-copy route resumes a pause the learner's breakpoint also hit; no_claim=what the ordinary handling then does with the pause
+test('a React copy pause that also names a learner breakpoint is not resumed as a React copy', async (context) => {
+  // Arrange
+  const staged = stageAppServer()
+  const { harness } = await armedAppServerRun(context, staged)
+  const files = staged.files().appRouterServer!
+  // Act
+  harness.server!.hit({
+    ...files.hitAt(LIBRARY_RETURN_LINE),
+    scriptId: 'react-copy',
+    unannounced: { reactCopy: 107 },
+    hitBreakpoints: ['owned-breakpoint', 'learner-owned'],
+  })
+  await new Promise((settle) => setTimeout(settle, SETTLE_MS))
+  // Assert
+  assert.equal(harness.server!.continues.length, 0)
+  assert.deepEqual(journaled(harness, 'breakpoint.react-copy'), [])
+})
+
+// protects=O4-2 an `(ssr)` copy pause that names no breakpoint at all is not resumed as a library copy; fails_when=a pause without hitBreakpointIds is taken for a copy of the run's own breakpoints; no_claim=what the ordinary handling then does with the pause
+test('an (ssr) copy pause that names no breakpoint is not resumed as a library copy', async (context) => {
+  // Arrange
+  const staged = stageAppServer()
+  const { harness } = await armedAppServerRun(context, staged)
+  const files = staged.files().appRouterServer!
+  announceResolved(harness, 'ssr-1', files.ssrJavascript, files.ssrAddress)
+  announceResolved(harness, 'rsc-1', files.rscJavascript, files.rscAddress)
+  await journaledOnce(harness, 'stop.module-parsed')
+  // Act
+  harness.server!.hit({
+    ...files.hitAt(LIBRARY_RETURN_LINE),
+    scriptId: 'ssr-1',
+  })
+  await new Promise((settle) => setTimeout(settle, SETTLE_MS))
+  // Assert
+  assert.equal(harness.server!.continues.length, 0)
+  assert.deepEqual(journaled(harness, 'breakpoint.library-copy'), [])
+})
+
+// protects=O2-2 a browser stop and a server stop at the same line of one library file: a browser pause there that names only the server stop's breakpoint is observed as the browser stop and never resumed as a server stop's copy; fails_when=the pause is resumed by id alone and the browser observation is lost; no_claim=js-debug's real ids for a shared location (the id is scripted)
+test('a browser pause at a line both a browser and a server stop declare is observed, not resumed', async (context) => {
+  // Arrange
+  const staged = stageAppServer()
+  const harness = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [
+      {
+        line: LIBRARY_RETURN_LINE,
+        column: 1,
+        inspections: [{ path: 'count', mode: 'value', required: true }],
+      },
+    ],
+    libraryAppServerOptions(staged, {
+      inspectionScope: { doubled: 6, count: 3 },
+      operations: {
+        operations: [CLICK_OPERATION],
+        stopOperations: [0, 1],
+        stopParticipants: ['server', 'browser'],
+      },
+    }),
+  )
+  const prepared = harness.run.prepare()
+  prepared.catch(() => undefined)
+  await waitUntil(
+    () => harness.server!.breakpointsAcknowledged() > 0,
+    'the entry-render stop was registered',
+  )
+  const files = staged.files()
+  const server = files.appRouterServer!
+  announceResolved(harness, 'rsc-1', server.rscJavascript, server.rscAddress)
+  await journaledOnce(harness, 'stop.module-parsed')
+  harness.server!.hit({
+    ...server.hitAt(LIBRARY_RETURN_LINE),
+    scriptId: 'rsc-1',
+  })
+  const entry = await waitUntil(
+    () => harness.run.view().participants.server?.snapshot,
+    'the entry-render stop S',
+  )
+  harness.replaceExecutedModule(files.browserModuleJavascript)
+  harness.announceScript('browser-lib', new URL(files.browserAddress).href)
+  harness.setDocumentReadyState('complete')
+  harness.suppressInputPause()
+  await harness.run.continue('server', entry.pause)
+  await prepared
+  harness.run.action('op-1', 'repository-operation')
+  await waitUntil(
+    () =>
+      harness.breakpoints.some(
+        (breakpoint) => breakpoint.id === 'owned-breakpoint-2',
+      ),
+    'the browser stop B was armed',
+  )
+  await waitUntil(() => harness.inputsSeen() >= 1, 'the click was sent')
+  // Act
+  harness.pauseBrowserInLibrary({
+    scriptId: 'browser-lib',
+    ...files.hitAt(LIBRARY_RETURN_LINE),
+    hitBreakpointIds: [harness.browserAdapterIdOf('owned-breakpoint')],
+  })
+  const stop = await waitUntil(
+    () => harness.run.view().participants.browser?.snapshot,
+    'the browser stop B at the shared line',
+  )
+  // Assert
+  assert.equal(stop.source.line, LIBRARY_RETURN_LINE)
+  assert.equal(
+    harness.commands.filter((command) => command === 'continue').length,
+    0,
+  )
+  assert.deepEqual(journaled(harness, 'breakpoint.library-copy'), [])
 })
 
 /** Adds a Pages folder to the nested app, so it holds both routers. */

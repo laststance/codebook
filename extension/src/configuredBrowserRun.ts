@@ -74,6 +74,7 @@ import {
   SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION,
   SECRET_FRAME_VALUE_COPY_MIN_CHARS,
   SIGN_IN_REPOSITORY_NAME_FALLBACK,
+  UI_CAUSE_MAX_CHARS,
 } from './constants'
 import type {
   DevelopmentBundle,
@@ -1608,7 +1609,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const key = libraryFreezeKey(stop.source)
     const known = this.libraryFreezes.get(key)
     if (known) {
-      // A browser and a server stop in one file are one file: the freeze is shared and both debuggers map it.
+      // A stop with the same path, line and column (the key) shares the freeze whichever participant declares it, so both debuggers map it.
       known.participants.add(stop.participant)
       return true
     }
@@ -2645,7 +2646,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       !(
         this.isRepeatOfPausedStop(event, this.stops.slice(0, this.stopIndex)) ||
         this.isBrowserLibraryCopy(event) ||
-        this.libraryCopyPauseOf(event) !== undefined
+        this.libraryCopyPauseOf(event) !== undefined ||
+        // A layer read still pending cannot yet say whether this pause is an (ssr) copy; it is held, and the `stopped` judges it after the read ({@link libraryCopyVerdictOf}).
+        this.appLibraryIdentifications.size > 0
       )
     )
       return
@@ -2730,7 +2733,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         return this.verdictOfHandedBackCopy(copy, isOwned)
       // The adapter may have resumed the copy while the stack was read: nothing is paused, so nothing is resumed or admitted.
       if (participant.copyPause !== copy) return 'gone'
-      if (isOwned) return { action: 'resume', event: 'breakpoint.react-copy' }
+      // A pause that also hit a breakpoint of the learner's (an id no server stop of the run owns) is theirs to see: it is not resumed as the copy of the run's own breakpoint.
+      const namesForeignBreakpoint = this.namesForeignServerBreakpoint(
+        session,
+        event.body?.hitBreakpointIds,
+      )
+      if (isOwned && !namesForeignBreakpoint)
+        return { action: 'resume', event: 'breakpoint.react-copy' }
       // Not at a stop of this run: today's handling, as if the pause had come to the intake plainly.
       this.dropCopyPause()
       this.admitPause('server', copy.event, copy.journaled, true)
@@ -2775,10 +2784,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     session: vscode.DebugSession,
     event: DebugProtocol.Event,
     held: NonNullable<DebugParticipant['unannouncedPause']>,
-  ): Promise<LibraryCopyVerdict | undefined> {
+  ): Promise<LibraryCopyVerdict | 'gone' | undefined> {
     if (event.body?.reason !== 'breakpoint') return undefined
     // A script announced in the resolved spelling is told from its layer by its text, which may still be read.
     await Promise.all([...this.appLibraryIdentifications])
+    // The pause may have left the held slot while the layer reads ran: nothing is resumed for a pause no longer held. One the run adopted as a stop meanwhile (a module announced again readmits it) is the stop machinery's, so the event goes on to it.
+    if (this.participants.server.unannouncedPause !== held) {
+      const server = this.participants.server
+      const isAdoptedAsStop =
+        server.stopped?.event === held.event ||
+        this.pendingCdpStop?.event === held.event
+      return isAdoptedAsStop ? undefined : 'gone'
+    }
     const scriptUrl = this.libraryCopyPauseOf(held.event)
     if (
       scriptUrl === undefined ||
@@ -2790,6 +2807,26 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       event: 'breakpoint.library-copy',
       scriptUrl: this.journalScriptUrlOf(scriptUrl),
     }
+  }
+
+  /**
+   * Tells whether a server pause names a breakpoint id that no server stop of the run owns, for {@link unexpectedHitVerdict}'s React-copy branch.
+   * Why it exists: React's copy of an owned stop's module is resumed only when the run's own breakpoints caused the pause; a learner's breakpoint at the same place must keep the ordinary handling (D12/D19).
+   * @param session - The server session whose adapter numbered the breakpoints.
+   * @param hitIds - The adapter's ids of the breakpoints the pause hit.
+   * @returns `true` when at least one id is named and some id is not a server stop's breakpoint (live or retired); `false` for no ids or only the run's own.
+   * @example this.namesForeignServerBreakpoint(session, [41, 9]) // true when 9 is the learner's breakpoint
+   */
+  private namesForeignServerBreakpoint(
+    session: vscode.DebugSession,
+    hitIds: readonly number[] | undefined,
+  ): boolean {
+    if (!hitIds || hitIds.length === 0) return false
+    return !this.hitsOnlyBreakpointsOf(
+      session,
+      hitIds,
+      (stop) => stop.participant === 'server',
+    )
   }
 
   /**
@@ -7678,7 +7715,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     let url: string | undefined
     try {
       url = lastSourceUrlOf(await this.instanceTextOf('server', event.scriptId))
-    } catch {
+    } catch (error) {
+      // The script stays unknown (behavior unchanged), but the cause is kept as evidence.
+      this.journalStopModule('stop.library-identify-failed', {
+        participant: 'server',
+        source: stop.source.path,
+        line: stop.source.line,
+        scriptId: event.scriptId,
+        cause: this.maskRunText(
+          error instanceof Error ? error.message : String(error),
+        ).slice(0, UI_CAUSE_MAX_CHARS),
+      })
       return
     }
     if (!url || !this.isRunOpen()) return
@@ -8178,7 +8225,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       | 'stop.instance-sealed'
       | 'stop.instance-coexisting'
       | 'stop.instance-refused'
-      | 'stop.library-copy',
+      | 'stop.library-copy'
+      | 'stop.library-identify-failed',
     payload: Record<string, unknown>,
   ): void {
     const journaled = this.stopModuleJournaled.get(type) ?? 0
@@ -10835,6 +10883,26 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (serverStops.length === 0 || !hitIds.every(isServerId)) return undefined
     const held =
       this.participants.browser.unannouncedPause ?? this.transientBrowserPause
+    // An id says which breakpoint was hit, not which participant's stop the pause is: a retired id maps to no stop at all. The pause's place decides; a pause at the place of a browser stop of the file is that stop's. While the page's runtime has not reported the place, a server stop that shares its line with a browser stop of the file cannot be told apart by id, so the pause is observed, never resumed.
+    const isAtBrowserStopPlace =
+      held === undefined
+        ? serverStops.some((stop) =>
+            this.stops.some(
+              (other) =>
+                other.participant === 'browser' &&
+                other.source.path === stop.source.path &&
+                other.source.line === stop.source.line,
+            ),
+          )
+        : this.stops.some(
+            (other) =>
+              other.participant === 'browser' &&
+              serverStops.some(
+                (stop) => stop.source.path === other.source.path,
+              ) &&
+              this.isPauseOfStop(held.event, other),
+          )
+    if (isAtBrowserStopPlace) return undefined
     const url = held ? this.pageScriptUrlOf(held.event) : undefined
     return {
       stop: serverStops[0]!,
