@@ -2203,6 +2203,8 @@ export const VALUE_SHAPE_KEY_LIMIT = 12
 export const VALUE_SHAPE_KEY_LIMIT_CHARS = 40
 /** The longest shape summary; a longer one is cut, so a malformed payload cannot grow the Output line that names it. */
 export const VALUE_SHAPE_SUMMARY_LIMIT_CHARS = 300
+/** The error a stop's capture reads when the paused page drew no image within {@link CAPTURE_TIMEOUT_MS}: the stop keeps its source and values, and the run goes on and ends partial (native C79-2: a stop that pauses right after the previous stop's continue, in the same render). */
+export const STOP_IMAGE_UNAVAILABLE_TEXT = `The paused page drew no image of this stop within ${CAPTURE_TIMEOUT_MS / 1000} s; the stop keeps its source and values, and the run goes on and ends partial.`
 /** The longest a pause no debugger stop announced may last for its resume to count as the debug adapter's own; the adapter resumes its pauses within milliseconds, and a pause that outlasts the wait for a stop's own pause is taken as announced, so this bound is that wait's bound ({@link CAPTURE_TIMEOUT_MS}) and follows it. */
 export const REPOSITORY_ADAPTER_PAUSE_LIMIT_MS = CAPTURE_TIMEOUT_MS
 /** The longest a page pause may last in a run that declares no browser stop before the run ends as "Unowned browser stop remained paused": the debug adapter resumes a pause of its own within milliseconds, and nobody else may pause the page of such a run. A pause in the page's stub of a declared server stop's module has {@link REPOSITORY_ADAPTER_PAUSE_LIMIT_MS} instead, because the adapter first reports that pause as a stop, which the run then resumes itself. */

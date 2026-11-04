@@ -33,6 +33,7 @@ import {
   type SecretFrameGate,
   type SecretFrameVerdict,
 } from '../../runtimeSupport/secretFrameGate'
+import { CdpRequestTimeoutError } from '../../runtimeSupport/utils/cdpRequestTimeoutError'
 import { describeWithheldImage } from '../../runtimeSupport/utils/describeWithheldImage'
 import { sha256 } from '../../runtimeSupport/utils/sha256'
 import { WaitTimeoutError } from '../../runtimeSupport/utils/waitTimeoutError'
@@ -346,6 +347,8 @@ export async function configuredRuntimeHarness(
     appEntryConfirmationHangs?: boolean
     /** Makes the stand-in page never answer a screenshot until the run is cancelled, so the run stays at the end of its setup, after the inputs were written. */
     holdScreenshot?: boolean
+    /** The screenshot requests (counted from 1 over the run) the stand-in page leaves unanswered until the request's bound, as a page paused in the middle of a frame does: each fails with the client's timeout error. */
+    timedOutScreenshots?: readonly number[]
     /**
      * Runs a version 3 configuration of ordered operations instead of the single action: the first stop and each of `additionalStops` follow the operation `stopOperations` names (the first stop first). A stop's pause is reported inside the input of its operation, which the page answers only once the operation's last stop was continued, as a handler paused in the debugger does.
      */
@@ -1522,6 +1525,9 @@ export async function configuredRuntimeHarness(
           return new Promise<never>((_resolve, reject) => {
             rejectHeldScreenshot = reject
           })
+        // A request the page never answers fails as the client's bound ends it.
+        if (options.timedOutScreenshots?.includes(screenshotCount))
+          throw new CdpRequestTimeoutError(method)
         return { data: screenshot }
       }
       if (method === 'Input.dispatchMouseEvent') {

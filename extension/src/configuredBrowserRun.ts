@@ -64,6 +64,7 @@ import {
   REPOSITORY_RUN_TIMEOUT_MS,
   REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT,
   SECRET_FRAME_SOURCE_URL,
+  STOP_IMAGE_UNAVAILABLE_TEXT,
   REPOSITORY_SETUP_TIMEOUT_MS,
   VITE_PAGE_GENERATION_LIMIT,
   VITE_SETUP_STEPS,
@@ -152,6 +153,7 @@ import {
   WITHHOLD_REASON_OF_VERDICT,
 } from './runtimeSupport/secretFrameGate'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
+import { CdpRequestTimeoutError } from './runtimeSupport/utils/cdpRequestTimeoutError'
 import { describeWithheldImage } from './runtimeSupport/utils/describeWithheldImage'
 import { isStopCausedByCodebook } from './runtimeSupport/utils/isStopCausedByCodebook'
 import { settleCleanup } from './runtimeSupport/utils/settleCleanup'
@@ -12255,17 +12257,26 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.evidence.record('capture.requested', { phase, pause })
     try {
       const requestedAtMs = Date.now()
-      const result = await this.requireCdp().request(
-        'Page.captureScreenshot',
-        { format: 'png' },
-        CAPTURE_TIMEOUT_MS,
-      )
+      const data = await this.screenshotOrUnavailable(pause)
       current()
-      const bytes = Buffer.from(result.data, 'base64'),
+      if (data === undefined) {
+        // The paused page drew no image in time: the stop keeps its source and values, the recording keeps a gap, and the run goes on and ends partial.
+        this.captures[phase] = {
+          status: 'failed',
+          error: STOP_IMAGE_UNAVAILABLE_TEXT,
+        }
+        this.evidence.record('capture.unavailable', {
+          phase,
+          pause,
+          timeoutMs: CAPTURE_TIMEOUT_MS,
+        })
+        return
+      }
+      const bytes = Buffer.from(data, 'base64'),
         hash = sha256(bytes)
       // A stop screenshot keeps no pixel from a window the secret gate cannot call safe; it reaches the recorder in order with the stream frames.
       const verdict = await this.browser.recordCapture(
-        result.data,
+        data,
         phase,
         requestedAtMs,
       )
@@ -12290,7 +12301,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       // Native debugger focus can hide the leased panel; reacquire renderer readiness without closing the learner's source tab.
       await this.browser.reveal(this.abort.signal)
       current()
-      const renderer = await this.browser.presentCapture(result.data, phase)
+      const renderer = await this.browser.presentCapture(data, phase)
       current()
       if (!renderer || renderer.hash !== hash)
         throw new Error('Renderer did not acknowledge exact phase bytes')
@@ -12303,6 +12314,30 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         pause,
         reason: String(error),
       })
+      throw error
+    }
+  }
+  /**
+   * Requests the page's image for a capture, and tells a stop image the paused page did not deliver in time apart from every other failure.
+   * Why it exists: a stop that pauses right after the previous stop's continue, in the same task (`QueryCache.build`, then `Query.fetch`, in one render in native C79-2), can leave the paused page unable to answer `Page.captureScreenshot` within {@link CAPTURE_TIMEOUT_MS}, while the stop's source and values were already read. Such a stop image becomes unavailable and the run goes on; any other failure, and an image that belongs to no stop, still fails the run. Called by {@link capture}.
+   * @param pause - The stop's pause identity; absent for an image of no stop (`before`, `after`).
+   * @returns The screenshot's base64 PNG data, or `undefined` for a stop image the page did not deliver within the bound.
+   * @throws Every other failure of the request, unchanged.
+   * @example await this.screenshotOrUnavailable({ sessionId: 'page', threadId: 1, generation: 2 }) // => undefined when the paused page drew nothing within 3 s
+   */
+  private async screenshotOrUnavailable(
+    pause: PauseIdentity | undefined,
+  ): Promise<string | undefined> {
+    try {
+      const result = await this.requireCdp().request(
+        'Page.captureScreenshot',
+        { format: 'png' },
+        CAPTURE_TIMEOUT_MS,
+      )
+      return result.data
+    } catch (error) {
+      // Only a stop's image may be missing: its source and values were read before it.
+      if (pause && error instanceof CdpRequestTimeoutError) return undefined
       throw error
     }
   }
