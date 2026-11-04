@@ -277,7 +277,7 @@ export function serverRenderHelp() {
         {
           item: 'saved study of a run below the repository root (packageRoot, API 1.18)',
           change:
-            'format 9 (.study.v9.json): the evidence rules of format 7 or 8 (whichever the configuration takes without packageRoot) plus the packageRoot field. Codebook 0.2.74.0 lists a format 9 study as saved by a newer Codebook; update Codebook to open it. Studies of runs without packageRoot keep formats 3 to 8, unchanged (nextPackageRoot)',
+            'format 9 (.study.v9.json), for adapter next-dev-webpack: the evidence rules of format 7 or 8 (whichever the configuration takes without packageRoot) plus the packageRoot field. Codebook 0.2.74.0 lists a format 9 study as saved by a newer Codebook; update Codebook to open it. Studies of runs without packageRoot keep formats 3 to 8, unchanged (nextPackageRoot)',
         },
         {
           item: 'saved study of a Vite run below the repository root (packageRoot, API 1.20)',

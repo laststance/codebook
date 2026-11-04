@@ -509,7 +509,14 @@ test('the migration table separates the saved Pages run (format 8 unchanged) fro
     row.item.startsWith('saved study of a Pages Router server run'),
   )
   // Assert
-  assert.equal(table.length, 6)
+  assert.equal(table.length, 7)
+  assert.ok(
+    table.some((row) =>
+      row.item.startsWith(
+        'saved study of a Vite run below the repository root',
+      ),
+    ),
+  )
   assert.equal(
     live?.change,
     'Codebook 0.2.74.0 or later, MCP API 1.17 or later; an older Codebook refuses a server stop in a Pages run with NEXT_SERVER_ONLY_STOP',
