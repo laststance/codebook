@@ -1,0 +1,225 @@
+{
+  "version": 9,
+  "workspaceKey": "0000000000000000000000000000000000000000000000000000000000000000",
+  "id": "08f6a332-95e1-4487-ba29-244f3a3256fb_15312f1f-ce82-4921-b2d8-19a343bcd6bf",
+  "instanceId": "08f6a332-95e1-4487-ba29-244f3a3256fb",
+  "runId": "15312f1f-ce82-4921-b2d8-19a343bcd6bf",
+  "profile": "repository-browser",
+  "createdAt": "2026-11-04T14:11:58.937Z",
+  "savedAt": "2026-11-04T14:11:59.122Z",
+  "state": "paused-browser",
+  "terminal": false,
+  "finalOutcome": "pending-teardown",
+  "materialSignature": "958c940573e71e7d1fabc11a6a4cadeeeccd3fdc4e8fc15d817383cf18602e2a",
+  "configuration": {
+    "version": 3,
+    "adapter": "next-dev-webpack",
+    "book": {
+      "bookId": "interface",
+      "revision": 1,
+      "nodeId": "theme",
+      "anchorIndex": 0
+    },
+    "source": {
+      "path": "packages/lib/src/core.ts",
+      "hash": "a8106b1601e84d7525e84ed95ade45c3d88e68bd54af34a5103beef8c3063858",
+      "line": 3,
+      "column": 1
+    },
+    "participant": "browser",
+    "afterOperation": 1,
+    "before": [
+      {
+        "kind": "visible",
+        "selector": "button"
+      }
+    ],
+    "after": [
+      {
+        "kind": "text",
+        "selector": "label",
+        "equals": "Dark"
+      }
+    ],
+    "operations": [
+      {
+        "kind": "click",
+        "title": "Next page",
+        "selector": "a"
+      }
+    ],
+    "inspections": [
+      {
+        "path": "doubled",
+        "mode": "value",
+        "required": true
+      }
+    ],
+    "additionalStops": [],
+    "packageRoot": "examples/app"
+  },
+  "configurationHash": "df1c7921c4b149f3a58d1f1f118081bc7dc4dc65b65d57547d006347091d6cdd",
+  "descriptor": {
+    "itemId": "repository/interface/theme",
+    "bookTitle": "Interface",
+    "nodeTitle": "Theme",
+    "anchors": [
+      {
+        "path": "packages/lib/src/core.ts",
+        "hash": "a8106b1601e84d7525e84ed95ade45c3d88e68bd54af34a5103beef8c3063858",
+        "startLine": 1,
+        "endLine": 4
+      },
+      {
+        "path": "src/mode.ts",
+        "hash": "f6d4386593d51ec67ad6d6811031238456f33ee12b3fa92a9df833159a355501",
+        "startLine": 1,
+        "endLine": 1
+      }
+    ],
+    "citationContext": {
+      "kind": "citations",
+      "hash": "54e03fecb83bcc52835fd1388e0a039afa935aa560083eecdc9def33148efaad",
+      "anchors": [
+        {
+          "path": "packages/lib/src/core.ts",
+          "hash": "a8106b1601e84d7525e84ed95ade45c3d88e68bd54af34a5103beef8c3063858",
+          "startLine": 1,
+          "endLine": 4
+        },
+        {
+          "path": "src/mode.ts",
+          "hash": "f6d4386593d51ec67ad6d6811031238456f33ee12b3fa92a9df833159a355501",
+          "startLine": 1,
+          "endLine": 1
+        }
+      ]
+    },
+    "sources": [
+      {
+        "path": "packages/lib/src/core.ts",
+        "hash": "a8106b1601e84d7525e84ed95ade45c3d88e68bd54af34a5103beef8c3063858",
+        "text": "export function double(count: number): number {\n  const doubled = count * 2\n  return doubled\n}\n",
+        "lineCount": 5
+      },
+      {
+        "path": "src/mode.ts",
+        "hash": "f6d4386593d51ec67ad6d6811031238456f33ee12b3fa92a9df833159a355501",
+        "text": "export const mode = \"display\";\n",
+        "lineCount": 2
+      }
+    ]
+  },
+  "operation": {
+    "id": "283dbc9b-7ae2-4dd9-8e69-7f9c48536d61",
+    "key": "one",
+    "inputDispatched": true,
+    "inputAcknowledged": false,
+    "afterVerified": false
+  },
+  "operations": [
+    {
+      "index": 1,
+      "kind": "click",
+      "title": "Next page",
+      "atMs": 126.795041,
+      "state": "paused",
+      "ack": "pending",
+      "valueCheck": "n/a",
+      "effect": "pending"
+    }
+  ],
+  "observations": [
+    {
+      "id": "browser-session:1",
+      "itemId": "repository/interface/theme",
+      "actionId": "repository-click",
+      "capturePhase": "paused-browser",
+      "snapshotUri": "codebook://08f6a332-95e1-4487-ba29-244f3a3256fb/runs/15312f1f-ce82-4921-b2d8-19a343bcd6bf/snapshots/browser-session%3A1",
+      "participant": "browser",
+      "capturedAt": "2026-11-04T14:11:59.106Z",
+      "elapsedMs": 213.033916,
+      "pause": {
+        "sessionId": "browser-session",
+        "threadId": 1,
+        "generation": 1
+      },
+      "source": {
+        "text": "export function double(count: number): number {\n  const doubled = count * 2\n  return doubled\n}\n",
+        "hash": "a8106b1601e84d7525e84ed95ade45c3d88e68bd54af34a5103beef8c3063858",
+        "line": 3,
+        "column": 1,
+        "javascriptHash": "22d306fb9c5813e26e65182590886de54d18888803bdc90075d9854cce66d1b7",
+        "mapHash": "856be0eee049b0f59f29f40c2a7493f4241af61bca73e9a57cc90b1ad203e5c4",
+        "scriptId": "actual",
+        "scriptUrl": "webpack-internal:///packages/lib/build/modern/core.js",
+        "generated": {
+          "line": 11,
+          "column": 2
+        },
+        "binding": {
+          "declaredLine": 3,
+          "boundLine": 3,
+          "mappedLinesBetween": 0
+        }
+      },
+      "values": {
+        "value:doubled": 6
+      },
+      "debugger": {
+        "version": 1,
+        "frames": [
+          {
+            "name": "configured",
+            "line": 3,
+            "column": 1,
+            "source": {
+              "text": "export function double(count: number): number {\n  const doubled = count * 2\n  return doubled\n}\n",
+              "hash": "a8106b1601e84d7525e84ed95ade45c3d88e68bd54af34a5103beef8c3063858",
+              "line": 3,
+              "name": "packages/lib/src/core.ts"
+            },
+            "scopes": [
+              {
+                "name": "Local",
+                "variables": [0]
+              }
+            ]
+          }
+        ],
+        "variables": [
+          {
+            "name": "nextTheme",
+            "value": "dark",
+            "type": "string",
+            "children": []
+          }
+        ],
+        "limitations": []
+      },
+      "unavailableValues": [],
+      "interpretations": []
+    }
+  ],
+  "captures": [
+    {
+      "phase": "before",
+      "status": "captured",
+      "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=",
+      "hash": "13f49d37064e5e9a125e79406f0e4d06a719813a3a3cca585595433c73e9b259"
+    },
+    {
+      "phase": "paused-browser",
+      "status": "captured",
+      "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=",
+      "hash": "13f49d37064e5e9a125e79406f0e4d06a719813a3a3cca585595433c73e9b259",
+      "snapshotId": "browser-session:1"
+    },
+    {
+      "phase": "after",
+      "status": "absent",
+      "reason": "No confirmed image for this phase."
+    }
+  ],
+  "links": []
+}
