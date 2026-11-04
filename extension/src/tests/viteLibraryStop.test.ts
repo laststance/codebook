@@ -6,6 +6,7 @@ import { test, type TestContext } from 'node:test'
 import type { RepositoryOperation } from '../repositoryConfigSchemas'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { refusalFailureOf } from '../utils/refusalFailureOf'
+import { viteLibraryBuildChangedFailure } from '../viteLibraryRefusals'
 
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
 import {
@@ -164,6 +165,20 @@ test('a library module that only the click would load is refused before the clic
   assert.equal(harness.mouse.length, 0)
 })
 
+/** The identity the stand-in Vite library run reports in a build-change failure. */
+const VITE_BUILD_CHANGED_IDENTITY = {
+  packageRoot: PACKAGE_ROOT,
+  library: '@scope/core',
+  file: NESTED_VITE_LIBRARY_SOURCE_PATH,
+}
+
+/** The details a restored Vite library build-change failure carries: no Next router field, the Vite identity kept. */
+const VITE_BUILD_CHANGED_DETAILS = {
+  reason: 'library-build-changed',
+  ...VITE_BUILD_CHANGED_IDENTITY,
+  sideEffects: 'unknown',
+}
+
 // protects=AC 3 (arming): executed bytes that differ from the sealed library bytes when the stop is armed end the run with library-build-changed; fails_when=the generic changed-module error is raised instead; no_claim=a real rebuild
 test('executed library bytes that differ at arming end the run with library-build-changed', async (context) => {
   // Arrange
@@ -184,7 +199,7 @@ test('executed library bytes that differ at arming end the run with library-buil
   })
 })
 
-// protects=AC 3 (pause): executed library bytes that differ at the pause end the run with library-build-changed and no snapshot; fails_when=the pause is captured or the failure is the generic one; no_claim=a real rebuild
+// protects=AC 3 (pause): executed library bytes that differ at the pause end the run with library-build-changed and no snapshot; fails_when=the pause is captured, the failure is the generic one, or it is restored as a Next Pages failure (router pages, packageRoot/library/file lost); no_claim=a real rebuild
 test('executed library bytes that differ at the pause end the run with library-build-changed and capture nothing', async (context) => {
   // Arrange
   const harness = await libraryHarness(context)
@@ -199,11 +214,16 @@ test('executed library bytes that differ at the pause end the run with library-b
   // Assert
   const restored = refusalFailureOf(harness.run.view().failures[0]!)
   assert.equal(restored?.code, 'RUNTIME_FAILED')
-  assert.equal(restored?.libraryDetails?.reason, 'library-build-changed')
+  assert.deepEqual(restored?.libraryDetails, VITE_BUILD_CHANGED_DETAILS)
+  assert.equal(
+    restored?.recoveryOverride,
+    viteLibraryBuildChangedFailure(VITE_BUILD_CHANGED_IDENTITY).describe()
+      .recovery,
+  )
   assert.equal(harness.run.view().snapshots.length, 0)
 })
 
-// protects=AC 3 (later stop): a later library stop whose module changed after the first stop paused ends the run with library-build-changed when it is armed, before its operation is sent; fails_when=the later stop arms the changed module or fails generically; no_claim=a real rebuild (the page reports other bytes after the first pause)
+// protects=AC 3 (later stop): a later library stop whose module changed after the first stop paused ends the run with library-build-changed when it is armed, before its operation is sent; fails_when=the later stop arms the changed module, fails generically, or restores as a Next Pages failure that loses packageRoot, library and file; no_claim=a real rebuild (the page reports other bytes after the first pause)
 test('a later library stop whose module changed after the first stop ends the run with library-build-changed', async (context) => {
   // Arrange
   const harness = await libraryHarness(
@@ -242,7 +262,7 @@ test('a later library stop whose module changed after the first stop ends the ru
   )
   // Assert
   const restored = refusalFailureOf(harness.run.view().failures[0]!)
-  assert.equal(restored?.libraryDetails?.reason, 'library-build-changed')
+  assert.deepEqual(restored?.libraryDetails, VITE_BUILD_CHANGED_DETAILS)
 })
 
 // protects=AC 3 (hot update): a hot replacement of the sealed library module (the same module parsed again as ?t=<n>) ends the run with library-build-changed; fails_when=the generic changed-after-sealing text is used; no_claim=Vite's real HMR

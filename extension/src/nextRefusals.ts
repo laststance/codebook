@@ -342,12 +342,14 @@ export function libraryBuildChangedFailure(
 /**
  * Writes the failure text a run records for a library refusal raised at a pause or an event, the form {@link refusalFailureOf} restores with its `details.reason`.
  * @param error - The error a library check threw.
- * @returns `<CODE>(<reason>): <message>` for a library refusal of {@link LIBRARY_RUNTIME_REASONS}; `undefined` for any other error.
+ * @returns `<CODE>(<reason>): <message>` for a Next library refusal of {@link LIBRARY_RUNTIME_REASONS} (one carrying `details.router`); `undefined` for any other error, a Vite library error included.
  * @example
  * libraryFailureText(libraryBuildChangedFailure('examples/app', 'lib', 'a.ts')) // => 'RUNTIME_FAILED(library-build-changed): The build of library lib changed …'
  */
 export function libraryFailureText(error: unknown): string | undefined {
   if (!(error instanceof StudyError)) return undefined
+  // Only a Next Pages library error carries `router`; a Vite library error with the same reason belongs to {@link viteLibraryFailureText}.
+  if (error.details?.router === undefined) return undefined
   const reason = LIBRARY_RUNTIME_REASONS.find(
     (known) => known === error.details?.reason,
   )

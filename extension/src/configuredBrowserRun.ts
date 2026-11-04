@@ -12814,8 +12814,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         if (error instanceof OperationRefusal) this.failOperation(error)
         else
           this.fail(
-            libraryFailureText(error) ??
-              viteLibraryFailureText(error) ??
+            viteLibraryFailureText(error) ??
+              libraryFailureText(error) ??
               String(error),
           )
       })
