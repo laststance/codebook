@@ -84,7 +84,8 @@ function isViteLauncherMessage(message: unknown): boolean {
     type === VITE_LAUNCHER_MESSAGES.facts ||
     type === VITE_LAUNCHER_MESSAGES.failed ||
     type === VITE_LAUNCHER_MESSAGES.listening ||
-    type === VITE_LAUNCHER_MESSAGES.optimizerIdle
+    type === VITE_LAUNCHER_MESSAGES.optimizerIdle ||
+    type === VITE_LAUNCHER_MESSAGES.libraryModulesResult
   )
 }
 

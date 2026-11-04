@@ -2940,7 +2940,24 @@ export const VITE_LAUNCHER_MESSAGES = {
   awaitOptimizer: 'vite-await-optimizer',
   /** Report answering {@link VITE_LAUNCHER_MESSAGES.awaitOptimizer}: the optimizer has nothing left to process. */
   optimizerIdle: 'vite-optimizer-idle',
+  /** Command after listening: asks the launcher to walk Vite's client module graph from the entry modules and list the modules inside one library folder. */
+  libraryModules: 'vite-library-modules',
+  /** Report answering {@link VITE_LAUNCHER_MESSAGES.libraryModules}: the library's modules, whether an optimized dependency holds the library, and the bound that ended the walk. */
+  libraryModulesResult: 'vite-library-modules-result',
 } as const
+
+/** The most modules one walk of Vite's client module graph visits before it ends with the `modules` bound (a library stop is then refused, never guessed). */
+export const VITE_LIBRARY_WALK_MODULE_LIMIT_COUNT = 500
+
+/** The most transformed code one walk of Vite's client module graph reads before it ends with the `bytes` bound. */
+export const VITE_LIBRARY_WALK_CODE_LIMIT_BYTES = 20 * 1024 * 1024
+
+/** The longest one walk of Vite's client module graph runs before it ends with the `deadline` bound. */
+export const VITE_LIBRARY_WALK_DEADLINE_MS = 15_000
+
+/** How long the extension waits for the launcher's answer to one walk: the walk's own deadline plus room for the IPC round trip. */
+export const VITE_LIBRARY_WALK_ANSWER_TIMEOUT_MS =
+  VITE_LIBRARY_WALK_DEADLINE_MS + 5_000
 
 /**
  * What an agent reads as the recovery when the Study placement guard refuses a presentation or an arrangement because the editor changed a group, a tab or the focus while Codebook arranged the Study.
