@@ -42,11 +42,6 @@ export class ViteLibraryRegistry {
     return this.libraries.get(ViteLibraryRegistry.keyOf(place))
   }
 
-  /** Tells whether any stop of the run lies in a library. @example registry.hasStops() // => true */
-  hasStops(): boolean {
-    return this.libraries.size > 0
-  }
-
   /**
    * Gives the module source of one library for one page generation, creating it on first use so every stop of that generation shares one walk.
    * @param generation - The page generation (0 for the first seal).
