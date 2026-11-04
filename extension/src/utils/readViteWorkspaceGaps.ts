@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { VITE_SUPPORTED_MAJOR } from '../constants'
 import type { ErrorCode } from '../errors'
 
+import type { ViteNotFoundReason } from './findViteInsideRepository'
 import { hasNextExecutable } from './hasNextExecutable'
 import { parseViteDevScript, type ViteDevScript } from './parseViteDevScript'
 import {
@@ -23,6 +24,8 @@ import {
   VITE_NO_DEV_SCRIPT_MESSAGE,
   VITE_NOT_AVAILABLE_FOR_NEXT_MESSAGE,
   VITE_NOT_INSTALLED_MESSAGE,
+  VITE_NOT_VITE_MESSAGE,
+  VITE_OUTSIDE_REPOSITORY_MESSAGE,
   VITE_PNP_MESSAGE,
   VITE_PREDEV_MESSAGE,
   viteEnginesMessage,
@@ -135,7 +138,7 @@ type PackageManifestReading = Awaited<ReturnType<typeof readPackageScripts>>
  */
 async function unresolvedGapsOf(
   workspace: string,
-  reason: 'yarn-pnp' | 'not-installed',
+  reason: ViteNotFoundReason,
   manifest: PackageManifestReading,
 ): Promise<NonEmptyGaps> {
   const resolutionGap = await resolutionGapOf(workspace, reason)
@@ -148,7 +151,7 @@ async function unresolvedGapsOf(
 }
 
 /**
- * Picks the gap for the reason Vite does not resolve: Yarn Plug-n-Play, a misrouted Next workspace or a missing install.
+ * Picks the gap for the reason Vite does not resolve: Yarn Plug-n-Play, a Vite outside the repository or not Vite, a misrouted Next workspace or a missing install.
  *
  * Called by {@link unresolvedGapsOf}.
  *
@@ -160,10 +163,18 @@ async function unresolvedGapsOf(
  */
 async function resolutionGapOf(
   workspace: string,
-  reason: 'yarn-pnp' | 'not-installed',
+  reason: ViteNotFoundReason,
 ): Promise<ViteWorkspaceGap> {
   if (reason === 'yarn-pnp')
     return { code: 'VITE_UNSUPPORTED', message: VITE_PNP_MESSAGE }
+  // A Vite that is present but unusable is no plain missing install, so it never suggests installing Vite or a Next misroute.
+  if (reason === 'outside-repository')
+    return {
+      code: 'PREREQUISITE_MISSING',
+      message: VITE_OUTSIDE_REPOSITORY_MESSAGE,
+    }
+  if (reason === 'not-vite')
+    return { code: 'PREREQUISITE_MISSING', message: VITE_NOT_VITE_MESSAGE }
   if (await hasNextExecutable(workspace))
     return {
       code: 'ADAPTER_MISROUTE',
@@ -307,6 +318,7 @@ function readScriptGaps(
  * @param workspace - The package root.
  * @param readNode - Reads the run's Node version, called only when the Node gate is reached; `undefined` when no Node is configured. A reader that rejects (a configured Node that cannot run) gives the same `PREREQUISITE_MISSING` gap to a start and to `codebook_status`.
  * @param firstGapOnly - Stop at the first gap, as a start does, so nothing after a refusal is read (no Node process after an unsupported major).
+ * @param repositoryRoot - Set for a nested app: Vite is resolved inside the repository only ({@link resolveViteInstallation}, decision D7); absent for the root app.
  * @returns The facts found and the gaps, empty when `vite-dev` could start as far as this check can tell.
  * @example
  * const { gaps } = await readViteWorkspaceGaps('/repo', async () => 'v24.22.1', true)
@@ -315,9 +327,10 @@ export async function readViteWorkspaceGaps(
   workspace: string,
   readNode: () => Promise<string | undefined>,
   firstGapOnly: boolean,
+  repositoryRoot?: string,
 ): Promise<ViteWorkspaceReading> {
   const manifest = await readPackageScripts(workspace)
-  const lookup = await resolveViteInstallation(workspace)
+  const lookup = await resolveViteInstallation(workspace, repositoryRoot)
   if (!lookup.found)
     return {
       ready: false,

@@ -319,14 +319,23 @@ import {
   resolveNextPackage,
   rootNextPackage,
   type ResolvedNextPackage,
+  type ResolvedPackage,
 } from './utils/resolveNextPackage'
 import {
   resolveNextPagesEntry,
   type NextPagesEntry,
 } from './utils/resolveNextPagesEntry'
+import {
+  resolveVitePackage,
+  rootVitePackage,
+  type ResolvedVitePackage,
+} from './utils/resolveVitePackage'
 import { sameScriptUrl } from './utils/sameScriptUrl'
 import { sanitizeCause } from './utils/sanitizeCause'
-import { suggestNextPackageRoots } from './utils/scanNextPackages'
+import {
+  suggestNextPackageRoots,
+  suggestVitePackageRoots,
+} from './utils/scanNextPackages'
 import { sealLibraryServerStop } from './utils/sealLibraryServerStop'
 import { sealPagesServerStop } from './utils/sealPagesServerStop'
 import { selfDeclaredInspectionHint } from './utils/selfDeclaredInspectionHint'
@@ -355,6 +364,7 @@ import { VITE_DEV_ADAPTER } from './viteDevAdapter'
 import {
   viteRefusal,
   viteReloadText,
+  viteOutsidePackageRefusal,
   viteResealFailureSentence,
   viteSetupDeadlineSentence,
   viteSetupDeadlineText,
@@ -855,6 +865,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private ownedDevelopmentLock?: DevelopmentLockIdentity
   /** The Next app this run uses, resolved once at the start of preparation (a `next-dev-webpack` run only); later lanes read every Next-path file through it. */
   private nextPackage?: ResolvedNextPackage
+  /** The Vite app this run uses, resolved once at the start of preparation (a `vite-dev` run only); a root run holds the root package, so the seal, the launch and the debugger keep today's paths. */
+  private vitePackage?: ResolvedVitePackage
   /** The frozen library builds of the run's library stops, by `path:line:column`, taken before any process starts. */
   private readonly libraryFreezes = new Map<string, LibraryFreeze>()
   /** The discovery budget every library stop's freeze charges, so N library stops cannot multiply the bounds. */
@@ -1231,12 +1243,25 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.track(Promise.resolve(vscode.debug.stopDebugging(session)))
   }
   /**
-   * The folder Next runs in and every Next-path reader roots at: the resolved package root of a nested Next app, else the opened workspace.
+   * The folder the app runs in and every app-path reader roots at: the resolved package root of a nested Next or Vite app, else the opened workspace.
    * Repository-level services (source authoring, book, storage, Git) keep `options.workspace`.
    * @example run.packageRoot // '/repo/examples/react/nextjs' for packageRoot "examples/react/nextjs"
    */
   get packageRoot(): string {
-    return this.nextPackage?.packageRoot ?? this.options.workspace
+    return this.resolvedPackage?.packageRoot ?? this.options.workspace
+  }
+
+  /**
+   * The folder record of whichever app this run resolved (Next or Vite), or `undefined` before preparation resolves one.
+   * Called by the readers that only need the package root and its path mappers, not Next's folders.
+   * @example this.resolvedPackage?.isRoot // true for a root run
+   */
+  private get resolvedPackage(): ResolvedPackage | undefined {
+    // Resolve by adapter: a Next run never reads Vite's package, nor a Vite run Next's.
+    const adapter = this.definition.configuration.adapter
+    if (adapter === 'next-dev-webpack') return this.nextPackage
+    if (adapter === 'vite-dev') return this.vitePackage
+    return undefined
   }
 
   /**
@@ -1254,19 +1279,72 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Gives the canonical folder of a Next app below the repository root for the run view, so the study writer saves it as `packageRoot` (E10).
-   * Called by the run view; a root run (or a run without Next) contributes nothing.
+   * Gives the canonical folder of a Next or Vite app below the repository root for the run view, so the study writer saves it as `packageRoot` (E10).
+   * Called by the run view; a root run contributes nothing. The field keeps its Next-era name for both adapters.
    * @returns `{ nextPackageRoot }`, or an empty object for a root run.
    * @example this.nextPackageView() // => { nextPackageRoot: 'examples/react/nextjs' }
    */
   private nextPackageView(): { nextPackageRoot?: string } {
-    if (!this.nextPackage) return {}
-    if (!this.nextPackage.isRoot)
-      return { nextPackageRoot: this.nextPackage.packageRootRelative }
+    const resolved = this.resolvedPackage
+    if (!resolved) return {}
+    if (!resolved.isRoot)
+      return { nextPackageRoot: resolved.packageRootRelative }
     // A declared alias that resolved to the repository root is a root run: "." tells the study writer to drop the alias from the saved configuration.
-    return this.nextPackage.declaredPackageRoot === '.'
-      ? {}
-      : { nextPackageRoot: '.' }
+    return resolved.declaredPackageRoot === '.' ? {} : { nextPackageRoot: '.' }
+  }
+
+  /**
+   * Resolves the Vite app once, then refuses stop files outside it, both before any process starts.
+   * Called at the start of preparation for a `vite-dev` run; the refusal order is the real path, the Vite app rule, then stops outside the package. Vite's installation is judged next by the adapter's workspace check (decision D7).
+   * @returns The resolved package; the root package for an absent or `"."` packageRoot.
+   * @throws `INVALID_CONFIGURATION` from {@link resolveVitePackage}; `VITE_SEAL_FAILED` (reason `outside-package`) for stops outside the package.
+   * @example this.vitePackage = await this.resolveVitePackageOfRun()
+   */
+  private async resolveVitePackageOfRun(): Promise<ResolvedVitePackage> {
+    const configuration = this.definition.configuration
+    const declared =
+      'packageRoot' in configuration ? configuration.packageRoot : undefined
+    if (declared === undefined || declared === '.')
+      return rootVitePackage(this.options.workspace)
+    const vitePackage = await resolveVitePackage(
+      this.options.workspace,
+      declared,
+      // A refusal names up to five discovered apps.
+      { suggest: () => suggestVitePackageRoots(this.options.workspace) },
+    )
+    if (vitePackage.isRoot) return vitePackage
+    const outside = await this.stopFilesOutside(vitePackage)
+    if (outside.length)
+      throw viteOutsidePackageRefusal(vitePackage.packageRootRelative, outside)
+    return vitePackage
+  }
+
+  /**
+   * Lists the declared stop files that lie outside a resolved app, in declared order and without repeats.
+   * Called by {@link resolveNextPackageOfRun} and {@link resolveVitePackageOfRun}.
+   * @param resolved - The resolved nested app.
+   * @param isHandled - Called for a stop outside the app; `true` keeps the stop out of the list (a Next server stop in a workspace library that is frozen instead).
+   * @returns The repository-relative paths of the stop files outside the app.
+   * @example await this.stopFilesOutside(vitePackage) // => ['packages/query-core/src/queryClient.ts']
+   */
+  private async stopFilesOutside(
+    resolved: ResolvedPackage,
+    isHandled?: (
+      stop: ReturnType<typeof configuredStops>[number],
+    ) => Promise<boolean>,
+  ): Promise<string[]> {
+    const outside: string[] = []
+    for (const stop of configuredStops(this.definition.configuration))
+      if (
+        !outside.includes(stop.source.path) &&
+        // Inside both ways: the readers map lexically, so an alias outside the package that links in must be refused here too, as must a file inside that links out.
+        (resolved.toPackageRelative(stop.source.path) === undefined ||
+          (await resolved.toPackageRelativeByRealPath(stop.source.path)) ===
+            undefined)
+      ) {
+        if (!(await isHandled?.(stop))) outside.push(stop.source.path)
+      }
+    return outside
   }
 
   /**
@@ -1290,19 +1368,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       { suggest: () => suggestNextPackageRoots(this.options.workspace) },
     )
     if (nextPackage.isRoot) return nextPackage
-    const outside: string[] = []
-    for (const stop of configuredStops(configuration))
-      if (
-        !outside.includes(stop.source.path) &&
-        // Inside both ways: the readers map lexically, so an alias outside the package that links in must be refused here too, as must a file inside that links out.
-        (nextPackage.toPackageRelative(stop.source.path) === undefined ||
-          (await nextPackage.toPackageRelativeByRealPath(stop.source.path)) ===
-            undefined)
-      ) {
-        // A server stop of a nested version 3 Pages run in a workspace library is frozen against the library's build; anything else outside stays refused.
-        if (!(await this.freezeLibraryStop(stop, nextPackage)))
-          outside.push(stop.source.path)
-      }
+    // A server stop of a nested version 3 Pages run in a workspace library is frozen against the library's build; anything else outside stays refused.
+    const outside = await this.stopFilesOutside(nextPackage, (stop) =>
+      this.freezeLibraryStop(stop, nextPackage),
+    )
     if (outside.length)
       throw outsidePackageRefusal(nextPackage.packageRootRelative, outside)
     return nextPackage
@@ -1399,6 +1468,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (this.definition.configuration.adapter === 'next-dev-webpack') {
       this.nextPackage = await this.resolveNextPackageOfRun()
       this.alive()
+    } else if (this.definition.configuration.adapter === 'vite-dev') {
+      // A Vite app below the root is resolved the same way, before any process starts; no other adapter inherits it.
+      this.vitePackage = await this.resolveVitePackageOfRun()
+      this.alive()
     }
     // A version 3 run asks the store once, before any server starts, whether it runs with the saved session; versions 1 and 2 never touch it.
     await this.admitSession()
@@ -1418,6 +1491,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.options.node,
       this.abort.signal,
       this.nextPackage,
+      this.vitePackage,
     )
     this.alive()
     const needsServer = configuredStops(this.definition.configuration).some(
@@ -1435,6 +1509,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       ...(hasPagesFolder ? { outputMask: maskNextServerOutput } : {}),
       workspace: this.packageRoot,
       ...(this.nextPackage ? { nextPackage: this.nextPackage } : {}),
+      ...(this.vitePackage ? { vitePackage: this.vitePackage } : {}),
       node: this.options.node,
       record: (type, detail) => this.evidence.record(type, detail),
       inspectServer: needsServer,
@@ -1630,7 +1705,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    */
   private skipSavedSessionOfPackageRoot(): boolean {
     // Decided from the resolved package: a packageRoot that links to the repository root is the root run and keeps its saved session.
-    if (this.nextPackage?.isRoot) return false
+    if (this.resolvedPackage?.isRoot) return false
     const declaredPackageRoot =
       'packageRoot' in this.definition.configuration
         ? this.definition.configuration.packageRoot
@@ -3661,6 +3736,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const acquired = await adapter.readBundle({
       workspace: this.options.workspace,
       ...(this.nextPackage ? { nextPackage: this.nextPackage } : {}),
+      ...(this.vitePackage ? { vitePackage: this.vitePackage } : {}),
       ...(freeze && this.nextPackage
         ? {
             library: {

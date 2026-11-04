@@ -763,7 +763,7 @@ export class LearningLibrary {
   /**
    * Says whether an archive format keeps a catalog checkpoint beside the archive, so {@link list} reads one and {@link reconcile} repairs one only for such a study.
    * @param format - The format of a study's newest archive.
-   * @returns `true` for `v3` to `v9`; `false` for the historical formats and for a newer Codebook's.
+   * @returns `true` for `v3` to `v10`; `false` for the historical formats and for a newer Codebook's.
    * @example this.keepsCheckpoint('v2') // => false
    */
   private keepsCheckpoint(format: LibraryEntry['format']): boolean {
@@ -774,7 +774,8 @@ export class LearningLibrary {
       format === 'v6' ||
       format === 'v7' ||
       format === 'v8' ||
-      format === 'v9'
+      format === 'v9' ||
+      format === 'v10'
     )
   }
 

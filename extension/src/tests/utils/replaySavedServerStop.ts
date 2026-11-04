@@ -33,12 +33,14 @@ export interface ReplayedStop {
  * Why it exists: the replay of a saved study reads the library, projects the recording at a moment and gives the observation's debugger state to the replay debug adapter; both tests of a saved Pages server run walk that path unchanged. The test replay starts nothing and sends nothing: it reads files and drives the adapter.
  * @param context - The test, which removes the library folder.
  * @param study - The study to save and replay.
+ * @param participant - Whose recorded stop to replay; `server` by default, `browser` for a browser stop (a Vite run has no other).
  * @returns The reopened study and what the replay debug session shows at the server stop.
  * @example const replayed = await replaySavedServerStop(context, study)
  */
 export async function replaySavedServerStop(
   context: TestContext,
   study: RetainedStudy,
+  participant: 'server' | 'browser' = 'server',
 ): Promise<ReplayedStop> {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-pages-replay-'))
   context.after(() => rm(directory, { recursive: true, force: true }))
@@ -47,7 +49,7 @@ export async function replaySavedServerStop(
   const reopened = await library.readStudy(study.id)
   const decoded = decodeConfiguredStudy(reopened, reopened.workspaceKey)
   const recorded = decoded.observations.find(
-    (observation) => observation.participant === 'server',
+    (observation) => observation.participant === participant,
   )
   const recordingContext = validateRecordingContext(
     buildRecordingContext(decoded, [], 1),

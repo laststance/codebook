@@ -28,6 +28,8 @@ export class ControlledOperationsRuntime extends ControlledConfiguredRuntime {
   appState?: 'kept'
   /** `package-root` for a run that declared a `packageRoot` other than "." and skipped the saved session. */
   savedSessionSkipped?: ConfiguredRuntimeView['savedSessionSkipped']
+  /** The canonical repository-relative folder of the app the run resolved below the repository root, as the real run reports it in its view; absent for a root run. */
+  nextPackageRoot?: string
   /** The saved-session status the run read at its start. */
   savedSession?: ConfiguredRuntimeView['savedSession']
   /** What the page read returns for the saved-session confirmation. */
@@ -119,6 +121,9 @@ export class ControlledOperationsRuntime extends ControlledConfiguredRuntime {
         ? { savedSessionSkipped: this.savedSessionSkipped }
         : {}),
       ...(this.savedSession ? { savedSession: this.savedSession } : {}),
+      ...(this.nextPackageRoot
+        ? { nextPackageRoot: this.nextPackageRoot }
+        : {}),
       nextAction:
         this.status === 'ready' &&
         this.records.some((record) => record.state === 'not-run')

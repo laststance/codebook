@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.2.78.0] - 2026-11-04 (development candidate)
+
+Cycle 0077 ([Issue #200](https://github.com/laststance/codebook/issues/200)), a feature cycle. A **Vite app in a folder below the repository root** now runs, pauses in its own source, saves and replays, with the repository root open. Most library Examples are such apps, for example about twenty of TanStack Query's `examples/react/*`. Before, Codebook refused them before anything started, so you had to open the Example folder alone and leave the library's source outside the workspace.
+
+**Run a Vite app below the repository root.**
+- **How you start it:** open the repository root and ask about the app's code. A version 3 `vite-dev` configuration may now declare the app's folder as `packageRoot`, as a Next app's could since 0.2.75.0. Versions 1 and 2 still refuse `packageRoot`.
+- **The chat picks the app:** under the `vite-dev` readiness, `codebook_status` says whether the root is a Vite app (`rootIsApp`) and lists the Vite apps below it in `packages`, with `installed`, `ready`, `version` and `missing`.
+  - A Vite app declares `vite` and has an `index.html` or a `dev` script Codebook accepts. A library package that only uses a Vite config for its tests is not listed.
+  - The list holds at most 50 apps; `packagesTruncated` says when it is incomplete.
+- **How it runs:** Codebook starts the app's own Vite from the app's folder. It reads the app's `dev` script and never runs it.
+  - Vite is the first `node_modules/vite` from the app's folder up to the repository root whose real path is inside the repository. Yarn PnP and `NODE_PATH` count as not installed.
+  - The run uses a fresh browser profile and never loads the repository's saved sign-in session (`savedSessionSkipped: "package-root"`).
+  - The app's own environment file values are masked.
+- **What stays repository-relative:** recorded sources and book citations, so the saved study and the replay name `examples/<app>/src/…` paths.
+
+**Clear refusals before anything starts.**
+- A `packageRoot` that is outside the repository, leaves it through a link, is a file, is missing or unreadable, or is not a Vite app is refused. Each refusal has its own `details.reason` and up to five suggestions.
+- A stop outside the app's folder is refused with `VITE_SEAL_FAILED` and the reason `outside-package`.
+- A `node_modules/vite` that resolves outside the repository, has a broken link or is not a usable `vite` package gets its own sentence telling you to reinstall the app's dependencies inside the repository.
+- A stop in a workspace library the app imports through Vite stays outside this version.
+
+**Saved as study format 10.** A nested Vite run is saved as `.study.v10.json` with its `packageRoot`. It replays from the recorded evidence, also after the app's folder is removed. Codebook 0.2.77.0 lists such a study as saved by a newer Codebook and keeps it. A root Vite run keeps the format it had.
+
+**Compatibility.** MCP API 1.20 (additive), bundled skill 1.0.69 (one rule: pick the app from the readiness `packages` of the adapter that lists it), study format 10. Root Vite runs, Next apps below the root (format 9) and library server stops are unchanged.
+
 ## [0.2.77.0] - 2026-11-04 (development candidate)
 
 Cycle 0076 ([Issue #198](https://github.com/laststance/codebook/issues/198)), a bug-fix cycle. Four tests that each failed once under load or on a cold CI runner in Cycle 0075 now wait for what they check. A fifth, which the cycle's own load runs exposed, is fixed too. Nothing changes in the extension you install.

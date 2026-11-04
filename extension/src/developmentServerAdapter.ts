@@ -9,6 +9,7 @@ import type { FrozenLibraryBuild } from './utils/libraryBuildStop'
 import type { DeclaredDevelopmentPort } from './utils/readDeclaredDevelopmentPort'
 import type { DevelopmentServerLayer } from './utils/readDevelopmentBundle'
 import type { ResolvedNextPackage } from './utils/resolveNextPackage'
+import type { ResolvedVitePackage } from './utils/resolveVitePackage'
 
 /** The name a repository-browser configuration gives its development server (`adapter`), the one key of {@link DevelopmentServerAdapter}. */
 export type DevelopmentServerAdapterName = RepositoryConfiguration['adapter']
@@ -18,10 +19,12 @@ export type DevelopmentApp = ReturnType<typeof launchDevelopmentServer>
 
 /** What {@link DevelopmentServerAdapter.start} needs from the run that starts the server. */
 export type DevelopmentServerStart = {
-  /** The Next app's package root (the opened repository root for a root app; the canonical `packageRoot` folder for a nested Next app); the Vite adapter's package root is the workspace root. */
+  /** The app's package root (the opened repository root for a root app; the canonical `packageRoot` folder for a nested Next or Vite app). */
   workspace: string
   /** The package a Next run resolved ({@link resolveNextPackage}): the launch runs its verified executable with `workspace` as its working folder. Absent for a Vite run. */
   nextPackage?: ResolvedNextPackage
+  /** The Vite app a nested Vite run resolved ({@link resolveVitePackage}): the launcher runs with `workspace` (the app folder) as its root and working folder. Absent for a root Vite run and for a Next run. */
+  vitePackage?: ResolvedVitePackage
   /** The Node executable of the run (`Codebook: Node Executable`). */
   node: string
   /** Appends to the run's evidence journal. */
@@ -53,6 +56,8 @@ export type DevelopmentBundleRequest = {
   workspace: string
   /** The Next app the run resolved: its readers read the package root and match the stop by its package-relative path. Absent for a Vite run and for a caller with only a root app. */
   nextPackage?: ResolvedNextPackage
+  /** The nested Vite app the run resolved: the seal reads the stop in the app folder under the stop's package-relative path. Absent for a root Vite run and for a Next run. */
+  vitePackage?: ResolvedVitePackage
   source: RepositoryConfiguration['source']
   /** The last line of the stop's citation, up to which a stop declared on a line with no mapped position is requested at the first mapped position after it ({@link resolveArmedPlace}); a Pages server stop's seal checks that line's client mapping too ({@link sealPagesServerStop}). */
   citationEndLine: number
@@ -116,6 +121,7 @@ export interface DevelopmentServerAdapter {
     node: string,
     signal: AbortSignal,
     nextPackage?: ResolvedNextPackage,
+    vitePackage?: ResolvedVitePackage,
   ): Promise<void>
   /** Starts the owned server on the project's own port and returns it with that port. */
   start(request: DevelopmentServerStart): Promise<{

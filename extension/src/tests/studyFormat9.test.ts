@@ -8,11 +8,7 @@ import {
   configuredStudySchema,
   type ConfiguredStudy,
 } from '../configuredStudySchemas'
-import {
-  PACKAGE_ROOT_STUDY_VERSION,
-  READABLE_STUDY_VERSION,
-  STUDY_STORAGE_FORMATS,
-} from '../constants'
+import { PACKAGE_ROOT_STUDY_VERSION, STUDY_STORAGE_FORMATS } from '../constants'
 import { LearningLibrary } from '../learningLibrary'
 import { retainedRepositoryConfigSchema } from '../repositoryConfigSchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
@@ -208,13 +204,13 @@ test('an old format 7 study with a server stop keeps the format 7 rules and deco
   assert.equal(usesServerRenderEvidence(decoded), false)
 })
 
-// protects=D3: the storage table, the readable version and the study schema know format 9; fails_when=v9 is missing from one of them or a format above 9 is accepted; no_claim=archive contents
+// protects=D3: the storage table, the readable version and the study schema know format 9; fails_when=v9 is missing from one of them or a format above 10 is accepted; no_claim=archive contents
 test('storage names, readable version and schema include format 9', () => {
   // Arrange
   const row = STUDY_STORAGE_FORMATS.find((format) => format.version === 9)
   const schemaVersion = configuredStudySchema.shape.version
   // Act
-  const acceptsTen = schemaVersion.safeParse(10).success
+  const acceptsEleven = schemaVersion.safeParse(11).success
   // Assert
   assert.deepEqual(row, {
     version: 9,
@@ -222,10 +218,9 @@ test('storage names, readable version and schema include format 9', () => {
     archiveSuffix: '.study.v9.json',
     metadataSuffix: '.study.meta.v9.json',
   })
-  assert.equal(READABLE_STUDY_VERSION, 9)
   assert.equal(PACKAGE_ROOT_STUDY_VERSION, 9)
   assert.equal(schemaVersion.safeParse(9).success, true)
-  assert.equal(acceptsTen, false)
+  assert.equal(acceptsEleven, false)
 })
 
 /**

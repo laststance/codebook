@@ -428,9 +428,31 @@ test('a workspace below the Git root reports every adapter not ready with the ne
   assert.deepEqual(next.packages, [])
   assert.equal(
     next.missing[0],
-    `This folder lies inside the Git repository "${gitRootName}" at "examples/web", and source authoring refuses it for every adapter, so no run can be set up from it. Ask the learner to open the "${gitRootName}" folder (the repository root) in the editor; do not retry in this window. A Next app (next-dev-webpack) then runs from the repository root with packageRoot "examples/web". Other adapters (vite-dev, node-server, node-test, chrome-extension) have no packageRoot to declare: they also need the repository root opened.`,
+    `This folder lies inside the Git repository "${gitRootName}" at "examples/web", and source authoring refuses it for every adapter, so no run can be set up from it. Ask the learner to open the "${gitRootName}" folder (the repository root) in the editor; do not retry in this window. A Next app (next-dev-webpack) or a Vite app (vite-dev) then runs from the repository root with packageRoot "examples/web". Other adapters (node-server, node-test, chrome-extension) have no packageRoot to declare: they also need the repository root opened.`,
   )
   assert.deepEqual(readiness['vite-dev'].missing, next.missing)
+})
+
+// protects=a workspace below the Git root tells the chat that a Vite app (vite-dev) declares packageRoot like a Next app, and does not list vite-dev among the adapters without one; fails_when=the vite-dev missing entry names vite-dev as an adapter with no packageRoot to declare; no_claim=the Vite packageRoot start itself (viteNestedDiscovery tests)
+test('a workspace below the Git root tells the chat that vite-dev can declare packageRoot', async (context) => {
+  // Arrange
+  const root = await makeRepository(context)
+  await trackedApp(root, 'examples/web')
+  await installNext(root, 'examples/web')
+  // Act
+  const readiness = await readStatusAdapterReadiness(
+    join(root, 'examples/web'),
+    process.execPath,
+    SIGNAL,
+  )
+  // Assert
+  const missing = readiness['vite-dev'].missing.join('\n')
+  assert.ok(
+    missing.includes(
+      'A Next app (next-dev-webpack) or a Vite app (vite-dev) then runs from the repository root with packageRoot "examples/web". Other adapters (node-server, node-test, chrome-extension) have no packageRoot to declare',
+    ),
+  )
+  assert.ok(!missing.includes('Other adapters (vite-dev'))
 })
 
 // protects=DX-13/AC 5: source authoring in a folder below the Git root is refused PREREQUISITE_MISSING with the Git root's folder name, the exact packageRoot and its own recovery, with no absolute path; fails_when=the old generic sentence returns, a path leaks, or the recovery stays the generic one; no_claim=Next start

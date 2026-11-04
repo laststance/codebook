@@ -28,14 +28,18 @@ export type PackageRelativePath = string & {
   readonly [packageRelativeBrand]: true
 }
 
-/** Why a declared `packageRoot` is no folder inside the repository (`details.reason`), plus `not-a-next-app` for a folder whose `package.json` does not name `next`. */
-type PackageRootRefusalReason =
+/** Why a declared `packageRoot` is no folder inside the repository (`details.reason`), plus `not-a-next-app` / `not-a-vite-app` for a folder that is no app of the adapter's kind. */
+export type PackageRootRefusalReason =
   | 'outside-repository'
   | 'link-leaves-repository'
   | 'not-a-folder'
   | 'missing'
   | 'unreadable'
   | 'not-a-next-app'
+  | 'not-a-vite-app'
+
+/** Which adapter's app a `packageRoot` must hold; decides the words of a refusal. */
+export type PackageAppKind = 'next' | 'vite'
 
 /** How a module id Next printed relates to the package: inside it (with both relative paths) or outside it. */
 export type NextModuleIdClassification =
@@ -47,14 +51,14 @@ export type NextModuleIdClassification =
   | { kind: 'outside'; id: string }
 
 /**
- * The one immutable answer about which Next app a run uses, produced once per run and read by every reader so none falls back to `<packageRoot>/node_modules/next`.
+ * The folder-and-path part of a resolved app, shared by a Next app and a Vite app: the package root and the mappers between repository-relative and package-relative paths.
  *
- * Why it exists: status, the start preflight, the launch and the readers of Next's own output must agree on one package root, one Next folder and one executable, and must map Next's package-relative module names to the repository-relative paths books and stops use.
+ * Why it exists: Cycle 0077 lets a Vite app live below the repository root as a Next app does, and both need one package root and the same path mappers, so neither falls back to the repository root. Made only by {@link buildPackageMappers}.
  */
-export type ResolvedNextPackage = Readonly<{
+export type ResolvedPackage = Readonly<{
   /** The opened repository's root (as given for the root app, its real path for a nested app). */
   repositoryRoot: RepositoryRoot
-  /** The folder Next runs in: the cwd of the launch and the root of every Next-path reader. */
+  /** The folder the app runs in: the cwd of the launch and the root of every path reader. */
   packageRoot: PackageRoot
   /** The package root's canonical repository-relative path (`.` for the root app); the value later saved and keyed. */
   packageRootRelative: string
@@ -62,21 +66,30 @@ export type ResolvedNextPackage = Readonly<{
   declaredPackageRoot: string
   /** Whether this is the repository root app (today's behaviour, byte for byte). */
   isRoot: boolean
-  /** The folder of the resolved `next` package. */
-  nextFolder: string
-  /** `dist/bin/next` of {@link ResolvedNextPackage.nextFolder}, verified (nested: real path, regular file, inside the repository). */
-  nextExecutable: string
-  /** Maps a repository-relative path to the package-relative one, or `undefined` when the file lies outside the package. Lexical; see {@link ResolvedNextPackage.toPackageRelativeByRealPath} for symlinks. */
+  /** Maps a repository-relative path to the package-relative one, or `undefined` when the file lies outside the package. Lexical; see {@link ResolvedPackage.toPackageRelativeByRealPath} for symlinks. */
   toPackageRelative(path: string): PackageRelativePath | undefined
-  /** Like {@link ResolvedNextPackage.toPackageRelative}, but compares real paths so a symlinked alias maps to its target. */
+  /** Like {@link ResolvedPackage.toPackageRelative}, but compares real paths so a symlinked alias maps to its target. */
   toPackageRelativeByRealPath(
     path: string,
   ): Promise<PackageRelativePath | undefined>
   /** Maps a package-relative path to the repository-relative one. */
   toRepositoryRelative(path: string): RepositoryRelativePath
-  /** Classifies a module id Next printed (`webpack-internal:///(pages-dir-node)/./src/pages/index.tsx`, `./src/a.ts`, `../shared/a.ts`). */
-  classifyModuleId(id: string): NextModuleIdClassification
 }>
+
+/**
+ * The one immutable answer about which Next app a run uses, produced once per run and read by every reader so none falls back to `<packageRoot>/node_modules/next`.
+ *
+ * Why it exists: status, the start preflight, the launch and the readers of Next's own output must agree on one package root, one Next folder and one executable, and must map Next's package-relative module names to the repository-relative paths books and stops use.
+ */
+export type ResolvedNextPackage = ResolvedPackage &
+  Readonly<{
+    /** The folder of the resolved `next` package. */
+    nextFolder: string
+    /** `dist/bin/next` of {@link ResolvedNextPackage.nextFolder}, verified (nested: real path, regular file, inside the repository). */
+    nextExecutable: string
+    /** Classifies a module id Next printed (`webpack-internal:///(pages-dir-node)/./src/pages/index.tsx`, `./src/a.ts`, `../shared/a.ts`). */
+    classifyModuleId(id: string): NextModuleIdClassification
+  }>
 
 /** What {@link resolveNextPackage} may be given beyond the two paths. */
 export type ResolveNextPackageOptions = {
@@ -124,11 +137,22 @@ async function installCommandOf(repositoryRoot: string): Promise<string> {
   return "the repository's install command at the repository root"
 }
 
-/** Builds the `INVALID_CONFIGURATION` refusal of a declared `packageRoot`. */
-async function invalidPackageRoot(
+/**
+ * Builds the `INVALID_CONFIGURATION` refusal of a declared `packageRoot`, worded for the adapter's app kind.
+ * Called by {@link resolveNextPackage} and {@link resolveVitePackage} (through {@link resolveDeclaredFolder}), so both adapters refuse with the same codes, `details` and anchors.
+ * @param declared - The declared `packageRoot`.
+ * @param reason - Why it is refused.
+ * @param options - The suggestion provider.
+ * @param appKind - Whose app the folder must hold; only the sentences differ.
+ * @param errno - The errno code of an `unreadable` folder.
+ * @returns The error to throw.
+ * @example await invalidPackageRoot('apps/missing', 'missing', {}, 'vite') // => StudyError INVALID_CONFIGURATION, details.reason 'missing'
+ */
+export async function invalidPackageRoot(
   declared: string,
   reason: PackageRootRefusalReason,
   options: ResolveNextPackageOptions,
+  appKind: PackageAppKind = 'next',
   errno?: string,
 ): Promise<StudyError> {
   const shown = sanitizeDeclaredPath(declared)
@@ -140,11 +164,14 @@ async function invalidPackageRoot(
     unreadable: `cannot be read${errno ? ` (${errno})` : ''}`,
     'not-a-next-app':
       'has no package.json that names next in dependencies, devDependencies or peerDependencies',
+    'not-a-vite-app':
+      'has no package.json that declares vite in dependencies or devDependencies together with an index.html or a dev script Codebook accepts',
   }
   const suggestions = [...((await options.suggest?.()) ?? [])]
     .slice(0, 5)
     .map(sanitizeDeclaredPath)
-  const message = `packageRoot "${shown}" ${words[reason]}. Declare packageRoot as the repository-relative folder of the Next app (one of details.suggestions), or remove it for an app at the repository root; nothing was started.`
+  const appName = appKind === 'vite' ? 'Vite' : 'Next'
+  const message = `packageRoot "${shown}" ${words[reason]}. Declare packageRoot as the repository-relative folder of the ${appName} app (one of details.suggestions), or remove it for an app at the repository root; nothing was started.`
   return new StudyError(
     'INVALID_CONFIGURATION',
     message,
@@ -163,7 +190,7 @@ async function invalidPackageRoot(
 }
 
 /** Says whether a real path equals a folder or lies inside it. */
-function isFolderOrInside(folder: string, realPath: string): boolean {
+export function isFolderOrInside(folder: string, realPath: string): boolean {
   return realPath === folder || isInsideFolder(folder, realPath)
 }
 
@@ -184,18 +211,19 @@ async function realPathOrCode(
 }
 
 /**
- * Builds the immutable record and its mappers from verified paths.
- * Called only by {@link resolveNextPackage}, which is why the branded types are constructible only in this module.
+ * Builds the immutable folder record and its path mappers from verified paths.
+ * Called by {@link buildResolved} for a Next app and by {@link resolveVitePackage} for a Vite app, which is why the branded types are constructible only in this module.
+ * @param input - The verified real paths and the declared value.
+ * @returns The frozen {@link ResolvedPackage}.
+ * @example buildPackageMappers({ repositoryRoot: '/repo', packageRoot: '/repo/apps/web', packageRootRelative: 'apps/web', declaredPackageRoot: 'apps/web', isRoot: false }).toPackageRelative('apps/web/src/a.ts') // => 'src/a.ts'
  */
-function buildResolved(input: {
+export function buildPackageMappers(input: {
   repositoryRoot: string
   packageRoot: string
   packageRootRelative: string
   declaredPackageRoot: string
   isRoot: boolean
-  nextFolder: string
-  nextExecutable: string
-}): ResolvedNextPackage {
+}): ResolvedPackage {
   const prefix =
     input.packageRootRelative === '.' ? '' : `${input.packageRootRelative}/`
   const toPackageRelative = (path: string): PackageRelativePath | undefined => {
@@ -221,8 +249,6 @@ function buildResolved(input: {
     packageRootRelative: input.packageRootRelative,
     declaredPackageRoot: input.declaredPackageRoot,
     isRoot: input.isRoot,
-    nextFolder: input.nextFolder,
-    nextExecutable: input.nextExecutable,
     toPackageRelative,
     async toPackageRelativeByRealPath(path: string) {
       const lexical = toPackageRelative(path)
@@ -243,6 +269,27 @@ function buildResolved(input: {
         '.') as PackageRelativePath
     },
     toRepositoryRelative,
+  })
+}
+
+/**
+ * Builds the immutable Next record: the shared folder record plus the Next folder, its executable and the module-id classifier.
+ * Called only by {@link resolveNextPackage} and {@link rootNextPackage}.
+ */
+function buildResolved(input: {
+  repositoryRoot: string
+  packageRoot: string
+  packageRootRelative: string
+  declaredPackageRoot: string
+  isRoot: boolean
+  nextFolder: string
+  nextExecutable: string
+}): ResolvedNextPackage {
+  const base = buildPackageMappers(input)
+  return Object.freeze({
+    ...base,
+    nextFolder: input.nextFolder,
+    nextExecutable: input.nextExecutable,
     classifyModuleId(id: string): NextModuleIdClassification {
       // Strip the loader scheme and the webpack layer: `webpack-internal:///(pages-dir-node)/./x`, `webpack://_N_E/./x`.
       let rest = id.split('\\').join('/')
@@ -259,7 +306,7 @@ function buildResolved(input: {
       return {
         kind: 'inside',
         packageRelative,
-        repositoryRelative: toRepositoryRelative(packageRelative),
+        repositoryRelative: base.toRepositoryRelative(packageRelative),
       }
     },
   })
@@ -314,18 +361,20 @@ export async function resolveNextPackage(
 
 /**
  * Checks a declared `packageRoot` by real path: a readable folder inside the repository.
- * Called by {@link resolveNextPackage} as its first step.
+ * Called by {@link resolveNextPackage} and {@link resolveVitePackage} as their first step.
  * @param repositoryRoot - The opened repository's root.
  * @param declared - The declared, non-root `packageRoot`.
  * @param options - The suggestion provider for refusals.
+ * @param appKind - Whose app the folder must hold, for the refusal's words.
  * @returns The real paths of the repository and the package folder.
  * @throws `INVALID_CONFIGURATION` with the reason (`unreadable`, `outside-repository`, `missing`, `not-a-folder`, `link-leaves-repository`).
  * @example await resolveDeclaredFolder('/repo', 'apps/web', {}) // => { repositoryRoot: '/repo', packageRoot: '/repo/apps/web' }
  */
-async function resolveDeclaredFolder(
+export async function resolveDeclaredFolder(
   repositoryRoot: string,
   declared: string,
   options: ResolveNextPackageOptions,
+  appKind: PackageAppKind = 'next',
 ): Promise<{ repositoryRoot: string; packageRoot: string }> {
   const repositoryReal = await realPathOrCode(repositoryRoot)
   if ('code' in repositoryReal)
@@ -333,11 +382,17 @@ async function resolveDeclaredFolder(
       declared,
       'unreadable',
       options,
+      appKind,
       repositoryReal.code,
     )
   const lexical = resolve(repositoryReal.path, declared)
   if (!isFolderOrInside(repositoryReal.path, lexical))
-    throw await invalidPackageRoot(declared, 'outside-repository', options)
+    throw await invalidPackageRoot(
+      declared,
+      'outside-repository',
+      options,
+      appKind,
+    )
   const real = await realPathOrCode(lexical)
   if ('code' in real) {
     // A missing component and a file used as a folder are the declaration's fault; anything else is a read failure with its errno.
@@ -350,15 +405,21 @@ async function resolveDeclaredFolder(
           ? 'not-a-folder'
           : 'unreadable',
       options,
+      appKind,
       isDeclarationFault ? undefined : real.code,
     )
   }
   if (!isFolderOrInside(repositoryReal.path, real.path))
-    throw await invalidPackageRoot(declared, 'link-leaves-repository', options)
+    throw await invalidPackageRoot(
+      declared,
+      'link-leaves-repository',
+      options,
+      appKind,
+    )
   // The real path is read again as a folder now, so a path replaced since is named.
   const entry = await stat(real.path).catch(() => undefined)
   if (!entry?.isDirectory())
-    throw await invalidPackageRoot(declared, 'not-a-folder', options)
+    throw await invalidPackageRoot(declared, 'not-a-folder', options, appKind)
   return { repositoryRoot: repositoryReal.path, packageRoot: real.path }
 }
 
@@ -370,7 +431,7 @@ async function resolveDeclaredFolder(
  * @returns The parsed value, or `undefined` when the file is unreadable, too large, not JSON or does not satisfy the schema.
  * @example await readJsonInside('/repo/apps/web', 'package.json', manifestSchema)
  */
-async function readJsonInside<Schema extends z.ZodType>(
+export async function readJsonInside<Schema extends z.ZodType>(
   root: string,
   path: string,
   schema: Schema,

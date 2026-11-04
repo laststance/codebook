@@ -3,8 +3,11 @@ import { test } from 'node:test'
 
 import {
   dropDefaultPackageRoot,
+  liveRepositoryConfigSchema,
   operationsRepositoryConfigSchema,
 } from '../repositoryConfigSchemas'
+
+import { createConfiguredStudy } from './utils/createConfiguredStudy'
 
 /** A valid version 3 configuration; the caller adds or changes fields. */
 function configuration(
@@ -68,20 +71,51 @@ test('dropDefaultPackageRoot removes "." and keeps a nested value', () => {
   assert.equal(canonicalNested.packageRoot, 'apps/web')
 })
 
-// protects=DX-18/AC 7: vite-dev with a nested packageRoot is refused at the schema and tells the chat to remove it; fails_when=the refinement is missing or "." is refused too; no_claim=Vite apps below the root
-test('vite-dev refuses a nested packageRoot and accepts "."', () => {
+// protects=AC 1 (Cycle 0077): a version 3 vite-dev configuration may declare a nested packageRoot and keeps "." as the root run; fails_when=the schema still refuses packageRoot under vite-dev or strips it; no_claim=that the folder exists or is a Vite app (the resolver's refusals)
+test('a version 3 vite-dev configuration accepts a nested packageRoot and "."', () => {
   // Arrange
-  const nested = configuration({ adapter: 'vite-dev', packageRoot: 'apps/web' })
+  const nested = configuration({
+    adapter: 'vite-dev',
+    packageRoot: 'examples/react/basic',
+  })
   const dot = configuration({ adapter: 'vite-dev', packageRoot: '.' })
   // Act
-  const refused = operationsRepositoryConfigSchema.safeParse(nested)
-  const accepted = operationsRepositoryConfigSchema.safeParse(dot)
+  const accepted = operationsRepositoryConfigSchema.safeParse(nested)
+  const root = operationsRepositoryConfigSchema.safeParse(dot)
   // Assert
-  assert.equal(refused.success, false)
-  assert.match(
-    refused.error?.issues[0]?.message ?? '',
-    /remove packageRoot.*next-dev-webpack/,
-  )
-  assert.deepEqual(refused.error?.issues[0]?.path, ['packageRoot'])
   assert.equal(accepted.success, true)
+  assert.equal(accepted.data?.packageRoot, 'examples/react/basic')
+  assert.equal(root.success, true)
+})
+
+// protects=AC 3 (Cycle 0077): a version 1 or 2 vite-dev configuration with packageRoot is still refused (the field exists only in version 3); fails_when=version 1 or 2 starts accepting packageRoot after the version 3 gate was lifted; no_claim=the refusal wording a client reads (an unknown key of the strict shape)
+test('a version 1 or 2 vite-dev configuration with packageRoot is refused', () => {
+  // Arrange
+  const reference = createConfiguredStudy().configuration
+  const versionOne = {
+    ...reference,
+    adapter: 'vite-dev',
+    packageRoot: 'apps/web',
+  }
+  const versionTwo = {
+    ...reference,
+    version: 2,
+    adapter: 'vite-dev',
+    participant: 'browser',
+    packageRoot: 'apps/web',
+  }
+  // Act
+  const results = [versionOne, versionTwo].map((input) =>
+    liveRepositoryConfigSchema.safeParse(input),
+  )
+  const withoutField = liveRepositoryConfigSchema.safeParse({
+    ...reference,
+    adapter: 'vite-dev',
+  })
+  // Assert
+  assert.deepEqual(
+    results.map((result) => result.success),
+    [false, false],
+  )
+  assert.equal(withoutField.success, true)
 })

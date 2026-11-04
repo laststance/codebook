@@ -15,7 +15,6 @@ import {
   REPOSITORY_CONFIG_VERSION,
   REPOSITORY_FORBIDDEN_INSPECTION_SEGMENTS,
   REPOSITORY_INSPECTION_LIMIT,
-  PACKAGE_ROOT_ECHO_CHARS,
   REPOSITORY_INSPECTION_PATH_LIMIT_CHARS,
   REPOSITORY_INSPECTION_SEGMENT_LIMIT,
   REPOSITORY_LITERAL_LIMIT_CHARS,
@@ -376,7 +375,7 @@ const operationsConfigurationShape = z.strictObject({
     .union([z.literal('.'), repositoryPathSchema])
     .optional()
     .describe(
-      'next-dev-webpack only: the Next app\'s folder, relative to the opened repository root (for example "examples/react/nextjs"). Omit it, or declare ".", for an app at the repository root. Stop files and book citations stay repository-relative and must lie inside this folder.',
+      'next-dev-webpack and vite-dev: the app\'s folder, relative to the opened repository root (for example "examples/react/nextjs" or "examples/react/basic"). Omit it, or declare ".", for an app at the repository root. Stop files and book citations stay repository-relative and must lie inside this folder.',
     ),
 })
 
@@ -552,30 +551,6 @@ function refuseViteServerParticipants(
 }
 
 /**
- * Refuses `packageRoot` other than "." under `adapter: "vite-dev"`, which runs an app at the repository root only in this version.
- * Called by {@link operationsRepositoryConfigSchema}, so the public schema, not a later start, rejects it.
- * @param configuration - A parsed version 3 configuration.
- * @param context - The refinement context that receives the issue.
- * @example refuseViteNestedPackageRoot({ adapter: 'vite-dev', packageRoot: 'apps/web', … }, context) // adds an issue at ['packageRoot']
- */
-function refuseViteNestedPackageRoot(
-  configuration: z.infer<typeof operationsConfigurationShape>,
-  context: z.RefinementCtx,
-): void {
-  if (
-    configuration.adapter !== 'vite-dev' ||
-    configuration.packageRoot === undefined ||
-    configuration.packageRoot === '.'
-  )
-    return
-  context.addIssue({
-    code: 'custom',
-    path: ['packageRoot'],
-    message: `adapter "vite-dev" runs an app at the repository root only; remove packageRoot (declared "${configuration.packageRoot.slice(0, PACKAGE_ROOT_ECHO_CHARS).replace(/[\u0000-\u001f\u007f]/g, '?')}"). This version supports packageRoot for adapter "next-dev-webpack" only.`,
-  })
-}
-
-/**
  * Drops a `packageRoot` of "." from a parsed version 3 configuration, so absent and "." are one configuration for the idempotency key, the run and the saved study.
  * Called by {@link StudyService.start} on the parsed start before its signature is taken.
  * @param configuration - Any parsed retained repository configuration.
@@ -656,10 +631,9 @@ export const operationsRepositoryConfigSchema =
   operationsConfigurationShape.superRefine((configuration, context) => {
     validateInspections(configuration, context)
     validateOperations(configuration, context)
-    refuseViteNestedPackageRoot(configuration, context)
   })
 /**
- * The configuration `codebook_start` accepts for the `repository-browser` profile: versions 1 to 3, where version 3 may declare `packageRoot` (`next-dev-webpack` only).
+ * The configuration `codebook_start` accepts for the `repository-browser` profile: versions 1 to 3, where version 3 may declare `packageRoot` (`next-dev-webpack` and `vite-dev`; versions 1 and 2 have no such field and refuse it as an unknown key).
  * Why it exists: the start, its idempotency intent, the help's `configurationSchema` and the source preparation must admit a nested Next app, while a saved study of formats 3 to 8 must not ({@link retainedRepositoryConfigSchema}).
  * Read by the start schemas in `schemas.ts`, the help resource and {@link prepareRepositoryStudy}.
  * @example liveRepositoryConfigSchema.parse({ version: 3, adapter: 'next-dev-webpack', packageRoot: 'examples/app', ... }) // accepted
@@ -693,10 +667,28 @@ const packageRootRepositoryConfigSchema = operationsConfigurationShape
     validateInspections(configuration, context)
     validateOperations(configuration, context)
   })
-/** Every configuration a saved study can hold: the retained union of formats 3 to 8, or the format 9 package-root variant. */
+/**
+ * The configuration a format 10 study retains: the version 3 `vite-dev` shape with a required `packageRoot` other than `"."`.
+ * Why it exists: 0.2.77.0 validates a format 9 configuration with {@link packageRootRepositoryConfigSchema}, which accepts `next-dev-webpack` only, so a nested Vite run needs its own format to be listed as saved by a newer Codebook. Validated like the format 9 variant (inspections, operations; {@link validateInspections} also refuses a server participant under `vite-dev`).
+ * Read by {@link studyConfigurationSchema}; a Vite run whose package root is `"."` saves the format it always did, without the field.
+ */
+const vitePackageRootRepositoryConfigSchema = operationsConfigurationShape
+  .extend({
+    adapter: z.literal('vite-dev'),
+    packageRoot: repositoryPathSchema.refine(
+      (value) => value !== '.',
+      'A format 10 study names a package folder other than ".".',
+    ),
+  })
+  .superRefine((configuration, context) => {
+    validateInspections(configuration, context)
+    validateOperations(configuration, context)
+  })
+/** Every configuration a saved study can hold: the retained union of formats 3 to 8, the format 9 package-root variant (Next) or the format 10 package-root variant (Vite). */
 export const studyConfigurationSchema = z.union([
   retainedRepositoryConfigSchema,
   packageRootRepositoryConfigSchema,
+  vitePackageRootRepositoryConfigSchema,
 ])
 export type RepositoryConfiguration = z.infer<typeof repositoryConfigSchema>
 export type RetainedRepositoryConfiguration = z.infer<

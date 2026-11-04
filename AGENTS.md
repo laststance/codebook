@@ -157,7 +157,7 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 **CodeRabbit and OCR.**
 
 - [.coderabbit.yaml](.coderabbit.yaml) = policy + exclusions: keep guidelines current; validate with `coderabbit config validate .coderabbit.yaml`; pass via `--config` beside extra context.
-  - CLI 0.9.1 exits 1 on every file with `unknown keyword: "x-undocumented"` (own schema defect): record that line as validation result; review with `-c` still applies file.
+  - CLI 0.9.2 validates file cleanly (0.9.1 exited 1 with `unknown keyword: "x-undocumented"`, own schema defect); a CLI that fails validation that way: record line as validation result; review with `-c` still applies file.
 - Required: local CodeRabbit CLI, findings triage, CI, OCR (picks files and rules, host reviews; each eligible file reviewed or skipped with reason; default exclusions reported apart; no independent external review).
 - Review against implementation base; record completion, source cut, covered files, findings.
 - Missing/private provider context = coverage limit.
@@ -227,8 +227,9 @@ No decision log; delivery chain and ship limit: [Delivery](#delivery).
 - Until nine-project final acceptance starts, actual-editor trials use `nextjs-dashboard` (same repo and revision): Mac **`/Users/ryotamurakami/repository/nextjs-dashboard`**; its macOS Space **`/Users/lume/repository/nextjs-dashboard`**; Windows host **`/home/murakami/laststance/nextjs-dashboard`**.
 - Exception: Node server execution form, which `nextjs-dashboard` lacks, trialled on pinned clone of P08 `laststance/switch-time` in Space (`/Users/lume/qa/c57/switch-time`, revision recorded in cycle Issue), with documented local stack.
 - Exception (Cycle 0073 decision D2, Issue #188; owner may revoke): Pages Router server-side forms (`getServerSideProps`, `getStaticProps`), which `nextjs-dashboard` lacks, trialled on pinned clone of P02 `TanStack/query`'s `examples/react/nextjs` in Space (`/Users/lume/qa/c73/tanstack-query`, revision recorded in cycle Issue).
+- Exception (Cycle 0077 decision D2, Issue #200; owner may revoke): Vite app below repository root, which `nextjs-dashboard` lacks, trialled on same pinned P02 clone's Vite Examples (`examples/react/*`, workspace packages they import built).
 - Never easier repo, never tenth acceptance target. Recheck revision, settings, dirty state; tell owner before occupying desktop; record unsupported behavior and missing setup. Docs-only work needs no native launch.
-- All development results, two exceptions included, = development evidence only: no nine-project credit, no final row filled; fixture results likewise. Final acceptance freezes own targets and candidate; Stage 1 starts only when prerequisites hold.
+- All development results, exceptions included, = development evidence only: no nine-project credit, no final row filled; fixture results likewise. Final acceptance freezes own targets and candidate; Stage 1 starts only when prerequisites hold.
 - Use real opened repos; isolated inputs verify mechanisms only, never as bundled demos or practical trials. Retired local trial resources removed; old records in Git = no current proof.
 - Development chats: VS Code = Copilot Chat, model **GPT-6.1 Terra** (replaces GPT6 Luna; listed in Space's VS Code 1.142.0, GPT-6.1 Luna not); before each VS Code trial search picker for `6.1` and `luna` → switch to GPT-6.1 Luna, cheaper, if it appears; Cursor = Agent, model **Grok 4.6 high**, Fast on allowed; after observed credit exhaustion (either host) = installed **Codex Extension** (Claude Code extension fallback retired).
   - Model missing from picker → that host's trial NOT RUN, picker list recorded.

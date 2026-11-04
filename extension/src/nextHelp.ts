@@ -47,7 +47,7 @@ const NEXT_SETUP_DEADLINE_SCOPE = `at its early steps (${NEXT_SETUP_STEPS.starti
  * The first key of `codebook://help/repository-browser`: one sentence that sends an agent from `codebook_status` to the quick start of its app's adapter.
  * Served before both quick starts, so an agent reads it before either.
  */
-export const REPOSITORY_BROWSER_START_HERE = `Read codebook_status first: profiles[].prerequisites.adapters names the adapter that is ready for this workspace, and the next-dev-webpack readiness names routerKind (app, pages, both or none), rootIsApp and packages (the Next apps below the repository root). ${NEXT_APP_SELECTION_RULE} Then read the matching section of this help, nextQuickStart for a Next app (App Router or Pages Router) or viteQuickStart for a Vite app. For a flow of several steps (type, choose an option, click) or a secret typed by the learner, read operationsQuickStart (configuration version 3) after it. For code that runs on the server of a Next app (an App Router page's server render, or a Pages Router page's getServerSideProps or getStaticProps and the code they call), read serverRenderQuickStart, which opens with the router choice and each router's own minimums. For a Next app below the repository root, read nextPackageRoot (its examples, refusals and limits).`
+export const REPOSITORY_BROWSER_START_HERE = `Read codebook_status first: profiles[].prerequisites.adapters names the adapter that is ready for this workspace, and the next-dev-webpack readiness names routerKind (app, pages, both or none), rootIsApp and packages (the Next apps below the repository root). ${NEXT_APP_SELECTION_RULE} Then read the matching section of this help, nextQuickStart for a Next app (App Router or Pages Router) or viteQuickStart for a Vite app. For a flow of several steps (type, choose an option, click) or a secret typed by the learner, read operationsQuickStart (configuration version 3) after it. For code that runs on the server of a Next app (an App Router page's server render, or a Pages Router page's getServerSideProps or getStaticProps and the code they call), read serverRenderQuickStart, which opens with the router choice and each router's own minimums. For a Next app below the repository root, read nextPackageRoot (its examples, refusals and limits); for a Vite app below the repository root (API 1.20 or later), read vitePackageRoot.`
 
 /**
  * A minimal valid `next-dev-webpack` configuration, generic on purpose: every identity and hash is a placeholder the agent replaces with the value the step named in {@link NEXT_QUICK_START_COPY_FROM} returned.
@@ -177,7 +177,7 @@ export const NEXT_NESTED_BROWSER_STOP_CONFIGURATION = {
  * @returns The resource address with the id as its anchor.
  * @example packageRootAnchor('outside-package') // => 'codebook://help/repository-browser#outside-package'
  */
-function packageRootAnchor(id: string): string {
+export function packageRootAnchor(id: string): string {
   return `codebook://help/repository-browser#${id}`
 }
 
@@ -185,7 +185,7 @@ function packageRootAnchor(id: string): string {
  * One refusal of a `packageRoot` run, keyed by the `details.reason` the error carries: the code it answers with, what it means and the fix the chat follows.
  * Keyed by reason so the compiler holds the table's entries uniform; {@link nextPackageRootHelp} serves them in this record's order.
  */
-const PACKAGE_ROOT_REFUSALS = {
+export const PACKAGE_ROOT_REFUSALS = {
   'outside-repository': {
     code: 'INVALID_CONFIGURATION',
     meaning:
@@ -265,7 +265,7 @@ const PACKAGE_ROOT_REFUSALS = {
     code: 'PREREQUISITE_MISSING',
     meaning:
       'The opened folder lies below the Git repository root, so source authoring refuses every run in this window; details.gitRoot names the repository folder and details.packageRoot the opened folder relative to it. codebook_status reports every repository-browser adapter not ready there.',
-    fix: 'Ask the learner to open the details.gitRoot folder (the repository root) in the editor and do not retry in this window. A Next app then runs from the root with packageRoot set to details.packageRoot; other adapters do not support a folder below the root yet.',
+    fix: 'Ask the learner to open the details.gitRoot folder (the repository root) in the editor and do not retry in this window. A Next app (or, since API 1.20, a Vite app) then runs from the root with packageRoot set to details.packageRoot.',
   },
 } as const
 
@@ -339,7 +339,7 @@ function nextPackageRootHelp() {
         {
           adapter: 'vite-dev',
           packageRoot:
-            'Not supported: a value other than "." is refused with INVALID_CONFIGURATION. Remove packageRoot; a Vite app runs at the repository root only.',
+            'Version 3 only (API 1.20 or later), absent means "." (the repository root); a bad value is refused with INVALID_CONFIGURATION, a missing Vite with PREREQUISITE_MISSING. A version 1 or 2 configuration with packageRoot is refused with INVALID_CONFIGURATION. Read vitePackageRoot in this help.',
         },
       ],
     },

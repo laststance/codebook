@@ -7,14 +7,22 @@ import {
   assertDevelopmentWorkspace,
   type DevelopmentLockIdentity,
 } from './assertDevelopmentWorkspace'
+import { causeRootsFor } from './causeRootsFor'
 import { readNextRouterKind } from './readNextRouterKind'
+import { readNodeVersion } from './readNodeVersion'
 import {
   readNextInstallation,
   type NextPackageReadiness,
+  type VitePackageReadiness,
 } from './readRepositoryAdapterReadiness'
+import { readViteWorkspaceGaps } from './readViteWorkspaceGaps'
 import { resolveNextPackage } from './resolveNextPackage'
+import { resolveVitePackage } from './resolveVitePackage'
+import { sanitizeCause } from './sanitizeCause'
 import {
   scanNextPackages,
+  scanPackages,
+  type NextPackageScan,
   type NextPackageTruncationReason,
   type ScanNextPackagesOptions,
 } from './scanNextPackages'
@@ -22,6 +30,14 @@ import {
 /** The discovery's answer for `next-dev-webpack` readiness. */
 export type NextPackageDiscovery = {
   packages: NextPackageReadiness[]
+  /** Whether the list is incomplete (a cap, the deadline, a skipped path or a Git failure). */
+  packagesTruncated: boolean
+  packagesTruncatedReason?: NextPackageTruncationReason
+}
+
+/** The discovery's answer for `vite-dev` readiness. */
+export type VitePackageDiscovery = {
+  packages: VitePackageReadiness[]
   /** Whether the list is incomplete (a cap, the deadline, a skipped path or a Git failure). */
   packagesTruncated: boolean
   packagesTruncatedReason?: NextPackageTruncationReason
@@ -165,9 +181,139 @@ export async function discoverNextPackages(
       readPackage(repositoryRoot, app.packageRoot, signal, ownedLock),
     scanOptions,
   )
+  return discoveryOf(scan)
+}
+
+/**
+ * Turns a scan into the discovery's answer: the entries and whether, and why, the list is incomplete.
+ * Called by {@link discoverNextPackages} and {@link discoverPackages} for each kind.
+ * @param scan - What the scan produced for one kind.
+ * @returns The entries, `packagesTruncated`, and `packagesTruncatedReason` when truncated.
+ * @example discoveryOf({ items: [], truncation: 'limit' }) // => { packages: [], packagesTruncated: true, packagesTruncatedReason: 'limit' }
+ */
+function discoveryOf<Item>(scan: NextPackageScan<Item>): {
+  packages: Item[]
+  packagesTruncated: boolean
+  packagesTruncatedReason?: NextPackageTruncationReason
+} {
   return {
     packages: scan.items,
     packagesTruncated: scan.truncation !== undefined,
     ...(scan.truncation ? { packagesTruncatedReason: scan.truncation } : {}),
   }
+}
+
+/**
+ * Reads what a start with this `packageRoot` checks, as a Vite status entry: the shared resolver ({@link resolveVitePackage}: real path, Vite app by decision D5) and the gaps of {@link readViteWorkspaceGaps} with Vite resolved inside the repository (decision D7).
+ *
+ * Why it exists: an entry's `ready` and `missing` must equal what a start decides, so the chat never starts an app that is not installed or has no accepted `dev` script (an `index.html` app without a `dev` script, or with a `predev`, is listed `ready: false` with the gap). A refusal of the resolver becomes the entry's `missing` sentence. Called by {@link discoverPackages} for each discovered Vite app.
+ *
+ * @param repositoryRoot - The opened repository's root.
+ * @param packageRoot - The discovered repository-relative folder.
+ * @param readNode - Reads the run's Node version once for the whole discovery.
+ * @returns The entry.
+ * @example await readVitePackageReadiness('/repo', 'examples/react/basic', async () => 'v24.22.1') // => { packageRoot: 'examples/react/basic', installed: true, ready: true, version: '8.3.5', missing: [] }
+ */
+async function readVitePackageReadiness(
+  repositoryRoot: string,
+  packageRoot: string,
+  readNode: () => Promise<string | undefined>,
+): Promise<VitePackageReadiness> {
+  let resolved: Awaited<ReturnType<typeof resolveVitePackage>>
+  try {
+    resolved = await resolveVitePackage(repositoryRoot, packageRoot)
+  } catch (error) {
+    return {
+      packageRoot,
+      installed: false,
+      ready: false,
+      missing: [describeReadFailure(error)],
+    }
+  }
+  let reading: Awaited<ReturnType<typeof readViteWorkspaceGaps>>
+  try {
+    reading = await readViteWorkspaceGaps(
+      resolved.packageRoot,
+      readNode,
+      false,
+      resolved.repositoryRoot,
+    )
+  } catch (error) {
+    // One unreadable app is listed not ready with a path-free sentence; it never drops out of the list.
+    return {
+      packageRoot,
+      installed: false,
+      ready: false,
+      missing: [describeReadFailure(error)],
+    }
+  }
+  // The gap sentences reach the chat, so a private root in one is hidden as in every other cause.
+  const roots = causeRootsFor([], repositoryRoot)
+  return {
+    packageRoot,
+    installed: reading.installation !== undefined,
+    ready: reading.ready,
+    ...(reading.installation ? { version: reading.installation.version } : {}),
+    missing: reading.gaps.map((gap) =>
+      sanitizeCause(gap.statusMessage ?? gap.message, roots),
+    ),
+  }
+}
+
+/** Options of {@link discoverPackages}: those of {@link discoverNextPackages} plus the Node the Vite apps' `engines.node` is judged against. */
+export type DiscoverPackagesOptions = DiscoverNextPackagesOptions & {
+  /** The configured Node executable, when one resolved; without it an app whose Vite declares `engines.node` is not ready, as at a start. */
+  node?: string
+  /** Replaces the Vite entry reader so a test can make one app slow. */
+  readVitePackage?: (
+    repositoryRoot: string,
+    packageRoot: string,
+    readNode: () => Promise<string | undefined>,
+    signal: AbortSignal,
+  ) => Promise<VitePackageReadiness>
+}
+
+/**
+ * Discovers the Next apps and the Vite apps below the repository root for `codebook_status` in one pass over the tracked `package.json` files ({@link scanPackages}), each with the readiness a start would decide.
+ *
+ * Why it exists: Cycle 0077 lists Vite apps beside Next apps without a second `git ls-files`, manifest read or deadline. Called by {@link readStatusAdapterReadiness}.
+ *
+ * @param repositoryRoot - The opened repository's root (the Git top level).
+ * @param options - Clock, deadline, cancellation, limits, the Node executable and the entry readers.
+ * @returns One discovery per kind, each with its entries, `packagesTruncated` and `packagesTruncatedReason`.
+ * @example await discoverPackages('/repo', { node: '/usr/bin/node' }) // => { next: { packages: […], packagesTruncated: false }, vite: { packages: [{ packageRoot: 'examples/react/basic', … }], packagesTruncated: false } }
+ */
+export async function discoverPackages(
+  repositoryRoot: string,
+  options: DiscoverPackagesOptions = {},
+): Promise<{ next: NextPackageDiscovery; vite: VitePackageDiscovery }> {
+  const {
+    readPackage = readNextPackageReadiness,
+    readVitePackage = (root, folder, readNode) =>
+      readVitePackageReadiness(root, folder, readNode),
+    ownedLock,
+    node,
+    ...scanOptions
+  } = options
+  // One Node version read serves every app of the pass; it is read only when an app's Vite declares `engines.node`.
+  let nodeVersion: Promise<string | undefined> | undefined
+  const scan = await scanPackages(
+    repositoryRoot,
+    {
+      next: (app, signal) =>
+        readPackage(repositoryRoot, app.packageRoot, signal, ownedLock),
+      vite: (app, signal) =>
+        readVitePackage(
+          repositoryRoot,
+          app.packageRoot,
+          () =>
+            (nodeVersion ??= node
+              ? readNodeVersion(node, signal)
+              : Promise.resolve(undefined)),
+          signal,
+        ),
+    },
+    scanOptions,
+  )
+  return { next: discoveryOf(scan.next), vite: discoveryOf(scan.vite) }
 }

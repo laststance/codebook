@@ -16,6 +16,8 @@ export type StubViteBehavior = {
   logEnv?: string[]
   /** Lines the stub's config prints to stdout while it loads. */
   logLines?: string[]
+  /** Makes the stub print `CWD <working directory>` while it loads, so a test sees the folder the launcher ran in. */
+  logCwd?: boolean
   /** A message the stub's config throws while it loads. */
   throws?: string
   /** Makes the stub write a transient `<config file>.timestamp-*.mjs` file beside the config it was given (default `vite.config.ts`) and not remove it. */
@@ -81,6 +83,7 @@ export async function createServer(inline) {
   const root = inline.root ?? (behavior.projectRoot ? join(cwd, behavior.projectRoot) : cwd)
   for (const [name, value] of Object.entries(behavior.setsEnv ?? {})) globalThis.process.env[name] = value
   for (const line of behavior.logLines ?? []) console.log(line)
+  if (behavior.logCwd) console.log('CWD ' + cwd)
   for (const name of behavior.logEnv ?? []) console.log('ENV ' + name + '=' + (globalThis.process.env[name] ?? ''))
   for (const message of behavior.sendsMessages ?? []) globalThis.process.send(message)
   if (behavior.exits !== undefined) globalThis.process.exit(behavior.exits)

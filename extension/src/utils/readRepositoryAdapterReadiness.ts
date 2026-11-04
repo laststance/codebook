@@ -61,6 +61,18 @@ export type NextAdapterReadiness = {
   packagesTruncatedReason?: NextPackageTruncationReason
 }
 
+/** One Vite app below the repository root as `codebook_status` lists it (`packages[]`); see {@link discoverPackages}. */
+export type VitePackageReadiness = {
+  /** The repository-relative folder: the exact value to declare as `packageRoot`. */
+  packageRoot: string
+  /** Whether Vite resolves for this app inside the repository ({@link resolveViteInstallation}, decision D7). */
+  installed: boolean
+  /** What a start with this `packageRoot` would decide on the app alone ({@link readViteWorkspaceGaps}); the environment joins the shared Node and Chrome prerequisites and a managed run. */
+  ready: boolean
+  version?: string
+  missing: string[]
+}
+
 /** The Vite prerequisite of one workspace. */
 export type ViteAdapterReadiness = {
   ready: boolean
@@ -77,6 +89,14 @@ export type ViteAdapterReadiness = {
   devScript?: ViteDevScriptReadiness
   yarnPnp: boolean
   missing: string[]
+  /** Status only: whether the root is itself the Vite app (its `package.json` declares `vite` and the root holds an `index.html` or an accepted `dev` script, decision D5). */
+  rootIsApp?: boolean
+  /** Status only: the Vite apps below the root from tracked `package.json` files, each with the readiness a start with its `packageRoot` decides. Empty below the Git root. */
+  packages?: VitePackageReadiness[]
+  /** Status only: whether `packages` is incomplete. */
+  packagesTruncated?: boolean
+  /** Status only: why `packages` is incomplete. */
+  packagesTruncatedReason?: NextPackageTruncationReason
 }
 
 /** What `codebook_status` reports per repository-browser adapter for the current workspace. */

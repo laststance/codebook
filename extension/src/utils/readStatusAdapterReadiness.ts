@@ -15,9 +15,10 @@ import {
   NEXT_PACKAGE_DEPTH_SENTENCE,
 } from './describeNextPackagesTruncation'
 import {
-  discoverNextPackages,
-  type DiscoverNextPackagesOptions,
+  discoverPackages,
+  type DiscoverPackagesOptions,
   type NextPackageDiscovery,
+  type VitePackageDiscovery,
 } from './discoverNextPackages'
 import { manifestNamesNext } from './nextManifest'
 import { readNextRouterKind } from './readNextRouterKind'
@@ -25,9 +26,11 @@ import {
   readRepositoryAdapterReadiness,
   type NextAdapterReadiness,
   type RepositoryAdapterReadiness,
+  type ViteAdapterReadiness,
 } from './readRepositoryAdapterReadiness'
 import { readRepositoryBuildText } from './readRepositoryBuildText'
 import { readGitTopLevel } from './runOpenedFolderGit'
+import { isViteAppManifest } from './viteAppManifest'
 
 /**
  * Says whether the opened root is itself the Next app: its `package.json` names `next` and it has a route folder (E3).
@@ -52,6 +55,29 @@ export async function readRootIsApp(workspace: string): Promise<boolean> {
     return false
   }
   return namesNext && (await readNextRouterKind(workspace)) !== 'none'
+}
+
+/**
+ * Says whether the opened root is itself the Vite app by decision D5: its `package.json` declares `vite` and the root holds an `index.html` or an accepted `dev` script.
+ *
+ * A hoisted root `node_modules/vite` alone never makes the root the choice. Called by {@link readStatusAdapterReadiness}.
+ *
+ * @param workspace - The opened repository's root.
+ * @returns `true` for a root Vite app; `false` for an unreadable manifest, no `vite` declaration, or neither `index.html` nor an accepted `dev` script (a Vitest-only root).
+ * @example await readRootIsViteApp('/repo') // => false for a monorepo root that only hoists Vite
+ */
+async function readRootIsViteApp(workspace: string): Promise<boolean> {
+  const text = await readRepositoryBuildText(
+    workspace,
+    'package.json',
+    NEXT_PACKAGE_DISCOVERY_MANIFEST_BYTES,
+  ).catch(() => undefined)
+  if (text === undefined) return false
+  try {
+    return await isViteAppManifest(JSON.parse(text), workspace)
+  } catch {
+    return false
+  }
 }
 
 /** What the opened folder is to Git: the repository root, a folder below it (with the names), or in no repository. */
@@ -86,11 +112,11 @@ async function readPlacement(
 /** The options of {@link readStatusAdapterReadiness}; the discovery's clock, deadline and entry reader are injectable. */
 export type StatusReadinessOptions = {
   /** The discovery's clock, deadline, limits, owned lock and entry reader; `now` and `timeoutMs` also bound the placement read, which shares the discovery's one deadline. */
-  discovery?: DiscoverNextPackagesOptions
+  discovery?: DiscoverPackagesOptions
 }
 
 /**
- * Reads the repository-browser readiness `codebook_status` reports: {@link readRepositoryAdapterReadiness} plus `rootIsApp` and the Next apps below the root.
+ * Reads the repository-browser readiness `codebook_status` reports: {@link readRepositoryAdapterReadiness} plus `rootIsApp` and the Next apps and Vite apps below the root (one discovery pass, {@link discoverPackages}).
  *
  * Why it exists: AC 4, 5 and 13. The chat chooses the app from `packages` (each entry's `ready` and `missing` are what a start with that `packageRoot` checks), and a workspace opened below the Git root reports every adapter not ready with the adapter-aware recovery, because source authoring refuses every run there. The discovery starts beside the other adapters' reads and the answer waits for it until its one deadline (5 s). Called by the environment's `prerequisites` for `codebook_status`.
  *
@@ -116,12 +142,15 @@ export async function readStatusAdapterReadiness(
   const deadlineAt =
     now() + (options.discovery?.timeoutMs ?? REPOSITORY_GIT_TIMEOUT_MS)
   const placement = await readPlacement(workspace, signal, deadlineAt - now())
-  const [base, rootIsApp, discovery] = await Promise.all([
+  const [base, rootIsApp, rootIsViteApp, discovery] = await Promise.all([
     readRepositoryAdapterReadiness(workspace, node, signal),
     // The root manifest is read even when Git failed: rootIsApp does not depend on Git.
     placement.kind === 'nested' ? false : readRootIsApp(workspace),
+    placement.kind === 'nested' ? false : readRootIsViteApp(workspace),
+    // One pass classifies each tracked package.json for both Next and Vite.
     placement.kind === 'root'
-      ? discoverNextPackages(workspace, {
+      ? discoverPackages(workspace, {
+          node,
           ...options.discovery,
           timeoutMs: Math.max(0, deadlineAt - now()),
           signal,
@@ -141,19 +170,33 @@ export async function readStatusAdapterReadiness(
         packages: [],
         packagesTruncated: false,
       },
-      'vite-dev': { ...base['vite-dev'], ready: false, missing: [recovery] },
+      'vite-dev': {
+        ...base['vite-dev'],
+        ready: false,
+        missing: [recovery],
+        rootIsApp: false,
+        packages: [],
+        packagesTruncated: false,
+      },
     }
   }
   const next: NextAdapterReadiness = {
     ...base['next-dev-webpack'],
     rootIsApp,
-    packages: discovery?.packages ?? [],
-    packagesTruncated: discovery?.packagesTruncated ?? true,
-    ...truncationReasonOf(discovery),
+    packages: discovery?.next.packages ?? [],
+    packagesTruncated: discovery?.next.packagesTruncated ?? true,
+    ...truncationReasonOf(discovery?.next),
+  }
+  const vite: ViteAdapterReadiness = {
+    ...base['vite-dev'],
+    rootIsApp: rootIsViteApp,
+    packages: discovery?.vite.packages ?? [],
+    packagesTruncated: discovery?.vite.packagesTruncated ?? true,
+    ...truncationReasonOf(discovery?.vite),
   }
   return {
     'next-dev-webpack': { ...next, missing: rootMissing(next) },
-    'vite-dev': base['vite-dev'],
+    'vite-dev': vite,
   }
 }
 
@@ -164,7 +207,7 @@ export async function readStatusAdapterReadiness(
  * @example truncationReasonOf(undefined) // => { packagesTruncatedReason: 'git-failed' }
  */
 function truncationReasonOf(
-  discovery: NextPackageDiscovery | undefined,
+  discovery: NextPackageDiscovery | VitePackageDiscovery | undefined,
 ): Pick<NextAdapterReadiness, 'packagesTruncatedReason'> {
   if (!discovery) return { packagesTruncatedReason: 'git-failed' }
   if (discovery.packagesTruncatedReason)

@@ -60,6 +60,10 @@ import { createSavedSessionOperationsAsker } from './utils/createSavedSessionOpe
 import { declaredStopOfSnapshot } from './utils/declaredStopOfSnapshot'
 import { describeOperationsConfirmationNotice } from './utils/describeOperationsConfirmationNotice'
 import { listVitestForRootClaim } from './utils/listVitestForRootClaim'
+import {
+  MANAGED_RUN_PREPARING_MESSAGE,
+  MANAGED_RUN_RELEASING_MESSAGE,
+} from './utils/managedRunStateMessages'
 import { nodeServerMachineGaps } from './utils/nodeServerMachineGaps'
 import type { NodeServerOrphanStore } from './utils/nodeServerOrphanRecords'
 import { nodeTestVitestFailure } from './utils/nodeTestVitestFailure'
@@ -445,13 +449,9 @@ export async function createEnvironment(
       ])
       // A managed run that is preparing or releasing blocks a new start under either adapter.
       const managedRunState = releasingConfiguredRun
-        ? [
-            'Codebook is releasing its managed run. Read the current run error and retry Stop if cleanup fails.',
-          ]
+        ? [MANAGED_RUN_RELEASING_MESSAGE]
         : preparingConfiguredRun
-          ? [
-              'Codebook is preparing its managed repository run. Poll the current run; do not stop its process or remove its lock.',
-            ]
+          ? [MANAGED_RUN_PREPARING_MESSAGE]
           : []
       // A preparing run may have created its lock before it has sealed ownership; never label that interval foreign.
       const configured = managedRunState.length
@@ -512,6 +512,15 @@ export async function createEnvironment(
               'vite-dev': {
                 ...adapters['vite-dev'],
                 ...check([...adapters['vite-dev'].missing, ...managedRunState]),
+                // Each listed Vite app is ready for a start only with the shared prerequisites and no managed run in the way, as a Next app is.
+                ...(adapters['vite-dev'].packages
+                  ? {
+                      packages: adapters['vite-dev'].packages.map((entry) => ({
+                        ...entry,
+                        ...check([...entry.missing, ...managedRunState]),
+                      })),
+                    }
+                  : {}),
               },
             },
           },
