@@ -2397,13 +2397,25 @@ export async function configuredRuntimeHarness(
       currentColumn = column
       currentLine = line
     },
-    /** Sends the debugger's `stopped` alone, for a pause the runtime reported earlier. */
-    emitStopped(): void {
+    /** Sends the debugger's `stopped` alone, for a pause the runtime reported earlier; `hitBreakpointIds` are the adapter's ids of the breakpoints it names, and `source` is the place its stack frame reports. @example harness.emitStopped({ hitBreakpointIds: [12], source: { line: 3, column: 1 } }) */
+    emitStopped(options?: {
+      hitBreakpointIds?: number[]
+      source?: { line: number; column: number }
+    }): void {
+      if (options?.source) {
+        currentLine = options.source.line
+        currentColumn = options.source.column
+      }
+      const hitBreakpointIds = options?.hitBreakpointIds
       run.onEvent(selected, {
         seq: ++requestSequence,
         type: 'event',
         event: 'stopped',
-        body: { threadId: 1, reason: 'breakpoint' },
+        body: {
+          threadId: 1,
+          reason: 'breakpoint',
+          ...(hitBreakpointIds ? { hitBreakpointIds } : {}),
+        },
       })
     },
     /** Announces a script of the owned page, as the debugger does for every module it parses. */

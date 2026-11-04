@@ -10847,7 +10847,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Finds the server library stop whose breakpoint a browser pause hit, when that pause is the page's copy of a library file that holds stops of both participants (D19).
-   * Why it exists: such a file is mapped in the browser launch, so a server stop's breakpoint (an editor breakpoint bound in every session) binds the page's copy too. A browser pause in that file is the stop only at a line a browser stop of the file declares; a pause that hit only server stops' breakpoints (live ones, or ones the run retired) is nobody's stop and is resumed. Called by {@link onEvent} for a browser `stopped`.
+   * Why it exists: such a file is mapped in the browser launch, so a server stop's breakpoint (an editor breakpoint bound in every session) binds the page's copy too. A browser pause in that file is the stop only at the place of a browser stop of the file (judged from the pause the page already reported, whether held, transient, admitted as the browser's stop or queued; the declared lines only while no pause is known); a pause that hit only server stops' breakpoints (live ones, or ones the run retired) is nobody's stop and is resumed. Called by {@link onEvent} for a browser `stopped`.
    * @param session - The browser session that sent the event.
    * @param body - The event's body.
    * @returns The server stop to resume for and the pause's script address (empty when the page's runtime has not announced the pause yet); `undefined` when the pause is anything else, including a pause that also hit a breakpoint that is no server stop's.
@@ -10881,8 +10881,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         (stop) => stop.breakpoint?.acknowledgedId(session) === id,
       )
     if (serverStops.length === 0 || !hitIds.every(isServerId)) return undefined
+    // The pause's event: one the intake already admitted as the browser's stop or queued behind a continuation counts too, because the DAP `stopped` can arrive after the CDP pause was judged.
     const held =
-      this.participants.browser.unannouncedPause ?? this.transientBrowserPause
+      this.participants.browser.unannouncedPause ??
+      this.transientBrowserPause ??
+      this.participants.browser.stopped ??
+      (this.pendingCdpStop?.participant === 'browser'
+        ? this.pendingCdpStop
+        : undefined)
     // An id says which breakpoint was hit, not which participant's stop the pause is: a retired id maps to no stop at all. The pause's place decides; a pause at the place of a browser stop of the file is that stop's. While the page's runtime has not reported the place, a server stop that shares its line with a browser stop of the file cannot be told apart by id, so the pause is observed, never resumed.
     const isAtBrowserStopPlace =
       held === undefined

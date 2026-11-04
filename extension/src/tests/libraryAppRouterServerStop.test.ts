@@ -1088,6 +1088,90 @@ test('a browser pause at a line both a browser and a server stop declare is obse
   assert.deepEqual(journaled(harness, 'breakpoint.library-copy'), [])
 })
 
+// protects=D19 a page pause the intake already admitted as browser stop B, whose breakpoint the debugger bound to a line other than B's declared one (the line a server stop declares), is observed when the debugger's stopped event names only the server stop's breakpoint; fails_when=the pause is judged from the declared lines alone and resumed as a library copy, losing B's observation; no_claim=js-debug's real binding move and a real click handler
+test('a browser pause admitted at the bound place of a browser stop is observed when the stopped event names only a server stop breakpoint', async (context) => {
+  // Arrange
+  const staged = stageAppServer()
+  const harness = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [
+      {
+        line: 2,
+        column: 1,
+        inspections: [{ path: 'count', mode: 'value', required: true }],
+      },
+    ],
+    libraryAppServerOptions(staged, {
+      inspectionScope: { doubled: 6, count: 3 },
+      operations: {
+        operations: [CLICK_OPERATION],
+        stopOperations: [0, 1],
+        stopParticipants: ['server', 'browser'],
+      },
+    }),
+  )
+  const prepared = harness.run.prepare()
+  prepared.catch(() => undefined)
+  await waitUntil(
+    () => harness.server!.breakpointsAcknowledged() > 0,
+    'the entry-render stop was registered',
+  )
+  const files = staged.files()
+  const server = files.appRouterServer!
+  announceResolved(harness, 'rsc-1', server.rscJavascript, server.rscAddress)
+  await journaledOnce(harness, 'stop.module-parsed')
+  harness.server!.hit({
+    ...server.hitAt(LIBRARY_RETURN_LINE),
+    scriptId: 'rsc-1',
+  })
+  const entry = await waitUntil(
+    () => harness.run.view().participants.server?.snapshot,
+    'the entry-render stop S',
+  )
+  harness.replaceExecutedModule(files.browserModuleJavascript)
+  harness.announceScript('browser-lib', new URL(files.browserAddress).href)
+  harness.setDocumentReadyState('complete')
+  harness.suppressInputPause()
+  // The debugger moves B's breakpoint, declared at line 2, to the executable line S declares.
+  const bound = files.hitAt(LIBRARY_RETURN_LINE)
+  harness.bindLaterStopsAt(bound.source.line, bound.source.column)
+  await harness.run.continue('server', entry.pause)
+  await prepared
+  harness.run.action('op-1', 'repository-operation')
+  await waitUntil(
+    () =>
+      harness.breakpoints.some(
+        (breakpoint) => breakpoint.id === 'owned-breakpoint-2',
+      ),
+    'the browser stop B was armed',
+  )
+  await waitUntil(() => harness.inputsSeen() >= 1, 'the click was sent')
+  // Act
+  harness.emitCdpPauseAt({
+    scriptId: 'browser-lib',
+    lineNumber: bound.generated.line,
+    columnNumber: bound.generated.column,
+    functionName: '',
+    hitBreakpoints: ['mapped-source'],
+  })
+  harness.emitStopped({
+    hitBreakpointIds: [harness.browserAdapterIdOf('owned-breakpoint')],
+    source: bound.source,
+  })
+  const stop = await waitUntil(
+    () => harness.run.view().participants.browser?.snapshot,
+    'the browser stop B at its bound place',
+  )
+  // Assert
+  assert.equal(stop.source.line, LIBRARY_RETURN_LINE)
+  assert.equal(
+    harness.commands.filter((command) => command === 'continue').length,
+    0,
+  )
+  assert.deepEqual(journaled(harness, 'breakpoint.library-copy'), [])
+})
+
 /** Adds a Pages folder to the nested app, so it holds both routers. */
 function withPagesFolder(staged: StagedLibrary): StagedLibrary {
   return {
