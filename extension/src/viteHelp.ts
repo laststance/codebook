@@ -1,9 +1,17 @@
 import {
   MILLISECONDS_PER_SECOND,
+  NEXT_PACKAGE_DISCOVERY_APP_LIMIT,
+  NEXT_PACKAGE_DISCOVERY_MANIFEST_LIMIT,
+  NEXT_PACKAGE_DISCOVERY_MAX_DEPTH,
+  REPOSITORY_GIT_TIMEOUT_MS,
   REPOSITORY_SETUP_TIMEOUT_MS,
+  VITE_APP_SELECTION_RULE,
+  VITE_PACKAGE_ROOT_MINIMUM_API,
+  VITE_PACKAGE_ROOT_MINIMUM_EXTENSION,
   VITE_STOP_EXTENSIONS,
   VITE_SUPPORTED_MAJOR,
 } from './constants'
+import { PACKAGE_ROOT_REFUSALS, packageRootAnchor } from './nextHelp'
 import {
   VITE_REFUSAL_CODES,
   viteHelpAnchor,
@@ -43,6 +51,117 @@ export const VITE_QUICK_START_CONFIGURATION = {
   },
   inspections: [{ path: 'value', mode: 'value', required: true }],
 } as const
+
+/**
+ * A complete version 3 configuration for a browser stop in a Vite app below the repository root, reached by one declared click: the app's folder is `packageRoot`, and `source.path` is repository-relative (it starts with that folder).
+ * Served as `vitePackageRoot.configurationNested` and parsed by a test with {@link liveRepositoryConfigSchema}. Every value is a neutral placeholder, not any project's folder or file: the agent replaces the folder with the `packageRoot` value of the `packages` entry the question is about, the book identity and the hash with the values the earlier steps returned.
+ */
+export const VITE_NESTED_CONFIGURATION = {
+  version: 3,
+  adapter: 'vite-dev',
+  packageRoot: 'apps/my-app',
+  book: {
+    bookId: 'my-article',
+    revision: 1,
+    nodeId: 'my-node',
+    anchorIndex: 0,
+  },
+  source: {
+    path: 'apps/my-app/src/components/Counter.tsx',
+    hash: '0000000000000000000000000000000000000000000000000000000000000000',
+    line: 14,
+    column: 5,
+  },
+  participant: 'browser',
+  afterOperation: 1,
+  entryPath: '/',
+  before: [{ kind: 'visible', selector: '[data-testid="count-button"]' }],
+  after: [
+    {
+      kind: 'text',
+      selector: '[data-testid="count-value"]',
+      equals: '1',
+    },
+  ],
+  operations: [
+    {
+      kind: 'click',
+      title: 'Click the counter button',
+      selector: '[data-testid="count-button"]',
+    },
+  ],
+  inspections: [{ path: 'count', mode: 'value', required: true }],
+} as const
+
+/**
+ * The refusals of a `packageRoot` run of a Vite app, keyed by `details.reason`: the five reasons the Next app shares (same code, same fix), then the Vite-only `not-a-vite-app` and `outside-package` (under `VITE_SEAL_FAILED`).
+ * Reuses {@link PACKAGE_ROOT_REFUSALS} for the shared rows so the two adapters cannot drift; the anchor of a reason is `codebook://help/repository-browser#<reason>` for both adapters.
+ */
+const VITE_PACKAGE_ROOT_REFUSALS = {
+  'outside-repository': PACKAGE_ROOT_REFUSALS['outside-repository'],
+  'link-leaves-repository': PACKAGE_ROOT_REFUSALS['link-leaves-repository'],
+  'not-a-folder': PACKAGE_ROOT_REFUSALS['not-a-folder'],
+  missing: PACKAGE_ROOT_REFUSALS.missing,
+  unreadable: PACKAGE_ROOT_REFUSALS.unreadable,
+  'not-a-vite-app': {
+    code: 'INVALID_CONFIGURATION',
+    meaning:
+      'The folder has no package.json that declares vite in dependencies or devDependencies, or it declares vite but holds no index.html and has no dev script Codebook accepts (a library package that only uses a vite.config for its tests is not an app).',
+    fix: 'Declare the folder whose package.json declares vite and runs the app (a packages entry of the vite-dev readiness), or tell the learner this folder is not a Vite app. Nothing started.',
+  },
+  'outside-package': {
+    code: 'VITE_SEAL_FAILED',
+    meaning:
+      'A stop file lies outside packageRoot (a shared package the app imports, for example); details.files lists every such stop and details.packageRoot the app folder. Refused before the server starts: nothing ran (details.sideEffects none). The anchor is shared with the Next app, whose code for this reason is NEXT_STOP_NOT_SEALED.',
+    fix: 'Declare stops only in files inside details.packageRoot, or tell the learner that code outside the app folder cannot be observed in this version (a stop in a workspace library through Vite is not supported). Do not start another run with the same stops.',
+  },
+} as const
+
+/**
+ * Builds the `vitePackageRoot` key of `codebook://help/repository-browser`: how to run a Vite app that lives below the repository root (API 1.20).
+ *
+ * Why it exists: before API 1.20 a Vite app below the repository root could not run, and a chat that meets one (a library's `examples/` folder, a monorepo) needs the selection rule, the exact configuration shape, the refusal fixes and the limits before it reads the long sections. Called by {@link viteHelp}, which serves its result as one key.
+ *
+ * @returns The section: selection rule, status fields, one complete version 3 example, the refusal-to-fix table (one anchor per `details.reason`), the saved-session rule, the study-format note and the limits.
+ * @example
+ * vitePackageRoot().refusals['not-a-vite-app'].anchor // => 'codebook://help/repository-browser#not-a-vite-app'
+ */
+function vitePackageRoot() {
+  return {
+    anchor: packageRootAnchor('vite-package-root'),
+    minimumApi: VITE_PACKAGE_ROOT_MINIMUM_API,
+    minimumExtension: VITE_PACKAGE_ROOT_MINIMUM_EXTENSION,
+    selectionRule: VITE_APP_SELECTION_RULE,
+    versionCheck: `packageRoot under vite-dev exists only in configuration version 3 and only when codebook_status reports API ${VITE_PACKAGE_ROOT_MINIMUM_API} or later (Codebook ${VITE_PACKAGE_ROOT_MINIMUM_EXTENSION}; compare the number after the dot as a whole number). A version 1 or 2 configuration with packageRoot is refused. On an older API, or when a start refuses packageRoot as an unknown key, tell the learner to update Codebook and do not run the app by another route.`,
+    openFrom:
+      "Open the repository root, never the app's folder: with a folder below the repository root open, source authoring is refused with PREREQUISITE_MISSING and the message names the packageRoot to declare once the learner has opened the root.",
+    status: {
+      rootIsApp:
+        'vite-dev readiness: true when the root package.json declares vite and the root holds an index.html or a dev script Codebook accepts. Only then is the root a candidate; the root ready keeps its meaning.',
+      packages: `Array of the Vite apps below the root that tracked package.json files declare (depth ${NEXT_PACKAGE_DISCOVERY_MAX_DEPTH} or less, at most ${NEXT_PACKAGE_DISCOVERY_APP_LIMIT}): { packageRoot, installed, ready, version?, missing[] }. packageRoot is the exact value to declare; ready and missing are what a start with that packageRoot checks (the dev script form, the Vite installation, Vite's engines.node). Untracked apps are not listed.`,
+      packagesTruncated: `true when the list is incomplete; packagesTruncatedReason says why: limit (more than ${NEXT_PACKAGE_DISCOVERY_APP_LIMIT} apps), manifest-cap (more than ${NEXT_PACKAGE_DISCOVERY_MANIFEST_LIMIT} manifests), deadline (the ${REPOSITORY_GIT_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s discovery bound), skipped-path (a path was skipped) or git-failed.`,
+    },
+    configurationNested: VITE_NESTED_CONFIGURATION,
+    example:
+      'configurationNested: a browser stop in a component of a Vite app whose folder is packageRoot, reached by one declared click (a browser stop declares afterOperation from 1). source.path stays repository-relative and starts with packageRoot; entryPath is the page the app serves. The folder, file, line, selectors and inspection are placeholders: replace them, the book and the hash with the app the question is about.',
+    refusals: Object.fromEntries(
+      Object.entries(VITE_PACKAGE_ROOT_REFUSALS).map(([reason, entry]) => [
+        reason,
+        { anchor: packageRootAnchor(reason), ...entry },
+      ]),
+    ),
+    savedSession:
+      'A Vite run with packageRoot other than "." starts with a fresh browser profile and never loads the repository\'s saved sign-in session; the run resource reports savedSessionSkipped "package-root".',
+    studies:
+      "A nested Vite run is saved as study format 10 (.study.v10.json) with packageRoot in its configuration; recorded sources and book citations stay repository-relative. A root Vite run keeps the format it takes today. Codebook 0.2.77.0 lists a format 10 study as saved by a newer Codebook; update Codebook to open it. Format 10 replays from recorded evidence, also after the app's folder is removed.",
+    limits: [
+      "Codebook starts the app's own Vite from its folder and reads its dev script without running it (the same dev script forms as a root app). Vite resolves as Node would from the app's folder: the first node_modules/vite from packageRoot up to the repository root, never above it, whose real path is inside the repository (a pnpm link and a hoisted install inside the repository qualify; Yarn PnP and NODE_PATH count as not installed).",
+      "Stops must lie in the app's own files; a stop in a workspace library the app imports is refused with VITE_SEAL_FAILED (outside-package). Browser stops only.",
+      "The app's own environment files are read and their values are masked, as for a root app. A Vite config temp file left in the app's own node_modules/.vite-temp or beside its config is removed; one in a shared ancestor node_modules/.vite-temp is never touched.",
+      'One run at a time per window: a root run beside a nested run is refused with BUSY.',
+    ],
+  }
+}
 
 /** Where each placeholder of {@link VITE_QUICK_START_CONFIGURATION} is copied from. */
 const VITE_QUICK_START_COPY_FROM = {
@@ -90,7 +209,7 @@ export function viteHelp() {
     viteSupport: {
       supported: [
         `Vite major ${VITE_SUPPORTED_MAJOR}; its own engines.node range must include the Node that Codebook runs (Codebook: Node Executable). A .nvmrc or .node-version of the project is not honored.`,
-        'A root app: the workspace root is the package root (a Vite app in a sub-folder, a packageRoot, is not supported yet).',
+        'A root app (the workspace root is the package root), or, in a version 3 configuration (API 1.20 or later), a Vite app in a folder below the repository root declared as packageRoot (see vitePackageRoot).',
         'A dev script of the form [NAME=value ...] vite [dev|serve] [--host] [--open] [--port N] [--mode M] [--config F] with --config naming a file inside the package root; --port, --mode and --config (also written --port=N) are forwarded to Vite as the script would, --host and --open are ignored (Codebook binds 127.0.0.1 and opens no browser of its own). Codebook never runs the dev script itself.',
         `Stops in JavaScript or TypeScript files under the package root (${VITE_STOP_EXTENSIONS.join(', ')}) that the entry page loads.`,
         'Browser stops only.',
@@ -112,5 +231,6 @@ export function viteHelp() {
         { anchor: viteHelpAnchor(code), recovery: viteRecoveryOf(code) },
       ]),
     ),
+    vitePackageRoot: vitePackageRoot(),
   }
 }
