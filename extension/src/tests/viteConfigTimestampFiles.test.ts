@@ -4,6 +4,7 @@ import {
   mkdtemp,
   realpath,
   rm,
+  stat,
   symlink,
   writeFile,
 } from 'node:fs/promises'
@@ -19,6 +20,14 @@ import {
 import { VITE_DEV_ADAPTER } from '../viteDevAdapter'
 
 const TEMP_NAME = 'vite.config.ts.timestamp-123-abc.mjs'
+
+/** Whether a path exists. */
+async function pathExists(path: string): Promise<boolean> {
+  return stat(path).then(
+    () => true,
+    () => false,
+  )
+}
 
 /** Makes a real-path temp folder removed after the test. */
 async function makeRoot(context: TestContext): Promise<string> {
@@ -61,6 +70,40 @@ test('a nested app whose node_modules links to a shared folder leaves that folde
   const listed = await listViteTimestampFiles(app, undefined, true)
   // Assert
   assert.deepEqual([...listed], [])
+})
+
+// protects=decision D8 for a nested app whose own node_modules is real but whose .vite-temp links to the repository's shared .vite-temp: another app's file there survives the end-of-run cleanup; fails_when=only the node_modules real path is checked, so the linked .vite-temp is listed and cleaned; no_claim=a link created before launch is also unlisted at launch (covered by the symlinked node_modules test)
+test('a nested app whose .vite-temp links to a shared folder does not delete another apps temp file', async (context) => {
+  // Arrange
+  const root = await makeRoot(context)
+  const app = join(root, 'apps/a')
+  const shared = join(root, 'node_modules/.vite-temp')
+  await mkdir(shared, { recursive: true })
+  await mkdir(join(app, 'node_modules'), { recursive: true })
+  await symlink(shared, join(app, 'node_modules/.vite-temp'))
+  const before = await listViteTimestampFiles(app, undefined, true)
+  await writeFile(join(shared, TEMP_NAME), 'x')
+  // Act
+  await removeNewViteTimestampFiles(app, before, undefined, true)
+  // Assert
+  assert.equal(await pathExists(join(shared, TEMP_NAME)), true)
+})
+
+// protects=decision D8 for a nested run whose --config leads to a sibling app: a new matching file beside that config survives; fails_when=the folder beside the config is cleaned without a real-path check; no_claim=a --config inside the app (existing behavior)
+test('a nested run with a --config outside the app leaves the folder beside that config alone', async (context) => {
+  // Arrange
+  const root = await makeRoot(context)
+  const app = join(root, 'apps/a')
+  const sibling = join(root, 'apps/b')
+  await mkdir(app, { recursive: true })
+  await mkdir(sibling, { recursive: true })
+  const configFile = '../b/vite.config.ts'
+  const before = await listViteTimestampFiles(app, configFile, true)
+  await writeFile(join(sibling, TEMP_NAME), 'x')
+  // Act
+  await removeNewViteTimestampFiles(app, before, configFile, true)
+  // Assert
+  assert.equal(await pathExists(join(sibling, TEMP_NAME)), true)
 })
 
 // protects=a nested app with a real node_modules inside it still lists its own .vite-temp; fails_when=the real-path check rejects an ordinary own folder; no_claim=a symlinked folder (test above)
