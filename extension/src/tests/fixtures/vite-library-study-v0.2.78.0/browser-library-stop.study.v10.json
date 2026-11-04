@@ -168,13 +168,18 @@
         "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
         "line": 1,
         "column": 1,
-        "javascriptHash": "90a211cdc7afe36a5f4d3bee6a1b67f3baad370911a63d0f50e32cd230fa9ccd",
-        "mapHash": "ea16762ea4eacb4673c3cc04fd2cbf36d41603f2f4c2fb70bd9b0eebf1996de9",
-        "scriptId": "17",
-        "scriptUrl": "webpack-internal:///(app-pages-browser)/src/theme.ts",
+        "javascriptHash": "2042c6fe52df9319ec236c67addbea3ef8b10b0289ca37b855fdbbc4a0aa1353",
+        "mapHash": "116f07e7df2ceeeeba78b95a746f89df78d504ea0f9aa92ceb6b2d17663aa45d",
+        "scriptId": "42",
+        "scriptUrl": "http://127.0.0.1:41731/@fs/home/example/repository/packages/core/build/modern/a.js",
         "generated": {
-          "line": 8,
-          "column": 2
+          "line": 0,
+          "column": 0
+        },
+        "binding": {
+          "declaredLine": 1,
+          "boundLine": 1,
+          "mappedLinesBetween": 0
         }
       },
       "values": {
@@ -194,7 +199,7 @@
         "version": 1,
         "frames": [
           {
-            "name": "fetch",
+            "name": "(anonymous)",
             "line": 1,
             "column": 1,
             "source": {
@@ -205,7 +210,7 @@
             },
             "scopes": [
               {
-                "name": "Local",
+                "name": "Module",
                 "variables": [0]
               }
             ]
@@ -213,8 +218,9 @@
         ],
         "variables": [
           {
-            "name": "fetchCount",
-            "value": "3",
+            "name": "nextTheme",
+            "value": "\"dark\"",
+            "type": "string",
             "children": []
           }
         ],
