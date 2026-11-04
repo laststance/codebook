@@ -140,8 +140,14 @@ const BROWSER_LIBRARY_RECOVERIES = {
   'library-not-in-build': `The entry chunks of the route and \`_app\` that the page loads at start do not hold exactly one built file of the library that maps the stop (details.candidates lists them). A library module the page loads later (\`next/dynamic\`, a lazy import) cannot be sealed. Tell the learner, or choose a stop on a line the page runs at load; do not start another run with the same stop. ${LIBRARY_ENTRY_REQUESTED} See ${libraryHelpAnchor('library-not-in-build')}.`,
 } as const
 
-/** The webpack layer a Pages library refusal is worded for (the same values as `LibraryStopLayer` in `sealLibraryStop.ts`, repeated so this module imports nothing from it). */
-type PagesLibraryLayer = 'pages-dir-node' | 'pages-dir-browser'
+/** The App Router browser layer's wording of the refusal that names the searched code (`library-not-in-build`): the client chunks of the entry route's client reference manifest. */
+const APP_BROWSER_LIBRARY_RECOVERIES = {
+  'library-not-in-build': `The client chunks of the entry route's client reference manifest do not hold exactly one built file of the library whose map names the stop's checked-out file (details.candidates lists them; details.mapSource is the path the module's map named). A library module the page loads later (\`next/dynamic\`, a lazy import) cannot be sealed. Tell the learner, or choose a stop on a line the page runs at load; do not start another run with the same stop. ${LIBRARY_ENTRY_REQUESTED} See ${libraryHelpAnchor('library-not-in-build')}.`,
+} as const
+
+/** The webpack layer a library refusal is worded for: a Pages server or browser layer, or the App Router browser layer (the same values as `LibraryStopLayer` in `sealLibraryStop.ts`, repeated so this module imports nothing from it). */
+type LibraryRefusalLayer =
+  'pages-dir-node' | 'pages-dir-browser' | 'app-pages-browser'
 
 /**
  * Picks the recovery of a layer-worded library refusal; called by {@link libraryNotInBuildRefusal} and {@link libraryBuildChangedFailure}.
@@ -152,8 +158,10 @@ type PagesLibraryLayer = 'pages-dir-node' | 'pages-dir-browser'
  */
 function pagesLibraryRecoveryOf(
   reason: keyof typeof BROWSER_LIBRARY_RECOVERIES,
-  layer: PagesLibraryLayer,
+  layer: LibraryRefusalLayer,
 ): string {
+  if (layer === 'app-pages-browser')
+    return APP_BROWSER_LIBRARY_RECOVERIES[reason]
   return layer === 'pages-dir-browser'
     ? BROWSER_LIBRARY_RECOVERIES[reason]
     : LIBRARY_RECOVERIES[reason]
@@ -180,17 +188,22 @@ export type LibraryRecoveryReason = keyof typeof LIBRARY_RECOVERIES
  * Why it exists: the refusal builders and {@link refusalFailureOf} must give the agent the same recovery whether the refusal was thrown or restored from a run's failure text.
  * @param reason - A library refusal `details.reason`.
  * @param adapter - The adapter whose run raised it: the endings differ in what had started (`next` by default, `vite` for a nested Vite app's browser stop).
+ * @param router - The router of a Next app (`details.router`): an App Router `library-not-in-build` names the client chunks of the entry route's client reference manifest, as the thrown refusal does; `pages` by default.
  * @returns The static recovery text, ending at the reason's own help anchor.
  * @example
  * libraryRecoveryOf('library-build-stale') // => "A workspace library's build does not match … See codebook://help/repository-browser#library-build-stale."
+ * libraryRecoveryOf('library-not-in-build', 'next', 'app') // => "The client chunks of the entry route's client reference manifest do not hold … See codebook://help/repository-browser#library-not-in-build."
  */
 export function libraryRecoveryOf(
   reason: LibraryRecoveryReason,
   adapter: 'next' | 'vite' = 'next',
+  router: 'pages' | 'app' = 'pages',
 ): string {
-  return adapter === 'vite'
-    ? VITE_LIBRARY_RECOVERIES[reason]
-    : LIBRARY_RECOVERIES[reason]
+  if (adapter === 'vite') return VITE_LIBRARY_RECOVERIES[reason]
+  // Only the refusal that names the searched code has an App Router wording; every other reason reads the same for both routers.
+  if (router === 'app' && reason === 'library-not-in-build')
+    return APP_BROWSER_LIBRARY_RECOVERIES[reason]
+  return LIBRARY_RECOVERIES[reason]
 }
 
 /** Why a library's build could not be matched to a stop file; the `details.cause` of a `library-build-unmapped` refusal. `prebundled` and `lazy-import` are raised only under `vite-dev`. */
@@ -269,7 +282,7 @@ const LIBRARY_RUNTIME_REASONS = [
 ] as const
 
 /** One of {@link LIBRARY_RUNTIME_REASONS}. */
-export type LibraryRuntimeReason = (typeof LIBRARY_RUNTIME_REASONS)[number]
+type LibraryRuntimeReason = (typeof LIBRARY_RUNTIME_REASONS)[number]
 
 /**
  * Builds the refusal of a library stop whose page server compile holds none, or more than one, of the built files that map the stop, raised by the library seal after the readiness request.
@@ -277,8 +290,9 @@ export type LibraryRuntimeReason = (typeof LIBRARY_RUNTIME_REASONS)[number]
  * @param libraryName - The library's package name.
  * @param file - The repository-relative stop file.
  * @param candidates - The built files that map the stop, repository-relative; named in the message.
- * @param layer - The webpack layer the seal searched; `pages-dir-browser` words the message and recovery by the entry chunks the page loads at start, the default `pages-dir-node` by the server compile.
- * @returns The `NEXT_STOP_NOT_SEALED` error: `details.reason: "library-not-in-build"`, `details.candidates`, the Pages details (`sideEffects: "unknown"`).
+ * @param layer - The webpack layer the seal searched; `pages-dir-browser` words the message and recovery by the entry chunks the page loads at start, `app-pages-browser` by the client chunks of the entry route's client reference manifest (its details carry `router: "app"` and, when given, `mapSource`), the default `pages-dir-node` by the server compile.
+ * @param mapSource - The path the one module's map named, when the module was found but its map does not name the stop's checked-out file (`app-pages-browser` only).
+ * @returns The `NEXT_STOP_NOT_SEALED` error: `details.reason: "library-not-in-build"`, `details.candidates`, the stop details (`sideEffects: "unknown"`; `router: "app"` and `mapSource` when the layer is `app-pages-browser`).
  * @example
  * throw libraryNotInBuildRefusal('examples/app', 'lib', 'packages/lib/src/core.ts', ['packages/lib/build/modern/core.js', 'packages/lib/build/legacy/core.js'])
  */
@@ -287,13 +301,16 @@ export function libraryNotInBuildRefusal(
   libraryName: string,
   file: string,
   candidates: readonly string[],
-  layer: PagesLibraryLayer = 'pages-dir-node',
+  layer: LibraryRefusalLayer = 'pages-dir-node',
+  mapSource?: string,
 ): StudyError {
   const list = candidates.join(', ') || 'none'
   const message =
-    layer === 'pages-dir-browser'
-      ? `The build of library ${libraryName} matches ${file}, but the entry chunks of the route and \`_app\` that the page loads at start do not hold exactly one of its candidates (${list}), so a stop there cannot be sealed for packageRoot ${packageRoot}. A library module the page loads later (\`next/dynamic\`, a lazy import) cannot be sealed.`
-      : `The build of library ${libraryName} matches ${file}, but the server compile of the page does not hold exactly one of its candidates (${list}), so a stop there cannot be sealed for packageRoot ${packageRoot}. The page's server code may load another build, or may not run that file.`
+    layer === 'app-pages-browser'
+      ? `The build of library ${libraryName} matches ${file}, but the client chunks of the entry route's client reference manifest do not hold exactly one of its candidates (${list}) whose map names the checked-out file, so a stop there cannot be sealed for packageRoot ${packageRoot}. A library module the page loads later (\`next/dynamic\`, a lazy import) cannot be sealed.`
+      : layer === 'pages-dir-browser'
+        ? `The build of library ${libraryName} matches ${file}, but the entry chunks of the route and \`_app\` that the page loads at start do not hold exactly one of its candidates (${list}), so a stop there cannot be sealed for packageRoot ${packageRoot}. A library module the page loads later (\`next/dynamic\`, a lazy import) cannot be sealed.`
+        : `The build of library ${libraryName} matches ${file}, but the server compile of the page does not hold exactly one of its candidates (${list}), so a stop there cannot be sealed for packageRoot ${packageRoot}. The page's server code may load another build, or may not run that file.`
   return nextRefusal('NEXT_STOP_NOT_SEALED', message, {
     details: {
       reason: 'library-not-in-build',
@@ -302,6 +319,9 @@ export function libraryNotInBuildRefusal(
       file,
       candidates: [...candidates],
       ...PAGES_STOP_REFUSAL_DETAILS,
+      ...(layer === 'app-pages-browser'
+        ? { router: 'app', ...(mapSource === undefined ? {} : { mapSource }) }
+        : {}),
     },
     recovery: pagesLibraryRecoveryOf('library-not-in-build', layer),
   })
@@ -314,7 +334,9 @@ export function libraryNotInBuildRefusal(
  * @param file - The repository-relative stop file.
  * @param line - The declared (armed) source line.
  * @param why - A short value-free reason for the message.
- * @returns The `NEXT_STOP_NOT_SEALED` error: `details.reason: "library-place-ambiguous"`, the Pages details (`sideEffects: "unknown"`).
+ * @param router - The router of the app (`app` for a browser stop sealed in source terms in an App Router app); `pages` by default.
+ * @param sideEffects - `none` for a refusal raised at the freeze, before any process starts; `unknown` (default) once the owned server answered the entry request.
+ * @returns The `NEXT_STOP_NOT_SEALED` error: `details.reason: "library-place-ambiguous"`, the stop details (`router: "app"` when raised for an App Router app, else `pages`; `sideEffects` as given).
  * @example
  * throw libraryPlaceAmbiguousRefusal('examples/app', 'lib', 'packages/lib/src/core.ts', 3, 'the bound line maps to several source lines')
  */
@@ -324,6 +346,8 @@ export function libraryPlaceAmbiguousRefusal(
   file: string,
   line: number,
   why: string,
+  router: 'pages' | 'app' = 'pages',
+  sideEffects: 'none' | 'unknown' = 'unknown',
 ): StudyError {
   const message = `The stop at ${file}:${line} in library ${libraryName} could not be tied to one source position (${why}) for packageRoot ${packageRoot}. Declare the stop on a line that holds a single statement.`
   return nextRefusal('NEXT_STOP_NOT_SEALED', message, {
@@ -332,7 +356,8 @@ export function libraryPlaceAmbiguousRefusal(
       packageRoot,
       library: libraryName,
       file,
-      ...PAGES_STOP_REFUSAL_DETAILS,
+      sideEffects,
+      router,
     },
     recovery: LIBRARY_RECOVERIES['library-place-ambiguous'],
   })
@@ -343,7 +368,8 @@ export function libraryPlaceAmbiguousRefusal(
  * @param packageRoot - The Next app's canonical repository-relative package root.
  * @param libraryName - The library's package name.
  * @param file - The repository-relative stop file.
- * @returns The `RUNTIME_FAILED` error: `details.reason: "library-build-changed"`, the Pages details (`sideEffects: "unknown"`).
+ * @param router - The router of the app (`app` for a browser stop sealed in source terms in an App Router app); `pages` by default.
+ * @returns The `RUNTIME_FAILED` error: `details.reason: "library-build-changed"`, the stop details (`sideEffects: "unknown"`; `router: "app"` when raised for an App Router app).
  * @example
  * throw libraryBuildChangedFailure('examples/app', 'lib', 'packages/lib/src/core.ts')
  */
@@ -351,6 +377,7 @@ export function libraryBuildChangedFailure(
   packageRoot: string,
   libraryName: string,
   file: string,
+  router: 'pages' | 'app' = 'pages',
 ): StudyError {
   const message = `The build of library ${libraryName} changed while the run was open (a module instance for ${file} carries other built text than the one checked before the start), so Codebook stopped it for packageRoot ${packageRoot}. Finish the rebuild yourself and start again; Codebook never builds.`
   return new StudyError(
@@ -365,6 +392,7 @@ export function libraryBuildChangedFailure(
       library: libraryName,
       file,
       ...PAGES_STOP_REFUSAL_DETAILS,
+      router,
     },
   )
 }
@@ -372,9 +400,10 @@ export function libraryBuildChangedFailure(
 /**
  * Writes the failure text a run records for a library refusal raised at a pause or an event, the form {@link refusalFailureOf} restores with its `details.reason`.
  * @param error - The error a library check threw.
- * @returns `<CODE>(<reason>): <message>` for a Next library refusal of {@link LIBRARY_RUNTIME_REASONS} (one carrying `details.router`); `undefined` for any other error, a Vite library error included.
+ * @returns `<CODE>(<reason>): <message>` for a Next Pages library refusal of {@link LIBRARY_RUNTIME_REASONS} (one carrying `details.router`), `<CODE>(<reason> app): <message>` for an App Router one so {@link libraryDetailsOfFailure} restores `router: "app"`; `undefined` for any other error, a Vite library error included.
  * @example
  * libraryFailureText(libraryBuildChangedFailure('examples/app', 'lib', 'a.ts')) // => 'RUNTIME_FAILED(library-build-changed): The build of library lib changed …'
+ * libraryFailureText(libraryBuildChangedFailure('examples/app', 'lib', 'a.ts', 'app')) // => 'RUNTIME_FAILED(library-build-changed app): The build of library lib changed …'
  */
 export function libraryFailureText(error: unknown): string | undefined {
   if (!(error instanceof StudyError)) return undefined
@@ -383,32 +412,49 @@ export function libraryFailureText(error: unknown): string | undefined {
   const reason = LIBRARY_RUNTIME_REASONS.find(
     (known) => known === error.details?.reason,
   )
-  return reason === undefined
-    ? undefined
-    : `${error.code}(${reason}): ${error.message}`
+  if (reason === undefined) return undefined
+  // An App Router failure names its router in the variant; the Pages text stays unchanged.
+  const variant =
+    error.details.router === 'app'
+      ? `${reason}${APP_LIBRARY_VARIANT_SUFFIX}`
+      : reason
+  return `${error.code}(${variant}): ${error.message}`
+}
+
+/** The suffix a library reason variant carries for an App Router app (`library-build-changed app`); no parenthesis and no line break, so the lead of a coded failure text still matches. */
+const APP_LIBRARY_VARIANT_SUFFIX = ' app'
+
+/** The `details` a restored library failure text carries: the reason, the router the variant named and `sideEffects: "unknown"`. */
+type LibraryFailureDetails = {
+  reason: LibraryRuntimeReason
+  router: 'pages' | 'app'
+  sideEffects: 'unknown'
 }
 
 /**
  * Restores the details of a coded failure text led by a library reason variant.
  * @param code - The text's code.
- * @param variant - The text's variant.
- * @returns The Pages details with the library reason when the code and variant are a library refusal; `undefined` otherwise.
+ * @param variant - The text's variant: a library reason, followed by ` app` for an App Router app ({@link libraryFailureText} writes both).
+ * @returns The library reason with the router (`pages` unless the variant ends in ` app`) and `sideEffects: "unknown"` when the code and variant are a library refusal; `undefined` otherwise.
  * @example
  * libraryDetailsOfFailure('RUNTIME_FAILED', 'library-build-changed') // => { reason: 'library-build-changed', router: 'pages', sideEffects: 'unknown' }
+ * libraryDetailsOfFailure('RUNTIME_FAILED', 'library-build-changed app') // => { reason: 'library-build-changed', router: 'app', sideEffects: 'unknown' }
  */
 export function libraryDetailsOfFailure(
   code: string,
   variant: string | undefined,
-):
-  | (typeof PAGES_STOP_REFUSAL_DETAILS & { reason: LibraryRuntimeReason })
-  | undefined {
-  const reason = LIBRARY_RUNTIME_REASONS.find((known) => known === variant)
+): LibraryFailureDetails | undefined {
+  const isApp = variant?.endsWith(APP_LIBRARY_VARIANT_SUFFIX) === true
+  const name = isApp
+    ? variant.slice(0, -APP_LIBRARY_VARIANT_SUFFIX.length)
+    : variant
+  const reason = LIBRARY_RUNTIME_REASONS.find((known) => known === name)
   const expected =
     reason === 'library-build-changed'
       ? 'RUNTIME_FAILED'
       : 'NEXT_STOP_NOT_SEALED'
   return reason !== undefined && code === expected
-    ? { reason, ...PAGES_STOP_REFUSAL_DETAILS }
+    ? { reason, ...PAGES_STOP_REFUSAL_DETAILS, router: isApp ? 'app' : 'pages' }
     : undefined
 }
 

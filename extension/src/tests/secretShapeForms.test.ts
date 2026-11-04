@@ -14,17 +14,38 @@ import {
 const SET_COOKIE =
   'sid=abc123; Path=/; Expires=Wed, 21 Oct 2025 07:28:00 GMT; HttpOnly'
 
-/** Runs `work` and fails when it takes longer than the bound, which only a quadratic scan of the input would. */
+/** How many times {@link assertFinishesWithin} may run the work before it fails: a run slowed by a loaded runner passes on a later one, a quadratic scan is slow on every run. */
+const LINEAR_SCAN_ATTEMPTS = 3
+
+/**
+ * Runs `work` up to {@link LINEAR_SCAN_ATTEMPTS} times and fails when no run finishes within the bound, which only a quadratic scan of the input would.
+ *
+ * Why it retries: under the Fallow health job's coverage run on a loaded CI runner one linear scan took 567 ms against a 500 ms bound, while the same scan takes 14 ms here (35 ms with V8 coverage); the scans this file guards took 4.9 s and 11 s before their fixes, so a regression still fails every attempt.
+ * @param boundMs - The most milliseconds the fastest run may take.
+ * @param label - Names the scan in the failure message.
+ * @param work - The scan to time; it must return the same result on every run.
+ * @example
+ * assertFinishesWithin(500, 'redactValuePreview on a hyphen run', () => redactValuePreview('a-'.repeat(50_000)))
+ */
 function assertFinishesWithin(
   boundMs: number,
   label: string,
   work: () => void,
 ): void {
-  const startedAt = performance.now()
-  work()
-  const tookMs = performance.now() - startedAt
+  const tookMs: number[] = []
+  // Stop at the first run within the bound; only a run that is slow every time fails.
+  for (let attempt = 0; attempt < LINEAR_SCAN_ATTEMPTS; attempt++) {
+    const startedAt = performance.now()
+    work()
+    const runMs = performance.now() - startedAt
+    tookMs.push(runMs)
+    if (runMs < boundMs) return
+  }
   // gstack-timing-ok: the bound is the contract (linear-time shape scans); measured times are 2–14 ms against a bound of hundreds of ms, so only the quadratic regression it guards fails it.
-  assert.ok(tookMs < boundMs, `${label} took ${Math.round(tookMs)} ms`)
+  assert.ok(
+    Math.min(...tookMs) < boundMs,
+    `${label} took ${tookMs.map((ms) => Math.round(ms)).join(', ')} ms in ${tookMs.length} runs`,
+  )
 }
 
 // protects=the Set-Cookie header a response preview shows; fails_when=an Expires attribute (blank and comma inside) makes the header read as prose in a fact, a preview or a quoted element; no_claim=a Cookie value without any pair or attribute

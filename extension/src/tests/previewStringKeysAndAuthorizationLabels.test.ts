@@ -24,17 +24,38 @@ const AWS_ACCESS_KEY = ['AKID', 'EXAMPLE'].join('')
 const AWS_SIGNATURE = ['5fa3c2d1', 'e8b94a70'].join('')
 const AWS_AUTHORIZATION = `AWS4-HMAC-SHA256 Credential=${AWS_ACCESS_KEY}/20260101/us-east-1/s3/aws4_request,SignedHeaders=host;x-amz-date,Signature=${AWS_SIGNATURE}`
 
-/** Runs `work` and fails when it takes longer than the bound, which only a quadratic scan of the input would. */
+/** How many times {@link assertFinishesWithin} may run the work before it fails: a run slowed by a loaded runner passes on a later one, a quadratic scan is slow on every run. */
+const LINEAR_SCAN_ATTEMPTS = 3
+
+/**
+ * Runs `work` up to {@link LINEAR_SCAN_ATTEMPTS} times and fails when no run finishes within the bound, which only a quadratic scan of the input would.
+ *
+ * Why it retries: under the Fallow health job's coverage run on a loaded CI runner a linear scan of the same shape (secretShapeForms) took 567 ms against a 500 ms bound, while it takes a few ms here; a quadratic regression is slow on every attempt and still fails.
+ * @param boundMs - The most milliseconds the fastest run may take.
+ * @param label - Names the scan in the failure message.
+ * @param work - The scan to time; it must return the same result on every run.
+ * @example
+ * assertFinishesWithin(500, 'redactValuePreview on a long preview', () => redactValuePreview('a: '.repeat(40_000)))
+ */
 function assertFinishesWithin(
   boundMs: number,
   label: string,
   work: () => void,
 ): void {
-  const startedAt = performance.now()
-  work()
-  const tookMs = performance.now() - startedAt
+  const tookMs: number[] = []
+  // Stop at the first run within the bound; only a run that is slow every time fails.
+  for (let attempt = 0; attempt < LINEAR_SCAN_ATTEMPTS; attempt++) {
+    const startedAt = performance.now()
+    work()
+    const runMs = performance.now() - startedAt
+    tookMs.push(runMs)
+    if (runMs < boundMs) return
+  }
   // gstack-timing-ok: the bound is the contract (linear-time shape scans); measured times are a few ms against a bound of hundreds of ms, so only the quadratic regression it guards fails it.
-  assert.ok(tookMs < boundMs, `${label} took ${Math.round(tookMs)} ms`)
+  assert.ok(
+    Math.min(...tookMs) < boundMs,
+    `${label} took ${tookMs.map((ms) => Math.round(ms)).join(', ')} ms in ${tookMs.length} runs`,
+  )
 }
 
 // protects=a secret-named key inside an object that a string value holds (util.inspect output kept in a string, a logged object, a nested one, over several lines), quoted on the outside with either quote or escaped inside; fails_when=the quoted-string rule that spares prose also spares the member keys of an object printed in a string, so its password, token or apiKey is printed, or the mask eats the string's closing quote; no_claim=a secret word with a colon at the start of a string or after a word, which stays prose

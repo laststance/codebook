@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import {
   libraryBuildChangedFailure,
   libraryFailureText,
+  libraryNotInBuildRefusal,
   libraryPlaceAmbiguousRefusal,
 } from '../nextRefusals'
 import { formatRefusalFailure } from '../utils/formatRefusalFailure'
@@ -317,4 +318,111 @@ test('an unknown library variant restores no recovery override', () => {
     code: 'NEXT_STOP_NOT_SEALED',
     message: 'The build of library lib changed.',
   })
+})
+
+// protects=an App Router library build change recorded as failure text restores details.router "app" with the unchanged reason and sideEffects; fails_when=libraryFailureText drops the router from the text or libraryDetailsOfFailure always restores "pages"; no_claim=the service forwarding
+test('an App Router library build-change text restores router app', () => {
+  // Arrange
+  const error = libraryBuildChangedFailure('examples/app', 'lib', 'a.ts', 'app')
+  // Act
+  const text = libraryFailureText(error) ?? ''
+  const restored = refusalFailureOf(text)
+  // Assert
+  assert.ok(
+    text.startsWith('RUNTIME_FAILED(library-build-changed app): '),
+    text,
+  )
+  assert.equal(restored?.code, 'RUNTIME_FAILED')
+  assert.deepEqual(restored?.libraryDetails, {
+    reason: 'library-build-changed',
+    router: 'app',
+    sideEffects: 'unknown',
+  })
+})
+
+// protects=a Pages library build change keeps its text byte for byte and still restores router pages; fails_when=the app variant suffix leaks into the Pages text or restore; no_claim=App Router texts
+test('a Pages library build-change text stays unchanged and restores router pages', () => {
+  // Arrange
+  const error = libraryBuildChangedFailure('examples/app', 'lib', 'a.ts')
+  // Act
+  const text = libraryFailureText(error) ?? ''
+  const restored = refusalFailureOf(text)
+  // Assert
+  assert.ok(text.startsWith('RUNTIME_FAILED(library-build-changed): '), text)
+  assert.deepEqual(restored?.libraryDetails, {
+    reason: 'library-build-changed',
+    router: 'pages',
+    sideEffects: 'unknown',
+  })
+})
+
+// protects=an App Router library-place-ambiguous refusal recorded as text restores router app; fails_when=the app variant is applied to library-build-changed only; no_claim=the recovery wording
+test('an App Router library-place-ambiguous text restores router app', () => {
+  // Arrange
+  const error = libraryPlaceAmbiguousRefusal(
+    'examples/app',
+    'lib',
+    'a.ts',
+    3,
+    'why',
+    'app',
+  )
+  // Act
+  const text = libraryFailureText(error) ?? ''
+  const restored = refusalFailureOf(text)
+  // Assert
+  assert.ok(
+    text.startsWith('NEXT_STOP_NOT_SEALED(library-place-ambiguous app): '),
+    text,
+  )
+  assert.equal(restored?.code, 'NEXT_STOP_NOT_SEALED')
+  assert.deepEqual(restored?.libraryDetails, {
+    reason: 'library-place-ambiguous',
+    router: 'app',
+    sideEffects: 'unknown',
+  })
+})
+
+// protects=an App Router library-not-in-build recorded as failure text (a tracked activity such as a reseal after a hot update) restores the same App Router recovery the thrown refusal carries, naming the client chunks of the entry route's client reference manifest; fails_when=the restore picks the server-compile recovery of a Pages server stop; no_claim=which run path records the text (configuredBrowserRun's track() is not driven here)
+test('an App Router library-not-in-build text restores the App Router recovery of the thrown refusal', () => {
+  // Arrange
+  const error = libraryNotInBuildRefusal(
+    'examples/app',
+    'lib',
+    'packages/lib/src/core.ts',
+    ['packages/lib/build/modern/core.js'],
+    'app-pages-browser',
+  )
+  // Act
+  const text = libraryFailureText(error) ?? ''
+  const restored = refusalFailureOf(text)
+  // Assert
+  assert.ok(
+    text.startsWith('NEXT_STOP_NOT_SEALED(library-not-in-build app): '),
+    text,
+  )
+  assert.equal(restored?.recoveryOverride, error.recoveryOverride)
+  assert.match(
+    restored?.recoveryOverride ?? '',
+    /^The client chunks of the entry route's client reference manifest do not hold exactly one built file/,
+  )
+})
+
+// protects=a Pages server library-not-in-build restored from text keeps the server-compile recovery it always had; fails_when=the router-aware selection changes the Pages recovery; no_claim=the Pages browser layer, whose text carries no layer (unchanged from Cycle 0079)
+test('a Pages library-not-in-build text still restores the server-compile recovery', () => {
+  // Arrange
+  const error = libraryNotInBuildRefusal(
+    'examples/app',
+    'lib',
+    'packages/lib/src/core.ts',
+    ['packages/lib/build/modern/core.js'],
+  )
+  // Act
+  const restored = refusalFailureOf(libraryFailureText(error) ?? '')
+  // Assert
+  assert.equal(restored?.recoveryOverride, error.recoveryOverride)
+  assert.match(
+    restored?.recoveryOverride ?? '',
+    /^The page's server code does not hold exactly one built file/,
+  )
 })

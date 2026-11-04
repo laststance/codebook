@@ -6,7 +6,6 @@ import { z } from 'zod'
 
 import {
   REPOSITORY_CHUNK_LIMIT_BYTES,
-  REPOSITORY_DISCOVERY_CANDIDATE_LIMIT,
   REPOSITORY_DISCOVERY_LIMIT_BYTES,
   REPOSITORY_DISCOVERY_TIMEOUT_MS,
   REPOSITORY_JAVASCRIPT_LIMIT_BYTES,
@@ -26,19 +25,13 @@ import {
   selectEvaluatedModule,
 } from './extractDevelopmentModule'
 import { findNextClientReferenceStub } from './findNextClientReferenceStub'
+import { readAppClientChunks } from './readAppClientChunks'
 import { readRepositoryBuildText } from './readRepositoryBuildText'
 import { resolveNextClientManifest } from './resolveNextClientManifest'
 import { rootNextPackage, type ResolvedNextPackage } from './resolveNextPackage'
 
 /** Which webpack layer a server stop was sealed from: `action-browser` or `rsc` in the entry route's App Router server chunk ({@link readDevelopmentBundle}), `pages-dir-node` in a Pages page's server compile or the server chunks it loads ({@link readPagesServerBundle}). */
 export type DevelopmentServerLayer = 'action-browser' | 'rsc' | 'pages-dir-node'
-
-const clientManifestSchema = z.object({
-  clientModules: z.record(
-    z.string(),
-    z.object({ chunks: z.array(z.string()) }),
-  ),
-})
 
 /**
  * Seals selected-route source for runtime preparation; a server stop uses its `(action-browser)` module, else the `(rsc)` module of the same route chunk, and reports which layer it sealed (a client component's reference stub is refused), rather than an SSR reference.
@@ -163,24 +156,7 @@ export async function readDevelopmentBundle(
       },
     }
   }
-  const manifest = await read(route.path, REPOSITORY_JAVASCRIPT_LIMIT_BYTES),
-    marker = `globalThis.__RSC_MANIFEST[${JSON.stringify(route.key)}]=`
-  if (manifest.split(marker).length !== 2)
-    throw new Error('Unsupported selected-route client manifest')
-  const parsed = clientManifestSchema.parse(
-      JSON.parse(manifest.split(marker)[1]!.trim().replace(/;$/, '')),
-    ),
-    candidates = new Set<string>()
-  // The selected source may belong to any client entry; no repository component name chooses the search scope.
-  for (const module of Object.values(parsed.clientModules))
-    for (const chunk of module.chunks)
-      if (chunk.endsWith('.js')) {
-        candidates.add(chunk)
-        if (candidates.size > REPOSITORY_DISCOVERY_CANDIDATE_LIMIT)
-          throw new Error('Application chunk count exceeds contract')
-      }
-  if (!candidates.size)
-    throw new Error('No declared selected-route client chunks')
+  const { candidates, manifestHash } = await readAppClientChunks(read, route)
   const bundles: BundleSource[] = [],
     scriptUrl = `webpack-internal:///(app-pages-browser)/./${packageRelative}`
   for (const candidate of candidates) {
@@ -215,8 +191,8 @@ export async function readDevelopmentBundle(
     discovery: {
       readBytes,
       durationMs: performance.now() - started,
-      candidates: [...candidates],
-      manifestHash: sha256(manifest),
+      candidates,
+      manifestHash,
     },
   }
 }
