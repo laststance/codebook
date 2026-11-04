@@ -307,6 +307,7 @@ function readScriptGaps(
  * @param workspace - The package root.
  * @param readNode - Reads the run's Node version, called only when the Node gate is reached; `undefined` when no Node is configured. A reader that rejects (a configured Node that cannot run) gives the same `PREREQUISITE_MISSING` gap to a start and to `codebook_status`.
  * @param firstGapOnly - Stop at the first gap, as a start does, so nothing after a refusal is read (no Node process after an unsupported major).
+ * @param repositoryRoot - Set for a nested app: Vite is resolved inside the repository only ({@link resolveViteInstallation}, decision D7); absent for the root app.
  * @returns The facts found and the gaps, empty when `vite-dev` could start as far as this check can tell.
  * @example
  * const { gaps } = await readViteWorkspaceGaps('/repo', async () => 'v24.22.1', true)
@@ -315,9 +316,10 @@ export async function readViteWorkspaceGaps(
   workspace: string,
   readNode: () => Promise<string | undefined>,
   firstGapOnly: boolean,
+  repositoryRoot?: string,
 ): Promise<ViteWorkspaceReading> {
   const manifest = await readPackageScripts(workspace)
-  const lookup = await resolveViteInstallation(workspace)
+  const lookup = await resolveViteInstallation(workspace, repositoryRoot)
   if (!lookup.found)
     return {
       ready: false,

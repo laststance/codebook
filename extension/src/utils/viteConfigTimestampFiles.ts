@@ -1,11 +1,32 @@
 import { readdir, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 
+import { isFolderOrInside } from './resolveNextPackage'
+
 /** The transient files Vite writes beside the default config while it bundles it: `vite.config.ts.timestamp-<ms>-<hash>.mjs`. */
 const DEFAULT_TIMESTAMP_FILE = /^vite\.config\..+\.timestamp-.+\.mjs$/
 
 /** The folder Vite 8 bundles an ESM config into, inside the nearest `node_modules`. */
 const VITE_TEMP_FOLDER = '.vite-temp'
+
+/**
+ * Finds the nearest `node_modules` folder at or above a directory, as Vite does before it writes a bundled config, and keeps it only when it belongs to the app (decision D8).
+ *
+ * Why it exists: in a hoisted layout the nearest `node_modules` can be an ancestor's, shared with other apps, where Codebook cannot tell its own transient files from another app's; such a folder is never cleaned.
+ * @param start - The directory the config lies in.
+ * @param appRoot - The app folder; the `node_modules` must lie at or inside it.
+ * @returns The app's own `node_modules`, or `undefined` when there is none or the nearest one is an ancestor's.
+ * @example await findOwnNodeModules('/repo/examples/basic', '/repo/examples/basic') // => '/repo/examples/basic/node_modules'
+ */
+async function findOwnNodeModules(
+  start: string,
+  appRoot: string,
+): Promise<string | undefined> {
+  const nearest = await findNearestNodeModules(start)
+  return nearest !== undefined && isFolderOrInside(appRoot, dirname(nearest))
+    ? nearest
+    : undefined
+}
 
 /** Finds the nearest `node_modules` folder at or above a directory, as Vite does before it writes a bundled config. */
 async function findNearestNodeModules(
@@ -24,14 +45,14 @@ async function findNearestNodeModules(
   }
 }
 
-/** Where Vite writes its transient files and which names count: the nearest `node_modules/.vite-temp` (Vite 8) and beside the config it loads (older layouts), named after that config file. */
+/** Where Vite writes its transient files and which names count: the app's own `node_modules/.vite-temp` (Vite 8; never a shared ancestor's, decision D8) and beside the config it loads (older layouts), named after that config file. */
 async function timestampTargets(
   workspace: string,
   configFile: string | undefined,
 ): Promise<{ directories: string[]; pattern: RegExp }> {
   const path = configFile ? resolve(workspace, configFile) : undefined
   const configDirectory = path ? dirname(path) : workspace
-  const nodeModules = await findNearestNodeModules(configDirectory)
+  const nodeModules = await findOwnNodeModules(configDirectory, workspace)
   const directories = [
     configDirectory,
     ...(nodeModules ? [join(nodeModules, VITE_TEMP_FOLDER)] : []),
@@ -46,7 +67,7 @@ async function timestampTargets(
 }
 
 /**
- * Lists the transient Vite config files beside the config Vite will load and in the nearest `node_modules/.vite-temp` where Vite 8 writes them, for the snapshot taken at launch.
+ * Lists the transient Vite config files beside the config Vite will load and in the app's own `node_modules/.vite-temp` where Vite 8 writes them, for the snapshot taken at launch. A `.vite-temp` in a shared ancestor `node_modules` is never listed, so it is never cleaned.
  * @param workspace - The package root.
  * @param configFile - The dev script's `--config` value; omitted when Vite finds the default `vite.config.*`.
  * @returns The absolute paths present now.

@@ -44,6 +44,7 @@ export async function refuseViteMisroute(workspace: string): Promise<void> {
  * @param workspace - The package root.
  * @param node - The run's Node executable.
  * @param signal - Ends the check when the run is cancelled.
+ * @param repositoryRoot - Set for a nested app: Vite is then resolved inside the repository only (decision D7).
  * @returns The Vite installation and the accepted script.
  * @throws `ADAPTER_MISROUTE` (no Vite, Next present), `PREREQUISITE_MISSING` (no Vite), `VITE_UNSUPPORTED` for the rest (an unreadable `package.json` included); each names the value it refuses.
  * @example
@@ -53,12 +54,14 @@ export async function assessViteWorkspace(
   workspace: string,
   node: string,
   signal: AbortSignal,
+  repositoryRoot?: string,
 ): Promise<ViteWorkspace> {
   signal.throwIfAborted()
   const reading = await readViteWorkspaceGaps(
     workspace,
     () => readNodeVersion(node, signal),
     true,
+    repositoryRoot,
   )
   // A blocked reading has a first gap; a ready one carries the installation and the script.
   if (!reading.ready) {

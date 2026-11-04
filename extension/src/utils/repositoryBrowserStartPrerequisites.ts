@@ -4,7 +4,11 @@ import type { StudyEnvironment } from '../runtime'
 import { assertDevelopmentWorkspace } from './assertDevelopmentWorkspace'
 import { describeReadFailure } from './discoverNextPackages'
 import { resolveNextPackage } from './resolveNextPackage'
-import { suggestNextPackageRoots } from './scanNextPackages'
+import { resolveVitePackage } from './resolveVitePackage'
+import {
+  suggestNextPackageRoots,
+  suggestVitePackageRoots,
+} from './scanNextPackages'
 
 /** The sentence of a vite-dev start whose window reported no Vite readiness. */
 const VITE_READINESS_UNAVAILABLE =
@@ -111,6 +115,50 @@ export async function selectedNextPackageStartPrerequisites(
   )
   const missing = [...prerequisites.missing, ...packageGaps]
   return { ready: missing.length === 0, missing }
+}
+
+/**
+ * Judges a `vite-dev` start whose configuration declares a `packageRoot` below the repository root, by the selected app and not by the root's readiness.
+ *
+ * The shared prerequisites (Node, Chrome, a managed run) stay the window's own; the app is judged by {@link resolveVitePackage} (real path, then the Vite app rule), so a root without Vite never blocks a nested start. Vite's own installation, version, `engines.node` and `dev` script are judged by the run's workspace check before any process starts (decision D7). Called by {@link StudyService} before it falls back to {@link repositoryBrowserStartPrerequisites}.
+ *
+ * @param prerequisites - What the environment reported; only its shared `ready`/`missing` are read.
+ * @param profile - The profile of the run that is starting.
+ * @param configuration - The run's configuration; `adapter` and `packageRoot` are read.
+ * @param workspace - The opened repository's root.
+ * @returns
+ * - `undefined` for any other profile or adapter, or a root app (absent `packageRoot`), so the caller keeps today's readiness
+ * - The shared prerequisites when the folder is a Vite app
+ * @throws `INVALID_CONFIGURATION` for an unusable `packageRoot`, before the shared gaps are judged.
+ * @example
+ * await selectedVitePackageStartPrerequisites(prerequisites, 'repository-browser', { adapter: 'vite-dev', packageRoot: 'examples/react/basic' }, '/repo')
+ * // => { ready: true, missing: [] }
+ */
+export async function selectedVitePackageStartPrerequisites(
+  prerequisites: EnvironmentPrerequisites,
+  profile: string,
+  configuration: unknown,
+  workspace: string,
+): Promise<{ ready: boolean; missing: string[] } | undefined> {
+  if (
+    profile !== REPOSITORY_BROWSER_PROFILE ||
+    typeof configuration !== 'object' ||
+    configuration === null ||
+    !('adapter' in configuration) ||
+    configuration.adapter !== 'vite-dev' ||
+    !('packageRoot' in configuration) ||
+    typeof configuration.packageRoot !== 'string' ||
+    configuration.packageRoot === '.'
+  )
+    return undefined
+  await resolveVitePackage(workspace, configuration.packageRoot, {
+    // A refusal names up to five discovered apps.
+    suggest: () => suggestVitePackageRoots(workspace),
+  })
+  return {
+    ready: prerequisites.missing.length === 0,
+    missing: prerequisites.missing,
+  }
 }
 
 /**

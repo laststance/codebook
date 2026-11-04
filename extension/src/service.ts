@@ -231,6 +231,7 @@ import {
   isRootNextStart,
   repositoryBrowserStartPrerequisites,
   selectedNextPackageStartPrerequisites,
+  selectedVitePackageStartPrerequisites,
 } from './utils/repositoryBrowserStartPrerequisites'
 import { resolveCapturedFactPaths } from './utils/resolveCapturedFactPaths'
 import { sameAcceptedDefinition } from './utils/sameAcceptedDefinition'
@@ -4681,6 +4682,13 @@ export class StudyService {
                   record.configuration,
                   this.environment.workspace,
                   record.cancellation.signal,
+                )) ??
+                // A nested Vite app is judged by its own folder the same way.
+                (await selectedVitePackageStartPrerequisites(
+                  prerequisites,
+                  record.profile,
+                  record.configuration,
+                  this.environment.workspace,
                 )) ??
                 // Shared Node/Chrome availability alone cannot authorize an unsupported selected profile.
                 repositoryBrowserStartPrerequisites(

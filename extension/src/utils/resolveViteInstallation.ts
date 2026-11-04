@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { VITE_VERSION_MAX_CHARS } from '../constants'
 import { viteRefusal } from '../viteRefusals'
 
+import { findViteInsideRepository } from './findViteInsideRepository'
 import { isSemverLikeVersion } from './isSemverLikeVersion'
 
 const vitePackageSchema = z.object({
@@ -52,6 +53,7 @@ function importEntryOf(exported: unknown): string | undefined {
  * Why it exists: Codebook runs the project's Vite, never one of its own, so pnpm and npm workspaces work as the project does. A Yarn Plug-n-Play project with no `node_modules` has nothing to resolve and is told apart.
  *
  * @param workspace - The package root.
+ * @param repositoryRoot - Set for a nested app: Vite is then the nearest `node_modules/vite` from the package root up to this root with its real path inside it ({@link findViteInsideRepository}); absent or equal to `workspace` keeps Node's resolution.
  * @returns The installation, or `yarn-pnp` / `not-installed` as the reason there is none.
  * @throws `VITE_UNSUPPORTED` when the `vite/package.json` version is not semver-like or is longer than {@link VITE_VERSION_MAX_CHARS} (the study records it, so it must fit the study schema); an error when it lacks a version or names no importable entry (the message names it); a manifest Node's resolution cannot parse fails that resolution first and reads as `not-installed`.
  * @example
@@ -59,19 +61,30 @@ function importEntryOf(exported: unknown): string | undefined {
  */
 export async function resolveViteInstallation(
   workspace: string,
+  repositoryRoot?: string,
 ): Promise<ViteInstallationLookup> {
-  const requireFromRoot = createRequire(
-    join(resolve(workspace), 'package.json'),
-  )
   let packagePath: string
-  try {
-    packagePath = requireFromRoot.resolve('vite/package.json')
-  } catch {
-    const isPnp = await access(join(workspace, '.pnp.cjs')).then(
-      () => true,
-      () => false,
+  // A nested app finds Vite only inside the repository (decision D7); the root app keeps Node's own resolution.
+  if (
+    repositoryRoot !== undefined &&
+    resolve(repositoryRoot) !== resolve(workspace)
+  ) {
+    const bounded = await findViteInsideRepository(workspace, repositoryRoot)
+    if (!bounded.found) return bounded
+    packagePath = bounded.packagePath
+  } else {
+    const requireFromRoot = createRequire(
+      join(resolve(workspace), 'package.json'),
     )
-    return { found: false, reason: isPnp ? 'yarn-pnp' : 'not-installed' }
+    try {
+      packagePath = requireFromRoot.resolve('vite/package.json')
+    } catch {
+      const isPnp = await access(join(workspace, '.pnp.cjs')).then(
+        () => true,
+        () => false,
+      )
+      return { found: false, reason: isPnp ? 'yarn-pnp' : 'not-installed' }
+    }
   }
   const manifest = vitePackageSchema.parse(
     JSON.parse(await readFile(packagePath, 'utf8')),
