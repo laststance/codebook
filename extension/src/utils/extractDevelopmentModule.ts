@@ -51,6 +51,14 @@ export function* evaluatedModuleTexts(
   }
 }
 
+/** The error {@link selectEvaluatedModule} throws when one chunk holds the address twice; callers match on this class, not on the message. */
+export class AmbiguousEvaluatedModuleError extends Error {
+  constructor() {
+    super('Ambiguous evaluated module')
+    this.name = 'AmbiguousEvaluatedModuleError'
+  }
+}
+
 /**
  * Picks the one evaluated module that carries a script address, as the sealed bundle of a cited original.
  * Called by {@link extractDevelopmentModule} and by the Pages readers ({@link readPagesDevelopmentBundle}, {@link readNextServerOnlyReason}) over a chunk's decoded modules.
@@ -82,7 +90,7 @@ export function selectEvaluatedModule(
   }
   if (performance.now() >= deadline)
     throw new Error('Module discovery deadline exceeded')
-  if (candidates.length > 1) throw new Error('Ambiguous evaluated module')
+  if (candidates.length > 1) throw new AmbiguousEvaluatedModuleError()
   return candidates[0]
 }
 

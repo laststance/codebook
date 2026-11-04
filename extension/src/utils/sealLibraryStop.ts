@@ -19,7 +19,10 @@ import type {
   NextPagesChunkModules,
   NextPagesDiscoveryCache,
 } from './createNextPagesDiscoveryCache'
-import { selectEvaluatedModule } from './extractDevelopmentModule'
+import {
+  AmbiguousEvaluatedModuleError,
+  selectEvaluatedModule,
+} from './extractDevelopmentModule'
 import { readNextChunkModules } from './readNextChunkModules'
 import {
   readEntryChunk,
@@ -28,7 +31,7 @@ import {
 import { compileOfRoute } from './readPagesServerBundle'
 import type { ResolvedNextPackage } from './resolveNextPackage'
 import type { NextPagesRoute } from './resolveNextPagesRoute'
-import { singleBundleOf } from './singleBundleOf'
+import { AmbiguousBundleError, singleBundleOf } from './singleBundleOf'
 import {
   spendNextPagesDiscovery,
   type NextPagesChunkFetcher,
@@ -224,6 +227,7 @@ function notInBuildOf(
     frozen.library.name,
     frozen.stopPath,
     candidates,
+    request.layer,
   )
 }
 
@@ -260,6 +264,7 @@ async function sealWithin(
           packageRootRelative,
           frozen.library.name,
           frozen.stopPath,
+          request.layer,
         )
       return {
         bundle: { ...bundle, source: content },
@@ -279,10 +284,10 @@ async function sealWithin(
   )
 }
 
-/** Tells whether {@link singleBundleOf} refused differing copies of one module. @example isAmbiguousCopies(new Error('Ambiguous application source chunk')) // true */
+/** Tells whether a module search found several copies of one module: differing chunk copies ({@link singleBundleOf}) or one chunk holding the address twice ({@link selectEvaluatedModule}). @example isAmbiguousCopies(new AmbiguousBundleError()) // true */
 function isAmbiguousCopies(error: unknown): boolean {
   return (
-    error instanceof Error &&
-    error.message === 'Ambiguous application source chunk'
+    error instanceof AmbiguousBundleError ||
+    error instanceof AmbiguousEvaluatedModuleError
   )
 }

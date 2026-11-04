@@ -135,6 +135,31 @@ const LIBRARY_RECOVERIES = {
   'library-build-changed': `The library was rebuilt, or the server module changed, during the run. Tell the learner to finish the rebuild and ask for a new start; never run the build yourself. ${LIBRARY_ENTRY_REQUESTED} See ${libraryHelpAnchor('library-build-changed')}.`,
 } as const
 
+/** The Pages browser layer's wording of the refusals that name the searched code (`library-not-in-build`) or the changed module (`library-build-changed`); the server layer keeps {@link LIBRARY_RECOVERIES}. */
+const BROWSER_LIBRARY_RECOVERIES = {
+  'library-not-in-build': `The entry chunks of the route and \`_app\` that the page loads at start do not hold exactly one built file of the library that maps the stop (details.candidates lists them). A library module the page loads later (\`next/dynamic\`, a lazy import) cannot be sealed. Tell the learner, or choose a stop on a line the page runs at load; do not start another run with the same stop. ${LIBRARY_ENTRY_REQUESTED} See ${libraryHelpAnchor('library-not-in-build')}.`,
+  'library-build-changed': `The library was rebuilt, or the module the page loaded changed, during the run. Tell the learner to finish the rebuild and ask for a new start; never run the build yourself. ${LIBRARY_ENTRY_REQUESTED} See ${libraryHelpAnchor('library-build-changed')}.`,
+} as const
+
+/** The webpack layer a Pages library refusal is worded for (the same values as `LibraryStopLayer` in `sealLibraryStop.ts`, repeated so this module imports nothing from it). */
+type PagesLibraryLayer = 'pages-dir-node' | 'pages-dir-browser'
+
+/**
+ * Picks the recovery of a layer-worded library refusal; called by {@link libraryNotInBuildRefusal} and {@link libraryBuildChangedFailure}.
+ * @param reason - The refusal reason with a browser-layer variant.
+ * @param layer - The layer the refusal is raised for.
+ * @returns The browser variant for `pages-dir-browser`, else the server text of {@link LIBRARY_RECOVERIES}.
+ * @example pagesLibraryRecoveryOf('library-build-changed', 'pages-dir-node') // => LIBRARY_RECOVERIES['library-build-changed']
+ */
+function pagesLibraryRecoveryOf(
+  reason: keyof typeof BROWSER_LIBRARY_RECOVERIES,
+  layer: PagesLibraryLayer,
+): string {
+  return layer === 'pages-dir-browser'
+    ? BROWSER_LIBRARY_RECOVERIES[reason]
+    : LIBRARY_RECOVERIES[reason]
+}
+
 /**
  * The static recovery of each library refusal under `vite-dev` (a nested Vite app's browser stop in a workspace library), keyed by `details.reason`. The stale and unmapped bodies are the Next ones; the endings say what a Vite run had started.
  * `library-place-ambiguous` is never raised under `vite-dev`, so it keeps the Next text.
@@ -253,6 +278,7 @@ export type LibraryRuntimeReason = (typeof LIBRARY_RUNTIME_REASONS)[number]
  * @param libraryName - The library's package name.
  * @param file - The repository-relative stop file.
  * @param candidates - The built files that map the stop, repository-relative; named in the message.
+ * @param layer - The webpack layer the seal searched; `pages-dir-browser` words the message and recovery by the entry chunks the page loads at start, the default `pages-dir-node` by the server compile.
  * @returns The `NEXT_STOP_NOT_SEALED` error: `details.reason: "library-not-in-build"`, `details.candidates`, the Pages details (`sideEffects: "unknown"`).
  * @example
  * throw libraryNotInBuildRefusal('examples/app', 'lib', 'packages/lib/src/core.ts', ['packages/lib/build/modern/core.js', 'packages/lib/build/legacy/core.js'])
@@ -262,8 +288,13 @@ export function libraryNotInBuildRefusal(
   libraryName: string,
   file: string,
   candidates: readonly string[],
+  layer: PagesLibraryLayer = 'pages-dir-node',
 ): StudyError {
-  const message = `The build of library ${libraryName} matches ${file}, but the server compile of the page does not hold exactly one of its candidates (${candidates.join(', ') || 'none'}), so a stop there cannot be sealed for packageRoot ${packageRoot}. The page's server code may load another build, or may not run that file.`
+  const list = candidates.join(', ') || 'none'
+  const message =
+    layer === 'pages-dir-browser'
+      ? `The build of library ${libraryName} matches ${file}, but the entry chunks of the route and \`_app\` that the page loads at start do not hold exactly one of its candidates (${list}), so a stop there cannot be sealed for packageRoot ${packageRoot}. A library module the page loads later (\`next/dynamic\`, a lazy import) cannot be sealed.`
+      : `The build of library ${libraryName} matches ${file}, but the server compile of the page does not hold exactly one of its candidates (${list}), so a stop there cannot be sealed for packageRoot ${packageRoot}. The page's server code may load another build, or may not run that file.`
   return nextRefusal('NEXT_STOP_NOT_SEALED', message, {
     details: {
       reason: 'library-not-in-build',
@@ -273,7 +304,7 @@ export function libraryNotInBuildRefusal(
       candidates: [...candidates],
       ...PAGES_STOP_REFUSAL_DETAILS,
     },
-    recovery: LIBRARY_RECOVERIES['library-not-in-build'],
+    recovery: pagesLibraryRecoveryOf('library-not-in-build', layer),
   })
 }
 
@@ -313,6 +344,7 @@ export function libraryPlaceAmbiguousRefusal(
  * @param packageRoot - The Next app's canonical repository-relative package root.
  * @param libraryName - The library's package name.
  * @param file - The repository-relative stop file.
+ * @param layer - The webpack layer of the changed module; `pages-dir-browser` words the recovery for the module the page loaded, the default keeps the server wording.
  * @returns The `RUNTIME_FAILED` error: `details.reason: "library-build-changed"`, the Pages details (`sideEffects: "unknown"`).
  * @example
  * throw libraryBuildChangedFailure('examples/app', 'lib', 'packages/lib/src/core.ts')
@@ -321,13 +353,14 @@ export function libraryBuildChangedFailure(
   packageRoot: string,
   libraryName: string,
   file: string,
+  layer: PagesLibraryLayer = 'pages-dir-node',
 ): StudyError {
   const message = `The build of library ${libraryName} changed while the run was open (a module instance for ${file} carries other built text than the one checked before the start), so Codebook stopped it for packageRoot ${packageRoot}. Finish the rebuild yourself and start again; Codebook never builds.`
   return new StudyError(
     'RUNTIME_FAILED',
     message,
     message,
-    LIBRARY_RECOVERIES['library-build-changed'],
+    pagesLibraryRecoveryOf('library-build-changed', layer),
     undefined,
     {
       reason: 'library-build-changed',
