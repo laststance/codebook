@@ -1,5 +1,10 @@
+import {
+  VITE_LIBRARY_READ_CONCURRENCY_COUNT,
+  VITE_LIBRARY_WALK_DEADLINE_MS,
+} from '../constants'
 import type { LibraryBuildUnmappedCause } from '../nextRefusals'
 
+import { ownedModuleUrl } from './ownedModuleUrl'
 import { absoluteSourceOf, readInlineServedMap } from './readViteServedModule'
 import { sourceMapMappedPositions } from './sourceMapMappedPositions'
 import type { ViteLibraryModules } from './viteLibraryModules'
@@ -196,6 +201,60 @@ function notInBuild(candidates: string[]): ViteLibrarySelection {
 }
 
 /**
+ * Reads every listed module through `readOne`, a few at a time, in the listed order, and gives up when one total deadline passes.
+ *
+ * Why it exists: each module fetch has its own timeout, so up to the module limit of them one after another could take minutes before a refusal; all reads of one selection share one bound. Called by {@link selectViteLibraryCandidate}.
+ * @param modules - The listed modules: each path on the owned server with its absolute address.
+ * @param deadlineMs - The total time allowed.
+ * @param readOne - Reads one module.
+ * @returns The readings in listed order, or `undefined` when the deadline passed first.
+ * @throws The first failure of a read.
+ * @example
+ * await readAllWithin([{ modulePath: '/a.js', url: 'http://127.0.0.1:4321/a.js' }], 15_000, readOne) // => [reading]
+ */
+async function readAllWithin(
+  modules: readonly { modulePath: string; url: string }[],
+  deadlineMs: number,
+  readOne: (module: {
+    modulePath: string
+    url: string
+  }) => Promise<ModuleReading>,
+): Promise<ModuleReading[] | undefined> {
+  const readings: ModuleReading[] = []
+  let next = 0
+  let expired = false
+  // Each worker takes the next unread module until none is left or time is up.
+  const worker = async (): Promise<void> => {
+    while (!expired && next < modules.length) {
+      const index = next++
+      readings[index] = await readOne(modules[index]!)
+    }
+  }
+  let timer: NodeJS.Timeout | undefined
+  const deadline = new Promise<'deadline'>((resolve) => {
+    timer = setTimeout(() => {
+      expired = true
+      resolve('deadline')
+    }, deadlineMs)
+  })
+  try {
+    const finished = Promise.all(
+      Array.from(
+        {
+          length: Math.min(VITE_LIBRARY_READ_CONCURRENCY_COUNT, modules.length),
+        },
+        worker,
+      ),
+    ).then(() => 'done' as const)
+    return (await Promise.race([finished, deadline])) === 'deadline'
+      ? undefined
+      : readings
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
  * Chooses the one served module of a workspace library that a nested Vite app's page loads and whose inline map names the stop file, or says why there is none.
  *
  * Why it exists: Vite serves a library's built module with the build's own map folded in, so the module the browser runs for a library line is found by its map, not by its address. Called by {@link sealViteLibraryStop} once per library stop, after the launcher's walk listed the library's modules (decisions D6, D10, D15 and the decision table of Cycle 0078, rows 2 to 10).
@@ -211,6 +270,8 @@ export async function selectViteLibraryCandidate(request: {
   stop: ViteLibraryStopFile
   ownedOrigin: string
   appRoot: string
+  /** The total time for all module reads of this selection; defaults to {@link VITE_LIBRARY_WALK_DEADLINE_MS}. */
+  deadlineMs?: number
 }): Promise<ViteLibrarySelection> {
   const walk = await request.source.list()
   // Row 2: the walk ended at a bound, so the list may be incomplete.
@@ -222,7 +283,12 @@ export async function selectViteLibraryCandidate(request: {
         cause: walk.bound === 'deadline' ? 'deadline' : 'bound',
       },
     }
-  if (walk.modules.length === 0)
+  // A listed path that is not a path on the owned server is no library module.
+  const modules = walk.modules.flatMap((modulePath) => {
+    const url = ownedModuleUrl(request.ownedOrigin, modulePath)
+    return url === undefined ? [] : [{ modulePath, url }]
+  })
+  if (modules.length === 0)
     // Row 3 (an optimized dependency holds the library) or decision D15 (the page reaches no module of the library).
     return walk.optimizedLibrary
       ? {
@@ -230,17 +296,24 @@ export async function selectViteLibraryCandidate(request: {
           facts: { reason: 'library-build-unmapped', cause: 'prebundled' },
         }
       : notInBuild([])
-  const readings: ModuleReading[] = []
-  for (const modulePath of walk.modules)
-    readings.push(
-      await readLibraryModule(
+  const readings = await readAllWithin(
+    modules,
+    request.deadlineMs ?? VITE_LIBRARY_WALK_DEADLINE_MS,
+    async ({ modulePath, url }) =>
+      readLibraryModule(
         modulePath,
-        `${request.ownedOrigin}${modulePath}`,
+        url,
         await request.source.read(modulePath),
         request.stop,
         request.appRoot,
       ),
-    )
+  )
+  // Row 2 again: the reads together passed the deadline, so the list was not fully read.
+  if (readings === undefined)
+    return {
+      kind: 'refused',
+      facts: { reason: 'library-build-unmapped', cause: 'deadline' },
+    }
   const judged = judgeReadings(readings)
   return judged.kind === 'candidate'
     ? {

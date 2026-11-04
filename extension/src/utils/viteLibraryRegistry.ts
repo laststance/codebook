@@ -15,7 +15,10 @@ type StopPlace = Readonly<{ path: string; line: number; column: number }>
  */
 export class ViteLibraryRegistry {
   private readonly libraries = new Map<string, LibraryPackage>()
-  private readonly moduleSources = new Map<string, ViteLibraryModuleSource>()
+  private readonly moduleSources = new Map<
+    string,
+    { generation: number; source: ViteLibraryModuleSource }
+  >()
 
   /** Keys a stop by its declared place. @example ViteLibraryRegistry.keyOf({ path: 'a.ts', line: 3, column: 1 }) // 'a.ts:3:1' */
   private static keyOf(place: StopPlace): string {
@@ -43,7 +46,7 @@ export class ViteLibraryRegistry {
   }
 
   /**
-   * Gives the module source of one library for one page generation, creating it on first use so every stop of that generation shares one walk.
+   * Gives the module source of one library for one page generation, creating it on first use so every stop of that generation shares one walk; asking for a newer generation drops the sources of older ones.
    * @param generation - The page generation (0 for the first seal).
    * @param library - The library.
    * @param create - Builds the source when this generation has none for the library.
@@ -55,12 +58,15 @@ export class ViteLibraryRegistry {
     library: LibraryPackage,
     create: () => ViteLibraryModuleSource,
   ): ViteLibraryModuleSource {
+    // A newer generation replaces the older ones: their served `?v=` addresses are stale and their texts only cost memory.
+    for (const [held, entry] of this.moduleSources)
+      if (entry.generation < generation) this.moduleSources.delete(held)
     const key = `${generation}|${library.realFolder}`
-    let source = this.moduleSources.get(key)
-    if (!source) {
-      source = create()
-      this.moduleSources.set(key, source)
+    let entry = this.moduleSources.get(key)
+    if (!entry) {
+      entry = { generation, source: create() }
+      this.moduleSources.set(key, entry)
     }
-    return source
+    return entry.source
   }
 }

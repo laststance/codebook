@@ -2971,6 +2971,9 @@ export const VITE_LIBRARY_WALK_DEADLINE_MS = 15_000
 /** The most candidate module URLs a Vite `library-not-in-build` refusal lists in its message and in `details.candidates`; the rest is counted ("and N more"). */
 export const VITE_LIBRARY_CANDIDATE_LIST_LIMIT_COUNT = 5
 
+/** How many served library modules one selection reads at the same time. */
+export const VITE_LIBRARY_READ_CONCURRENCY_COUNT = 8
+
 /** How long the extension waits for the launcher's answer to one walk: the walk's own deadline plus room for the IPC round trip. */
 export const VITE_LIBRARY_WALK_ANSWER_TIMEOUT_MS =
   VITE_LIBRARY_WALK_DEADLINE_MS + 5_000

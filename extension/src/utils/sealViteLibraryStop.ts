@@ -5,11 +5,13 @@ import { REPOSITORY_SOURCE_LIMIT_BYTES } from '../constants'
 import type { BundleSource } from '../repositoryBundle'
 import type { RepositoryConfiguration } from '../repositoryConfigSchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
+import { WaitTimeoutError } from '../runtimeSupport/utils/waitTimeoutError'
 import { viteLibraryRefusal } from '../viteLibraryRefusals'
 import { viteRefusal } from '../viteRefusals'
 
 import { ViteLibraryFetchBound } from './createViteLibraryModuleSource'
 import type { LibraryPackage } from './libraryBuildStop'
+import { ownedModuleUrl } from './ownedModuleUrl'
 import { readRepositoryBuildText } from './readRepositoryBuildText'
 import { normalizeServedMap } from './readViteServedModule'
 import {
@@ -81,10 +83,16 @@ export async function sealViteLibraryStop(request: ViteLibrarySealRequest) {
   }).catch((error: unknown) => {
     if (error instanceof ViteLibraryFetchBound)
       throw refuse({ reason: 'library-build-unmapped', cause: 'bound' })
+    // The launcher's walk answer did not arrive in time: decision-table row 2, cause deadline. A launcher exit or any other failure stays what it is.
+    if (error instanceof WaitTimeoutError)
+      throw refuse({ reason: 'library-build-unmapped', cause: 'deadline' })
     throw error
   })
   if (selection.kind === 'refused') throw refuse(selection.facts)
-  const url = `${request.ownedOrigin}${selection.modulePath}`
+  const url = ownedModuleUrl(request.ownedOrigin, selection.modulePath)
+  // The selection only names owned-origin paths; this guards the invariant.
+  if (url === undefined)
+    throw new Error('Selected library module is not on the owned server')
   const sourceMap = await normalizeServedMap(
     selection.javascript,
     { realPath, url },

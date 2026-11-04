@@ -8,6 +8,7 @@ import { test, type TestContext } from 'node:test'
 import { StudyError } from '../errors'
 import { libraryRecoveryOf } from '../nextRefusals'
 import { sha256 } from '../runtimeSupport/utils/sha256'
+import { WaitTimeoutError } from '../runtimeSupport/utils/waitTimeoutError'
 import { createViteLibraryModuleSource } from '../utils/createViteLibraryModuleSource'
 import { refusalFailureOf } from '../utils/refusalFailureOf'
 import { sealViteLibraryStop } from '../utils/sealViteLibraryStop'
@@ -338,4 +339,82 @@ test('asks for a rebuild with source maps only when a rebuild can fix the unmapp
   assert.ok(!lazyImport.includes(rebuildSentence))
   assert.ok(!prebundled.includes(rebuildSentence))
   assert.ok(!deadline.includes(rebuildSentence))
+})
+
+// protects=transient failure: one failed module fetch is not cached, so the next read of that module fetches again; fails_when=the rejection is remembered and every later read refuses without a request; no_claim=real Vite
+test('reads a module again after a transient fetch failure instead of refusing every later stop', async (context) => {
+  // Arrange
+  const fixture = await stage(context)
+  const missing = `/@fs${fixture.root}/packages/core/build/missing.js`
+  const attempt = () =>
+    fixture.moduleSource.read(missing).then(
+      () => 'read',
+      () => 'failed',
+    )
+  // Act
+  const first = await attempt()
+  const second = await attempt()
+  // Assert
+  assert.equal(first, 'failed')
+  assert.equal(second, 'failed')
+  assert.equal(fixture.requests.filter((url) => url === missing).length, 2)
+})
+
+// protects=owned origin: a module path that is not a single-slash path is refused before any request; fails_when=a scheme-relative path is fetched; no_claim=none beyond protects
+test('refuses to read a module path that is not on the owned server without any request', async (context) => {
+  // Arrange
+  const fixture = await stage(context)
+  // Act
+  const failure = await fixture.moduleSource.read('//evil.test/a.js').then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // Assert
+  assert.ok(failure instanceof StudyError)
+  assert.equal(failure.code, 'VITE_SEAL_FAILED')
+  assert.deepEqual(fixture.requests, [])
+})
+
+// protects=decision table row 2 (deadline): a launcher walk answer that times out is refused as library-build-unmapped with cause deadline and the library identity, not an uncoded error; fails_when=the WaitTimeoutError propagates or another cause is reported; no_claim=the real launcher (a scripted list rejects)
+test('refuses a walk answer timeout as library-build-unmapped with cause deadline', async (context) => {
+  // Arrange
+  const fixture = await stage(context)
+  const request = {
+    ...sealRequest(fixture),
+    moduleSource: {
+      list: () => Promise.reject(new WaitTimeoutError('walk timed out')),
+      read: fixture.moduleSource.read,
+    },
+  }
+  // Act
+  const failure = await sealViteLibraryStop(request).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // Assert
+  assert.ok(failure instanceof StudyError)
+  assert.equal(failure.code, 'VITE_SEAL_FAILED')
+  assert.deepEqual(failure.details, {
+    reason: 'library-build-unmapped',
+    cause: 'deadline',
+    packageRoot: 'examples/app',
+    library: '@scope/core',
+    file: 'packages/core/src/a.ts',
+    sideEffects: 'none',
+  })
+})
+
+// protects=launcher exit stays itself: a launcher that exited during the walk is not worded as a deadline; fails_when=every walk failure becomes cause deadline; no_claim=the real launcher (a scripted list rejects)
+test('lets a launcher exit during the walk fail as it is instead of as a deadline', async (context) => {
+  // Arrange
+  const fixture = await stage(context)
+  const request = {
+    ...sealRequest(fixture),
+    moduleSource: {
+      list: () => Promise.reject(new Error('Application exited: 1')),
+      read: fixture.moduleSource.read,
+    },
+  }
+  // Act / Assert
+  await assert.rejects(sealViteLibraryStop(request), /Application exited: 1/)
 })

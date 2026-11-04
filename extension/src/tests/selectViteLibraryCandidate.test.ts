@@ -343,3 +343,84 @@ test('compares a /@fs/ map entry by real path with the stop file through a linke
   // Assert
   assert.equal(result.kind, 'selected')
 })
+
+// protects=decision table row 2 (deadline) for reads: all module reads of one selection share one deadline, so a server that never answers refuses at the deadline instead of waiting per module; fails_when=the selection waits for each read (it never returns here) or reports another cause; no_claim=real fetch timeouts (the reads are scripted promises that never settle)
+test('refuses with cause deadline when the module reads together pass the total deadline', async () => {
+  // Arrange
+  const source: ViteLibraryModuleSource = {
+    list: async () => ({ modules: [MODERN, LEGACY], optimizedLibrary: false }),
+    read: () => new Promise<string>(() => undefined),
+  }
+  // Act
+  const result = await selectViteLibraryCandidate({
+    source,
+    stop: { realPath: FILE, text: TEXT, line: 1, citationEndLine: 2 },
+    ownedOrigin: OWNED_ORIGIN,
+    appRoot: APP_ROOT,
+    deadlineMs: 50,
+  })
+  // Assert
+  assert.deepEqual(result, {
+    kind: 'refused',
+    facts: { reason: 'library-build-unmapped', cause: 'deadline' },
+  })
+})
+
+// protects=read parallelism: at most eight modules are read at once and the readings keep the listed order; fails_when=more than eight reads overlap or the selected module is the wrong one because order was lost; no_claim=real fetches
+test('reads at most eight modules at the same time and still selects the right one', async () => {
+  // Arrange
+  const paths = Array.from(
+    { length: 20 },
+    (_, index) => `/@fs/repo/packages/core/build/modern/m${index}.js`,
+  )
+  const target = '/@fs/repo/packages/core/build/modern/m13.js'
+  let active = 0
+  let peak = 0
+  const source: ViteLibraryModuleSource = {
+    list: async () => ({ modules: paths, optimizedLibrary: false }),
+    read: async (path) => {
+      active += 1
+      peak = Math.max(peak, active)
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      active -= 1
+      return path === target ? served() : 'export {}\n'
+    },
+  }
+  // Act
+  const result = await selectViteLibraryCandidate({
+    source,
+    stop: { realPath: FILE, text: TEXT, line: 1, citationEndLine: 2 },
+    ownedOrigin: OWNED_ORIGIN,
+    appRoot: APP_ROOT,
+  })
+  // Assert
+  assert.equal(peak, 8)
+  assert.equal(result.kind, 'selected')
+  assert.equal(result.kind === 'selected' && result.modulePath, target)
+})
+
+// protects=owned origin: a listed path that is not a single-slash path on the owned server is never read; fails_when=a scheme-relative or host-looking path reaches read(); no_claim=the launcher never lists such paths today
+test('never reads a listed path that would leave the owned origin', async () => {
+  // Arrange
+  const reads: string[] = []
+  const source: ViteLibraryModuleSource = {
+    list: async () => ({
+      modules: ['//evil.test/a.js', '@evil.test/a.js', MODERN],
+      optimizedLibrary: false,
+    }),
+    read: async (path) => {
+      reads.push(path)
+      return served()
+    },
+  }
+  // Act
+  const result = await selectViteLibraryCandidate({
+    source,
+    stop: { realPath: FILE, text: TEXT, line: 1, citationEndLine: 2 },
+    ownedOrigin: OWNED_ORIGIN,
+    appRoot: APP_ROOT,
+  })
+  // Assert
+  assert.deepEqual(reads, [MODERN])
+  assert.equal(result.kind, 'selected')
+})

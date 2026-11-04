@@ -1,7 +1,8 @@
 import { VITE_ENTRY_MODULE_SCRIPT_LIMIT_COUNT } from '../constants'
 
 const HTML_COMMENT = /<!--[\s\S]*?-->/g
-const SCRIPT_OPENING_TAG = /<script\b([^>]*)>/gi
+// Quoted attribute values may hold a `>`, so the tag scan steps over them.
+const SCRIPT_OPENING_TAG = /<script\b((?:[^>"']|"[^"]*"|'[^']*')*)>/gi
 const ATTRIBUTE =
   /([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g
 
@@ -26,7 +27,9 @@ function attributesOf(attributeText: string): Map<string, string> {
  * Lists the served paths of the `<script type="module" src=…>` elements of an entry page, so Codebook can ask the owned Vite launcher to walk the modules the page loads.
  *
  * Why it exists: a browser stop in a workspace library is tied to the page's module graph, which starts at the module scripts of the `index.html` Vite serves at the entry path (Vite's own `/@vite/client` included). Called by {@link sealViteLibraryStop} once per page generation, with the HTML fetched from the owned origin.
- * An inline module script (no `src`), a classic script, a script inside an HTML comment and a script on another origin are skipped.
+ * An inline module script (no `src`), a classic script, a script inside a complete HTML comment and a script on another origin are skipped.
+ * Vite's dev server rewrites a page's own inline `<script type="module">` into `<script type="module" src="/index.html?html-proxy&index=0.js">` (Vite 8.3.5 `addInlineModule`), so such an entry arrives with a `src`, and is kept with its query; no inline parsing is needed.
+ * Limits of the scan: it is a regular-expression scan, not an HTML parser. Text that merely looks like a script tag inside `<noscript>`, `<textarea>`, `<template>` or an unterminated comment is read as a script; a stray entry only adds a module to the walk and is harmless. A `>` inside a quoted attribute value is handled.
  * @param html - The served entry page.
  * @param entryUrl - The absolute address the page was fetched from; relative `src` values resolve against it.
  * @returns The same-origin paths with their query (`/src/main.tsx`, `/@vite/client`), in document order and without repeats, at most {@link VITE_ENTRY_MODULE_SCRIPT_LIMIT_COUNT}.

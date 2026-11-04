@@ -62,3 +62,23 @@ test('stops listing at the entry module limit', () => {
   assert.equal(sources.length, VITE_ENTRY_MODULE_SCRIPT_LIMIT_COUNT)
   assert.equal(sources[0], '/m0.js')
 })
+
+// protects=Vite 8.3.5 dev HTML: the html-proxy src Vite writes for a page's inline module script stays an entry with its query; fails_when=the query is cut or the entry dropped; no_claim=a real Vite page (hand-written stand-in of what addInlineModule produces)
+test('keeps the html-proxy src Vite writes for an inline module script, with its query', () => {
+  // Arrange
+  const html = `<script type="module" src="/index.html?html-proxy&index=0.js"></script>`
+  // Act
+  const sources = extractModuleScriptSources(html, ENTRY)
+  // Assert
+  assert.deepEqual(sources, ['/index.html?html-proxy&index=0.js'])
+})
+
+// protects=tag scan: a '>' inside a quoted attribute value does not end the tag early; fails_when=the module script after such an attribute is missed; no_claim=full HTML parsing
+test('reads a module script whose quoted attribute holds a greater-than sign', () => {
+  // Arrange
+  const html = `<script data-note="a>b" type="module" src="/src/main.tsx"></script>`
+  // Act
+  const sources = extractModuleScriptSources(html, ENTRY)
+  // Assert
+  assert.deepEqual(sources, ['/src/main.tsx'])
+})

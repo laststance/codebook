@@ -8,6 +8,7 @@ import {
 import { viteRefusal } from '../viteRefusals'
 
 import { extractModuleScriptSources } from './extractModuleScriptSources'
+import { ownedModuleUrl } from './ownedModuleUrl'
 import { readCappedBody } from './readCappedBody'
 import { fetchServedModule } from './readViteServedModule'
 import type { ViteLibraryModuleSource } from './selectViteLibraryCandidate'
@@ -107,7 +108,13 @@ export function createViteLibraryModuleSource(
     )
   }
   const fetchText = async (modulePath: string): Promise<string> => {
-    const url = `${request.ownedOrigin}${modulePath}`
+    const url = ownedModuleUrl(request.ownedOrigin, modulePath)
+    // A path that does not stay on the owned origin is never fetched.
+    if (url === undefined)
+      throw viteRefusal(
+        'VITE_SEAL_FAILED',
+        `A library module cannot be read: ${modulePath} is not a path on the owned server. Start again once; if it repeats, tell the learner.`,
+      )
     const text = await fetchServedModule(
       { realPath: '', url },
       request.signal,
@@ -128,8 +135,17 @@ export function createViteLibraryModuleSource(
     read: (modulePath) => {
       let text = texts.get(modulePath)
       if (!text) {
-        text = fetchText(modulePath)
-        texts.set(modulePath, text)
+        const pending = fetchText(modulePath)
+        text = pending
+        texts.set(modulePath, pending)
+        // A transient failure must not refuse every later stop: forget it, except the byte bound, which stays true for the generation.
+        pending.catch((error: unknown) => {
+          if (
+            !(error instanceof ViteLibraryFetchBound) &&
+            texts.get(modulePath) === pending
+          )
+            texts.delete(modulePath)
+        })
       }
       return text
     },
