@@ -337,6 +337,10 @@ export async function configuredRuntimeHarness(
     entryAnswer?: { status: number; location?: string }
     /** The origin the stand-in server reports as its own (default `http://127.0.0.1:4321`). */
     serverOrigin?: string
+    /**
+     * Moves the cited source `src/mode.ts` (the study's second anchor) to this repository-relative path and makes every additional stop declare that file, so one run can hold a stop in the first file and stops in a second one (such as a library browser stop beside a server stop in the app's own page). Only in a version 3 run with `operations`; by default every additional stop stays in the first file.
+     */
+    additionalStopFile?: string
     /** The configuration's entry path (default: none, so `/`). */
     entryPath?: string
     /** Makes the stand-in browser's first `close` fail, as a close that could not confirm Chrome's exit does; the second succeeds. */
@@ -405,6 +409,13 @@ export async function configuredRuntimeHarness(
   if (fixture?.declaredColumn)
     reference.configuration.source.column = fixture.declaredColumn
   if (options.sourcePath) relocateFirstSource(reference, options.sourcePath)
+  if (options.additionalStopFile) {
+    // The second anchor and source move together, so the descriptor still holds the stop file's text and hash.
+    const descriptor = reference.descriptor!
+    descriptor.anchors[1]!.path = options.additionalStopFile
+    descriptor.sources[1]!.path = options.additionalStopFile
+    descriptor.citationContext = citationContext(descriptor.anchors)
+  }
   // A nested Next app: the stops keep repository-relative paths, the package-relative path is what Next prints.
   const packageFolder = options.packageRoot
   const packageRootDeclared = packageFolder
@@ -455,10 +466,18 @@ export async function configuredRuntimeHarness(
             ('browser' as const),
           source: {
             ...reference.configuration.source,
+            ...(options.additionalStopFile
+              ? {
+                  path: options.additionalStopFile,
+                  hash: reference.descriptor!.sources[1]!.hash,
+                }
+              : {}),
             line: stop.line,
             column: stop.column,
           },
-          anchorIndex: reference.configuration.book.anchorIndex,
+          anchorIndex: options.additionalStopFile
+            ? 1
+            : reference.configuration.book.anchorIndex,
           inspections: stop.inspections,
           afterOperation: options.operations!.stopOperations[index + 1]!,
         })),

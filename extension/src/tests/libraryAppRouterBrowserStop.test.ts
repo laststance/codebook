@@ -482,6 +482,61 @@ test('a browser stop in a library of a nested app with both routers stays refuse
   assert.equal(harness.developmentServerLaunches(), 0)
 })
 
+/** An app file beside the staged page, where the mixed run's server stop lies (inside the nested app, so it is no library stop). */
+const APP_DATA_PATH = `${LIBRARY_APP_FOLDER}/app/data.ts`
+
+/** The options of a mixed App Router run: the browser stop in the library file first, then a server stop in an app file, both after the click. */
+function mixedOptions(staged: StagedLibrary): LibraryBrowserRunOptions {
+  return appOptions(staged, {
+    additionalStopFile: APP_DATA_PATH,
+    serverRuntime: { route: '/' },
+    operations: {
+      operations: [{ kind: 'click', title: 'Next page', selector: 'a' }],
+      stopOperations: [1, 1],
+      stopParticipants: ['browser', 'server'],
+    },
+  })
+}
+
+// protects=AC 4 (D20) in a run that holds a browser stop in a workspace library and a server stop in an app file, the server's pwa-node attach carries only the app wildcard override while the browser launch carries the exact library override; fails_when=the attach gains a library entry (its (ssr), (rsc) or React copies could then bind the stop) or the launch loses it; no_claim=a real js-debug attach, Next compile or Chrome (the attach and the launch are the configurations the run hands the editor)
+test('the server attach of a mixed App Router run carries no library override while the browser launch does', async (context) => {
+  // Arrange
+  const staged = stageApp()
+  const harness = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [
+      {
+        line: 1,
+        column: 1,
+        inspections: [{ path: 'doubled', mode: 'value', required: true }],
+      },
+    ],
+    mixedOptions(staged),
+  )
+  // Act
+  await harness.run.prepare()
+  // Assert
+  const { checkedOut, appResolved } = await pathsOf(harness)
+  const realRoot = await realpath(harness.directory)
+  assert.equal(harness.serverLaunches.length, 1)
+  assert.equal(harness.serverLaunches[0]!.type, 'pwa-node')
+  assert.deepEqual(plain(harness.serverLaunches[0]!.sourceMapPathOverrides), {
+    'webpack://_N_E/./*': `${realRoot}/${LIBRARY_APP_FOLDER}/*`,
+  })
+  assert.deepEqual(
+    plain(harness.launchConfigurations[0]!.sourceMapPathOverrides),
+    {
+      'webpack://_N_E/./*': `${realRoot}/${LIBRARY_APP_FOLDER}/*`,
+      [appResolved]: checkedOut,
+      [resolve(
+        join(harness.directory, LIBRARY_APP_FOLDER),
+        '../../src/core.ts',
+      )]: checkedOut,
+    },
+  )
+})
+
 /** The options of a run without a nested app: a stop in a library path of the repository's root app. */
 const ROOT_APP_OPTIONS: LibraryBrowserRunOptions = {
   participant: 'browser',
