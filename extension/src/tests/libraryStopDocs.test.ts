@@ -118,7 +118,7 @@ test('the help states the library-stop rule and no longer says every library sta
     false,
   )
   assert.ok(limits.includes('transpilePackages'))
-  assert.ok(limits.includes('a server library stop through an App Router app'))
+  assert.ok(limits.includes('and since API 1.24 a server stop of one may too'))
   assert.ok(
     limits.includes(
       'since API 1.23 a browser stop of a nested App Router app may lie in a workspace library',
@@ -126,8 +126,8 @@ test('the help states the library-stop rule and no longer says every library sta
   )
 })
 
-// protects=API 1.23 is served and the 1.19 note names the five reasons as additive; fails_when=the version or a reason of the note drifts; no_claim=the behavior behind the reasons
-test('API_VERSION is 1.23 and its note names the five library-stop reasons', async () => {
+// protects=API 1.24 is served and the 1.19 note names the five reasons as additive; fails_when=the version or a reason of the note drifts; no_claim=the behavior behind the reasons
+test('API_VERSION is 1.24 and its note names the five library-stop reasons', async () => {
   // Arrange
   const constants = await readPackaged('src', 'constants.ts')
   // Act
@@ -136,18 +136,18 @@ test('API_VERSION is 1.23 and its note names the five library-stop reasons', asy
       .split('\n')
       .find((line) => line.startsWith(' * 1.19 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.23')
+  assert.equal(API_VERSION, '1.24')
   for (const [reason] of LIBRARY_REASONS)
     assert.ok(note.includes(`\`${reason}\``), reason)
   assert.ok(note.includes('`details.cause`'))
 })
 
 // protects=skill 1.0.68 carries the library-stop sentence (declare a library server stop, tell the learner which build to run on library-build-stale, never run it) and names no sample app or function; fails_when=the sentence changes or a sample name enters the skill; no_claim=how a chat follows it
-test('the bundled skill 1.0.72 tells the chat to name the build and never run it', async () => {
+test('the bundled skill 1.0.73 tells the chat to name the build and never run it', async () => {
   // Arrange
   const skill = await readPackaged('skills/codebook/SKILL.md')
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.72"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.73"\n'))
   assert.ok(
     skill.includes(
       "A question that leads from an Example of a nested Next Pages app into the checked-out library may declare a server stop in the library's source, but only when `codebook_status` reports API 1.19 or later; on an older API tell the learner to update Codebook instead of following the `outside-package` fix. When the run refuses with `library-build-stale`, tell the learner which build to run, and never run it yourself; for `library-build-unmapped` read `details.cause` and the help section for it.",
@@ -185,9 +185,9 @@ test('the README states the library-stop rule in the nested-app section with API
     ...LIBRARY_REASONS.map(([reason]) => `\`${reason}\``),
   ])
     assert.ok(section.includes(phrase), phrase)
-  assert.ok(readme.includes('with **MCP API 1.23**'))
+  assert.ok(readme.includes('with **MCP API 1.24**'))
   assert.ok(readme.includes('(1.0.68).**'))
-  assert.ok(readme.includes('updates to **1.0.72**'))
+  assert.ok(readme.includes('updates to **1.0.73**'))
 })
 
 // protects=the help describes every bound and deadline cause of library-build-unmapped with the real limits, and says a transpilePackages library is refused as library-build-unmapped, not outside-package; fails_when=the bound text drops the entry, byte or unfinished-scan limits, hard-codes a stale number, or the limits sentence claims outside-package for transpilePackages; no_claim=that the run emits these causes (libraryBuildStop tests)
@@ -242,7 +242,7 @@ test('the help rule names browser library stops of a nested Pages app and the af
     'declares afterOperation from 1 (afterOperation 0 is refused)',
     'observed through a server library stop, or after a client navigation',
     'study format 9 with no new field',
-    'A server stop in a workspace library of an App Router app, and a library stop of an app with both routers, keep the outside-package refusal; a root app (packageRoot absent or ".") has no files outside the app and a version 2 configuration cannot carry packageRoot, so the app readers refuse such a stop as not in the code the page loads at start',
+    'A library stop of an app with both routers keeps the outside-package refusal; a root app (packageRoot absent or ".") has no files outside the app and a version 2 configuration cannot carry packageRoot, so the app readers refuse such a stop as not in the code the page loads at start',
   ])
     assert.ok(rule.includes(phrase), phrase)
   assert.ok(limits.includes('or since API 1.22 a browser stop'))
@@ -361,7 +361,7 @@ test('the API 1.22 note names the arming, new script id and pause paths of libra
 })
 
 // protects=Cycle 0080 Task 4: the help rule and limits say a browser stop of a nested App Router app may lie in a workspace library, with the checked-out library file in the native debugger, the entry-chunk rule and the library-not-in-build refusal, and keep the App Router server stop and both-routers refusals; fails_when=the rule or limits drop the App Router browser stop, the checked-out file statement or the server refusal; no_claim=that the run pauses
-test('the help names browser library stops of a nested App Router app and keeps the App Router server stop refused', async (context) => {
+test('the help names browser library stops of a nested App Router app and keeps the both-routers library stop refused', async (context) => {
   // Arrange
   const help = await readHelp(context)
   const { rule } = help.nextPackageRoot.libraryStops
@@ -372,12 +372,12 @@ test('the help names browser library stops of a nested App Router app and keeps 
     'the .js chunks of its client-reference manifest',
     'so a module loaded later is refused as library-not-in-build',
     "the native debugger shows the checked-out library file with the library's values, not the built file",
-    'A server stop in a workspace library of an App Router app, and a library stop of an app with both routers, keep the outside-package refusal',
+    'A library stop of an app with both routers keeps the outside-package refusal',
   ])
     assert.ok(rule.includes(phrase), phrase)
   assert.ok(
     limits.includes(
-      'a server library stop through an App Router app, a library stop of an app with both routers or of a root app',
+      'a library stop of an app with both routers or of a root app',
     ),
   )
   assert.ok(
@@ -387,8 +387,8 @@ test('the help names browser library stops of a nested App Router app and keeps 
   )
 })
 
-// protects=API 1.23 is served and its note names the App Router browser library stop, its reuse of the 1.19 reasons and the unchanged server refusal; fails_when=the version or a statement of the 1.23 note drifts; no_claim=the behavior behind the note
-test('API_VERSION is 1.23 and its note adds browser library stops of a nested App Router app', async () => {
+// protects=API 1.23 is served and its note names the App Router browser library stop, its reuse of the 1.19 reasons and the server refusal that 1.24 lifted; fails_when=the version or a statement of the 1.23 note drifts; no_claim=the behavior behind the note
+test('API_VERSION is 1.24 and its 1.23 note adds browser library stops of a nested App Router app', async () => {
   // Arrange
   const constants = await readPackaged('src', 'constants.ts')
   // Act
@@ -397,33 +397,103 @@ test('API_VERSION is 1.23 and its note adds browser library stops of a nested Ap
       .split('\n')
       .find((line) => line.startsWith(' * 1.23 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.23')
+  assert.equal(API_VERSION, '1.24')
   for (const phrase of [
     'of an App Router app may lie in the checked-out source of a workspace library',
     "The native debugger shows the checked-out library file with the library's values",
     'a saved study gains no field',
-    'A server stop in a workspace library of an App Router app, and a library stop of an app with both routers, stay refused as `outside-package`',
+    'A server stop in a workspace library of an App Router app stayed refused as `outside-package` until 1.24, and a library stop of an app with both routers still is',
   ])
     assert.ok(note.includes(phrase), phrase)
 })
 
-// protects=the skill 1.0.72 tells the chat that a browser stop of a nested App Router app may lie in a workspace library, gated on API 1.23, and the README says the same with its version mentions; fails_when=the sentence, the API gate or either version leaves the skill or README; no_claim=how a chat follows it
-test('the skill 1.0.72 and the README state browser library stops of a nested Next App Router app', async () => {
+// protects=the skill 1.0.73 tells the chat that a browser stop of a nested App Router app may lie in a workspace library, gated on API 1.23, and the README says the same with its version mentions; fails_when=the sentence, the API gate or either version leaves the skill or README; no_claim=how a chat follows it
+test('the skill 1.0.73 and the README state browser library stops of a nested Next App Router app', async () => {
   // Arrange
   const readme = await readPackaged('README.md')
   const skill = await readPackaged('skills/codebook/SKILL.md')
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.72"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.73"\n'))
   assert.ok(
     skill.includes(
-      'With API 1.23 or later a browser stop of a nested Next App Router app may lie in a workspace library too, as for a nested Pages or Vite app, and the native debugger shows the checked-out library file there; a server library stop of an App Router app, and a library stop of an app with both routers, keep the `outside-package` refusal',
+      'With API 1.23 or later a browser stop of a nested Next App Router app may lie in a workspace library too, as for a nested Pages or Vite app, and the native debugger shows the checked-out library file there. With API 1.24 or later a server stop of a nested Next App Router app may lie in a workspace library too, and the native debugger shows the checked-out library file there; a library stop of an app with both routers keeps the `outside-package` refusal',
     ),
   )
   for (const phrase of [
     'Since API 1.23 a browser stop of a nested App Router app may lie in such a library too',
     "the native debugger shows the checked-out library file with the library's values",
     'API 1.23 is additive: it adds browser stops in the checked-out source of a workspace library that a nested Next App Router app imports',
-    '(1.0.72).**',
+    '(1.0.72), and a server stop there (1.0.73).**',
+  ])
+    assert.ok(readme.includes(phrase), phrase)
+})
+
+// protects=Cycle 0081 Task 4: the help rule and limits say a server stop of a nested App Router app may lie in a workspace library, pauses in the server render with the checked-out library file in the native debugger, and resumes pauses in another copy of the module or at a browser-only line; fails_when=the rule or the limits drop the server stop, its copy handling or the both-routers refusal; no_claim=that the server render pauses
+test('the help names server library stops of a nested App Router app and the resumed copies', async (context) => {
+  // Arrange
+  const help = await readHelp(context)
+  const { rule } = help.nextPackageRoot.libraryStops
+  const limits = help.nextPackageRoot.limits.join('\n')
+  // Act / Assert
+  for (const phrase of [
+    'Since API 1.24 a server stop of a nested App Router app may lie in a workspace library too',
+    "a module in the entry route's server code, the (rsc) layer",
+    'details.router "app" under NEXT_STOP_NOT_SEALED',
+    'it pauses in the server render of the entry route',
+    "the native debugger shows the checked-out library file with the library's values, not the built file",
+    'a pause in another copy of the module, or at a line only a browser stop declares',
+    'is resumed and not recorded',
+    'A library stop of an app with both routers keeps the outside-package refusal',
+  ])
+    assert.ok(rule.includes(phrase), phrase)
+  assert.ok(
+    limits.includes(
+      'and since API 1.24 a server stop of one may too (it pauses in the server render',
+    ),
+  )
+})
+
+// protects=API 1.24 is served and its note adds server library stops of a nested App Router app with the resumed copies and the unchanged both-routers refusal; fails_when=the version or a statement of the 1.24 note drifts; no_claim=the behavior behind the note
+test('API_VERSION is 1.24 and its note adds server library stops of a nested App Router app', async () => {
+  // Arrange
+  const constants = await readPackaged('src', 'constants.ts')
+  // Act
+  const note =
+    constants
+      .split('\n')
+      .find((line) => line.startsWith(' * 1.24 is additive')) ?? ''
+  // Assert
+  assert.equal(API_VERSION, '1.24')
+  for (const phrase of [
+    'a server stop under `next-dev-webpack` with a nested `packageRoot`',
+    'of an App Router app may lie in the checked-out source of a workspace library',
+    'a saved study gains no field',
+    "the native debugger shows the checked-out library file with the library's values",
+    'a pause in another copy of the module, or at a line only a browser stop declares, is resumed and not recorded',
+    'A library stop of an app with both routers',
+  ])
+    assert.ok(note.includes(phrase), phrase)
+})
+
+// protects=the skill 1.0.73 tells the chat that a server stop of a nested App Router app may lie in a workspace library, gated on API 1.24, and the README says the same with its version mentions; fails_when=the sentence, the API gate or either version leaves; no_claim=how a chat follows it
+test('the skill 1.0.73 and the README state server library stops of a nested Next App Router app', async () => {
+  // Arrange
+  const readme = await readPackaged('README.md')
+  const skill = await readPackaged('skills/codebook/SKILL.md')
+  // Act / Assert
+  assert.ok(skill.includes('metadata:\n  version: "1.0.73"\n'))
+  assert.ok(
+    skill.includes(
+      'With API 1.24 or later a server stop of a nested Next App Router app may lie in a workspace library too, and the native debugger shows the checked-out library file there',
+    ),
+  )
+  for (const phrase of [
+    'Since API 1.24 a server stop of a nested App Router app may lie in such a library too',
+    'it pauses in the server render of the entry route, and the native debugger shows the checked-out library file',
+    'is resumed and not recorded',
+    'API 1.24 is additive: it adds server stops in the checked-out source of a workspace library that a nested Next App Router app imports',
+    'and a server stop there (1.0.73).**',
+    'updates to **1.0.73**',
   ])
     assert.ok(readme.includes(phrase), phrase)
 })
