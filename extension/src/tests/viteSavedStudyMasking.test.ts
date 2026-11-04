@@ -31,6 +31,35 @@ test('a .env value the debugger captured at a Vite pause is masked in the saved 
   )
 })
 
+// protects=a VITE_ value of a Vite app below the repository root never reaches its saved study, which is format 10 and names the app folder; fails_when=the nested run's study keeps the captured env value, or saves without packageRoot or as another format; no_claim=a real Vite reading the app folder's .env (the controlled runtime reports the secret as the debugger value; the launcher's own test masks a real .env from the app folder)
+test('a .env value captured at a pause of a Vite app below the repository root is masked in its format 10 saved study', async (context) => {
+  // Arrange
+  const { service, record, library } = await pausedViteRun(
+    context,
+    SECRET,
+    undefined,
+    {
+      packageRoot: 'examples/react/basic',
+      packageApp: { decoyRoot: true },
+      operations: {
+        operations: [{ kind: 'click', title: 'Toggle', selector: '#toggle' }],
+        stopOperations: [1],
+      },
+    },
+  )
+  // Act
+  const archive = await captureStudy(service, record, library.workspaceKey)
+  // Assert
+  assert.ok(archive)
+  assert.equal(JSON.stringify(archive).includes(SECRET), false)
+  assert.equal(archive.version, 10)
+  assert.equal(
+    'packageRoot' in archive.configuration && archive.configuration.packageRoot,
+    'examples/react/basic',
+  )
+  assert.equal(archive.observations[0]?.values['value:nextTheme'], '[masked]')
+})
+
 // Value: protects=the served JavaScript resource of a redacted module shows the masked text with its label and does not fail the integrity check that the executed bytes' hash would fail; fails_when=the resource hashes the masked text against the seal or serves it without the label; why_new=Cycle 0064 task 18 keeps the seal hash of the executed bytes beside a masked copy; seam=none; no_claim=the map resource
 test('the JavaScript source resource of a redacted Vite module is served masked with its label although its text no longer hashes to the seal', async (context) => {
   // Arrange

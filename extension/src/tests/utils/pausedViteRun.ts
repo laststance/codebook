@@ -87,7 +87,15 @@ export async function pausedViteRun(
   })
   const record = service.record(receipt)
   await record.preparation
-  service.action({ ...receipt, key: 'one', action: 'repository-click' })
+  // A version 3 configuration (a nested app declares one) advances by its first operation; versions 1 and 2 by their click.
+  service.action({
+    ...receipt,
+    key: 'one',
+    action:
+      harness.definition.configuration.version === 3
+        ? 'repository-operation'
+        : 'repository-click',
+  })
   await waitUntil(
     () => harness.run.view().snapshots.length === 1,
     'committed Vite pause',

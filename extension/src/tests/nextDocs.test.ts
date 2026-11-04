@@ -186,6 +186,7 @@ test('the repository-browser help keeps its existing top keys and leads with sta
     'viteSupport',
     'viteFirstRun',
     'viteRefusals',
+    'vitePackageRoot',
     'nextQuickStart',
     'nextSupport',
     'nextRefusals',
