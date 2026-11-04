@@ -270,7 +270,7 @@ export const PACKAGE_ROOT_REFUSALS = {
 } as const
 
 /** The refusal reasons of a library stop, in the order the help lists them (API 1.19); each has a row in {@link PACKAGE_ROOT_REFUSALS}. */
-const LIBRARY_STOP_REASONS = [
+export const LIBRARY_STOP_REASONS = [
   'library-build-stale',
   'library-build-unmapped',
   'library-not-in-build',

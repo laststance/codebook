@@ -122,8 +122,8 @@ test('the help states the library-stop rule and no longer says every library sta
   assert.ok(limits.includes('App Router Examples'))
 })
 
-// protects=API 1.20 is served and its note names the five reasons as additive; fails_when=the version or a reason of the note drifts; no_claim=the behavior behind the reasons
-test('API_VERSION is 1.20 and its note names the five library-stop reasons', async () => {
+// protects=API 1.21 is served and its note names the five reasons as additive; fails_when=the version or a reason of the note drifts; no_claim=the behavior behind the reasons
+test('API_VERSION is 1.21 and its note names the five library-stop reasons', async () => {
   // Arrange
   const constants = await readPackaged('src', 'constants.ts')
   // Act
@@ -132,18 +132,18 @@ test('API_VERSION is 1.20 and its note names the five library-stop reasons', asy
       .split('\n')
       .find((line) => line.startsWith(' * 1.19 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.20')
+  assert.equal(API_VERSION, '1.21')
   for (const [reason] of LIBRARY_REASONS)
     assert.ok(note.includes(`\`${reason}\``), reason)
   assert.ok(note.includes('`details.cause`'))
 })
 
 // protects=skill 1.0.68 carries the library-stop sentence (declare a library server stop, tell the learner which build to run on library-build-stale, never run it) and names no sample app or function; fails_when=the sentence changes or a sample name enters the skill; no_claim=how a chat follows it
-test('the bundled skill 1.0.69 tells the chat to name the build and never run it', async () => {
+test('the bundled skill 1.0.70 tells the chat to name the build and never run it', async () => {
   // Arrange
   const skill = await readPackaged('skills/codebook/SKILL.md')
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.69"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.70"\n'))
   assert.ok(
     skill.includes(
       "A question that leads from an Example into the checked-out library may declare a server stop in the library's source, but only when `codebook_status` reports API 1.19 or later; on an older API tell the learner to update Codebook instead of following the `outside-package` fix. When the run refuses with `library-build-stale`, tell the learner which build to run, and never run it yourself; for `library-build-unmapped` read `details.cause` and the help section for it.",
@@ -163,7 +163,7 @@ test('the bundled skill 1.0.69 tells the chat to name the build and never run it
 })
 
 // protects=the README carries the library-stop rule in the nested-app section, the five reasons, and the 1.19 and 1.0.68 version mentions; fails_when=a reason, the never-builds rule or a version leaves the README; no_claim=native behavior
-test('the README states the library-stop rule in the nested-app section with API 1.19 and skill 1.0.69', async () => {
+test('the README states the library-stop rule in the nested-app section with API 1.19 and skill 1.0.70', async () => {
   // Arrange
   const readme = await readPackaged('README.md')
   const start = readme.indexOf('## Run a Next app below the repository root')
@@ -181,9 +181,9 @@ test('the README states the library-stop rule in the nested-app section with API
     ...LIBRARY_REASONS.map(([reason]) => `\`${reason}\``),
   ])
     assert.ok(section.includes(phrase), phrase)
-  assert.ok(readme.includes('with **MCP API 1.20**'))
+  assert.ok(readme.includes('with **MCP API 1.21**'))
   assert.ok(readme.includes('(1.0.68).**'))
-  assert.ok(readme.includes('updates to **1.0.69**'))
+  assert.ok(readme.includes('updates to **1.0.70**'))
 })
 
 // protects=the help describes every bound and deadline cause of library-build-unmapped with the real limits, and says a transpilePackages library is refused as library-build-unmapped, not outside-package; fails_when=the bound text drops the entry, byte or unfinished-scan limits, hard-codes a stale number, or the limits sentence claims outside-package for transpilePackages; no_claim=that the run emits these causes (libraryBuildStop tests)
