@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.2.81.0] - 2026-11-05 (development candidate)
+
+Cycle 0080 ([Issue #208](https://github.com/laststance/codebook/issues/208)), a feature cycle. A **browser stop in the checked-out source of a workspace library** that a Next **App Router** app below the repository root imports now pauses in that library, with the library's real values in the native debugger. A learner who opens one of TanStack Query's App Router Examples can now follow a mutation from the app's form into the library's own code, as 0.2.80.0 allowed for Pages apps.
+
+**Pause in a workspace library through a nested App Router app.**
+- **When it applies:** a version 3 `next-dev-webpack` run whose `packageRoot` is an App Router app below the root, with a `participant: "browser"` stop in the checked-out source (for example `packages/<library>/src/…`) of a workspace library the app links to inside the repository. The library needs a current build with source maps that carry `sourcesContent`; Codebook never builds it.
+- **Which code it pauses in:** the one library module among the `.js` chunks of the entry route's client-reference manifest, so a module the page loads later is refused as `library-not-in-build`.
+- **In the native debugger:** Variables, Call Stack and the editor show the **checked-out library file** with the library's values. The chat, the recorded source and the replay use the same file.
+- **Saved as study format 9, with no new field.** The stop is saved with the library file's repository-relative path, hash and line, and replays from the recorded evidence after the app has stopped.
+
+**Clear refusals** under `NEXT_STOP_NOT_SEALED`, with the library reasons of the Pages and server library stops:
+- before any process starts, `library-place-ambiguous` when the path Next writes for the stop file contains `*`, or leads to the checked-out file of another stop of the run;
+- at the seal, before any input, `library-not-in-build` when the module's map does not name the checked-out file (with `details.mapSource`), and `library-build-changed` (`RUNTIME_FAILED`) when the library build on disk or its map changed after the run started;
+- a **server** stop in a library of an App Router app, and a library stop of an app with both routers, stay refused as `outside-package`; a library stop of a root app or a version 2 configuration is refused as code the page does not load at start.
+
+**Compatibility.** MCP API 1.23 (additive: a refusal of an App Router app carries `details.router: "app"`, and `library-not-in-build` may carry `details.mapSource`) and bundled skill 1.0.72 (one sentence: a browser stop of a nested App Router app may lie in a workspace library the app links to). Study format 9. Pages, Vite and server library stops and the app's own App Router stops are unchanged. In Cursor, run **Codebook: Set Up AI Chat** after installing, so the managed skill updates to 1.0.72.
+
 ## [0.2.80.0] - 2026-11-04 (development candidate)
 
 Cycle 0079 ([Issue #205](https://github.com/laststance/codebook/issues/205)), a feature cycle. A **browser stop in the checked-out source of a workspace library** that a Next Pages app below the repository root imports now pauses in that library, with the library's real values in the native debugger. With 0.2.75.0's server library stops, a learner can follow TanStack Query's Next Example from the server's prefetch to the browser's hydration and to the fetch that **Show More** starts, in the library's own code.
