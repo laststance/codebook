@@ -1,5 +1,5 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
-import { mkdtemp, readFile, stat } from 'node:fs/promises'
+import { mkdtemp, stat } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -13,6 +13,7 @@ import { Cdp } from '../../runtimeSupport/cdp'
 import { resolveChromeExecutable } from '../../utils/resolveChromeExecutable'
 
 import { removeTestBrowserProfile } from './removeTestBrowserProfile'
+import { waitForTestBrowserEndpoint } from './waitForTestBrowserEndpoint'
 
 /** A fixture page open in a real headless Chrome, with the channel a run's operations are sent through. */
 export type RealChromePage = {
@@ -160,15 +161,12 @@ async function launchChrome(
     ],
     { stdio: 'ignore' },
   )
-  for (let attempt = 0; attempt < 200; attempt++) {
-    const text = await readFile(
-      join(profile, 'DevToolsActivePort'),
-      'utf8',
-    ).catch(() => undefined)
-    const port = Number(text?.split('\n')[0])
-    if (port > 0) return { process: child, debuggingPort: port, profile }
-    await delay(100)
+  try {
+    // A cold runner's first Chrome start gets Codebook's own start bound.
+    const { port } = await waitForTestBrowserEndpoint(profile)
+    return { process: child, debuggingPort: port, profile }
+  } catch (error) {
+    child.kill('SIGKILL')
+    throw error
   }
-  child.kill('SIGKILL')
-  throw new Error('Chrome did not publish its debugging port.')
 }
