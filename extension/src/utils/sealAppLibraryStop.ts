@@ -1,8 +1,11 @@
-import { basename, isAbsolute, join, resolve } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 
 import { z } from 'zod'
 
-import { REPOSITORY_JAVASCRIPT_LIMIT_BYTES } from '../constants'
+import {
+  LIBRARY_MAP_SOURCE_DETAIL_LIMIT_CHARS,
+  REPOSITORY_JAVASCRIPT_LIMIT_BYTES,
+} from '../constants'
 import type {
   AppBrowserLibrarySealInput,
   DevelopmentBundle,
@@ -16,6 +19,7 @@ import {
 import { mapSchema, type BundleSource } from '../repositoryBundle'
 
 import type { NextPagesChunkModules } from './createNextPagesDiscoveryCache'
+import { cutTextToFit } from './cutTextToFit'
 import { inlineSourceMapOf } from './extractDevelopmentModule'
 import { readAppClientChunks } from './readAppClientChunks'
 import { readNextChunkModules } from './readNextChunkModules'
@@ -62,7 +66,8 @@ const appPathsManifestSchema = z.record(z.string(), z.string())
 export async function sealAppLibraryStop(
   request: AppLibraryStopSealRequest,
 ): Promise<DevelopmentBundle> {
-  return wordPagesSealFailure(request.signal, () => sealWithin(request))
+  // An uncoded failure of this seal is an App Router one.
+  return wordPagesSealFailure(request.signal, () => sealWithin(request), 'app')
 }
 
 /** Builds the `library-not-in-build` refusal of a request's stop. @example throw notInBuildOf(request, ['packages/lib/build/modern/core.js']) */
@@ -78,13 +83,20 @@ function notInBuildOf(
     frozen.stopPath,
     candidates,
     'app-pages-browser',
-    mapSource,
+    // The map's source is served text, so the detail is bounded.
+    mapSource === undefined
+      ? undefined
+      : cutTextToFit(
+          mapSource,
+          (candidate) =>
+            candidate.length <= LIBRARY_MAP_SOURCE_DETAIL_LIMIT_CHARS,
+        ),
   )
 }
 
 /**
  * Finds the copies of one module in a chunk's decoded modules by their final `sourceURL`; called by {@link sealWithin} for each frozen flavour.
- * @param file - A decoded client chunk.
+ * @param indexed - A decoded client chunk with the final `sourceURL` of each module text, read once by {@link indexedChunksOf}.
  * @param scriptUrl - The module's `(app-pages-browser)` address.
  * @param builtFile - The flavour's absolute built file, kept as the bundle's identity.
  * @param deadline - The discovery step's deadline.
@@ -93,16 +105,17 @@ function notInBuildOf(
  * @example moduleCopiesIn(chunk, 'webpack-internal:///(app-pages-browser)/../../../packages/lib/build/modern/core.js', '/repo/packages/lib/build/modern/core.js', deadline)
  */
 function moduleCopiesIn(
-  file: NextPagesChunkModules,
+  indexed: IndexedChunk,
   scriptUrl: string,
   builtFile: string,
   deadline: number,
 ): BundleSource[] {
+  const { file, finalUrls } = indexed
   const copies: BundleSource[] = []
-  for (const javascript of file.moduleTexts) {
+  for (const [position, javascript] of file.moduleTexts.entries()) {
     if (performance.now() >= deadline)
       throw new Error('Module discovery deadline exceeded')
-    const finalUrl = finalSourceUrlOf(javascript)
+    const finalUrl = finalUrls[position]
     if (finalUrl === undefined || !sameScriptUrl(scriptUrl, finalUrl)) continue
     if (Buffer.byteLength(javascript) > REPOSITORY_JAVASCRIPT_LIMIT_BYTES)
       throw new Error('Selected JavaScript module exceeds byte limit')
@@ -120,36 +133,72 @@ function moduleCopiesIn(
   return copies
 }
 
+/** A decoded client chunk with the final `sourceURL` of each of its module texts, in order. */
+type IndexedChunk = {
+  file: NextPagesChunkModules
+  finalUrls: readonly (string | undefined)[]
+}
+
+/**
+ * Reads the final `sourceURL` of every module text once, so the flavour search and the ambiguity scan of {@link sealWithin} do not repeat it per flavour.
+ * @param files - The decoded client chunks.
+ * @param deadline - The discovery step's deadline.
+ * @returns The chunks with their modules' final addresses.
+ * @throws `Module discovery deadline exceeded`.
+ * @example indexedChunksOf(files, step.deadline)[0]!.finalUrls // => ['webpack-internal:///(app-pages-browser)/./a.js']
+ */
+function indexedChunksOf(
+  files: readonly NextPagesChunkModules[],
+  deadline: number,
+): IndexedChunk[] {
+  return files.map((file) => ({
+    file,
+    finalUrls: file.moduleTexts.map((javascript) => {
+      if (performance.now() >= deadline)
+        throw new Error('Module discovery deadline exceeded')
+      return finalSourceUrlOf(javascript)
+    }),
+  }))
+}
+
 /** Reads the last `//# sourceURL=` of a module text, which is its effective address. @example finalSourceUrlOf('x\n//# sourceURL=webpack-internal:///(app-pages-browser)/./a.js\n') // => 'webpack-internal:///(app-pages-browser)/./a.js' */
 function finalSourceUrlOf(javascript: string): string | undefined {
   return [...javascript.matchAll(/^\/\/# sourceURL=(.+)$/gm)].at(-1)?.[1]
 }
 
 /**
- * Tells whether a module's own inline map names one of the given files, for the ambiguity check of {@link sealWithin}.
+ * Tells whether a module's own inline map may name one of the given files, for the ambiguity check of {@link sealWithin}; it fails closed.
  * @param javascript - A module text of the chunk set.
- * @param paths - The app-resolved paths of the stop file.
- * @returns `true` when the map's `sources` has one of the paths; `false` for a module without a readable inline map.
- * @example mapNamesAny(moduleText, ['/repo/examples/src/core.ts']) // => false for react-query's own module
+ * @param paths - Every path that would bind the stop file: the app-resolved paths of all frozen flavours and the checked-out real path.
+ * @returns
+ * - `true` when the map's `sources` has one of the paths
+ * - `true` when the module has an inline map that cannot be read (over the byte limit, several maps, malformed encoding, not JSON), since it may name the file
+ * - `false` for a module without any inline map and for a readable map that names none of the paths
+ * @example mapMayNameAny(moduleText, ['/repo/examples/src/core.ts']) // => false for react-query's own module
  */
-function mapNamesAny(javascript: string, paths: readonly string[]): boolean {
+function mapMayNameAny(javascript: string, paths: readonly string[]): boolean {
   let mapText: string
   try {
     mapText = inlineSourceMapOf(javascript)
   } catch {
-    // A module without exactly one inline map names no file.
-    return false
+    // A module with no inline map names no file; one whose map cannot be read may name it.
+    return javascript.includes('sourceMappingURL=data:application/json')
   }
-  // The file's name is a cheap test before the map is parsed.
-  const name = paths[0] === undefined ? '' : basename(paths[0])
-  if (!mapText.includes(name)) return false
+  // The map is always parsed: a text pre-filter would skip a path written with JSON escapes and a map that is not JSON.
   try {
     const sources: unknown = JSON.parse(mapText).sources
     return (
-      Array.isArray(sources) && sources.some((source) => paths.includes(source))
+      Array.isArray(sources) &&
+      sources.some(
+        (source) =>
+          typeof source === 'string' &&
+          (paths.includes(source) ||
+            (isAbsolute(source) && paths.includes(resolve(source)))),
+      )
     )
   } catch {
-    return false
+    // Not JSON: the module may still name the file.
+    return true
   }
 }
 
@@ -197,7 +246,7 @@ async function clientChunksOf(
 
 /**
  * Finds the one frozen flavour the chunk set holds as a module; called by {@link sealWithin}.
- * @param files - The decoded client chunks.
+ * @param files - The decoded client chunks with their modules' final addresses.
  * @param request - The seal request.
  * @param deadline - The discovery step's deadline.
  * @returns The flavour's built path and its module (identical copies are one).
@@ -205,7 +254,7 @@ async function clientChunksOf(
  * @example oneFlavourOf(files, request, step.deadline) // => { builtPath: 'packages/lib/build/modern/core.js', bundle }
  */
 function oneFlavourOf(
-  files: readonly NextPagesChunkModules[],
+  files: readonly IndexedChunk[],
   request: AppLibraryStopSealRequest,
   deadline: number,
 ): { builtPath: string; bundle: BundleSource } {
@@ -282,17 +331,27 @@ async function sealWithin(
     request.signal,
     async (step) => {
       const { files, manifestHash } = await clientChunksOf(step, request)
-      const found = oneFlavourOf(files, request, step.deadline)
+      const indexed = indexedChunksOf(files, step.deadline)
+      const found = oneFlavourOf(indexed, request, step.deadline)
       const map = checkedMapOf(request, found)
       // Another module naming the same file would bind the breakpoint in a second place.
-      const expected = appBrowser.appResolvedPaths[found.builtPath] ?? []
-      const isNamedElsewhere = files.some((file) =>
-        file.moduleTexts.some((javascript) => {
-          const finalUrl = finalSourceUrlOf(javascript)
+      const { sourceRealPath, sourceText } = appBrowser
+      // Any flavour's app-resolved path and the checked-out file would bind the same breakpoint.
+      const competing = [
+        ...new Set([
+          ...Object.values(appBrowser.appResolvedPaths).flat(),
+          sourceRealPath,
+        ]),
+      ]
+      const isNamedElsewhere = indexed.some(({ file, finalUrls }) =>
+        file.moduleTexts.some((javascript, position) => {
+          if (performance.now() >= step.deadline)
+            throw new Error('Module discovery deadline exceeded')
+          const finalUrl = finalUrls[position]
           return (
             (finalUrl === undefined ||
               !sameScriptUrl(found.bundle.scriptUrl, finalUrl)) &&
-            mapNamesAny(javascript, expected)
+            mapMayNameAny(javascript, competing)
           )
         }),
       )
@@ -305,7 +364,6 @@ async function sealWithin(
           'another module of the route client chunks names the same file',
           'app',
         )
-      const { sourceRealPath, sourceText } = appBrowser
       return {
         bundle: {
           ...found.bundle,

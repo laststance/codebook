@@ -2996,3 +2996,6 @@ export const VITE_CACHE_BUSTING_QUERY_PARAMS = ['t', 'v', 'import'] as const
  * Set as the {@link StudyError.recoveryOverride} by {@link StudyWorkspace.refusePlacement}; names the two real controls (the Study pane's Restore button, the Open Study Workspace command), what was not done, and that the learner's arrangement stays as it is.
  */
 export const PLACEMENT_REFUSED_RECOVERY = `The editor changed the layout (a group, a tab or the focus) while Codebook arranged the Study, so Codebook stopped; no run was started, no application input was sent, and the learner\u2019s own tabs and groups were left as they are. Do not invent a command. Ask the learner to choose ${STUDY_RESTORE_CONTROL_LABEL} in the Study pane, or to run Codebook: Open Study Workspace from the Command Palette, then call codebook_presentation once more with fresh identities from codebook_status. Never start or continue a run to repair the layout.`
+
+/** The most characters of a served module map source path that a `library-not-in-build` refusal keeps in `details.mapSource`; the path is served text, so a longer one is cut with {@link CUT_TEXT_MARKER}. */
+export const LIBRARY_MAP_SOURCE_DETAIL_LIMIT_CHARS = 512
