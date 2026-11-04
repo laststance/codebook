@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import { readFile, realpath, rm, writeFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
+import { pathToFileURL } from 'node:url'
+
+import * as reader from '../utils/readRepositoryBuildText'
 
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
 import {
@@ -267,5 +270,200 @@ test('an App Router library stop is refused as place-ambiguous when another modu
   const failure = await preparationFailure(harness)
   // Assert
   assert.deepEqual(refusalOf(failure), PLACE_AMBIGUOUS)
+  assert.equal(harness.inputsSeen(), 0)
+})
+
+/** Encodes a map object as the base64 payload of an inline source map. @example mapPayloadOf({ version: 3, sources: [], mappings: '' }) */
+function mapPayloadOf(map: Record<string, unknown>): string {
+  return Buffer.from(JSON.stringify(map)).toString('base64')
+}
+
+// protects=AC 3 a competing module whose map spells the stop file as sourceRoot plus a relative source collides; fails_when=the collision check compares the source text alone and seals beside a module that binds the same breakpoint; no_claim=a relative sourceRoot (it has no base to resolve against)
+test('an App Router library stop is refused as place-ambiguous when another module names the file through sourceRoot', async (context) => {
+  // Arrange
+  const staged = stageApp()
+  const harness = await openRun(context, staged)
+  const { appResolved } = await pathsOf(harness)
+  await addCompetingModule(
+    harness,
+    mapPayloadOf({
+      version: 3,
+      sourceRoot: dirname(appResolved),
+      sources: ['core.ts'],
+      mappings: '',
+    }),
+  )
+  // Act
+  const failure = await preparationFailure(harness)
+  // Assert
+  assert.deepEqual(refusalOf(failure), PLACE_AMBIGUOUS)
+  assert.equal(harness.inputsSeen(), 0)
+})
+
+// protects=AC 3 a competing module whose map names the stop file as a file:// URL collides; fails_when=a file URL is compared as text and never resolved to its path; no_claim=other URL schemes
+test('an App Router library stop is refused as place-ambiguous when another module names the file as a file URL', async (context) => {
+  // Arrange
+  const staged = stageApp()
+  const harness = await openRun(context, staged)
+  const { appResolved } = await pathsOf(harness)
+  await addCompetingModule(
+    harness,
+    mapPayloadOf({
+      version: 3,
+      sources: [pathToFileURL(appResolved).href],
+      mappings: '',
+    }),
+  )
+  // Act
+  const failure = await preparationFailure(harness)
+  // Assert
+  assert.deepEqual(refusalOf(failure), PLACE_AMBIGUOUS)
+  assert.equal(harness.inputsSeen(), 0)
+})
+
+// protects=AC 3 a competing module with an indexed map whose section names the stop file collides; fails_when=only the top-level sources of a map are read; no_claim=sections nested deeper than the depth limit
+test('an App Router library stop is refused as place-ambiguous when another module names the file inside an indexed map section', async (context) => {
+  // Arrange
+  const staged = stageApp()
+  const harness = await openRun(context, staged)
+  const { appResolved } = await pathsOf(harness)
+  await addCompetingModule(
+    harness,
+    mapPayloadOf({
+      version: 3,
+      sections: [
+        {
+          offset: { line: 0, column: 0 },
+          map: { version: 3, sources: [appResolved], mappings: '' },
+        },
+      ],
+    }),
+  )
+  // Act
+  const failure = await preparationFailure(harness)
+  // Assert
+  assert.deepEqual(refusalOf(failure), PLACE_AMBIGUOUS)
+  assert.equal(harness.inputsSeen(), 0)
+})
+
+// protects=AC 3 a competing indexed map with a section the debugger would fetch by url cannot be read, so the stop is refused; fails_when=an external section is treated as naming nothing; no_claim=fetching the url
+test('an App Router library stop is refused as place-ambiguous when another module carries an indexed map with an external section', async (context) => {
+  // Arrange
+  const staged = stageApp()
+  const harness = await openRun(context, staged)
+  await addCompetingModule(
+    harness,
+    mapPayloadOf({
+      version: 3,
+      sections: [
+        { offset: { line: 0, column: 0 }, url: 'https://example.test/a.map' },
+      ],
+    }),
+  )
+  // Act
+  const failure = await preparationFailure(harness)
+  // Assert
+  assert.deepEqual(refusalOf(failure), PLACE_AMBIGUOUS)
+})
+
+// protects=AC 3 a readable file URL map that names another file does not block the seal; fails_when=the widened collision check refuses every file URL; no_claim=a map that names the stop file (refused above)
+test('an App Router library stop is sealed when another module names another file as a file URL', async (context) => {
+  // Arrange
+  const staged = stageApp()
+  const harness = await openRun(context, staged)
+  await addCompetingModule(
+    harness,
+    mapPayloadOf({
+      version: 3,
+      sources: [pathToFileURL('/elsewhere/x.ts').href],
+      mappings: '',
+    }),
+  )
+  // Act
+  const failure = await preparationFailure(harness)
+  // Assert
+  assert.equal(failure, undefined)
+})
+
+// protects=AC 3 a map with sourceRoot and a relative source that names another file does not block the seal; fails_when=any sourceRoot map is refused; no_claim=a sourceRoot map that names the stop file (refused above)
+test('an App Router library stop is sealed when another module joins sourceRoot to a source in another folder', async (context) => {
+  // Arrange
+  const staged = stageApp()
+  const harness = await openRun(context, staged)
+  await addCompetingModule(
+    harness,
+    mapPayloadOf({
+      version: 3,
+      sourceRoot: '/elsewhere',
+      sources: ['core.ts'],
+      mappings: '',
+    }),
+  )
+  // Act
+  const failure = await preparationFailure(harness)
+  // Assert
+  assert.equal(failure, undefined)
+})
+
+/**
+ * Rewrites one frozen library file on disk the moment the seal reads it again, after the freeze read it once, so the file changes between the freeze and the seal.
+ * @param context - The test context, which restores the reader after the test.
+ * @param suffix - The end of the file name to change (`core.js` or `core.js.map`).
+ * @example changeFrozenFileAtSeal(context, 'core.js.map')
+ */
+function changeFrozenFileAtSeal(context: TestContext, suffix: string): void {
+  let reads = 0
+  const original = reader.readRepositoryBuildText
+  context.mock.method(
+    reader,
+    'readRepositoryBuildText',
+    async (...args: Parameters<typeof original>) => {
+      const [root, path] = args
+      if (path.endsWith(`build/modern/${suffix}`) && ++reads === 2) {
+        const fullPath = join(root, path)
+        // The text changes; the module map's sourcesContent stays the checked-out text.
+        await writeFile(fullPath, `${await readFile(fullPath, 'utf8')}\n`)
+      }
+      return original(...args)
+    },
+  )
+}
+
+/** The refusal a build that changed after the freeze raises. */
+const BUILD_CHANGED = {
+  code: 'RUNTIME_FAILED',
+  details: {
+    reason: 'library-build-changed',
+    packageRoot: LIBRARY_APP_FOLDER,
+    library: 'lib',
+    file: LIBRARY_SOURCE_PATH,
+    router: 'app',
+    sideEffects: 'unknown',
+  },
+}
+
+// protects=AC 3 (OV-1) a frozen built file that changed after the freeze, with the module map's sourcesContent unchanged, is refused RUNTIME_FAILED library-build-changed; fails_when=the seal checks only sourcesContent and records the run as the checked-out source's; no_claim=a rebuild Next performs itself
+test('an App Router library stop is refused as build-changed when the built file changed after the freeze', async (context) => {
+  // Arrange
+  const staged = stageApp()
+  const harness = await openRun(context, staged)
+  changeFrozenFileAtSeal(context, 'core.js')
+  // Act
+  const failure = await preparationFailure(harness)
+  // Assert
+  assert.deepEqual(refusalOf(failure), BUILD_CHANGED)
+  assert.equal(harness.inputsSeen(), 0)
+})
+
+// protects=AC 3 (OV-1) a frozen build map that changed after the freeze, with the module map's sourcesContent unchanged, is refused RUNTIME_FAILED library-build-changed; fails_when=the seal never re-hashes the build map; no_claim=a rebuild Next performs itself
+test('an App Router library stop is refused as build-changed when the build map changed after the freeze', async (context) => {
+  // Arrange
+  const staged = stageApp()
+  const harness = await openRun(context, staged)
+  changeFrozenFileAtSeal(context, 'core.js.map')
+  // Act
+  const failure = await preparationFailure(harness)
+  // Assert
+  assert.deepEqual(refusalOf(failure), BUILD_CHANGED)
   assert.equal(harness.inputsSeen(), 0)
 })

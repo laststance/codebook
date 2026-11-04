@@ -18,6 +18,7 @@ import {
 } from '../nextRefusals'
 import { mapSchema, type BundleSource } from '../repositoryBundle'
 
+import { changedFrozenFileOf } from './changedFrozenFileOf'
 import type { NextPagesChunkModules } from './createNextPagesDiscoveryCache'
 import { cutTextToFit } from './cutTextToFit'
 import { inlineSourceMapOf } from './extractDevelopmentModule'
@@ -27,6 +28,7 @@ import { resolveNextClientManifest } from './resolveNextClientManifest'
 import type { ResolvedNextPackage } from './resolveNextPackage'
 import { sameScriptUrl } from './sameScriptUrl'
 import { AmbiguousBundleError, singleBundleOf } from './singleBundleOf'
+import { sourceMapTextMayNamePath } from './sourceMapMayNamePath'
 import {
   spendNextPagesDiscovery,
   type NextPagesDiscoveryStep,
@@ -185,21 +187,8 @@ function mapMayNameAny(javascript: string, paths: readonly string[]): boolean {
     return javascript.includes('sourceMappingURL=data:application/json')
   }
   // The map is always parsed: a text pre-filter would skip a path written with JSON escapes and a map that is not JSON.
-  try {
-    const sources: unknown = JSON.parse(mapText).sources
-    return (
-      Array.isArray(sources) &&
-      sources.some(
-        (source) =>
-          typeof source === 'string' &&
-          (paths.includes(source) ||
-            (isAbsolute(source) && paths.includes(resolve(source)))),
-      )
-    )
-  } catch {
-    // Not JSON: the module may still name the file.
-    return true
-  }
+  // Absolute, file://, sourceRoot-joined and indexed-map sources are all normalized there; unreadable shapes fail closed.
+  return sourceMapTextMayNamePath(mapText, paths)
 }
 
 /**
@@ -330,6 +319,21 @@ async function sealWithin(
     request.nextPackage.packageRoot,
     request.signal,
     async (step) => {
+      // The disk check stands in for the Pages seal's built-entry comparison: the dev server compiles after the freeze, so an unchanged frozen build on disk means the chunk came from it.
+      const changedFile = await changedFrozenFileOf(
+        frozen,
+        request.library.realRoot,
+        step.deadline,
+        step.signal,
+      )
+      // The refusal names the stop's file like every build-changed refusal; the changed file is the cause only.
+      if (changedFile !== undefined)
+        throw libraryBuildChangedFailure(
+          packageRootRelative,
+          frozen.library.name,
+          frozen.stopPath,
+          'app',
+        )
       const { files, manifestHash } = await clientChunksOf(step, request)
       const indexed = indexedChunksOf(files, step.deadline)
       const found = oneFlavourOf(indexed, request, step.deadline)
