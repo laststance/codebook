@@ -594,9 +594,11 @@ export async function configuredRuntimeHarness(
       : { after: definition.configuration.after, selector: '#unused' }
   const afterExpression = configuredDomExpression(declaredAction.after)
   const scrollExpression = configuredScrollExpression(declaredAction.selector)
-  // A Pages server stop is sealed from the build's real path (its maps name the canonical workspace), so the editor's breakpoints and the debugger's frames name that path too.
+  // A Pages server stop is sealed from the build's real path (its maps name the canonical workspace), so the editor's breakpoints and the debugger's frames name that path too. A library stop with a server (`serverRuntime`) is covered by that; a browser-only library stop names it as well; no other caller passes `library`.
   const sourceRoot =
-    (options.nextPages && options.serverRuntime) || viteLibrary || library
+    (options.nextPages && options.serverRuntime) ||
+    viteLibrary ||
+    (library && options.participant === 'browser')
       ? await realpath(repository.directory)
       : repository.directory
   // A browser library stop of a Next Pages run: the page executes the library's `(pages-dir-browser)` module, and the debugger reports its built line.
@@ -604,7 +606,7 @@ export async function configuredRuntimeHarness(
     library && options.participant === 'browser' ? library : undefined
   const browserLibraryHit =
     browserLibrary && fixture?.declaredLine
-      ? browserLibrary.hitAt(fixture.declaredLine)
+      ? browserLibrary.hitAt(fixture.declaredLine, 'pages-dir-browser')
       : undefined
   const sourcePath = library
       ? join(sourceRoot, library.builtPath)

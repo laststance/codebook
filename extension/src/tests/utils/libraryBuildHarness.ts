@@ -26,8 +26,23 @@ export const LIBRARY_RETURN_LINE = 3
 /** The app folder the fixture links the library into. */
 export const LIBRARY_APP_FOLDER = 'examples/app'
 
-/** How many wrapper lines Next's module wrapper puts before the built code in the eval module (the generated line is the built line plus this). */
+/** How many wrapper lines Next's module wrapper puts before the built code in a `(pages-dir-node)` eval module (the generated line is the built line plus this). */
 export const WRAPPER_LINE_COUNT = 2
+
+/** How many wrapper lines the `(pages-dir-browser)` eval module of a library built file carries: E1 measured eval line 171 for built line 162 and 396 for 386, so a seal that reuses the built line as the eval line misses by this much. */
+export const BROWSER_WRAPPER_LINE_COUNT = 9
+
+/** The generated columns where the segments of a `(pages-dir-browser)` eval module's line start, as Next's inline map emits them (several per line, none at column 0 for the first). */
+export const BROWSER_SEGMENT_COLUMNS = [2, 16, 30] as const
+
+/** The generated column a browser pause reports: inside the second segment, not on a segment start (E1 saw CDP pause at mid-line columns 14 and 61). */
+export const BROWSER_PAUSE_COLUMN = 19
+
+/** The built columns the segments of a browser eval module line map. */
+const BROWSER_BUILT_COLUMNS = [0, 2, 4] as const
+
+/** The webpack layer of an eval module. */
+type EvalLayer = 'pages-dir-node' | 'pages-dir-browser'
 
 /** A build flavour of the library. */
 export type LibraryFlavour = 'modern' | 'legacy'
@@ -144,19 +159,45 @@ export function libraryEvalModule(input: {
   runtimePath: string
   wrapperLines?: number
   /** The webpack layer the module's `sourceURL` names; `pages-dir-node` by default. */
-  layer?: 'pages-dir-node' | 'pages-dir-browser'
+  layer?: EvalLayer
 }): string {
-  const wrapper = input.wrapperLines ?? WRAPPER_LINE_COUNT
+  const isBrowser = input.layer === 'pages-dir-browser'
+  const wrapper =
+    input.wrapperLines ??
+    (isBrowser ? BROWSER_WRAPPER_LINE_COUNT : WRAPPER_LINE_COUNT)
   const builtLines = input.builtText.split('\n')
   const code = [
     ...Array.from({ length: wrapper }, () => '/* wrapper */'),
-    ...builtLines.map((_, index) => `work${index + 1}();`),
+    ...builtLines.map((_, index) =>
+      isBrowser
+        ? // Three statements per line, starting at the segment columns.
+          [
+            `work${index + 1}();`,
+            `mid${index + 1}();`,
+            `tail${index + 1}();`,
+          ].reduce(
+            (line, text, part) =>
+              line.padEnd(BROWSER_SEGMENT_COLUMNS[part]!) + text,
+            '',
+          )
+        : `work${index + 1}();`,
+    ),
   ].join('\n')
   let previous = 0
+  let previousBuiltColumn = 0
   const segments = builtLines.map((_, index) => {
-    const segment = `${vlq(0)}${vlq(0)}${vlq(index - previous)}${vlq(0)}`
+    // A browser line holds several segments, none at column 0; a node line holds one at column 0.
+    const columns = isBrowser ? BROWSER_SEGMENT_COLUMNS : [0]
+    const line = columns
+      .map((genCol, part) => {
+        const builtColumn = isBrowser ? BROWSER_BUILT_COLUMNS[part]! : 0
+        const segment = `${vlq(part === 0 ? genCol : genCol - columns[part - 1]!)}${vlq(0)}${vlq(part === 0 ? index - previous : 0)}${vlq(builtColumn - previousBuiltColumn)}`
+        previousBuiltColumn = builtColumn
+        return segment
+      })
+      .join(',')
     previous = index
-    return segment
+    return line
   })
   const map = {
     version: 3,
@@ -222,8 +263,13 @@ export type LibraryHarnessFiles = {
   realRoot: string
   /** The built line of a source line in the first flavour. */
   builtLineOf(sourceLine: number): number
-  /** The pause a hit at a source line makes: the generated place of the eval module and the DAP frame's built place. */
-  hitAt(sourceLine: number): {
+  /**
+   * The pause a hit at a source line makes: the generated place of the eval module and the DAP frame's built place. The browser layer's place is inside a line, past a segment start, in the browser module's longer wrapper.
+   */
+  hitAt(
+    sourceLine: number,
+    layer?: EvalLayer,
+  ): {
     generated: { line: number; column: number }
     source: { line: number; column: number }
   }
@@ -231,7 +277,7 @@ export type LibraryHarnessFiles = {
   evalModule(options?: {
     builtText?: string
     wrapperLines?: number
-    layer?: 'pages-dir-node' | 'pages-dir-browser'
+    layer?: EvalLayer
   }): string
 }
 
@@ -248,6 +294,11 @@ export function libraryFixture(
   realRoot: string
 }) => Promise<LibraryHarnessFiles> {
   return async ({ directory, realRoot }) => {
+    // A differing copy needs a browser module to differ from; without one the fixture would silently stage no ambiguity.
+    if (spec.differingBrowserCopy && !spec.inBrowser?.length)
+      throw new Error(
+        'differingBrowserCopy needs at least one flavour in inBrowser',
+      )
     const flavours = spec.flavours ?? ['modern']
     const inCompile = spec.inCompile ?? ['modern']
     const put = async (path: string, text: string): Promise<void> => {
@@ -308,7 +359,7 @@ export function libraryFixture(
         moduleText()
       if (index === 0 && spec.differingBrowserCopy)
         browserAppModules[`(pages-dir-browser)/${runtimePathOf(flavour)}`] =
-          moduleText(WRAPPER_LINE_COUNT + 1)
+          moduleText(BROWSER_WRAPPER_LINE_COUNT + 1)
     }
     const first = inCompile[0] ?? flavours[0]!
     const firstFile = built.get(first)!
@@ -320,12 +371,19 @@ export function libraryFixture(
       builtText: firstFile.builtText,
       runtimePath,
     })
-    const builtLineOf = (sourceLine: number): number => {
-      const line = builtLineOfSourceLine(firstFile.mapText, sourceLine)
+    // The browser module is the first browser-side flavour's, which may differ from the server's first.
+    const firstBrowser = spec.inBrowser?.[0] ?? first
+    const browserFile = built.get(firstBrowser)!
+    const browserBuiltPath = `packages/lib/build/${firstBrowser}/core.js`
+    const browserRuntimePath = runtimePathOf(firstBrowser)
+    const builtLineIn = (file: BuiltFile, sourceLine: number): number => {
+      const line = builtLineOfSourceLine(file.mapText, sourceLine)
       if (line === undefined)
         throw new Error(`No built line for source line ${sourceLine}`)
       return line
     }
+    const builtLineOf = (sourceLine: number): number =>
+      builtLineIn(firstFile, sourceLine)
     return {
       builtPath,
       runtimePath,
@@ -340,15 +398,25 @@ export function libraryFixture(
       browserAppModules,
       browserModuleJavascript: libraryEvalModule({
         realRoot,
-        builtPath,
-        builtText: firstFile.builtText,
-        runtimePath,
+        builtPath: browserBuiltPath,
+        builtText: browserFile.builtText,
+        runtimePath: browserRuntimePath,
         layer: 'pages-dir-browser',
       }),
-      browserAddress: `webpack-internal:///(pages-dir-browser)/${runtimePath}`,
+      browserAddress: `webpack-internal:///(pages-dir-browser)/${browserRuntimePath}`,
       realRoot,
       builtLineOf,
-      hitAt(sourceLine) {
+      hitAt(sourceLine, layer = 'pages-dir-node') {
+        if (layer === 'pages-dir-browser') {
+          const browserLine = builtLineIn(browserFile, sourceLine)
+          return {
+            generated: {
+              line: browserLine - 1 + BROWSER_WRAPPER_LINE_COUNT,
+              column: BROWSER_PAUSE_COLUMN,
+            },
+            source: { line: browserLine, column: 1 },
+          }
+        }
         const builtLine = builtLineOf(sourceLine)
         return {
           generated: { line: builtLine - 1 + WRAPPER_LINE_COUNT, column: 0 },
