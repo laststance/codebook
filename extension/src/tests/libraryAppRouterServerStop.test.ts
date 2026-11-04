@@ -936,6 +936,23 @@ test('a failed layer read of a resolved-spelling script is journaled with its sc
   assert.equal(harness.run.view().failures.length, 0)
 })
 
+// protects=the cause of a failed layer read is bounded to 300 characters before it is journaled, so one oversized debugger error cannot flood the saved journal; fails_when=the cause is journaled whole; no_claim=masking of learner secrets in the cause (the harness declares no input) or which scripts js-debug announces
+test('the cause of a failed layer read is cut to 300 characters in the journal', async (context) => {
+  // Arrange
+  const staged = stageAppServer()
+  const { harness } = await armedAppServerRun(context, staged)
+  const files = staged.files().appRouterServer!
+  harness.server!.failNextScriptRead('ssr-1', 'x'.repeat(2000))
+  // Act
+  announceResolved(harness, 'ssr-1', files.ssrJavascript, files.ssrAddress)
+  await journaledOnce(harness, 'stop.library-identify-failed')
+  // Assert
+  const [entry] = journaled(harness, 'stop.library-identify-failed') as {
+    cause: string
+  }[]
+  assert.equal(entry!.cause, `Error: ${'x'.repeat(293)}`)
+})
+
 // protects=O4-2 an `(ssr)` copy pause at the server stop's line that also names a breakpoint of the learner's is not resumed as a library copy, so the learner's pause keeps the ordinary handling; fails_when=the copy route resumes a pause the learner's breakpoint also hit; no_claim=what the ordinary handling then does with the pause (only that no library-copy resume or journal happens)
 test('an (ssr) copy pause that also names a learner breakpoint is not resumed as a library copy', async (context) => {
   // Arrange

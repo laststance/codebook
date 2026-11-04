@@ -157,7 +157,7 @@ export function createServerParticipant(parts: ServerParticipantParts) {
   const scriptTexts = new Map<string, string>()
   const heldScriptReads = new Map<string, Promise<void>>()
   /** The scripts whose next text read fails, as a transient `Debugger.getScriptSource` error does. */
-  const failingScriptReads = new Set<string>()
+  const failingScriptReads = new Map<string, string | undefined>()
   const routes = new Map<number, ServerRouteAnswer>()
   const frames = new Map<number, { line: number; column: number }>()
   let currentHit = 0
@@ -381,10 +381,13 @@ export function createServerParticipant(parts: ServerParticipantParts) {
         const scriptId = parameters?.scriptId ?? ''
         scriptReads.push(scriptId)
         await heldScriptReads.get(scriptId)
-        if (failingScriptReads.delete(scriptId))
+        if (failingScriptReads.has(scriptId)) {
+          const detail = failingScriptReads.get(scriptId)
+          failingScriptReads.delete(scriptId)
           throw new Error(
-            `Debugger.getScriptSource: No script for id: ${scriptId}`,
+            detail ?? `Debugger.getScriptSource: No script for id: ${scriptId}`,
           )
+        }
         return { scriptSource: scriptTexts.get(scriptId) ?? parts.javascript }
       }
       if (
@@ -677,8 +680,8 @@ export function createServerParticipant(parts: ServerParticipantParts) {
       scriptTexts.set(scriptId, text)
     },
     /** Makes the run's next read of a script's text fail, as a transient `Debugger.getScriptSource` error; the read after it answers. */
-    failNextScriptRead(scriptId: string): void {
-      failingScriptReads.add(scriptId)
+    failNextScriptRead(scriptId: string, message?: string): void {
+      failingScriptReads.set(scriptId, message)
     },
     /** Keeps the run's read of a script's text open until the returned function is called. */
     holdScriptRead(scriptId: string): () => void {
