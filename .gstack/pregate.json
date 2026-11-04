@@ -223,10 +223,11 @@
     {
       "finding": "env.kv",
       "paths": [
-        "extension/src/tests/fixtures/saved-bytes-09859e5d/*.json"
+        "extension/src/tests/fixtures/saved-bytes-09859e5d/*.json",
+        "extension/src/tests/fixtures/app-router-library-server-study-v0.2.82.0/*.json"
       ],
       "pattern": "entry-load",
-      "reason": "the operation key entry-load (a run-operation name, the field is called key) in the saved-study byte-identity fixtures recorded at 09859e5d; no secret value"
+      "reason": "the operation key entry-load (a run-operation name, the field is called key) in the saved-study byte-identity fixtures recorded at 09859e5d; no secret value; also the App Router server library golden study (v0.2.82.0), whose entry-render stop saves the same operation key"
     },
     {
       "finding": "env.kv",
