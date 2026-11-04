@@ -118,12 +118,12 @@ test('the help states the library-stop rule and no longer says every library sta
     false,
   )
   assert.ok(limits.includes('transpilePackages'))
-  assert.ok(limits.includes('browser-side library stops'))
+  assert.ok(limits.includes('a library stop through App Router Examples'))
   assert.ok(limits.includes('App Router Examples'))
 })
 
-// protects=API 1.21 is served and its note names the five reasons as additive; fails_when=the version or a reason of the note drifts; no_claim=the behavior behind the reasons
-test('API_VERSION is 1.21 and its note names the five library-stop reasons', async () => {
+// protects=API 1.22 is served and its note names the five reasons as additive; fails_when=the version or a reason of the note drifts; no_claim=the behavior behind the reasons
+test('API_VERSION is 1.22 and its note names the five library-stop reasons', async () => {
   // Arrange
   const constants = await readPackaged('src', 'constants.ts')
   // Act
@@ -132,18 +132,18 @@ test('API_VERSION is 1.21 and its note names the five library-stop reasons', asy
       .split('\n')
       .find((line) => line.startsWith(' * 1.19 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.21')
+  assert.equal(API_VERSION, '1.22')
   for (const [reason] of LIBRARY_REASONS)
     assert.ok(note.includes(`\`${reason}\``), reason)
   assert.ok(note.includes('`details.cause`'))
 })
 
 // protects=skill 1.0.68 carries the library-stop sentence (declare a library server stop, tell the learner which build to run on library-build-stale, never run it) and names no sample app or function; fails_when=the sentence changes or a sample name enters the skill; no_claim=how a chat follows it
-test('the bundled skill 1.0.70 tells the chat to name the build and never run it', async () => {
+test('the bundled skill 1.0.71 tells the chat to name the build and never run it', async () => {
   // Arrange
   const skill = await readPackaged('skills/codebook/SKILL.md')
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.70"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.71"\n'))
   assert.ok(
     skill.includes(
       "A question that leads from an Example into the checked-out library may declare a server stop in the library's source, but only when `codebook_status` reports API 1.19 or later; on an older API tell the learner to update Codebook instead of following the `outside-package` fix. When the run refuses with `library-build-stale`, tell the learner which build to run, and never run it yourself; for `library-build-unmapped` read `details.cause` and the help section for it.",
@@ -163,7 +163,7 @@ test('the bundled skill 1.0.70 tells the chat to name the build and never run it
 })
 
 // protects=the README carries the library-stop rule in the nested-app section, the five reasons, and the 1.19 and 1.0.68 version mentions; fails_when=a reason, the never-builds rule or a version leaves the README; no_claim=native behavior
-test('the README states the library-stop rule in the nested-app section with API 1.19 and skill 1.0.70', async () => {
+test('the README states the library-stop rule in the nested-app section with API 1.19 and skill 1.0.71', async () => {
   // Arrange
   const readme = await readPackaged('README.md')
   const start = readme.indexOf('## Run a Next app below the repository root')
@@ -181,9 +181,9 @@ test('the README states the library-stop rule in the nested-app section with API
     ...LIBRARY_REASONS.map(([reason]) => `\`${reason}\``),
   ])
     assert.ok(section.includes(phrase), phrase)
-  assert.ok(readme.includes('with **MCP API 1.21**'))
+  assert.ok(readme.includes('with **MCP API 1.22**'))
   assert.ok(readme.includes('(1.0.68).**'))
-  assert.ok(readme.includes('updates to **1.0.70**'))
+  assert.ok(readme.includes('updates to **1.0.71**'))
 })
 
 // protects=the help describes every bound and deadline cause of library-build-unmapped with the real limits, and says a transpilePackages library is refused as library-build-unmapped, not outside-package; fails_when=the bound text drops the entry, byte or unfinished-scan limits, hard-codes a stale number, or the limits sentence claims outside-package for transpilePackages; no_claim=that the run emits these causes (libraryBuildStop tests)
@@ -221,4 +221,77 @@ test('each library-stop refusal recovery links its own help section', () => {
   )
   // Assert
   assert.deepEqual(anchors, [...reasons])
+})
+
+// protects=the help names browser library stops of a nested Pages app, keeps App Router, root and version 2 refused, and says a browser stop declares afterOperation from 1 with the two routes to entry-load library code (D13); fails_when=the rule keeps saying browser-side library stops stay outside the range or drops the afterOperation limit or either route; no_claim=that the run pauses (libraryBrowserStop tests)
+test('the help rule names browser library stops of a nested Pages app and the afterOperation limit', async (context) => {
+  // Arrange
+  const help = await readHelp(context)
+  const { rule } = help.nextPackageRoot.libraryStops
+  const limits = help.nextPackageRoot.limits.join('\n')
+  // Act / Assert
+  for (const phrase of [
+    'since API 1.22 a browser stop',
+    'a packageRoot other than "."',
+    'entry chunks of the route and _app',
+    'library-not-in-build',
+    'declares afterOperation from 1 (afterOperation 0 is refused)',
+    'observed through a server library stop, or after a client navigation',
+    'study format 9 with no new field',
+    'App Router apps, root apps and version 2 configurations keep the outside-package refusal',
+  ])
+    assert.ok(rule.includes(phrase), phrase)
+  assert.ok(limits.includes('or since API 1.22 a browser stop'))
+  assert.equal(limits.includes('browser-side library stops'), false)
+})
+
+// protects=each library refusal entry words both participants and none still says a library stop is server-only; fails_when=a stale, unmapped, not-in-build or changed entry names only the server; no_claim=which participant a run refuses for
+test('each library refusal entry covers browser library stops with one anchor per reason', async (context) => {
+  // Arrange
+  const help = await readHelp(context)
+  const { refusals } = help.nextPackageRoot
+  // Act / Assert
+  for (const [reason] of LIBRARY_REASONS)
+    assert.equal(
+      refusals[reason]?.anchor,
+      `codebook://help/repository-browser#${reason}`,
+      reason,
+    )
+  assert.ok(refusals['library-build-stale']?.meaning.includes('a browser stop'))
+  assert.ok(
+    refusals['library-build-unmapped']?.meaning.includes('a browser stop'),
+  )
+  assert.ok(
+    refusals['library-not-in-build']?.meaning.includes(
+      'a library module the page loads later (next/dynamic, a lazy import) or never loads',
+    ),
+  )
+  assert.ok(
+    refusals['library-build-changed']?.meaning.includes(
+      'announced again under a new script id',
+    ),
+  )
+  assert.ok(
+    refusals['outside-package']?.fix.includes('a browser stop since API 1.22'),
+  )
+})
+
+// protects=the README and the skill state that a browser stop of a nested Next Pages app may lie in a workspace library, with the afterOperation limit; fails_when=a sentence or the version leaves either file; no_claim=native behavior
+test('the README and the skill state browser library stops of a nested Next Pages app with the afterOperation limit', async () => {
+  // Arrange
+  const readme = await readPackaged('README.md')
+  const skill = await readPackaged('skills/codebook/SKILL.md')
+  // Act / Assert
+  for (const phrase of [
+    'Since API 1.22 a browser stop of a nested Pages app may lie in such a library too',
+    'A browser stop declares `afterOperation` from 1',
+    'API 1.22 is additive: it adds browser stops in the checked-out source of a workspace library that a nested Next Pages app imports',
+    '(1.0.71).**',
+  ])
+    assert.ok(readme.includes(phrase), phrase)
+  assert.ok(
+    skill.includes(
+      'With API 1.22 or later a browser stop of a nested Next Pages app may lie in such a library too; it declares `afterOperation` from 1',
+    ),
+  )
 })
