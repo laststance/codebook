@@ -213,7 +213,7 @@ test('the bundled skill declares flows as operations, keeps secrets with the lea
         part.startsWith('**Operations (configuration version 3).**'),
       ) ?? ''
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.70"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.71"\n'))
   assert.ok(paragraph.includes('ordered v3 `operations`'))
   assert.ok(paragraph.includes('`afterOperation`'))
   assert.ok(paragraph.includes('always `secret: "ask-learner"`'))
@@ -250,7 +250,7 @@ test('the README names operations, ask-learner, the masking behavior change and 
   assert.ok(section.includes('`[pending]`'))
   assert.ok(section.includes('`isError: true`'))
   assert.ok(section.includes('`NAVIGATION_NOT_SETTLED`'))
-  assert.ok(readme.includes('**MCP API 1.21**'))
+  assert.ok(readme.includes('**MCP API 1.22**'))
 })
 
 // protects=DX-11/DES-4: the help says when a saved-session run asks, what a decline does, how Review again works, the confirmation values, the learner-only setting and why a fresh run shows no dialog; fails_when=a rule leaves the section; no_claim=the wording's quality
@@ -304,5 +304,19 @@ test('the README and the skill name the saved-session confirmation and keep its 
   assert.ok(skill.includes('only when it reads `confirmed`'))
   assert.ok(
     skill.includes('Never change `codebook.confirmSavedSessionOperations`'),
+  )
+})
+
+// protects=native C79-2: the chat learns that a browser stop's image can be unavailable while the run is still live (captures[].status failed with the unavailable sentence), so it does not tell the learner the run failed; fails_when=the frames help omits the unavailable stop image or its reason; no_claim=the behaviour itself (stopImageUnavailable tests)
+test('the frames help tells a chat that a browser stop image the paused page could not draw leaves the run going', async (context) => {
+  // Arrange
+  const help = await readHelp(context)
+  // Act
+  const frames = String(help.operationsSecrets.frames)
+  // Assert
+  assert.ok(
+    frames.includes(
+      'its capture then reads captures[].status failed with the reason "The paused page drew no image of this stop within 3 s; the stop keeps its source and values, and the run goes on and ends partial.", the observation has no imageUri, and the run has not failed',
+    ),
   )
 })

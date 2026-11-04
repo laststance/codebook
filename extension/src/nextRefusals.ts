@@ -132,8 +132,32 @@ const LIBRARY_RECOVERIES = {
   'library-build-unmapped': `${LIBRARY_UNMAPPED_BODY} ${LIBRARY_NOTHING_STARTED} See ${libraryHelpAnchor('library-build-unmapped')}.`,
   'library-not-in-build': `The page's server code does not hold exactly one built file of the library that maps the stop (details.candidates lists them). Tell the learner, or choose a stop on a line the page's server code runs; do not start another run with the same stop. ${LIBRARY_ENTRY_REQUESTED} See ${libraryHelpAnchor('library-not-in-build')}.`,
   'library-place-ambiguous': `The library stop could not be tied to one source position. Declare the stop on a line that holds a single statement, after the line that declares the value it reads; do not start another run with the same stop. ${LIBRARY_ENTRY_REQUESTED} See ${libraryHelpAnchor('library-place-ambiguous')}.`,
-  'library-build-changed': `The library was rebuilt, or the server module changed, during the run. Tell the learner to finish the rebuild and ask for a new start; never run the build yourself. ${LIBRARY_ENTRY_REQUESTED} See ${libraryHelpAnchor('library-build-changed')}.`,
+  'library-build-changed': `The library was rebuilt, or the module the run executes changed, during the run. Tell the learner to finish the rebuild and ask for a new start; never run the build yourself. ${LIBRARY_ENTRY_REQUESTED} See ${libraryHelpAnchor('library-build-changed')}.`,
 } as const
+
+/** The Pages browser layer's wording of the refusal that names the searched code (`library-not-in-build`); the server layer keeps {@link LIBRARY_RECOVERIES}. `library-build-changed` has one recovery for both layers, because a restored failure text carries no layer ({@link refusalFailureOf}). */
+const BROWSER_LIBRARY_RECOVERIES = {
+  'library-not-in-build': `The entry chunks of the route and \`_app\` that the page loads at start do not hold exactly one built file of the library that maps the stop (details.candidates lists them). A library module the page loads later (\`next/dynamic\`, a lazy import) cannot be sealed. Tell the learner, or choose a stop on a line the page runs at load; do not start another run with the same stop. ${LIBRARY_ENTRY_REQUESTED} See ${libraryHelpAnchor('library-not-in-build')}.`,
+} as const
+
+/** The webpack layer a Pages library refusal is worded for (the same values as `LibraryStopLayer` in `sealLibraryStop.ts`, repeated so this module imports nothing from it). */
+type PagesLibraryLayer = 'pages-dir-node' | 'pages-dir-browser'
+
+/**
+ * Picks the recovery of a layer-worded library refusal; called by {@link libraryNotInBuildRefusal} and {@link libraryBuildChangedFailure}.
+ * @param reason - The refusal reason with a browser-layer variant.
+ * @param layer - The layer the refusal is raised for.
+ * @returns The browser variant for `pages-dir-browser`, else the server text of {@link LIBRARY_RECOVERIES}.
+ * @example pagesLibraryRecoveryOf('library-not-in-build', 'pages-dir-node') // => LIBRARY_RECOVERIES['library-not-in-build']
+ */
+function pagesLibraryRecoveryOf(
+  reason: keyof typeof BROWSER_LIBRARY_RECOVERIES,
+  layer: PagesLibraryLayer,
+): string {
+  return layer === 'pages-dir-browser'
+    ? BROWSER_LIBRARY_RECOVERIES[reason]
+    : LIBRARY_RECOVERIES[reason]
+}
 
 /**
  * The static recovery of each library refusal under `vite-dev` (a nested Vite app's browser stop in a workspace library), keyed by `details.reason`. The stale and unmapped bodies are the Next ones; the endings say what a Vite run had started.
@@ -253,6 +277,7 @@ export type LibraryRuntimeReason = (typeof LIBRARY_RUNTIME_REASONS)[number]
  * @param libraryName - The library's package name.
  * @param file - The repository-relative stop file.
  * @param candidates - The built files that map the stop, repository-relative; named in the message.
+ * @param layer - The webpack layer the seal searched; `pages-dir-browser` words the message and recovery by the entry chunks the page loads at start, the default `pages-dir-node` by the server compile.
  * @returns The `NEXT_STOP_NOT_SEALED` error: `details.reason: "library-not-in-build"`, `details.candidates`, the Pages details (`sideEffects: "unknown"`).
  * @example
  * throw libraryNotInBuildRefusal('examples/app', 'lib', 'packages/lib/src/core.ts', ['packages/lib/build/modern/core.js', 'packages/lib/build/legacy/core.js'])
@@ -262,8 +287,13 @@ export function libraryNotInBuildRefusal(
   libraryName: string,
   file: string,
   candidates: readonly string[],
+  layer: PagesLibraryLayer = 'pages-dir-node',
 ): StudyError {
-  const message = `The build of library ${libraryName} matches ${file}, but the server compile of the page does not hold exactly one of its candidates (${candidates.join(', ') || 'none'}), so a stop there cannot be sealed for packageRoot ${packageRoot}. The page's server code may load another build, or may not run that file.`
+  const list = candidates.join(', ') || 'none'
+  const message =
+    layer === 'pages-dir-browser'
+      ? `The build of library ${libraryName} matches ${file}, but the entry chunks of the route and \`_app\` that the page loads at start do not hold exactly one of its candidates (${list}), so a stop there cannot be sealed for packageRoot ${packageRoot}. A library module the page loads later (\`next/dynamic\`, a lazy import) cannot be sealed.`
+      : `The build of library ${libraryName} matches ${file}, but the server compile of the page does not hold exactly one of its candidates (${list}), so a stop there cannot be sealed for packageRoot ${packageRoot}. The page's server code may load another build, or may not run that file.`
   return nextRefusal('NEXT_STOP_NOT_SEALED', message, {
     details: {
       reason: 'library-not-in-build',
@@ -273,7 +303,7 @@ export function libraryNotInBuildRefusal(
       candidates: [...candidates],
       ...PAGES_STOP_REFUSAL_DETAILS,
     },
-    recovery: LIBRARY_RECOVERIES['library-not-in-build'],
+    recovery: pagesLibraryRecoveryOf('library-not-in-build', layer),
   })
 }
 

@@ -33,6 +33,7 @@ import {
   type SecretFrameGate,
   type SecretFrameVerdict,
 } from '../../runtimeSupport/secretFrameGate'
+import { CdpRequestTimeoutError } from '../../runtimeSupport/utils/cdpRequestTimeoutError'
 import { describeWithheldImage } from '../../runtimeSupport/utils/describeWithheldImage'
 import { sha256 } from '../../runtimeSupport/utils/sha256'
 import { WaitTimeoutError } from '../../runtimeSupport/utils/waitTimeoutError'
@@ -269,6 +270,10 @@ export async function configuredRuntimeHarness(
      * Stages a server stop in a workspace library ({@link libraryFixture}): called with the repository after it exists, it writes the library and its builds and gives the eval modules of the server compile. The debugger's frames, breakpoint file and script then name the built file, as js-debug reports Next's eval map (the built file's own map is not chained).
      */
     libraryStop?: ReturnType<typeof libraryFixture>
+    /**
+     * How the page announces a browser library stop's module. `resolved` (the default) is what js-debug's CDP channel sends a run (native C79-1 journal): the module address with its dot segments resolved, so `(pages-dir-browser)/../../packages/lib/build/modern/core.js` arrives as `packages/lib/build/modern/core.js`. `as-written` is the address the build wrote, as a direct CDP connection to Chrome reports it (E1).
+     */
+    browserLibraryAnnouncement?: 'resolved' | 'as-written'
     /** Moves the first cited source, and the stop declared in it, to this repository-relative path (such as a file under `src/pages`; with `packageRoot` a file inside that folder). */
     sourcePath?: string
     /**
@@ -342,6 +347,8 @@ export async function configuredRuntimeHarness(
     appEntryConfirmationHangs?: boolean
     /** Makes the stand-in page never answer a screenshot until the run is cancelled, so the run stays at the end of its setup, after the inputs were written. */
     holdScreenshot?: boolean
+    /** The screenshot requests (counted from 1 over the run) the stand-in page leaves unanswered until the request's bound, as a page paused in the middle of a frame does: each fails with the client's timeout error. */
+    timedOutScreenshots?: readonly number[]
     /**
      * Runs a version 3 configuration of ordered operations instead of the single action: the first stop and each of `additionalStops` follow the operation `stopOperations` names (the first stop first). A stop's pause is reported inside the input of its operation, which the page answers only once the operation's last stop was continued, as a handler paused in the debugger does.
      */
@@ -541,6 +548,8 @@ export async function configuredRuntimeHarness(
                 holdsCited: false,
                 extraModules: library.serverModules,
               },
+              extraBrowserModules: library.browserModules,
+              extraAppModules: library.browserAppModules,
             }
           : options.nextPages,
       )
@@ -592,11 +601,25 @@ export async function configuredRuntimeHarness(
       : { after: definition.configuration.after, selector: '#unused' }
   const afterExpression = configuredDomExpression(declaredAction.after)
   const scrollExpression = configuredScrollExpression(declaredAction.selector)
-  // A Pages server stop is sealed from the build's real path (its maps name the canonical workspace), so the editor's breakpoints and the debugger's frames name that path too.
+  // A Pages server stop is sealed from the build's real path (its maps name the canonical workspace), so the editor's breakpoints and the debugger's frames name that path too. A library stop with a server (`serverRuntime`) is covered by that; a browser-only library stop names it as well; no other caller passes `library`.
   const sourceRoot =
-    (options.nextPages && options.serverRuntime) || viteLibrary
+    (options.nextPages && options.serverRuntime) ||
+    viteLibrary ||
+    (library && options.participant === 'browser')
       ? await realpath(repository.directory)
       : repository.directory
+  // A browser library stop of a Next Pages run: the page executes the library's `(pages-dir-browser)` module, and the debugger reports its built line.
+  const browserLibrary =
+    library && options.participant === 'browser' ? library : undefined
+  /** Gives the address the page announces for its stop module: a browser library module's address resolved as js-debug sends it, every other address as the build wrote it. */
+  const announcedPageUrlOf = (scriptUrl: string): string =>
+    browserLibrary && options.browserLibraryAnnouncement !== 'as-written'
+      ? new URL(scriptUrl).href
+      : scriptUrl
+  const browserLibraryHit =
+    browserLibrary && fixture?.declaredLine
+      ? browserLibrary.hitAt(fixture.declaredLine, 'pages-dir-browser')
+      : undefined
   const sourcePath = library
       ? join(sourceRoot, library.builtPath)
       : join(sourceRoot, definition.configuration.source.path),
@@ -605,6 +628,7 @@ export async function configuredRuntimeHarness(
     baseJavascript =
       options.moduleJavascript ??
       viteLibrary?.servedModule ??
+      browserLibrary?.browserModuleJavascript ??
       pagesBuild?.moduleJavascript ??
       (fixture ? source : 'const nextTheme = "dark";'),
     javascript = options.serverModuleSourceUrl
@@ -625,11 +649,13 @@ export async function configuredRuntimeHarness(
     mapSource: sourcePath,
     scriptUrl: viteLibrary
       ? `${viteLibrary.server.origin}${viteLibrary.moduleRoute}?v=v1`
-      : options.adapter
-        ? 'http://127.0.0.1:4321/src/theme.ts'
-        : options.nextPages
-          ? `webpack-internal:///(pages-dir-browser)/./${packageSourcePath}`
-          : `webpack-internal:///(app-pages-browser)/./${packageSourcePath}`,
+      : browserLibrary
+        ? browserLibrary.browserAddress
+        : options.adapter
+          ? 'http://127.0.0.1:4321/src/theme.ts'
+          : options.nextPages
+            ? `webpack-internal:///(pages-dir-browser)/./${packageSourcePath}`
+            : `webpack-internal:///(app-pages-browser)/./${packageSourcePath}`,
     chunkPath: join(packageDirectory, '.next/dev/chunk.js'),
     chunkHash: '0'.repeat(64),
   }
@@ -1000,15 +1026,20 @@ export async function configuredRuntimeHarness(
       debuggerPausedEvent({
         callFrameId: 'selected-frame',
         scriptId: 'actual',
-        lineNumber: currentLine - 1,
-        columnNumber: currentColumn - 1,
+        lineNumber: browserLibraryHit
+          ? browserLibraryHit.generated.line
+          : currentLine - 1,
+        columnNumber: browserLibraryHit
+          ? browserLibraryHit.generated.column
+          : currentColumn - 1,
         hitBreakpoints: ['mapped-source'],
       }),
     )
   }
   const emitPause = (column = 1, line = 1, announced = true): void => {
-    currentColumn = column
-    currentLine = line
+    // A browser library stop pauses on the built line the library's stop translates to.
+    currentColumn = browserLibraryHit?.source.column ?? column
+    currentLine = browserLibraryHit?.source.line ?? line
     stopCount++
     // A real debugger may reveal an existing source tab over the leased application panel.
     if (hideViewportAtPause) viewportReady = false
@@ -1446,7 +1477,7 @@ export async function configuredRuntimeHarness(
         if (!options.viteLibrary?.lazy)
           listeners.get('Debugger.scriptParsed')?.({
             scriptId: 'actual',
-            url: bundle.scriptUrl,
+            url: announcedPageUrlOf(bundle.scriptUrl),
             executionContextId: 1,
           })
         if (emitPreparationResume) {
@@ -1494,6 +1525,9 @@ export async function configuredRuntimeHarness(
           return new Promise<never>((_resolve, reject) => {
             rejectHeldScreenshot = reject
           })
+        // A request the page never answers fails as the client's bound ends it.
+        if (options.timedOutScreenshots?.includes(screenshotCount))
+          throw new CdpRequestTimeoutError(method)
         return { data: screenshot }
       }
       if (method === 'Input.dispatchMouseEvent') {
@@ -2516,7 +2550,7 @@ export async function configuredRuntimeHarness(
     announceSealedModule(scriptId: string): void {
       listeners.get('Debugger.scriptParsed')?.({
         scriptId,
-        url: bundle.scriptUrl,
+        url: announcedPageUrlOf(bundle.scriptUrl),
         executionContextId: 1,
       })
     },

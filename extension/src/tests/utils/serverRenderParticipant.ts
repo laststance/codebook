@@ -819,6 +819,9 @@ export function createServerParticipant(parts: ServerParticipantParts) {
     routeReads,
     /** How many `setBreakpoints` registrations the participant acknowledged. */
     breakpointsAcknowledged: (): number => breakpointsAcknowledged,
+    /** The id this session's adapter gives an editor breakpoint, as a `stopped` event's `hitBreakpointIds` names it. @example harness.server.adapterIdOf('owned-breakpoint') // 41 */
+    adapterIdOf: (breakpointId: string): number =>
+      adapterId({ id: breakpointId }),
     /** Whether the run closed the server's inspector channel. */
     isClosed: (): boolean => closed,
   }

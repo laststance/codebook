@@ -119,19 +119,18 @@ test('a library stop whose build was made from an older source is refused before
   assert.equal(harness.developmentServerLaunches(), 0)
 })
 
-// protects=D1 a browser stop in the library keeps the outside-package refusal: only server stops are sealed through a library build; fails_when=a browser stop in the library is frozen or run; no_claim=every other outside stop (nextPackageRun tests)
-test('a browser stop in a workspace library keeps the outside-package refusal', async (context) => {
+// protects=AC 2 and AC 4 a version 2 browser stop in a workspace library path is not frozen as a library stop (only a version 3 run of a nested app is): the app's own readers refuse it as code the page does not load at start; fails_when=a version 2 browser stop in the library is frozen or run; no_claim=every other outside stop (nextPackageRun tests); a version 2 configuration has no packageRoot, so no nested app and no outside-package refusal is reachable for it
+test('a version 2 browser stop in a workspace library is not frozen as a library stop', async (context) => {
   // Arrange
   const staged = stageLibrary()
   const harness = await pagesServerRun(
     context,
     libraryRunOptions(staged, {
       participant: 'browser',
-      operations: {
-        operations: [{ kind: 'click', title: 'Next page', selector: 'a' }],
-        stopOperations: [1],
-        stopParticipants: ['browser'],
-      },
+      packageRoot: undefined,
+      packageApp: undefined,
+      operations: undefined,
+      serverRuntime: undefined,
     }),
   )
   // Act
@@ -140,8 +139,12 @@ test('a browser stop in a workspace library keeps the outside-package refusal', 
     (error: unknown) => error,
   )
   // Assert
-  assert.equal(detailsOf(failure).reason, 'outside-package')
-  assert.equal(harness.developmentServerLaunches(), 0)
+  assert.equal(Reflect.get(Object(failure), 'code'), 'NEXT_STOP_NOT_SEALED')
+  assert.match(
+    String(failure),
+    /packages\/lib\/src\/core\.ts is not in the code the page \/ loads at start/,
+  )
+  assert.equal(harness.developmentServerLaunches(), 1)
 })
 
 // protects=A3 a built line that several source lines compile into is refused library-place-ambiguous when the debugger binds it, because the pause cannot be tied to the declared line; fails_when=the stop is accepted at the built line and recorded as one of the source lines; no_claim=the many-to-one map is hand-encoded (TypeScript never emits one for this source)
@@ -294,6 +297,33 @@ test('a pause in the browser copy of the library module is not an unowned page p
       .map((event) => Reflect.get(Object(event.detail), 'participant')),
     ['browser'],
   )
+  harness.run.stop().catch(() => undefined)
+  await prepared.catch(() => undefined)
+})
+
+// protects=A5 (C79-1 native finding) js-debug announces the page's copy of the library module with its dot segments resolved (`(pages-dir-browser)/../../packages/lib/build/modern/core.js` arrives as `packages/lib/build/modern/core.js`), and a pause there still keeps the adapter's longer bound and does not end the run as an unowned page pause; fails_when=the copy is matched only by the path the build prints, so js-debug's spelling makes its pause unowned and the run fails within 250 ms; no_claim=the debug adapter's later stopped and resume, and a real js-debug (the announcement is scripted in the spelling the native C79-1 journal shows)
+test('a pause in the browser copy of the library module announced with resolved dot segments is not an unowned page pause', async (context) => {
+  // Arrange
+  const staged = stageLibrary()
+  const harness = await pagesServerRun(context, libraryRunOptions(staged))
+  const prepared = harness.run.prepare()
+  await armedEntry(harness)
+  harness.announceScript(
+    'browser-copy',
+    'webpack-internal:///packages/lib/build/modern/core.js',
+  )
+  // Act
+  harness.emitCdpPauseAt({
+    scriptId: 'browser-copy',
+    lineNumber: 0,
+    columnNumber: 0,
+    functionName: '',
+    hitBreakpoints: ['native'],
+  })
+  harness.advance(1000)
+  // Assert
+  assert.equal(harness.run.view().status === 'failed', false)
+  assert.equal(harness.run.view().failures.join('; '), '')
   harness.run.stop().catch(() => undefined)
   await prepared.catch(() => undefined)
 })

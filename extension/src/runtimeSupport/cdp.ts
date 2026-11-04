@@ -1,6 +1,7 @@
 import type { ProtocolMapping } from 'devtools-protocol/types/protocol-mapping'
 
 import { ACTIVE_TIMEOUT_MS, STREAM_TELEMETRY_INTERVAL_MS } from './constants'
+import { CdpRequestTimeoutError } from './utils/cdpRequestTimeoutError'
 import { openWebSocket } from './utils/openWebSocket'
 
 interface PendingRequest {
@@ -165,7 +166,7 @@ export class Cdp {
       const timer = setTimeout(() => {
         this.pending.delete(id)
         this.log('cdp.timeout', { id, method, timeoutMs })
-        reject(new Error(`CDP ${method} timed out`))
+        reject(new CdpRequestTimeoutError(method))
       }, timeoutMs)
       this.pending.set(id, { method, resolve, reject, timer, delayMs, quiet })
       if (method === 'Page.screencastFrameAck' && this.streamTelemetry) {

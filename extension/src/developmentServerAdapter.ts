@@ -80,7 +80,7 @@ export type DevelopmentBundleRequest = {
     entrySource: string
     cache: NextPagesDiscoveryCache
   }
-  /** Set for a server stop in a workspace library: the frozen build the stop is sealed through ({@link sealLibraryServerStop}) instead of the stop file's own module. Absent for every other stop. */
+  /** Set for a server stop in a workspace library: the frozen build the stop is sealed through ({@link sealLibraryStop}) instead of the stop file's own module. Absent for every other stop. */
   library?: LibraryStopSealInput
   /** Set for a browser stop of a nested Vite run in a workspace library the app reaches: the library and the page generation's served modules the stop is sealed through ({@link sealViteLibraryStop}) instead of the app's own module. Absent for every other stop. */
   viteLibrary?: ViteLibraryStopSealInput
