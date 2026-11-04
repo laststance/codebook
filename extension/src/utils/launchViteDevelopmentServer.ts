@@ -128,6 +128,19 @@ function listenFailureRefusal(
 }
 
 /**
+ * Says whether the run is a nested Vite app (below the repository root), the only run whose transient-file cleanup leaves a shared ancestor `node_modules` alone (decision D8).
+ * Called by {@link launchViteDevelopmentServer} for the timestamp snapshot and its cleanup.
+ * @param vitePackage - The Vite app the run resolved, when it resolved one.
+ * @returns `true` for a nested app; `false` for a root run or none.
+ * @example isNestedViteRun(undefined) // => false
+ */
+function isNestedViteRun(
+  vitePackage: DevelopmentServerStart['vitePackage'],
+): boolean {
+  return Boolean(vitePackage) && vitePackage?.isRoot === false
+}
+
+/**
  * Starts the owned Vite launcher, judges the facts of the config the server will use, and lets it listen only when the project is supported and its port is free.
  *
  * Why it exists: the Vite adapter must evaluate the project's config once, on the server that is then started, and refuse before any listener exists. Called by the Vite adapter's `start` during repository-browser preparation.
@@ -160,9 +173,12 @@ export async function launchViteDevelopmentServer(
     .filter(([name]) => !VITE_MODE_ENV_NAMES.includes(name))
     .map(([, value]) => value)
   const mask = (text: string): string => maskKnownValues(text, maskedValues)
+  // Only a nested app leaves a shared ancestor node_modules alone (decision D8); a root run cleans as before.
+  const isNestedApp = isNestedViteRun(request.vitePackage)
   const timestampFilesBefore = await listViteTimestampFiles(
     request.workspace,
     script.configFile,
+    isNestedApp,
   )
   const options: ViteLauncherOptions = {
     viteEntry: installation.entry,
@@ -191,6 +207,7 @@ export async function launchViteDevelopmentServer(
           request.workspace,
           timestampFilesBefore,
           script.configFile,
+          isNestedApp,
         ),
     },
   )

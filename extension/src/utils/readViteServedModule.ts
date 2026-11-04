@@ -204,18 +204,18 @@ async function normalizeServedMap(
  * @param ownedOrigin - The origin the ready server reported.
  * @param source - The declared stop's source (path, line and the hash the article accepted).
  * @param signal - Ends the read when the run is cancelled.
- * @param packageRelativePath - The stop file's path below `packageRoot`, for a nested app whose `source.path` is repository-relative; defaults to `source.path`. Messages keep naming `source.path`.
+ * @param packageRelativePath - The stop file's path below `packageRoot`, below `packageRoot` (the adapter maps a nested app's repository-relative `source.path`; a root run passes `source.path`). Messages keep naming `source.path`.
  * @returns The bundle in the shape {@link readDevelopmentBundle} returns, with the discovery measurements.
  * @throws `VITE_SEAL_FAILED` for each refusal; a plain error when the source differs from the accepted article.
  * @example
- * const { bundle } = await readViteServedModule('/repo', 'http://127.0.0.1:3010', stop.source, signal)
+ * const { bundle } = await readViteServedModule('/repo', 'http://127.0.0.1:3010', stop.source, signal, stop.source.path)
  */
 export async function readViteServedModule(
   packageRoot: string,
   ownedOrigin: string,
   source: RepositoryConfiguration['source'],
   signal: AbortSignal,
-  packageRelativePath: string = source.path,
+  packageRelativePath: string,
 ) {
   const started = performance.now()
   const refuse: Refuse = (

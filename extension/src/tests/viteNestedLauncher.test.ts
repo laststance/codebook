@@ -9,6 +9,7 @@ import type {
 } from '../developmentServerAdapter'
 import { assessViteWorkspace } from '../utils/assessViteWorkspace'
 import { launchViteDevelopmentServer } from '../utils/launchViteDevelopmentServer'
+import { resolveVitePackage } from '../utils/resolveVitePackage'
 
 import {
   createViteRepository,
@@ -61,6 +62,7 @@ async function startNestedVite(
   let app: DevelopmentApp | undefined
   const request: DevelopmentServerStart = {
     workspace: appFolder,
+    vitePackage: await resolveVitePackage(repository.root, APP),
     node: process.execPath,
     record: () => undefined,
     inspectServer: false,
@@ -174,6 +176,7 @@ test('a timestamp file left in the apps own .vite-temp is removed and one from b
   await launchViteDevelopmentServer(
     {
       workspace: appFolder,
+      vitePackage: await resolveVitePackage(repository.root, APP),
       node: process.execPath,
       record: () => undefined,
       inspectServer: false,

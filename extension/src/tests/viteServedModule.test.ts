@@ -99,6 +99,7 @@ test('seals the served module unchanged and its map maps the declared line to th
     fixture.origin,
     fixture.stop,
     new AbortController().signal,
+    fixture.stop.path,
   )
   const verifier = createBundleVerifier(bundle)
   // Assert
@@ -120,6 +121,7 @@ test('refuses a stop whose module is not served, naming the file, the line and t
       fixture.origin,
       fixture.stop,
       new AbortController().signal,
+      fixture.stop.path,
     ),
   )
   // Assert
@@ -144,6 +146,7 @@ test('refuses a redirect without following it and names the address', async (con
       fixture.origin,
       fixture.stop,
       new AbortController().signal,
+      fixture.stop.path,
     ),
   )
   // Assert
@@ -165,6 +168,7 @@ test('refuses a module served as something other than JavaScript', async (contex
       fixture.origin,
       fixture.stop,
       new AbortController().signal,
+      fixture.stop.path,
     ),
   )
   // Assert
@@ -187,6 +191,7 @@ test('refuses a module without an inline map', async (context) => {
       fixture.origin,
       fixture.stop,
       new AbortController().signal,
+      fixture.stop.path,
     ),
   )
   // Assert
@@ -216,6 +221,7 @@ test('refuses a map that names another file or carries different source text', a
       otherFile.origin,
       otherFile.stop,
       new AbortController().signal,
+      otherFile.stop.path,
     ),
   )
   const text = await refusalOf(
@@ -224,6 +230,7 @@ test('refuses a map that names another file or carries different source text', a
       otherText.origin,
       otherText.stop,
       new AbortController().signal,
+      otherText.stop.path,
     ),
   )
   // Assert
@@ -248,6 +255,7 @@ test('a stop in a plugin-rewritten module is refused naming the plugin cause and
       fixture.origin,
       fixture.stop,
       new AbortController().signal,
+      fixture.stop.path,
     ),
   )
   // Assert
@@ -286,6 +294,7 @@ test('refuses a body over the JavaScript byte limit', async (context) => {
       fixture.origin,
       fixture.stop,
       new AbortController().signal,
+      fixture.stop.path,
     ),
   )
   // Assert
@@ -380,6 +389,7 @@ test('refuses a map that is not UTF-8 JSON with the coded seal failure instead o
           fixture.origin,
           fixture.stop,
           new AbortController().signal,
+          fixture.stop.path,
         ),
       ),
     ),
@@ -410,6 +420,7 @@ test('refuses a map source entry with a malformed percent escape with the coded 
       fixture.origin,
       fixture.stop,
       new AbortController().signal,
+      fixture.stop.path,
     ),
   )
   // Assert
@@ -484,6 +495,7 @@ test('refuses a map that retains no source text instead of substituting the file
       absent.origin,
       absent.stop,
       new AbortController().signal,
+      absent.stop.path,
     ),
   )
   const nullRefusal = await refusalOf(
@@ -492,6 +504,7 @@ test('refuses a map that retains no source text instead of substituting the file
       nulled.origin,
       nulled.stop,
       new AbortController().signal,
+      nulled.stop.path,
     ),
   )
   // Assert

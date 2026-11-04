@@ -7,6 +7,7 @@ import { isViteScriptOfModule } from './utils/isViteScriptOfModule'
 import { launchViteDevelopmentServer } from './utils/launchViteDevelopmentServer'
 import { readViteServedModule } from './utils/readViteServedModule'
 import type { ResolvedVitePackage } from './utils/resolveVitePackage'
+import { viteOutsidePackageRefusal } from './viteRefusals'
 
 /**
  * Gives the repository root a nested Vite app is resolved inside, or `undefined` for the root app.
@@ -55,22 +56,32 @@ export const VITE_DEV_ADAPTER: DevelopmentServerAdapter = {
   // Vite has no development lock.
   readOwnedLock: async () => undefined,
   waitForServerSettled: awaitViteOptimizerIdle,
-  readBundle: (request) => {
+  readBundle: async (request) => {
     const { vitePackage } = request
     // A nested app is sealed in its own folder under the stop's package-relative path; a root run keeps the repository root and the declared path.
-    if (vitePackage && !vitePackage.isRoot)
+    if (vitePackage && !vitePackage.isRoot) {
+      const packageRelativePath = vitePackage.toPackageRelative(
+        request.source.path,
+      )
+      // A stop the mapper cannot place inside the app is refused, never read from its repository path.
+      if (packageRelativePath === undefined)
+        throw viteOutsidePackageRefusal(vitePackage.packageRootRelative, [
+          request.source.path,
+        ])
       return readViteServedModule(
         vitePackage.packageRoot,
         request.ownedOrigin,
         request.source,
         request.signal,
-        vitePackage.toPackageRelative(request.source.path),
+        packageRelativePath,
       )
+    }
     return readViteServedModule(
       request.workspace,
       request.ownedOrigin,
       request.source,
       request.signal,
+      request.source.path,
     )
   },
   browserDebugFields: (workspace) => ({

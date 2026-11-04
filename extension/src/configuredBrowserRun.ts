@@ -1257,7 +1257,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @example this.resolvedPackage?.isRoot // true for a root run
    */
   private get resolvedPackage(): ResolvedPackage | undefined {
-    return this.nextPackage ?? this.vitePackage
+    // Resolve by adapter: a Next run never reads Vite's package, nor a Vite run Next's.
+    const adapter = this.definition.configuration.adapter
+    if (adapter === 'next-dev-webpack') return this.nextPackage
+    if (adapter === 'vite-dev') return this.vitePackage
+    return undefined
   }
 
   /**
@@ -1464,8 +1468,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (this.definition.configuration.adapter === 'next-dev-webpack') {
       this.nextPackage = await this.resolveNextPackageOfRun()
       this.alive()
-    } else {
-      // A Vite app below the root is resolved the same way, before any process starts.
+    } else if (this.definition.configuration.adapter === 'vite-dev') {
+      // A Vite app below the root is resolved the same way, before any process starts; no other adapter inherits it.
       this.vitePackage = await this.resolveVitePackageOfRun()
       this.alive()
     }
