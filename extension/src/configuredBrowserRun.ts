@@ -608,7 +608,7 @@ function libraryFreezeKey(source: {
   return `${source.path}:${source.line}:${source.column}`
 }
 
-/** What a run keeps per server stop in a workspace library, frozen before any process starts ({@link ConfiguredBrowserRun.resolveNextPackageOfRun}). */
+/** What a run keeps per stop (server or browser) in a workspace library, frozen before any process starts ({@link ConfiguredBrowserRun.resolveNextPackageOfRun}). */
 type LibraryFreeze = {
   frozen: FrozenLibraryBuild
   /** The checked-out library source text, read once and equal to the accepted hash. */
@@ -2459,7 +2459,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Settles what a server `stopped` event is before the stop machinery sees it: a hit in React's copy of an owned stop's module, or a repeat hit of a stop that already paused, is resumed by the run and journaled (F1, X15); every other stop goes on to {@link onEvent} unchanged.
+   * Settles what a server `stopped` event is before the stop machinery sees it: a hit in React's copy of an owned stop's module, a hit of the run's own browser library breakpoint in the server's copy of that module, or a repeat hit of a stop that already paused, is resumed by the run and journaled (F1, X15); every other stop goes on to {@link onEvent} unchanged.
    * Why it exists: the debugger's two channels have no common order, and these hits are nobody's declared pause, so the event must not fail the run as an unexpected stop. Called by {@link onEvent} for the server's `stopped` in a run that renders server stops.
    * @param session - The server session that sent the event.
    * @param event - The `stopped` event.
@@ -2608,7 +2608,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Decides whether the pause behind a `stopped` is a hit the run resumes: React's copy at an owned stop's position, or a repeat of a stop that already paused.
+   * Decides whether the pause behind a `stopped` is a hit the run resumes: React's copy at an owned stop's position, the server's copy of a browser library stop's module hit by the run's own breakpoint (`breakpoint.browser-library-copy`), or a repeat of a stop that already paused.
    * A copy elsewhere is given back to the pause intake as the held pause it would have been.
    * @param session - The server session.
    * @param event - The `stopped` event, whose thread the stack is read for.
@@ -2645,9 +2645,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const held = participant.unannouncedPause
     if (!held) return undefined
     // The server's copy of a browser library stop's module is nobody's stop, wherever the run is in its operations.
+    // Only a pause that hit the run's own browser library breakpoint is that copy: a breakpoint of the learner's at another line of the module is theirs to see.
     if (
       event.body?.reason === 'breakpoint' &&
-      this.isBrowserLibraryCopy(held.event)
+      this.isBrowserLibraryCopy(held.event) &&
+      this.hitsOnlyBrowserLibraryBreakpoints(
+        session,
+        event.body.hitBreakpointIds,
+      )
     )
       return { action: 'resume', event: 'breakpoint.browser-library-copy' }
     const alreadyPaused = this.stops.slice(
@@ -2730,6 +2735,28 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           stop.participant === 'server' && this.isPauseOfStop(event, stop),
       )
     )
+  }
+
+  /**
+   * Tells whether the breakpoints a server `stopped` event reports are all the run's own breakpoints of browser library stops.
+   * Why it exists: the module's server copy holds every breakpoint set on that file, so the module alone does not tell the run's breakpoint from a learner's or another owner's at another line; resuming that one would hide the learner's stop. Called by {@link unexpectedHitVerdict} before it resumes a pause as the browser library copy.
+   * @param session - The server session whose adapter numbered the breakpoints.
+   * @param hitIds - The adapter's ids of the breakpoints the pause hit (`hitBreakpointIds`); absent when the adapter named none.
+   * @returns `true` when every id is the id this session acknowledged for a browser library stop's breakpoint, or when the adapter named none (nothing contradicts the run's own breakpoint); `false` when some id names any other breakpoint.
+   * @example this.hitsOnlyBrowserLibraryBreakpoints(session, [12]) // true when 12 is the server session's id of the browser library stop's breakpoint
+   */
+  private hitsOnlyBrowserLibraryBreakpoints(
+    session: vscode.DebugSession,
+    hitIds: readonly number[] | undefined,
+  ): boolean {
+    const isOwnedId = (id: number): boolean =>
+      this.stops.some(
+        (stop) =>
+          stop.participant === 'browser' &&
+          stop.library !== undefined &&
+          stop.breakpoint?.acknowledgedId(session) === id,
+      )
+    return (hitIds ?? []).every(isOwnedId)
   }
 
   /**
@@ -2819,7 +2846,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Resumes a copy hit or a repeat hit through the run's own server-side resume, journals why, and gives the run back its state: nothing was consumed.
+   * Resumes a copy hit (React's, or the server's copy of a browser library stop's module) or a repeat hit through the run's own server-side resume, journals why, and gives the run back its state: nothing was consumed.
    * @param session - The server session.
    * @param event - The `stopped` event whose thread is resumed.
    * @param verdict - The resume verdict whose event is journaled.
@@ -3460,7 +3487,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Journals a resumed hit (`breakpoint.other-route`, `breakpoint.outside-data-function`, `breakpoint.unattributed-resumed`, `breakpoint.repeat-hit`, `breakpoint.react-copy`), each event type up to {@link SERVER_RENDER_RESUMED_HIT_JOURNAL_LIMIT}; past it only the count is kept. Routes pass the run's masking.
+   * Journals a resumed hit (`breakpoint.other-route`, `breakpoint.outside-data-function`, `breakpoint.unattributed-resumed`, `breakpoint.repeat-hit`, `breakpoint.react-copy`, `breakpoint.browser-library-copy`), each event type up to {@link SERVER_RENDER_RESUMED_HIT_JOURNAL_LIMIT}; past it only the count is kept. Routes pass the run's masking.
    * @param verdict - The resume verdict.
    * @example this.journalResumedHit({ action: 'resume', event: 'breakpoint.other-route', route: '/dashboard/invoices' })
    */
@@ -4573,7 +4600,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Ends a run whose frozen library server stop cannot be sealed because the entry path resolved to an App Router route.
+   * Ends a run whose frozen library stop (server or browser) cannot be sealed because the entry path resolved to an App Router route.
    * Called by {@link resolvePagesCapableRoute} when the manifests resolve an App route; the server already started, so the refusal reports `sideEffects` `unknown`.
    * @throws `NEXT_STOP_NOT_SEALED` with `details.reason` `outside-package` when any library stop was frozen; nothing otherwise.
    * @example
@@ -4654,7 +4681,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       const established = await readNextServerOnlyReason({
         nextPackage: this.nextPackageOrRoot,
         path: stop.source.path,
-        line: stop.source.line,
+        // A library stop's `source.line` is a built line while its path is the library source: the declared line is what pairs with the path.
+        line: declaredLineOf(stop),
         folder: pagesRun.folder,
         compiledPath: pagesRun.compiledPath,
         clientBundle: stop.bundle,

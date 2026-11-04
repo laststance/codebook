@@ -485,3 +485,53 @@ test('a browser stop in a library path of a root app is still refused by the app
   )
   assert.equal(harness.inputsSeen(), 0)
 })
+
+/** Sends the server session's `stopped` event naming the breakpoints it hit, as js-debug does. @example sendServerStopNaming(harness, [999]) */
+function sendServerStopNaming(
+  harness: Awaited<ReturnType<typeof preparedMixedRun>>['harness'],
+  hitBreakpointIds: number[],
+): void {
+  harness.run.onEvent(harness.server!.session, {
+    type: 'event',
+    seq: 9000,
+    event: 'stopped',
+    body: { reason: 'breakpoint', threadId: 1, hitBreakpointIds },
+  })
+}
+
+// protects=AC 4 (M1) a breakpoint of the learner's or another owner's at another line of the module's server copy is not the run's browser library breakpoint and is not resumed or journaled as the browser library copy; fails_when=the pause is resumed as breakpoint.browser-library-copy because the module's script address alone matched; no_claim=js-debug's real breakpoint ids (the ids are scripted)
+test('a pause of a breakpoint that is not the run’s own in the server copy of a browser library module is not resumed as the browser library copy', async (context) => {
+  // Arrange
+  const { staged, harness } = await preparedMixedRun(context)
+  // Act: the server copy pauses at the library line, naming an adapter breakpoint (999) the run does not own.
+  harness.server!.pauseCdp({
+    ...staged.files().hitAt(LIBRARY_RETURN_LINE),
+    pages: { fixture: 'get-server-side-props-before-await', prepend: true },
+  })
+  sendServerStopNaming(harness, [999])
+  await waitUntil(
+    () => harness.run.view().failures.length > 0,
+    'the pause stayed in the ordinary pause handling',
+  )
+  // Assert
+  assert.deepEqual(plain(copyEventsOf(harness)), [])
+  assert.deepEqual(plain(harness.server!.continues), [])
+})
+
+// protects=AC 4 (M1 exclusion clause) a pause at the place of a server library stop in the same module as a browser library stop is not taken for the browser library copy: it is not resumed or journaled as one; fails_when=the server stop's place is resumed as breakpoint.browser-library-copy; no_claim=the server stop being admitted in order (here it comes before the browser stop, so the run ends on it as an extra stop)
+test('a pause at a server library stop in the same module as a browser library stop is not resumed as the browser library copy', async (context) => {
+  // Arrange
+  const { staged, harness } = await preparedMixedRun(context)
+  // Act: the server stop's line (2) pauses before the input.
+  harness.server!.hit({
+    ...staged.files().hitAt(2),
+    pages: { fixture: 'get-server-side-props-before-await', prepend: true },
+  })
+  await waitUntil(
+    () => harness.run.view().failures.length > 0,
+    'the pause stayed in the ordinary pause handling',
+  )
+  // Assert
+  assert.deepEqual(plain(copyEventsOf(harness)), [])
+  assert.deepEqual(plain(harness.server!.continues), [])
+})
