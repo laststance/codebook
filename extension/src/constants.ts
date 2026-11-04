@@ -2981,13 +2981,14 @@ export const VITE_LIBRARY_WALK_ANSWER_TIMEOUT_MS =
 /** The path segment of Vite's optimized-dependency cache (`node_modules/.vite/deps`): the library walk never transforms or follows a module served from there. */
 export const VITE_OPTIMIZED_DEPS_PATH_SEGMENT = '/node_modules/.vite/'
 
-/** URL prefixes of Vite's own virtual modules (its client, React Refresh, null-byte ids): the library walk neither transforms nor follows them, since no library module is reached through one. */
-export const VITE_VIRTUAL_MODULE_URL_PREFIXES = [
+/** URL prefixes of Vite's own client helpers (its client and env scripts, React Refresh): the library walk neither transforms nor follows them, since they import no application code. Plugin virtual modules (`/@id/__x00__…`, `/@id/virtual:…`) are not listed: a generated module may import a library, so the walk follows them. */
+export const VITE_CLIENT_HELPER_URL_PREFIXES = [
   '/@vite/',
   '/@react-refresh',
-  '/@id/__x00__',
-  '\0',
 ] as const
+
+/** The URL query parameters Vite adds only to bust caches or mark an import (`t` timestamp, `v` optimizer version, `import` non-JS import); the library walk ignores them when it decides that two URLs name one module. Any other parameter (`raw`, `url`, `worker`, `inline`, …) changes the module and stays. */
+export const VITE_CACHE_BUSTING_QUERY_PARAMS = ['t', 'v', 'import'] as const
 
 /**
  * What an agent reads as the recovery when the Study placement guard refuses a presentation or an arrangement because the editor changed a group, a tab or the focus while Codebook arranged the Study.

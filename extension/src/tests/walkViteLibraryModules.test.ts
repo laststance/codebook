@@ -18,7 +18,7 @@ import {
 
 /** One module of a scripted graph. */
 type ScriptedModule = {
-  file: string
+  file: string | null
   code?: string
   imports?: string[]
   throws?: boolean
@@ -117,8 +117,8 @@ test('ends on an import cycle and lists each library module once', async () => {
   ])
 })
 
-// protects=a pre-bundled dependency and Vite's virtual modules are never transformed; fails_when=the walk transforms /node_modules/.vite/ or /@vite/client URLs; no_claim=that real Vite lists them in the graph (the fake lists them on purpose)
-test('never transforms an optimized dependency or a Vite virtual module', async () => {
+// protects=a pre-bundled dependency and Vite's own client helpers are never transformed; fails_when=the walk transforms /node_modules/.vite/, /@vite/client or /@react-refresh URLs; no_claim=that real Vite lists them in the graph (the fake lists them on purpose)
+test('never transforms an optimized dependency or a Vite client helper', async () => {
   // Arrange
   const { environment, transformed } = fakeEnvironment({
     '/src/main.tsx': {
@@ -127,8 +127,6 @@ test('never transforms an optimized dependency or a Vite virtual module', async 
         '/node_modules/.vite/deps/react.js?v=abc',
         '/@vite/client',
         '/@react-refresh',
-        '/@id/__x00__virtual:thing',
-        '\0plugin',
         '/@fs/repo/lib/index.js',
       ],
     },
@@ -137,8 +135,6 @@ test('never transforms an optimized dependency or a Vite virtual module', async 
     },
     '/@vite/client': { file: '/repo/vite/client.mjs' },
     '/@react-refresh': { file: '/repo/vite/refresh.js' },
-    '/@id/__x00__virtual:thing': { file: '/repo/lib/virtual.js' },
-    '\0plugin': { file: '/repo/lib/plugin.js' },
     '/@fs/repo/lib/index.js': { file: '/repo/lib/index.js' },
   })
   // Act
@@ -440,6 +436,78 @@ test('lists a library file once when it is reached under two URLs', async () => 
   })
   // Assert
   assert.deepEqual(result.modules, ['/@fs/repo/lib/a.js?t=1'])
+})
+
+// protects=a library reached only through a plugin's virtual module is still listed; fails_when=the walk skips /@id/__x00__ or /@id/virtual: URLs with their imports; no_claim=real Vite (the fake graph names a generated module with no file)
+test('lists a library module reached only through a plugin virtual module', async () => {
+  // Arrange
+  const { environment, transformed } = fakeEnvironment({
+    '/src/main.js': {
+      file: '/repo/app/main.js',
+      imports: ['/@id/__x00__virtual:routes', '/@vite/client'],
+    },
+    '/@id/__x00__virtual:routes': {
+      file: null,
+      imports: ['/@fs/repo/lib/build/a.js'],
+    },
+    '/@vite/client': { file: '/repo/vite/client.mjs' },
+    '/@fs/repo/lib/build/a.js': { file: '/repo/lib/build/a.js' },
+  })
+  // Act
+  const result = await walkViteLibraryModules(environment, {
+    entries: ['/src/main.js'],
+    libraryFolder: '/repo/lib',
+  })
+  // Assert
+  assert.deepEqual(result.modules, ['/@fs/repo/lib/build/a.js'])
+  assert.equal(transformed.includes('/@vite/client'), false)
+})
+
+// protects=a ?raw variant reached first does not hide the executable module of the same file, in either order; fails_when=modules are de-duplicated by real file path alone; no_claim=real Vite (a fake graph names both URLs)
+for (const [label, imports] of [
+  ['raw first', ['/@fs/repo/lib/a.js?raw', '/@fs/repo/lib/a.js']],
+  ['plain first', ['/@fs/repo/lib/a.js', '/@fs/repo/lib/a.js?raw']],
+] as const) {
+  test(`lists both the plain and the ?raw module of one file (${label})`, async () => {
+    // Arrange
+    const { environment } = fakeEnvironment({
+      '/src/main.tsx': { file: '/repo/app/main.tsx', imports: [...imports] },
+      '/@fs/repo/lib/a.js?raw': { file: '/repo/lib/a.js' },
+      '/@fs/repo/lib/a.js': { file: '/repo/lib/a.js' },
+    })
+    // Act
+    const result = await walkViteLibraryModules(environment, {
+      entries: ['/src/main.tsx'],
+      libraryFolder: '/repo/lib',
+    })
+    // Assert
+    assert.deepEqual(result.modules, imports)
+  })
+}
+
+// protects=the cache-busting t, v and import parameters never make a second module; fails_when=the identity key keeps them; no_claim=real Vite
+test('lists one module once when URLs differ only by t, v and import parameters', async () => {
+  // Arrange
+  const { environment } = fakeEnvironment({
+    '/src/main.tsx': {
+      file: '/repo/app/main.tsx',
+      imports: [
+        '/@fs/repo/lib/a.js?import&t=1',
+        '/@fs/repo/lib/a.js?v=2',
+        '/@fs/repo/lib/a.js',
+      ],
+    },
+    '/@fs/repo/lib/a.js?import&t=1': { file: '/repo/lib/a.js' },
+    '/@fs/repo/lib/a.js?v=2': { file: '/repo/lib/a.js' },
+    '/@fs/repo/lib/a.js': { file: '/repo/lib/a.js' },
+  })
+  // Act
+  const result = await walkViteLibraryModules(environment, {
+    entries: ['/src/main.tsx'],
+    libraryFolder: '/repo/lib',
+  })
+  // Assert
+  assert.deepEqual(result.modules, ['/@fs/repo/lib/a.js?import&t=1'])
 })
 
 // protects=the optimizer cache folder is compared by real path, so a cacheDir given through a symlink still keeps pre-bundled files out; fails_when=the cacheDir is only path-resolved while the file is a real path; no_claim=Windows junctions (a POSIX symlink is used)

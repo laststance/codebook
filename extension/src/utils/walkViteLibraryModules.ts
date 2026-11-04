@@ -6,7 +6,7 @@ import {
   VITE_LIBRARY_WALK_DEADLINE_MS,
   VITE_LIBRARY_WALK_MODULE_LIMIT_COUNT,
   VITE_OPTIMIZED_DEPS_PATH_SEGMENT,
-  VITE_VIRTUAL_MODULE_URL_PREFIXES,
+  VITE_CLIENT_HELPER_URL_PREFIXES,
 } from '../constants'
 import type {
   ViteLibraryModulesCommand,
@@ -14,6 +14,7 @@ import type {
 } from '../viteLauncherProtocol'
 
 import { isInsideFolder } from './isInsideFolder'
+import { viteModuleIdentityKey } from './viteModuleIdentityKey'
 
 /** The part of Vite's module node the walk reads (`EnvironmentModuleNode`). */
 type WalkedModuleNode = {
@@ -81,19 +82,19 @@ async function realPathOrSelf(path: string): Promise<string> {
 }
 
 /**
- * Tells whether a served URL is one the walk must not transform or follow: an optimized dependency or a Vite virtual module.
+ * Tells whether a served URL is one the walk must not transform or follow: an optimized dependency or one of Vite's own client helpers.
  *
- * Why it exists: a pre-bundled dependency is one rewritten chunk that no source map of the library maps, and Vite's virtual modules hold no library code; the safer route is to leave both untouched. Called by {@link walkViteLibraryModules} before each transform.
+ * Why it exists: a pre-bundled dependency is one rewritten chunk that no source map of the library maps, and Vite's client helpers import no application code; the safer route is to leave both untouched. Plugin virtual modules are walked, because a generated module may import a library. Called by {@link walkViteLibraryModules} before each transform.
  *
  * @param url - A served module URL, possibly with a query.
- * @returns `true` for a URL under the optimizer's cache folder or starting with a virtual prefix.
+ * @returns `true` for a URL under the optimizer's cache folder or starting with a client-helper prefix.
  * @example
  * isUntouchedViteUrl('/node_modules/.vite/deps/react.js?v=1') // => true
  */
 function isUntouchedViteUrl(url: string): boolean {
   return (
     url.includes(VITE_OPTIMIZED_DEPS_PATH_SEGMENT) ||
-    VITE_VIRTUAL_MODULE_URL_PREFIXES.some((prefix) => url.startsWith(prefix))
+    VITE_CLIENT_HELPER_URL_PREFIXES.some((prefix) => url.startsWith(prefix))
   )
 }
 
@@ -193,7 +194,7 @@ type WalkedModule = {
   imports: Iterable<string>
   /** The UTF-8 size of the transformed code. */
   codeBytes: number
-  /** The module's real file path when it lies in the library; the key that keeps one file from being listed under two URLs. */
+  /** The module's real file path when it lies in the library; the key (file plus meaning-changing query) that keeps one module from being listed under two URLs. */
   libraryFile?: string
 }
 
@@ -238,7 +239,7 @@ async function readWalkedModule(
     // A library imports its own chunks, so its imports are followed too.
     imports: node.staticImportedUrls ?? [],
     codeBytes,
-    ...(inLibrary ? { libraryFile: realFile } : {}),
+    ...(inLibrary ? { libraryFile: viteModuleIdentityKey(realFile, url) } : {}),
   }
 }
 
@@ -281,7 +282,7 @@ async function raceAgainstDeadline(
  *
  * Why it exists: a browser stop in a workspace library is sealed against the served module that maps it, and only Vite's own graph names the modules the page will load, with the browser's resolution, before the page opens. Called by the owned Vite launcher (`viteLauncher.ts`) for each `vite-library-modules` command.
  *
- * Each URL is transformed first (which fills the graph), then its module node's `staticImportedUrls` are followed (`TransformResult.deps` is unset at runtime in Vite 8.3.5). The result is a superset of what the page loads, because that set also lists `import()` targets. Optimized dependencies and Vite's virtual modules are never transformed or followed. A module whose transform throws is skipped with its imports. The walk never throws as a whole.
+ * Each URL is transformed first (which fills the graph), then its module node's `staticImportedUrls` are followed (`TransformResult.deps` is unset at runtime in Vite 8.3.5). The result is a superset of what the page loads, because that set also lists `import()` targets. Optimized dependencies and Vite's own client helpers are never transformed or followed; plugin virtual modules are. A module whose transform throws is skipped with its imports. The walk never throws as a whole.
  *
  * @param environment - Vite's client environment (`server.environments.client`).
  * @param command - The entry URLs and the library's real path.
@@ -308,7 +309,7 @@ export async function walkViteLibraryModules(
   const queue = [...command.entries]
   const seen = new Set(queue)
   const modules: string[] = []
-  // One library file reached under two URLs (`?t=` / `?v=` variants) is listed once, under the first URL.
+  // One module reached under two URLs (`?t=` / `?v=` variants) is listed once, under the first URL; `?raw` and the plain file stay two modules.
   const listedFiles = new Set<string>()
   const progress = { visited: 0, transformedBytes: 0, startedAt: limits.now() }
   let bound: ViteLibraryWalkBound | undefined
