@@ -194,7 +194,7 @@ export type LibraryRecoveryReason = keyof typeof LIBRARY_RECOVERIES
  * Why it exists: the refusal builders and {@link refusalFailureOf} must give the agent the same recovery whether the refusal was thrown or restored from a run's failure text.
  * @param reason - A library refusal `details.reason`.
  * @param adapter - The adapter whose run raised it: the endings differ in what had started (`next` by default, `vite` for a nested Vite app's browser stop).
- * @param router - The router of a Next app (`details.router`): an App Router `library-not-in-build` names the client chunks of the entry route's client reference manifest, as the thrown refusal does; `pages` by default.
+ * @param router - The router of a Next app (`details.router`): an App Router `library-not-in-build` names the client chunks of the entry route's client reference manifest, as the thrown refusal does; `app-server` (from {@link libraryRecoveryRouterOfFailure}) names the entry route's server compile and its `(rsc)` modules; `pages` by default.
  * @returns The static recovery text, ending at the reason's own help anchor.
  * @example
  * libraryRecoveryOf('library-build-stale') // => "A workspace library's build does not match … See codebook://help/repository-browser#library-build-stale."
@@ -203,11 +203,13 @@ export type LibraryRecoveryReason = keyof typeof LIBRARY_RECOVERIES
 export function libraryRecoveryOf(
   reason: LibraryRecoveryReason,
   adapter: 'next' | 'vite' = 'next',
-  router: 'pages' | 'app' = 'pages',
+  router: 'pages' | 'app' | 'app-server' = 'pages',
 ): string {
   if (adapter === 'vite') return VITE_LIBRARY_RECOVERIES[reason]
   // Only the refusal that names the searched code has an App Router wording; every other reason reads the same for both routers.
-  if (router === 'app' && reason === 'library-not-in-build')
+  if (router === 'app-server' && reason === 'library-not-in-build')
+    return APP_SERVER_LIBRARY_RECOVERIES[reason]
+  if (router !== 'pages' && reason === 'library-not-in-build')
     return APP_BROWSER_LIBRARY_RECOVERIES[reason]
   return LIBRARY_RECOVERIES[reason]
 }
@@ -408,7 +410,7 @@ export function libraryBuildChangedFailure(
 /**
  * Writes the failure text a run records for a library refusal raised at a pause or an event, the form {@link refusalFailureOf} restores with its `details.reason`.
  * @param error - The error a library check threw.
- * @returns `<CODE>(<reason>): <message>` for a Next Pages library refusal of {@link LIBRARY_RUNTIME_REASONS} (one carrying `details.router`), `<CODE>(<reason> app): <message>` for an App Router one so {@link libraryDetailsOfFailure} restores `router: "app"`; `undefined` for any other error, a Vite library error included.
+ * @returns `<CODE>(<reason>): <message>` for a Next Pages library refusal of {@link LIBRARY_RUNTIME_REASONS} (one carrying `details.router`), `<CODE>(<reason> app): <message>` for an App Router one so {@link libraryDetailsOfFailure} restores `router: "app"` (`<reason> app rsc` for a `library-not-in-build` of the server layer, which {@link libraryRecoveryRouterOfFailure} reads); `undefined` for any other error, a Vite library error included.
  * @example
  * libraryFailureText(libraryBuildChangedFailure('examples/app', 'lib', 'a.ts')) // => 'RUNTIME_FAILED(library-build-changed): The build of library lib changed …'
  * libraryFailureText(libraryBuildChangedFailure('examples/app', 'lib', 'a.ts', 'app')) // => 'RUNTIME_FAILED(library-build-changed app): The build of library lib changed …'
@@ -421,9 +423,13 @@ export function libraryFailureText(error: unknown): string | undefined {
     (known) => known === error.details?.reason,
   )
   if (reason === undefined) return undefined
-  // An App Router failure names its router in the variant; the Pages text stays unchanged.
-  const variant =
-    error.details.router === 'app'
+  // An App Router failure names its router in the variant, and a `library-not-in-build` of the server layer `rsc` its layer too (it words another recovery); the Pages text stays unchanged.
+  const isServerLayer =
+    reason === 'library-not-in-build' &&
+    error.recoveryOverride === APP_SERVER_LIBRARY_RECOVERIES[reason]
+  const variant = isServerLayer
+    ? `${reason}${APP_SERVER_LIBRARY_VARIANT_SUFFIX}`
+    : error.details.router === 'app'
       ? `${reason}${APP_LIBRARY_VARIANT_SUFFIX}`
       : reason
   return `${error.code}(${variant}): ${error.message}`
@@ -431,6 +437,9 @@ export function libraryFailureText(error: unknown): string | undefined {
 
 /** The suffix a library reason variant carries for an App Router app (`library-build-changed app`); no parenthesis and no line break, so the lead of a coded failure text still matches. */
 const APP_LIBRARY_VARIANT_SUFFIX = ' app'
+
+/** The suffix a `library-not-in-build` variant carries for the App Router server layer `rsc` (`library-not-in-build app rsc`); a text with only {@link APP_LIBRARY_VARIANT_SUFFIX} stays the browser layer. */
+const APP_SERVER_LIBRARY_VARIANT_SUFFIX = ' app rsc'
 
 /** The `details` a restored library failure text carries: the reason, the router the variant named and `sideEffects: "unknown"`. */
 type LibraryFailureDetails = {
@@ -452,10 +461,15 @@ export function libraryDetailsOfFailure(
   code: string,
   variant: string | undefined,
 ): LibraryFailureDetails | undefined {
-  const isApp = variant?.endsWith(APP_LIBRARY_VARIANT_SUFFIX) === true
-  const name = isApp
-    ? variant.slice(0, -APP_LIBRARY_VARIANT_SUFFIX.length)
-    : variant
+  const isServerLayer =
+    variant?.endsWith(APP_SERVER_LIBRARY_VARIANT_SUFFIX) === true
+  const isApp =
+    isServerLayer || variant?.endsWith(APP_LIBRARY_VARIANT_SUFFIX) === true
+  const name = isServerLayer
+    ? variant.slice(0, -APP_SERVER_LIBRARY_VARIANT_SUFFIX.length)
+    : isApp
+      ? variant.slice(0, -APP_LIBRARY_VARIANT_SUFFIX.length)
+      : variant
   const reason = LIBRARY_RUNTIME_REASONS.find((known) => known === name)
   const expected =
     reason === 'library-build-changed'
@@ -464,6 +478,23 @@ export function libraryDetailsOfFailure(
   return reason !== undefined && code === expected
     ? { reason, ...PAGES_STOP_REFUSAL_DETAILS, router: isApp ? 'app' : 'pages' }
     : undefined
+}
+
+/**
+ * Reads which recovery wording a library failure text's variant selects, for {@link libraryRecoveryOf}.
+ *
+ * Why it exists: the `details` a text restores hold only the router, but a `library-not-in-build` of the App Router server layer words another recovery than the browser layer. Called by {@link refusalFailureOf}.
+ * @param variant - The text's variant ({@link libraryFailureText} writes it).
+ * @returns `app-server` for a variant ending in ` app rsc`, `app` for one ending in ` app`, else `pages`.
+ * @example
+ * libraryRecoveryRouterOfFailure('library-not-in-build app rsc') // => 'app-server'
+ * libraryRecoveryRouterOfFailure('library-not-in-build app') // => 'app'
+ */
+export function libraryRecoveryRouterOfFailure(
+  variant: string | undefined,
+): 'pages' | 'app' | 'app-server' {
+  if (variant?.endsWith(APP_SERVER_LIBRARY_VARIANT_SUFFIX)) return 'app-server'
+  return variant?.endsWith(APP_LIBRARY_VARIANT_SUFFIX) ? 'app' : 'pages'
 }
 
 /**

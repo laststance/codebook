@@ -101,7 +101,7 @@ test('the App Router server library golden is a format 9 study with format 8 evi
   assert.equal(decoded.state, 'completed')
 })
 
-// protects=AC 6 key sets: the server observation of the golden has the same key set, nested included, as the Cycle 0074 Pages server golden's, and its library source fields equal those of the Cycle 0081 App Router browser golden; fails_when=the observation gains or loses a key (or one of its nested keys), or the library source keys (configuration source, descriptor source, observation source) differ from the browser golden's; no_claim=equal values (only key sets are compared; the value names, which depend on the stop, are not keys of the format)
+// protects=AC 6 key sets: the server observation of the golden has the same key set, nested included, as the Cycle 0074 Pages server golden's, and its library source fields equal those of the Cycle 0080 (v0.2.81.0) App Router browser golden; fails_when=the observation gains or loses a key (or one of its nested keys), or the library source keys (configuration source, descriptor source, observation source) differ from the browser golden's; no_claim=equal values (only key sets are compared; the value names, which depend on the stop, are not keys of the format)
 test('the App Router server library golden adds no observation field to the Pages server golden and no library source field to the browser golden', async () => {
   // Arrange
   const server = await readServerStudy()

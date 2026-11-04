@@ -408,6 +408,44 @@ test('an App Router library-not-in-build text restores the App Router recovery o
   )
 })
 
+// protects=an App Router server (rsc) library-not-in-build recorded as failure text restores the server-compile recovery of the thrown refusal, and an older text with the variant `app` alone still reads as the browser layer; fails_when=the restore gives an rsc seal the client-chunks wording, or an old ` app` text stops restoring the browser wording; no_claim=which run path records the text
+test('an App Router server library-not-in-build text restores the rsc recovery and an older app text the browser one', () => {
+  // Arrange
+  const error = libraryNotInBuildRefusal(
+    'examples/app',
+    'lib',
+    'packages/lib/src/core.ts',
+    ['packages/lib/build/modern/core.js'],
+    'rsc',
+  )
+  // Act
+  const text = libraryFailureText(error) ?? ''
+  const restored = refusalFailureOf(text)
+  const older = refusalFailureOf(
+    text.replace('library-not-in-build app rsc', 'library-not-in-build app'),
+  )
+  // Assert
+  assert.ok(
+    text.startsWith('NEXT_STOP_NOT_SEALED(library-not-in-build app rsc): '),
+    text,
+  )
+  assert.equal(restored?.recoveryOverride, error.recoveryOverride)
+  assert.match(
+    restored?.recoveryOverride ?? '',
+    /^The entry route's server compile does not hold exactly one `\(rsc\)` module/,
+  )
+  assert.equal(
+    restored?.libraryDetails && 'router' in restored.libraryDetails
+      ? restored.libraryDetails.router
+      : undefined,
+    'app',
+  )
+  assert.match(
+    older?.recoveryOverride ?? '',
+    /^The client chunks of the entry route's client reference manifest/,
+  )
+})
+
 // protects=a Pages server library-not-in-build restored from text keeps the server-compile recovery it always had; fails_when=the router-aware selection changes the Pages recovery; no_claim=the Pages browser layer, whose text carries no layer (unchanged from Cycle 0079)
 test('a Pages library-not-in-build text still restores the server-compile recovery', () => {
   // Arrange

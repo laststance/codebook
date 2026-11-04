@@ -6,6 +6,7 @@ import { PACKAGE_ROOT_FRESH_SESSION_RECOVERY, type ErrorCode } from '../errors'
 import {
   libraryDetailsOfFailure,
   libraryRecoveryOf,
+  libraryRecoveryRouterOfFailure,
   NEXT_PAGES_FAILURE_VARIANT,
   NEXT_REFUSAL_CODES,
   nextSetupDeadlineRecovery,
@@ -144,7 +145,7 @@ export function refusalFailureOf(text: string): RefusalFailure | undefined {
       recoveryOverride: libraryRecoveryOf(
         libraryDetails.reason,
         'next',
-        libraryDetails.router,
+        libraryRecoveryRouterOfFailure(variant),
       ),
       libraryDetails,
     }

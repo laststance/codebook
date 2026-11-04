@@ -142,7 +142,7 @@ test('API_VERSION is 1.24 and its note names the five library-stop reasons', asy
   assert.ok(note.includes('`details.cause`'))
 })
 
-// protects=skill 1.0.68 carries the library-stop sentence (declare a library server stop, tell the learner which build to run on library-build-stale, never run it) and names no sample app or function; fails_when=the sentence changes or a sample name enters the skill; no_claim=how a chat follows it
+// protects=skill 1.0.73 carries the library-stop sentence (declare a library server stop, tell the learner which build to run on library-build-stale, never run it) and names no sample app or function; fails_when=the sentence changes or a sample name enters the skill; no_claim=how a chat follows it
 test('the bundled skill 1.0.73 tells the chat to name the build and never run it', async () => {
   // Arrange
   const skill = await readPackaged('skills/codebook/SKILL.md')
@@ -360,7 +360,7 @@ test('the API 1.22 note names the arming, new script id and pause paths of libra
   assert.ok(note.includes('the server-stop description of 1.19 is unchanged'))
 })
 
-// protects=Cycle 0080 Task 4: the help rule and limits say a browser stop of a nested App Router app may lie in a workspace library, with the checked-out library file in the native debugger, the entry-chunk rule and the library-not-in-build refusal, and keep the App Router server stop and both-routers refusals; fails_when=the rule or limits drop the App Router browser stop, the checked-out file statement or the server refusal; no_claim=that the run pauses
+// protects=Cycle 0080 Task 4: the help rule and limits say a browser stop of a nested App Router app may lie in a workspace library, with the checked-out library file in the native debugger, the entry-chunk rule and the library-not-in-build refusal, and keep the both-routers refusal; fails_when=the rule or limits drop the App Router browser stop, the checked-out file statement or the both-routers refusal; no_claim=that the run pauses
 test('the help names browser library stops of a nested App Router app and keeps the both-routers library stop refused', async (context) => {
   // Arrange
   const help = await readHelp(context)
@@ -387,7 +387,7 @@ test('the help names browser library stops of a nested App Router app and keeps 
   )
 })
 
-// protects=API 1.23 is served and its note names the App Router browser library stop, its reuse of the 1.19 reasons and the server refusal that 1.24 lifted; fails_when=the version or a statement of the 1.23 note drifts; no_claim=the behavior behind the note
+// protects=API 1.23 is served and its note names the App Router browser library stop, its reuse of the 1.19 reasons and the statement that an App Router server library stop stayed refused until 1.24; fails_when=the version or a statement of the 1.23 note drifts; no_claim=the behavior behind the note
 test('API_VERSION is 1.24 and its 1.23 note adds browser library stops of a nested App Router app', async () => {
   // Arrange
   const constants = await readPackaged('src', 'constants.ts')
@@ -496,4 +496,25 @@ test('the skill 1.0.73 and the README state server library stops of a nested Nex
     'updates to **1.0.73**',
   ])
     assert.ok(readme.includes(phrase), phrase)
+})
+
+// protects=the help meanings of library-not-in-build and library-build-changed state the App Router server stop (API 1.24): the one (rsc) module, an (ssr) copy never counting, and a re-announcement with the sealed bytes being a coexisting instance; fails_when=either meaning loses the server-stop statement; no_claim=the behavior behind the text
+test('the help words the App Router server library stop in library-not-in-build and library-build-changed', async (context) => {
+  // Arrange
+  const help = await readHelp(context)
+  const { refusals } = help.nextPackageRoot
+  // Act
+  const notInBuild = refusals['library-not-in-build']?.meaning ?? ''
+  const buildChanged = refusals['library-build-changed']?.meaning ?? ''
+  // Assert
+  assert.ok(
+    notInBuild.includes(
+      "the one (rsc) module of the entry route's server chunk, server/<route>.js (a server stop, API 1.24 or later; an (ssr) copy of a module never counts)",
+    ),
+  )
+  assert.ok(
+    buildChanged.includes(
+      'only differing bytes of a re-announced (rsc) module give it; a re-announcement with the sealed bytes is a coexisting instance, and the (ssr) and React copies of the module are journaled, never bound',
+    ),
+  )
 })
