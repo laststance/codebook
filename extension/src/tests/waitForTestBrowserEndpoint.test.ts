@@ -76,8 +76,9 @@ test('a test browser that never publishes its endpoint fails at the bound with t
     failure.message,
     'Chrome published no debugging endpoint within 1 s.',
   )
+  // gstack-timing-ok: nowMs is the injected fake clock, and the bound is the contract under test.
   assert.ok(fake.state.nowMs >= 1_000)
-  assert.ok(fake.state.nowMs <= 1_100)
+  assert.ok(fake.state.nowMs <= 1_100) // gstack-timing-ok: the same fake clock.
   assert.equal(fake.state.reads, 11)
 })
 
