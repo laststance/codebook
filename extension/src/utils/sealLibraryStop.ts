@@ -264,7 +264,6 @@ async function sealWithin(
           packageRootRelative,
           frozen.library.name,
           frozen.stopPath,
-          request.layer,
         )
       return {
         bundle: { ...bundle, source: content },

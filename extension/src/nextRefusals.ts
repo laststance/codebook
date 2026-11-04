@@ -132,13 +132,12 @@ const LIBRARY_RECOVERIES = {
   'library-build-unmapped': `${LIBRARY_UNMAPPED_BODY} ${LIBRARY_NOTHING_STARTED} See ${libraryHelpAnchor('library-build-unmapped')}.`,
   'library-not-in-build': `The page's server code does not hold exactly one built file of the library that maps the stop (details.candidates lists them). Tell the learner, or choose a stop on a line the page's server code runs; do not start another run with the same stop. ${LIBRARY_ENTRY_REQUESTED} See ${libraryHelpAnchor('library-not-in-build')}.`,
   'library-place-ambiguous': `The library stop could not be tied to one source position. Declare the stop on a line that holds a single statement, after the line that declares the value it reads; do not start another run with the same stop. ${LIBRARY_ENTRY_REQUESTED} See ${libraryHelpAnchor('library-place-ambiguous')}.`,
-  'library-build-changed': `The library was rebuilt, or the server module changed, during the run. Tell the learner to finish the rebuild and ask for a new start; never run the build yourself. ${LIBRARY_ENTRY_REQUESTED} See ${libraryHelpAnchor('library-build-changed')}.`,
+  'library-build-changed': `The library was rebuilt, or the module the run executes changed, during the run. Tell the learner to finish the rebuild and ask for a new start; never run the build yourself. ${LIBRARY_ENTRY_REQUESTED} See ${libraryHelpAnchor('library-build-changed')}.`,
 } as const
 
-/** The Pages browser layer's wording of the refusals that name the searched code (`library-not-in-build`) or the changed module (`library-build-changed`); the server layer keeps {@link LIBRARY_RECOVERIES}. */
+/** The Pages browser layer's wording of the refusal that names the searched code (`library-not-in-build`); the server layer keeps {@link LIBRARY_RECOVERIES}. `library-build-changed` has one recovery for both layers, because a restored failure text carries no layer ({@link refusalFailureOf}). */
 const BROWSER_LIBRARY_RECOVERIES = {
   'library-not-in-build': `The entry chunks of the route and \`_app\` that the page loads at start do not hold exactly one built file of the library that maps the stop (details.candidates lists them). A library module the page loads later (\`next/dynamic\`, a lazy import) cannot be sealed. Tell the learner, or choose a stop on a line the page runs at load; do not start another run with the same stop. ${LIBRARY_ENTRY_REQUESTED} See ${libraryHelpAnchor('library-not-in-build')}.`,
-  'library-build-changed': `The library was rebuilt, or the module the page loaded changed, during the run. Tell the learner to finish the rebuild and ask for a new start; never run the build yourself. ${LIBRARY_ENTRY_REQUESTED} See ${libraryHelpAnchor('library-build-changed')}.`,
 } as const
 
 /** The webpack layer a Pages library refusal is worded for (the same values as `LibraryStopLayer` in `sealLibraryStop.ts`, repeated so this module imports nothing from it). */
@@ -149,7 +148,7 @@ type PagesLibraryLayer = 'pages-dir-node' | 'pages-dir-browser'
  * @param reason - The refusal reason with a browser-layer variant.
  * @param layer - The layer the refusal is raised for.
  * @returns The browser variant for `pages-dir-browser`, else the server text of {@link LIBRARY_RECOVERIES}.
- * @example pagesLibraryRecoveryOf('library-build-changed', 'pages-dir-node') // => LIBRARY_RECOVERIES['library-build-changed']
+ * @example pagesLibraryRecoveryOf('library-not-in-build', 'pages-dir-node') // => LIBRARY_RECOVERIES['library-not-in-build']
  */
 function pagesLibraryRecoveryOf(
   reason: keyof typeof BROWSER_LIBRARY_RECOVERIES,
@@ -344,7 +343,6 @@ export function libraryPlaceAmbiguousRefusal(
  * @param packageRoot - The Next app's canonical repository-relative package root.
  * @param libraryName - The library's package name.
  * @param file - The repository-relative stop file.
- * @param layer - The webpack layer of the changed module; `pages-dir-browser` words the recovery for the module the page loaded, the default keeps the server wording.
  * @returns The `RUNTIME_FAILED` error: `details.reason: "library-build-changed"`, the Pages details (`sideEffects: "unknown"`).
  * @example
  * throw libraryBuildChangedFailure('examples/app', 'lib', 'packages/lib/src/core.ts')
@@ -353,14 +351,13 @@ export function libraryBuildChangedFailure(
   packageRoot: string,
   libraryName: string,
   file: string,
-  layer: PagesLibraryLayer = 'pages-dir-node',
 ): StudyError {
   const message = `The build of library ${libraryName} changed while the run was open (a module instance for ${file} carries other built text than the one checked before the start), so Codebook stopped it for packageRoot ${packageRoot}. Finish the rebuild yourself and start again; Codebook never builds.`
   return new StudyError(
     'RUNTIME_FAILED',
     message,
     message,
-    pagesLibraryRecoveryOf('library-build-changed', layer),
+    LIBRARY_RECOVERIES['library-build-changed'],
     undefined,
     {
       reason: 'library-build-changed',

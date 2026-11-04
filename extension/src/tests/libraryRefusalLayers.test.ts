@@ -65,34 +65,24 @@ test('a server-layer not-in-build refusal keeps the server compile wording', () 
   assert.deepEqual(explicit, byDefault)
 })
 
-// protects=the library-build-changed recovery is right for the browser layer (a module the page loaded) and unchanged for the server layer; fails_when=the browser recovery says the server module changed, or the server text changes; no_claim=the message text
-test('a library-build-changed recovery names the module the page loaded for the browser layer and keeps the server text otherwise', () => {
+// protects=the library-build-changed recovery reads right for a browser and a server library stop alike, also when the failure text is restored without its layer; fails_when=the recovery names the server module (wrong for a browser stop) or the page's module (wrong for a server stop); no_claim=the message text
+test('a library-build-changed recovery names the module the run executes, for every layer', () => {
   // Arrange
   const file = 'packages/lib/src/core.ts'
   // Act
-  const browser = libraryBuildChangedFailure(
-    'examples/app',
-    'lib',
-    file,
-    'pages-dir-browser',
-  ).describe()
-  const server = libraryBuildChangedFailure(
+  const failure = libraryBuildChangedFailure(
     'examples/app',
     'lib',
     file,
   ).describe()
   // Assert
   assert.ok(
-    browser.recovery.startsWith(
-      'The library was rebuilt, or the module the page loaded changed, during the run.',
+    failure.recovery.startsWith(
+      'The library was rebuilt, or the module the run executes changed, during the run.',
     ),
   )
-  assert.equal(browser.recovery.includes('server module'), false)
-  assert.ok(
-    server.recovery.startsWith(
-      'The library was rebuilt, or the server module changed, during the run.',
-    ),
-  )
+  assert.equal(failure.recovery.includes('server module'), false)
+  assert.equal(failure.recovery.includes('the page loaded'), false)
 })
 
 // protects=callers match the ambiguity errors by class, with their messages unchanged; fails_when=a message-only error is thrown or a message changes; no_claim=the seal mapping
