@@ -38,7 +38,7 @@ import { isAtOrInsideFolder } from './isAtOrInsideFolder'
 import { linksToRealFolder } from './linksToRealFolder'
 import { readRepositoryBuildText } from './readRepositoryBuildText'
 import { resolveArmedPlace } from './resolveArmedPlace'
-import type { ResolvedNextPackage } from './resolveNextPackage'
+import type { ResolvedPackage } from './resolveNextPackage'
 import { walkSourceMapSegments } from './walkSourceMapSegments'
 
 /** A workspace library the Next app imports through a link inside the repository, as {@link detectLibraryPackage} found it. */
@@ -51,9 +51,9 @@ export type LibraryPackage = Readonly<{
   realFolder: string
 }>
 
-/** The part of {@link ResolvedNextPackage} library detection reads: the app folder and the two ways to tell a path is inside it. */
+/** The part of {@link ResolvedPackage} (a Next or a Vite app) library detection reads: the app folder and the two ways to tell a path is inside it. */
 export type LibraryAppFolder = Pick<
-  ResolvedNextPackage,
+  ResolvedPackage,
   'packageRoot' | 'toPackageRelative' | 'toPackageRelativeByRealPath'
 >
 

@@ -107,16 +107,44 @@ const LIBRARY_NOTHING_STARTED =
 const LIBRARY_ENTRY_REQUESTED =
   "The entry had already been requested, so the page's data function may have run (details.sideEffects is unknown)."
 
+/** The sentence a Vite library recovery ends with for a refusal raised before the browser opened: the owned Vite server was started (it may have transformed modules into its own cache), but no page or app code ran and no file was written. */
+const LIBRARY_VITE_BEFORE_BROWSER =
+  'No browser was opened and no input was sent; the Vite server Codebook started was stopped, no page or application code ran and no file was written (details.sideEffects is none).'
+
+/** The sentence a Vite library recovery ends with for a refusal raised after the browser opened. */
+const LIBRARY_VITE_BROWSER_OPENED =
+  "The browser had already loaded the entry page, so the page's own code ran (details.sideEffects is unknown)."
+
+/** The body of the `library-build-stale` recovery, shared by both adapters; each adds its own ending. */
+const LIBRARY_STALE_BODY =
+  "A workspace library's build does not match its checked-out source (details.library names the package, details.file the stop file). Tell the learner to run the build script of that library themselves and ask for a new start; never run the build yourself, and never declare another stop to make the run succeed."
+
+/** The body of the `library-build-unmapped` recovery, shared by both adapters; each adds its own ending. */
+const LIBRARY_UNMAPPED_BODY =
+  "A workspace library's build cannot be tied to the stop file (details.library names the package, details.file the stop file, details.cause says why). Read details.cause and follow the section for it in the help; the cause decides whether a rebuild can help. Never run the build yourself, and do not retry with the same stop."
+
 /**
  * The static recovery of each library refusal, keyed by `details.reason`: fields only, because a recovery override reaches MCP unsanitized.
  * Each text matches the fix of the same reason in the repository-browser help and ends at that reason's own anchor.
  */
 const LIBRARY_RECOVERIES = {
-  'library-build-stale': `A workspace library's build does not match its checked-out source (details.library names the package, details.file the stop file). Tell the learner to run the build script of that library themselves and ask for a new start; never run the build yourself, and never declare another stop to make the run succeed. ${LIBRARY_NOTHING_STARTED} See ${libraryHelpAnchor('library-build-stale')}.`,
-  'library-build-unmapped': `A workspace library's build cannot be tied to the stop file (details.library names the package, details.file the stop file, details.cause says why). Read details.cause and follow the section for it in the help; the cause decides whether a rebuild can help. Never run the build yourself, and do not retry with the same stop. ${LIBRARY_NOTHING_STARTED} See ${libraryHelpAnchor('library-build-unmapped')}.`,
+  'library-build-stale': `${LIBRARY_STALE_BODY} ${LIBRARY_NOTHING_STARTED} See ${libraryHelpAnchor('library-build-stale')}.`,
+  'library-build-unmapped': `${LIBRARY_UNMAPPED_BODY} ${LIBRARY_NOTHING_STARTED} See ${libraryHelpAnchor('library-build-unmapped')}.`,
   'library-not-in-build': `The page's server code does not hold exactly one built file of the library that maps the stop (details.candidates lists them). Tell the learner, or choose a stop on a line the page's server code runs; do not start another run with the same stop. ${LIBRARY_ENTRY_REQUESTED} See ${libraryHelpAnchor('library-not-in-build')}.`,
   'library-place-ambiguous': `The library stop could not be tied to one source position. Declare the stop on a line that holds a single statement, after the line that declares the value it reads; do not start another run with the same stop. ${LIBRARY_ENTRY_REQUESTED} See ${libraryHelpAnchor('library-place-ambiguous')}.`,
   'library-build-changed': `The library was rebuilt, or the server module changed, during the run. Tell the learner to finish the rebuild and ask for a new start; never run the build yourself. ${LIBRARY_ENTRY_REQUESTED} See ${libraryHelpAnchor('library-build-changed')}.`,
+} as const
+
+/**
+ * The static recovery of each library refusal under `vite-dev` (a nested Vite app's browser stop in a workspace library), keyed by `details.reason`. The stale and unmapped bodies are the Next ones; the endings say what a Vite run had started.
+ * `library-place-ambiguous` is never raised under `vite-dev`, so it keeps the Next text.
+ */
+const VITE_LIBRARY_RECOVERIES = {
+  ...LIBRARY_RECOVERIES,
+  'library-build-stale': `${LIBRARY_STALE_BODY} ${LIBRARY_VITE_BEFORE_BROWSER} See ${libraryHelpAnchor('library-build-stale')}.`,
+  'library-build-unmapped': `${LIBRARY_UNMAPPED_BODY} When details.cause is lazy-import the library module is loaded only by the operation itself: declare the stop in code the entry page runs at load, or tell the learner; the browser had then loaded the entry page and details.sideEffects is unknown. For every other cause: ${LIBRARY_VITE_BEFORE_BROWSER} See ${libraryHelpAnchor('library-build-unmapped')}.`,
+  'library-not-in-build': `The modules the entry page loads do not hold exactly one served module of the library that maps the stop (details.candidates lists the module URLs when more than one matches). Tell the learner, or choose a stop in code the entry page runs from its own modules; do not start another run with the same stop. ${LIBRARY_VITE_BEFORE_BROWSER} See ${libraryHelpAnchor('library-not-in-build')}.`,
+  'library-build-changed': `The library's served module changed during the run (a rebuild, or a hot update of the module). Tell the learner to finish the rebuild and ask for a new start; never run the build yourself. ${LIBRARY_VITE_BROWSER_OPENED} See ${libraryHelpAnchor('library-build-changed')}.`,
 } as const
 
 /** The `details.reason` values {@link LIBRARY_RECOVERIES} answers. */
@@ -127,17 +155,30 @@ export type LibraryRecoveryReason = keyof typeof LIBRARY_RECOVERIES
  *
  * Why it exists: the refusal builders and {@link refusalFailureOf} must give the agent the same recovery whether the refusal was thrown or restored from a run's failure text.
  * @param reason - A library refusal `details.reason`.
+ * @param adapter - The adapter whose run raised it: the endings differ in what had started (`next` by default, `vite` for a nested Vite app's browser stop).
  * @returns The static recovery text, ending at the reason's own help anchor.
  * @example
  * libraryRecoveryOf('library-build-stale') // => "A workspace library's build does not match … See codebook://help/repository-browser#library-build-stale."
  */
-export function libraryRecoveryOf(reason: LibraryRecoveryReason): string {
-  return LIBRARY_RECOVERIES[reason]
+export function libraryRecoveryOf(
+  reason: LibraryRecoveryReason,
+  adapter: 'next' | 'vite' = 'next',
+): string {
+  return adapter === 'vite'
+    ? VITE_LIBRARY_RECOVERIES[reason]
+    : LIBRARY_RECOVERIES[reason]
 }
 
-/** Why a library's build could not be matched to a stop file; the `details.cause` of a `library-build-unmapped` refusal. */
+/** Why a library's build could not be matched to a stop file; the `details.cause` of a `library-build-unmapped` refusal. `prebundled` and `lazy-import` are raised only under `vite-dev`. */
 export type LibraryBuildUnmappedCause =
-  'no-map' | 'no-content' | 'no-line' | 'malformed' | 'bound' | 'deadline'
+  | 'no-map'
+  | 'no-content'
+  | 'no-line'
+  | 'malformed'
+  | 'bound'
+  | 'deadline'
+  | 'prebundled'
+  | 'lazy-import'
 
 /**
  * Builds the refusal of a library stop whose build is older than (or otherwise differs from) the checked-out source, raised by {@link freezeLibraryBuild} before any process starts.

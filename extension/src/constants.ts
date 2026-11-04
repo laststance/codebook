@@ -2806,6 +2806,12 @@ export const VITE_LAUNCHER_FACTS_TIMEOUT_MS = 30_000
 /** How long one request for a module the Vite dev server serves may take while a stop is sealed. */
 export const VITE_MODULE_FETCH_TIMEOUT_MS = 15_000
 
+/** The most bytes of the served entry `index.html` Codebook reads to list the page's module scripts for a library stop. */
+export const VITE_ENTRY_PAGE_LIMIT_BYTES = 1024 * 1024
+
+/** The most module scripts one entry page may list for a library stop's walk; more are ignored beyond this count. */
+export const VITE_ENTRY_MODULE_SCRIPT_LIMIT_COUNT = 100
+
 /** The longest `node --version` may take when a run's Node executable is checked. */
 export const NODE_VERSION_TIMEOUT_MS = 10_000
 

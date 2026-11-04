@@ -1,5 +1,6 @@
 import { join } from 'node:path'
 
+import { VITE_LIBRARY_WALK_ANSWER_TIMEOUT_MS } from './constants'
 import type { DevelopmentServerAdapter } from './developmentServerAdapter'
 import { assessViteWorkspace } from './utils/assessViteWorkspace'
 import { awaitViteOptimizerIdle } from './utils/awaitViteOptimizerIdle'
@@ -7,6 +8,8 @@ import { isViteScriptOfModule } from './utils/isViteScriptOfModule'
 import { launchViteDevelopmentServer } from './utils/launchViteDevelopmentServer'
 import { readViteServedModule } from './utils/readViteServedModule'
 import type { ResolvedVitePackage } from './utils/resolveVitePackage'
+import { sealViteLibraryStop } from './utils/sealViteLibraryStop'
+import { requestViteLibraryModules } from './utils/viteLibraryModules'
 import { viteOutsidePackageRefusal } from './viteRefusals'
 
 /**
@@ -56,8 +59,28 @@ export const VITE_DEV_ADAPTER: DevelopmentServerAdapter = {
   // Vite has no development lock.
   readOwnedLock: async () => undefined,
   waitForServerSettled: awaitViteOptimizerIdle,
+  walkLibraryModules: (app, request, signal) =>
+    requestViteLibraryModules(
+      app,
+      request,
+      VITE_LIBRARY_WALK_ANSWER_TIMEOUT_MS,
+      signal,
+    ),
   readBundle: async (request) => {
     const { vitePackage } = request
+    // A stop in a workspace library is sealed from the served module whose map names its file, not from the app's own module of that path.
+    if (request.viteLibrary && vitePackage && !vitePackage.isRoot)
+      return sealViteLibraryStop({
+        appRoot: vitePackage.packageRoot,
+        packageRootRelative: vitePackage.packageRootRelative,
+        library: request.viteLibrary.library,
+        repositoryRoot: vitePackage.repositoryRoot,
+        source: request.source,
+        citationEndLine: request.citationEndLine,
+        ownedOrigin: request.ownedOrigin,
+        moduleSource: request.viteLibrary.moduleSource,
+        signal: request.signal,
+      })
     // A nested app is sealed in its own folder under the stop's package-relative path; a root run keeps the repository root and the declared path.
     if (vitePackage && !vitePackage.isRoot) {
       const packageRelativePath = vitePackage.toPackageRelative(
@@ -88,6 +111,8 @@ export const VITE_DEV_ADAPTER: DevelopmentServerAdapter = {
     webRoot: workspace,
     sourceMaps: true,
     perScriptSourcemaps: 'yes',
+    // A workspace library outside the app's root is served as /@fs/<absolute path>: the debugger binds a source breakpoint there only when it maps that prefix to the disk (Cycle 0078 E1).
+    pathMapping: { '/@fs/': '/' },
   }),
   isScriptOfModule: isViteScriptOfModule,
 }

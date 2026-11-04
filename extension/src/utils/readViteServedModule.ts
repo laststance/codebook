@@ -34,11 +34,84 @@ const servedMapSchema = z.object({
   sourceRoot: z.literal('').optional(),
 })
 
-/** Ends a seal with the `VITE_SEAL_FAILED` refusal that names the stop, the reason and the fix; the optional way out replaces the generic advice for a refusal that has its own. */
-type Refuse = (reason: string, wayOut?: string) => never
+/** What the single inline map of a served module is: absent, unusable (with the problem) or a parsed flat version 3 map. */
+export type InlineServedMap =
+  | { status: 'none'; count: number }
+  | {
+      status: 'invalid'
+      problem: 'count' | 'oversized' | 'utf8' | 'schema'
+      count: number
+    }
+  | { status: 'map'; map: z.infer<typeof servedMapSchema> }
 
-/** Resolves one entry of a served map's `sources` to an absolute path of the package, or an absolute address for another origin; a malformed escape ends the seal through `refuse`. */
-async function absoluteSourceOf(
+/**
+ * Reads the one inline source map of a served module without judging what it names.
+ *
+ * Why it exists: the seal of an app stop ({@link normalizeServedMap}) and the choice among a library's served modules ({@link selectViteLibraryCandidate}) must decode a served map the same way. Called by both.
+ * @param javascript - The served module.
+ * @returns `none` when the module has no inline map; `invalid` for several maps, an oversized or non-base64 map, non-UTF-8 JSON, or a map that is not a flat version 3 map; otherwise the parsed map.
+ * @example
+ * readInlineServedMap('export {}\n') // => { status: 'none', count: 0 }
+ */
+export function readInlineServedMap(javascript: string): InlineServedMap {
+  const encodedMaps = [...javascript.matchAll(INLINE_MAP)]
+  const count = encodedMaps.length
+  if (count === 0) return { status: 'none', count }
+  if (count !== 1) return { status: 'invalid', problem: 'count', count }
+  const encoded = encodedMaps[0]![1]!
+  const mapBytes = Buffer.from(encoded, 'base64')
+  if (
+    mapBytes.byteLength > REPOSITORY_MAP_LIMIT_BYTES ||
+    mapBytes.toString('base64') !== encoded
+  )
+    return { status: 'invalid', problem: 'oversized', count }
+  // Non-UTF-8 or non-JSON bytes are a coded refusal, not a raw TypeError/SyntaxError
+  let mapJson: unknown
+  try {
+    mapJson = JSON.parse(
+      new TextDecoder('utf-8', { fatal: true }).decode(mapBytes),
+    )
+  } catch {
+    return { status: 'invalid', problem: 'utf8', count }
+  }
+  const parsed = servedMapSchema.safeParse(mapJson)
+  return parsed.success
+    ? { status: 'map', map: parsed.data }
+    : { status: 'invalid', problem: 'schema', count }
+}
+
+/**
+ * Words why a served module's inline map is unusable, for the seal's refusal.
+ * @param inline - A reading that is not a map.
+ * @param url - The module's address.
+ * @returns The sentence, without a final period.
+ * @example
+ * inlineMapProblem({ status: 'none', count: 0 }, 'http://127.0.0.1:1/a.js') // => 'http://127.0.0.1:1/a.js has 0 inline source maps, not exactly one'
+ */
+function inlineMapProblem(
+  inline: Exclude<InlineServedMap, { status: 'map' }>,
+  url: string,
+): string {
+  if (inline.status === 'none' || inline.problem === 'count')
+    return `${url} has ${inline.count} inline source maps, not exactly one`
+  if (inline.problem === 'oversized')
+    return `the inline map of ${url} is oversized or malformed`
+  return inline.problem === 'utf8'
+    ? `the inline source map of ${url} is not valid UTF-8 JSON`
+    : `the inline map of ${url} is not a flat version 3 map`
+}
+
+/** Ends a seal with the `VITE_SEAL_FAILED` refusal that names the stop, the reason and the fix; the optional way out replaces the generic advice for a refusal that has its own. */
+export type Refuse = (reason: string, wayOut?: string) => never
+
+/** The path prefix under which Vite serves a file outside the app's root by its absolute path. */
+const VITE_FS_PREFIX = '/@fs/'
+
+/**
+ * Resolves one entry of a served map's `sources` to an absolute path of the package, or an absolute address for another origin; a malformed escape ends the seal through `refuse`.
+ * An entry that resolves to `/@fs/<absolute path>` (a workspace library's file, served outside the app's root) is that absolute path, as the browser's debugger maps it.
+ */
+export async function absoluteSourceOf(
   source: string,
   moduleUrl: string,
   packageRoot: string,
@@ -56,7 +129,10 @@ async function absoluteSourceOf(
       `the inline map of ${moduleUrl} has the source entry ${JSON.stringify(source)}, which is not a valid URL path`,
     )
   }
-  const path = join(packageRoot, ...decoded.split('/'))
+  // `/@fs/<absolute>` names the file by its absolute path; a Windows drive keeps no leading slash.
+  const path = decoded.startsWith(VITE_FS_PREFIX)
+    ? decoded.slice(VITE_FS_PREFIX.length - 1).replace(/^\/([A-Za-z]:\/)/, '$1')
+    : join(packageRoot, ...decoded.split('/'))
   return realpath(path).catch(() => path)
 }
 
@@ -81,7 +157,7 @@ function servedProblemOf(response: Response, url: string): string | undefined {
  * @param refuse - Ends the seal with a sentence.
  * @returns The served text, unchanged.
  */
-async function fetchServedModule(
+export async function fetchServedModule(
   address: ViteModuleAddress,
   signal: AbortSignal,
   refuse: Refuse,
@@ -123,42 +199,17 @@ async function fetchServedModule(
  * @param refuse - Ends the seal with a sentence.
  * @returns The normalized map as JSON text.
  */
-async function normalizeServedMap(
+export async function normalizeServedMap(
   javascript: string,
   address: ViteModuleAddress,
   sourceText: string,
   packageRoot: string,
   refuse: Refuse,
 ): Promise<string> {
-  const encodedMaps = [...javascript.matchAll(INLINE_MAP)]
-  if (encodedMaps.length !== 1)
-    refuse(
-      `${address.url} has ${encodedMaps.length} inline source maps, not exactly one`,
-    )
-  const encoded = encodedMaps[0]![1]!
-  const mapBytes = Buffer.from(encoded, 'base64')
-  if (
-    mapBytes.byteLength > REPOSITORY_MAP_LIMIT_BYTES ||
-    mapBytes.toString('base64') !== encoded
-  )
-    refuse(`the inline map of ${address.url} is oversized or malformed`)
-  // Non-UTF-8 or non-JSON bytes are a coded refusal, not a raw TypeError/SyntaxError
-  let mapJson: unknown
-  try {
-    mapJson = JSON.parse(
-      new TextDecoder('utf-8', { fatal: true }).decode(mapBytes),
-    )
-  } catch {
-    return refuse(
-      `the inline source map of ${address.url} is not valid UTF-8 JSON`,
-    )
-  }
-  const parsed = servedMapSchema.safeParse(mapJson)
-  if (!parsed.success)
-    return refuse(
-      `the inline map of ${address.url} is not a flat version 3 map`,
-    )
-  const map = parsed.data
+  const inline = readInlineServedMap(javascript)
+  if (inline.status !== 'map')
+    return refuse(inlineMapProblem(inline, address.url))
+  const { map } = inline
   const sources = await Promise.all(
     map.sources.map((entry) =>
       absoluteSourceOf(entry, address.url, packageRoot, refuse),
