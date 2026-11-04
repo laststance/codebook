@@ -209,6 +209,52 @@ async function answerLibraryModules(
 }
 
 /**
+ * Answers one command the extension sends after the launcher listens: the optimizer wait or the library module walk.
+ *
+ * Why it exists: the listening launcher keeps answering commands for the whole run, and each answer runs asynchronously so a long walk never blocks the next command. Called by the launcher's `process.on('message')` handler for every valid command; `listen` and `refuse` mean nothing after listening and are ignored.
+ *
+ * @param server - The listening Vite dev server.
+ * @param command - A command {@link isViteLauncherCommand} accepted.
+ * @param send - Sends one report to the extension over IPC.
+ * @example
+ * answerListeningCommand(server, { type: 'vite-await-optimizer' }, send) // later sends { type: 'vite-optimizer-idle' }
+ */
+function answerListeningCommand(
+  server: ViteServer,
+  command: ViteLauncherCommand,
+  send: (report: ViteLauncherReport) => Promise<void>,
+): void {
+  if (command.type === VITE_LAUNCHER_MESSAGES.awaitOptimizer) {
+    void answerOptimizerIdle(server, send)
+    return
+  }
+  // Async, so a long walk never blocks the other commands.
+  if (command.type === VITE_LAUNCHER_MESSAGES.libraryModules)
+    void answerLibraryModules(server, command, send)
+}
+
+/**
+ * Reports `vite-optimizer-idle` once Vite's dependency optimizer has nothing left to process, also when the wait fails.
+ *
+ * Why it exists: the extension waits for the optimizer before it writes the run's inputs, and a failed wait must still answer so the extension never hangs. Called by {@link answerListeningCommand}.
+ *
+ * @param server - The listening Vite dev server.
+ * @param send - Sends one report to the extension over IPC.
+ * @returns Settles after the report was sent.
+ * @example
+ * await answerOptimizerIdle(server, send) // sends { type: 'vite-optimizer-idle' }
+ */
+async function answerOptimizerIdle(
+  server: ViteServer,
+  send: (report: ViteLauncherReport) => Promise<void>,
+): Promise<void> {
+  await waitForViteOptimizerIdle(
+    server.environments?.client?.depsOptimizer,
+  ).catch(() => undefined)
+  await send({ type: VITE_LAUNCHER_MESSAGES.optimizerIdle })
+}
+
+/**
  * The owned Vite launcher: runs inside the app's package root under the run's Node, imports the app's own Vite, creates its dev server exactly as Vite's CLI `dev` does, reports the facts of the resolved config over IPC, listens only when the extension says so, and prints the URLs for the readiness check.
  *
  * Why it exists: the config is evaluated once, and the policy is judged on the config the server really uses. Spawned by {@link launchViteDevelopmentServer} with a Node IPC channel; this module runs on load and is never imported by the extension.
@@ -312,17 +358,8 @@ async function run(): Promise<void> {
     // From now on the extension may ask when the dependency optimizer is idle, before it writes its inputs.
     const listeningServer = server
     process.on('message', (message) => {
-      if (!isViteLauncherCommand(message)) return
-      if (message.type === VITE_LAUNCHER_MESSAGES.awaitOptimizer) {
-        void waitForViteOptimizerIdle(
-          listeningServer.environments?.client?.depsOptimizer,
-        )
-          .catch(() => undefined)
-          .then(() => send({ type: VITE_LAUNCHER_MESSAGES.optimizerIdle }))
-      } else if (message.type === VITE_LAUNCHER_MESSAGES.libraryModules) {
-        // Async, so a long walk never blocks the other commands.
-        void answerLibraryModules(listeningServer, message, send)
-      }
+      if (isViteLauncherCommand(message))
+        answerListeningCommand(listeningServer, message, send)
     })
     const address = server.httpServer?.address()
     await send({
