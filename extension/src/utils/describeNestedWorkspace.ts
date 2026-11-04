@@ -43,10 +43,10 @@ export function describeNestedWorkspace(
 /**
  * Words the adapter-aware recovery of a workspace opened below the Git root.
  *
- * The opened folder cannot run anything: source authoring refuses every adapter there. A Next app runs from the repository root with `packageRoot` set to the folder's repository-relative path; the other adapters do not support a folder below the root yet.
+ * The opened folder cannot run anything: source authoring refuses every adapter there. A Next app (next-dev-webpack) or, since API 1.20, a Vite app (vite-dev) runs from the repository root with `packageRoot` set to the folder's repository-relative path; node-server, node-test and chrome-extension have no `packageRoot` to declare.
  *
  * @param nested - The names from {@link describeNestedWorkspace}.
- * @returns One sentence-group the chat can follow without guessing: the Git root's folder name, the exact `packageRoot`, the instruction to ask the learner to open that folder and not to retry in this window, and what other adapters can do.
+ * @returns One sentence-group the chat can follow without guessing: the Git root's folder name, the exact `packageRoot`, the instruction to ask the learner to open that folder and not to retry in this window, and what the adapters without a `packageRoot` need.
  * @example describeNestedWorkspaceRecovery({ gitRootName: 'p02', packageRoot: 'examples/react/nextjs' }) // => 'This folder lies inside the Git repository "p02" …'
  */
 export function describeNestedWorkspaceRecovery(
@@ -58,7 +58,7 @@ export function describeNestedWorkspaceRecovery(
   const declaration = nested.packageRoot
     ? `with packageRoot "${nested.packageRoot}"`
     : "with packageRoot set to the opened folder's repository-relative path"
-  return `This folder lies inside the Git repository "${nested.gitRootName}"${folder}, and source authoring refuses it for every adapter, so no run can be set up from it. Ask the learner to open the "${nested.gitRootName}" folder (the repository root) in the editor; do not retry in this window. A Next app (next-dev-webpack) then runs from the repository root ${declaration}. Other adapters (vite-dev, node-server, node-test, chrome-extension) have no packageRoot to declare: they also need the repository root opened.`
+  return `This folder lies inside the Git repository "${nested.gitRootName}"${folder}, and source authoring refuses it for every adapter, so no run can be set up from it. Ask the learner to open the "${nested.gitRootName}" folder (the repository root) in the editor; do not retry in this window. A Next app (next-dev-webpack) or a Vite app (vite-dev) then runs from the repository root ${declaration}. Other adapters (node-server, node-test, chrome-extension) have no packageRoot to declare: they also need the repository root opened.`
 }
 
 /**
