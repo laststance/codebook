@@ -1,5 +1,41 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, symlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+
+/** The repository-relative folder of the stand-in workspace library of {@link writeNestedViteLibrary}. */
+export const NESTED_VITE_LIBRARY_FOLDER = 'packages/core'
+
+/** The `name` of the stand-in workspace library. */
+export const NESTED_VITE_LIBRARY_NAME = '@scope/core'
+
+/** The repository-relative path of the library's source file the stop is declared in. */
+export const NESTED_VITE_LIBRARY_SOURCE_PATH = 'packages/core/src/a.ts'
+
+/** The repository-relative path of the library's built module, whose inline map names `src/a.ts`. */
+export const NESTED_VITE_LIBRARY_BUILT_PATH = 'packages/core/build/modern/a.js'
+
+/**
+ * Builds the text Vite serves for a library's built module: the executed statement and an inline map that names the library's source file with its text, as Vite serves a workspace library whose build carries `sourcesContent`.
+ * @param sourceText - The text the map retains for `../../src/a.ts`.
+ * @param executedStatement - The module's JavaScript before the map comment.
+ * @param mappings - The map's VLQ `mappings` (generated 0:0 to source 1:1 by default).
+ * @returns The served module text.
+ * @example
+ * servedViteLibraryModule('export const a = 1\n', 'const nextTheme = "dark";') // => 'const nextTheme = "dark";\n//# sourceMappingURL=data:application/json;base64,…'
+ */
+export function servedViteLibraryModule(
+  sourceText: string,
+  executedStatement: string,
+  mappings = 'AAAA',
+): string {
+  const map = JSON.stringify({
+    version: 3,
+    sources: ['../../src/a.ts'],
+    sourcesContent: [sourceText],
+    names: [],
+    mappings,
+  })
+  return `${executedStatement}\n//# sourceMappingURL=data:application/json;base64,${Buffer.from(map).toString('base64')}`
+}
 
 /** The `dev` script of a nested stand-in Vite app: one Codebook accepts, on the port its own package declares. */
 export const NESTED_VITE_DEV_SCRIPT = 'vite --port 4321'
@@ -72,4 +108,36 @@ export async function writeNestedVitePackage(input: {
     NESTED_VITE_DEV_SCRIPT,
     input.envText,
   )
+}
+
+/**
+ * Writes a workspace library next to a nested Vite app: `package.json`, `src/a.ts`, a `build/modern/a.js` whose inline map names the source, and (unless `linked` is false) the app's `node_modules` link to the library.
+ *
+ * Why it exists: Cycle 0078 integration tests need a library the app reaches through a link inside the repository, with a build mapped to its `src/`. Used by `configuredRuntimeHarness` for a Vite library stop.
+ * @param input - `repositoryDirectory` and `packageDirectory` absolute folders, the library source text, the served module text and whether the app links to the library.
+ * @example await writeNestedViteLibrary({ repositoryDirectory, packageDirectory, sourceText, servedModule, linked: true })
+ */
+export async function writeNestedViteLibrary(input: {
+  repositoryDirectory: string
+  packageDirectory: string
+  sourceText: string
+  servedModule: string
+  linked?: boolean
+}): Promise<void> {
+  const library = join(input.repositoryDirectory, NESTED_VITE_LIBRARY_FOLDER)
+  await put(
+    library,
+    'package.json',
+    JSON.stringify({ name: NESTED_VITE_LIBRARY_NAME }),
+  )
+  await put(library, 'src/a.ts', input.sourceText)
+  await put(library, 'build/modern/a.js', input.servedModule)
+  if (input.linked === false) return
+  const link = join(
+    input.packageDirectory,
+    'node_modules',
+    NESTED_VITE_LIBRARY_NAME,
+  )
+  await mkdir(dirname(link), { recursive: true })
+  await symlink(library, link)
 }

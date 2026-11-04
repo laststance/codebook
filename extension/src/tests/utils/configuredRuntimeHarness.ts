@@ -77,7 +77,12 @@ import {
 } from './loadConstantsWith'
 import { loadModule } from './loadModule'
 import { writeDecoyNextApp, writeNestedPackage } from './nestedNextWorkspace'
-import { writeNestedVitePackage } from './nestedViteWorkspace'
+import {
+  NESTED_VITE_LIBRARY_BUILT_PATH,
+  servedViteLibraryModule,
+  writeNestedViteLibrary,
+  writeNestedVitePackage,
+} from './nestedViteWorkspace'
 import {
   writeNextPagesWorkspace,
   type NextPagesHarnessOptions,
@@ -86,6 +91,7 @@ import {
 import { repositoryHarness } from './repositoryHarness'
 import { createServerParticipant } from './serverRenderParticipant'
 import { sourceBreakpointRequest } from './sourceBreakpointRequest'
+import { startViteLibraryServer } from './viteLibraryServer'
 
 /** What the owned page reports for a condition that does not hold; `textDifference` is left open so a test can send a value the run must refuse. */
 interface BeforeFailure {
@@ -110,6 +116,37 @@ export interface FakeControl {
   multiple?: boolean
   /** The options of a select. */
   options?: { value: string; disabled?: boolean }[]
+}
+
+/**
+ * Writes the workspace library of a Vite library stop and starts the loopback server that serves it, for {@link configuredRuntimeHarness}.
+ * @param input - The repository and app folders, the library source text and whether the app's link to the library is left out.
+ * @returns The server, the served module text, and the served path of the library module (without a query).
+ * @example const library = await stageViteLibrary({ repositoryDirectory, packageDirectory, sourceText })
+ */
+async function stageViteLibrary(input: {
+  repositoryDirectory: string
+  packageDirectory: string
+  sourceText: string
+  mappings: string
+  unlinked?: boolean
+}) {
+  const servedModule = servedViteLibraryModule(
+    input.sourceText,
+    'const nextTheme = "dark";',
+    input.mappings,
+  )
+  await writeNestedViteLibrary({
+    repositoryDirectory: input.repositoryDirectory,
+    packageDirectory: input.packageDirectory,
+    sourceText: input.sourceText,
+    servedModule,
+    linked: !input.unlinked,
+  })
+  const realRepository = await realpath(input.repositoryDirectory)
+  const moduleRoute = `/@fs${realRepository}/${NESTED_VITE_LIBRARY_BUILT_PATH}`
+  const server = await startViteLibraryServer(moduleRoute, servedModule)
+  return { server, servedModule, moduleRoute }
 }
 
 /** The source of a fixture that gives none: one statement on line 1 and an empty line 2, declared with `var` so that the stop on line 1, which requires value:nextTheme, stays on its declared line. */
@@ -238,6 +275,15 @@ export async function configuredRuntimeHarness(
      * Runs a nested Next app at this repository-relative folder (Issue 192), the one way to declare a nested package in this harness: the version 3 configuration (with `operations`) declares `packageRoot` last, the folder gets a `package.json` and a Next installation, the first cited source moves below it (unless `sourcePath` names one, which must then lie inside it), and with `nextPages` the Pages project (`.next/dev`, chunks) is written under it instead of at the repository root. Module ids Next prints name the package-relative path; stops keep their repository-relative path.
      */
     packageRoot?: string
+    /**
+     * Stages a workspace library a nested Vite app reaches (Cycle 0078): the first cited source moves to `packages/core/src/a.ts` outside the app, the library gets a build mapped to it and a link from the app, and a loopback server serves the entry page and the library module under `/@fs/`. A library stop is then sealed by the real Vite adapter from that server, while the debugger stays scripted; the stand-in launcher's walk lists the library module. Only with `adapter: "vite-dev"` and `packageRoot`.
+     */
+    viteLibrary?: {
+      /** Leaves the page's scripts unannounced for the library module, as a module that only the operation loads (`import()` in a click handler) is. */
+      lazy?: boolean
+      /** Leaves the app's `node_modules` link to the library out, so the app does not reach it. */
+      unlinked?: boolean
+    }
     /** Variations of the nested app declared by `packageRoot`. */
     packageApp?: {
       /** Writes a different Next app at the repository root: `pages/`, `app/`, `package.json` (another port and `dev` script), `node_modules/next` and `.next` whose contents differ from the package's, so a read of the wrong root yields another value. */
@@ -513,6 +559,17 @@ export async function configuredRuntimeHarness(
       withNext: !options.nextPages,
       next: options.packageApp?.next ?? 'package',
     })
+  // A Vite library stop: the library, its build and the loopback server the real seal fetches from.
+  const viteLibrary = options.viteLibrary
+    ? await stageViteLibrary({
+        repositoryDirectory: repository.directory,
+        packageDirectory,
+        sourceText: reference.descriptor!.sources[0]!.text,
+        mappings: additionalStops.length ? 'AAAA,MAAM' : 'AAAA',
+        unlinked: options.viteLibrary.unlinked,
+      })
+    : undefined
+  if (viteLibrary) context.after(() => viteLibrary.server.close())
   // A declared alias is a link inside the repository that points at the folder holding the app.
   if (packageFolder && packageRootDeclared !== packageFolder) {
     await mkdir(dirname(join(repository.directory, packageRootDeclared!)), {
@@ -537,7 +594,7 @@ export async function configuredRuntimeHarness(
   const scrollExpression = configuredScrollExpression(declaredAction.selector)
   // A Pages server stop is sealed from the build's real path (its maps name the canonical workspace), so the editor's breakpoints and the debugger's frames name that path too.
   const sourceRoot =
-    options.nextPages && options.serverRuntime
+    (options.nextPages && options.serverRuntime) || viteLibrary
       ? await realpath(repository.directory)
       : repository.directory
   const sourcePath = library
@@ -547,6 +604,7 @@ export async function configuredRuntimeHarness(
     // With a fixture the executed module mirrors the source line for line, so a pause can be placed on any of its lines; a Pages page executes the eval module of its chunk.
     baseJavascript =
       options.moduleJavascript ??
+      viteLibrary?.servedModule ??
       pagesBuild?.moduleJavascript ??
       (fixture ? source : 'const nextTheme = "dark";'),
     javascript = options.serverModuleSourceUrl
@@ -565,11 +623,13 @@ export async function configuredRuntimeHarness(
         options.mappings ?? (additionalStops.length ? 'AAAA,MAAM' : 'AAAA'),
     }),
     mapSource: sourcePath,
-    scriptUrl: options.adapter
-      ? 'http://127.0.0.1:4321/src/theme.ts'
-      : options.nextPages
-        ? `webpack-internal:///(pages-dir-browser)/./${packageSourcePath}`
-        : `webpack-internal:///(app-pages-browser)/./${packageSourcePath}`,
+    scriptUrl: viteLibrary
+      ? `${viteLibrary.server.origin}${viteLibrary.moduleRoute}?v=v1`
+      : options.adapter
+        ? 'http://127.0.0.1:4321/src/theme.ts'
+        : options.nextPages
+          ? `webpack-internal:///(pages-dir-browser)/./${packageSourcePath}`
+          : `webpack-internal:///(app-pages-browser)/./${packageSourcePath}`,
     chunkPath: join(packageDirectory, '.next/dev/chunk.js'),
     chunkHash: '0'.repeat(64),
   }
@@ -598,6 +658,9 @@ export async function configuredRuntimeHarness(
   const setupSteps: string[] = []
   // The text of the module the Vite stand-in serves now; {@link serveChangedModule} replaces it, as a dependency-optimizer reload does.
   let servedJavascript = javascript
+  // The walks the Vite stand-in launcher answered for a library stop, and the `?v=` hash its listing names now ({@link setLibraryVersion}).
+  const libraryWalks: { entries: string[]; libraryFolder: string }[] = []
+  let libraryVersion = 'v1'
   // The seal refusal the Vite stand-in gives from now on; {@link refuseLaterSeals} sets it.
   let laterSealRefusal: string | undefined
   // How many times the run asked the Vite stand-in whether the server is settled, and the hold on its answer.
@@ -665,7 +728,14 @@ export async function configuredRuntimeHarness(
   /** The timeout each `Page.navigate` request asked for (`undefined`: the channel's own default). */
   const navigateTimeouts: (number | undefined)[] = []
   let closeAttempts = 0
-  const serverOrigin = options.serverOrigin ?? 'http://127.0.0.1:4321'
+  const serverOrigin =
+    viteLibrary?.server.origin ??
+    options.serverOrigin ??
+    'http://127.0.0.1:4321'
+  // The loopback name the browser opens the owned server by; a Vite library stop's server listens on a free port.
+  const localhostOrigin = viteLibrary
+    ? `http://localhost:${new URL(serverOrigin).port}`
+    : 'http://localhost:4321'
   const savedLease: SavedSessionRunLease = {
     profile: '/stand-in/Application Support/sign-in-profiles/0123abcd',
     setupAt: '2026-11-02T00:00:00.000Z',
@@ -716,7 +786,7 @@ export async function configuredRuntimeHarness(
     removedAck = true,
     bound = false,
     rejectBinding = false,
-    pageOrigin = 'http://127.0.0.1:4321',
+    pageOrigin = viteLibrary?.server.origin ?? 'http://127.0.0.1:4321',
     executedScriptSource: string | undefined,
     ready = true,
     beforeFailure: BeforeFailure = { conditionIndex: 0, reason: 'not-visible' },
@@ -1332,7 +1402,7 @@ export async function configuredRuntimeHarness(
           listeners.get('Page.frameNavigated')?.({
             frame: {
               id: 'main',
-              url: `http://localhost:4321${landing}`,
+              url: `${localhostOrigin}${landing}`,
               loaderId: `loader-${++navigationCount}`,
             },
           })
@@ -1372,11 +1442,13 @@ export async function configuredRuntimeHarness(
         }
         // js-debug can resume internal source-map stops without exposing a DAP stop.
         if (emitPreparationResume) emitCdpPause()
-        listeners.get('Debugger.scriptParsed')?.({
-          scriptId: 'actual',
-          url: bundle.scriptUrl,
-          executionContextId: 1,
-        })
+        // A library module that only the operation loads is not parsed with the page.
+        if (!options.viteLibrary?.lazy)
+          listeners.get('Debugger.scriptParsed')?.({
+            scriptId: 'actual',
+            url: bundle.scriptUrl,
+            executionContextId: 1,
+          })
         if (emitPreparationResume) {
           listeners.get('Debugger.resumed')?.({})
           emitCdpPause()
@@ -2031,6 +2103,19 @@ export async function configuredRuntimeHarness(
                 : {}),
             }
           },
+          // The stand-in launcher lists the one library module the server serves, under the hash of the moment.
+          walkLibraryModules: async (
+            _app: unknown,
+            request: { entries: string[]; libraryFolder: string },
+          ) => {
+            libraryWalks.push(request)
+            return {
+              modules: viteLibrary
+                ? [`${viteLibrary.moduleRoute}?v=${libraryVersion}`]
+                : [],
+              optimizedLibrary: false,
+            }
+          },
           waitForServerSettled: async (_app: unknown, timeoutMs: number) => {
             settledQuestions += 1
             settledTimeoutsMs.push(timeoutMs)
@@ -2047,18 +2132,24 @@ export async function configuredRuntimeHarness(
               }),
             ])
           },
-          readBundle: async (request: {
-            signal: AbortSignal
-            workspace: string
-            vitePackage?: { packageRoot: string }
-            source: { path: string }
-          }) => {
+          readBundle: async (
+            request: Parameters<
+              typeof viteDevAdapter.VITE_DEV_ADAPTER.readBundle
+            >[0],
+          ) => {
             viteRequests.sealed.push({
               workspace: request.workspace,
               packageRoot: request.vitePackage?.packageRoot,
               sourcePath: request.source.path,
             })
             sealReads += 1
+            // A library stop is sealed by the real adapter from the loopback server; the page then announces the module under its sealed address.
+            if (request.viteLibrary) {
+              const sealed =
+                await viteDevAdapter.VITE_DEV_ADAPTER.readBundle(request)
+              bundle.scriptUrl = sealed.bundle.scriptUrl
+              return sealed
+            }
             if (options.sealFailure) throw new Error(options.sealFailure)
             if (laterSealRefusal !== undefined)
               throw new StudyError(
@@ -2276,7 +2367,7 @@ export async function configuredRuntimeHarness(
     /** Reports that the page reached this path of the run's origin, or this absolute URL on its own origin (an external sign-in page, Chrome's error page), as a redirect does: a full document load, or a client-side navigation inside the document. @example harness.landOn('/login', 'document') */
     landOn(path: string, kind: 'document' | 'within-document'): void {
       const onRunOrigin = path.startsWith('/')
-      const url = onRunOrigin ? `http://localhost:4321${path}` : path
+      const url = onRunOrigin ? `${localhostOrigin}${path}` : path
       // The page's pathname has no query; the event's URL keeps it, as a redirect to sign-in carries a callback.
       pagePathname = new URL(url).pathname
       if (!onRunOrigin) pageOrigin = new URL(url).origin
@@ -2335,7 +2426,7 @@ export async function configuredRuntimeHarness(
     /** Reports another main-frame page load, as a Vite dependency-optimizer reload or a click's navigation does. @example harness.reloadPage() */
     reloadPage(): void {
       listeners.get('Page.frameNavigated')?.({
-        frame: { id: 'main', url: 'http://localhost:4321/' },
+        frame: { id: 'main', url: `${localhostOrigin}/` },
       })
     },
     /** The timeout each `Page.navigate` request asked for, in order (`undefined`: the channel's own default). */
@@ -2352,7 +2443,7 @@ export async function configuredRuntimeHarness(
       listeners.get('Page.frameNavigated')?.({
         frame: {
           id: 'main',
-          url: `http://localhost:4321${path}`,
+          url: `${localhostOrigin}${path}`,
           loaderId: `loader-${++navigationCount}`,
         },
       })
@@ -2367,7 +2458,7 @@ export async function configuredRuntimeHarness(
         frame: {
           id: 'child',
           parentId: 'main',
-          url: 'http://localhost:4321/x',
+          url: `${localhostOrigin}/x`,
         },
       })
     },
@@ -2394,6 +2485,24 @@ export async function configuredRuntimeHarness(
     /** Ends the pending optimizer wait as the launcher's own wait does when its bound passes: with the uncoded wait timeout. @example harness.expireOptimizerWait() */
     expireOptimizerWait(): void {
       expireOptimizerWait()
+    },
+    /** The Vite library stop's stand-in launcher and server (Cycle 0078); absent without the `viteLibrary` option. */
+    viteLibrary: viteLibrary && {
+      /** Every walk the run asked the stand-in launcher for, in order. */
+      walks: libraryWalks,
+      /** Makes the stand-in launcher list the library module under this `?v=` hash from now on, as a dependency-optimizer reload does. @example harness.viteLibrary?.setVersion('v2') */
+      setVersion(version: string): void {
+        libraryVersion = version
+      },
+      /** Serves this module text from the loopback server from now on (a rebuild). @example harness.viteLibrary?.setModuleText('…') */
+      setModuleText(text: string): void {
+        viteLibrary.server.setModuleText(text)
+      },
+      /** The served module text the harness started with. */
+      servedModule: viteLibrary.servedModule,
+      /** The module's served address under the hash the stand-in launcher lists now. */
+      moduleAddress: (version = libraryVersion): string =>
+        `${viteLibrary.server.origin}${viteLibrary.moduleRoute}?v=${version}`,
     },
     /** How many times the run read a stop module from the Vite stand-in. */
     sealReadCount(): number {
