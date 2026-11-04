@@ -1,0 +1,217 @@
+{
+  "version": 9,
+  "workspaceKey": "0000000000000000000000000000000000000000000000000000000000000000",
+  "id": "c346f8e7-6cc6-43d7-b7bf-a27b50bcff2a_545b8101-b512-407e-9e86-e19d43cd9ff5",
+  "instanceId": "c346f8e7-6cc6-43d7-b7bf-a27b50bcff2a",
+  "runId": "545b8101-b512-407e-9e86-e19d43cd9ff5",
+  "profile": "repository-browser",
+  "createdAt": "2026-11-04T18:34:03.683Z",
+  "savedAt": "2026-11-04T18:34:04.049Z",
+  "state": "completed",
+  "terminal": false,
+  "finalOutcome": "pending-teardown",
+  "materialSignature": "74fe2a63b4cfff63f610df88225a97efc4a9c27607824278c41775eba551b9d0",
+  "configuration": {
+    "version": 3,
+    "adapter": "next-dev-webpack",
+    "book": {
+      "bookId": "interface",
+      "revision": 1,
+      "nodeId": "theme",
+      "anchorIndex": 0
+    },
+    "source": {
+      "path": "packages/lib/src/core.ts",
+      "hash": "a8106b1601e84d7525e84ed95ade45c3d88e68bd54af34a5103beef8c3063858",
+      "line": 3,
+      "column": 1
+    },
+    "participant": "server",
+    "afterOperation": 0,
+    "before": [
+      {
+        "kind": "visible",
+        "selector": "button"
+      }
+    ],
+    "after": [
+      {
+        "kind": "text",
+        "selector": "label",
+        "equals": "Dark"
+      }
+    ],
+    "inspections": [
+      {
+        "path": "doubled",
+        "mode": "value",
+        "required": true
+      }
+    ],
+    "additionalStops": [],
+    "packageRoot": "examples/app"
+  },
+  "configurationHash": "dd83840e91ddf6f6e56df1382047a6269739ec136aaf7b36696736a312ca61d6",
+  "descriptor": {
+    "itemId": "repository/interface/theme",
+    "bookTitle": "Interface",
+    "nodeTitle": "Theme",
+    "anchors": [
+      {
+        "path": "packages/lib/src/core.ts",
+        "hash": "a8106b1601e84d7525e84ed95ade45c3d88e68bd54af34a5103beef8c3063858",
+        "startLine": 1,
+        "endLine": 4
+      },
+      {
+        "path": "src/mode.ts",
+        "hash": "f6d4386593d51ec67ad6d6811031238456f33ee12b3fa92a9df833159a355501",
+        "startLine": 1,
+        "endLine": 1
+      }
+    ],
+    "citationContext": {
+      "kind": "citations",
+      "hash": "54e03fecb83bcc52835fd1388e0a039afa935aa560083eecdc9def33148efaad",
+      "anchors": [
+        {
+          "path": "packages/lib/src/core.ts",
+          "hash": "a8106b1601e84d7525e84ed95ade45c3d88e68bd54af34a5103beef8c3063858",
+          "startLine": 1,
+          "endLine": 4
+        },
+        {
+          "path": "src/mode.ts",
+          "hash": "f6d4386593d51ec67ad6d6811031238456f33ee12b3fa92a9df833159a355501",
+          "startLine": 1,
+          "endLine": 1
+        }
+      ]
+    },
+    "sources": [
+      {
+        "path": "packages/lib/src/core.ts",
+        "hash": "a8106b1601e84d7525e84ed95ade45c3d88e68bd54af34a5103beef8c3063858",
+        "text": "export function double(count: number): number {\n  const doubled = count * 2\n  return doubled\n}\n",
+        "lineCount": 5
+      },
+      {
+        "path": "src/mode.ts",
+        "hash": "f6d4386593d51ec67ad6d6811031238456f33ee12b3fa92a9df833159a355501",
+        "text": "export const mode = \"display\";\n",
+        "lineCount": 2
+      }
+    ]
+  },
+  "operation": {
+    "id": "0c6e261f-e8a5-4c62-bafa-e4289d35509e",
+    "key": "entry-load",
+    "inputDispatched": false,
+    "inputAcknowledged": false,
+    "continuedPause": {
+      "sessionId": "server-session",
+      "threadId": 1,
+      "generation": 1
+    },
+    "afterVerified": true
+  },
+  "firstExecutionObserved": false,
+  "observations": [
+    {
+      "id": "server-session:1",
+      "itemId": "repository/interface/theme",
+      "actionId": "repository-click",
+      "capturePhase": "paused-server",
+      "snapshotUri": "codebook://c346f8e7-6cc6-43d7-b7bf-a27b50bcff2a/runs/545b8101-b512-407e-9e86-e19d43cd9ff5/snapshots/server-session%3A1",
+      "participant": "server",
+      "execution": "server-render",
+      "attribution": "entry-load",
+      "declaredIndex": 0,
+      "executionIndex": 0,
+      "capturedAt": "2026-11-04T18:34:03.898Z",
+      "elapsedMs": 266.493916,
+      "pause": {
+        "sessionId": "server-session",
+        "threadId": 1,
+        "generation": 1
+      },
+      "source": {
+        "text": "export function double(count: number): number {\n  const doubled = count * 2\n  return doubled\n}\n",
+        "hash": "a8106b1601e84d7525e84ed95ade45c3d88e68bd54af34a5103beef8c3063858",
+        "line": 3,
+        "column": 1,
+        "javascriptHash": "f0597e610c75100c5f5f0fed2da9f20de8839386177b3ce419e313dd5316571e",
+        "mapHash": "1a65a36aacbaaf1908b8c0322318a0ba9a51d10ea2d95f3482a7da73dca304f8",
+        "scriptId": "server",
+        "scriptUrl": "webpack-internal:///(rsc)/../../packages/lib/build/modern/core.js",
+        "generated": {
+          "line": 6,
+          "column": 0
+        },
+        "binding": {
+          "declaredLine": 3,
+          "boundLine": 3,
+          "mappedLinesBetween": 0
+        }
+      },
+      "values": {
+        "value:doubled": 6
+      },
+      "debugger": {
+        "version": 1,
+        "frames": [
+          {
+            "name": "double",
+            "line": 3,
+            "column": 1,
+            "source": {
+              "text": "export function double(count: number): number {\n  const doubled = count * 2\n  return doubled\n}\n",
+              "hash": "a8106b1601e84d7525e84ed95ade45c3d88e68bd54af34a5103beef8c3063858",
+              "line": 3,
+              "name": "packages/lib/src/core.ts"
+            },
+            "scopes": [
+              {
+                "name": "Local",
+                "variables": [0]
+              }
+            ]
+          }
+        ],
+        "variables": [
+          {
+            "name": "doubled",
+            "value": "6",
+            "type": "number",
+            "children": []
+          }
+        ],
+        "limitations": []
+      },
+      "unavailableValues": [],
+      "interpretations": []
+    }
+  ],
+  "captures": [
+    {
+      "phase": "before",
+      "status": "captured",
+      "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=",
+      "hash": "13f49d37064e5e9a125e79406f0e4d06a719813a3a3cca585595433c73e9b259"
+    },
+    {
+      "phase": "paused-server",
+      "status": "captured",
+      "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=",
+      "hash": "13f49d37064e5e9a125e79406f0e4d06a719813a3a3cca585595433c73e9b259",
+      "snapshotId": "server-session:1"
+    },
+    {
+      "phase": "after",
+      "status": "captured",
+      "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=",
+      "hash": "13f49d37064e5e9a125e79406f0e4d06a719813a3a3cca585595433c73e9b259"
+    }
+  ],
+  "links": []
+}
