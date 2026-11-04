@@ -104,7 +104,8 @@
   },
   "operation": {
     "id": "d8dc14fe-a2ae-4c1b-b0c2-6f7efd909e5f",
-    "key": "entry-load",
+    "key":
+      "entry-load",
     "inputDispatched": false,
     "inputAcknowledged": false,
     "continuedPause": {
