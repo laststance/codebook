@@ -176,7 +176,7 @@ test('the help has one fix anchor per packageRoot reason and a cross-adapter tab
   )
 })
 
-// protects=API 1.23 is served and the 1.18 note names the packageRoot fields; fails_when=the version or a field of the note drifts; no_claim=the behavior of other lanes
+// protects=API 1.24 is served and the 1.18 note names the packageRoot fields; fails_when=the version or a field of the note drifts; no_claim=the behavior of other lanes
 test('API_VERSION is 1.24 and its 1.18 note names the packageRoot fields', async () => {
   // Arrange
   const constants = await readPackaged('src/constants.ts')
