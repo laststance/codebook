@@ -83,8 +83,10 @@ export async function launchRealHeadlessPage(
     }
     await removeTestBrowserProfile(profile)
   })
-  // A cold runner's first Chrome start gets Codebook's own start bound.
-  const endpoint = await waitForTestBrowserEndpoint(profile)
+  // A cold runner's first Chrome start gets Codebook's own start bound; a Chrome that ended fails at once.
+  const endpoint = await waitForTestBrowserEndpoint(profile, {
+    hasExited: () => child.exitCode !== null || child.signalCode !== null,
+  })
   const cdp = await connectFlatCdp(
     `ws://127.0.0.1:${endpoint.port}${endpoint.path}`,
     10_000,

@@ -5,16 +5,16 @@ import { waitForTestBrowserEndpoint } from './utils/waitForTestBrowserEndpoint'
 
 /**
  * A fake clock, sleep and file reader for one wait: the sleep and each read advance the clock, and the reader answers with the text a test gives for the current time.
- * @param answerAt - The file text at a fake time (`undefined` when the file does not exist yet).
+ * @param answerAt - The file text at a fake time: `undefined` when the file does not exist yet (an `ENOENT` rejection), an `Error` to reject with.
  * @param readMs - How much fake time each read takes.
- * @returns The seams to pass, the clock and the number of reads.
+ * @returns The seams to pass, the clock, the number of reads and the paths read.
  * @example const fake = fakeStart((nowMs) => (nowMs >= 2_000 ? '51234\n/devtools/browser/abc' : undefined))
  */
 function fakeStart(
-  answerAt: (nowMs: number) => string | undefined,
+  answerAt: (nowMs: number) => string | Error | undefined,
   readMs = 0,
 ) {
-  const state = { nowMs: 0, reads: 0 }
+  const state = { nowMs: 0, reads: 0, paths: new Set<string>() }
   return {
     state,
     seams: {
@@ -22,12 +22,15 @@ function fakeStart(
       sleep: async (ms: number): Promise<void> => {
         state.nowMs += ms
       },
-      readText: async () => {
+      readText: async (path: string) => {
         state.reads += 1
-        const text = answerAt(state.nowMs)
+        state.paths.add(path)
+        const answer = answerAt(state.nowMs)
         state.nowMs += readMs
-        if (text === undefined) throw new Error('ENOENT: no such file')
-        return text
+        if (answer === undefined)
+          throw Object.assign(new Error('no such file'), { code: 'ENOENT' })
+        if (answer instanceof Error) throw answer
+        return answer
       },
     },
   }
@@ -49,9 +52,10 @@ test('a test browser that publishes its endpoint after 25 s on a cold runner is 
     path: '/devtools/browser/cold-start',
   })
   assert.equal(fake.state.nowMs, 25_000)
+  assert.deepEqual([...fake.state.paths], ['/profile/DevToolsActivePort'])
 })
 
-// Value: protects=CI-1: a Chrome that never publishes its endpoint fails the test at its bound with a sentence naming it, neither earlier nor long after; fails_when=the wait gives up before the bound or keeps waiting past it by more than one poll; no_claim=the real file system (the fake reader answers that no file exists)
+// Value: protects=CI-1: a Chrome that never publishes its endpoint fails the test at its bound with a sentence naming it, neither earlier nor long after, after a last look at the bound; fails_when=the wait gives up before the bound, keeps waiting past it by more than one poll, or skips the look at the bound (10 reads instead of 11); no_claim=the real file system (the fake reader answers that no file exists)
 test('a test browser that never publishes its endpoint fails at the bound with the bound named', async () => {
   // Arrange
   const fake = fakeStart(() => undefined)
@@ -74,6 +78,64 @@ test('a test browser that never publishes its endpoint fails at the bound with t
   )
   assert.ok(fake.state.nowMs >= 1_000)
   assert.ok(fake.state.nowMs <= 1_100)
+  assert.equal(fake.state.reads, 11)
+})
+
+// Value: protects=a Chrome that crashed at start fails the test at once with a sentence saying it ended, instead of waiting out the 30 s bound; fails_when=the wait ignores the ended process and runs to the bound; no_claim=a real crash (a flag stands in for the child's exit code)
+test('a test browser that exits before publishing its endpoint fails at once', async () => {
+  // Arrange
+  const fake = fakeStart(() => undefined)
+  let exited = false
+
+  // Act
+  const failure = await waitForTestBrowserEndpoint('/profile', {
+    ...fake.seams,
+    hasExited: () => {
+      // The process ends during the first pause.
+      const ended = exited
+      exited = true
+      return ended
+    },
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.ok(failure instanceof Error)
+  assert.equal(
+    failure.message,
+    'Chrome exited before it published its debugging endpoint.',
+  )
+  assert.equal(fake.state.reads, 2)
+  assert.equal(fake.state.nowMs, 100)
+})
+
+// Value: protects=a read failure other than a missing file (a permission or descriptor error) is named in the failure, so a CI log shows the cause; fails_when=the failure hides it behind the generic sentence, or names a plain missing file; no_claim=a real EACCES (the fake reader rejects with that code)
+test('a read that fails with more than a missing file is named when the wait gives up', async () => {
+  // Arrange
+  const fake = fakeStart((nowMs) =>
+    nowMs < 500
+      ? Object.assign(new Error('permission denied'), { code: 'EACCES' })
+      : undefined,
+  )
+
+  // Act
+  const failure = await waitForTestBrowserEndpoint('/profile', {
+    ...fake.seams,
+    boundMs: 1_000,
+    pollMs: 100,
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.ok(failure instanceof Error)
+  assert.equal(
+    failure.message,
+    'Chrome published no debugging endpoint within 1 s. The last read failed with EACCES.',
+  )
 })
 
 // Value: protects=a half-written DevToolsActivePort is read again instead of failing the test or connecting to nothing; fails_when=an unparsable first read ends the wait or is returned as an endpoint; no_claim=Chrome's write timing (the fake reader gives a port line alone, then the full file)
