@@ -139,5 +139,6 @@ export async function writeNestedViteLibrary(input: {
     NESTED_VITE_LIBRARY_NAME,
   )
   await mkdir(dirname(link), { recursive: true })
-  await symlink(library, link)
+  // A junction on Windows, which needs no symlink privilege; ignored elsewhere.
+  await symlink(library, link, 'junction')
 }

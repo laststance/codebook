@@ -131,7 +131,7 @@ const VITE_LIBRARY_SIDE_EFFECTS_SENTENCE =
  * `library-place-ambiguous` is absent on purpose: the placement rule of an app stop always returns a position under `vite-dev`, so the reason does not occur.
  */
 const VITE_LIBRARY_ROWS: Record<
-  string,
+  Exclude<(typeof LIBRARY_STOP_REASONS)[number], 'library-place-ambiguous'>,
   { code: string; meaning: string; fix: string }
 > = {
   'library-build-stale': {
@@ -168,13 +168,20 @@ const VITE_LIBRARY_ROWS: Record<
  */
 function viteLibraryRefusals() {
   return Object.fromEntries(
-    LIBRARY_STOP_REASONS.flatMap((reason) => {
-      const row = VITE_LIBRARY_ROWS[reason]
-      // library-place-ambiguous has no Vite row: skip it
-      return row === undefined
+    LIBRARY_STOP_REASONS.flatMap((reason) =>
+      // library-place-ambiguous never occurs under vite-dev (D14); every other reason must have a row, which the table's key type enforces
+      reason === 'library-place-ambiguous'
         ? []
-        : [[reason, { anchor: packageRootAnchor(reason), ...row }] as const]
-    }),
+        : [
+            [
+              reason,
+              {
+                anchor: packageRootAnchor(reason),
+                ...VITE_LIBRARY_ROWS[reason],
+              },
+            ] as const,
+          ],
+    ),
   )
 }
 
