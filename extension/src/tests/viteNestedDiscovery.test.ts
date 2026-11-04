@@ -2,10 +2,11 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
 import { promisify } from 'node:util'
 
+import type * as DiscoverModule from '../utils/discoverNextPackages'
 import { discoverPackages } from '../utils/discoverNextPackages'
 import { readStatusAdapterReadiness } from '../utils/readStatusAdapterReadiness'
 import { scanPackages, scanVitePackages } from '../utils/scanNextPackages'
@@ -13,6 +14,8 @@ import {
   VITE_NO_DEV_SCRIPT_MESSAGE,
   VITE_PREDEV_MESSAGE,
 } from '../utils/viteWorkspaceMessages'
+
+import { loadModule } from './utils/loadModule'
 
 const executeFile = promisify(execFile)
 const SIGNAL = new AbortController().signal
@@ -236,4 +239,96 @@ test('rootIsApp for Vite needs a vite dependency and an index.html or an accepte
   )
   assert.equal(reports[0]?.['vite-dev'].ready, true)
   assert.equal(reports[0]?.['vite-dev'].installed, true)
+})
+
+/** Loads {@link DiscoverModule} with the Vite workspace reading replaced, so a test decides what it throws or reports. */
+async function discoveryWithReading(
+  reading: (workspace: string) => Promise<unknown>,
+): Promise<typeof DiscoverModule> {
+  return loadModule<typeof DiscoverModule>(
+    resolve(__dirname, '../utils/discoverNextPackages.js'),
+    { './readViteWorkspaceGaps': { readViteWorkspaceGaps: reading } },
+  )
+}
+
+// protects=Vite status listing: an app whose workspace reading throws stays in the list as not ready with a path-free sentence, and the other apps are still read; fails_when=the throwing app disappears from packages[] or the sentence names the repository path; no_claim=which real failure throws
+test('a Vite app whose readiness read throws is listed not ready with a path-free sentence', async (context) => {
+  // Arrange
+  const root = await makeRepository(context)
+  await trackedViteApp(root, 'apps/broken')
+  await trackedViteApp(root, 'apps/fine')
+  const discovery = await discoveryWithReading(async (workspace) => {
+    if (workspace.endsWith('apps/broken'))
+      throw Object.assign(new Error(`EACCES: lstat '${workspace}'`), {
+        code: 'EACCES',
+      })
+    return { ready: true, gaps: [] }
+  })
+  // Act
+  const result = await discovery.discoverPackages(root, {})
+  // Assert
+  assert.deepEqual(
+    result.vite.packages.map((entry) => ({
+      packageRoot: entry.packageRoot,
+      ready: entry.ready,
+      missing: [...entry.missing],
+    })),
+    [
+      {
+        packageRoot: 'apps/broken',
+        ready: false,
+        missing: ['The package could not be checked (EACCES).'],
+      },
+      { packageRoot: 'apps/fine', ready: true, missing: [] },
+    ],
+  )
+})
+
+// protects=Vite status listing: a gap sentence that names the repository path reaches the chat with the path hidden, as Next messages do; fails_when=packages[].missing shows the absolute repository path; no_claim=the wording of real gap sentences
+test('a Vite gap sentence that names the repository path is listed with the path hidden', async (context) => {
+  // Arrange
+  const root = await makeRepository(context)
+  await trackedViteApp(root, 'apps/web')
+  const discovery = await discoveryWithReading(async (workspace) => ({
+    ready: false,
+    gaps: [
+      { code: 'PREREQUISITE_MISSING', message: `broken at ${workspace}/x` },
+    ],
+  }))
+  // Act
+  const result = await discovery.discoverPackages(root, {})
+  // Assert
+  assert.deepEqual(
+    result.vite.packages.map((entry) => [...entry.missing]),
+    [['broken at <workspace>/apps/web/x']],
+  )
+})
+
+// protects=scan cost: once the Vite list is full, later chunks never read a Vite app that would be discarded, while the Next list keeps being read; fails_when=the Vite visitor is called for apps/d after the limit was reached; no_claim=the truncation reason (shared by design)
+test('a kind at its limit is not visited again in later chunks', async (context) => {
+  // Arrange
+  const root = await makeRepository(context)
+  await trackedViteApp(root, 'apps/a')
+  await trackedViteApp(root, 'apps/b')
+  await put(root, 'apps/c/package.json', NEXT_MANIFEST)
+  await trackedViteApp(root, 'apps/d')
+  await put(root, 'apps/e/package.json', NEXT_MANIFEST)
+  await track(root, 'apps/c/package.json', 'apps/e/package.json')
+  const visitedVite: string[] = []
+  // Act
+  const scan = await scanPackages(
+    root,
+    {
+      next: async (app) => app.packageRoot,
+      vite: async (app) => {
+        visitedVite.push(app.packageRoot)
+        return app.packageRoot
+      },
+    },
+    { limits: { apps: 1, concurrency: 1 } },
+  )
+  // Assert
+  assert.deepEqual(visitedVite, ['apps/a', 'apps/b'])
+  assert.deepEqual(scan.vite.items, ['apps/a'])
+  assert.deepEqual(scan.next.items, ['apps/c'])
 })

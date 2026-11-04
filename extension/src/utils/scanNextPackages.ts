@@ -253,6 +253,26 @@ async function visitChunk<NextItem, ViteItem>(
 }
 
 /**
+ * Drops the visitor of every kind that reached its app limit.
+ *
+ * Why it exists: an app of a full kind is discarded, so reading its readiness is wasted work. Called by {@link scanPackages} before each chunk.
+ *
+ * @param visitors - The visitors the scan was asked for.
+ * @param limitReached - Which kinds already hold their maximum of apps.
+ * @returns The visitors of the kinds that can still take an app.
+ * @example visitorsOfOpenKinds({ next: nextVisit, vite: viteVisit }, { next: false, vite: true }) // => { next: nextVisit }
+ */
+function visitorsOfOpenKinds<NextItem, ViteItem>(
+  visitors: ScanVisitors<NextItem, ViteItem>,
+  limitReached: Record<ScanKind, boolean>,
+): ScanVisitors<NextItem, ViteItem> {
+  return {
+    ...(limitReached.next ? {} : { next: visitors.next }),
+    ...(limitReached.vite ? {} : { vite: visitors.vite }),
+  }
+}
+
+/**
  * Lists the tracked `package.json` paths through the hardened Git invocation.
  * @param repositoryRoot - The repository's root.
  * @param limits - Timeout, output cap and cancellation.
@@ -439,7 +459,7 @@ export async function scanPackages<NextItem, ViteItem>(
       const results = await visitChunk(
         real,
         readable.slice(start, start + limits.concurrency),
-        visitors,
+        visitorsOfOpenKinds(visitors, limitReached),
         stop.signal,
       )
       // A chunk that finished after the deadline ended the scan is dropped.

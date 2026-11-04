@@ -7,6 +7,7 @@ import {
   assertDevelopmentWorkspace,
   type DevelopmentLockIdentity,
 } from './assertDevelopmentWorkspace'
+import { causeRootsFor } from './causeRootsFor'
 import { readNextRouterKind } from './readNextRouterKind'
 import { readNodeVersion } from './readNodeVersion'
 import {
@@ -17,6 +18,7 @@ import {
 import { readViteWorkspaceGaps } from './readViteWorkspaceGaps'
 import { resolveNextPackage } from './resolveNextPackage'
 import { resolveVitePackage } from './resolveVitePackage'
+import { sanitizeCause } from './sanitizeCause'
 import {
   scanNextPackages,
   scanPackages,
@@ -228,18 +230,33 @@ async function readVitePackageReadiness(
       missing: [describeReadFailure(error)],
     }
   }
-  const reading = await readViteWorkspaceGaps(
-    resolved.packageRoot,
-    readNode,
-    false,
-    resolved.repositoryRoot,
-  )
+  let reading: Awaited<ReturnType<typeof readViteWorkspaceGaps>>
+  try {
+    reading = await readViteWorkspaceGaps(
+      resolved.packageRoot,
+      readNode,
+      false,
+      resolved.repositoryRoot,
+    )
+  } catch (error) {
+    // One unreadable app is listed not ready with a path-free sentence; it never drops out of the list.
+    return {
+      packageRoot,
+      installed: false,
+      ready: false,
+      missing: [describeReadFailure(error)],
+    }
+  }
+  // The gap sentences reach the chat, so a private root in one is hidden as in every other cause.
+  const roots = causeRootsFor([], repositoryRoot)
   return {
     packageRoot,
     installed: reading.installation !== undefined,
     ready: reading.ready,
     ...(reading.installation ? { version: reading.installation.version } : {}),
-    missing: reading.gaps.map((gap) => gap.statusMessage ?? gap.message),
+    missing: reading.gaps.map((gap) =>
+      sanitizeCause(gap.statusMessage ?? gap.message, roots),
+    ),
   }
 }
 

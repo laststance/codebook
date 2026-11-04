@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
 import {
   access,
   lstat,
@@ -13,6 +14,7 @@ import {
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
+import { promisify } from 'node:util'
 
 import type { DebugAdapterTrackerFactory, DebugSession } from 'vscode'
 import { z } from 'zod'
@@ -26,6 +28,8 @@ import { sha256 } from '../runtimeSupport/utils/sha256'
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { createCrossRuntimeStudy } from './utils/createCrossRuntimeStudy'
 import { loadModule } from './utils/loadModule'
+
+const execFileAsync = promisify(execFile)
 
 test('untrusted, remote and virtual workspaces reject execution before creating any runtime', async () => {
   // Arrange
@@ -1399,4 +1403,106 @@ test('saved session setup returns the missing Node and Chrome settings when they
   if (inputs.ready) return
   assert.match(inputs.missing.join('\n'), /codebook.nodeExecutable/)
   assert.match(inputs.missing.join('\n'), /codebook.chromeExecutable/)
+})
+
+// protects=codebook_status: a listed Vite app reads not ready while Chrome is missing, as a Next app does; fails_when=packages[] of vite-dev keeps the app-only ready while the shared prerequisites have a gap; no_claim=a managed run in the way (the same check() joins its sentences)
+test('a listed Vite app reads not ready with the shared Chrome gap', async (context) => {
+  // Arrange
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-vite-status-')),
+  )
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  await writeFile(
+    join(directory, 'product.json'),
+    JSON.stringify({ version: '1.140.0', commit: 'fixture' }),
+  )
+  await mkdir(join(directory, 'dist'))
+  await writeFile(
+    join(directory, 'dist/build.json'),
+    JSON.stringify({
+      revision: 'fixture',
+      dirty: false,
+      sourceHash: 'fixture',
+    }),
+  )
+  await mkdir(join(directory, 'apps/web/node_modules/vite'), {
+    recursive: true,
+  })
+  await writeFile(
+    join(directory, 'apps/web/package.json'),
+    JSON.stringify({
+      name: 'web',
+      devDependencies: { vite: '^8.3.5' },
+      scripts: { dev: 'vite' },
+    }),
+  )
+  await writeFile(
+    join(directory, 'apps/web/node_modules/vite/package.json'),
+    JSON.stringify({
+      name: 'vite',
+      version: '8.3.5',
+      type: 'module',
+      exports: {
+        '.': { import: './index.mjs' },
+        './package.json': './package.json',
+      },
+    }),
+  )
+  await writeFile(
+    join(directory, 'apps/web/node_modules/vite/index.mjs'),
+    'export {}\n',
+  )
+  await execFileAsync('git', ['init', '--quiet', directory])
+  await execFileAsync('git', ['add', '--', 'apps/web/package.json'], {
+    cwd: directory,
+  })
+  const disposable = { dispose(): void {} }
+  const boundary = await loadModule<typeof EnvironmentModule>(
+    resolve(__dirname, '../environment.js'),
+    {
+      './configuredBrowserRun': {},
+      './utils/resolveExternalNodeExecutable': {
+        resolveExternalNodeExecutable: async () => '/external/node',
+      },
+      vscode: {
+        workspace: {
+          isTrusted: true,
+          workspaceFolders: [{ uri: { scheme: 'file', fsPath: directory } }],
+          getConfiguration: () => ({
+            get: (key: string, fallback: string) =>
+              key === 'chromeExecutable'
+                ? join(directory, 'no-such-chrome')
+                : fallback,
+          }),
+        },
+        env: {
+          appRoot: directory,
+          appName: 'Visual Studio Code',
+          remoteName: '',
+        },
+        version: '1.140.0',
+        extensions: { getExtension: () => ({}) },
+        debug: {
+          registerDebugAdapterTrackerFactory: () => disposable,
+          onDidTerminateDebugSession: () => disposable,
+          onDidChangeActiveDebugSession: () => disposable,
+        },
+      },
+    },
+  )
+  const environment = await boundary.createEnvironment({
+    extensionPath: directory,
+  })
+  context.after(() => environment.dispose())
+  // Act
+  const prerequisites = await environment.prerequisites({
+    discoverPackages: true,
+  })
+  // Assert
+  const entry =
+    prerequisites.profiles?.['repository-browser']?.adapters?.['vite-dev']
+      ?.packages?.[0]
+  assert.equal(entry?.packageRoot, 'apps/web')
+  assert.equal(entry?.ready, false)
+  assert.match(entry?.missing.join(' ') ?? '', /Chrome/i)
 })

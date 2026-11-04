@@ -3,6 +3,7 @@ import type { StudyEnvironment } from '../runtime'
 
 import { assertDevelopmentWorkspace } from './assertDevelopmentWorkspace'
 import { describeReadFailure } from './discoverNextPackages'
+import { managedRunStateOf } from './managedRunStateMessages'
 import { resolveNextPackage } from './resolveNextPackage'
 import { resolveVitePackage } from './resolveVitePackage'
 import {
@@ -128,7 +129,7 @@ export async function selectedNextPackageStartPrerequisites(
  * @param workspace - The opened repository's root.
  * @returns
  * - `undefined` for any other profile or adapter, or a root app (absent `packageRoot`), so the caller keeps today's readiness
- * - The shared prerequisites when the folder is a Vite app
+ * - The shared prerequisites and any managed-run state when the folder is a Vite app
  * @throws `INVALID_CONFIGURATION` for an unusable `packageRoot`, before the shared gaps are judged.
  * @example
  * await selectedVitePackageStartPrerequisites(prerequisites, 'repository-browser', { adapter: 'vite-dev', packageRoot: 'examples/react/basic' }, '/repo')
@@ -155,10 +156,14 @@ export async function selectedVitePackageStartPrerequisites(
     // A refusal names up to five discovered apps.
     suggest: () => suggestVitePackageRoots(workspace),
   })
-  return {
-    ready: prerequisites.missing.length === 0,
-    missing: prerequisites.missing,
-  }
+  // A managed run that is preparing or releasing blocks a nested start as it blocks the root's.
+  const missing = [
+    ...prerequisites.missing,
+    ...managedRunStateOf(
+      prerequisites.profiles?.[REPOSITORY_BROWSER_PROFILE]?.missing ?? [],
+    ),
+  ]
+  return { ready: missing.length === 0, missing }
 }
 
 /**

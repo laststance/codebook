@@ -13,6 +13,7 @@ import { dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { StudyError } from '../errors'
+import { MANAGED_RUN_PREPARING_MESSAGE } from '../utils/managedRunStateMessages'
 import { selectedVitePackageStartPrerequisites } from '../utils/repositoryBrowserStartPrerequisites'
 import { resolveVitePackage } from '../utils/resolveVitePackage'
 import { viteOutsidePackageRefusal } from '../viteRefusals'
@@ -272,4 +273,33 @@ test('the start preflight of a nested vite-dev run is judged by its folder and n
   assert.deepEqual(nested, { ready: true, missing: [] })
   assert.equal(rootStart, undefined)
   assert.equal(refusal.details?.reason, 'not-a-vite-app')
+})
+
+// protects=start preflight: a nested vite-dev start waits while Codebook prepares its managed run, as the root start does; fails_when=the nested start reads ready while the profile reports a preparing run; no_claim=the root start (it keeps the adapter readiness)
+test('a nested vite-dev start waits while a managed run is preparing', async (context) => {
+  // Arrange
+  const root = await makeRepository(context)
+  await viteManifest(join(root, 'examples/react/basic'), { dev: 'vite' })
+  const prerequisites = {
+    ready: true,
+    missing: [] as string[],
+    profiles: {
+      'repository-browser': {
+        ready: false,
+        missing: [MANAGED_RUN_PREPARING_MESSAGE],
+      },
+    },
+  } as unknown as Parameters<typeof selectedVitePackageStartPrerequisites>[0]
+  // Act
+  const nested = await selectedVitePackageStartPrerequisites(
+    prerequisites,
+    'repository-browser',
+    { adapter: 'vite-dev', packageRoot: 'examples/react/basic' },
+    root,
+  )
+  // Assert
+  assert.deepEqual(nested, {
+    ready: false,
+    missing: [MANAGED_RUN_PREPARING_MESSAGE],
+  })
 })
