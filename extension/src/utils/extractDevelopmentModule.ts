@@ -145,7 +145,7 @@ export function bundleOfEvaluatedModule(
 /**
  * Decodes the one inline source map of an evaluated webpack module.
  *
- * Why it exists: {@link bundleOfEvaluatedModule} and the App Router library seal ({@link sealLibraryStop}) both read a module's own map and differ only in what they expect it to name.
+ * Why it exists: {@link bundleOfEvaluatedModule} and the App Router library seal ({@link sealAppLibraryStop}) both read a module's own map and differ only in what they expect it to name.
  * @param javascript - The evaluated module text.
  * @returns The map's JSON text.
  * @throws When the module has no inline map or several, the map exceeds its byte limit or its encoding is malformed.

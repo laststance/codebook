@@ -21,7 +21,7 @@ export type BuildTextReader = (path: string, limit: number) => Promise<string>
 /**
  * Reads the client chunks an App Router entry route's client reference manifest lists, without evaluating the manifest.
  *
- * Why it exists: the app's own browser stop ({@link readDevelopmentBundle}) and a browser stop in a workspace library ({@link sealLibraryStop}) search the same set, the `.js` chunks of `globalThis.__RSC_MANIFEST[<route key>]`. Called by both.
+ * Why it exists: the app's own browser stop ({@link readDevelopmentBundle}) and a browser stop in a workspace library ({@link sealAppLibraryStop}) search the same set, the `.js` chunks of `globalThis.__RSC_MANIFEST[<route key>]`. Called by both.
  * @param read - Reads a build file below the package root.
  * @param route - The route's manifest key and client reference manifest path ({@link resolveNextClientManifest}).
  * @returns The distinct `.js` chunk paths (relative to `.next/dev`) and the SHA-256 of the manifest text.

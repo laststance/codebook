@@ -318,3 +318,66 @@ test('an unknown library variant restores no recovery override', () => {
     message: 'The build of library lib changed.',
   })
 })
+
+// protects=an App Router library build change recorded as failure text restores details.router "app" with the unchanged reason and sideEffects; fails_when=libraryFailureText drops the router from the text or libraryDetailsOfFailure always restores "pages"; no_claim=the service forwarding
+test('an App Router library build-change text restores router app', () => {
+  // Arrange
+  const error = libraryBuildChangedFailure('examples/app', 'lib', 'a.ts', 'app')
+  // Act
+  const text = libraryFailureText(error) ?? ''
+  const restored = refusalFailureOf(text)
+  // Assert
+  assert.ok(
+    text.startsWith('RUNTIME_FAILED(library-build-changed app): '),
+    text,
+  )
+  assert.equal(restored?.code, 'RUNTIME_FAILED')
+  assert.deepEqual(restored?.libraryDetails, {
+    reason: 'library-build-changed',
+    router: 'app',
+    sideEffects: 'unknown',
+  })
+})
+
+// protects=a Pages library build change keeps its text byte for byte and still restores router pages; fails_when=the app variant suffix leaks into the Pages text or restore; no_claim=App Router texts
+test('a Pages library build-change text stays unchanged and restores router pages', () => {
+  // Arrange
+  const error = libraryBuildChangedFailure('examples/app', 'lib', 'a.ts')
+  // Act
+  const text = libraryFailureText(error) ?? ''
+  const restored = refusalFailureOf(text)
+  // Assert
+  assert.ok(text.startsWith('RUNTIME_FAILED(library-build-changed): '), text)
+  assert.deepEqual(restored?.libraryDetails, {
+    reason: 'library-build-changed',
+    router: 'pages',
+    sideEffects: 'unknown',
+  })
+})
+
+// protects=an App Router library-place-ambiguous refusal recorded as text restores router app; fails_when=the app variant is applied to library-build-changed only; no_claim=the recovery wording
+test('an App Router library-place-ambiguous text restores router app', () => {
+  // Arrange
+  const error = libraryPlaceAmbiguousRefusal(
+    'examples/app',
+    'lib',
+    'a.ts',
+    3,
+    'why',
+    'app',
+  )
+  // Act
+  const text = libraryFailureText(error) ?? ''
+  const restored = refusalFailureOf(text)
+  // Assert
+  assert.ok(
+    text.startsWith('NEXT_STOP_NOT_SEALED(library-place-ambiguous app): '),
+    text,
+  )
+  assert.equal(restored?.code, 'NEXT_STOP_NOT_SEALED')
+  assert.deepEqual(restored?.libraryDetails, {
+    reason: 'library-place-ambiguous',
+    router: 'app',
+    sideEffects: 'unknown',
+  })
+})

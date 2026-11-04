@@ -277,7 +277,7 @@ const LIBRARY_RUNTIME_REASONS = [
 ] as const
 
 /** One of {@link LIBRARY_RUNTIME_REASONS}. */
-export type LibraryRuntimeReason = (typeof LIBRARY_RUNTIME_REASONS)[number]
+type LibraryRuntimeReason = (typeof LIBRARY_RUNTIME_REASONS)[number]
 
 /**
  * Builds the refusal of a library stop whose page server compile holds none, or more than one, of the built files that map the stop, raised by the library seal after the readiness request.
@@ -393,9 +393,10 @@ export function libraryBuildChangedFailure(
 /**
  * Writes the failure text a run records for a library refusal raised at a pause or an event, the form {@link refusalFailureOf} restores with its `details.reason`.
  * @param error - The error a library check threw.
- * @returns `<CODE>(<reason>): <message>` for a Next library refusal of {@link LIBRARY_RUNTIME_REASONS} (one carrying `details.router`); `undefined` for any other error, a Vite library error included.
+ * @returns `<CODE>(<reason>): <message>` for a Next Pages library refusal of {@link LIBRARY_RUNTIME_REASONS} (one carrying `details.router`), `<CODE>(<reason> app): <message>` for an App Router one so {@link libraryDetailsOfFailure} restores `router: "app"`; `undefined` for any other error, a Vite library error included.
  * @example
  * libraryFailureText(libraryBuildChangedFailure('examples/app', 'lib', 'a.ts')) // => 'RUNTIME_FAILED(library-build-changed): The build of library lib changed …'
+ * libraryFailureText(libraryBuildChangedFailure('examples/app', 'lib', 'a.ts', 'app')) // => 'RUNTIME_FAILED(library-build-changed app): The build of library lib changed …'
  */
 export function libraryFailureText(error: unknown): string | undefined {
   if (!(error instanceof StudyError)) return undefined
@@ -404,32 +405,49 @@ export function libraryFailureText(error: unknown): string | undefined {
   const reason = LIBRARY_RUNTIME_REASONS.find(
     (known) => known === error.details?.reason,
   )
-  return reason === undefined
-    ? undefined
-    : `${error.code}(${reason}): ${error.message}`
+  if (reason === undefined) return undefined
+  // An App Router failure names its router in the variant; the Pages text stays unchanged.
+  const variant =
+    error.details.router === 'app'
+      ? `${reason}${APP_LIBRARY_VARIANT_SUFFIX}`
+      : reason
+  return `${error.code}(${variant}): ${error.message}`
+}
+
+/** The suffix a library reason variant carries for an App Router app (`library-build-changed app`); no parenthesis and no line break, so the lead of a coded failure text still matches. */
+const APP_LIBRARY_VARIANT_SUFFIX = ' app'
+
+/** The `details` a restored library failure text carries: the reason, the router the variant named and `sideEffects: "unknown"`. */
+type LibraryFailureDetails = {
+  reason: LibraryRuntimeReason
+  router: 'pages' | 'app'
+  sideEffects: 'unknown'
 }
 
 /**
  * Restores the details of a coded failure text led by a library reason variant.
  * @param code - The text's code.
- * @param variant - The text's variant.
- * @returns The Pages details with the library reason when the code and variant are a library refusal; `undefined` otherwise.
+ * @param variant - The text's variant: a library reason, followed by ` app` for an App Router app ({@link libraryFailureText} writes both).
+ * @returns The library reason with the router (`pages` unless the variant ends in ` app`) and `sideEffects: "unknown"` when the code and variant are a library refusal; `undefined` otherwise.
  * @example
  * libraryDetailsOfFailure('RUNTIME_FAILED', 'library-build-changed') // => { reason: 'library-build-changed', router: 'pages', sideEffects: 'unknown' }
+ * libraryDetailsOfFailure('RUNTIME_FAILED', 'library-build-changed app') // => { reason: 'library-build-changed', router: 'app', sideEffects: 'unknown' }
  */
 export function libraryDetailsOfFailure(
   code: string,
   variant: string | undefined,
-):
-  | (typeof PAGES_STOP_REFUSAL_DETAILS & { reason: LibraryRuntimeReason })
-  | undefined {
-  const reason = LIBRARY_RUNTIME_REASONS.find((known) => known === variant)
+): LibraryFailureDetails | undefined {
+  const isApp = variant?.endsWith(APP_LIBRARY_VARIANT_SUFFIX) === true
+  const name = isApp
+    ? variant.slice(0, -APP_LIBRARY_VARIANT_SUFFIX.length)
+    : variant
+  const reason = LIBRARY_RUNTIME_REASONS.find((known) => known === name)
   const expected =
     reason === 'library-build-changed'
       ? 'RUNTIME_FAILED'
       : 'NEXT_STOP_NOT_SEALED'
   return reason !== undefined && code === expected
-    ? { reason, ...PAGES_STOP_REFUSAL_DETAILS }
+    ? { reason, ...PAGES_STOP_REFUSAL_DETAILS, router: isApp ? 'app' : 'pages' }
     : undefined
 }
 
