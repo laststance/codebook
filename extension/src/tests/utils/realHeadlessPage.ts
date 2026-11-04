@@ -1,15 +1,15 @@
 import { spawn } from 'node:child_process'
-import { mkdtemp, readFile, stat } from 'node:fs/promises'
+import { mkdtemp, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { TestContext } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import { connectFlatCdp } from '../../runtimeSupport/flatCdpConnection'
-import { readDevToolsActivePort } from '../../runtimeSupport/utils/readDevToolsActivePort'
 import { resolveChromeExecutable } from '../../utils/resolveChromeExecutable'
 
 import { removeTestBrowserProfile } from './removeTestBrowserProfile'
+import { waitForTestBrowserEndpoint } from './waitForTestBrowserEndpoint'
 
 /** Says whether a path is an executable file. */
 function isExecutable(path: string): Promise<boolean> {
@@ -83,14 +83,10 @@ export async function launchRealHeadlessPage(
     }
     await removeTestBrowserProfile(profile)
   })
-  let endpoint: ReturnType<typeof readDevToolsActivePort>
-  for (let attempt = 0; attempt < 100 && !endpoint; attempt++) {
-    await delay(100)
-    endpoint = await readFile(join(profile, 'DevToolsActivePort'), 'utf8')
-      .then(readDevToolsActivePort)
-      .catch(() => undefined)
-  }
-  if (!endpoint) throw new Error('Chrome published no debugging endpoint.')
+  // A cold runner's first Chrome start gets Codebook's own start bound; a Chrome that ended fails at once.
+  const endpoint = await waitForTestBrowserEndpoint(profile, {
+    hasExited: () => child.exitCode !== null || child.signalCode !== null,
+  })
   const cdp = await connectFlatCdp(
     `ws://127.0.0.1:${endpoint.port}${endpoint.path}`,
     10_000,

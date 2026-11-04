@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.82.1] - 2026-11-05 (development candidate)
+
+Cycle 0082 ([Issue #215](https://github.com/laststance/codebook/issues/215)), a bug-fix cycle. Nothing changes in how Codebook behaves for a learner, and the packaged extension keeps version 0.2.82.
+
+**Development checks no longer fail on a cold CI runner's first Chrome start.**
+- The two test helpers that start a real headless Chrome now wait for it through one shared wait, with the same 30-second start bound Codebook's own browser launch uses. They used to give up after about 10 and 20 seconds, which failed a Test shard once on each pull request of Cycle 0081.
+- A test Chrome that exits during its start now fails the test at once with "Chrome exited before it published its debugging endpoint.", and a failed start removes its temporary profile folder.
+
+**Dependencies.** Fallow 3.39.0, with the measured health baseline retaken on it.
+
 ## [0.2.82.0] - 2026-11-05 (development candidate)
 
 Cycle 0081 ([Issue #210](https://github.com/laststance/codebook/issues/210)), a feature cycle. A **server stop in the checked-out source of a workspace library** that a Next **App Router** app below the repository root imports now pauses in that library, in the server render, with the library's real values in the native debugger. With 0.2.81.0's browser library stops, a learner who opens one of TanStack Query's App Router Examples can now follow both halves of what these Examples teach: the server component prefetches and dehydrates the query cache, and the browser hydrates it.

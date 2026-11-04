@@ -1,5 +1,5 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
-import { mkdtemp, readFile, stat } from 'node:fs/promises'
+import { mkdtemp, stat } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -13,6 +13,7 @@ import { Cdp } from '../../runtimeSupport/cdp'
 import { resolveChromeExecutable } from '../../utils/resolveChromeExecutable'
 
 import { removeTestBrowserProfile } from './removeTestBrowserProfile'
+import { waitForTestBrowserEndpoint } from './waitForTestBrowserEndpoint'
 
 /** A fixture page open in a real headless Chrome, with the channel a run's operations are sent through. */
 export type RealChromePage = {
@@ -131,15 +132,26 @@ export async function closeRealChrome(): Promise<void> {
   launched = undefined
   const chrome = await pending?.catch(() => undefined)
   if (!chrome) return
+  await stopChrome(chrome.process, chrome.profile)
+}
+
+/**
+ * Ends a test Chrome and removes its profile folder, so no browser or folder outlives the test file.
+ * Called by {@link closeRealChrome} after the file's tests, and by {@link launchChrome} when the start fails, whose Chrome no later close can reach.
+ * @param child - The Chrome process.
+ * @param profile - Its `--user-data-dir` folder.
+ * @example await stopChrome(child, profile)
+ */
+async function stopChrome(child: ChildProcess, profile: string): Promise<void> {
   // A Chrome that already exited emits no further `exit`, so only a running one is awaited.
-  if (chrome.process.exitCode === null && chrome.process.signalCode === null) {
+  if (child.exitCode === null && child.signalCode === null) {
     const exited = new Promise<void>((resolve) =>
-      chrome.process.once('exit', () => resolve()),
+      child.once('exit', () => resolve()),
     )
-    chrome.process.kill('SIGKILL')
+    child.kill('SIGKILL')
     await exited
   }
-  await removeTestBrowserProfile(chrome.profile)
+  await removeTestBrowserProfile(profile)
 }
 
 /** Starts the file's one headless Chrome on a fresh profile folder and waits for its debugging port. */
@@ -160,15 +172,15 @@ async function launchChrome(
     ],
     { stdio: 'ignore' },
   )
-  for (let attempt = 0; attempt < 200; attempt++) {
-    const text = await readFile(
-      join(profile, 'DevToolsActivePort'),
-      'utf8',
-    ).catch(() => undefined)
-    const port = Number(text?.split('\n')[0])
-    if (port > 0) return { process: child, debuggingPort: port, profile }
-    await delay(100)
+  try {
+    // A cold runner's first Chrome start gets Codebook's own start bound; a Chrome that ended fails at once.
+    const { port } = await waitForTestBrowserEndpoint(profile, {
+      hasExited: () => child.exitCode !== null || child.signalCode !== null,
+    })
+    return { process: child, debuggingPort: port, profile }
+  } catch (error) {
+    // No later close reaches a Chrome whose start failed: end it and remove its folder here.
+    await stopChrome(child, profile)
+    throw error
   }
-  child.kill('SIGKILL')
-  throw new Error('Chrome did not publish its debugging port.')
 }
