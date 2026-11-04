@@ -165,6 +165,19 @@ test('refuses modules without any inline map as library-build-unmapped with caus
   })
 })
 
+// protects=decision table row 5: a map whose sources entry is not a parseable URL is refused as malformed instead of throwing; fails_when=the raw TypeError of new URL escapes the selection; no_claim=none beyond protects
+test('refuses a served map with an unparseable source entry as library-build-unmapped with cause malformed', async () => {
+  // Arrange
+  const modules = { [MODERN]: served({ sources: ['http://'] }) }
+  // Act
+  const result = await select(modules)
+  // Assert
+  assert.deepEqual(result, {
+    kind: 'refused',
+    facts: { reason: 'library-build-unmapped', cause: 'malformed' },
+  })
+})
+
 // protects=decision table row 5: a map that is not a flat version 3 map is refused as malformed even when another module has no map; fails_when=a malformed map is read as no-map; no_claim=none beyond protects
 test('refuses a malformed served map as library-build-unmapped with cause malformed', async () => {
   // Arrange

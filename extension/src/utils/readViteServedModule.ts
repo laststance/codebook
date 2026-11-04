@@ -117,7 +117,15 @@ export async function absoluteSourceOf(
   packageRoot: string,
   refuse: Refuse,
 ): Promise<string> {
-  const resolved = new URL(source, moduleUrl)
+  // An entry that cannot be parsed as a URL is a refusal, not a raw TypeError
+  let resolved: URL
+  try {
+    resolved = new URL(source, moduleUrl)
+  } catch {
+    return refuse(
+      `the inline map of ${moduleUrl} has the source entry ${JSON.stringify(source)}, which is not a valid URL`,
+    )
+  }
   if (resolved.protocol === 'file:') return fileURLToPath(resolved)
   if (resolved.origin !== new URL(moduleUrl).origin) return resolved.href
   // A malformed escape in the entry is a refusal, not a raw URIError
