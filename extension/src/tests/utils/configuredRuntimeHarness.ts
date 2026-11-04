@@ -269,6 +269,10 @@ export async function configuredRuntimeHarness(
      * Stages a server stop in a workspace library ({@link libraryFixture}): called with the repository after it exists, it writes the library and its builds and gives the eval modules of the server compile. The debugger's frames, breakpoint file and script then name the built file, as js-debug reports Next's eval map (the built file's own map is not chained).
      */
     libraryStop?: ReturnType<typeof libraryFixture>
+    /**
+     * How the page announces a browser library stop's module. `resolved` (the default) is what js-debug's CDP channel sends a run (native C79-1 journal): the module address with its dot segments resolved, so `(pages-dir-browser)/../../packages/lib/build/modern/core.js` arrives as `packages/lib/build/modern/core.js`. `as-written` is the address the build wrote, as a direct CDP connection to Chrome reports it (E1).
+     */
+    browserLibraryAnnouncement?: 'resolved' | 'as-written'
     /** Moves the first cited source, and the stop declared in it, to this repository-relative path (such as a file under `src/pages`; with `packageRoot` a file inside that folder). */
     sourcePath?: string
     /**
@@ -604,6 +608,11 @@ export async function configuredRuntimeHarness(
   // A browser library stop of a Next Pages run: the page executes the library's `(pages-dir-browser)` module, and the debugger reports its built line.
   const browserLibrary =
     library && options.participant === 'browser' ? library : undefined
+  /** Gives the address the page announces for its stop module: a browser library module's address resolved as js-debug sends it, every other address as the build wrote it. */
+  const announcedPageUrlOf = (scriptUrl: string): string =>
+    browserLibrary && options.browserLibraryAnnouncement !== 'as-written'
+      ? new URL(scriptUrl).href
+      : scriptUrl
   const browserLibraryHit =
     browserLibrary && fixture?.declaredLine
       ? browserLibrary.hitAt(fixture.declaredLine, 'pages-dir-browser')
@@ -1465,7 +1474,7 @@ export async function configuredRuntimeHarness(
         if (!options.viteLibrary?.lazy)
           listeners.get('Debugger.scriptParsed')?.({
             scriptId: 'actual',
-            url: bundle.scriptUrl,
+            url: announcedPageUrlOf(bundle.scriptUrl),
             executionContextId: 1,
           })
         if (emitPreparationResume) {
@@ -2535,7 +2544,7 @@ export async function configuredRuntimeHarness(
     announceSealedModule(scriptId: string): void {
       listeners.get('Debugger.scriptParsed')?.({
         scriptId,
-        url: bundle.scriptUrl,
+        url: announcedPageUrlOf(bundle.scriptUrl),
         executionContextId: 1,
       })
     },

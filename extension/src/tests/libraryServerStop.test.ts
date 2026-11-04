@@ -300,3 +300,30 @@ test('a pause in the browser copy of the library module is not an unowned page p
   harness.run.stop().catch(() => undefined)
   await prepared.catch(() => undefined)
 })
+
+// protects=A5 (C79-1 native finding) js-debug announces the page's copy of the library module with its dot segments resolved (`(pages-dir-browser)/../../packages/lib/build/modern/core.js` arrives as `packages/lib/build/modern/core.js`), and a pause there still keeps the adapter's longer bound and does not end the run as an unowned page pause; fails_when=the copy is matched only by the path the build prints, so js-debug's spelling makes its pause unowned and the run fails within 250 ms; no_claim=the debug adapter's later stopped and resume, and a real js-debug (the announcement is scripted in the spelling the native C79-1 journal shows)
+test('a pause in the browser copy of the library module announced with resolved dot segments is not an unowned page pause', async (context) => {
+  // Arrange
+  const staged = stageLibrary()
+  const harness = await pagesServerRun(context, libraryRunOptions(staged))
+  const prepared = harness.run.prepare()
+  await armedEntry(harness)
+  harness.announceScript(
+    'browser-copy',
+    'webpack-internal:///packages/lib/build/modern/core.js',
+  )
+  // Act
+  harness.emitCdpPauseAt({
+    scriptId: 'browser-copy',
+    lineNumber: 0,
+    columnNumber: 0,
+    functionName: '',
+    hitBreakpoints: ['native'],
+  })
+  harness.advance(1000)
+  // Assert
+  assert.equal(harness.run.view().status === 'failed', false)
+  assert.equal(harness.run.view().failures.join('; '), '')
+  harness.run.stop().catch(() => undefined)
+  await prepared.catch(() => undefined)
+})
