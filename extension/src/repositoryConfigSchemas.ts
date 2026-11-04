@@ -657,7 +657,8 @@ export const retainedRepositoryConfigSchema = liveRepositoryConfigSchema.refine(
  */
 const packageRootRepositoryConfigSchema = operationsConfigurationShape
   .extend({
-    adapter: z.literal('next-dev-webpack'),
+    // Lane A bridge: the run's definition parses through this schema, so a nested Vite run needs the Vite adapter here; Lane C replaces it with the format 10 variant.
+    adapter: z.enum(['next-dev-webpack', 'vite-dev']),
     packageRoot: repositoryPathSchema.refine(
       (value) => value !== '.',
       'A format 9 study names a package folder other than ".".',

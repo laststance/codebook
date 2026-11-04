@@ -77,6 +77,7 @@ import {
 } from './loadConstantsWith'
 import { loadModule } from './loadModule'
 import { writeDecoyNextApp, writeNestedPackage } from './nestedNextWorkspace'
+import { writeNestedVitePackage } from './nestedViteWorkspace'
 import {
   writeNextPagesWorkspace,
   type NextPagesHarnessOptions,
@@ -247,6 +248,8 @@ export async function configuredRuntimeHarness(
       declared?: string
       /** Leaves the cited sources at their repository-relative path outside the package folder, as a stop in a shared workspace package is. */
       stopsOutside?: boolean
+      /** For a nested Vite app (`adapter: "vite-dev"`): the text of the app folder's `.env`. */
+      envText?: string
     }
     /** Declares the first stop for this participant in a version 2 (cross-runtime) configuration, as a start that names `participant` does, or in a version 3 configuration when `operations` is given; only without additional stops in the version 2 form, whose form differs. */
     participant?: 'browser' | 'server'
@@ -459,7 +462,8 @@ export async function configuredRuntimeHarness(
   const packageDirectory = packageFolder
     ? join(repository.directory, packageFolder)
     : repository.directory
-  if (options.packageApp?.decoyRoot)
+  // A nested Vite app brings its own decoy root (another Vite app); a Next run keeps the Next decoy.
+  if (options.packageApp?.decoyRoot && options.adapter !== 'vite-dev')
     await writeDecoyNextApp(
       repository.directory,
       options.packageApp?.next !== 'hoisted',
@@ -495,7 +499,14 @@ export async function configuredRuntimeHarness(
           : options.nextPages,
       )
     : undefined
-  if (packageFolder)
+  if (packageFolder && options.adapter === 'vite-dev')
+    await writeNestedVitePackage({
+      repositoryDirectory: repository.directory,
+      packageDirectory,
+      decoyRoot: options.packageApp?.decoyRoot,
+      envText: options.packageApp?.envText,
+    })
+  else if (packageFolder)
     await writeNestedPackage({
       repositoryDirectory: repository.directory,
       packageDirectory,
@@ -567,6 +578,12 @@ export async function configuredRuntimeHarness(
     assertedWorkspaceRoots: string[] = [],
     declaredPortRoots: string[] = [],
     launchRequests: unknown[] = []
+  // What the Vite stand-in received, so a nested Vite run proves the app folder reached the workspace check, the start and the seal.
+  const viteRequests: {
+    assertedWorkspace: { workspace: string; packageRoot?: string }[]
+    started: { workspace: string; packageRoot?: string }[]
+    sealed: { workspace: string; packageRoot?: string; sourcePath: string }[]
+  } = { assertedWorkspace: [], started: [], sealed: [] }
   const releases: string[] = [],
     mouse: { type?: string; timeout?: number }[] = [],
     commands: string[] = [],
@@ -1975,11 +1992,28 @@ export async function configuredRuntimeHarness(
       './viteDevAdapter': {
         VITE_DEV_ADAPTER: {
           ...viteDevAdapter.VITE_DEV_ADAPTER,
-          assertWorkspace: async () => undefined,
+          assertWorkspace: async (
+            workspace: string,
+            _node: string,
+            _signal: AbortSignal,
+            _nextPackage?: unknown,
+            vitePackage?: { packageRoot: string },
+          ) => {
+            viteRequests.assertedWorkspace.push({
+              workspace,
+              packageRoot: vitePackage?.packageRoot,
+            })
+          },
           start: async (request: {
+            workspace: string
+            vitePackage?: { packageRoot: string }
             onApp(app: typeof fakeApplication): void
             onStep(step: string): void
           }) => {
+            viteRequests.started.push({
+              workspace: request.workspace,
+              packageRoot: request.vitePackage?.packageRoot,
+            })
             request.onStep('starting Vite')
             setupSteps.push('starting Vite')
             request.onApp(fakeApplication)
@@ -2013,7 +2047,17 @@ export async function configuredRuntimeHarness(
               }),
             ])
           },
-          readBundle: async (request: { signal: AbortSignal }) => {
+          readBundle: async (request: {
+            signal: AbortSignal
+            workspace: string
+            vitePackage?: { packageRoot: string }
+            source: { path: string }
+          }) => {
+            viteRequests.sealed.push({
+              workspace: request.workspace,
+              packageRoot: request.vitePackage?.packageRoot,
+              sourcePath: request.source.path,
+            })
             sealReads += 1
             if (options.sealFailure) throw new Error(options.sealFailure)
             if (laterSealRefusal !== undefined)
@@ -2118,6 +2162,8 @@ export async function configuredRuntimeHarness(
       declaredPort: declaredPortRoots,
       launchRequests,
     },
+    /** What the Vite stand-in received from the run: the workspace check's and the start's folder, and each sealed stop's repository root, package root and declared path. */
+    viteRequests,
     /** The configuration of each server debug session the run started, in order. */
     serverLaunches,
     /** Changes what `document.readyState` answers from now on, so a test lets the entry page finish loading once its server stops were continued. @example harness.setDocumentReadyState('complete') */

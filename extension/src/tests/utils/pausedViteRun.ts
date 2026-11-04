@@ -13,6 +13,7 @@ import { configuredRuntimeHarness } from './configuredRuntimeHarness'
  * @param context - The test context, which shuts the service down when the test ends.
  * @param secret - The env-file value the debugger reports, the executed module inlines and the source map lists.
  * @param moduleJavascript - The executed module's text; defaults to a module that inlines the secret. A text without the secret leaves the value only in the source map.
+ * @param harnessOptions - More options for the controlled runtime, such as `packageRoot` and `operations` for a Vite app below the repository root; the Vite adapter and the masked values stay as set here.
  * @returns The service, the run's record and receipt, the library and the controlled run.
  * @example
  * const { service, record, library } = await pausedViteRun(context, 'plainsecret1')
@@ -21,6 +22,7 @@ export async function pausedViteRun(
   context: TestContext,
   secret: string,
   moduleJavascript: string = `const nextTheme = "${secret}";`,
+  harnessOptions: Parameters<typeof configuredRuntimeHarness>[3] = {},
 ) {
   let service: StudyService | undefined, books: RepositoryBookStore | undefined
   context.after(async () => {
@@ -28,6 +30,7 @@ export async function pausedViteRun(
     books?.dispose()
   })
   const harness = await configuredRuntimeHarness(context, undefined, [], {
+    ...harnessOptions,
     adapter: 'vite-dev',
     capturedValue: secret,
     moduleJavascript,
