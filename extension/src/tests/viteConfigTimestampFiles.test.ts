@@ -18,7 +18,7 @@ import {
 } from '../utils/viteConfigTimestampFiles'
 import { VITE_DEV_ADAPTER } from '../viteDevAdapter'
 
-const TEMP_NAME = 'vite.config.ts.timestamp-1730000000-abc.mjs'
+const TEMP_NAME = 'vite.config.ts.timestamp-123-abc.mjs'
 
 /** Makes a real-path temp folder removed after the test. */
 async function makeRoot(context: TestContext): Promise<string> {

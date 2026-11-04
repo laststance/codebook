@@ -134,7 +134,7 @@ test('a timestamp file another app writes into the shared hoisted .vite-temp sur
     dev: 'vite',
     behavior: { port },
   })
-  const name = 'vite.config.ts.timestamp-1730000000-abc.mjs'
+  const name = 'vite.config.ts.timestamp-123-abc.mjs'
   const sharedOther = join(run.repository.root, 'node_modules/.vite-temp', name)
   await put(run.repository.root, `node_modules/.vite-temp/${name}`, 'x')
   // Act
@@ -151,7 +151,7 @@ test('a timestamp file left in the apps own .vite-temp is removed and one from b
   const appFolder = join(repository.root, APP)
   const tempFolder = 'node_modules/.vite-temp'
   const oldName = 'vite.config.ts.timestamp-1-old.mjs'
-  const newName = 'vite.config.ts.timestamp-1730000000-abc.mjs'
+  const newName = 'vite.config.ts.timestamp-123-abc.mjs'
   await put(appFolder, `${tempFolder}/${oldName}`, 'x')
   await put(
     appFolder,
