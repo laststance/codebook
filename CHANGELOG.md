@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.2.82.0] - 2026-11-05 (development candidate)
+
+Cycle 0081 ([Issue #210](https://github.com/laststance/codebook/issues/210)), a feature cycle. A **server stop in the checked-out source of a workspace library** that a Next **App Router** app below the repository root imports now pauses in that library, in the server render, with the library's real values in the native debugger. With 0.2.81.0's browser library stops, a learner who opens one of TanStack Query's App Router Examples can now follow both halves of what these Examples teach: the server component prefetches and dehydrates the query cache, and the browser hydrates it.
+
+**Pause in a workspace library on the server of a nested App Router app.**
+- **When it applies:** a version 3 `next-dev-webpack` run whose `packageRoot` is an App Router app below the root, with a `participant: "server"` stop in the checked-out source (for example `packages/<library>/src/…`) of a workspace library the app links to inside the repository. The library needs a current build with source maps that carry `sourcesContent`; Codebook never builds it.
+- **Which code it pauses in:** the one `(rsc)` module of the library file in the entry route's server code, during the server render of the entry route.
+- **In the native debugger:** Variables, Call Stack and the editor show the **checked-out library file** with the library's values. The chat, the recorded source and the replay use the same file.
+- **Other copies of the module are left alone:** the server also renders the library for client components (`(ssr)`) and React keeps its own copy. A pause in one of those copies, or at a line only a browser stop of the same file declares, is resumed and not recorded; a pause that also hits a breakpoint of yours stays yours.
+- **Both participants in one file:** a run may declare a server stop and a browser stop in the same library file; each pauses only at its own lines.
+- **Saved as study format 9, with no new field.** The stop is saved with the library file's repository-relative path, hash and line, and replays from the recorded evidence after the app has stopped.
+
+**Clear refusals** under `NEXT_STOP_NOT_SEALED`, with the library reasons of the browser library stops and `details.router: "app"`:
+- before any process starts, `library-build-stale`, `library-build-unmapped` and `library-place-ambiguous`;
+- at the seal, before any input, `library-not-in-build` (no `(rsc)` module of the file in the entry route's server code, two built flavours, differing copies, or a map that names another path or several sources), `library-place-ambiguous` (another `(rsc)` module names the same path) and `client-component` (a `'use client'` library file, whose server module is only a reference);
+- `library-build-changed` (`RUNTIME_FAILED`) when the build or its map changed after the run started, or the bytes the server runs differ at arming, at the pause or when the module is announced again. The same bytes announced again are the same module, so a server recompile does not end the run.
+- a library stop of an app with both routers stays refused as `outside-package`; a library stop of a root app or a version 2 configuration is refused as code the page does not load at start.
+
+**Compatibility.** MCP API 1.24 (additive) and bundled skill 1.0.73 (one sentence: a server stop of a nested App Router app may lie in a workspace library the app links to). Study format 9; Codebook 0.2.81.0 reads a study this version saves. Pages, Vite and browser library stops and the app's own App Router stops are unchanged.
+
 ## [0.2.81.0] - 2026-11-05 (development candidate)
 
 Cycle 0080 ([Issue #208](https://github.com/laststance/codebook/issues/208)), a feature cycle. A **browser stop in the checked-out source of a workspace library** that a Next **App Router** app below the repository root imports now pauses in that library, with the library's real values in the native debugger. A learner who opens one of TanStack Query's App Router Examples can now follow a mutation from the app's form into the library's own code, as 0.2.80.0 allowed for Pages apps.
