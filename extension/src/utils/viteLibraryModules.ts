@@ -5,6 +5,7 @@ import type {
   ViteLibraryModulesReport,
 } from '../viteLauncherProtocol'
 
+import { nextLauncherMessageBefore } from './nextLauncherMessageBefore'
 import { parseViteLauncherReport } from './parseViteLauncherReport'
 import { serializeLauncherRequests } from './serializeLauncherRequests'
 
@@ -51,9 +52,11 @@ export async function requestViteLibraryModules(
     }
     app.send(command)
     // Reports that belong to no pending request (a late optimizer answer, a timed-out walk's answer) are skipped until this request's answer arrives.
+    // One deadline for the whole wait: skipped reports do not restart the clock.
+    const deadlineAtMs = performance.now() + timeoutMs
     for (;;) {
       const report = parseViteLauncherReport(
-        await app.nextMessage(timeoutMs, signal),
+        await nextLauncherMessageBefore(app, deadlineAtMs, signal),
       )
       if (
         report.type === VITE_LAUNCHER_MESSAGES.libraryModulesResult &&

@@ -1,6 +1,7 @@
 import { VITE_LAUNCHER_MESSAGES } from '../constants'
 import type { DevelopmentApp } from '../developmentServerAdapter'
 
+import { nextLauncherMessageBefore } from './nextLauncherMessageBefore'
 import { parseViteLauncherReport } from './parseViteLauncherReport'
 import { serializeLauncherRequests } from './serializeLauncherRequests'
 
@@ -26,9 +27,11 @@ export async function awaitViteOptimizerIdle(
   await serializeLauncherRequests(app, async () => {
     app.send({ type: VITE_LAUNCHER_MESSAGES.awaitOptimizer })
     // Reports that belong to no pending request (a late walk answer) are skipped until the optimizer report arrives.
+    // One deadline for the whole wait: skipped reports do not restart the clock.
+    const deadlineAtMs = performance.now() + timeoutMs
     for (;;) {
       const report = parseViteLauncherReport(
-        await app.nextMessage(timeoutMs, signal),
+        await nextLauncherMessageBefore(app, deadlineAtMs, signal),
       )
       if (report.type === VITE_LAUNCHER_MESSAGES.optimizerIdle) return
     }

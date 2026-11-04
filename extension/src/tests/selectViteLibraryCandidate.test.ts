@@ -424,3 +424,33 @@ test('never reads a listed path that would leave the owned origin', async () => 
   assert.deepEqual(reads, [MODERN])
   assert.equal(result.kind, 'selected')
 })
+
+// protects=a failed module read stops the other workers from starting more reads; fails_when=the remaining listed modules keep being fetched after the first failure; no_claim=real fetches and the byte cap (reads are scripted promises)
+test('stops starting module reads after one read fails and still reports that failure', async () => {
+  // Arrange
+  const paths = Array.from(
+    { length: 30 },
+    (_, index) => `/@fs/repo/packages/core/build/modern/m${index}.js`,
+  )
+  let started = 0
+  const source: ViteLibraryModuleSource = {
+    list: async () => ({ modules: paths, optimizedLibrary: false }),
+    read: async (path) => {
+      started += 1
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      if (path === paths[0]) throw new Error('library module fetch failed')
+      return 'export {}\n'
+    },
+  }
+  // Act
+  const outcome = selectViteLibraryCandidate({
+    source,
+    stop: { realPath: FILE, text: TEXT, line: 1, citationEndLine: 2 },
+    ownedOrigin: OWNED_ORIGIN,
+    appRoot: APP_ROOT,
+  })
+  await assert.rejects(outcome, /library module fetch failed/)
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  // Assert
+  assert.equal(started, 8)
+})

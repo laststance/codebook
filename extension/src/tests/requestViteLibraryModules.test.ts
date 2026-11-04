@@ -123,3 +123,62 @@ test('requestViteLibraryModules skips a late optimizer report and another reques
     bound: 'deadline',
   })
 })
+
+/** A launcher that never answers its request and sends the given unrelated report every 40 ms. */
+function createChattyApp(unrelated: unknown) {
+  const queue: unknown[] = []
+  const timer = setInterval(() => queue.push(unrelated), 40)
+  return {
+    stop: (): void => clearInterval(timer),
+    send(): void {},
+    async nextMessage(timeoutMs: number): Promise<unknown> {
+      const deadline = Date.now() + timeoutMs
+      while (queue.length === 0) {
+        if (Date.now() > deadline)
+          throw new Error(
+            'Timed out waiting for a message of the owned launcher',
+          )
+        await new Promise((resolve) => setTimeout(resolve, 2))
+      }
+      return queue.shift()
+    },
+  }
+}
+
+// protects=the walk wait has one overall deadline even when unrelated reports keep arriving; fails_when=each skipped report restarts the timeout so the call never ends; no_claim=the real launcher (a scripted app sending an unrelated report every 40 ms stands in)
+test('requestViteLibraryModules rejects at its overall timeout while unrelated reports keep arriving', async () => {
+  // Arrange
+  const app = createChattyApp({ type: 'vite-optimizer-idle' })
+  const startedMs = Date.now()
+  // Act
+  const outcome = requestViteLibraryModules(
+    app,
+    walkRequest,
+    200,
+    new AbortController().signal,
+  )
+  await assert
+    .rejects(outcome, /Timed out waiting for a message of the owned launcher/)
+    .finally(app.stop)
+  // Assert
+  assert.ok(Date.now() - startedMs < 400)
+})
+
+// protects=the optimizer wait has one overall deadline even when unrelated reports keep arriving; fails_when=each skipped report restarts the timeout so the call never ends; no_claim=the real launcher (a scripted app sending another request's walk answer every 40 ms stands in)
+test('awaitViteOptimizerIdle rejects at its overall timeout while unrelated reports keep arriving', async () => {
+  // Arrange
+  const app = createChattyApp({
+    type: 'vite-library-modules-result',
+    requestId: -1,
+    modules: [],
+    optimizedLibrary: false,
+  })
+  const startedMs = Date.now()
+  // Act
+  const outcome = awaitViteOptimizerIdle(app, 200, new AbortController().signal)
+  await assert
+    .rejects(outcome, /Timed out waiting for a message of the owned launcher/)
+    .finally(app.stop)
+  // Assert
+  assert.ok(Date.now() - startedMs < 400)
+})

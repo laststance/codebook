@@ -222,18 +222,25 @@ async function readAllWithin(
 ): Promise<ModuleReading[] | undefined> {
   const readings: ModuleReading[] = []
   let next = 0
-  let expired = false
-  // Each worker takes the next unread module until none is left or time is up.
+  // Aborted by the deadline or by the first failed read.
+  const stopReading = new AbortController()
+  // Each worker takes the next unread module until none is left or reading was stopped.
   const worker = async (): Promise<void> => {
-    while (!expired && next < modules.length) {
+    while (!stopReading.signal.aborted && next < modules.length) {
       const index = next++
-      readings[index] = await readOne(modules[index]!)
+      try {
+        readings[index] = await readOne(modules[index]!)
+      } catch (error) {
+        // The first failure ends the other workers' remaining reads; the race already rejects with this error.
+        stopReading.abort()
+        throw error
+      }
     }
   }
   let timer: NodeJS.Timeout | undefined
   const deadline = new Promise<'deadline'>((resolve) => {
     timer = setTimeout(() => {
-      expired = true
+      stopReading.abort()
       resolve('deadline')
     }, deadlineMs)
   })
