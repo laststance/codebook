@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.2.77.0] - 2026-11-04 (development candidate)
+
+Cycle 0076 ([Issue #198](https://github.com/laststance/codebook/issues/198)), a bug-fix cycle. Four tests that each failed once under load or on a cold CI runner in Cycle 0075 now wait for what they check. A fifth, which the cycle's own load runs exposed, is fixed too. Nothing changes in the extension you install.
+
+**Checks that no longer depend on timing.** Each test now waits for the state it asserts instead of a fixed time:
+- **Stalled frame storage:** the frame budget tests end only after the first frame blob is written or has failed, so the test's cleanup no longer races a late write (`ENOTEMPTY`).
+- **Real Chrome:** the pipe-transport test first runs Chrome once on its own throwaway profile, bounded at 60 s, and logs that cold-start time as `REAL_CHROME_PROBE_MS`. The product's 20 s start bound is unchanged.
+- **A journal filled with frames:** the size-limit test publishes its first frames one at a time under a slowed disk, so a slow runner still reaches the journal limit.
+- **Wiki update marker and reservation waits:** the tests wait for the recorded marker answer and for the reservations to leave the disk, with a 30 s safety net, instead of a fixed time.
+- **The outside-the-project Wiki update test:** three bounded experiments could not reproduce its failure. A recurrence now prints every record of the window that tells which refusal, failure or unanswered start ended the run.
+
+**Compatibility.** No MCP API, bundled skill or study format change (MCP API 1.19, skill 1.0.68).
+
 ## [0.2.76.0] - 2026-11-04 (development candidate)
 
 Cycle 0075 ([Issue #196](https://github.com/laststance/codebook/issues/196)), a feature cycle. A library's own Example can now take you **into the checked-out library's source**. A server stop in a workspace library pauses there, for example in TanStack Query's `packages/query-core` when its `examples/react/nextjs` page prefetches. The library is one that a Next Pages app below the repository root imports. You see the library's real values, and the run saves and replays with the library's source.
