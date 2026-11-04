@@ -3,6 +3,7 @@ import {
   HTTP_REDIRECT_STATUS_MIN,
   VITE_ENTRY_PAGE_LIMIT_BYTES,
   VITE_LIBRARY_WALK_CODE_LIMIT_BYTES,
+  VITE_LIBRARY_WALK_ENTRY_LIMIT_COUNT,
   VITE_MODULE_FETCH_TIMEOUT_MS,
 } from '../constants'
 import { viteRefusal } from '../viteRefusals'
@@ -102,10 +103,11 @@ export function createViteLibraryModuleSource(
   const list = async (): Promise<ViteLibraryModules> => {
     const entryUrl = `${request.ownedOrigin}${request.entryPath}`
     const html = await fetchEntryPage(entryUrl, request.signal)
-    return request.requestWalk(
-      extractModuleScriptSources(html, entryUrl),
-      request.libraryRealFolder,
-    )
+    const entries = extractModuleScriptSources(html, entryUrl)
+    // The launcher refuses a longer command and the walk would only time out, so the bound is answered here.
+    if (entries.length > VITE_LIBRARY_WALK_ENTRY_LIMIT_COUNT)
+      throw new ViteLibraryFetchBound()
+    return request.requestWalk(entries, request.libraryRealFolder)
   }
   const fetchText = async (modulePath: string): Promise<string> => {
     const url = ownedModuleUrl(request.ownedOrigin, modulePath)
@@ -131,7 +133,17 @@ export function createViteLibraryModuleSource(
     return text
   }
   return {
-    list: () => (walk ??= list()),
+    list: () => {
+      if (walk) return walk
+      const pending = list()
+      walk = pending
+      // A transient failure (entry page, walk answer, launcher exit) must not fail every later stop of the generation: forget it, except the bound, which stays true.
+      pending.catch((error: unknown) => {
+        if (!(error instanceof ViteLibraryFetchBound) && walk === pending)
+          walk = undefined
+      })
+      return pending
+    },
     read: (modulePath) => {
       let text = texts.get(modulePath)
       if (!text) {

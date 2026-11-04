@@ -524,3 +524,84 @@ test('refuses an entry page that redirects without following it', async (context
   assert.deepEqual(requests, ['/'])
   assert.deepEqual(fixture.requests, [])
 })
+
+// protects=decision-table row 2 (bound): an entry page listing more module scripts than the launcher accepts is refused as library-build-unmapped with cause bound before any walk command is sent; fails_when=the over-long list is sent and only times out as deadline; no_claim=the real launcher (a stand-in server serves 65 module scripts)
+test('refuses an entry page with 65 module scripts as library-build-unmapped with cause bound without sending a walk', async (context) => {
+  // Arrange
+  const fixture = await stage(context)
+  const crowded = createServer((_request, response) => {
+    response.setHeader('content-type', 'text/html')
+    response.end(
+      Array.from(
+        { length: 65 },
+        (_, index) => `<script type="module" src="/m${index}.js"></script>`,
+      ).join(''),
+    )
+  })
+  await new Promise<void>((resolve) => crowded.listen(0, '127.0.0.1', resolve))
+  context.after(() => crowded.close())
+  const address = crowded.address()
+  const origin = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`
+  const walked: string[][] = []
+  const moduleSource = createViteLibraryModuleSource({
+    ownedOrigin: origin,
+    entryPath: '/',
+    libraryRealFolder: fixture.library.realFolder,
+    requestWalk: async (entries) => {
+      walked.push(entries)
+      return { modules: [], optimizedLibrary: false }
+    },
+    signal: new AbortController().signal,
+  })
+  // Act
+  const failure = await sealViteLibraryStop({
+    ...sealRequest(fixture),
+    ownedOrigin: origin,
+    moduleSource,
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // Assert
+  assert.ok(failure instanceof StudyError)
+  assert.deepEqual(failure.details, {
+    reason: 'library-build-unmapped',
+    cause: 'bound',
+    packageRoot: 'examples/app',
+    library: '@scope/core',
+    file: 'packages/core/src/a.ts',
+    sideEffects: 'none',
+  })
+  assert.deepEqual(walked, [])
+})
+
+// protects=listing retry: a transient listing failure (here a walk that fails once) is forgotten so the next stop of the generation lists again and succeeds; fails_when=the first rejection is cached for the whole page generation; no_claim=which transient failures occur in practice (a stand-in walk rejects once)
+test('lists again after a transient listing failure instead of caching it for the generation', async (context) => {
+  // Arrange
+  const fixture = await stage(context)
+  let attempts = 0
+  const moduleSource = createViteLibraryModuleSource({
+    ownedOrigin: fixture.origin,
+    entryPath: '/',
+    libraryRealFolder: fixture.library.realFolder,
+    requestWalk: async () => {
+      attempts += 1
+      if (attempts === 1) throw new Error('Application exited: 1')
+      return {
+        modules: [`${fixture.modulePath}?v=abc`],
+        optimizedLibrary: false,
+      }
+    },
+    signal: new AbortController().signal,
+  })
+  // Act
+  const first = await moduleSource.list().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  const second = await moduleSource.list()
+  // Assert
+  assert.match(String(first), /Application exited: 1/)
+  assert.deepEqual(second.modules, [`${fixture.modulePath}?v=abc`])
+  assert.equal(attempts, 2)
+})

@@ -2809,9 +2809,6 @@ export const VITE_MODULE_FETCH_TIMEOUT_MS = 15_000
 /** The most bytes of the served entry `index.html` Codebook reads to list the page's module scripts for a library stop. */
 export const VITE_ENTRY_PAGE_LIMIT_BYTES = 1024 * 1024
 
-/** The most module scripts one entry page may list for a library stop's walk; more are ignored beyond this count. */
-export const VITE_ENTRY_MODULE_SCRIPT_LIMIT_COUNT = 100
-
 /** The longest `node --version` may take when a run's Node executable is checked. */
 export const NODE_VERSION_TIMEOUT_MS = 10_000
 
@@ -2962,7 +2959,7 @@ export const VITE_LIBRARY_WALK_MODULE_LIMIT_COUNT = 500
 /** The most transformed code one walk of Vite's client module graph reads before it ends with the `bytes` bound. */
 export const VITE_LIBRARY_WALK_CODE_LIMIT_BYTES = 20 * 1024 * 1024
 
-/** The most entry URLs one library-modules command may carry; a longer list is a malformed command and is refused. */
+/** The most entry URLs one library-modules command may carry, and so the most module scripts one entry page may list for a library stop's walk: a page listing more is refused as `library-build-unmapped` with cause `bound` before any command is sent, and a longer list in a command is malformed and refused. */
 export const VITE_LIBRARY_WALK_ENTRY_LIMIT_COUNT = 64
 
 /** The longest one walk of Vite's client module graph runs before it ends with the `deadline` bound. */

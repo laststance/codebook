@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { VITE_ENTRY_MODULE_SCRIPT_LIMIT_COUNT } from '../constants'
+import { VITE_LIBRARY_WALK_ENTRY_LIMIT_COUNT } from '../constants'
 import { extractModuleScriptSources } from '../utils/extractModuleScriptSources'
 
 const ENTRY = 'http://127.0.0.1:4321/'
@@ -49,17 +49,17 @@ test('resolves a relative src against the entry address and lists a repeated mod
   assert.deepEqual(sources, ['/app/main.tsx'])
 })
 
-// protects=Cycle 0078 entries: a page with a huge number of scripts cannot make the walk request unbounded; fails_when=more than the entry limit are returned; no_claim=none beyond protects
-test('stops listing at the entry module limit', () => {
+// protects=Cycle 0078 entries: a page with a huge number of scripts cannot make the walk request unbounded, and a page one over the walk limit stays distinguishable from one at it; fails_when=more than the walk limit plus one are returned; no_claim=none beyond protects
+test('stops listing one module script past the walk entry limit', () => {
   // Arrange
   const html = Array.from(
-    { length: VITE_ENTRY_MODULE_SCRIPT_LIMIT_COUNT + 20 },
+    { length: VITE_LIBRARY_WALK_ENTRY_LIMIT_COUNT + 20 },
     (_, index) => `<script type="module" src="/m${index}.js"></script>`,
   ).join('')
   // Act
   const sources = extractModuleScriptSources(html, ENTRY)
   // Assert
-  assert.equal(sources.length, VITE_ENTRY_MODULE_SCRIPT_LIMIT_COUNT)
+  assert.equal(sources.length, 65)
   assert.equal(sources[0], '/m0.js')
 })
 
@@ -81,4 +81,40 @@ test('reads a module script whose quoted attribute holds a greater-than sign', (
   const sources = extractModuleScriptSources(html, ENTRY)
   // Assert
   assert.deepEqual(sources, ['/src/main.tsx'])
+})
+
+// protects=entry page scan: malformed pages full of unterminated script openers or comment openers are read in linear time and yield no entry; fails_when=the scan rescans the rest of the page per opener (quadratic: 256 KiB took about 7 s) or invents an entry; no_claim=the exact milliseconds (the bound is generous); a browser's own error recovery
+test('reads unterminated script and comment openers in 256 KiB and 1 MiB pages without stalling', () => {
+  // Arrange
+  const pages = [
+    '<script '.repeat(32_768),
+    '<!-- <script '.repeat(20_000),
+    '<script a="'.repeat(26_000),
+    '<script '.repeat(131_072),
+  ]
+  for (const page of pages) {
+    // Act
+    const started = performance.now()
+    const sources = extractModuleScriptSources(page, ENTRY)
+    const elapsedMs = performance.now() - started
+    // Assert
+    assert.deepEqual(sources, [])
+    assert.ok(elapsedMs < 500, `took ${elapsedMs} ms for ${page.length} bytes`)
+  }
+})
+
+// protects=entry page scan: a large page with many complete tags and comments returns its module scripts in order; fails_when=the linear scan drops, reorders or double-counts tags between comments; no_claim=pages beyond the entry page byte cap
+test('lists the module scripts of a large page full of complete tags and comments in order', () => {
+  // Arrange
+  const html = Array.from(
+    { length: 40 },
+    (_, index) =>
+      `<!-- <script type="module" src="/hidden${index}.js"></script> --><p>filler</p><script type="module" src="/m${index}.js"></script>`,
+  ).join('\n')
+  // Act
+  const sources = extractModuleScriptSources(html, ENTRY)
+  // Assert
+  assert.equal(sources.length, 40)
+  assert.equal(sources[0], '/m0.js')
+  assert.equal(sources[39], '/m39.js')
 })
