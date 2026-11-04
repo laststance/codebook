@@ -188,17 +188,22 @@ export type LibraryRecoveryReason = keyof typeof LIBRARY_RECOVERIES
  * Why it exists: the refusal builders and {@link refusalFailureOf} must give the agent the same recovery whether the refusal was thrown or restored from a run's failure text.
  * @param reason - A library refusal `details.reason`.
  * @param adapter - The adapter whose run raised it: the endings differ in what had started (`next` by default, `vite` for a nested Vite app's browser stop).
+ * @param router - The router of a Next app (`details.router`): an App Router `library-not-in-build` names the client chunks of the entry route's client reference manifest, as the thrown refusal does; `pages` by default.
  * @returns The static recovery text, ending at the reason's own help anchor.
  * @example
  * libraryRecoveryOf('library-build-stale') // => "A workspace library's build does not match … See codebook://help/repository-browser#library-build-stale."
+ * libraryRecoveryOf('library-not-in-build', 'next', 'app') // => "The client chunks of the entry route's client reference manifest do not hold … See codebook://help/repository-browser#library-not-in-build."
  */
 export function libraryRecoveryOf(
   reason: LibraryRecoveryReason,
   adapter: 'next' | 'vite' = 'next',
+  router: 'pages' | 'app' = 'pages',
 ): string {
-  return adapter === 'vite'
-    ? VITE_LIBRARY_RECOVERIES[reason]
-    : LIBRARY_RECOVERIES[reason]
+  if (adapter === 'vite') return VITE_LIBRARY_RECOVERIES[reason]
+  // Only the refusal that names the searched code has an App Router wording; every other reason reads the same for both routers.
+  if (router === 'app' && reason === 'library-not-in-build')
+    return APP_BROWSER_LIBRARY_RECOVERIES[reason]
+  return LIBRARY_RECOVERIES[reason]
 }
 
 /** Why a library's build could not be matched to a stop file; the `details.cause` of a `library-build-unmapped` refusal. `prebundled` and `lazy-import` are raised only under `vite-dev`. */

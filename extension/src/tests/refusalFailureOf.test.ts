@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import {
   libraryBuildChangedFailure,
   libraryFailureText,
+  libraryNotInBuildRefusal,
   libraryPlaceAmbiguousRefusal,
 } from '../nextRefusals'
 import { formatRefusalFailure } from '../utils/formatRefusalFailure'
@@ -380,4 +381,48 @@ test('an App Router library-place-ambiguous text restores router app', () => {
     router: 'app',
     sideEffects: 'unknown',
   })
+})
+
+// protects=an App Router library-not-in-build recorded as failure text (a tracked activity such as a reseal after a hot update) restores the same App Router recovery the thrown refusal carries, naming the client chunks of the entry route's client reference manifest; fails_when=the restore picks the server-compile recovery of a Pages server stop; no_claim=which run path records the text (configuredBrowserRun's track() is not driven here)
+test('an App Router library-not-in-build text restores the App Router recovery of the thrown refusal', () => {
+  // Arrange
+  const error = libraryNotInBuildRefusal(
+    'examples/app',
+    'lib',
+    'packages/lib/src/core.ts',
+    ['packages/lib/build/modern/core.js'],
+    'app-pages-browser',
+  )
+  // Act
+  const text = libraryFailureText(error) ?? ''
+  const restored = refusalFailureOf(text)
+  // Assert
+  assert.ok(
+    text.startsWith('NEXT_STOP_NOT_SEALED(library-not-in-build app): '),
+    text,
+  )
+  assert.equal(restored?.recoveryOverride, error.recoveryOverride)
+  assert.match(
+    restored?.recoveryOverride ?? '',
+    /^The client chunks of the entry route's client reference manifest do not hold exactly one built file/,
+  )
+})
+
+// protects=a Pages server library-not-in-build restored from text keeps the server-compile recovery it always had; fails_when=the router-aware selection changes the Pages recovery; no_claim=the Pages browser layer, whose text carries no layer (unchanged from Cycle 0079)
+test('a Pages library-not-in-build text still restores the server-compile recovery', () => {
+  // Arrange
+  const error = libraryNotInBuildRefusal(
+    'examples/app',
+    'lib',
+    'packages/lib/src/core.ts',
+    ['packages/lib/build/modern/core.js'],
+  )
+  // Act
+  const restored = refusalFailureOf(libraryFailureText(error) ?? '')
+  // Assert
+  assert.equal(restored?.recoveryOverride, error.recoveryOverride)
+  assert.match(
+    restored?.recoveryOverride ?? '',
+    /^The page's server code does not hold exactly one built file/,
+  )
 })

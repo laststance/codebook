@@ -141,7 +141,11 @@ export function refusalFailureOf(text: string): RefusalFailure | undefined {
     return {
       code,
       message,
-      recoveryOverride: libraryRecoveryOf(libraryDetails.reason),
+      recoveryOverride: libraryRecoveryOf(
+        libraryDetails.reason,
+        'next',
+        libraryDetails.router,
+      ),
       libraryDetails,
     }
   // Of the other codes only a deadline has variants, and only a known name selects its static recovery.
