@@ -2954,23 +2954,32 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @example this.rememberServerCopyId(stop) // keeps 41 for the server session when its adapter numbered the browser library stop's breakpoint 41
    */
   private rememberServerCopyId(stop: PreparedStop): void {
-    const server = this.participants.server.selected
     const isAppLibraryStop =
       this.libraryFreezes.get(libraryFreezeKey(stop.source))?.appBrowser !==
       undefined
+    const server = this.participants.server.selected
     if (
-      !server ||
-      !(
-        isAppLibraryStop ||
-        (stop.participant === 'browser' && stop.library !== undefined)
-      )
+      server &&
+      (isAppLibraryStop ||
+        (stop.participant === 'browser' && stop.library !== undefined))
     )
-      return
-    const id = stop.breakpoint?.acknowledgedId(server)
+      this.retainRetiredId(server, stop)
+    // A server library stop's breakpoint also sits in the page's copy of its file, whose pause can name the old id after the retirement.
+    const browser = this.participants.browser.selected
+    if (browser && isAppLibraryStop && stop.participant === 'server')
+      this.retainRetiredId(browser, stop)
+  }
+
+  /** Keeps the id a session's adapter gave a stop's breakpoint in {@link retiredServerCopyIds}, for {@link rememberServerCopyId}. @example this.retainRetiredId(session, stop) */
+  private retainRetiredId(
+    session: vscode.DebugSession,
+    stop: PreparedStop,
+  ): void {
+    const id = stop.breakpoint?.acknowledgedId(session)
     if (id === undefined) return
-    const ids = this.retiredServerCopyIds.get(server.id) ?? new Set<number>()
+    const ids = this.retiredServerCopyIds.get(session.id) ?? new Set<number>()
     ids.add(id)
-    this.retiredServerCopyIds.set(server.id, ids)
+    this.retiredServerCopyIds.set(session.id, ids)
   }
 
   /**
@@ -10560,10 +10569,21 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (event.event === 'stopped') {
       const body: DebugProtocol.StoppedEvent['body'] = event.body
       // The editor sends a server stop's breakpoint to the browser session too, and the page's stub of a "use server" module maps the same line: that browser pause belongs to the server stop's breakpoint, not to a stop of the page, so it is resumed.
-      const serverStop =
+      const libraryCopyOf =
         name === 'browser'
-          ? this.serverStopOfBrowserPause(session, body)
+          ? this.browserLibraryCopyOf(session, body)
           : undefined
+      const serverStop =
+        libraryCopyOf?.stop ??
+        (name === 'browser'
+          ? this.serverStopOfBrowserPause(session, body)
+          : undefined)
+      if (libraryCopyOf)
+        this.journalResumedHit({
+          action: 'resume',
+          event: 'breakpoint.library-copy',
+          scriptUrl: libraryCopyOf.scriptUrl,
+        })
       this.recordStopVerdict(session, participant, serverStop !== undefined)
       if (serverStop) {
         this.track(
@@ -10775,6 +10795,51 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       session,
       body.hitBreakpointIds ?? [],
     )
+  }
+
+  /**
+   * Finds the server library stop whose breakpoint a browser pause hit, when that pause is the page's copy of a library file that holds stops of both participants (D19).
+   * Why it exists: such a file is mapped in the browser launch, so a server stop's breakpoint (an editor breakpoint bound in every session) binds the page's copy too. A browser pause in that file is the stop only at a line a browser stop of the file declares; a pause that hit only server stops' breakpoints (live ones, or ones the run retired) is nobody's stop and is resumed. Called by {@link onEvent} for a browser `stopped`.
+   * @param session - The browser session that sent the event.
+   * @param body - The event's body.
+   * @returns The server stop to resume for and the pause's script address (empty when the page's runtime has not announced the pause yet); `undefined` when the pause is anything else, including a pause that also hit a breakpoint that is no server stop's.
+   * @example this.browserLibraryCopyOf(session, { reason: 'breakpoint', threadId: 1, hitBreakpointIds: [1] }) // { stop, scriptUrl: 'webpack-internal:///packages/lib/…' }
+   */
+  private browserLibraryCopyOf(
+    session: vscode.DebugSession,
+    body: DebugProtocol.StoppedEvent['body'],
+  ): { stop: PreparedStop; scriptUrl: string } | undefined {
+    const hitIds = body.hitBreakpointIds ?? []
+    if (
+      !Number.isInteger(body.threadId) ||
+      body.reason !== 'breakpoint' ||
+      hitIds.length === 0 ||
+      this.browserHoldsOwnPause()
+    )
+      return undefined
+    // Only a file that holds stops of both participants is mapped in the browser and in the server.
+    const serverStops = this.stops.filter(
+      (stop) =>
+        this.isAppLibraryServerStop(stop) &&
+        this.stops.some(
+          (other) =>
+            other.participant === 'browser' &&
+            other.source.path === stop.source.path,
+        ),
+    )
+    const isServerId = (id: number): boolean =>
+      Boolean(this.retiredServerCopyIds.get(session.id)?.has(id)) ||
+      serverStops.some(
+        (stop) => stop.breakpoint?.acknowledgedId(session) === id,
+      )
+    if (serverStops.length === 0 || !hitIds.every(isServerId)) return undefined
+    const held =
+      this.participants.browser.unannouncedPause ?? this.transientBrowserPause
+    const url = held ? this.pageScriptUrlOf(held.event) : undefined
+    return {
+      stop: serverStops[0]!,
+      scriptUrl: url === undefined ? '' : this.journalScriptUrlOf(url),
+    }
   }
 
   /**

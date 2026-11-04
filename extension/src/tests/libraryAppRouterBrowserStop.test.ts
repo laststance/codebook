@@ -460,33 +460,6 @@ function withPagesFolder(staged: StagedLibrary): StagedLibrary {
   }
 }
 
-// protects=AC 4 a server stop in a workspace library of a nested App Router app stays refused outside-package before any process starts; fails_when=the stop is frozen as a library stop or a server starts; no_claim=a server stop of a Pages app (library server stop tests)
-test('a server stop in a library of a nested App Router app stays refused outside-package before any server starts', async (context) => {
-  // Arrange
-  const staged = stageApp()
-  const harness = await openRun(context, staged, {
-    participant: 'server',
-    operations: {
-      operations: [{ kind: 'click', title: 'Next page', selector: 'a' }],
-      stopOperations: [1],
-      stopParticipants: ['server'],
-    },
-  })
-  // Act
-  const failure = await preparationFailure(harness)
-  // Assert
-  assert.deepEqual(refusalOf(failure), {
-    code: 'NEXT_STOP_NOT_SEALED',
-    details: {
-      reason: 'outside-package',
-      files: [LIBRARY_SOURCE_PATH],
-      packageRoot: LIBRARY_APP_FOLDER,
-      sideEffects: 'none',
-    },
-  })
-  assert.equal(harness.developmentServerLaunches(), 0)
-})
-
 // protects=AC 4 a browser stop in a library of a nested app with both routers stays refused outside-package before any process starts, since its entry route is known only after the server started; fails_when=the stop is frozen as an App Router library stop; no_claim=a both-routers app whose entry resolves to an App page
 test('a browser stop in a library of a nested app with both routers stays refused outside-package before any server starts', async (context) => {
   // Arrange

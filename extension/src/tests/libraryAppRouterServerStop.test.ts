@@ -744,6 +744,97 @@ test('a server pause at the line only a browser stop declares, in the (ssr) copy
   ])
 })
 
+// protects=D19 a browser pause in the page's copy of a library file that holds stops of both participants, at a line only a server stop declares (S, whose breakpoint the editor also bound in the page), is resumed with a journal entry that names the page's script address and is never observed, and the browser stop B of the same file then pauses and is observed; fails_when=the page pause at S's line is saved as an observation, fails the run as an extra stop, leaves the page paused, or B's own pause is taken for a copy; no_claim=js-debug's real page pause at a server stop's line (scripted, with the retired breakpoint's id) and a real click handler that runs both lines
+test('a browser pause at the line only a server stop declares is resumed and never observed, and the browser stop then pauses', async (context) => {
+  // Arrange
+  const staged = stageAppServer()
+  const harness = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [
+      {
+        line: 2,
+        column: 1,
+        inspections: [{ path: 'count', mode: 'value', required: true }],
+      },
+    ],
+    libraryAppServerOptions(staged, {
+      inspectionScope: { doubled: 6, count: 3 },
+      operations: {
+        operations: [CLICK_OPERATION],
+        stopOperations: [0, 1],
+        stopParticipants: ['server', 'browser'],
+      },
+    }),
+  )
+  const prepared = harness.run.prepare()
+  prepared.catch(() => undefined)
+  await waitUntil(
+    () => harness.server!.breakpointsAcknowledged() > 0,
+    'the entry-render stop was registered',
+  )
+  const files = staged.files()
+  const server = files.appRouterServer!
+  announceResolved(harness, 'rsc-1', server.rscJavascript, server.rscAddress)
+  await journaledOnce(harness, 'stop.module-parsed')
+  harness.server!.hit({
+    ...server.hitAt(LIBRARY_RETURN_LINE),
+    scriptId: 'rsc-1',
+  })
+  const entry = await waitUntil(
+    () => harness.run.view().participants.server?.snapshot,
+    'the entry-render stop S',
+  )
+  // The page parsed the library's `(app-pages-browser)` module before B is armed.
+  harness.replaceExecutedModule(files.browserModuleJavascript)
+  harness.announceScript('browser-lib', new URL(files.browserAddress).href)
+  harness.setDocumentReadyState('complete')
+  harness.suppressInputPause()
+  await harness.run.continue('server', entry.pause)
+  await prepared
+  harness.run.action('op-1', 'repository-operation')
+  await waitUntil(
+    () =>
+      harness.breakpoints.some(
+        (breakpoint) => breakpoint.id === 'owned-breakpoint-2',
+      ),
+    'the browser stop B was armed',
+  )
+  // The page runs both lines inside the input of operation 1.
+  await waitUntil(() => harness.inputsSeen() >= 1, 'the click was sent')
+  const serverBreakpointId = harness.browserAdapterIdOf('owned-breakpoint')
+  const browserBreakpointId = harness.browserAdapterIdOf('owned-breakpoint-2')
+  // Act
+  harness.pauseBrowserInLibrary({
+    scriptId: 'browser-lib',
+    ...files.hitAt(LIBRARY_RETURN_LINE),
+    hitBreakpointIds: [serverBreakpointId],
+  })
+  await waitUntil(
+    () =>
+      harness.commands.filter((command) => command === 'continue').length >= 1,
+    'the page pause at S was resumed',
+  )
+  const observedAtCopy = harness.run.view().participants.browser?.snapshot
+  harness.pauseBrowserInLibrary({
+    scriptId: 'browser-lib',
+    ...files.hitAt(2),
+    hitBreakpointIds: [browserBreakpointId],
+  })
+  const stop = await waitUntil(
+    () => harness.run.view().participants.browser?.snapshot,
+    'the browser stop B',
+  )
+  // Assert
+  assert.equal(observedAtCopy, undefined)
+  assert.deepEqual(journaled(harness, 'breakpoint.library-copy'), [
+    { scriptUrl: new URL(files.browserAddress).href },
+  ])
+  assert.equal(harness.run.view().failures.length, 0)
+  assert.equal(stop.source.line, 2)
+  assert.equal(harness.run.view().snapshots.length, 2)
+})
+
 /** Adds a Pages folder to the nested app, so it holds both routers. */
 function withPagesFolder(staged: StagedLibrary): StagedLibrary {
   return {
