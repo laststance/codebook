@@ -1,16 +1,16 @@
 {
   "version": 9,
   "workspaceKey": "0000000000000000000000000000000000000000000000000000000000000000",
-  "id": "08f6a332-95e1-4487-ba29-244f3a3256fb_15312f1f-ce82-4921-b2d8-19a343bcd6bf",
-  "instanceId": "08f6a332-95e1-4487-ba29-244f3a3256fb",
-  "runId": "15312f1f-ce82-4921-b2d8-19a343bcd6bf",
+  "id": "88b0fb9f-3ee6-44db-b048-c66b98b6183c_4fce678e-2641-4edf-b674-49c75c6ad1ef",
+  "instanceId": "88b0fb9f-3ee6-44db-b048-c66b98b6183c",
+  "runId": "4fce678e-2641-4edf-b674-49c75c6ad1ef",
   "profile": "repository-browser",
-  "createdAt": "2026-11-04T14:11:58.937Z",
-  "savedAt": "2026-11-04T14:11:59.122Z",
-  "state": "paused-browser",
+  "createdAt": "2026-11-04T14:28:45.667Z",
+  "savedAt": "2026-11-04T14:28:45.884Z",
+  "state": "completed",
   "terminal": false,
   "finalOutcome": "pending-teardown",
-  "materialSignature": "958c940573e71e7d1fabc11a6a4cadeeeccd3fdc4e8fc15d817383cf18602e2a",
+  "materialSignature": "2edce6eb46073265b4fd25622fddc94c48fb2bd2caf37a82c9693d22179087fe",
   "configuration": {
     "version": 3,
     "adapter": "next-dev-webpack",
@@ -111,22 +111,27 @@
     ]
   },
   "operation": {
-    "id": "283dbc9b-7ae2-4dd9-8e69-7f9c48536d61",
+    "id": "aac0797f-248c-4a86-a465-9f4c3ce57c2e",
     "key": "one",
     "inputDispatched": true,
-    "inputAcknowledged": false,
-    "afterVerified": false
+    "inputAcknowledged": true,
+    "continuedPause": {
+      "sessionId": "browser-session",
+      "threadId": 1,
+      "generation": 1
+    },
+    "afterVerified": true
   },
   "operations": [
     {
       "index": 1,
       "kind": "click",
       "title": "Next page",
-      "atMs": 126.795041,
-      "state": "paused",
-      "ack": "pending",
+      "atMs": 88.669458,
+      "state": "done",
+      "ack": "yes",
       "valueCheck": "n/a",
-      "effect": "pending"
+      "effect": "after-verified"
     }
   ],
   "observations": [
@@ -135,10 +140,10 @@
       "itemId": "repository/interface/theme",
       "actionId": "repository-click",
       "capturePhase": "paused-browser",
-      "snapshotUri": "codebook://08f6a332-95e1-4487-ba29-244f3a3256fb/runs/15312f1f-ce82-4921-b2d8-19a343bcd6bf/snapshots/browser-session%3A1",
+      "snapshotUri": "codebook://88b0fb9f-3ee6-44db-b048-c66b98b6183c/runs/4fce678e-2641-4edf-b674-49c75c6ad1ef/snapshots/browser-session%3A1",
       "participant": "browser",
-      "capturedAt": "2026-11-04T14:11:59.106Z",
-      "elapsedMs": 213.033916,
+      "capturedAt": "2026-11-04T14:28:45.782Z",
+      "elapsedMs": 147.477833,
       "pause": {
         "sessionId": "browser-session",
         "threadId": 1,
@@ -149,8 +154,8 @@
         "hash": "a8106b1601e84d7525e84ed95ade45c3d88e68bd54af34a5103beef8c3063858",
         "line": 3,
         "column": 1,
-        "javascriptHash": "22d306fb9c5813e26e65182590886de54d18888803bdc90075d9854cce66d1b7",
-        "mapHash": "856be0eee049b0f59f29f40c2a7493f4241af61bca73e9a57cc90b1ad203e5c4",
+        "javascriptHash": "4933cce3440fe83de03f81e7ab0b90bdb06ff7e00ab905bbbd3e79905610e3ee",
+        "mapHash": "6c4e95c7bcfe71ae315121116f436b7090246b5d495c4d476cf22e457f7e133c",
         "scriptId": "actual",
         "scriptUrl": "webpack-internal:///packages/lib/build/modern/core.js",
         "generated": {
@@ -217,8 +222,9 @@
     },
     {
       "phase": "after",
-      "status": "absent",
-      "reason": "No confirmed image for this phase."
+      "status": "captured",
+      "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=",
+      "hash": "13f49d37064e5e9a125e79406f0e4d06a719813a3a3cca585595433c73e9b259"
     }
   ],
   "links": []

@@ -14,6 +14,10 @@ const LIBRARY_STUDY_PATH = join(
   FIXTURES,
   'app-router-library-browser-study-v0.2.81.0/browser-library-stop.study.v9.json',
 )
+const PAGES_GOLDEN_PATH = join(
+  FIXTURES,
+  'pages-library-browser-study-v0.2.80.0/browser-library-stop.study.v9.json',
+)
 const ROOT_GOLDEN_PATH = join(
   FIXTURES,
   'operations-study-v0.2.72.0/browser-only-v3.study.v7.json',
@@ -22,7 +26,7 @@ const ROOT_GOLDEN_PATH = join(
 /**
  * Reads the fixture study: a format 9 study of a nested Next App Router app whose browser stop lies in `packages/lib/src/core.ts`.
  *
- * It was generated once at Cycle 0080 from the scripted App Router browser library run of `libraryAppRouterBrowserStop.test.ts` (a stop on `return doubled` in the library's modern build, served by the controlled runtime) and saved through the service writer ({@link captureStudy} on a service record, as `pausedViteRun` does for a Vite run). The one-off generator is not part of the product or the suite.
+ * It was generated once at Cycle 0080 from the scripted App Router browser library run of `libraryAppRouterBrowserStop.test.ts` (a stop on `return doubled` in the library's modern build, served by the controlled runtime) and saved through the service writer ({@link captureStudy} on a service record, as `pausedViteRun` does for a Vite run). The run continued past the stop to completion before the capture, as the Cycle 0079 Pages golden did: the study reads `state: "completed"`, its operation `afterVerified: true` with the `continuedPause`, and every capture phase captured. The one-off generator is not part of the product or the suite.
  *
  * @returns The study as saved, before decoding.
  */
@@ -35,6 +39,7 @@ test('a format 9 study with an App Router browser library stop decodes with the 
   // Arrange
   const raw = await readLibraryStudy()
   const golden = JSON.parse(await readFile(ROOT_GOLDEN_PATH, 'utf8'))
+  const pagesGolden = JSON.parse(await readFile(PAGES_GOLDEN_PATH, 'utf8'))
   // Act
   const decoded = decodeConfiguredStudy(raw, raw.workspaceKey)
   // Assert
@@ -51,6 +56,9 @@ test('a format 9 study with an App Router browser library stop decodes with the 
     decoded.descriptor?.sources[0]?.hash,
   )
   assert.deepEqual(decoded.observations[0]?.values, { 'value:doubled': 6 })
+  // The golden is the finished run, not the paused one.
+  assert.equal(decoded.state, 'completed')
+  assert.equal(decoded.operation?.afterVerified, true)
   assert.deepEqual(Object.keys(raw).sort(), Object.keys(golden).sort())
   assert.deepEqual(
     Object.keys(raw.configuration).sort(),
@@ -59,6 +67,15 @@ test('a format 9 study with an App Router browser library stop decodes with the 
       'additionalStops',
       'packageRoot',
     ].sort(),
+  )
+  // The nested observation and its source carry the keys of the Cycle 0079 Pages golden, no more.
+  assert.deepEqual(
+    Object.keys(raw.observations[0]!).sort(),
+    Object.keys(pagesGolden.observations[0]).sort(),
+  )
+  assert.deepEqual(
+    Object.keys(raw.observations[0]!.source).sort(),
+    Object.keys(pagesGolden.observations[0].source).sort(),
   )
 })
 
