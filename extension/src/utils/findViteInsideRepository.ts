@@ -6,7 +6,13 @@ import { isFolderOrInside } from './resolveNextPackage'
 /** What the bounded walk found: the real path of the nearest `vite/package.json`, or why there is none. */
 export type ViteInsideRepositoryLookup =
   | { found: true; packagePath: string }
-  | { found: false; reason: 'yarn-pnp' | 'not-installed' }
+  | { found: false; reason: ViteNotFoundReason }
+
+/**
+ * Why no usable Vite was found for an app: Yarn Plug-n-Play, nothing installed, the nearest entry resolving outside the repository (or a link that cannot be followed), or a package that is not Vite (D7).
+ */
+export type ViteNotFoundReason =
+  'yarn-pnp' | 'not-installed' | 'outside-repository' | 'not-vite'
 
 /**
  * Finds the nearest `node_modules/vite` from an app folder up to the repository root, accepted only when its real path lies inside the repository (decision D7).
@@ -16,7 +22,7 @@ export type ViteInsideRepositoryLookup =
  *
  * @param appFolder - The app's real path, inside the repository.
  * @param repositoryRoot - The opened repository's root.
- * @returns The real `package.json` path of the nearest Vite, or `not-installed` / `yarn-pnp`.
+ * @returns The real `package.json` path of the nearest Vite, or `not-installed` / `yarn-pnp` / `outside-repository` (the nearest entry leaves the repository or its link is broken).
  * @example
  * await findViteInsideRepository('/repo/examples/basic', '/repo') // => { found: true, packagePath: '/repo/node_modules/.pnpm/vite@8.3.5/node_modules/vite/package.json' }
  */
@@ -48,10 +54,10 @@ export async function findViteInsideRepository(
   }
   if (nearest !== undefined) {
     const real = await realpath(nearest).catch(() => undefined)
-    // A link that cannot be followed, or that leaves the repository, leaves no Vite to run.
+    // A link that cannot be followed, or that leaves the repository, is told apart from a missing install: the learner must fix the link, not install Vite.
     if (real !== undefined && isFolderOrInside(canonicalRoot, real))
       return { found: true, packagePath: join(real, 'package.json') }
-    return { found: false, reason: 'not-installed' }
+    return { found: false, reason: 'outside-repository' }
   }
   for (const folder of [appFolder, repositoryRoot]) {
     const isPnp = await access(join(folder, '.pnp.cjs')).then(

@@ -121,7 +121,7 @@ test('a node_modules/vite link that leaves the repository is not installed and n
   // Act
   const lookup = await resolveViteInstallation(app, root)
   // Assert
-  assert.deepEqual(lookup, { found: false, reason: 'not-installed' })
+  assert.deepEqual(lookup, { found: false, reason: 'outside-repository' })
 })
 
 // protects=decision D7: NODE_PATH is never consulted for a nested app; fails_when=a Vite reachable only through NODE_PATH starts the nested app; no_claim=the root app's resolution
@@ -174,4 +174,103 @@ test('the workspace reading of a nested app is blocked by PREREQUISITE_MISSING u
   assert.equal(blocked.ready, false)
   assert.equal(blocked.gaps[0]?.code, 'PREREQUISITE_MISSING')
   assert.equal(ready.ready, true)
+})
+
+// protects=decision D7: a nearest node_modules/vite that leaves the repository or is a broken link is told apart from a missing Vite, and the status and start message does not say to install Vite; fails_when=the outside or broken link reads as the plain not-installed sentence; no_claim=Windows junctions
+test('an outside or broken node_modules/vite link gets its own recovery sentence in the workspace reading', async (context) => {
+  // Arrange
+  const outer = await makeFolder(context)
+  await installVite(join(outer, 'vite-elsewhere'))
+  const root = join(outer, 'checkout')
+  const outsideApp = join(root, 'examples/react/outside')
+  const brokenApp = join(root, 'examples/react/broken')
+  await writeApp(outsideApp)
+  await writeApp(brokenApp)
+  await mkdir(join(outsideApp, 'node_modules'), { recursive: true })
+  await mkdir(join(brokenApp, 'node_modules'), { recursive: true })
+  await symlink(
+    join(outer, 'vite-elsewhere'),
+    join(outsideApp, 'node_modules/vite'),
+  )
+  await symlink(join(outer, 'missing'), join(brokenApp, 'node_modules/vite'))
+  const readNode = async (): Promise<string | undefined> => 'v24.22.1'
+  // Act
+  const outside = await readViteWorkspaceGaps(outsideApp, readNode, true, root)
+  const broken = await readViteWorkspaceGaps(brokenApp, readNode, true, root)
+  // Assert
+  for (const reading of [outside, broken]) {
+    assert.equal(reading.ready, false)
+    assert.equal(reading.gaps[0]?.code, 'PREREQUISITE_MISSING')
+    assert.match(
+      reading.gaps[0]?.message ?? '',
+      /resolves outside the repository or its link is broken; install the package's dependencies inside the repository/,
+    )
+    assert.doesNotMatch(reading.gaps[0]?.message ?? '', /Install the workspace/)
+  }
+})
+
+// protects=decision D7: a nested app's nearest node_modules/vite whose manifest names another package is not used; fails_when=any package folder named vite is run as Vite; no_claim=the root app, which keeps Node's resolution
+test('a nested node_modules/vite whose package.json names another package is not Vite', async (context) => {
+  // Arrange
+  const root = await makeFolder(context)
+  await installVite(join(root, 'node_modules/vite'))
+  await put(
+    join(root, 'node_modules/vite/package.json'),
+    JSON.stringify({
+      name: 'not-vite',
+      version: '8.3.5',
+      exports: {
+        '.': { import: './index.mjs' },
+        './package.json': './package.json',
+      },
+    }),
+  )
+  const app = join(root, 'examples/react/basic')
+  await writeApp(app)
+  // Act
+  const nested = await resolveViteInstallation(app, root)
+  const asRoot = await resolveViteInstallation(root)
+  // Assert
+  assert.deepEqual(nested, { found: false, reason: 'not-vite' })
+  assert.equal(asRoot.found, true)
+})
+
+// protects=decision D7: a nested Vite whose import entry is a link out of the repository is refused; fails_when=the launcher imports a file outside the checkout; no_claim=Windows junctions
+test('a nested Vite whose import entry links outside the repository is refused', async (context) => {
+  // Arrange
+  const outer = await makeFolder(context)
+  await put(join(outer, 'elsewhere.mjs'), 'export const version = "x"\n')
+  const root = join(outer, 'checkout')
+  await installVite(join(root, 'node_modules/vite'))
+  await rm(join(root, 'node_modules/vite/index.mjs'))
+  await symlink(
+    join(outer, 'elsewhere.mjs'),
+    join(root, 'node_modules/vite/index.mjs'),
+  )
+  const app = join(root, 'examples/react/basic')
+  await writeApp(app)
+  // Act
+  const lookup = await resolveViteInstallation(app, root)
+  // Assert
+  assert.deepEqual(lookup, { found: false, reason: 'outside-repository' })
+})
+
+// protects=decision D7: a nested Vite whose package.json is a link out of the repository is refused; fails_when=a manifest outside the checkout is trusted; no_claim=Windows junctions
+test('a nested Vite whose package.json links outside the repository is refused', async (context) => {
+  // Arrange
+  const outer = await makeFolder(context)
+  await installVite(join(outer, 'other'))
+  const root = join(outer, 'checkout')
+  await installVite(join(root, 'node_modules/vite'))
+  await rm(join(root, 'node_modules/vite/package.json'))
+  await symlink(
+    join(outer, 'other/package.json'),
+    join(root, 'node_modules/vite/package.json'),
+  )
+  const app = join(root, 'examples/react/basic')
+  await writeApp(app)
+  // Act
+  const lookup = await resolveViteInstallation(app, root)
+  // Assert
+  assert.deepEqual(lookup, { found: false, reason: 'not-vite' })
 })

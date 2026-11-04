@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { VITE_SUPPORTED_MAJOR } from '../constants'
 import type { ErrorCode } from '../errors'
 
+import type { ViteNotFoundReason } from './findViteInsideRepository'
 import { hasNextExecutable } from './hasNextExecutable'
 import { parseViteDevScript, type ViteDevScript } from './parseViteDevScript'
 import {
@@ -23,6 +24,8 @@ import {
   VITE_NO_DEV_SCRIPT_MESSAGE,
   VITE_NOT_AVAILABLE_FOR_NEXT_MESSAGE,
   VITE_NOT_INSTALLED_MESSAGE,
+  VITE_NOT_VITE_MESSAGE,
+  VITE_OUTSIDE_REPOSITORY_MESSAGE,
   VITE_PNP_MESSAGE,
   VITE_PREDEV_MESSAGE,
   viteEnginesMessage,
@@ -135,7 +138,7 @@ type PackageManifestReading = Awaited<ReturnType<typeof readPackageScripts>>
  */
 async function unresolvedGapsOf(
   workspace: string,
-  reason: 'yarn-pnp' | 'not-installed',
+  reason: ViteNotFoundReason,
   manifest: PackageManifestReading,
 ): Promise<NonEmptyGaps> {
   const resolutionGap = await resolutionGapOf(workspace, reason)
@@ -148,7 +151,7 @@ async function unresolvedGapsOf(
 }
 
 /**
- * Picks the gap for the reason Vite does not resolve: Yarn Plug-n-Play, a misrouted Next workspace or a missing install.
+ * Picks the gap for the reason Vite does not resolve: Yarn Plug-n-Play, a Vite outside the repository or not Vite, a misrouted Next workspace or a missing install.
  *
  * Called by {@link unresolvedGapsOf}.
  *
@@ -160,10 +163,18 @@ async function unresolvedGapsOf(
  */
 async function resolutionGapOf(
   workspace: string,
-  reason: 'yarn-pnp' | 'not-installed',
+  reason: ViteNotFoundReason,
 ): Promise<ViteWorkspaceGap> {
   if (reason === 'yarn-pnp')
     return { code: 'VITE_UNSUPPORTED', message: VITE_PNP_MESSAGE }
+  // A Vite that is present but unusable is no plain missing install, so it never suggests installing Vite or a Next misroute.
+  if (reason === 'outside-repository')
+    return {
+      code: 'PREREQUISITE_MISSING',
+      message: VITE_OUTSIDE_REPOSITORY_MESSAGE,
+    }
+  if (reason === 'not-vite')
+    return { code: 'PREREQUISITE_MISSING', message: VITE_NOT_VITE_MESSAGE }
   if (await hasNextExecutable(workspace))
     return {
       code: 'ADAPTER_MISROUTE',

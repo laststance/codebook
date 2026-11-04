@@ -8,6 +8,14 @@ export const VITE_PNP_MESSAGE =
 export const VITE_NOT_INSTALLED_MESSAGE =
   'Install the workspace dependencies, including vite, before using vite-dev (the vite package does not resolve from the package root).'
 
+/** The sentence for a nested app whose nearest `node_modules/vite` resolves outside the repository or is a link that cannot be followed (decision D7); it names no path. */
+export const VITE_OUTSIDE_REPOSITORY_MESSAGE =
+  "Vite for this app resolves outside the repository or its link is broken; install the package's dependencies inside the repository, then start again."
+
+/** The sentence for a nested app whose nearest `node_modules/vite` is not a usable Vite package: another package name, an unreadable manifest or an import entry that leaves the repository. */
+export const VITE_NOT_VITE_MESSAGE =
+  "The nearest node_modules/vite for this app is not a usable vite package inside the repository (its package.json names another package or cannot be read, or its entry is missing); reinstall the package's dependencies inside the repository, then start again."
+
 /** The sentence for a workspace that has Next and no `vite` package. */
 export const VITE_ADAPTER_MISROUTE_MESSAGE =
   'vite-dev was chosen, but this workspace has Next and no vite package: use adapter "next-dev-webpack".'
