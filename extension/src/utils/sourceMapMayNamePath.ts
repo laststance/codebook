@@ -1,8 +1,7 @@
 import { isAbsolute, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-/** How deep an indexed map's sections may nest before the map counts as unreadable. */
-const LIBRARY_SECTION_DEPTH_LIMIT = 8
+import { LIBRARY_SECTION_DEPTH_LIMIT } from '../constants'
 
 /** Whether a value is a plain object. @example isRecord({}) // => true */
 function isRecord(value: unknown): value is Record<string, unknown> {

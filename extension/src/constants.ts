@@ -2999,3 +2999,6 @@ export const PLACEMENT_REFUSED_RECOVERY = `The editor changed the layout (a grou
 
 /** The most characters of a served module map source path that a `library-not-in-build` refusal keeps in `details.mapSource`; the path is served text, so a longer one is cut with {@link CUT_TEXT_MARKER}. */
 export const LIBRARY_MAP_SOURCE_DETAIL_LIMIT_CHARS = 512
+
+/** How deep an indexed source map's sections may nest before the App Router library seal's collision check counts the map as unreadable (and so as possibly naming the stop file). */
+export const LIBRARY_SECTION_DEPTH_LIMIT = 8
