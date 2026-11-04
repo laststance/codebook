@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.2.80.0] - 2026-11-04 (development candidate)
+
+Cycle 0079 ([Issue #205](https://github.com/laststance/codebook/issues/205)), a feature cycle. A **browser stop in the checked-out source of a workspace library** that a Next Pages app below the repository root imports now pauses in that library, with the library's real values in the native debugger. With 0.2.75.0's server library stops, a learner can follow TanStack Query's Next Example from the server's prefetch to the browser's hydration and to the fetch that **Show More** starts, in the library's own code.
+
+**Pause in a workspace library through a nested Next Pages app.**
+- **When it applies:** a version 3 `next-dev-webpack` run whose `packageRoot` is a Pages app below the root, with a `participant: "browser"` stop in the checked-out source (for example `packages/<library>/src/…`) of a workspace library the app reaches through links inside the repository, directly or through other workspace libraries. An App Router app keeps refusing it as `outside-package`.
+- **How it finds the code the browser runs:** Codebook freezes the library's build before any process starts, then finds the one module `(pages-dir-browser)/<runtimePath>` of exactly one built flavour in the route's and `_app`'s entry chunks, and checks its built text against the freeze. The run pauses there and records the checked-out library source at the line the paused built line translates to.
+- **In the native debugger:** Variables and Call Stack show the library's built file (`packages/<library>/build/<file>.js`), while the chat, the recorded source and the replay use the library source.
+- **When it can run:** a browser stop declares `afterOperation` from 1, so library code that runs only at the entry load is observed through a server library stop or after a client navigation.
+- **Codebook never builds the library:** you build it, with source maps that include `sourcesContent`.
+
+**Clear refusals** under `NEXT_STOP_NOT_SEALED`, with the reasons of server library stops:
+- before any process starts: `library-build-stale` (a rebuild, run by you, fixes it) and `library-build-unmapped`;
+- at the seal, before any input: `library-not-in-build` (a module the page loads later or never loads, two built flavours, or differing copies) and `library-place-ambiguous`;
+- `library-build-changed` (`RUNTIME_FAILED`) when the build changed before the seal, or the bytes the browser runs differ at arming, after a rebuild or hot update, or at the pause.
+
+**Fixed.**
+- **The browser library module is bound in the spelling the editor's debugger announces.** The page's debugger names a library module with its climb out of the app resolved (`packages/<library>/build/…` instead of `(pages-dir-browser)/../../../packages/<library>/build/…`). A server library stop's copy in the page is recognised in that spelling too.
+- **A stop the paused page cannot draw in time no longer fails the run.** A browser stop that pauses right after the previous stop's continue, in the same render, may leave the paused page unable to draw that stop's image. After 3 s the image is recorded as unavailable, the stop keeps its source and values, and the run goes on and ends partial. An image of a server stop or of no stop that times out still fails the run.
+- In a run that also inspects the server, a pause in the server's copy of a browser library stop's module is resumed and journaled only when it names the run's own breakpoint.
+
+**Saved as study format 9, with no new field.** A browser library stop is saved with the library file's repository-relative path, hash and line, and replays from the recorded evidence.
+
+**Compatibility.** MCP API 1.22 (additive) and bundled skill 1.0.71 (one sentence: a browser stop of a nested Next Pages app may lie in a workspace library the app imports). Study format 9. Server library stops, Vite library stops and the app's own browser stops are unchanged.
+
 ## [0.2.79.0] - 2026-11-04 (development candidate)
 
 Cycle 0078 ([Issue #202](https://github.com/laststance/codebook/issues/202)), a feature cycle. A **browser stop in the checked-out source of a workspace library** that a Vite app below the repository root imports now pauses in that library, with the library's real values in the native debugger. Most library Examples work this way, for example TanStack Query's `examples/react/*` importing `packages/query-core`. Before, Codebook refused such a stop as `outside-package`, so a chat could only explain the library from its source.
