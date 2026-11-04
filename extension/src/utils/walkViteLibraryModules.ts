@@ -48,6 +48,11 @@ export type ViteLibraryWalkOptions = {
   deadlineMs?: number
   /** The clock in milliseconds; defaults to `Date.now`. */
   now?: () => number
+  /**
+   * Starts a one-shot timer and answers a function that cancels it; defaults to `setTimeout` / `clearTimeout`.
+   * Tests inject a scripted timer so no test waits for the real deadline.
+   */
+  startTimer?: (callback: () => void, delayMs: number) => () => void
 }
 
 /** What one walk found; the launcher sends it as the answer to a library-modules command. */
@@ -116,6 +121,23 @@ async function hasOptimizedLibrary(
   return false
 }
 
+/**
+ * Starts a real one-shot timer and answers the function that cancels it.
+ *
+ * Why it exists: the default of {@link ViteLibraryWalkOptions.startTimer}. Called by {@link walkViteLibraryModules} when a test injects no timer.
+ *
+ * @param callback - Runs once after the delay.
+ * @param delayMs - The delay in milliseconds.
+ * @returns A function that cancels the timer.
+ * @example
+ * const cancel = startRealTimer(() => {}, 100)
+ * cancel()
+ */
+function startRealTimer(callback: () => void, delayMs: number): () => void {
+  const handle = setTimeout(callback, delayMs)
+  return (): void => clearTimeout(handle)
+}
+
 /** The limits and the clock of one walk, defaults filled in. */
 type ResolvedWalkLimits = Required<ViteLibraryWalkOptions>
 
@@ -171,6 +193,8 @@ type WalkedModule = {
   imports: Iterable<string>
   /** The UTF-8 size of the transformed code. */
   codeBytes: number
+  /** The module's real file path when it lies in the library; the key that keeps one file from being listed under two URLs. */
+  libraryFile?: string
 }
 
 /**
@@ -196,18 +220,59 @@ async function readWalkedModule(
   const codeBytes = Buffer.byteLength(transformed.code, 'utf8')
   const node = await environment.moduleGraph.getModuleByUrl(url)
   if (!node) return { inLibrary: false, imports: [], codeBytes }
-  const file = node.file ? resolve(node.file) : undefined
+  const realFile = node.file
+    ? await realPathOrSelf(resolve(node.file))
+    : undefined
   const cacheDir = environment.config?.cacheDir
-  // A file inside the optimizer's cache is a pre-bundled dependency, however its URL looked: it is neither listed nor followed.
-  if (file && cacheDir && isInsideFolder(resolve(cacheDir), file))
+  // A file inside the optimizer's cache is a pre-bundled dependency, however its URL looked: it is neither listed nor followed. Both sides are real paths, like the library check.
+  if (
+    realFile &&
+    cacheDir &&
+    isInsideFolder(await realPathOrSelf(resolve(cacheDir)), realFile)
+  )
     return { inLibrary: false, imports: [], codeBytes }
+  const inLibrary =
+    realFile !== undefined && isInsideFolder(libraryFolder, realFile)
   return {
-    inLibrary:
-      file !== undefined &&
-      isInsideFolder(libraryFolder, await realPathOrSelf(file)),
+    inLibrary,
     // A library imports its own chunks, so its imports are followed too.
     imports: node.staticImportedUrls ?? [],
     codeBytes,
+    ...(inLibrary ? { libraryFile: realFile } : {}),
+  }
+}
+
+/** Marks that the deadline won the race against a transform. */
+const DEADLINE_WON = Symbol('deadline-won')
+
+/**
+ * Reads one module, giving up when the time left before the walk's deadline runs out.
+ *
+ * Why it exists: the deadline is otherwise checked only between transforms, so one transform that hangs would outlast it and the extension would time out without a coded answer. Called by {@link walkViteLibraryModules} for each URL.
+ *
+ * @param read - The module read to race.
+ * @param remainingMs - The time left before the deadline.
+ * @param startTimer - Starts the one-shot timer; answers its cancel function.
+ * @returns The module's contribution, or {@link DEADLINE_WON} when the time ran out first.
+ * @throws When the read fails before the deadline; the caller skips the module.
+ * @example
+ * await raceAgainstDeadline(readWalkedModule(env, url, lib), 5_000, startRealTimer)
+ */
+async function raceAgainstDeadline(
+  read: Promise<WalkedModule | undefined>,
+  remainingMs: number,
+  startTimer: (callback: () => void, delayMs: number) => () => void,
+): Promise<WalkedModule | undefined | typeof DEADLINE_WON> {
+  // A read that loses the race may still fail later; swallow that so it is not an unhandled rejection.
+  read.catch(() => undefined)
+  let cancelTimer = (): void => undefined
+  const deadline = new Promise<typeof DEADLINE_WON>((resolveDeadline) => {
+    cancelTimer = startTimer(() => resolveDeadline(DEADLINE_WON), remainingMs)
+  })
+  try {
+    return await Promise.race([read, deadline])
+  } finally {
+    cancelTimer()
   }
 }
 
@@ -236,12 +301,15 @@ export async function walkViteLibraryModules(
     codeLimitBytes: VITE_LIBRARY_WALK_CODE_LIMIT_BYTES,
     deadlineMs: VITE_LIBRARY_WALK_DEADLINE_MS,
     now: Date.now,
+    startTimer: startRealTimer,
     ...options,
   }
   const { libraryFolder } = command
   const queue = [...command.entries]
   const seen = new Set(queue)
   const modules: string[] = []
+  // One library file reached under two URLs (`?t=` / `?v=` variants) is listed once, under the first URL.
+  const listedFiles = new Set<string>()
   const progress = { visited: 0, transformedBytes: 0, startedAt: limits.now() }
   let bound: ViteLibraryWalkBound | undefined
   for (const url of queue) {
@@ -251,10 +319,24 @@ export async function walkViteLibraryModules(
     if (bound) break
     progress.visited += 1
     try {
-      const walked = await readWalkedModule(environment, url, libraryFolder)
+      const remainingMs =
+        limits.deadlineMs - (limits.now() - progress.startedAt)
+      const walked = await raceAgainstDeadline(
+        readWalkedModule(environment, url, libraryFolder),
+        Math.max(remainingMs, 0),
+        limits.startTimer,
+      )
+      // A transform that outlasts the deadline ends the walk with what it has.
+      if (walked === DEADLINE_WON) {
+        bound = 'deadline'
+        break
+      }
       if (!walked) continue
       progress.transformedBytes += walked.codeBytes
-      if (walked.inLibrary) modules.push(url)
+      if (walked.libraryFile && !listedFiles.has(walked.libraryFile)) {
+        listedFiles.add(walked.libraryFile)
+        modules.push(url)
+      }
       enqueueNewUrls(queue, seen, walked.imports)
     } catch {
       // A module whose transform fails is skipped with its imports; the walk goes on.

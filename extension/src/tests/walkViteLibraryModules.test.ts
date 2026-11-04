@@ -366,3 +366,109 @@ test('skips a module whose transform throws and keeps walking the others', async
   // Assert
   assert.deepEqual(result.modules, ['/@fs/repo/lib/ok.js'])
 })
+
+// protects=one transform that never answers ends the walk with the deadline bound instead of hanging until the extension times out; fails_when=the deadline is checked only between transforms; no_claim=real elapsed time (a scripted timer fires at once) and real Vite (the fake transform never settles)
+test('answers the deadline bound when one transform never settles', async () => {
+  // Arrange
+  const { environment } = fakeEnvironment({})
+  environment.transformRequest = () => new Promise(() => undefined)
+  const requestedDelays: number[] = []
+  // Act
+  const result = await walkViteLibraryModules(
+    environment,
+    { entries: ['/src/main.tsx'], libraryFolder: '/repo/lib' },
+    {
+      deadlineMs: 15_000,
+      now: () => 0,
+      startTimer: (callback, delayMs) => {
+        requestedDelays.push(delayMs)
+        setImmediate(callback)
+        return () => undefined
+      },
+    },
+  )
+  // Assert
+  assert.deepEqual(result, {
+    modules: [],
+    optimizedLibrary: false,
+    bound: 'deadline',
+  })
+  assert.deepEqual(requestedDelays, [15_000])
+})
+
+// protects=the deadline timer is cancelled once a transform answers in time, so no timer outlives the walk; fails_when=the timer is left running; no_claim=real timers (a scripted timer records the cancel)
+test('cancels the deadline timer of every transform that answers in time', async () => {
+  // Arrange
+  const { environment } = fakeEnvironment({
+    '/src/main.tsx': { file: '/repo/app/main.tsx' },
+  })
+  let started = 0
+  let cancelled = 0
+  // Act
+  const result = await walkViteLibraryModules(
+    environment,
+    { entries: ['/src/main.tsx'], libraryFolder: '/repo/lib' },
+    {
+      startTimer: () => {
+        started += 1
+        return (): void => {
+          cancelled += 1
+        }
+      },
+    },
+  )
+  // Assert
+  assert.deepEqual(result, { modules: [], optimizedLibrary: false })
+  assert.deepEqual({ started, cancelled }, { started: 1, cancelled: 1 })
+})
+
+// protects=one library file reached under two URLs is listed once under the first URL; fails_when=modules are de-duplicated by URL only; no_claim=real Vite (a fake graph names the same file under a ?t= and a ?v= URL)
+test('lists a library file once when it is reached under two URLs', async () => {
+  // Arrange
+  const { environment } = fakeEnvironment({
+    '/src/main.tsx': {
+      file: '/repo/app/main.tsx',
+      imports: ['/@fs/repo/lib/a.js?t=1', '/@fs/repo/lib/a.js?v=2'],
+    },
+    '/@fs/repo/lib/a.js?t=1': { file: '/repo/lib/a.js' },
+    '/@fs/repo/lib/a.js?v=2': { file: '/repo/lib/a.js' },
+  })
+  // Act
+  const result = await walkViteLibraryModules(environment, {
+    entries: ['/src/main.tsx'],
+    libraryFolder: '/repo/lib',
+  })
+  // Assert
+  assert.deepEqual(result.modules, ['/@fs/repo/lib/a.js?t=1'])
+})
+
+// protects=the optimizer cache folder is compared by real path, so a cacheDir given through a symlink still keeps pre-bundled files out; fails_when=the cacheDir is only path-resolved while the file is a real path; no_claim=Windows junctions (a POSIX symlink is used)
+test('does not follow a cache-folder module when cacheDir is a symlink to the real folder', async (context) => {
+  // Arrange
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'codebook-walk-')))
+  context.after(() => rm(root, { recursive: true, force: true }))
+  await mkdir(join(root, 'realCache/deps'), { recursive: true })
+  await writeFile(join(root, 'realCache/deps/chunk.js'), 'export {}')
+  await symlink(join(root, 'realCache'), join(root, 'cacheLink'))
+  const { environment } = fakeEnvironment(
+    {
+      '/src/main.tsx': {
+        file: join(root, 'app/main.tsx'),
+        imports: ['/deps/chunk.js'],
+      },
+      '/deps/chunk.js': {
+        file: join(root, 'realCache/deps/chunk.js'),
+        imports: ['/@fs/repo/lib/index.js'],
+      },
+      '/@fs/repo/lib/index.js': { file: '/repo/lib/index.js' },
+    },
+    { config: { cacheDir: join(root, 'cacheLink') } },
+  )
+  // Act
+  const result = await walkViteLibraryModules(environment, {
+    entries: ['/src/main.tsx'],
+    libraryFolder: '/repo/lib',
+  })
+  // Assert
+  assert.deepEqual(result.modules, [])
+})

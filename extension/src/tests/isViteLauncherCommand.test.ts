@@ -68,3 +68,25 @@ test('accepts a well-formed library-modules command and rejects one with a missi
     false,
   ])
 })
+
+// protects=a library-modules command with a relative library folder, a non-URL entry or more than 64 entries is refused; fails_when=the folder is not required to be absolute or the entries are not bounded and shaped; no_claim=the launcher's reaction to the refusal (see viteLauncher.test.ts)
+test('rejects a library-modules command with a relative library folder, an entry without a leading slash or more than 64 entries', () => {
+  // Arrange
+  const wellFormed = {
+    type: 'vite-library-modules',
+    requestId: 3,
+    entries: ['/src/main.tsx'],
+    libraryFolder: '/repo/lib',
+  }
+  const tooMany = Array.from({ length: 65 }, (_, index) => `/src/${index}.tsx`)
+  const atLimit = Array.from({ length: 64 }, (_, index) => `/src/${index}.tsx`)
+  // Act
+  const results = [
+    { ...wellFormed, libraryFolder: 'repo/lib' },
+    { ...wellFormed, entries: ['src/main.tsx'] },
+    { ...wellFormed, entries: tooMany },
+    { ...wellFormed, entries: atLimit },
+  ].map((value) => isViteLauncherCommand(value))
+  // Assert
+  assert.deepEqual(results, [false, false, false, true])
+})
