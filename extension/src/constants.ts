@@ -2968,6 +2968,9 @@ export const VITE_LIBRARY_WALK_ENTRY_LIMIT_COUNT = 64
 /** The longest one walk of Vite's client module graph runs before it ends with the `deadline` bound. */
 export const VITE_LIBRARY_WALK_DEADLINE_MS = 15_000
 
+/** The most candidate module URLs a Vite `library-not-in-build` refusal lists in its message and in `details.candidates`; the rest is counted ("and N more"). */
+export const VITE_LIBRARY_CANDIDATE_LIST_LIMIT_COUNT = 5
+
 /** How long the extension waits for the launcher's answer to one walk: the walk's own deadline plus room for the IPC round trip. */
 export const VITE_LIBRARY_WALK_ANSWER_TIMEOUT_MS =
   VITE_LIBRARY_WALK_DEADLINE_MS + 5_000

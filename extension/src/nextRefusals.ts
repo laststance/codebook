@@ -107,9 +107,9 @@ const LIBRARY_NOTHING_STARTED =
 const LIBRARY_ENTRY_REQUESTED =
   "The entry had already been requested, so the page's data function may have run (details.sideEffects is unknown)."
 
-/** The sentence a Vite library recovery ends with for a refusal raised before the browser opened: the owned Vite server was started (it may have transformed modules into its own cache), but no page or app code ran and no file was written. */
+/** The sentence a Vite library recovery ends with for a refusal raised before the browser opened: no browser opened and no page or app code ran, Codebook wrote no learner file or build output, and the owned Vite server that had started may have written its own dependency cache. */
 const LIBRARY_VITE_BEFORE_BROWSER =
-  'No browser was opened and no input was sent; the Vite server Codebook started was stopped, no page or application code ran and no file was written (details.sideEffects is none).'
+  'No browser was opened and no input was sent; no page or application code ran and Codebook wrote no learner file or build output; the owned Vite server had started (it was stopped) and may have written its own dependency cache (details.sideEffects is none).'
 
 /** The sentence a Vite library recovery ends with for a refusal raised after the browser opened. */
 const LIBRARY_VITE_BROWSER_OPENED =

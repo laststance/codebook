@@ -124,7 +124,7 @@ const VITE_PACKAGE_ROOT_REFUSALS = {
 
 /** What a refused library stop under `vite-dev` says about side effects: the owned Vite server started, but no browser opened and no page or app code ran. */
 const VITE_LIBRARY_SIDE_EFFECTS_SENTENCE =
-  "details.sideEffects is none: refused before the browser opened (no page or app code ran, and no learner file or build output was written; Codebook's own Vite server had started and may have transformed modules into its own cache)."
+  'details.sideEffects is none: refused before the browser opened (no browser opened, no page or app code ran, no learner file or build output was written by Codebook; the owned Vite server started and may have written its own dependency cache).'
 
 /**
  * The library-stop rows that differ from the Next app's, keyed by reason: the code, the cause list and the side effects are Vite's own, while the anchor and the fix of a reason the two adapters share come from {@link PACKAGE_ROOT_REFUSALS}.

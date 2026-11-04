@@ -14,8 +14,11 @@ import {
 import {
   VITE_LIBRARY_BUILD_CHANGED_VARIANT,
   VITE_LIBRARY_LAZY_IMPORT_VARIANT,
+  type ViteLibraryStopIdentity,
 } from '../viteLibraryRefusals'
 import { viteFailureOf, type ViteRefusalCode } from '../viteRefusals'
+
+import { decodeViteLibraryVariant } from './viteLibraryFailureIdentity'
 
 /** The codes a run's failure text can lead with besides the Vite ones: every Next Pages refusal, a source change found during a run (a Fast Refresh of a sealed module) and a secret control that stopped being a safe password control. */
 const CODED_FAILURE_CODES = [
@@ -61,8 +64,8 @@ export type RefusalFailure = {
     | ViteLibraryFailureDetails
 }
 
-/** The fields a Vite library failure text restores: the reason (and cause) with `sideEffects: "unknown"`; the library and file are in the message. */
-type ViteLibraryFailureDetails = {
+/** The fields a Vite library failure text restores: the reason (and cause) with `sideEffects: "unknown"`, and the package root, library and file its variant carries. */
+type ViteLibraryFailureDetails = ViteLibraryStopIdentity & {
   reason: 'library-build-changed' | 'library-build-unmapped'
   cause?: 'lazy-import'
   sideEffects: 'unknown'
@@ -74,18 +77,16 @@ const CODED_FAILURE_LEAD = /^([A-Z][A-Z_]*)(?:\(([^()\n]*)\))?: /
 /**
  * Finds the coded failure a failure text's lead names.
  *
- * Why: `RUNTIME_FAILED` counts as coded only as a library build change ({@link libraryDetailsOfFailure}), so any other run failure text keeps today's uncoded handling. Called by {@link refusalFailureOf}.
+ * Why: `RUNTIME_FAILED` counts as coded only as a Pages library build change ({@link libraryDetailsOfFailure}; the Vite one is restored earlier by {@link restoredViteFailure}), so any other run failure text keeps today's uncoded handling. Called by {@link refusalFailureOf}.
  * @param lead - The match of the coded-failure lead, or `null` when the text has none.
- * @returns The known code, or `undefined` for no lead, an unknown code or a `RUNTIME_FAILED` without the `library-build-changed` variant.
+ * @returns The known code, or `undefined` for no lead, an unknown code or a `RUNTIME_FAILED` without the Pages `library-build-changed` variant.
  * @example codedFailureCodeOf(CODED_FAILURE_LEAD.exec('RUNTIME_FAILED: The run failed.')) // => undefined
  */
 function codedFailureCodeOf(
   lead: RegExpExecArray | null,
 ): (typeof CODED_FAILURE_CODES)[number] | undefined {
   const code = CODED_FAILURE_CODES.find((known) => known === lead?.[1])
-  return code === 'RUNTIME_FAILED' &&
-    lead?.[2] !== VITE_LIBRARY_BUILD_CHANGED_VARIANT &&
-    !libraryDetailsOfFailure(code, lead?.[2])
+  return code === 'RUNTIME_FAILED' && !libraryDetailsOfFailure(code, lead?.[2])
     ? undefined
     : code
 }
@@ -163,28 +164,60 @@ export function refusalFailureOf(text: string): RefusalFailure | undefined {
  * restoredViteFailure('RUNTIME_FAILED(vite-library-build-changed): The served module …')?.libraryDetails?.reason // => 'library-build-changed'
  */
 function restoredViteFailure(text: string): RefusalFailure | undefined {
-  const changedLead = `RUNTIME_FAILED(${VITE_LIBRARY_BUILD_CHANGED_VARIANT}): `
-  if (text.startsWith(changedLead))
+  const changed = viteLibraryFailureLead(
+    text,
+    'RUNTIME_FAILED',
+    VITE_LIBRARY_BUILD_CHANGED_VARIANT,
+  )
+  if (changed)
     return {
       code: 'RUNTIME_FAILED',
-      message: text.slice(changedLead.length),
+      message: changed.message,
       recoveryOverride: libraryRecoveryOf('library-build-changed', 'vite'),
       libraryDetails: {
         reason: 'library-build-changed',
+        ...changed.identity,
         sideEffects: 'unknown',
       },
     }
-  const lazyLead = `VITE_SEAL_FAILED(${VITE_LIBRARY_LAZY_IMPORT_VARIANT}): `
-  if (text.startsWith(lazyLead))
+  const lazy = viteLibraryFailureLead(
+    text,
+    'VITE_SEAL_FAILED',
+    VITE_LIBRARY_LAZY_IMPORT_VARIANT,
+  )
+  if (lazy)
     return {
       code: 'VITE_SEAL_FAILED',
-      message: text.slice(lazyLead.length),
+      message: lazy.message,
       recoveryOverride: libraryRecoveryOf('library-build-unmapped', 'vite'),
       libraryDetails: {
         reason: 'library-build-unmapped',
         cause: 'lazy-import',
+        ...lazy.identity,
         sideEffects: 'unknown',
       },
     }
   return viteFailureOf(text)
+}
+
+/**
+ * Reads the lead `<code>(<variant>:<identity>): ` of a Vite library failure text.
+ *
+ * Why it exists: {@link restoredViteFailure} reads two such leads and needs the message after it and the stop identity the variant carries. A lead whose identity cannot be read is not a library failure of this version, so it restores nothing.
+ * @param text - A run's failure reason.
+ * @param code - The code the lead must start with.
+ * @param variant - The variant name before the identity.
+ * @returns The message after the lead and the decoded identity; `undefined` for any other text.
+ * @example
+ * viteLibraryFailureLead('VITE_SEAL_FAILED(lazy-import:%5B…%5D): The library …', 'VITE_SEAL_FAILED', 'lazy-import')?.identity.library // => '@scope/core'
+ */
+function viteLibraryFailureLead(
+  text: string,
+  code: string,
+  variant: string,
+): { message: string; identity: ViteLibraryStopIdentity } | undefined {
+  const lead = CODED_FAILURE_LEAD.exec(text)
+  if (lead?.[1] !== code) return undefined
+  const identity = decodeViteLibraryVariant(lead[2], variant)
+  return identity && { message: text.slice(lead[0].length), identity }
 }

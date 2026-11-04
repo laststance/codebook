@@ -4027,16 +4027,22 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         if (
           typeof error.details?.reason === 'string' &&
           error.details.reason.startsWith('library-')
-        )
+        ) {
+          const resealMessage = viteResealFailureSentence(
+            generation,
+            error.message,
+          )
           throw new StudyError(
             error.code,
-            viteResealFailureSentence(generation, error.message),
-            error.causeDetail,
+            resealMessage,
+            // The cause words the renewal that failed, like the message, not the first seal's text.
+            resealMessage,
             // The general recovery covers a seal renewed after a page load; the library one says nothing ran.
             undefined,
             undefined,
             { ...error.details, sideEffects: 'unknown' },
           )
+        }
         throw viteRefusal(
           'VITE_SEAL_FAILED',
           viteResealFailureSentence(generation, error.message),
@@ -5147,7 +5153,6 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       packageRoot: this.vitePackage?.packageRootRelative ?? '.',
       library: library.name,
       file: stop.source.path,
-      sideEffects: 'unknown',
     })
   }
 

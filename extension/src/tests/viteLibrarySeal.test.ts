@@ -201,7 +201,6 @@ test('restores a lazy-import refusal from its failure text with the reason, the 
     packageRoot: 'examples/app',
     library: '@scope/core',
     file: 'packages/core/src/a.ts',
-    sideEffects: 'unknown',
   })
   // Act
   const text = viteLibraryFailureText(error)
@@ -211,8 +210,12 @@ test('restores a lazy-import refusal from its failure text with the reason, the 
   assert.deepEqual(restored?.libraryDetails, {
     reason: 'library-build-unmapped',
     cause: 'lazy-import',
+    packageRoot: 'examples/app',
+    library: '@scope/core',
+    file: 'packages/core/src/a.ts',
     sideEffects: 'unknown',
   })
+  assert.equal(error.details?.sideEffects, 'unknown')
   assert.equal(
     restored?.recoveryOverride,
     libraryRecoveryOf('library-build-unmapped', 'vite'),
@@ -234,8 +237,73 @@ test('restores a Vite library build change from its failure text without the Pag
   assert.equal(restored?.code, 'RUNTIME_FAILED')
   assert.deepEqual(restored?.libraryDetails, {
     reason: 'library-build-changed',
+    packageRoot: 'examples/app',
+    library: '@scope/core',
+    file: 'packages/core/src/a.ts',
     sideEffects: 'unknown',
   })
+})
+
+// protects=a build-changed or lazy-import failure whose file path holds parentheses and a colon still restores its package root, library and file from the text; fails_when=the identity is cut at a parenthesis or lost; no_claim=the run's recording of the text (integration test)
+test('restores the package root, library and file of a failure whose names hold parentheses and colons', () => {
+  // Arrange
+  const identity = {
+    packageRoot: 'examples/react/(group)/app',
+    library: '@scope/core',
+    file: 'packages/core/src/a:(b).ts',
+  }
+  // Act
+  const text = viteLibraryFailureText(viteLibraryBuildChangedFailure(identity))
+  const restored = text === undefined ? undefined : refusalFailureOf(text)
+  // Assert
+  assert.equal(restored?.code, 'RUNTIME_FAILED')
+  assert.deepEqual(restored?.libraryDetails, {
+    reason: 'library-build-changed',
+    ...identity,
+    sideEffects: 'unknown',
+  })
+})
+
+// protects=a not-in-build refusal lists at most five candidates in its message and details; fails_when=all seven are listed; no_claim=the candidate selection
+test('lists at most five candidate modules and counts the rest', () => {
+  // Arrange
+  const candidates = [
+    '/1.js',
+    '/2.js',
+    '/3.js',
+    '/4.js',
+    '/5.js',
+    '/6.js',
+    '/7.js',
+  ]
+  // Act
+  const error = viteLibraryRefusal({
+    reason: 'library-not-in-build',
+    packageRoot: 'examples/app',
+    library: '@scope/core',
+    file: 'packages/core/src/a.ts',
+    candidates,
+  })
+  // Assert
+  assert.deepEqual(error.details?.candidates, candidates.slice(0, 5))
+  assert.match(
+    error.message,
+    /\(\/1\.js, \/2\.js, \/3\.js, \/4\.js, \/5\.js and 2 more\)/,
+  )
+  assert.doesNotMatch(error.message, /\/6\.js/)
+})
+
+// protects=Vite recovery and help say the owned Vite server started and may have written its own dependency cache while Codebook wrote nothing; fails_when=the text says no file was written at all; no_claim=the Next text
+test('words the Vite library recovery with the dependency cache the owned server may have written', () => {
+  // Arrange / Act
+  const recovery = libraryRecoveryOf('library-build-stale', 'vite')
+  // Assert
+  assert.match(
+    recovery,
+    /no page or application code ran and Codebook wrote no learner file or build output/,
+  )
+  assert.match(recovery, /may have written its own dependency cache/)
+  assert.doesNotMatch(recovery, /no file was written/)
 })
 
 // protects=a library-build-unmapped message tells the learner to rebuild with source maps only for the causes a rebuild fixes (no-map, no-content, malformed); fails_when=a lazy-import, prebundled, no-line, bound or deadline refusal tells the learner to rebuild, or a no-map refusal stops saying it; no_claim=the recovery sentence (shared with the Next path) and the help rows
@@ -255,7 +323,6 @@ test('asks for a rebuild with source maps only when a rebuild can fix the unmapp
   const lazyImport = viteLibraryRefusal({
     ...identity,
     cause: 'lazy-import',
-    sideEffects: 'unknown',
   }).message
   const prebundled = viteLibraryRefusal({
     ...identity,

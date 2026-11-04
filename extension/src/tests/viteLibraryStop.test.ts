@@ -289,6 +289,29 @@ test('a reload before the inputs walks again and seals the new generation of the
   )
 })
 
+// protects=reseal after a reload: a library refusal of the renewed seal carries the reseal sentence as its cause, like its message, and keeps its reason and unknown side effects; fails_when=the cause keeps the first seal's text; no_claim=a real optimizer (the stand-in launcher lists the new hash)
+test('a library refusal of the seal renewed after a reload words its cause as the renewal that failed', async (context) => {
+  // Arrange
+  const harness = await libraryHarness(context)
+  const preparing = preparationFailure(harness)
+  await waitUntil(() => harness.navigations.length === 1, 'first navigation')
+  // Act
+  harness.viteLibrary?.setModuleText(
+    servedViteLibraryModule('export const stale = true\n', 'const old = 1;'),
+  )
+  harness.reloadPage()
+  harness.announceSealedModule('second')
+  const failure = await preparing
+  // Assert
+  assert.equal(Reflect.get(Object(failure), 'code'), 'VITE_SEAL_FAILED')
+  assert.match(
+    String(Reflect.get(Object(failure), 'causeDetail')),
+    /^Sealing the stops again after page load 1 failed: /,
+  )
+  assert.equal(refusalOf(failure).details.reason, 'library-build-stale')
+  assert.equal(refusalOf(failure).details.sideEffects, 'unknown')
+})
+
 // protects=AC 2 (outside-package kept): a stop outside the app in a library the app does NOT link to keeps today's outside-package refusal with its fields and no library; fails_when=an unreachable library is accepted or the refusal gains details.library; no_claim=chains of workspace links (unit test of detectLibraryPackage)
 test('a stop in a library the app does not reach keeps the outside-package refusal before anything starts', async (context) => {
   // Arrange
