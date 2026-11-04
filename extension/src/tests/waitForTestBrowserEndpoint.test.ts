@@ -52,7 +52,15 @@ test('a test browser that publishes its endpoint after 25 s on a cold runner is 
     path: '/devtools/browser/cold-start',
   })
   assert.equal(fake.state.nowMs, 25_000)
-  assert.deepEqual([...fake.state.paths], ['/profile/DevToolsActivePort'])
+  // node:path joins with the platform's separator, so Windows reads the backslash spelling.
+  assert.deepEqual(
+    [...fake.state.paths],
+    [
+      process.platform === 'win32'
+        ? '\\profile\\DevToolsActivePort'
+        : '/profile/DevToolsActivePort',
+    ],
+  )
 })
 
 // Value: protects=CI-1: a Chrome that never publishes its endpoint fails the test at its bound with a sentence naming it, neither earlier nor long after, after a last look at the bound; fails_when=the wait gives up before the bound, keeps waiting past it by more than one poll, or skips the look at the bound (10 reads instead of 11); no_claim=the real file system (the fake reader answers that no file exists)
