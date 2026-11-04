@@ -157,7 +157,7 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 **CodeRabbit and OCR.**
 
 - [.coderabbit.yaml](.coderabbit.yaml) = policy + exclusions: keep guidelines current; validate with `coderabbit config validate .coderabbit.yaml`; pass via `--config` beside extra context.
-  - CLI 0.9.1 exits 1 on every file with `unknown keyword: "x-undocumented"` (own schema defect): record that line as validation result; review with `-c` still applies file.
+  - CLI 0.9.2 validates file cleanly (0.9.1 exited 1 with `unknown keyword: "x-undocumented"`, own schema defect); a CLI that fails validation that way: record line as validation result; review with `-c` still applies file.
 - Required: local CodeRabbit CLI, findings triage, CI, OCR (picks files and rules, host reviews; each eligible file reviewed or skipped with reason; default exclusions reported apart; no independent external review).
 - Review against implementation base; record completion, source cut, covered files, findings.
 - Missing/private provider context = coverage limit.
