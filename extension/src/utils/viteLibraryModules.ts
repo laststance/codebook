@@ -6,6 +6,7 @@ import type {
 } from '../viteLauncherProtocol'
 
 import { parseViteLauncherReport } from './parseViteLauncherReport'
+import { serializeLauncherRequests } from './serializeLauncherRequests'
 
 /** What one walk of Vite's client module graph found for one library folder (the report without its protocol fields). */
 export type ViteLibraryModules = Omit<
@@ -20,6 +21,8 @@ let lastRequestId = 0
  * Asks the owned Vite launcher which modules of one library folder Vite's client graph reaches from the entry modules, and waits for that answer.
  *
  * Why it exists: a browser stop in a workspace library that a nested Vite app imports is sealed against the one served module whose map names the stop's file; Vite's own graph (inside the launcher) lists the candidates with the browser's resolution, before the browser opens. Called by the Vite adapter once per page generation of a run with a library stop.
+ *
+ * Requests on one launcher are serialized ({@link serializeLauncherRequests}): this one is sent only after the previous request's answer arrived, so concurrent callers never take each other's answers.
  *
  * @param app - The started Vite launcher process (listening).
  * @param request - The entry module URLs of the served `index.html` and the library folder's real path.
@@ -37,28 +40,30 @@ export async function requestViteLibraryModules(
   timeoutMs: number,
   signal: AbortSignal,
 ): Promise<ViteLibraryModules> {
-  lastRequestId += 1
-  const requestId = lastRequestId
-  const command: ViteLibraryModulesCommand = {
-    type: VITE_LAUNCHER_MESSAGES.libraryModules,
-    requestId,
-    entries: request.entries,
-    libraryFolder: request.libraryFolder,
-  }
-  app.send(command)
-  // Other reports (a late optimizer answer, an earlier walk's answer) are skipped until this request's answer arrives.
-  for (;;) {
-    const report = parseViteLauncherReport(
-      await app.nextMessage(timeoutMs, signal),
-    )
-    if (
-      report.type === VITE_LAUNCHER_MESSAGES.libraryModulesResult &&
-      report.requestId === requestId
-    )
-      return {
-        modules: report.modules,
-        optimizedLibrary: report.optimizedLibrary,
-        ...(report.bound === undefined ? {} : { bound: report.bound }),
-      }
-  }
+  return serializeLauncherRequests(app, async () => {
+    lastRequestId += 1
+    const requestId = lastRequestId
+    const command: ViteLibraryModulesCommand = {
+      type: VITE_LAUNCHER_MESSAGES.libraryModules,
+      requestId,
+      entries: request.entries,
+      libraryFolder: request.libraryFolder,
+    }
+    app.send(command)
+    // Reports that belong to no pending request (a late optimizer answer, a timed-out walk's answer) are skipped until this request's answer arrives.
+    for (;;) {
+      const report = parseViteLauncherReport(
+        await app.nextMessage(timeoutMs, signal),
+      )
+      if (
+        report.type === VITE_LAUNCHER_MESSAGES.libraryModulesResult &&
+        report.requestId === requestId
+      )
+        return {
+          modules: report.modules,
+          optimizedLibrary: report.optimizedLibrary,
+          ...(report.bound === undefined ? {} : { bound: report.bound }),
+        }
+    }
+  })
 }
