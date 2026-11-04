@@ -238,7 +238,7 @@ test('the help rule names browser library stops of a nested Pages app and the af
     'declares afterOperation from 1 (afterOperation 0 is refused)',
     'observed through a server library stop, or after a client navigation',
     'study format 9 with no new field',
-    'App Router apps, root apps and version 2 configurations keep the outside-package refusal',
+    'An App Router app keeps the outside-package refusal for a library stop; a root app (packageRoot absent or ".") has no files outside the app and a version 2 configuration cannot carry packageRoot, so the app readers refuse such a stop as not in the code the page loads at start',
   ])
     assert.ok(rule.includes(phrase), phrase)
   assert.ok(limits.includes('or since API 1.22 a browser stop'))
@@ -294,4 +294,64 @@ test('the README and the skill state browser library stops of a nested Next Page
       'With API 1.22 or later a browser stop of a nested Next Pages app may lie in such a library too; it declares `afterOperation` from 1',
     ),
   )
+})
+
+// protects=the skill no longer says every stop file must lie inside packageRoot, and names the supported library exception inside the repository; fails_when=the old sentence returns or the exception drops out; no_claim=what a run does
+test('the skill lets a supported workspace-library stop lie outside packageRoot but inside the repository', async () => {
+  // Arrange
+  const skill = await readPackaged('skills/codebook/SKILL.md')
+  // Act / Assert
+  assert.equal(skill.includes('and must lie inside it)'), false)
+  assert.ok(
+    skill.includes(
+      'app-local files lie inside `packageRoot`, and only a supported workspace-library stop',
+    ),
+  )
+  assert.ok(skill.includes('but it must stay inside the repository)'))
+  assert.ok(
+    skill.includes(
+      'a root app has no files outside the app and a version 2 configuration cannot carry `packageRoot`, so the app readers refuse such a stop as not in the code the page loads at start',
+    ),
+  )
+})
+
+// protects=root apps and version 2 are not said to keep the outside-package refusal in any packaged text; fails_when=the wrong claim returns in the API note, the help, the skill or the README; no_claim=refusal behavior
+test('no packaged text says root apps and version 2 keep the outside-package refusal', async (context) => {
+  // Arrange
+  const help = await readHelp(context)
+  const texts = [
+    JSON.stringify(help),
+    await readPackaged('README.md'),
+    await readPackaged('skills/codebook/SKILL.md'),
+    await readPackaged('src', 'constants.ts'),
+  ]
+  // Act / Assert
+  for (const text of texts)
+    assert.equal(
+      /root apps and version 2 configurations keep/.test(text),
+      false,
+    )
+  assert.ok(
+    (await readPackaged('README.md')).includes(
+      'a library stop of a root app or a version 2 configuration is refused as not in the code the page loads at start',
+    ),
+  )
+})
+
+// protects=the 1.22 note names all three library-build-changed paths of a browser stop and keeps the 1.19 server description apart; fails_when=arming, the new script id or the pause drops out of the note, or the note stops separating browser from server; no_claim=the runtime behavior
+test('the API 1.22 note names the arming, new script id and pause paths of library-build-changed for a browser stop', async () => {
+  // Arrange
+  const constants = await readPackaged('src', 'constants.ts')
+  // Act
+  const note =
+    constants
+      .split('\n')
+      .find((line) => line.startsWith(' * 1.22 is additive')) ?? ''
+  // Assert
+  assert.ok(
+    note.includes(
+      'for a browser stop only, bytes that differ at arming, a rebuild or hot update announced under a new script id, and bytes that differ at the pause',
+    ),
+  )
+  assert.ok(note.includes('the server-stop description of 1.19 is unchanged'))
 })
