@@ -668,10 +668,28 @@ const packageRootRepositoryConfigSchema = operationsConfigurationShape
     validateInspections(configuration, context)
     validateOperations(configuration, context)
   })
-/** Every configuration a saved study can hold: the retained union of formats 3 to 8, or the format 9 package-root variant. */
+/**
+ * The configuration a format 10 study retains: the version 3 `vite-dev` shape with a required `packageRoot` other than `"."`.
+ * Why it exists: 0.2.77.0 validates a format 9 configuration with {@link packageRootRepositoryConfigSchema}, which accepts `next-dev-webpack` only, so a nested Vite run needs its own format to be listed as saved by a newer Codebook. Validated like the format 9 variant (inspections, operations; {@link validateInspections} also refuses a server participant under `vite-dev`).
+ * Read by {@link studyConfigurationSchema}; a Vite run whose package root is `"."` saves the format it always did, without the field.
+ */
+const vitePackageRootRepositoryConfigSchema = operationsConfigurationShape
+  .extend({
+    adapter: z.literal('vite-dev'),
+    packageRoot: repositoryPathSchema.refine(
+      (value) => value !== '.',
+      'A format 10 study names a package folder other than ".".',
+    ),
+  })
+  .superRefine((configuration, context) => {
+    validateInspections(configuration, context)
+    validateOperations(configuration, context)
+  })
+/** Every configuration a saved study can hold: the retained union of formats 3 to 8, the format 9 package-root variant (Next) or the format 10 package-root variant (Vite). */
 export const studyConfigurationSchema = z.union([
   retainedRepositoryConfigSchema,
   packageRootRepositoryConfigSchema,
+  vitePackageRootRepositoryConfigSchema,
 ])
 export type RepositoryConfiguration = z.infer<typeof repositoryConfigSchema>
 export type RetainedRepositoryConfiguration = z.infer<

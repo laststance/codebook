@@ -10,7 +10,7 @@ import { usesServerRenderEvidence } from './studyFormatOfConfiguration'
  * Called by {@link captureStudy} for every observation, because the runtime puts those fields on every pause of every run.
  * @param observation - The observation built from a pause snapshot.
  * @param study - The study being written: its `version` from {@link studyFormatOfConfiguration} and its sealed `configuration`.
- * @returns The observation itself for format 8 rules (format 8, or format 9 with a server stop), else a copy without the format 8 fields.
+ * @returns The observation itself for format 8 rules (format 8, or format 9 or 10 with a server stop), else a copy without the format 8 fields.
  * @example observationOfFormat({ ...observation, declaredIndex: 0 }, { version: 7, configuration }).declaredIndex // => undefined
  */
 export function observationOfFormat(
