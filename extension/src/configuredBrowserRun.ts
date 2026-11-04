@@ -816,6 +816,8 @@ type DebugParticipant = {
     journaled: boolean
     /** The declared server stop the run was resuming the page for when it took this pause as its own (a page pause read while a resume of the run's own had no answer, {@link ConfiguredBrowserRun.ownPagePauseUnderResume}): its resume is then nobody else's, however long the adapter takes to answer. */
     resumedByRun?: PreparedStop
+    /** Set while a `stopped` classifies this pause ({@link ConfiguredBrowserRun.libraryCopyVerdictOf} awaits layer reads): the idle bound of {@link ConfiguredBrowserRun.holdCopyPauseWhileIdle} then only records it passed (`idleBoundPassed`) instead of dropping the pause, so the verdict is not 'gone' for a pause the runtime still holds; a verdict that resumes nothing applies the drop then. */
+    classifying?: { idleBoundPassed: boolean }
   }
   /** A server pause in a script the run never saw parsed, kept apart while the script's address is read ({@link ConfiguredBrowserRun.discoverUnannouncedScript}); `done` settles when the pause went on to admission, or was dropped because the runtime resumed it first. */
   discovering?: { event: Protocol.Debugger.PausedEvent; done: Promise<void> }
@@ -2660,8 +2662,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     participant.unannouncedPause = held
     setTimeout(() => {
-      if (participant.unannouncedPause === held && !this.operation)
-        participant.unannouncedPause = undefined
+      if (participant.unannouncedPause !== held || this.operation) return
+      // A `stopped` is classifying the pause: the drop waits for its verdict.
+      if (held.classifying) held.classifying.idleBoundPassed = true
+      else participant.unannouncedPause = undefined
     }, SERVER_RENDER_CLASSIFICATION_MS)
   }
 
@@ -2748,7 +2752,28 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const held = participant.unannouncedPause
     if (!held) return undefined
     const libraryCopy = await this.libraryCopyVerdictOf(session, event, held)
-    if (libraryCopy) return libraryCopy
+    // A verdict that resumes nothing after the idle bound passed drops the pause (`undefined`), as the bound would have without the wait.
+    if (libraryCopy || this.dropAfterClassification(held)) return libraryCopy
+    return this.heldPauseVerdictOf(session, event, held)
+  }
+
+  /**
+   * Decides a held server pause that is not a library copy: the server's copy of a browser library stop's module, or a repeat hit of a stop that already paused.
+   * Called by {@link unexpectedHitVerdict} after the library-copy classification resumed nothing.
+   * @param session - The server session.
+   * @param event - The `stopped` event.
+   * @param held - The pause held for it.
+   * @returns The resume verdict; `undefined` for any other pause.
+   * @example this.heldPauseVerdictOf(session, event, held) // { action: 'resume', event: 'breakpoint.repeat-hit' }
+   */
+  private heldPauseVerdictOf(
+    session: vscode.DebugSession,
+    event: DebugProtocol.Event,
+    held: NonNullable<DebugParticipant['unannouncedPause']>,
+  ):
+    | Extract<ServerRenderHitVerdict, { event: 'breakpoint.repeat-hit' }>
+    | BrowserLibraryCopyVerdict
+    | undefined {
     // The server's copy of a browser library stop's module is nobody's stop, wherever the run is in its operations.
     // Only a pause that hit the run's own browser library breakpoint is that copy: a breakpoint of the learner's at another line of the module is theirs to see.
     if (
@@ -2772,6 +2797,29 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Ends a held server pause's classification: when the idle bound of {@link holdCopyPauseWhileIdle} passed meanwhile and no operation started, drops the pause as the bound would have without the wait.
+   * Called by {@link unexpectedHitVerdict} once {@link libraryCopyVerdictOf} resumed nothing.
+   * @param held - The pause the `stopped` classified.
+   * @returns `true` when the pause was dropped.
+   * @example if (this.dropAfterClassification(held)) return undefined
+   */
+  private dropAfterClassification(
+    held: NonNullable<DebugParticipant['unannouncedPause']>,
+  ): boolean {
+    const idleBoundPassed = held.classifying?.idleBoundPassed
+    held.classifying = undefined
+    const participant = this.participants.server
+    if (
+      !idleBoundPassed ||
+      participant.unannouncedPause !== held ||
+      this.operation
+    )
+      return false
+    participant.unannouncedPause = undefined
+    return true
+  }
+
+  /**
    * Decides whether a held server pause is nobody's stop of a server library stop's file: another layer's copy of the module, or a line only a browser stop declares (D12/D17).
    * Called by {@link unexpectedHitVerdict}; the copy is resumed only when the pause hit the run's own library breakpoints, so a learner's breakpoint in the file stays theirs.
    * @param session - The server session.
@@ -2786,6 +2834,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     held: NonNullable<DebugParticipant['unannouncedPause']>,
   ): Promise<LibraryCopyVerdict | 'gone' | undefined> {
     if (event.body?.reason !== 'breakpoint') return undefined
+    // The idle bound must not drop the pause while the layer reads below run.
+    held.classifying = { idleBoundPassed: false }
     // A script announced in the resolved spelling is told from its layer by its text, which may still be read.
     await Promise.all([...this.appLibraryIdentifications])
     // The pause may have left the held slot while the layer reads ran: nothing is resumed for a pause no longer held. One the run adopted as a stop meanwhile (a module announced again readmits it) is the stop machinery's, so the event goes on to it.

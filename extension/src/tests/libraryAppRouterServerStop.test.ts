@@ -915,6 +915,79 @@ test('an (ssr) copy pause during its still-open layer read while the run is idle
   ])
 })
 
+// protects=O2-1 an `(ssr)` copy pause whose layer read answers after the idle classification bound but within the read's own bound is still resumed as a library copy, and the run continues; fails_when=the idle bound drops the pause while its `stopped` awaits the read, the verdict is gone and the server stays paused; no_claim=js-debug's real timing of a script read (the read and the clock are the harness's)
+test('an (ssr) copy pause whose layer read answers after the idle bound is still resumed as a library copy', async (context) => {
+  // Arrange
+  const staged = stageAppServer()
+  const harness = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [
+      {
+        line: 2,
+        column: 1,
+        inspections: [{ path: 'count', mode: 'value', required: true }],
+      },
+    ],
+    libraryAppServerOptions(staged, {
+      inspectionScope: { doubled: 6, count: 3 },
+      operations: {
+        operations: [CLICK_OPERATION],
+        stopOperations: [0, 1],
+        stopParticipants: ['server', 'browser'],
+      },
+    }),
+  )
+  const prepared = harness.run.prepare()
+  prepared.catch(() => undefined)
+  await waitUntil(
+    () => harness.server!.breakpointsAcknowledged() > 0,
+    'the entry-render stop was registered',
+  )
+  const files = staged.files()
+  const server = files.appRouterServer!
+  announceResolved(harness, 'rsc-1', server.rscJavascript, server.rscAddress)
+  await journaledOnce(harness, 'stop.module-parsed')
+  harness.server!.hit({
+    ...server.hitAt(LIBRARY_RETURN_LINE),
+    scriptId: 'rsc-1',
+  })
+  const entry = await waitUntil(
+    () => harness.run.view().participants.server?.snapshot,
+    'the entry-render stop S',
+  )
+  harness.replaceExecutedModule(files.browserModuleJavascript)
+  harness.announceScript('browser-lib', new URL(files.browserAddress).href)
+  harness.setDocumentReadyState('complete')
+  harness.suppressInputPause()
+  await harness.run.continue('server', entry.pause)
+  await prepared
+  // The run is idle now: no operation has started. The copy's text read stays open while it pauses.
+  const releaseRead = harness.server!.holdScriptRead('ssr-1')
+  announceResolved(harness, 'ssr-1', server.ssrJavascript, server.ssrAddress)
+  // Act
+  harness.server!.hit({
+    ...server.hitAt(LIBRARY_RETURN_LINE),
+    scriptId: 'ssr-1',
+    hitBreakpoints: ['owned-breakpoint'],
+  })
+  // Let the `stopped` reach its layer-read wait before the clock moves.
+  await new Promise((resolve) => setImmediate(resolve))
+  await new Promise((resolve) => setImmediate(resolve))
+  // The idle bound (1 s) passes while the read (bounded at 2 s) is still open.
+  harness.advance(1_200)
+  releaseRead()
+  await waitUntil(
+    () => harness.server!.continues.length === 2,
+    'the idle copy pause was resumed after the idle bound and its layer read',
+  )
+  // Assert
+  assert.equal(harness.run.view().failures.length, 0)
+  assert.deepEqual(journaled(harness, 'breakpoint.library-copy'), [
+    { scriptUrl: server.ssrAddress },
+  ])
+})
+
 // protects=O2-3 a layer read that fails is journaled with the script id and the cause, and the script stays unknown; fails_when=the failure is swallowed without a journal entry; no_claim=which scripts js-debug announces in the resolved spelling
 test('a failed layer read of a resolved-spelling script is journaled with its script id and cause', async (context) => {
   // Arrange
