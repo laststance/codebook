@@ -40,6 +40,10 @@ export type LibraryFixtureSpec = {
   flavours?: readonly LibraryFlavour[]
   /** The flavours the page's server compile holds as modules; `modern` by default. */
   inCompile?: readonly LibraryFlavour[]
+  /** The flavours the page's entry chunk (`pages/index.js`) holds as `(pages-dir-browser)` modules; none by default, so a server stop's run is unchanged. */
+  inBrowser?: readonly LibraryFlavour[]
+  /** Also puts a copy of the first browser flavour's module with another wrapper size into the `_app` chunk, so two entry chunks carry differing copies. */
+  differingBrowserCopy?: boolean
   /** Replaces the built text of the first flavour (the map keeps the transpiled mappings), so a test can give one built line several source lines. */
   rewriteBuilt?: (built: BuiltFile) => BuiltFile
 }
@@ -139,6 +143,8 @@ export function libraryEvalModule(input: {
   builtText: string
   runtimePath: string
   wrapperLines?: number
+  /** The webpack layer the module's `sourceURL` names; `pages-dir-node` by default. */
+  layer?: 'pages-dir-node' | 'pages-dir-browser'
 }): string {
   const wrapper = input.wrapperLines ?? WRAPPER_LINE_COUNT
   const builtLines = input.builtText.split('\n')
@@ -164,7 +170,7 @@ export function libraryEvalModule(input: {
     ignoreList: [],
     sourceRoot: '',
   }
-  return `${code}\n//# sourceMappingURL=data:application/json;charset=utf-8;base64,${Buffer.from(JSON.stringify(map)).toString('base64')}\n//# sourceURL=webpack-internal:///(pages-dir-node)/${input.runtimePath}\n`
+  return `${code}\n//# sourceMappingURL=data:application/json;charset=utf-8;base64,${Buffer.from(JSON.stringify(map)).toString('base64')}\n//# sourceURL=webpack-internal:///(${input.layer ?? 'pages-dir-node'})/${input.runtimePath}\n`
 }
 
 /**
@@ -204,6 +210,14 @@ export type LibraryHarnessFiles = {
   moduleMap: string
   /** The eval modules the server compile holds, by module id. */
   serverModules: Record<string, string>
+  /** The `(pages-dir-browser)` eval modules the page's entry chunk holds, by module id. */
+  browserModules: Record<string, string>
+  /** The `(pages-dir-browser)` eval modules the `_app` chunk holds, by module id (a differing copy of the page chunk's module). */
+  browserAppModules: Record<string, string>
+  /** The `(pages-dir-browser)` eval module of the first flavour (what the browser's debugger reports for the script). */
+  browserModuleJavascript: string
+  /** The `(pages-dir-browser)` address of that module. */
+  browserAddress: string
   /** The real repository root the modules name. */
   realRoot: string
   /** The built line of a source line in the first flavour. */
@@ -214,7 +228,11 @@ export type LibraryHarnessFiles = {
     source: { line: number; column: number }
   }
   /** Builds the eval module of that flavour's built text again, with another built text or wrapper size, as a recompile does. */
-  evalModule(options?: { builtText?: string; wrapperLines?: number }): string
+  evalModule(options?: {
+    builtText?: string
+    wrapperLines?: number
+    layer?: 'pages-dir-node' | 'pages-dir-browser'
+  }): string
 }
 
 /**
@@ -273,6 +291,25 @@ export function libraryFixture(
           runtimePath: runtimePathOf(flavour),
         })
     }
+    const browserModules: Record<string, string> = {}
+    const browserAppModules: Record<string, string> = {}
+    for (const [index, flavour] of (spec.inBrowser ?? []).entries()) {
+      const file = built.get(flavour)!
+      const moduleText = (wrapperLines?: number): string =>
+        libraryEvalModule({
+          realRoot,
+          builtPath: `packages/lib/build/${flavour}/core.js`,
+          builtText: file.builtText,
+          runtimePath: runtimePathOf(flavour),
+          layer: 'pages-dir-browser',
+          wrapperLines,
+        })
+      browserModules[`(pages-dir-browser)/${runtimePathOf(flavour)}`] =
+        moduleText()
+      if (index === 0 && spec.differingBrowserCopy)
+        browserAppModules[`(pages-dir-browser)/${runtimePathOf(flavour)}`] =
+          moduleText(WRAPPER_LINE_COUNT + 1)
+    }
     const first = inCompile[0] ?? flavours[0]!
     const firstFile = built.get(first)!
     const builtPath = `packages/lib/build/${first}/core.js`
@@ -299,6 +336,16 @@ export function libraryFixture(
         'base64',
       ).toString(),
       serverModules,
+      browserModules,
+      browserAppModules,
+      browserModuleJavascript: libraryEvalModule({
+        realRoot,
+        builtPath,
+        builtText: firstFile.builtText,
+        runtimePath,
+        layer: 'pages-dir-browser',
+      }),
+      browserAddress: `webpack-internal:///(pages-dir-browser)/${runtimePath}`,
       realRoot,
       builtLineOf,
       hitAt(sourceLine) {
@@ -315,6 +362,7 @@ export function libraryFixture(
           builtText: options.builtText ?? firstFile.builtText,
           runtimePath,
           wrapperLines: options.wrapperLines,
+          layer: options.layer,
         })
       },
     }

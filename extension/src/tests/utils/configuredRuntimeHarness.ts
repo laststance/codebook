@@ -541,6 +541,8 @@ export async function configuredRuntimeHarness(
                 holdsCited: false,
                 extraModules: library.serverModules,
               },
+              extraBrowserModules: library.browserModules,
+              extraAppModules: library.browserAppModules,
             }
           : options.nextPages,
       )
@@ -594,9 +596,16 @@ export async function configuredRuntimeHarness(
   const scrollExpression = configuredScrollExpression(declaredAction.selector)
   // A Pages server stop is sealed from the build's real path (its maps name the canonical workspace), so the editor's breakpoints and the debugger's frames name that path too.
   const sourceRoot =
-    (options.nextPages && options.serverRuntime) || viteLibrary
+    (options.nextPages && options.serverRuntime) || viteLibrary || library
       ? await realpath(repository.directory)
       : repository.directory
+  // A browser library stop of a Next Pages run: the page executes the library's `(pages-dir-browser)` module, and the debugger reports its built line.
+  const browserLibrary =
+    library && options.participant === 'browser' ? library : undefined
+  const browserLibraryHit =
+    browserLibrary && fixture?.declaredLine
+      ? browserLibrary.hitAt(fixture.declaredLine)
+      : undefined
   const sourcePath = library
       ? join(sourceRoot, library.builtPath)
       : join(sourceRoot, definition.configuration.source.path),
@@ -605,6 +614,7 @@ export async function configuredRuntimeHarness(
     baseJavascript =
       options.moduleJavascript ??
       viteLibrary?.servedModule ??
+      browserLibrary?.browserModuleJavascript ??
       pagesBuild?.moduleJavascript ??
       (fixture ? source : 'const nextTheme = "dark";'),
     javascript = options.serverModuleSourceUrl
@@ -625,11 +635,13 @@ export async function configuredRuntimeHarness(
     mapSource: sourcePath,
     scriptUrl: viteLibrary
       ? `${viteLibrary.server.origin}${viteLibrary.moduleRoute}?v=v1`
-      : options.adapter
-        ? 'http://127.0.0.1:4321/src/theme.ts'
-        : options.nextPages
-          ? `webpack-internal:///(pages-dir-browser)/./${packageSourcePath}`
-          : `webpack-internal:///(app-pages-browser)/./${packageSourcePath}`,
+      : browserLibrary
+        ? browserLibrary.browserAddress
+        : options.adapter
+          ? 'http://127.0.0.1:4321/src/theme.ts'
+          : options.nextPages
+            ? `webpack-internal:///(pages-dir-browser)/./${packageSourcePath}`
+            : `webpack-internal:///(app-pages-browser)/./${packageSourcePath}`,
     chunkPath: join(packageDirectory, '.next/dev/chunk.js'),
     chunkHash: '0'.repeat(64),
   }
@@ -1000,15 +1012,20 @@ export async function configuredRuntimeHarness(
       debuggerPausedEvent({
         callFrameId: 'selected-frame',
         scriptId: 'actual',
-        lineNumber: currentLine - 1,
-        columnNumber: currentColumn - 1,
+        lineNumber: browserLibraryHit
+          ? browserLibraryHit.generated.line
+          : currentLine - 1,
+        columnNumber: browserLibraryHit
+          ? browserLibraryHit.generated.column
+          : currentColumn - 1,
         hitBreakpoints: ['mapped-source'],
       }),
     )
   }
   const emitPause = (column = 1, line = 1, announced = true): void => {
-    currentColumn = column
-    currentLine = line
+    // A browser library stop pauses on the built line the library's stop translates to.
+    currentColumn = browserLibraryHit?.source.column ?? column
+    currentLine = browserLibraryHit?.source.line ?? line
     stopCount++
     // A real debugger may reveal an existing source tab over the leased application panel.
     if (hideViewportAtPause) viewportReady = false

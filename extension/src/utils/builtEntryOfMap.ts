@@ -23,7 +23,7 @@ function normalizedSource(source: string, root: string): string {
 /**
  * Reads the retained text of the built file from an eval module's inline map, whichever way the map spells the file.
  *
- * Why it exists: the library seal compares the retained built text against the frozen build, and a lookup that misses the entry must not read as "the build changed". Called by {@link sealLibraryServerStop}.
+ * Why it exists: the library seal compares the retained built text against the frozen build, and a lookup that misses the entry must not read as "the build changed". Called by {@link sealLibraryStop}.
  * @param map - The module's parsed inline map.
  * @param builtFile - The absolute built file the module was selected for.
  * @param root - The directory a relative `sources` spelling resolves against.

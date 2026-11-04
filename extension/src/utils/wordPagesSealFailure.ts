@@ -6,7 +6,7 @@ import { thrownMessage } from './thrownMessage'
 /**
  * Runs a Pages server seal and words every raw failure of it as the `RUNTIME_FAILED` refusal that carries the Pages details.
  *
- * Why it exists: every seal of a Pages server stop runs after Codebook's readiness request ran the page's data function, so its failures report `sideEffects: "unknown"`. Called by {@link sealPagesServerStop} and {@link sealLibraryServerStop}.
+ * Why it exists: every seal of a Pages server stop runs after Codebook's readiness request ran the page's data function, so its failures report `sideEffects: "unknown"`. Called by {@link sealPagesServerStop} and {@link sealLibraryStop}.
  * @param signal - The run's abort signal; an abort is rethrown unchanged.
  * @param seal - The seal to run.
  * @returns What the seal returns.

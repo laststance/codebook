@@ -10,7 +10,10 @@ import type { BundleSource } from '../repositoryBundle'
 import type { RepositoryConfiguration } from '../repositoryConfigSchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 
-import type { NextPagesDiscoveryCache } from './createNextPagesDiscoveryCache'
+import type {
+  NextPagesChunkModules,
+  NextPagesDiscoveryCache,
+} from './createNextPagesDiscoveryCache'
 import { selectEvaluatedModule } from './extractDevelopmentModule'
 import { parseNextManifest } from './parseNextManifest'
 import { spendOnAcceptedPagesSource } from './readAcceptedPagesSource'
@@ -88,12 +91,8 @@ export async function readPagesDevelopmentBundle(
   return spendOnAcceptedPagesSource(
     request,
     async ({ step, original, measure }) => {
-      const manifest = await step.readBuildText(
-        BUILD_MANIFEST,
-        REPOSITORY_JAVASCRIPT_LIMIT_BYTES,
-      )
-      const candidates = initialPageChunksOf(
-        parseNextManifest(BUILD_MANIFEST, manifest, buildManifestSchema).pages,
+      const { candidates, manifestHash } = await readInitialPageChunks(
+        step,
         route,
       )
       const bundle = await sealFromChunks(step, request, candidates, original)
@@ -105,11 +104,62 @@ export async function readPagesDevelopmentBundle(
         discovery: {
           ...measure(),
           candidates,
-          manifestHash: sha256(manifest),
+          manifestHash,
         },
       }
     },
   )
+}
+
+/**
+ * Reads one listed entry chunk and decodes its eval modules, from its file or else from the owned server.
+ * Called by {@link sealFromChunks} for an app's own stop and by {@link sealLibraryStop} for a browser library stop.
+ * @param step - The discovery step.
+ * @param cache - The run's discovery cache.
+ * @param chunkPath - The chunk's path in `.next/dev`, as the build manifest lists it.
+ * @param fetchChunk - Fetches the chunk from the owned server when no file of it exists.
+ * @returns The decoded chunk.
+ * @throws `Declared chunk … is absent from the selected build` without a file and without a fetcher (the name is cleaned by {@link redactNextEntryPath}); read, budget and decoding failures.
+ * @example (await readEntryChunk(step, cache, 'static/chunks/pages/index.js')).moduleTexts.length // => 8
+ */
+export async function readEntryChunk(
+  step: NextPagesDiscoveryStep,
+  cache: NextPagesDiscoveryCache,
+  chunkPath: string,
+  fetchChunk?: NextPagesChunkFetcher,
+): Promise<NextPagesChunkModules> {
+  const chunk = await readNextChunkModules(step, cache, chunkPath, fetchChunk)
+  if (!chunk)
+    throw new Error(
+      `Declared chunk ${redactNextEntryPath(chunkPath)} is absent from the selected build`,
+    )
+  return chunk
+}
+
+/**
+ * Reads the build manifest and lists the entry chunks the page of a route loads first.
+ * Called by {@link readPagesDevelopmentBundle} for an app's own stop and by {@link sealLibraryStop} for a browser library stop, so both search the same chunks.
+ * @param step - The discovery step, which charges the manifest read to the run's budget.
+ * @param route - The Pages route.
+ * @returns The distinct entry chunks and the manifest's hash.
+ * @throws When the manifest is unreadable or malformed, or the chunks exceed the candidate limit.
+ * @example await readInitialPageChunks(step, '/') // => { candidates: ['static/chunks/pages/index.js', 'static/chunks/pages/_app.js'], manifestHash: '9f2c…' }
+ */
+export async function readInitialPageChunks(
+  step: NextPagesDiscoveryStep,
+  route: NextPagesRoute['route'],
+): Promise<{ candidates: string[]; manifestHash: string }> {
+  const manifest = await step.readBuildText(
+    BUILD_MANIFEST,
+    REPOSITORY_JAVASCRIPT_LIMIT_BYTES,
+  )
+  return {
+    candidates: initialPageChunksOf(
+      parseNextManifest(BUILD_MANIFEST, manifest, buildManifestSchema).pages,
+      route,
+    ),
+    manifestHash: sha256(manifest),
+  }
 }
 
 /**
@@ -164,16 +214,12 @@ async function sealFromChunks(
   const scriptUrl = `webpack-internal:///(pages-dir-browser)/./${original.packageRelative}`
   const bundles: BundleSource[] = []
   for (const candidate of candidates) {
-    const chunk = await readNextChunkModules(
+    const chunk = await readEntryChunk(
       step,
       request.cache,
       candidate,
       request.fetchChunk,
     )
-    if (!chunk)
-      throw new Error(
-        `Declared chunk ${redactNextEntryPath(candidate)} is absent from the selected build`,
-      )
     const bundle = selectEvaluatedModule(
       chunk.moduleTexts,
       { ...original, chunkPath: chunk.chunkPath, chunkHash: chunk.chunkHash },

@@ -337,7 +337,7 @@ import {
   suggestNextPackageRoots,
   suggestVitePackageRoots,
 } from './utils/scanNextPackages'
-import { sealLibraryServerStop } from './utils/sealLibraryServerStop'
+import { sealLibraryStop } from './utils/sealLibraryStop'
 import { sealPagesServerStop } from './utils/sealPagesServerStop'
 import { selfDeclaredInspectionHint } from './utils/selfDeclaredInspectionHint'
 import { serverExecutionOfScriptUrl } from './utils/serverExecutionOfScriptUrl'
@@ -468,12 +468,17 @@ const NEXT_DEV_WEBPACK_ADAPTER: DevelopmentServerAdapter = {
   readBundle: (request) => {
     const { nextRoute } = request
     // A server stop of a Pages run is sealed from the page's server compile and the chunks it requires.
-    // A server stop in a workspace library is sealed from its verified build artifact.
+    // A stop in a workspace library is sealed from its verified build artifact: a server stop in the server compile, a browser stop in the entry chunks the page loads first.
     if (nextRoute && request.library && request.nextPackage)
-      return sealLibraryServerStop({
+      return sealLibraryStop({
         nextPackage: request.nextPackage,
         library: request.library,
         route: nextRoute.route,
+        layer:
+          request.execution === 'browser'
+            ? 'pages-dir-browser'
+            : 'pages-dir-node',
+        fetchChunk: nextServedChunkFetcher(request.ownedOrigin),
         signal: request.signal,
         cache: nextRoute.cache,
       })
@@ -583,6 +588,11 @@ type StopInstance = StopModule & {
 type ServerHitVerdict = ServerRenderHitVerdict | PagesDataFunctionHitVerdict
 /** The verdicts the run resumes a hit by. */
 type ResumeHitVerdict = Extract<ServerHitVerdict, { action: 'resume' }>
+/** The verdict for a pause in the server's copy of a browser library stop's module (`breakpoint.browser-library-copy`): resumed and journaled, never counted. */
+type BrowserLibraryCopyVerdict = {
+  action: 'resume'
+  event: 'breakpoint.browser-library-copy'
+}
 /** The `Network` events that end a request, which drops it from the outstanding page requests. */
 const PAGE_REQUEST_END_EVENTS = [
   'Network.responseReceived',
@@ -1421,6 +1431,46 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Words the changed build of a Next library stop as the `library-build-changed` failure.
+   * Called wherever the executed bytes of a library module differ from the frozen ones: {@link assertExecutedModuleSealed}, {@link changedAfterSealingText}, {@link refuseInstance} and the executed-bytes check at a pause.
+   * @param stop - The declared stop.
+   * @returns The failure for a stop with a Next library freeze; `undefined` for every other stop.
+   * @example
+   * const change = this.nextLibraryChanged(stop) // RUNTIME_FAILED library-build-changed for a library stop
+   */
+  private nextLibraryChanged(stop: PreparedStop): StudyError | undefined {
+    if (!stop.library) return undefined
+    return libraryBuildChangedFailure(
+      this.nextPackageOrRoot.packageRootRelative,
+      stop.library.frozen.library.name,
+      stop.library.frozen.stopPath,
+    )
+  }
+
+  /**
+   * Chooses what a failed verification of the executed module at a pause throws.
+   * Called by {@link inspect}: a library module whose executed bytes differ from the sealed ones is a changed build (Next or Vite wording), any other failure keeps its error.
+   * @param stop - The paused stop.
+   * @param isChangedText - Whether the executed script's hash differs from the sealed one.
+   * @param error - What the verifier threw.
+   * @returns The error to throw.
+   * @example
+   * throw this.changedLibraryOrError(stop, true, error) // library-build-changed for a library stop
+   */
+  private changedLibraryOrError(
+    stop: PreparedStop,
+    isChangedText: boolean,
+    error: unknown,
+  ): unknown {
+    if (!isChangedText) return error
+    const viteLibrary = this.viteLibraries.libraryOf(stop.source)
+    return (
+      this.nextLibraryChanged(stop) ??
+      (viteLibrary ? this.viteLibraryChanged(stop, viteLibrary) : error)
+    )
+  }
+
+  /**
    * Lists the declared stop files that lie outside a resolved app, in declared order and without repeats.
    * Called by {@link resolveNextPackageOfRun} and {@link resolveVitePackageOfRun}.
    * @param resolved - The resolved nested app.
@@ -1469,7 +1519,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       { suggest: () => suggestNextPackageRoots(this.options.workspace) },
     )
     if (nextPackage.isRoot) return nextPackage
-    // A server stop of a nested version 3 Pages run in a workspace library is frozen against the library's build; anything else outside stays refused.
+    // A server or browser stop of a nested version 3 Pages run in a workspace library is frozen against the library's build; anything else outside stays refused.
     const outside = await this.stopFilesOutside(nextPackage, (stop) =>
       this.freezeLibraryStop(stop, nextPackage),
     )
@@ -1479,11 +1529,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Freezes the build of a server stop that lies outside the Next app in a workspace library, before any process starts.
+   * Freezes the build of a server or browser stop that lies outside the Next app in a workspace library, before any process starts.
    * Called by {@link resolveNextPackageOfRun} for each stop outside the package; the library source text is read once here and checked against the accepted hash, and kept for the capture.
    * @param stop - A stop whose file lies outside the package.
    * @param nextPackage - The resolved nested Next app.
-   * @returns `true` when the stop was frozen as a library stop; `false` when it stays an `outside-package` stop (not a server stop, not a version 3 run, no linked workspace library, or an app whose router kind is not `pages`).
+   * @returns `true` when the stop was frozen as a library stop; `false` when it stays an `outside-package` stop (not a version 3 run, no linked workspace library, or an app whose router kind is not `pages`).
    * @throws `NEXT_STOP_NOT_SEALED` (`library-build-stale`, `library-build-unmapped`; `sideEffects: "none"`) from {@link freezeLibraryBuild}; an error when the checked-out file differs from the accepted hash.
    * @example
    * if (!(await this.freezeLibraryStop(stop, nextPackage))) outside.push(stop.source.path)
@@ -1492,10 +1542,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     stop: ReturnType<typeof configuredStops>[number],
     nextPackage: ResolvedNextPackage,
   ): Promise<boolean> {
-    if (
-      stop.participant !== 'server' ||
-      this.definition.configuration.version !== OPERATIONS_CONFIG_VERSION
-    )
+    // Only a version 3 run freezes a library build, for a stop of either participant.
+    if (this.definition.configuration.version !== OPERATIONS_CONFIG_VERSION)
       return false
     const library = await detectLibraryPackage(
       this.options.workspace,
@@ -2502,7 +2550,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       name !== 'server' ||
       !this.rendersServerStops() ||
       participant.unannouncedPause ||
-      !this.isRepeatOfPausedStop(event, this.stops.slice(0, this.stopIndex))
+      !(
+        this.isRepeatOfPausedStop(event, this.stops.slice(0, this.stopIndex)) ||
+        this.isBrowserLibraryCopy(event)
+      )
     )
       return
     const held: NonNullable<DebugParticipant['unannouncedPause']> = {
@@ -2572,6 +2623,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         ServerRenderHitVerdict,
         { event: 'breakpoint.react-copy' | 'breakpoint.repeat-hit' }
       >
+    | BrowserLibraryCopyVerdict
     | 'gone'
     | undefined
   > {
@@ -2592,6 +2644,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     const held = participant.unannouncedPause
     if (!held) return undefined
+    // The server's copy of a browser library stop's module is nobody's stop, wherever the run is in its operations.
+    if (
+      event.body?.reason === 'breakpoint' &&
+      this.isBrowserLibraryCopy(held.event)
+    )
+      return { action: 'resume', event: 'breakpoint.browser-library-copy' }
     const alreadyPaused = this.stops.slice(
       0,
       this.stopIndex + (this.continuation ? 1 : 0),
@@ -2641,6 +2699,36 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     return (
       isRscScriptUrl(scriptUrl) ||
       (this.pagesRun !== undefined && isPagesServerScriptUrl(scriptUrl))
+    )
+  }
+
+  /**
+   * Tells whether a server pause is in the `(pages-dir-node)` copy of the module of a browser library stop.
+   * Why it exists: the editor sets a browser library stop's breakpoint on the library's built file, and the debugger binds it in every copy of that file, including the one Next's server runs; in a run that also inspects the server that copy pauses for nobody. Called by {@link unexpectedHitVerdict} for the held pause and by {@link holdCopyPauseWhileIdle} to keep such a pause while no operation is active.
+   * @param event - The paused event.
+   * @returns `true` when the top frame's script is the server copy of a browser library stop's module and the pause is not at the place of a server stop.
+   * @example this.isBrowserLibraryCopy(event) // true for a pause in (pages-dir-node)/../../packages/lib/build/modern/core.js while a browser stop is declared in packages/lib/src/core.ts
+   */
+  private isBrowserLibraryCopy(event: Protocol.Debugger.PausedEvent): boolean {
+    const location = event.callFrames[0]?.location
+    const scriptUrl =
+      location && this.participants.server.scriptUrls.get(location.scriptId)
+    if (!scriptUrl) return false
+    return (
+      this.stops.some(
+        (stop) =>
+          stop.participant === 'browser' &&
+          stop.library !== undefined &&
+          sameScriptUrl(
+            `webpack-internal:///(pages-dir-node)/${stop.library.runtimePath}`,
+            scriptUrl,
+          ),
+      ) &&
+      // A server stop in the same module owns the pauses at its own place.
+      !this.stops.some(
+        (stop) =>
+          stop.participant === 'server' && this.isPauseOfStop(event, stop),
+      )
     )
   }
 
@@ -2740,7 +2828,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private async resumeUnexpectedHit(
     session: vscode.DebugSession,
     event: DebugProtocol.Event,
-    verdict: Extract<ServerRenderHitVerdict, { action: 'resume' }>,
+    verdict:
+      | Extract<ServerRenderHitVerdict, { action: 'resume' }>
+      | BrowserLibraryCopyVerdict,
   ): Promise<void> {
     const participant = this.participants.server
     this.journalResumedHit(verdict)
@@ -3374,7 +3464,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @param verdict - The resume verdict.
    * @example this.journalResumedHit({ action: 'resume', event: 'breakpoint.other-route', route: '/dashboard/invoices' })
    */
-  private journalResumedHit(verdict: ResumeHitVerdict): void {
+  private journalResumedHit(
+    verdict: ResumeHitVerdict | BrowserLibraryCopyVerdict,
+  ): void {
     const count = (this.resumedHitCounts.get(verdict.event) ?? 0) + 1
     this.resumedHitCounts.set(verdict.event, count)
     if (count > SERVER_RENDER_RESUMED_HIT_JOURNAL_LIMIT) {
@@ -5106,6 +5198,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.alive()
     if (sha256(executed.scriptSource) !== module.verifier.hashes.javascript) {
       // A library module that changed after the seal (a rebuild, a hot update) is a changed build, not a generic mismatch.
+      const nextLibraryChange = this.nextLibraryChanged(stop)
+      if (nextLibraryChange) throw nextLibraryChange
       const library = this.viteLibraries.libraryOf(stop.source)
       if (library) throw this.viteLibraryChanged(stop, library)
       throw new Error(
@@ -5123,6 +5217,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * this.fail(this.changedAfterSealingText(stop)) // 'Selected module changed after sealing'
    */
   private changedAfterSealingText(stop: PreparedStop): string {
+    const nextLibraryText = libraryFailureText(this.nextLibraryChanged(stop))
+    if (nextLibraryText) return nextLibraryText
     const library = this.viteLibraries.libraryOf(stop.source)
     const libraryText =
       library && viteLibraryFailureText(this.viteLibraryChanged(stop, library))
@@ -7324,15 +7420,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (coexisting && isChangedOriginalError(error)) {
       // A library module whose built text moved is a changed build, not a changed source.
       this.fail(
-        stop.library
-          ? (libraryFailureText(
-              libraryBuildChangedFailure(
-                this.nextPackageOrRoot.packageRootRelative,
-                stop.library.frozen.library.name,
-                stop.library.frozen.stopPath,
-              ),
-            ) ?? this.sourceChangedText(stop))
-          : this.sourceChangedText(stop),
+        libraryFailureText(this.nextLibraryChanged(stop)) ??
+          this.sourceChangedText(stop),
       )
       return
     }
@@ -11207,14 +11296,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         { lineOnly: Boolean(stop.library) },
       )
     } catch (error) {
-      // A library module whose executed bytes differ at the pause is a changed build.
-      const viteLibrary = this.viteLibraries.libraryOf(stop.source)
-      const isChangedText =
+      throw this.changedLibraryOrError(
+        stop,
         sha256(executed.scriptSource) !==
-        executedModule.verifier.hashes.javascript
-      throw viteLibrary && isChangedText
-        ? this.viteLibraryChanged(stop, viteLibrary)
-        : error
+          executedModule.verifier.hashes.javascript,
+        error,
+      )
     }
     // The refused-getter list only words a failure message; the snapshot (and the study it saves into) keeps values and unavailability alone.
     const { sideEffectRefused = [], ...facts } = await inspectConfiguredValues(

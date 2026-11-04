@@ -41,6 +41,10 @@ export type NextPagesHarnessOptions = {
   chunks?: boolean
   /** Whether the page chunk carries the cited source's module; `true` by default. Without it the module is in no chunk the page loads at start (a module loaded later). */
   citedInPageChunk?: boolean
+  /** Further `(pages-dir-browser)` eval modules the page chunk holds, by webpack module id (a workspace library's built module in a browser library stop's run). */
+  extraBrowserModules?: Readonly<Record<string, string>>
+  /** Further `(pages-dir-browser)` eval modules the `_app` chunk holds, by webpack module id. */
+  extraAppModules?: Readonly<Record<string, string>>
   /** How many lines, from line 1, the browser module of the cited source maps, or the ascending lines it maps; 1 by default. */
   mappedLines?: number | readonly number[]
   /** Gives the browser module of the cited source a map whose scan stops at its size limit before it reaches any line (the generated-lines limit), so the client mapping of every line reads `unknown`. */
@@ -139,16 +143,16 @@ export async function writeNextPagesWorkspace(
   if (options.chunks ?? true) {
     await write(
       '.next/dev/static/chunks/pages/index.js',
-      browserChunk(
-        'pages/index',
-        (options.citedInPageChunk ?? true)
+      browserChunk('pages/index', {
+        ...((options.citedInPageChunk ?? true)
           ? { [`./${cited.path}`]: moduleJavascript }
-          : {},
-      ),
+          : {}),
+        ...options.extraBrowserModules,
+      }),
     )
     await write(
       '.next/dev/static/chunks/pages/_app.js',
-      browserChunk('pages/_app', {}),
+      browserChunk('pages/_app', { ...options.extraAppModules }),
     )
   }
   const serverModuleJavascript = options.serverCompile
