@@ -621,7 +621,7 @@ export async function configuredRuntimeHarness(
       ? browserLibrary.hitAt(fixture.declaredLine, 'pages-dir-browser')
       : undefined
   const sourcePath = library
-      ? join(sourceRoot, library.builtPath)
+      ? join(sourceRoot, library.frameFile ?? library.builtPath)
       : join(sourceRoot, definition.configuration.source.path),
     source = reference.descriptor!.sources[0]!.text,
     // With a fixture the executed module mirrors the source line for line, so a pause can be placed on any of its lines; a Pages page executes the eval module of its chunk.

@@ -1,9 +1,11 @@
 import { mkdir, symlink, writeFile } from 'node:fs/promises'
-import { dirname, join, posix } from 'node:path'
+import { dirname, join, posix, resolve } from 'node:path'
 
 import ts from 'typescript'
 
 import { walkSourceMapSegments } from '../../utils/walkSourceMapSegments'
+
+import { browserChunk } from './nextPagesBuildHarness'
 
 /** The library the fixture app imports, as its `package.json` names it. */
 export const LIBRARY_NAME = 'lib'
@@ -42,7 +44,7 @@ export const BROWSER_PAUSE_COLUMN = 19
 const BROWSER_BUILT_COLUMNS = [0, 2, 4] as const
 
 /** The webpack layer of an eval module. */
-type EvalLayer = 'pages-dir-node' | 'pages-dir-browser'
+type EvalLayer = 'pages-dir-node' | 'pages-dir-browser' | 'app-pages-browser'
 
 /** A build flavour of the library. */
 export type LibraryFlavour = 'modern' | 'legacy'
@@ -61,6 +63,26 @@ export type LibraryFixtureSpec = {
   differingBrowserCopy?: boolean
   /** Replaces the built text of the first flavour (the map keeps the transpiled mappings), so a test can give one built line several source lines. */
   rewriteBuilt?: (built: BuiltFile) => BuiltFile
+  /**
+   * Stages a nested App Router app instead of a Pages one (Cycle 0080): the app gets an `app/` folder, an App paths manifest, the entry route's client reference manifest and two client chunks (`layout.js`, `page.js`) that hold the `inBrowser` flavours as `(app-pages-browser)` modules, each with the map Next writes there: one source, the library's TypeScript at the build map's entry resolved against the app's package root, with the checked-out text (E1 of Cycle 0080).
+   */
+  appRouter?: {
+    /** Puts the top page in a route group, `app/(shop)/page.tsx`. */
+    routeGroup?: boolean
+    /** The flavours each client chunk holds; `inBrowser` in both by default, so the module is an identical copy in two chunks. */
+    chunks?: {
+      layout?: readonly LibraryFlavour[]
+      page?: readonly LibraryFlavour[]
+    }
+    /** Gives the `page.js` copy another wrapper size, so the two chunks carry differing copies. */
+    differingPageCopy?: boolean
+    /** Replaces the `sources` of the module's map (absolute paths). */
+    mapSources?: readonly string[]
+    /** Replaces the `sourcesContent` of the module's map. */
+    mapContent?: string
+    /** Adds a second module to `layout.js` whose map names the same path as the library module. */
+    extraNamingModule?: boolean
+  }
 }
 
 /** One transpiled build file with its map. */
@@ -160,8 +182,14 @@ export function libraryEvalModule(input: {
   wrapperLines?: number
   /** The webpack layer the module's `sourceURL` names; `pages-dir-node` by default. */
   layer?: EvalLayer
+  /** Replaces the map's `sources` and `sourcesContent`. */
+  mapOverride?: {
+    sources?: readonly string[]
+    sourcesContent?: readonly string[]
+  }
 }): string {
-  const isBrowser = input.layer === 'pages-dir-browser'
+  const isBrowser =
+    input.layer === 'pages-dir-browser' || input.layer === 'app-pages-browser'
   const wrapper =
     input.wrapperLines ??
     (isBrowser ? BROWSER_WRAPPER_LINE_COUNT : WRAPPER_LINE_COUNT)
@@ -202,8 +230,10 @@ export function libraryEvalModule(input: {
   const map = {
     version: 3,
     file: '',
-    sources: [join(input.realRoot, input.builtPath)],
-    sourcesContent: [input.builtText],
+    sources: input.mapOverride?.sources ?? [
+      join(input.realRoot, input.builtPath),
+    ],
+    sourcesContent: input.mapOverride?.sourcesContent ?? [input.builtText],
     names: [],
     mappings: [...Array.from({ length: wrapper }, () => ''), ...segments].join(
       ';',
@@ -261,6 +291,10 @@ export type LibraryHarnessFiles = {
   browserAddress: string
   /** The real repository root the modules name. */
   realRoot: string
+  /** The repository-relative file the debugger's frames name instead of {@link LibraryHarnessFiles.builtPath} (an App Router stop runs in the checked-out source). */
+  frameFile?: string
+  /** For an App Router fixture: the path the module's map names, and the chunks written (chunk path below `.next/dev`, then module text by module id). */
+  appRouter?: { mapSource: string; chunks: Record<string, string> }
   /** The built line of a source line in the first flavour. */
   builtLineOf(sourceLine: number): number
   /**
@@ -384,7 +418,7 @@ export function libraryFixture(
     }
     const builtLineOf = (sourceLine: number): number =>
       builtLineIn(firstFile, sourceLine)
-    return {
+    const files: LibraryHarnessFiles = {
       builtPath,
       runtimePath,
       builtText: firstFile.builtText,
@@ -434,5 +468,141 @@ export function libraryFixture(
         })
       },
     }
+    if (!spec.appRouter) return files
+    return {
+      ...files,
+      ...(await writeAppRouterBuild({
+        directory,
+        realRoot,
+        spec: spec.appRouter,
+        flavours: spec.inBrowser ?? ['modern'],
+        runtimePathOf,
+      })),
+    }
+  }
+}
+
+/**
+ * Writes the App Router side of a library fixture: the app folder, the App paths manifest, the entry route's client reference manifest and the two client chunks, and gives the facts the harness needs for the browser participant.
+ * @param input - The repository, the app-router knobs, the `inBrowser` flavours and the runtime path of a flavour.
+ * @returns The fields of {@link LibraryHarnessFiles} an App Router stop replaces: the browser module and its address, the hit in source terms and the file the frames name.
+ * @example const extra = await writeAppRouterBuild({ directory, realRoot, spec: {}, flavours: ['modern'], runtimePathOf })
+ */
+async function writeAppRouterBuild(input: {
+  directory: string
+  realRoot: string
+  spec: NonNullable<LibraryFixtureSpec['appRouter']>
+  flavours: readonly LibraryFlavour[]
+  runtimePathOf(flavour: LibraryFlavour): string
+}): Promise<Partial<LibraryHarnessFiles>> {
+  const { directory, realRoot, spec } = input
+  const put = async (path: string, text: string): Promise<void> => {
+    await mkdir(dirname(join(directory, path)), { recursive: true })
+    await writeFile(join(directory, path), text)
+  }
+  const appFolder = join(LIBRARY_APP_FOLDER)
+  const pageFolder = spec.routeGroup ? 'app/(shop)' : 'app'
+  const pageKey = spec.routeGroup ? '/(shop)/page' : '/page'
+  await put(
+    join(appFolder, pageFolder, 'page.tsx'),
+    'export default function Page() { return null }\n',
+  )
+  await put(
+    join(appFolder, '.next/dev/server/app-paths-manifest.json'),
+    JSON.stringify({ [pageKey]: `${pageFolder}/page.js` }),
+  )
+  const chunkPaths = {
+    layout: 'static/chunks/app/layout.js',
+    page: 'static/chunks/app/page.js',
+  }
+  await put(
+    join(
+      appFolder,
+      `.next/dev/server/${pageFolder}/page_client-reference-manifest.js`,
+    ),
+    `globalThis.__RSC_MANIFEST=(globalThis.__RSC_MANIFEST||{});\nglobalThis.__RSC_MANIFEST[${JSON.stringify(pageKey)}]=${JSON.stringify(
+      {
+        clientModules: {
+          'client.tsx#default': {
+            id: 1,
+            name: '*',
+            chunks: [
+              chunkPaths.layout,
+              chunkPaths.page,
+              'static/chunks/app/page.css',
+            ],
+          },
+        },
+      },
+    )}`,
+  )
+  // The path Next writes: the build map's entry resolved against the app's package root.
+  const mapSource = resolve(join(realRoot, appFolder), '../../src/core.ts')
+  const moduleText = (flavour: LibraryFlavour, wrapperLines?: number): string =>
+    libraryEvalModule({
+      realRoot: '',
+      builtPath: mapSource,
+      builtText: LIBRARY_SOURCE,
+      runtimePath: input.runtimePathOf(flavour),
+      layer: 'app-pages-browser',
+      wrapperLines,
+      mapOverride: {
+        sources: spec.mapSources,
+        sourcesContent:
+          spec.mapContent === undefined ? undefined : [spec.mapContent],
+      },
+    })
+  const idOf = (flavour: LibraryFlavour): string =>
+    `(app-pages-browser)/${input.runtimePathOf(flavour)}`
+  const modulesOf = (
+    flavours: readonly LibraryFlavour[],
+    wrapperLines?: number,
+  ): Record<string, string> =>
+    Object.fromEntries(
+      flavours.map((flavour) => [
+        idOf(flavour),
+        moduleText(flavour, wrapperLines),
+      ]),
+    )
+  const chunks = {
+    [chunkPaths.layout]: browserChunk('app/layout', {
+      ...modulesOf(spec.chunks?.layout ?? input.flavours),
+      ...(spec.extraNamingModule
+        ? {
+            '(app-pages-browser)/./src/other.ts': libraryEvalModule({
+              realRoot: '',
+              builtPath: mapSource,
+              builtText: LIBRARY_SOURCE,
+              runtimePath: './src/other.ts',
+              layer: 'app-pages-browser',
+            }),
+          }
+        : {}),
+    }),
+    [chunkPaths.page]: browserChunk(
+      'app/page',
+      modulesOf(
+        spec.chunks?.page ?? input.flavours,
+        spec.differingPageCopy ? BROWSER_WRAPPER_LINE_COUNT + 1 : undefined,
+      ),
+    ),
+  }
+  for (const [path, text] of Object.entries(chunks))
+    await put(join(appFolder, '.next/dev', path), text)
+  const first = input.flavours[0] ?? 'modern'
+  return {
+    frameFile: LIBRARY_SOURCE_PATH,
+    appRouter: { mapSource, chunks },
+    browserModuleJavascript: moduleText(first),
+    browserAddress: `webpack-internal:///${idOf(first)}`,
+    hitAt: (sourceLine) => ({
+      // The module's own map leads to the source line, so the hit is in source terms.
+      generated: {
+        line: sourceLine - 1 + BROWSER_WRAPPER_LINE_COUNT,
+        // The first segment of the line, which maps the line's first source column exactly.
+        column: BROWSER_SEGMENT_COLUMNS[0],
+      },
+      source: { line: sourceLine, column: 1 },
+    }),
   }
 }

@@ -126,22 +126,7 @@ export function bundleOfEvaluatedModule(
     urls.slice(0, -1).some((url) => url[1] !== '[module]')
   )
     throw new Error('Module has ambiguous script identity')
-  const encodedMaps = [
-    ...javascript.matchAll(
-      /^\/\/# sourceMappingURL=data:application\/json(?:;charset=utf-8)?;base64,([A-Za-z\d+/=]+)$/gm,
-    ),
-  ]
-  if (encodedMaps.length !== 1)
-    throw new Error('Module has missing or ambiguous inline maps')
-  const mapBytes = Buffer.from(encodedMaps[0]![1]!, 'base64')
-  if (mapBytes.byteLength > REPOSITORY_MAP_LIMIT_BYTES)
-    throw new Error('Inline map exceeds byte limit')
-  if (mapBytes.toString('base64') !== encodedMaps[0]![1])
-    throw new Error('Inline map encoding is malformed')
-  const sourceMap = new TextDecoder('utf-8', {
-      fatal: true,
-      ignoreBOM: true,
-    }).decode(mapBytes),
+  const sourceMap = inlineSourceMapOf(javascript),
     payload = mapSchema.parse(JSON.parse(sourceMap))
   if (!payload.sources.includes(sourcePath))
     throw new Error('Selected module does not name the exact original')
@@ -155,6 +140,33 @@ export function bundleOfEvaluatedModule(
     chunkPath,
     chunkHash,
   }
+}
+
+/**
+ * Decodes the one inline source map of an evaluated webpack module.
+ *
+ * Why it exists: {@link bundleOfEvaluatedModule} and the App Router library seal ({@link sealLibraryStop}) both read a module's own map and differ only in what they expect it to name.
+ * @param javascript - The evaluated module text.
+ * @returns The map's JSON text.
+ * @throws When the module has no inline map or several, the map exceeds its byte limit or its encoding is malformed.
+ * @example inlineSourceMapOf(moduleText) // => '{"version":3,…}'
+ */
+export function inlineSourceMapOf(javascript: string): string {
+  const encodedMaps = [
+    ...javascript.matchAll(
+      /^\/\/# sourceMappingURL=data:application\/json(?:;charset=utf-8)?;base64,([A-Za-z\d+/=]+)$/gm,
+    ),
+  ]
+  if (encodedMaps.length !== 1)
+    throw new Error('Module has missing or ambiguous inline maps')
+  const mapBytes = Buffer.from(encodedMaps[0]![1]!, 'base64')
+  if (mapBytes.byteLength > REPOSITORY_MAP_LIMIT_BYTES)
+    throw new Error('Inline map exceeds byte limit')
+  if (mapBytes.toString('base64') !== encodedMaps[0]![1])
+    throw new Error('Inline map encoding is malformed')
+  return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
+    mapBytes,
+  )
 }
 
 /** Scans large webpack chunks for {@link extractDevelopmentModule} without executing payloads or recursive regexp matching. @example [...webpackEvalLiterals('eval("work()");')] */

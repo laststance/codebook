@@ -98,6 +98,8 @@ export type LibraryBuildCandidate = Readonly<{
   builtSha256: string
   /** SHA-256 of the build map's text. */
   mapSha256: string
+  /** The build map's `sources` entry for the stop file, exactly as the map writes it (for example `../../src/core.ts`). Next composes the module's own map from it and resolves it against the app's package root, so {@link appResolvedPathsOf} turns it into the path a nested App Router app's browser map names. */
+  mapSource: string
 }>
 
 /** A place of a built file, one-based line and column. */
@@ -966,6 +968,7 @@ async function freezeWithin(
         builtPath: built.builtPath,
         builtSha256: sha256(built.text),
         mapSha256: sha256(map.mapText),
+        mapSource: map.parsed.sources[map.sourceIndex]!,
       },
       table: tabulate(map.parsed.mappings, map.sourceIndex),
     })

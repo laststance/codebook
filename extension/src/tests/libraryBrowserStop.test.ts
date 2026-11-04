@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -336,42 +336,6 @@ test('executed browser library bytes that differ only at the pause end the run w
   assert.equal(restored?.code, 'RUNTIME_FAILED')
   assert.deepEqual(restored?.libraryDetails, RESTORED_BUILD_CHANGED)
   assert.equal(harness.run.view().snapshots.length, 0)
-})
-
-// protects=AC 4 a browser stop in a workspace library of a nested App Router app is refused outside-package before any server starts, as before browser library stops existed; fails_when=the stop is frozen as a library stop (the run fails late and uncoded); no_claim=an app with both routers
-test('a browser library stop in a nested App Router app is refused outside-package before any server starts', async (context) => {
-  // Arrange
-  const staged = stageLibrary({ inBrowser: ['modern'] })
-  const harness = await openRun(
-    context,
-    {
-      ...staged,
-      // The nested app gets an App folder and no Pages folder, so no Pages route can run.
-      stop: async (input) => {
-        const appFolder = join(input.directory, LIBRARY_APP_FOLDER, 'app')
-        await mkdir(appFolder, { recursive: true })
-        await writeFile(
-          join(appFolder, 'page.tsx'),
-          'export default function Page() { return null }\n',
-        )
-        return staged.stop(input)
-      },
-    },
-    { nextPages: undefined },
-  )
-  // Act
-  const failure = await preparationFailure(harness)
-  // Assert
-  assert.deepEqual(refusalOf(failure), {
-    code: 'NEXT_STOP_NOT_SEALED',
-    details: {
-      reason: 'outside-package',
-      files: [LIBRARY_SOURCE_PATH],
-      packageRoot: LIBRARY_APP_FOLDER,
-      sideEffects: 'none',
-    },
-  })
-  assert.equal(harness.developmentServerLaunches(), 0)
 })
 
 /**

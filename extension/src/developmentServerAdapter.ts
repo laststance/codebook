@@ -99,6 +99,20 @@ export type LibraryStopSealInput = {
   packageRootRelative: string
   /** The real (symlink-free) repository root the built files are named below. */
   realRoot: string
+  /** Set for a browser stop of a nested App Router app: the stop is sealed in source terms ({@link sealAppLibraryStop}). Absent for a Pages stop. */
+  appBrowser?: AppBrowserLibrarySealInput
+}
+
+/** What the App Router browser library seal needs beyond the frozen build. */
+export type AppBrowserLibrarySealInput = {
+  /** For each frozen build flavour's built path, the paths the app's browser map may name for the stop file ({@link appResolvedPathsOf}). */
+  appResolvedPaths: Readonly<Record<string, readonly string[]>>
+  /** The checked-out stop file's absolute real path, which the sealed bundle and the browser's map override lead to. */
+  sourceRealPath: string
+  /** The checked-out stop file's text, equal to the accepted hash. */
+  sourceText: string
+  /** The run's discovery cache for App Router library seals. */
+  cache: NextPagesDiscoveryCache
 }
 
 /** The sealed module of one stop with what the discovery measured, as {@link readDevelopmentBundle} returns it. */
@@ -172,8 +186,11 @@ export interface DevelopmentServerAdapter {
     request: { entries: string[]; libraryFolder: string },
     signal: AbortSignal,
   ): Promise<ViteLibraryModules>
-  /** The js-debug launch fields of the browser that opens the app. */
-  browserDebugFields(workspace: string): BrowserDebugFields
+  /** The js-debug launch fields of the browser that opens the app; `libraryOverrides` are exact `sourceMapPathOverrides` entries for browser stops in workspace libraries of a nested App Router app (the Next adapter adds them, others ignore them). */
+  browserDebugFields(
+    workspace: string,
+    libraryOverrides?: Readonly<Record<string, string>>,
+  ): BrowserDebugFields
   /** Tells whether a script URL a runtime announced is the sealed module's address. */
   isScriptOfModule(sealedUrl: string, announcedUrl: string): boolean
 }
