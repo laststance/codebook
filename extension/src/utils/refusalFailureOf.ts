@@ -58,7 +58,7 @@ export type RefusalFailure = {
   details?: { reason: SignInRequiredReason }
   /** Present only for `NEXT_ENTRY_REDIRECTED` led by the `pages` variant ({@link NEXT_PAGES_FAILURE_VARIANT}): the fields of a Pages entry refusal after the readiness request, which the agent reads as `details`. */
   pagesDetails?: typeof PAGES_STOP_REFUSAL_DETAILS
-  /** Present only for a library refusal raised at a pause or an event (`NEXT_STOP_NOT_SEALED(library-place-ambiguous)`, `RUNTIME_FAILED(library-build-changed)`): the Pages fields with the library `reason`. */
+  /** Present only for a library refusal raised at a pause or an event (`NEXT_STOP_NOT_SEALED(library-place-ambiguous)`, `RUNTIME_FAILED(library-build-changed)`): the library fields (`reason`, `sideEffects` and, for an App Router refusal, `router: "app"`) that {@link libraryDetailsOfFailure} restores. */
   libraryDetails?:
     | NonNullable<ReturnType<typeof libraryDetailsOfFailure>>
     | ViteLibraryFailureDetails
@@ -77,9 +77,9 @@ const CODED_FAILURE_LEAD = /^([A-Z][A-Z_]*)(?:\(([^()\n]*)\))?: /
 /**
  * Finds the coded failure a failure text's lead names.
  *
- * Why: `RUNTIME_FAILED` counts as coded only as a Pages library build change ({@link libraryDetailsOfFailure}; the Vite one is restored earlier by {@link restoredViteFailure}), so any other run failure text keeps today's uncoded handling. Called by {@link refusalFailureOf}.
+ * Why: `RUNTIME_FAILED` counts as coded only as a Next library build change, Pages or App Router ({@link libraryDetailsOfFailure}; the Vite one is restored earlier by {@link restoredViteFailure}), so any other run failure text keeps today's uncoded handling. Called by {@link refusalFailureOf}.
  * @param lead - The match of the coded-failure lead, or `null` when the text has none.
- * @returns The known code, or `undefined` for no lead, an unknown code or a `RUNTIME_FAILED` without the Pages `library-build-changed` variant.
+ * @returns The known code, or `undefined` for no lead, an unknown code or a `RUNTIME_FAILED` without the Next `library-build-changed` variant.
  * @example codedFailureCodeOf(CODED_FAILURE_LEAD.exec('RUNTIME_FAILED: The run failed.')) // => undefined
  */
 function codedFailureCodeOf(

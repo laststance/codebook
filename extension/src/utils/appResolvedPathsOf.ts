@@ -11,7 +11,7 @@ import type { LibraryBuildCandidate } from './libraryBuildStop'
  * @returns For each flavour's built path, the distinct absolute paths `resolve(root, mapSource)`, in the order of `roots`.
  * @example
  * appResolvedPathsOf(['/repo/examples/app'], [{ builtPath: 'packages/lib/build/modern/core.js', mapSource: '../../src/core.ts', builtSha256: '…', mapSha256: '…' }])
- * // => { 'packages/lib/build/modern/core.js': ['/repo/examples/src/core.ts'] }
+ * // => { 'packages/lib/build/modern/core.js': ['/repo/src/core.ts'] }
  */
 export function appResolvedPathsOf(
   roots: readonly string[],

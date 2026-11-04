@@ -145,8 +145,8 @@ const APP_BROWSER_LIBRARY_RECOVERIES = {
   'library-not-in-build': `The client chunks of the entry route's client reference manifest do not hold exactly one built file of the library whose map names the stop's checked-out file (details.candidates lists them; details.mapSource is the path the module's map named). A library module the page loads later (\`next/dynamic\`, a lazy import) cannot be sealed. Tell the learner, or choose a stop on a line the page runs at load; do not start another run with the same stop. ${LIBRARY_ENTRY_REQUESTED} See ${libraryHelpAnchor('library-not-in-build')}.`,
 } as const
 
-/** The webpack layer a library refusal is worded for (the same values as `LibraryStopLayer` in `sealLibraryStop.ts`, repeated so this module imports nothing from it). */
-type PagesLibraryLayer =
+/** The webpack layer a library refusal is worded for: a Pages server or browser layer, or the App Router browser layer (the same values as `LibraryStopLayer` in `sealLibraryStop.ts`, repeated so this module imports nothing from it). */
+type LibraryRefusalLayer =
   'pages-dir-node' | 'pages-dir-browser' | 'app-pages-browser'
 
 /**
@@ -158,7 +158,7 @@ type PagesLibraryLayer =
  */
 function pagesLibraryRecoveryOf(
   reason: keyof typeof BROWSER_LIBRARY_RECOVERIES,
-  layer: PagesLibraryLayer,
+  layer: LibraryRefusalLayer,
 ): string {
   if (layer === 'app-pages-browser')
     return APP_BROWSER_LIBRARY_RECOVERIES[reason]
@@ -287,7 +287,7 @@ type LibraryRuntimeReason = (typeof LIBRARY_RUNTIME_REASONS)[number]
  * @param candidates - The built files that map the stop, repository-relative; named in the message.
  * @param layer - The webpack layer the seal searched; `pages-dir-browser` words the message and recovery by the entry chunks the page loads at start, `app-pages-browser` by the client chunks of the entry route's client reference manifest (its details carry `router: "app"` and, when given, `mapSource`), the default `pages-dir-node` by the server compile.
  * @param mapSource - The path the one module's map named, when the module was found but its map does not name the stop's checked-out file (`app-pages-browser` only).
- * @returns The `NEXT_STOP_NOT_SEALED` error: `details.reason: "library-not-in-build"`, `details.candidates`, the Pages details (`sideEffects: "unknown"`).
+ * @returns The `NEXT_STOP_NOT_SEALED` error: `details.reason: "library-not-in-build"`, `details.candidates`, the stop details (`sideEffects: "unknown"`; `router: "app"` and `mapSource` when the layer is `app-pages-browser`).
  * @example
  * throw libraryNotInBuildRefusal('examples/app', 'lib', 'packages/lib/src/core.ts', ['packages/lib/build/modern/core.js', 'packages/lib/build/legacy/core.js'])
  */
@@ -296,7 +296,7 @@ export function libraryNotInBuildRefusal(
   libraryName: string,
   file: string,
   candidates: readonly string[],
-  layer: PagesLibraryLayer = 'pages-dir-node',
+  layer: LibraryRefusalLayer = 'pages-dir-node',
   mapSource?: string,
 ): StudyError {
   const list = candidates.join(', ') || 'none'
@@ -330,7 +330,7 @@ export function libraryNotInBuildRefusal(
  * @param line - The declared (armed) source line.
  * @param why - A short value-free reason for the message.
  * @param router - The router of the app (`app` for a browser stop sealed in source terms in an App Router app); `pages` by default.
- * @returns The `NEXT_STOP_NOT_SEALED` error: `details.reason: "library-place-ambiguous"`, the Pages details (`sideEffects: "unknown"`).
+ * @returns The `NEXT_STOP_NOT_SEALED` error: `details.reason: "library-place-ambiguous"`, the stop details (`sideEffects: "unknown"`; `router: "app"` when raised for an App Router app).
  * @example
  * throw libraryPlaceAmbiguousRefusal('examples/app', 'lib', 'packages/lib/src/core.ts', 3, 'the bound line maps to several source lines')
  */
@@ -362,7 +362,7 @@ export function libraryPlaceAmbiguousRefusal(
  * @param libraryName - The library's package name.
  * @param file - The repository-relative stop file.
  * @param router - The router of the app (`app` for a browser stop sealed in source terms in an App Router app); `pages` by default.
- * @returns The `RUNTIME_FAILED` error: `details.reason: "library-build-changed"`, the Pages details (`sideEffects: "unknown"`).
+ * @returns The `RUNTIME_FAILED` error: `details.reason: "library-build-changed"`, the stop details (`sideEffects: "unknown"`; `router: "app"` when raised for an App Router app).
  * @example
  * throw libraryBuildChangedFailure('examples/app', 'lib', 'packages/lib/src/core.ts')
  */

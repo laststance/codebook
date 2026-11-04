@@ -150,7 +150,7 @@ test('the bundled skill 1.0.71 tells the chat to name the build and never run it
   assert.ok(skill.includes('metadata:\n  version: "1.0.72"\n'))
   assert.ok(
     skill.includes(
-      "A question that leads from an Example into the checked-out library may declare a server stop in the library's source, but only when `codebook_status` reports API 1.19 or later; on an older API tell the learner to update Codebook instead of following the `outside-package` fix. When the run refuses with `library-build-stale`, tell the learner which build to run, and never run it yourself; for `library-build-unmapped` read `details.cause` and the help section for it.",
+      "A question that leads from an Example of a nested Next Pages app into the checked-out library may declare a server stop in the library's source, but only when `codebook_status` reports API 1.19 or later; on an older API tell the learner to update Codebook instead of following the `outside-package` fix. When the run refuses with `library-build-stale`, tell the learner which build to run, and never run it yourself; for `library-build-unmapped` read `details.cause` and the help section for it.",
     ),
   )
   for (const sample of [
