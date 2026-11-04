@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type { WikiFreshness } from '../utils/inspectDeepWikiFreshness'
 import { sleepUntilAborted } from '../utils/sleepUntilAborted'
 import type { WikiUpdateStatus } from '../utils/wikiUpdateRun'
@@ -3246,11 +3247,11 @@ test('an Update that meets a marker nobody owns while another window holds the c
   }
 })
 
-/** Waits until a change of the window's own marker has given this answer, polling as {@link waitForEnd} does; it returns at the limit either way, so the test's assertion names what was missing. */
+/** Waits until a change of the window's own marker has given this answer, polling as {@link waitForEnd} does; it returns at the limit either way, so the test's assertion names what was missing; the limit is a safety net far above the attempt's own bound (20 claim attempts, each stretched by a slow disk; about 8 s at most under the Cycle 0076 disk-contention load), the wait ends on the recorded answer. */
 async function waitForMarkerAnswer(
   window: { markerChanges: Array<{ answer?: boolean | 'threw' }> },
   answer: boolean,
-  limitMs = 6_000,
+  limitMs = 30_000,
 ): Promise<void> {
   const deadline = Date.now() + limitMs
   while (
@@ -3417,7 +3418,7 @@ test('Update pressed again in the same window while its earlier update’s marke
   }
 })
 
-// Value: protects=other editor windows after a window closes while the removal of its marker waits for its next attempt; fails_when=the closing window leaves that attempt to a timer that never runs, so its marker stays on disk as a running update and refuses every other window until the run's bound has passed; why_new=Cycle 0046 second ship, red team RT3; seam=the delay before the next attempt, set longer than the test
+// Value: protects=other editor windows after a window closes while the removal of its marker waits for its next attempt; fails_when=the closing window leaves that attempt to a timer that never runs, so its marker stays on disk as a running update and refuses every other window until the run's bound has passed; why_new=Cycle 0046 second ship, red team RT3; seam=the delay before the next attempt, set longer than the test; no_claim=the claim attempts of the first removal are bounded by the product (20 attempts), which a slow disk stretches but this test no longer races
 test('a window that closes while the removal of its marker waits for its next attempt makes that attempt as it closes, and the marker leaves the disk with the window', async () => {
   // Arrange: a claim on the marker held by a window of another machine, and an update whose end could not remove its marker.
   const wiki = await openWikiWindow({
@@ -3432,7 +3433,13 @@ test('a window that closes while the removal of its marker waits for its next at
     wiki.setFreshness(CURRENT)
     await wiki.publish('b'.repeat(64))
     await waitForEnd(wiki.status)
+    // The first attempt gives up after its claim attempts, however slow each disk call is; the wait ends on that recorded answer, the long limit being only a safety net.
     await waitForMarkerAnswer(wiki, false)
+    assert.equal(
+      wiki.markerChanges[0]?.answer,
+      false,
+      'the first removal attempt must have failed on the held claim before the claim is freed',
+    )
     await rm(claimDirectory, { recursive: true })
 
     // Act
@@ -4143,7 +4150,7 @@ test('a window that closes within a stopped watch’s bound keeps that watch’s
   }
 })
 
-// Value: protects=other windows and this window's later presses after a stopped watch's bound, on every output the learner updated; fails_when=the claim of a run on another output clears the timer of the first output's reservation, so this window never removes that reservation from the disk at the watch bound; why_new=Cycle 0046 /ship red team finding R7; seam=the watch bound, 3 seconds instead of 15 minutes
+// Value: protects=other windows and this window's later presses after a stopped watch's bound, on every output the learner updated; fails_when=the claim of a run on another output clears the timer of the first output's reservation, so this window never removes that reservation from the disk at the watch bound; why_new=Cycle 0046 /ship red team finding R7; seam=the watch bound, 3 seconds instead of 15 minutes; no_claim=how long after the bound the removal takes on a slow disk
 test('the reservation a stopped watch left on one Wiki output leaves the disk at its watch bound, also after an update of another output began in the meantime', async () => {
   // Arrange: the watch bound is 3 seconds; a watch on the first output is stopped, then the setting names a second output, whose update begins and is stopped too.
   const progress: CancellableProgress[] = []
@@ -4168,14 +4175,17 @@ test('the reservation a stopped watch left on one Wiki output leaves the disk at
     await wiki.clickUpdate()
     progress[1]!.cancel()
     await waitForEnd(wiki.status)
-    const secondEndedAtMs = Date.now()
     const wasFirstReservedMeanwhile = await isOnDisk(
       `${wiki.outputDirectory}.update-run.json`,
     )
 
-    // Act: the watch bound of both stopped watches passes, the second one's half a second ago.
-    await new Promise((resolveWait) =>
-      setTimeout(resolveWait, secondEndedAtMs + 3_500 - Date.now()),
+    // Act: the watch bound of both stopped watches passes; the removals then run on the real disk, so the test waits until both reservations have left it, never for a fixed time after the bound. The 30 s budget is only a safety net far above the 3 s bound; at it the wait fails naming what stayed.
+    await waitUntil(
+      async () =>
+        !(await isOnDisk(`${wiki.outputDirectory}.update-run.json`)) &&
+        !(await isOnDisk(`${secondOutput}.update-run.json`)),
+      'both stopped watches’ reservations to leave the disk',
+      30_000,
     )
 
     // Assert
@@ -4568,6 +4578,36 @@ test('the watch of a VS Code update is the same status bar entry, and no notific
   }
 })
 
+/**
+ * Describes what one update window showed, for the message of a failed assertion.
+ *
+ * Why: this test once failed with empty status bar texts and nothing else to read. A recurrence must name which refusal, failed or unanswered start ended the run, so the message carries every record that tells.
+ * Value card: protects=a recurrence of the empty status bar names which refusal, failed or unanswered start ended the run; fails_when=a failure prints only the two arrays; no_claim=a cause, only the records that name it.
+ * Called by the status bar assertions of the outside-the-project update test.
+ *
+ * @param window - The window the update ran in (it may be closed already; its records stay).
+ * @param running - The window's update status, read before it closed.
+ * @returns One line of JSON with the notices, warnings, errors, marker changes, status, executed commands and confirmations.
+ * @example
+ * describeWindowForFailure(window, status) // => '{"notices":[],"warnings":[],…}'
+ */
+function describeWindowForFailure(
+  window: Awaited<ReturnType<typeof openWikiUpdateWindow>>,
+  running: ReturnType<
+    Awaited<ReturnType<typeof openWikiUpdateWindow>>['status']
+  >,
+): string {
+  return JSON.stringify({
+    notices: window.notices,
+    warnings: window.warnings,
+    errors: window.errors,
+    markerChanges: window.markerChanges,
+    running,
+    executedCommands: window.executedCommands,
+    confirmations: window.confirmations,
+  })
+}
+
 // Value: protects=the learner whose Wiki lies outside the project, where the chat asks to approve each step: the confirmation says why before the press, and the watch must not cover those approvals; fails_when=the confirmation loses the note, or such an update is watched with a notification again, or with an entry of its own words; why_new=Cycle 0045 (the note), Cycle 0046 row 336 (the title without it), row 592 (the watch in the status bar); seam=none
 test('the confirmation of an update whose output lies outside the project says the chat will ask to approve each step there, and its watch is the same status bar entry, with no notification', async () => {
   // Arrange
@@ -4609,10 +4649,12 @@ test('the confirmation of an update whose output lies outside the project says t
       assert.deepEqual(
         [window.statusBarTexts, window.progressTitles],
         [['$(sync~spin) Watching for the LLM Wiki · Stop watching'], []],
+        `The status bar entry or the progress titles differ. The ${window === fromTheLink ? 'fromTheLink' : 'fromTheCommand'} window showed: ${describeWindowForFailure(window, running)}`,
       )
       assert.equal(
         running.state === 'running' ? running.isOutputOutsideProject : false,
         true,
+        `The run was not an output outside the project. The ${window === fromTheLink ? 'fromTheLink' : 'fromTheCommand'} window showed: ${describeWindowForFailure(window, running)}`,
       )
     }
     assert.deepEqual(fromTheCommand.confirmations, [])

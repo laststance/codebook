@@ -387,9 +387,38 @@ test('a pause wholly inside another pause is journaled and the outer pause keeps
   )
 })
 
-// protects=E-D: a busy surface that fills the journal's stream-frame room ends only its frames: the pause close, the result and the seal still record, and the seal names the size limit and the filmstrip; fails_when=the journal fills with frames and the result is lost, or the seal is complete; no_claim=the production 8 MiB (the limits are injected small)
+/** How many stream frames fit the journal's injected room with margin: the journal-limit test drains this many one by one. */
+const FRAMES_STORED_BEFORE_THE_JOURNAL_ROOM_ENDS = 30
+
+/** How many stream frames the journal-limit test offers: more than the journal's room, few enough that the queued tail drains inside the seal's deadline on a slow disk. */
+const FRAMES_OFFERED = 40
+
+/**
+ * Makes every frame blob's publication take `delayMs` longer, as a slow disk does.
+ * Why: the frame writer's serial queue calls `appendFrame` only after the blob is renamed, so a slow rename is how a loaded runner's disk reaches the journal tests.
+ * Called by the journal-limit test in this file; the mock is restored when the test ends.
+ * @param context - The test whose end restores the real `rename`.
+ * @param delayMs - The added time per blob publication.
+ * @example slowFrameBlobWrites(context, 50)
+ */
+function slowFrameBlobWrites(
+  context: Parameters<typeof openExtensionStore>[0],
+  delayMs: number,
+): void {
+  const realRename = fsPromises.rename.bind(fsPromises)
+  mock.method(fsPromises, 'rename', async (from: string, to: string) => {
+    // Only the frame blobs are slowed; journal and ledger renames keep their real speed.
+    if (String(to).endsWith('.png'))
+      await new Promise((resolve) => setTimeout(resolve, delayMs))
+    return realRename(from, to)
+  })
+  context.after(() => mock.restoreAll())
+}
+
+// protects=E-D: a busy surface that fills the journal's stream-frame room ends only its frames: the pause close, the result and the seal still record, and the seal names the size limit and the filmstrip; fails_when=the journal fills with frames and the result is lost, or the seal is complete; no_claim=the production 8 MiB (the limits are injected small); runs with each frame blob's publication slowed by 50 ms, so a slow disk cannot hide the size limit behind the seal's drain deadline
 test('a surface that fills the journal ends its stream frames while the close, the result and the seal still record', async (context) => {
   // Arrange
+  slowFrameBlobWrites(context, 50)
   const { recorder, store, header, clock } = await recorderOver(context, {
     limits: { journalLimitBytes: 16_384 + 8_000, maxEntries: 13_100 },
   })
@@ -397,9 +426,20 @@ test('a surface that fills the journal ends its stream frames while the close, t
   openCaptured(recorder, page)
 
   // Act
-  for (let index = 0; index < 60; index += 1) {
+  for (let index = 0; index < FRAMES_OFFERED; index += 1) {
     clock.nowMs += 60
     streamFrame(recorder, `frame ${index}`)
+    // Each of the first frames is published and journaled before the next is offered, so the serial queue never outgrows the seal's drain deadline on a slow disk. The journal's room holds about 34 such frames; the last ten are queued together and reach its limit through their own entries.
+    if (index < FRAMES_STORED_BEFORE_THE_JOURNAL_ROOM_ENDS)
+      await waitUntil(
+        async () =>
+          (await store.read(header.studyId)).entries.filter(
+            (entry) => entry.type === 'frame',
+          ).length >=
+          index + 1,
+        `frame ${index} to be journaled`,
+        20_000,
+      )
   }
   clock.nowMs += 60
   recorder.pauseClosed(page.pauseId, 'continue')
@@ -421,7 +461,7 @@ test('a surface that fills the journal ends its stream frames while the close, t
   const frameCount = history.entries.filter(
     (entry) => entry.type === 'frame',
   ).length
-  assert.ok(frameCount > 0 && frameCount < 60)
+  assert.ok(frameCount > 0 && frameCount < FRAMES_OFFERED)
 })
 
 // protects=E-D: a pin still fits after the stream frames hit the journal's reserve, so a stop frame is not crowded out by a busy surface; fails_when=the pin is refused with the stream frames; no_claim=the production sizes
