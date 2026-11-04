@@ -306,3 +306,17 @@ test('the README and the skill name the saved-session confirmation and keep its 
     skill.includes('Never change `codebook.confirmSavedSessionOperations`'),
   )
 })
+
+// protects=native C79-2: the chat learns that a browser stop's image can be unavailable while the run is still live (captures[].status failed with the unavailable sentence), so it does not tell the learner the run failed; fails_when=the frames help omits the unavailable stop image or its reason; no_claim=the behaviour itself (stopImageUnavailable tests)
+test('the frames help tells a chat that a browser stop image the paused page could not draw leaves the run going', async (context) => {
+  // Arrange
+  const help = await readHelp(context)
+  // Act
+  const frames = String(help.operationsSecrets.frames)
+  // Assert
+  assert.ok(
+    frames.includes(
+      'its capture then reads captures[].status failed with the reason "The paused page drew no image of this stop within 3 s; the stop keeps its source and values, and the run goes on and ends partial.", the observation has no imageUri, and the run has not failed',
+    ),
+  )
+})

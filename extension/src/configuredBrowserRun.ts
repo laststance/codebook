@@ -11297,7 +11297,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Seals actual configured values and renderer pixels only while the exact source-bound pause remains current, called by {@link onEvent} for an accepted debugger stop.
    * When the observation is committed it publishes, in one synchronous step, the snapshot, the status `paused-<participant>` and the ready snapshot that offers the continuation; until then the run's status is the one before the stop, so a read of the run never finds a paused state without its observation.
    * @param pause - The identity the pause gate gave the accepted stop.
-   * @throws The failure that ends the run when the pause changed, its binding or frame is refused, or the evidence cannot be saved; a failed image or required inspection is thrown after the snapshot was committed, so its facts stay readable.
+   * @throws The failure that ends the run when the pause changed, its binding or frame is refused, or the evidence cannot be saved; a failed image or required inspection is thrown after the snapshot was committed, so its facts stay readable. A browser stop's image the paused page drew nothing for in time is not thrown: the stop commits and stays paused, its capture reads `failed` with {@link STOP_IMAGE_UNAVAILABLE_TEXT}, and the run goes on ({@link screenshotOrUnavailable}).
    * @example
    * ```ts
    * this.track(this.inspect(pause))
@@ -12257,7 +12257,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.evidence.record('capture.requested', { phase, pause })
     try {
       const requestedAtMs = Date.now()
-      const data = await this.screenshotOrUnavailable(pause)
+      const data = await this.screenshotOrUnavailable(phase)
       current()
       if (data === undefined) {
         // The paused page drew no image in time: the stop keeps its source and values, the recording keeps a gap, and the run goes on and ends partial.
@@ -12318,15 +12318,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
   }
   /**
-   * Requests the page's image for a capture, and tells a stop image the paused page did not deliver in time apart from every other failure.
-   * Why it exists: a stop that pauses right after the previous stop's continue, in the same task (`QueryCache.build`, then `Query.fetch`, in one render in native C79-2), can leave the paused page unable to answer `Page.captureScreenshot` within {@link CAPTURE_TIMEOUT_MS}, while the stop's source and values were already read. Such a stop image becomes unavailable and the run goes on; any other failure, and an image that belongs to no stop, still fails the run. Called by {@link capture}.
-   * @param pause - The stop's pause identity; absent for an image of no stop (`before`, `after`).
-   * @returns The screenshot's base64 PNG data, or `undefined` for a stop image the page did not deliver within the bound.
+   * Requests the page's image for a capture, and tells a browser stop's image the paused page did not deliver in time apart from every other failure.
+   * Why it exists: a browser stop that pauses right after the previous stop's continue, in the same task (`QueryCache.build`, then `Query.fetch`, in one render in native C79-2), can leave the paused page unable to answer `Page.captureScreenshot` within {@link CAPTURE_TIMEOUT_MS}, while the stop's source and values were already read. Such an image becomes unavailable and the run goes on. Any other failure still fails the run, and so does a timeout of any other image: a server stop's (the page is not paused then) or one that belongs to no stop (`before`, `after`). Called by {@link capture}.
+   * @param phase - The capture phase the image is for.
+   * @returns The screenshot's base64 PNG data, or `undefined` for a browser stop's image the page did not deliver within the bound.
    * @throws Every other failure of the request, unchanged.
-   * @example await this.screenshotOrUnavailable({ sessionId: 'page', threadId: 1, generation: 2 }) // => undefined when the paused page drew nothing within 3 s
+   * @example await this.screenshotOrUnavailable('paused-browser') // => undefined when the paused page drew nothing within 3 s
    */
   private async screenshotOrUnavailable(
-    pause: PauseIdentity | undefined,
+    phase: (typeof CONFIGURED_CAPTURE_PHASES)[number] | 'paused-server',
   ): Promise<string | undefined> {
     try {
       const result = await this.requireCdp().request(
@@ -12336,11 +12336,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       )
       return result.data
     } catch (error) {
-      // Only a stop's image may be missing: its source and values were read before it.
-      if (pause && error instanceof CdpRequestTimeoutError) return undefined
+      // Only a browser stop's image may be missing: the paused page cannot draw it, and the stop's source and values were read before it.
+      if (phase === 'paused-browser' && error instanceof CdpRequestTimeoutError)
+        return undefined
       throw error
     }
   }
+
   /** Reveals only the committed immutable source through the shared reader and drains its accepted presentation work on cleanup. @example await run.reveal(snapshot) */
   reveal(snapshot: RuntimeSnapshot): Promise<void> {
     this.alive()

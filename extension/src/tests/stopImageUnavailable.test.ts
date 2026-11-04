@@ -5,8 +5,16 @@ import type { RepositoryOperation } from '../repositoryConfigSchemas'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
+import { armedEntry } from './utils/entryRenderHarness'
+import {
+  hitOnLine,
+  PAGES_SERVER_RETURN_LINE,
+  pagesServerRun,
+} from './utils/pagesServerRunHarness'
 
 const OPERATION_ACTION = 'repository-operation'
+/** The screenshot a Pages server stop's pause takes: after the image before the entry request. */
+const SERVER_STOP_SCREENSHOT = 1
 const UNAVAILABLE_SENTENCE =
   'The paused page drew no image of this stop within 3 s; the stop keeps its source and values, and the run goes on and ends partial.'
 const ENABLED_STOP = [
@@ -130,4 +138,36 @@ test('a result image that times out still fails the run', async (context) => {
   )
   assert.equal(view.captures.after?.status, 'failed')
   assert.equal(view.snapshotCaptures?.[stop.id]?.status, 'captured')
+})
+
+// protects=only a browser stop's image may be missing: a Pages server stop's image that times out (the page is not paused then) still fails the run with the client's timeout; fails_when=the server stop's timeout is taken for an unavailable stop image and the run goes on; no_claim=a real Next server or Chrome (the stand-in page leaves the server stop's screenshot unanswered)
+test('a server stop image that times out still fails the run', async (context) => {
+  // Arrange
+  const harness = await pagesServerRun(context, {
+    timedOutScreenshots: [SERVER_STOP_SCREENSHOT],
+  })
+  const prepared = harness.run.prepare()
+  await armedEntry(harness)
+  // Act
+  harness.server!.hit(
+    hitOnLine(PAGES_SERVER_RETURN_LINE, {
+      fixture: 'get-server-side-props-before-await',
+    }),
+  )
+  await waitUntil(
+    () => harness.run.view().failures.length > 0,
+    'the run failed',
+  )
+  await prepared.catch(() => undefined)
+  // Assert
+  const view = harness.run.view()
+  assert.match(
+    view.failures.join('; '),
+    /CDP Page\.captureScreenshot timed out/,
+  )
+  assert.equal(view.captures['paused-server']?.status, 'failed')
+  assert.deepEqual(
+    view.events.filter((event) => event.type === 'capture.unavailable'),
+    [],
+  )
 })
