@@ -237,3 +237,35 @@ test('an uncoded failure of the App Router seal reports the app router', async (
     details: { router: 'app', sideEffects: 'unknown' },
   })
 })
+
+// protects=AC 3 a competing module without any inline map names no file, so the stop is sealed beside it (most modules of a real chunk set carry no map); fails_when=the fail-closed collision check treats an absent map as unreadable and refuses the seal; no_claim=a module whose map is present but unreadable (refused above)
+test('an App Router library stop is sealed when another module carries no source map at all', async (context) => {
+  // Arrange
+  const staged = stageApp()
+  const harness = await openRun(context, staged)
+  await addCompetingModule(harness, undefined)
+  // Act
+  const failure = await preparationFailure(harness)
+  // Assert
+  assert.equal(failure, undefined)
+})
+
+// protects=AC 3 a competing module that spells the app-resolved path with a `..` segment still collides, since the check compares resolved paths; fails_when=the check compares the source text as written and seals beside a module that binds the same breakpoint; no_claim=relative sources and symlinked package roots
+test('an App Router library stop is refused as place-ambiguous when another module spells the path with a dot-dot segment', async (context) => {
+  // Arrange
+  const staged = stageApp()
+  const harness = await openRun(context, staged)
+  const { appResolved } = await pathsOf(harness)
+  const unnormalized = appResolved.replace(/core\.ts$/, 'sub/../core.ts')
+  await addCompetingModule(
+    harness,
+    Buffer.from(
+      JSON.stringify({ version: 3, sources: [unnormalized], mappings: '' }),
+    ).toString('base64'),
+  )
+  // Act
+  const failure = await preparationFailure(harness)
+  // Assert
+  assert.deepEqual(refusalOf(failure), PLACE_AMBIGUOUS)
+  assert.equal(harness.inputsSeen(), 0)
+})
