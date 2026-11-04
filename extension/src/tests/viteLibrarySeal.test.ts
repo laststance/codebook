@@ -418,3 +418,109 @@ test('lets a launcher exit during the walk fail as it is instead of as a deadlin
   // Act / Assert
   await assert.rejects(sealViteLibraryStop(request), /Application exited: 1/)
 })
+
+// protects=decision table row 2 (bound): library modules whose served bytes together pass the fetch bound refuse as library-build-unmapped with cause bound and the library identity; fails_when=the bound error escapes uncoded, is swallowed or another cause is reported; no_claim=the real launcher's walk bound (only the byte bound of the module fetches); why_new=the fetch-side bound was untested while the walk bound was; seam=none
+test('refuses library modules whose fetched bytes pass the bound as library-build-unmapped with cause bound', async (context) => {
+  // Arrange
+  const fixture = await stage(context, { moduleText: 'x'.repeat(7_000_000) })
+  const moduleSource = createViteLibraryModuleSource({
+    ownedOrigin: fixture.origin,
+    entryPath: '/',
+    libraryRealFolder: fixture.library.realFolder,
+    requestWalk: async () => ({
+      // Three 7,000,000-byte modules pass the 20 MiB bound of one generation.
+      modules: [1, 2, 3].map((n) => `${fixture.modulePath}?v=${n}`),
+      optimizedLibrary: false,
+    }),
+    signal: new AbortController().signal,
+  })
+  // Act
+  const failure = await sealViteLibraryStop({
+    ...sealRequest(fixture),
+    moduleSource,
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // Assert
+  assert.ok(failure instanceof StudyError)
+  assert.equal(failure.code, 'VITE_SEAL_FAILED')
+  assert.deepEqual(failure.details, {
+    reason: 'library-build-unmapped',
+    cause: 'bound',
+    packageRoot: 'examples/app',
+    library: '@scope/core',
+    file: 'packages/core/src/a.ts',
+    sideEffects: 'none',
+  })
+})
+
+// protects=entry page: an entry path the owned server does not answer with a page ends the seal with a coded VITE_SEAL_FAILED that names the status; fails_when=the 404 body is walked as an entry page or the failure escapes uncoded; no_claim=the real Vite entry handling; why_new=no test reached the entry-page fetch failure rows; seam=none
+test('refuses an entry path the owned server answers with a 404 before any walk', async (context) => {
+  // Arrange
+  const fixture = await stage(context)
+  const walked: string[][] = []
+  const moduleSource = createViteLibraryModuleSource({
+    ownedOrigin: fixture.origin,
+    entryPath: '/missing',
+    libraryRealFolder: fixture.library.realFolder,
+    requestWalk: async (entries) => {
+      walked.push(entries)
+      return { modules: [], optimizedLibrary: false }
+    },
+    signal: new AbortController().signal,
+  })
+  // Act
+  const failure = await sealViteLibraryStop({
+    ...sealRequest(fixture),
+    moduleSource,
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // Assert
+  assert.ok(failure instanceof StudyError)
+  assert.equal(failure.code, 'VITE_SEAL_FAILED')
+  assert.match(failure.message, /it answered status 404/)
+  assert.deepEqual(walked, [])
+})
+
+// protects=entry page: an entry page that redirects is never followed (it could leave the owned origin) and ends the seal with a coded VITE_SEAL_FAILED; fails_when=the redirect is followed to another host or the walk starts from a redirect body; no_claim=the real Vite entry handling; why_new=no test reached the entry-page redirect row; seam=none
+test('refuses an entry page that redirects without following it', async (context) => {
+  // Arrange
+  const fixture = await stage(context)
+  const requests: string[] = []
+  const redirecting = createServer((request, response) => {
+    requests.push(request.url ?? '')
+    response.statusCode = 302
+    response.setHeader('location', `${fixture.origin}/`)
+    response.end()
+  })
+  await new Promise<void>((resolve) =>
+    redirecting.listen(0, '127.0.0.1', resolve),
+  )
+  context.after(() => redirecting.close())
+  const address = redirecting.address()
+  const origin = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`
+  const moduleSource = createViteLibraryModuleSource({
+    ownedOrigin: origin,
+    entryPath: '/',
+    libraryRealFolder: fixture.library.realFolder,
+    requestWalk: async () => ({ modules: [], optimizedLibrary: false }),
+    signal: new AbortController().signal,
+  })
+  // Act
+  const failure = await sealViteLibraryStop({
+    ...sealRequest(fixture),
+    ownedOrigin: origin,
+    moduleSource,
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // Assert
+  assert.ok(failure instanceof StudyError)
+  assert.match(failure.message, /it redirects \(status 302\)/)
+  assert.deepEqual(requests, ['/'])
+  assert.deepEqual(fixture.requests, [])
+})
