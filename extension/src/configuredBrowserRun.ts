@@ -252,7 +252,10 @@ import {
   freezeLibraryBuild,
   type FrozenLibraryBuild,
 } from './utils/libraryBuildStop'
-import { libraryMapOverrides } from './utils/libraryMapOverrides'
+import {
+  appLibraryPathConflictOf,
+  libraryMapOverrides,
+} from './utils/libraryMapOverrides'
 import { maskLearnerSecretText } from './utils/maskLearnerSecretText'
 import { maskNextServerOutput } from './utils/maskNextServerOutput'
 import { maskSourceMapText } from './utils/maskSourceMapText'
@@ -1475,6 +1478,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    */
   private nextLibraryChanged(stop: PreparedStop): StudyError | undefined {
     // A built-terms stop carries its freeze; a source-terms stop (nested App Router app) is found by its declared place.
+    // stop.library comes first: a built-terms stop's source.line is rewritten to the built line, so its declared key no longer matches the map.
     const freeze =
       stop.library ?? this.libraryFreezes.get(libraryFreezeKey(stop.source))
     if (!freeze) return undefined
@@ -1568,12 +1572,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Freezes the build of a server or browser stop that lies outside the Next app in a workspace library, before any process starts.
+   * Freezes the build of a server or browser stop that lies outside the Next app in a workspace library, before any process starts: built terms for a Pages app (either participant), source terms for a browser stop of an App Router app.
    * Called by {@link resolveNextPackageOfRun} for each stop outside the package; the library source text is read once here and checked against the accepted hash, and kept for the capture.
    * @param stop - A stop whose file lies outside the package.
    * @param nextPackage - The resolved nested Next app.
-   * @returns `true` when the stop was frozen as a library stop; `false` when it stays an `outside-package` stop (not a version 3 run, no linked workspace library, or an app whose router kind is not `pages`).
-   * @throws `NEXT_STOP_NOT_SEALED` (`library-build-stale`, `library-build-unmapped`; `sideEffects: "none"`) from {@link freezeLibraryBuild}; an error when the checked-out file differs from the accepted hash.
+   * @returns `true` when the stop was frozen as a library stop; `false` when it stays an `outside-package` stop (not a version 3 run, no linked workspace library, a server stop of an App Router app, or an app with both routers or no route folder).
+   * @throws `NEXT_STOP_NOT_SEALED` (`library-build-stale`, `library-build-unmapped`; `sideEffects: "none"`) from {@link freezeLibraryBuild}; `NEXT_STOP_NOT_SEALED` (`library-place-ambiguous`, `router: "app"`, `sideEffects: "none"`) for an App Router browser stop whose app-resolved path holds `*` or is already held by another frozen file ({@link appLibraryPathConflictOf}); an error when the checked-out file differs from the accepted hash.
    * @example
    * if (!(await this.freezeLibraryStop(stop, nextPackage))) outside.push(stop.source.path)
    */
@@ -1616,24 +1620,42 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const sourceText = await readFile(join(realRoot, stop.source.path), 'utf8')
     if (sha256(sourceText) !== stop.source.hash)
       throw new Error('Selected source differs from the accepted article')
+    const appBrowser = isAppBrowserStop
+      ? {
+          appResolvedPaths: appResolvedPathsOf(
+            [
+              join(this.options.workspace, nextPackage.packageRootRelative),
+              nextPackage.packageRoot,
+            ],
+            frozen.candidates,
+          ),
+          sourceRealPath: await realpath(join(realRoot, stop.source.path)),
+        }
+      : undefined
+    if (appBrowser) {
+      // An override key must name one file: refuse a wildcard or a path another frozen file holds now, not as a bind timeout later.
+      const conflict = appLibraryPathConflictOf(this.appLibraryEntries(), {
+        appResolvedPaths: Object.values(appBrowser.appResolvedPaths).flat(),
+        checkedOutFile: appBrowser.sourceRealPath,
+      })
+      if (conflict)
+        throw libraryPlaceAmbiguousRefusal(
+          nextPackage.packageRootRelative,
+          frozen.library.name,
+          stop.source.path,
+          stop.source.line,
+          conflict.kind === 'wildcard'
+            ? `the path ${conflict.path} that the build map names holds the character *, which cannot be mapped onto one checked-out file`
+            : `the path ${conflict.path} that the build map names also leads to ${conflict.otherFile}, and ${appBrowser.sourceRealPath} cannot share it`,
+          'app',
+          'none',
+        )
+    }
     this.libraryFreezes.set(key, {
       frozen,
       sourceText,
       realRoot,
-      ...(isAppBrowserStop
-        ? {
-            appBrowser: {
-              appResolvedPaths: appResolvedPathsOf(
-                [
-                  join(this.options.workspace, nextPackage.packageRootRelative),
-                  nextPackage.packageRoot,
-                ],
-                frozen.candidates,
-              ),
-              sourceRealPath: await realpath(join(realRoot, stop.source.path)),
-            },
-          }
-        : {}),
+      ...(appBrowser ? { appBrowser } : {}),
     })
     return true
   }
@@ -3831,22 +3853,30 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Gives the exact `sourceMapPathOverrides` entries of the run's browser stops in workspace libraries of a nested App Router app.
    * Called by {@link launchOwnedBrowser}; the entries come from the freeze, so a saved run that launches the browser before the seal gets the same ones. The server's attach keeps only its own wildcard (decision D20).
    * @returns One exact entry per app-resolved path ({@link libraryMapOverrides}); empty for a run with no such stop.
-   * @example this.appLibraryOverrides() // => { '/repo/examples/src/mutation.ts': '/repo/packages/query-core/src/mutation.ts' }
+   * @example this.appLibraryOverrides() // => { '/repo/src/mutation.ts': '/repo/packages/query-core/src/mutation.ts' }
    */
   private appLibraryOverrides(): Record<string, string> {
-    return libraryMapOverrides(
-      [...this.libraryFreezes.values()].flatMap(({ appBrowser }) =>
-        appBrowser
-          ? [
-              {
-                appResolvedPaths: Object.values(
-                  appBrowser.appResolvedPaths,
-                ).flat(),
-                checkedOutFile: appBrowser.sourceRealPath,
-              },
-            ]
-          : [],
-      ),
+    return libraryMapOverrides(this.appLibraryEntries())
+  }
+
+  /**
+   * Lists the app-resolved paths and checked-out file of every App Router browser stop frozen so far.
+   * Called by {@link appLibraryOverrides} and by {@link freezeLibraryStop} for its conflict check.
+   * @returns One entry per frozen App Router browser stop.
+   * @example this.appLibraryEntries() // => [{ appResolvedPaths: ['/repo/src/core.ts'], checkedOutFile: '/repo/packages/lib/src/core.ts' }]
+   */
+  private appLibraryEntries() {
+    return [...this.libraryFreezes.values()].flatMap(({ appBrowser }) =>
+      appBrowser
+        ? [
+            {
+              appResolvedPaths: Object.values(
+                appBrowser.appResolvedPaths,
+              ).flat(),
+              checkedOutFile: appBrowser.sourceRealPath,
+            },
+          ]
+        : [],
     )
   }
 
@@ -8201,9 +8231,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Gives the path Next prints for a declared stop's module: the stop's repository-relative file mapped once to the package-relative path, the form of every webpack module address ({@link isPageStubOfSource}, {@link isModuleEntryPause}).
-   * Called wherever a stop's file is compared with a module address the page or server announced. Stop files outside the package are refused before any process starts, so the mapping always succeeds for a Next run; a Vite run has no resolved package and keeps the repository-relative path (its addresses are not webpack module paths).
+   * Called wherever a stop's file is compared with a module address the page or server announced. Stop files outside the package are refused before any process starts, except a library stop: a built-terms stop answers with its built runtime path, and a source-terms stop (App Router browser) has its file outside the package, so it keeps the repository-relative path (its module address is matched by its map, not by this path); a Vite run has no resolved package and keeps the repository-relative path (its addresses are not webpack module paths).
    * @param stop - The declared stop.
-   * @returns The stop file's path from the package root; the repository-relative path for a root app, a Vite run, or a path the package does not contain.
+   * @returns The stop file's path from the package root; the repository-relative path for a root app, a Vite run, a source-terms library stop or any path the package does not contain.
    * @example
    * ```ts
    * this.nextModulePathOf(stop) // 'src/actions.ts' for a stop in examples/app/src/actions.ts of the package examples/app

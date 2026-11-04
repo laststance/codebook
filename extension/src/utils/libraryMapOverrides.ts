@@ -1,3 +1,43 @@
+/** One library stop's app-resolved paths and the checked-out file they lead to. */
+type LibraryMapEntry = {
+  appResolvedPaths: readonly string[]
+  checkedOutFile: string
+}
+
+/** What stops an app-resolved path from becoming an exact override key. */
+export type AppLibraryPathConflict =
+  | { kind: 'wildcard'; path: string }
+  | { kind: 'collision'; path: string; otherFile: string }
+
+/**
+ * Finds the first reason a new frozen browser stop cannot get exact override keys beside the stops already frozen.
+ *
+ * Why it exists: {@link libraryMapOverrides} would drop a key with `*` and let a later stop win a key an earlier one holds, so the breakpoint would never bind (a timeout) or would bind on the wrong file. The freeze asks here, before any process starts, and refuses instead. Called by {@link ConfiguredBrowserRun} when it freezes a browser stop of an App Router app.
+ * @param frozen - The entries of the stops frozen so far.
+ * @param entry - The entry of the stop being frozen.
+ * @returns The conflict, a wildcard character first, then a path another file already holds; `undefined` when every key is free (equal files share a key harmlessly).
+ * @example
+ * appLibraryPathConflictOf([{ appResolvedPaths: ['/repo/src/core.ts'], checkedOutFile: '/repo/packages/a/src/core.ts' }], { appResolvedPaths: ['/repo/src/core.ts'], checkedOutFile: '/repo/packages/b/src/core.ts' })
+ * // => { kind: 'collision', path: '/repo/src/core.ts', otherFile: '/repo/packages/a/src/core.ts' }
+ */
+export function appLibraryPathConflictOf(
+  frozen: readonly LibraryMapEntry[],
+  entry: LibraryMapEntry,
+): AppLibraryPathConflict | undefined {
+  for (const path of entry.appResolvedPaths) {
+    if (path.includes('*')) return { kind: 'wildcard', path }
+    // A path another file already holds would be silently overwritten.
+    const holder = frozen.find(
+      (other) =>
+        other.checkedOutFile !== entry.checkedOutFile &&
+        other.appResolvedPaths.includes(path),
+    )
+    if (holder)
+      return { kind: 'collision', path, otherFile: holder.checkedOutFile }
+  }
+  return undefined
+}
+
 /**
  * Builds the exact `sourceMapPathOverrides` entries that map the paths a nested App Router app's browser maps name onto the checked-out library files.
  *
@@ -5,14 +45,11 @@
  * @param entries - For each frozen stop, the app-resolved paths ({@link appResolvedPathsOf}) and the checked-out file they lead to.
  * @returns One `{ <app-resolved path>: <checked-out file> }` entry per distinct path. A path with a `*` is left out, since js-debug would read it as a wildcard.
  * @example
- * libraryMapOverrides([{ appResolvedPaths: ['/repo/examples/src/core.ts'], checkedOutFile: '/repo/packages/lib/src/core.ts' }])
- * // => { '/repo/examples/src/core.ts': '/repo/packages/lib/src/core.ts' }
+ * libraryMapOverrides([{ appResolvedPaths: ['/repo/src/core.ts'], checkedOutFile: '/repo/packages/lib/src/core.ts' }])
+ * // => { '/repo/src/core.ts': '/repo/packages/lib/src/core.ts' }
  */
 export function libraryMapOverrides(
-  entries: readonly {
-    appResolvedPaths: readonly string[]
-    checkedOutFile: string
-  }[],
+  entries: readonly LibraryMapEntry[],
 ): Record<string, string> {
   const overrides: Record<string, string> = {}
   for (const { appResolvedPaths, checkedOutFile } of entries)

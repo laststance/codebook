@@ -330,7 +330,8 @@ export function libraryNotInBuildRefusal(
  * @param line - The declared (armed) source line.
  * @param why - A short value-free reason for the message.
  * @param router - The router of the app (`app` for a browser stop sealed in source terms in an App Router app); `pages` by default.
- * @returns The `NEXT_STOP_NOT_SEALED` error: `details.reason: "library-place-ambiguous"`, the stop details (`sideEffects: "unknown"`; `router: "app"` when raised for an App Router app).
+ * @param sideEffects - `none` for a refusal raised at the freeze, before any process starts; `unknown` (default) once the owned server answered the entry request.
+ * @returns The `NEXT_STOP_NOT_SEALED` error: `details.reason: "library-place-ambiguous"`, the stop details (`router: "app"` when raised for an App Router app, else `pages`; `sideEffects` as given).
  * @example
  * throw libraryPlaceAmbiguousRefusal('examples/app', 'lib', 'packages/lib/src/core.ts', 3, 'the bound line maps to several source lines')
  */
@@ -341,6 +342,7 @@ export function libraryPlaceAmbiguousRefusal(
   line: number,
   why: string,
   router: 'pages' | 'app' = 'pages',
+  sideEffects: 'none' | 'unknown' = 'unknown',
 ): StudyError {
   const message = `The stop at ${file}:${line} in library ${libraryName} could not be tied to one source position (${why}) for packageRoot ${packageRoot}. Declare the stop on a line that holds a single statement.`
   return nextRefusal('NEXT_STOP_NOT_SEALED', message, {
@@ -349,7 +351,7 @@ export function libraryPlaceAmbiguousRefusal(
       packageRoot,
       library: libraryName,
       file,
-      ...PAGES_STOP_REFUSAL_DETAILS,
+      sideEffects,
       router,
     },
     recovery: LIBRARY_RECOVERIES['library-place-ambiguous'],
