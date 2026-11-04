@@ -100,3 +100,78 @@ test('a copy hit whose stack read outlasts the copy-hold timer is still resumed 
   assert.equal(copies.length, 1)
   assert.equal(harness.run.view().failures.length, 0)
 })
+
+// Value: protects=O4-2 with the C3 bound: a copy pause that hit the run's own breakpoint and a learner's together, whose stack read outlasts the copy-hold timer, is not resumed as a copy once the timer gave it back to admission; fails_when=the handed-back verdict skips the check of the hit breakpoint ids and resumes the learner's pause; why_new=the copy tests with a learner breakpoint answer the stack before the timer, so only the unhanded branch checked the ids; seam=none; no_claim=the adapter's real stack latency
+test('a handed-back copy pause that also names a learner breakpoint is not resumed as a React copy', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(
+    context,
+    controlOf(context),
+    [{ line: 3, column: 1, inspections: [...ENABLED_STOP] }],
+    {
+      participant: 'server',
+      serverSeal: 'rsc',
+      serverRuntime: { route: '/dashboard/invoices' },
+      entryPath: '/dashboard/invoices',
+      documentReadyState: 'loading',
+      mappings: COMPONENT_MAP,
+      fixture: { source: COMPONENT_SOURCE, citationEndLine: 3 },
+      operations: {
+        operations: [],
+        stopOperations: [0, 0],
+        stopParticipants: ['server', 'server'],
+      },
+    },
+  )
+  const prepared = harness.run.prepare()
+  prepared.catch(() => undefined)
+  await waitUntil(
+    () => harness.navigations.length === 1,
+    'the entry navigation started',
+  )
+  harness.server!.hit({})
+  const stopA = await waitUntil(
+    () => harness.run.view().participants.server?.snapshot,
+    'the published server pause',
+  )
+  await harness.run.continue('server', stopA.pause)
+  await waitUntil(
+    () => harness.server!.continues.length >= 1,
+    'the first resume of the server',
+  )
+  harness.server!.announceReactCopy('3672', 109)
+  // Act: the pause names the run's own breakpoint and the learner's; the timer falls due during the stack read
+  harness.server!.pauseCdp({
+    scriptId: '3672',
+    generated: STOP_B_PLACE,
+    source: STOP_B_SOURCE,
+    hitBreakpoints: ['owned-breakpoint', 'learner-owned'],
+  })
+  harness.advance(200)
+  const releaseStack = harness.server!.holdNextStackTrace()
+  const stackReadsBefore = harness.server!.commands.filter(
+    (command) => command === 'stackTrace',
+  ).length
+  harness.server!.stopDap()
+  await waitUntil(
+    () =>
+      harness.server!.commands.filter((command) => command === 'stackTrace')
+        .length > stackReadsBefore,
+    'the stack read of the copy hit started',
+  )
+  harness.advance(900)
+  releaseStack()
+  // The pause reaches the ordinary handling: a breakpoint no stop of the run owns is a conflict the run reports, not a copy to resume
+  await waitUntil(
+    () => harness.run.view().participants.server?.conflict,
+    'the pause with the learner breakpoint reported as a conflict',
+  )
+  // Assert
+  assert.equal(harness.server!.continues.length, 1)
+  assert.equal(
+    harness.run
+      .view()
+      .events.filter((event) => event.type === 'breakpoint.react-copy').length,
+    0,
+  )
+})

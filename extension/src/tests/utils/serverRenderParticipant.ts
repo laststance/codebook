@@ -104,6 +104,8 @@ export interface ServerHit {
   unannounced?: { url?: string; scriptText?: string; reactCopy?: number }
   /** The reason both channels report for the pause (default `breakpoint` for the DAP `stopped`, `other` for the CDP pause), such as `exception`. */
   stopReason?: string
+  /** The editor breakpoints (by their id in the harness) the DAP `stopped` names in `hitBreakpointIds`, as the adapter does for a breakpoint hit; none are named by default. */
+  hitBreakpoints?: readonly string[]
 }
 
 /** Which of the two channels of a pause arrives first (`both` sends the CDP pause and then the DAP `stopped`). */
@@ -155,11 +157,12 @@ export function createServerParticipant(parts: ServerParticipantParts) {
   const scriptTexts = new Map<string, string>()
   const heldScriptReads = new Map<string, Promise<void>>()
   /** The scripts whose next text read fails, as a transient `Debugger.getScriptSource` error does. */
-  const failingScriptReads = new Set<string>()
+  const failingScriptReads = new Map<string, string | undefined>()
   const routes = new Map<number, ServerRouteAnswer>()
   const frames = new Map<number, { line: number; column: number }>()
   let currentHit = 0
   let currentStopReason = 'breakpoint'
+  let currentHitBreakpointIds: number[] | undefined
   const adapterIds = new Map<string, number>()
   const adapterId = (breakpoint: { id: string }): number => {
     const known = adapterIds.get(breakpoint.id)
@@ -378,10 +381,13 @@ export function createServerParticipant(parts: ServerParticipantParts) {
         const scriptId = parameters?.scriptId ?? ''
         scriptReads.push(scriptId)
         await heldScriptReads.get(scriptId)
-        if (failingScriptReads.delete(scriptId))
+        if (failingScriptReads.has(scriptId)) {
+          const detail = failingScriptReads.get(scriptId)
+          failingScriptReads.delete(scriptId)
           throw new Error(
-            `Debugger.getScriptSource: No script for id: ${scriptId}`,
+            detail ?? `Debugger.getScriptSource: No script for id: ${scriptId}`,
           )
+        }
         return { scriptSource: scriptTexts.get(scriptId) ?? parts.javascript }
       }
       if (
@@ -470,6 +476,7 @@ export function createServerParticipant(parts: ServerParticipantParts) {
     } else if (!announced.has(scriptId)) announce(scriptId)
     currentHit = ++hitNumber
     currentStopReason = hit.stopReason ?? 'breakpoint'
+    currentHitBreakpointIds = hit.hitBreakpoints?.map((id) => adapterId({ id }))
     routes.set(
       currentHit,
       hit.route === undefined ? parts.defaultRoute : hit.route,
@@ -554,7 +561,13 @@ export function createServerParticipant(parts: ServerParticipantParts) {
       type: 'event',
       seq: ++sequence,
       event: 'stopped',
-      body: { reason: currentStopReason, threadId: 1 },
+      body: {
+        reason: currentStopReason,
+        threadId: 1,
+        ...(currentHitBreakpointIds
+          ? { hitBreakpointIds: currentHitBreakpointIds }
+          : {}),
+      },
     })
   }
 
@@ -667,8 +680,8 @@ export function createServerParticipant(parts: ServerParticipantParts) {
       scriptTexts.set(scriptId, text)
     },
     /** Makes the run's next read of a script's text fail, as a transient `Debugger.getScriptSource` error; the read after it answers. */
-    failNextScriptRead(scriptId: string): void {
-      failingScriptReads.add(scriptId)
+    failNextScriptRead(scriptId: string, message?: string): void {
+      failingScriptReads.set(scriptId, message)
     },
     /** Keeps the run's read of a script's text open until the returned function is called. */
     holdScriptRead(scriptId: string): () => void {

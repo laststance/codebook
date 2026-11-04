@@ -29,6 +29,7 @@ import { readAppClientChunks } from './readAppClientChunks'
 import { readRepositoryBuildText } from './readRepositoryBuildText'
 import { resolveNextClientManifest } from './resolveNextClientManifest'
 import { rootNextPackage, type ResolvedNextPackage } from './resolveNextPackage'
+import { serverChunkOfRoute } from './serverChunkOfRoute'
 
 /** Which webpack layer a server stop was sealed from: `action-browser` or `rsc` in the entry route's App Router server chunk ({@link readDevelopmentBundle}), `pages-dir-node` in a Pages page's server compile or the server chunks it loads ({@link readPagesServerBundle}). */
 export type DevelopmentServerLayer = 'action-browser' | 'rsc' | 'pages-dir-node'
@@ -106,7 +107,7 @@ export async function readDevelopmentBundle(
       }
   // A cold action may not be loaded yet; seal its compiled bytes without importing or executing them.
   if (execution === 'server-action') {
-    const candidate = `server/${routes![route.key]!}`,
+    const candidate = serverChunkOfRoute(routes!, route.key),
       chunkPath = resolve(root, '.next/dev', candidate)
     const chunk = await read(chunkPath, REPOSITORY_CHUNK_LIMIT_BYTES)
     // Decode the chunk once; both server layers are searched in the same modules.

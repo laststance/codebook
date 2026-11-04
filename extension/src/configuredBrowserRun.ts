@@ -74,6 +74,7 @@ import {
   SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION,
   SECRET_FRAME_VALUE_COPY_MIN_CHARS,
   SIGN_IN_REPOSITORY_NAME_FALLBACK,
+  UI_CAUSE_MAX_CHARS,
 } from './constants'
 import type {
   DevelopmentBundle,
@@ -254,7 +255,7 @@ import {
 } from './utils/libraryBuildStop'
 import {
   appLibraryPathConflictOf,
-  libraryMapOverrides,
+  libraryMapOverridesFor,
 } from './utils/libraryMapOverrides'
 import { maskLearnerSecretText } from './utils/maskLearnerSecretText'
 import { maskNextServerOutput } from './utils/maskNextServerOutput'
@@ -477,14 +478,10 @@ const NEXT_DEV_WEBPACK_ADAPTER: DevelopmentServerAdapter = {
   },
   readBundle: (request) => {
     const { nextRoute } = request
-    // A browser stop in a workspace library of a nested App Router app (no Pages route) is sealed in source terms from the route's client chunks.
-    if (
-      !nextRoute &&
-      request.execution === 'browser' &&
-      request.library?.appBrowser &&
-      request.nextPackage
-    )
+    // A stop in a workspace library of a nested App Router app (no Pages route) is sealed in source terms: a browser stop from the route's client chunks, a server stop from the `(rsc)` modules of the route's server compile.
+    if (!nextRoute && request.library?.appBrowser && request.nextPackage)
       return sealAppLibraryStop({
+        layer: request.execution === 'browser' ? 'app-pages-browser' : 'rsc',
         nextPackage: request.nextPackage,
         library: request.library,
         appBrowser: request.library.appBrowser,
@@ -622,6 +619,12 @@ type BrowserLibraryCopyVerdict = {
   action: 'resume'
   event: 'breakpoint.browser-library-copy'
 }
+/** The verdict for a server pause in a server library stop's file that is nobody's stop: another layer's copy of the module (the `(ssr)` one) or a line only a browser stop declares; resumed and journaled with the script address, never counted and never observed. */
+type LibraryCopyVerdict = {
+  action: 'resume'
+  event: 'breakpoint.library-copy'
+  scriptUrl: string
+}
 /** The `Network` events that end a request, which drops it from the outstanding page requests. */
 const PAGE_REQUEST_END_EVENTS = [
   'Network.responseReceived',
@@ -644,7 +647,9 @@ type LibraryFreeze = {
   sourceText: string
   /** The real (symlink-free) repository root. */
   realRoot: string
-  /** Set for a browser stop of a nested App Router app, which runs in source terms: the paths its browser map names and the checked-out file's real path. */
+  /** The participants that declare a stop at this place; a Pages freeze or an App Router file with both has one or two. Decides which debugger gets the file's exact map override. */
+  participants: Set<'browser' | 'server'>
+  /** Set for a stop (either participant) of a nested App Router app, which runs in source terms: the paths its map names and the checked-out file's real path. */
   appBrowser?: {
     appResolvedPaths: Readonly<Record<string, readonly string[]>>
     sourceRealPath: string
@@ -811,6 +816,8 @@ type DebugParticipant = {
     journaled: boolean
     /** The declared server stop the run was resuming the page for when it took this pause as its own (a page pause read while a resume of the run's own had no answer, {@link ConfiguredBrowserRun.ownPagePauseUnderResume}): its resume is then nobody else's, however long the adapter takes to answer. */
     resumedByRun?: PreparedStop
+    /** Set while a `stopped` classifies this pause ({@link ConfiguredBrowserRun.libraryCopyVerdictOf} awaits layer reads): the idle bound of {@link ConfiguredBrowserRun.holdCopyPauseWhileIdle} then only records it passed (`idleBoundPassed`) instead of dropping the pause, so the verdict is not 'gone' for a pause the runtime still holds; a verdict that resumes nothing applies the drop then. */
+    classifying?: { idleBoundPassed: boolean }
   }
   /** A server pause in a script the run never saw parsed, kept apart while the script's address is read ({@link ConfiguredBrowserRun.discoverUnannouncedScript}); `done` settles when the pause went on to admission, or was dropped because the runtime resumed it first. */
   discovering?: { event: Protocol.Debugger.PausedEvent; done: Promise<void> }
@@ -1045,6 +1052,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private scriptAnnouncementCount = 0
   /** The reads of script texts in flight, by participant and script id, so the stops of one module share a read ({@link instanceTextOf}). */
   private readonly instanceTexts = new Map<string, Promise<string>>()
+  /** The reads that tell which webpack layer a server script announced in js-debug's resolved spelling belongs to ({@link ConfiguredBrowserRun.identifyAppLibraryScript}); the verdict on a pause in a library module waits for them. */
+  private readonly appLibraryIdentifications = new Set<Promise<void>>()
   /** What the after conditions last answered while they did not hold, so the run's own deadline, which ends the after wait first, can still name the condition and its hint ({@link afterDeadlineReason}). */
   private lastAfterFailure?: ConfiguredDomFailure
   /** What the current operation's own after conditions last answered while they did not hold, for the same reason as {@link lastAfterFailure} ({@link operationAfterDeadlineText}). */
@@ -1572,12 +1581,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Freezes the build of a server or browser stop that lies outside the Next app in a workspace library, before any process starts: built terms for a Pages app (either participant), source terms for a browser stop of an App Router app.
+   * Freezes the build of a server or browser stop that lies outside the Next app in a workspace library, before any process starts: built terms for a Pages app (either participant), source terms for a stop of either participant in an App Router app.
    * Called by {@link resolveNextPackageOfRun} for each stop outside the package; the library source text is read once here and checked against the accepted hash, and kept for the capture.
    * @param stop - A stop whose file lies outside the package.
    * @param nextPackage - The resolved nested Next app.
-   * @returns `true` when the stop was frozen as a library stop; `false` when it stays an `outside-package` stop (not a version 3 run, no linked workspace library, a server stop of an App Router app, or an app with both routers or no route folder).
-   * @throws `NEXT_STOP_NOT_SEALED` (`library-build-stale`, `library-build-unmapped`; `sideEffects: "none"`) from {@link freezeLibraryBuild}; `NEXT_STOP_NOT_SEALED` (`library-place-ambiguous`, `router: "app"`, `sideEffects: "none"`) for an App Router browser stop whose app-resolved path holds `*` or is already held by another frozen file ({@link appLibraryPathConflictOf}); an error when the checked-out file differs from the accepted hash.
+   * @returns `true` when the stop was frozen as a library stop; `false` when it stays an `outside-package` stop (not a version 3 run, no linked workspace library, or an app with both routers or no route folder).
+   * @throws `NEXT_STOP_NOT_SEALED` (`library-build-stale`, `library-build-unmapped`; `sideEffects: "none"`) from {@link freezeLibraryBuild}; `NEXT_STOP_NOT_SEALED` (`library-place-ambiguous`, `router: "app"`, `sideEffects: "none"`) for an App Router stop (either participant) whose app-resolved path holds `*` or is already held by another frozen file ({@link appLibraryPathConflictOf}); an error when the checked-out file differs from the accepted hash.
    * @example
    * if (!(await this.freezeLibraryStop(stop, nextPackage))) outside.push(stop.source.path)
    */
@@ -1595,13 +1604,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.abort.signal,
     )
     if (!library) return false
-    // A Pages app freezes a stop of either participant. An App Router app freezes a browser stop only (sealed in source terms); its server stops, an app with both routers (its entry route is known only after the server started) and an app with no route folder keep the outside-package refusal before anything starts.
+    // A Pages app freezes a stop of either participant, and an App Router app does too (sealed in source terms: a browser stop from the client chunks, a server stop from the `(rsc)` modules). An app with both routers (its entry route is known only after the server started) and an app with no route folder keep the outside-package refusal before anything starts.
     const routerKind = await readNextRouterKind(nextPackage.packageRoot)
-    const isAppBrowserStop =
-      routerKind === 'app' && stop.participant === 'browser'
-    if (routerKind !== 'pages' && !isAppBrowserStop) return false
+    const isAppLibraryStop = routerKind === 'app'
+    if (routerKind !== 'pages' && !isAppLibraryStop) return false
     const key = libraryFreezeKey(stop.source)
-    if (this.libraryFreezes.has(key)) return true
+    const known = this.libraryFreezes.get(key)
+    if (known) {
+      // A stop with the same path, line and column (the key) shares the freeze whichever participant declares it, so both debuggers map it.
+      known.participants.add(stop.participant)
+      return true
+    }
     const frozen = await freezeLibraryBuild({
       repositoryRoot: this.options.workspace,
       packageRootRelative: nextPackage.packageRootRelative,
@@ -1620,7 +1633,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const sourceText = await readFile(join(realRoot, stop.source.path), 'utf8')
     if (sha256(sourceText) !== stop.source.hash)
       throw new Error('Selected source differs from the accepted article')
-    const appBrowser = isAppBrowserStop
+    const appBrowser = isAppLibraryStop
       ? {
           appResolvedPaths: appResolvedPathsOf(
             [
@@ -1655,6 +1668,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       frozen,
       sourceText,
       realRoot,
+      participants: new Set([stop.participant]),
       ...(appBrowser ? { appBrowser } : {}),
     })
     return true
@@ -2633,7 +2647,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       participant.unannouncedPause ||
       !(
         this.isRepeatOfPausedStop(event, this.stops.slice(0, this.stopIndex)) ||
-        this.isBrowserLibraryCopy(event)
+        this.isBrowserLibraryCopy(event) ||
+        this.libraryCopyPauseOf(event) !== undefined ||
+        // A layer read still pending cannot yet say whether this pause is an (ssr) copy; it is held, and the `stopped` judges it after the read ({@link libraryCopyVerdictOf}).
+        this.appLibraryIdentifications.size > 0
       )
     )
       return
@@ -2645,8 +2662,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     participant.unannouncedPause = held
     setTimeout(() => {
-      if (participant.unannouncedPause === held && !this.operation)
-        participant.unannouncedPause = undefined
+      if (participant.unannouncedPause !== held || this.operation) return
+      // A `stopped` is classifying the pause: the drop waits for its verdict.
+      if (held.classifying) held.classifying.idleBoundPassed = true
+      else participant.unannouncedPause = undefined
     }, SERVER_RENDER_CLASSIFICATION_MS)
   }
 
@@ -2705,13 +2724,20 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         { event: 'breakpoint.react-copy' | 'breakpoint.repeat-hit' }
       >
     | BrowserLibraryCopyVerdict
+    | LibraryCopyVerdict
     | 'gone'
     | undefined
   > {
     const participant = this.participants.server
     const copy = participant.copyPause
     if (copy) {
-      const isOwned = await this.isAtOwnedStopPosition(session, event)
+      const isAtOwnedPosition = await this.isAtOwnedStopPosition(session, event)
+      // A pause that also hit a breakpoint of the learner's (an id no server stop of the run owns) is theirs to see: it is not resumed as the copy of the run's own breakpoint, whether or not the copy-hold timer handed it back meanwhile.
+      const namesForeignBreakpoint = this.namesForeignServerBreakpoint(
+        session,
+        event.body?.hitBreakpointIds,
+      )
+      const isOwned = isAtOwnedPosition && !namesForeignBreakpoint
       // The copy-hold timer gave the pause back to admission while the stack was read: the pause is still paused, and this `stopped` is the one that decides it.
       if (copy.handedToAdmission)
         return this.verdictOfHandedBackCopy(copy, isOwned)
@@ -2725,6 +2751,29 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     const held = participant.unannouncedPause
     if (!held) return undefined
+    const libraryCopy = await this.libraryCopyVerdictOf(session, event, held)
+    // A verdict that resumes nothing after the idle bound passed drops the pause (`undefined`), as the bound would have without the wait.
+    if (libraryCopy || this.dropAfterClassification(held)) return libraryCopy
+    return this.heldPauseVerdictOf(session, event, held)
+  }
+
+  /**
+   * Decides a held server pause that is not a library copy: the server's copy of a browser library stop's module, or a repeat hit of a stop that already paused.
+   * Called by {@link unexpectedHitVerdict} after the library-copy classification resumed nothing.
+   * @param session - The server session.
+   * @param event - The `stopped` event.
+   * @param held - The pause held for it.
+   * @returns The resume verdict; `undefined` for any other pause.
+   * @example this.heldPauseVerdictOf(session, event, held) // { action: 'resume', event: 'breakpoint.repeat-hit' }
+   */
+  private heldPauseVerdictOf(
+    session: vscode.DebugSession,
+    event: DebugProtocol.Event,
+    held: NonNullable<DebugParticipant['unannouncedPause']>,
+  ):
+    | Extract<ServerRenderHitVerdict, { event: 'breakpoint.repeat-hit' }>
+    | BrowserLibraryCopyVerdict
+    | undefined {
     // The server's copy of a browser library stop's module is nobody's stop, wherever the run is in its operations.
     // Only a pause that hit the run's own browser library breakpoint is that copy: a breakpoint of the learner's at another line of the module is theirs to see.
     if (
@@ -2748,10 +2797,93 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Ends a held server pause's classification: when the idle bound of {@link holdCopyPauseWhileIdle} passed meanwhile and no operation started, drops the pause as the bound would have without the wait.
+   * Called by {@link unexpectedHitVerdict} once {@link libraryCopyVerdictOf} resumed nothing.
+   * @param held - The pause the `stopped` classified.
+   * @returns `true` when the pause was dropped.
+   * @example if (this.dropAfterClassification(held)) return undefined
+   */
+  private dropAfterClassification(
+    held: NonNullable<DebugParticipant['unannouncedPause']>,
+  ): boolean {
+    const idleBoundPassed = held.classifying?.idleBoundPassed
+    held.classifying = undefined
+    const participant = this.participants.server
+    if (
+      !idleBoundPassed ||
+      participant.unannouncedPause !== held ||
+      this.operation
+    )
+      return false
+    participant.unannouncedPause = undefined
+    return true
+  }
+
+  /**
+   * Decides whether a held server pause is nobody's stop of a server library stop's file: another layer's copy of the module, or a line only a browser stop declares (D12/D17).
+   * Called by {@link unexpectedHitVerdict}; the copy is resumed only when the pause hit the run's own library breakpoints, so a learner's breakpoint in the file stays theirs.
+   * @param session - The server session.
+   * @param event - The `stopped` event.
+   * @param held - The pause held for it.
+   * @returns The library-copy resume verdict; `undefined` for any other pause.
+   * @example await this.libraryCopyVerdictOf(session, event, held) // { action: 'resume', event: 'breakpoint.library-copy', scriptUrl: 'webpack-internal:///(ssr)/…' }
+   */
+  private async libraryCopyVerdictOf(
+    session: vscode.DebugSession,
+    event: DebugProtocol.Event,
+    held: NonNullable<DebugParticipant['unannouncedPause']>,
+  ): Promise<LibraryCopyVerdict | 'gone' | undefined> {
+    if (event.body?.reason !== 'breakpoint') return undefined
+    // The idle bound must not drop the pause while the layer reads below run.
+    held.classifying = { idleBoundPassed: false }
+    // A script announced in the resolved spelling is told from its layer by its text, which may still be read.
+    await Promise.all([...this.appLibraryIdentifications])
+    // The pause may have left the held slot while the layer reads ran: nothing is resumed for a pause no longer held. One the run adopted as a stop meanwhile (a module announced again readmits it) is the stop machinery's, so the event goes on to it.
+    if (this.participants.server.unannouncedPause !== held) {
+      const server = this.participants.server
+      const isAdoptedAsStop =
+        server.stopped?.event === held.event ||
+        this.pendingCdpStop?.event === held.event
+      return isAdoptedAsStop ? undefined : 'gone'
+    }
+    const scriptUrl = this.libraryCopyPauseOf(held.event)
+    if (
+      scriptUrl === undefined ||
+      !this.hitsOnlyRunLibraryBreakpoints(session, event.body.hitBreakpointIds)
+    )
+      return undefined
+    return {
+      action: 'resume',
+      event: 'breakpoint.library-copy',
+      scriptUrl: this.journalScriptUrlOf(scriptUrl),
+    }
+  }
+
+  /**
+   * Tells whether a server pause names a breakpoint id that no server stop of the run owns, for {@link unexpectedHitVerdict}'s React-copy branch.
+   * Why it exists: React's copy of an owned stop's module is resumed only when the run's own breakpoints caused the pause; a learner's breakpoint at the same place must keep the ordinary handling (D12/D19).
+   * @param session - The server session whose adapter numbered the breakpoints.
+   * @param hitIds - The adapter's ids of the breakpoints the pause hit.
+   * @returns `true` when at least one id is named and some id is not a server stop's breakpoint (live or retired); `false` for no ids or only the run's own.
+   * @example this.namesForeignServerBreakpoint(session, [41, 9]) // true when 9 is the learner's breakpoint
+   */
+  private namesForeignServerBreakpoint(
+    session: vscode.DebugSession,
+    hitIds: readonly number[] | undefined,
+  ): boolean {
+    if (!hitIds || hitIds.length === 0) return false
+    return !this.hitsOnlyBreakpointsOf(
+      session,
+      hitIds,
+      (stop) => stop.participant === 'server',
+    )
+  }
+
+  /**
    * Gives the verdict for a copy pause that the copy-hold timer handed back to admission while its `stopped` was being classified.
    * Why it exists: the hand-off clears {@link DebugParticipant.copyPause} like an adapter resume does, but the runtime is still paused, so the notification must not be dropped.
    * @param copy - The copy pause the timer gave back.
-   * @param isOwned - Whether the stack put the copy at an owned stop's position.
+   * @param isOwned - Whether the stack put the copy at an owned stop's position and the pause hit no breakpoint a server stop of the run does not own.
    * @returns The copy-resume verdict when the pause is still held and owned; `undefined` to let the stop machinery see the event when admission kept the pause as a stop; `'gone'` when nothing holds the pause any more (the adapter resumed it after the hand-off, or admission dropped it).
    * @example this.verdictOfHandedBackCopy(copy, true) // { action: 'resume', event: 'breakpoint.react-copy' }
    */
@@ -2852,13 +2984,52 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     session: vscode.DebugSession,
     hitIds: readonly number[] | undefined,
   ): boolean {
+    return this.hitsOnlyBreakpointsOf(
+      session,
+      hitIds,
+      (stop) => stop.participant === 'browser' && stop.library !== undefined,
+    )
+  }
+
+  /**
+   * Tells whether the breakpoints a server `stopped` event reports are all the run's own breakpoints in workspace libraries of an App Router app, a browser stop's or a server stop's (the debugger binds an editor breakpoint in every copy of the file).
+   * Called by {@link unexpectedHitVerdict} before it resumes a pause as a library copy; a pause that names no breakpoint proves no ownership.
+   * @param session - The server session whose adapter numbered the breakpoints.
+   * @param hitIds - The adapter's ids of the breakpoints the pause hit.
+   * @returns `true` when at least one id is named and every id is one the session acknowledged for such a stop, now or before the run retired it.
+   * @example this.hitsOnlyRunLibraryBreakpoints(session, [41]) // true when 41 is a library stop's id in the server session
+   */
+  private hitsOnlyRunLibraryBreakpoints(
+    session: vscode.DebugSession,
+    hitIds: readonly number[] | undefined,
+  ): boolean {
+    return this.hitsOnlyBreakpointsOf(
+      session,
+      hitIds,
+      (stop) =>
+        this.libraryFreezes.get(libraryFreezeKey(stop.source))?.appBrowser !==
+        undefined,
+    )
+  }
+
+  /**
+   * Tells whether every breakpoint id a server pause names belongs to a stop of a given kind, for {@link hitsOnlyBrowserLibraryBreakpoints} and {@link hitsOnlyRunLibraryBreakpoints}.
+   * @param session - The server session whose adapter numbered the breakpoints.
+   * @param hitIds - The adapter's ids of the breakpoints the pause hit.
+   * @param isOwnerStop - Whether a declared stop is one whose breakpoint counts as the run's own.
+   * @returns `true` when at least one id is named and each is the id the session acknowledged for such a stop, now or before the run retired it ({@link rememberServerCopyId}).
+   * @example this.hitsOnlyBreakpointsOf(session, [41], (stop) => stop.library !== undefined)
+   */
+  private hitsOnlyBreakpointsOf(
+    session: vscode.DebugSession,
+    hitIds: readonly number[] | undefined,
+    isOwnerStop: (stop: PreparedStop) => boolean,
+  ): boolean {
     const isOwnedId = (id: number): boolean =>
       Boolean(this.retiredServerCopyIds.get(session.id)?.has(id)) ||
       this.stops.some(
         (stop) =>
-          stop.participant === 'browser' &&
-          stop.library !== undefined &&
-          stop.breakpoint?.acknowledgedId(session) === id,
+          isOwnerStop(stop) && stop.breakpoint?.acknowledgedId(session) === id,
       )
     return hitIds !== undefined && hitIds.length > 0 && hitIds.every(isOwnedId)
   }
@@ -2870,13 +3041,32 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @example this.rememberServerCopyId(stop) // keeps 41 for the server session when its adapter numbered the browser library stop's breakpoint 41
    */
   private rememberServerCopyId(stop: PreparedStop): void {
+    const isAppLibraryStop =
+      this.libraryFreezes.get(libraryFreezeKey(stop.source))?.appBrowser !==
+      undefined
     const server = this.participants.server.selected
-    if (stop.participant !== 'browser' || !stop.library || !server) return
-    const id = stop.breakpoint?.acknowledgedId(server)
+    if (
+      server &&
+      (isAppLibraryStop ||
+        (stop.participant === 'browser' && stop.library !== undefined))
+    )
+      this.retainRetiredId(server, stop)
+    // A server library stop's breakpoint also sits in the page's copy of its file, whose pause can name the old id after the retirement.
+    const browser = this.participants.browser.selected
+    if (browser && isAppLibraryStop && stop.participant === 'server')
+      this.retainRetiredId(browser, stop)
+  }
+
+  /** Keeps the id a session's adapter gave a stop's breakpoint in {@link retiredServerCopyIds}, for {@link rememberServerCopyId}. @example this.retainRetiredId(session, stop) */
+  private retainRetiredId(
+    session: vscode.DebugSession,
+    stop: PreparedStop,
+  ): void {
+    const id = stop.breakpoint?.acknowledgedId(session)
     if (id === undefined) return
-    const ids = this.retiredServerCopyIds.get(server.id) ?? new Set<number>()
+    const ids = this.retiredServerCopyIds.get(session.id) ?? new Set<number>()
     ids.add(id)
-    this.retiredServerCopyIds.set(server.id, ids)
+    this.retiredServerCopyIds.set(session.id, ids)
   }
 
   /**
@@ -2977,7 +3167,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     event: DebugProtocol.Event,
     verdict:
       | Extract<ServerRenderHitVerdict, { action: 'resume' }>
-      | BrowserLibraryCopyVerdict,
+      | BrowserLibraryCopyVerdict
+      | LibraryCopyVerdict,
   ): Promise<void> {
     const participant = this.participants.server
     this.journalResumedHit(verdict)
@@ -3612,7 +3803,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @example this.journalResumedHit({ action: 'resume', event: 'breakpoint.other-route', route: '/dashboard/invoices' })
    */
   private journalResumedHit(
-    verdict: ResumeHitVerdict | BrowserLibraryCopyVerdict,
+    verdict: ResumeHitVerdict | BrowserLibraryCopyVerdict | LibraryCopyVerdict,
   ): void {
     const count = (this.resumedHitCounts.get(verdict.event) ?? 0) + 1
     this.resumedHitCounts.set(verdict.event, count)
@@ -3624,7 +3815,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       verdict.event,
       verdict.event === 'breakpoint.other-route'
         ? { route: this.maskRunText(verdict.route) }
-        : {},
+        : verdict.event === 'breakpoint.library-copy'
+          ? { scriptUrl: verdict.scriptUrl }
+          : {},
     )
   }
 
@@ -3823,10 +4016,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Gives the library part of a bundle request for a stop with a Next library freeze.
-   * Called by {@link sealDeclaredStop}; a browser stop of a nested App Router app also gets its source-terms facts and the run's App library cache.
+   * Called by {@link sealDeclaredStop}; a stop (either participant) of a nested App Router app also gets its source-terms facts and the run's App library cache.
    * @param freeze - The stop's freeze.
    * @param nextPackage - The resolved nested Next app.
-   * @returns The frozen build, the app's package root and the real repository root, plus `appBrowser` for an App Router browser stop.
+   * @returns The frozen build, the app's package root and the real repository root, plus `appBrowser` for an App Router library stop.
    * @example this.librarySealInput(freeze, nextPackage) // => { frozen, packageRootRelative: 'examples/app', realRoot, appBrowser }
    */
   private librarySealInput(
@@ -3850,33 +4043,38 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Gives the exact `sourceMapPathOverrides` entries of the run's browser stops in workspace libraries of a nested App Router app.
-   * Called by {@link launchOwnedBrowser}; the entries come from the freeze, so a saved run that launches the browser before the seal gets the same ones. The server's attach keeps only its own wildcard (decision D20).
-   * @returns One exact entry per app-resolved path ({@link libraryMapOverrides}); empty for a run with no such stop.
-   * @example this.appLibraryOverrides() // => { '/repo/src/mutation.ts': '/repo/packages/query-core/src/mutation.ts' }
+   * Gives the exact `sourceMapPathOverrides` entries of one participant's stops in workspace libraries of a nested App Router app.
+   * Called by {@link launchOwnedBrowser} for the browser and by {@link selectServer} for the server attach; the entries come from the freeze, so a saved run that launches the browser before the seal gets the same ones. A file only the other participant declares gives this one no entry.
+   * @param participant - Whose debugger the entries are for.
+   * @returns One exact entry per app-resolved path ({@link libraryMapOverridesFor}); empty for a run with no such stop.
+   * @example this.appLibraryOverrides('server') // => { '/repo/src/mutation.ts': '/repo/packages/query-core/src/mutation.ts' }
    */
-  private appLibraryOverrides(): Record<string, string> {
-    return libraryMapOverrides(this.appLibraryEntries())
+  private appLibraryOverrides(
+    participant: 'browser' | 'server',
+  ): Record<string, string> {
+    return libraryMapOverridesFor(this.appLibraryEntries(), participant)
   }
 
   /**
-   * Lists the app-resolved paths and checked-out file of every App Router browser stop frozen so far.
-   * Called by {@link appLibraryOverrides} and by {@link freezeLibraryStop} for its conflict check.
-   * @returns One entry per frozen App Router browser stop.
-   * @example this.appLibraryEntries() // => [{ appResolvedPaths: ['/repo/src/core.ts'], checkedOutFile: '/repo/packages/lib/src/core.ts' }]
+   * Lists the app-resolved paths, checked-out file and declaring participants of every App Router library stop frozen so far.
+   * Called by {@link appLibraryOverrides} and by {@link freezeLibraryStop} for its conflict check, which covers the stops of both participants.
+   * @returns One entry per frozen App Router library stop.
+   * @example this.appLibraryEntries() // => [{ appResolvedPaths: ['/repo/src/core.ts'], checkedOutFile: '/repo/packages/lib/src/core.ts', participants: Set(1) { 'server' } }]
    */
   private appLibraryEntries() {
-    return [...this.libraryFreezes.values()].flatMap(({ appBrowser }) =>
-      appBrowser
-        ? [
-            {
-              appResolvedPaths: Object.values(
-                appBrowser.appResolvedPaths,
-              ).flat(),
-              checkedOutFile: appBrowser.sourceRealPath,
-            },
-          ]
-        : [],
+    return [...this.libraryFreezes.values()].flatMap(
+      ({ appBrowser, participants }) =>
+        appBrowser
+          ? [
+              {
+                appResolvedPaths: Object.values(
+                  appBrowser.appResolvedPaths,
+                ).flat(),
+                checkedOutFile: appBrowser.sourceRealPath,
+                participants,
+              },
+            ]
+          : [],
     )
   }
 
@@ -3902,7 +4100,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           url: 'about:blank',
           ...adapter.browserDebugFields(
             this.packageRoot,
-            this.appLibraryOverrides(),
+            this.appLibraryOverrides('browser'),
           ),
           timeout: ACTIVE_TIMEOUT_MS,
         },
@@ -7466,6 +7664,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     // A Fast Refresh hot-update chunk is never a module a Pages run sealed.
     if (this.pagesRun && isHotUpdateScriptUrl(event.url)) return
     for (const stop of this.stops) {
+      // A server stop in a workspace library of an App Router app is told from its `(ssr)` and React copies by the script's own text.
+      if (name === 'server' && this.isAppLibraryServerStop(stop)) {
+        this.bindAppLibraryServerScript(stop, event)
+        continue
+      }
       // The same module parsed for another webpack layer is a further instance of the stop's module, placed by its own map.
       if (this.isModuleInAnotherLayerOfStop(stop, name, event))
         this.track(this.adoptInstance(stop, name, event))
@@ -7506,6 +7709,231 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private judgeNewsRefusedBeforeModule(stop: PreparedStop): void {
     const session = this.participants[stop.participant].selected
     if (session) this.track(this.retakeNewsByBreakLocations(stop, session))
+  }
+
+  /**
+   * Tells whether a stop is a server stop in a workspace library of a nested App Router app, which runs in source terms in the `(rsc)` layer.
+   * Called by the script binding and the pause intake, which tell the sealed `(rsc)` module from its `(ssr)` and React copies.
+   * @param stop - A declared stop.
+   * @returns `true` for a `participant: "server"` stop whose library freeze is an App Router one.
+   * @example this.isAppLibraryServerStop(stop) // true for a server stop in packages/query-core/src/queryClient.ts of an App Router app
+   */
+  private isAppLibraryServerStop(stop: PreparedStop): boolean {
+    return (
+      stop.participant === 'server' &&
+      this.libraryFreezes.get(libraryFreezeKey(stop.source))?.appBrowser !==
+        undefined
+    )
+  }
+
+  /**
+   * Binds a script the server announced to a server library stop of an App Router app, for {@link bindParsedScript}.
+   * Why it exists: the `(rsc)` module and the `(ssr)` module of one library file announce one address in js-debug's resolved spelling (the first `..` takes the layer), so the announced URL alone cannot say which is the sealed module (D15). An address that keeps its layer is judged at once; a resolved one by the last `sourceURL` of the script's own text ({@link identifyAppLibraryScript}).
+   * @param stop - The declared server library stop.
+   * @param event - The announced script.
+   * @example this.bindAppLibraryServerScript(stop, event)
+   */
+  private bindAppLibraryServerScript(
+    stop: PreparedStop,
+    event: Protocol.Debugger.ScriptParsedEvent,
+  ): void {
+    if (!event.url) return
+    // The layer survived: the address is the sealed module's or another layer's copy, which is never bound.
+    if (sameScriptUrl(stop.bundle.scriptUrl, event.url)) {
+      this.acceptAppLibraryModule(stop, event)
+      return
+    }
+    if (!isAnnouncedScriptOf(stop.bundle.scriptUrl, event.url)) return
+    const identification = this.identifyAppLibraryScript(stop, event).finally(
+      () => this.appLibraryIdentifications.delete(identification),
+    )
+    this.appLibraryIdentifications.add(identification)
+    this.track(identification)
+  }
+
+  /**
+   * Reads the text of a script announced in the resolved spelling and judges its layer by its own last `sourceURL`, for {@link bindAppLibraryServerScript}.
+   * An `(rsc)` module is accepted as the stop's module; any other layer's copy keeps its layered address in the run's script list, which is how a pause in it is told from the stop's ({@link appLibraryCopyUrlOf}), and is journaled as a library copy. A text that cannot be read leaves the script unknown.
+   * @param stop - The declared server library stop.
+   * @param event - The announced script.
+   * @example await this.identifyAppLibraryScript(stop, event)
+   */
+  private async identifyAppLibraryScript(
+    stop: PreparedStop,
+    event: Protocol.Debugger.ScriptParsedEvent,
+  ): Promise<void> {
+    let url: string | undefined
+    try {
+      url = lastSourceUrlOf(await this.instanceTextOf('server', event.scriptId))
+    } catch (error) {
+      // The script stays unknown (behavior unchanged), but the cause is kept as evidence.
+      this.journalStopModule('stop.library-identify-failed', {
+        participant: 'server',
+        source: stop.source.path,
+        line: stop.source.line,
+        scriptId: event.scriptId,
+        cause: this.maskRunText(
+          error instanceof Error ? error.message : String(error),
+        ).slice(0, UI_CAUSE_MAX_CHARS),
+      })
+      return
+    }
+    if (!url || !this.isRunOpen()) return
+    this.participants.server.scriptUrls.set(event.scriptId, url)
+    if (sameScriptUrl(stop.bundle.scriptUrl, url)) {
+      this.acceptAppLibraryModule(stop, { ...event, url })
+      return
+    }
+    this.journalStopModule('stop.library-copy', {
+      participant: 'server',
+      source: stop.source.path,
+      line: stop.source.line,
+      scriptId: event.scriptId,
+      scriptUrl: this.journalScriptUrlOf(url),
+    })
+  }
+
+  /**
+   * Takes a script that is the stop's `(rsc)` module: the first one is the stop's script, a later one under a new script id is a coexisting instance when its bytes are the sealed ones.
+   * @param stop - The declared server library stop.
+   * @param event - The script, with its layered address.
+   * @example this.acceptAppLibraryModule(stop, { ...event, url: stop.bundle.scriptUrl })
+   */
+  private acceptAppLibraryModule(
+    stop: PreparedStop,
+    event: Protocol.Debugger.ScriptParsedEvent,
+  ): void {
+    if (stop.script?.scriptId === event.scriptId) return
+    if (stop.script !== undefined) {
+      this.track(this.adoptAppLibraryInstance(stop, event))
+      return
+    }
+    stop.script = event
+    this.journalStopModule('stop.module-parsed', {
+      participant: 'server',
+      source: stop.source.path,
+      line: declaredLineOf(stop),
+      scriptId: event.scriptId,
+      scriptUrl: event.url,
+    })
+    this.judgeNewsRefusedBeforeModule(stop)
+    this.readmitHeldPause(stop, 'server', event.scriptId)
+  }
+
+  /**
+   * Accepts the sealed `(rsc)` module announced again under a new script id when its text is the sealed one, and ends the run with `library-build-changed` when it is not (D16).
+   * Why it exists: Next parses a route's module again for a recompile, which is no change; only different bytes are. The instance is the stop's own bundle under another script id, since the script's own map names the app-resolved path and the sealed map was re-pointed to the checked-out file. Called by {@link acceptAppLibraryModule}.
+   * @param stop - The declared server library stop.
+   * @param event - The new script, with its layered address.
+   * @example await this.adoptAppLibraryInstance(stop, event)
+   */
+  private async adoptAppLibraryInstance(
+    stop: PreparedStop,
+    event: Protocol.Debugger.ScriptParsedEvent,
+  ): Promise<void> {
+    if (!this.isRunOpen()) return
+    this.announceScript('server', event.scriptId)
+    stop.unusableInstances.set(event.scriptId, {
+      url: event.url,
+      reason: 'its text had not been read yet',
+    })
+    const journaled = {
+      participant: 'server',
+      source: stop.source.path,
+      line: declaredLineOf(stop),
+      scriptId: event.scriptId,
+      scriptUrl: event.url,
+    }
+    let text: string
+    try {
+      text = await this.instanceTextOf('server', event.scriptId)
+    } catch (error) {
+      if (!this.isRunOpen() || !stop.unusableInstances.has(event.scriptId))
+        return
+      stop.unusableInstances.set(event.scriptId, {
+        url: event.url,
+        reason: this.journalCauseOf(error),
+      })
+      this.journalStopModule('stop.instance-refused', {
+        ...journaled,
+        reason: this.journalCauseOf(error),
+      })
+      return
+    }
+    if (!this.isRunOpen() || !stop.unusableInstances.has(event.scriptId)) return
+    // Other bytes under the sealed address are a rebuilt module.
+    if (sha256(text) !== stop.verifier.hashes.javascript) {
+      this.fail(
+        libraryFailureText(this.nextLibraryChanged(stop)) ??
+          this.sourceChangedText(stop),
+      )
+      return
+    }
+    stop.unusableInstances.delete(event.scriptId)
+    stop.instances.set(event.scriptId, {
+      bundle: stop.bundle,
+      verifier: stop.verifier,
+      script: event,
+      coexisting: true,
+    })
+    this.journalStopModule('stop.instance-coexisting', {
+      ...journaled,
+      hashes: stop.verifier.hashes,
+    })
+    this.readmitHeldPause(stop, 'server', event.scriptId)
+  }
+
+  /**
+   * Gives the layered address of a script that is another layer's copy of a server library stop's module (the `(ssr)` module).
+   * Called by {@link libraryCopyPauseOf}.
+   * @param scriptId - The script a pause is in.
+   * @returns The address when the script is the same library module in another webpack layer; `undefined` for the stop's own module and every other script.
+   * @example this.appLibraryCopyUrlOf('3101') // 'webpack-internal:///(ssr)/../../../packages/lib/build/modern/core.js'
+   */
+  private appLibraryCopyUrlOf(scriptId: string): string | undefined {
+    const url = this.participants.server.scriptUrls.get(scriptId)
+    if (url === undefined) return undefined
+    const isCopy = this.stops.some(
+      (stop) =>
+        this.isAppLibraryServerStop(stop) &&
+        isModuleInAnotherLayer(stop.bundle.scriptUrl, url),
+    )
+    return isCopy ? url : undefined
+  }
+
+  /**
+   * Tells whether a server pause in a server library stop's file belongs to nobody's stop of the file: a pause in another layer's copy, or in the sealed `(rsc)` module at a line no server stop of the file declares (a line only a browser stop declares, D12/D17).
+   * Called by {@link unexpectedHitVerdict} and {@link holdCopyPauseWhileIdle}.
+   * @param event - The paused event.
+   * @returns The script address to journal for a copy pause; `undefined` for any other pause.
+   * @example this.libraryCopyPauseOf(event) // 'webpack-internal:///(ssr)/../../../packages/lib/build/modern/core.js'
+   */
+  private libraryCopyPauseOf(
+    event: Protocol.Debugger.PausedEvent,
+  ): string | undefined {
+    const scriptId = event.callFrames[0]?.location.scriptId
+    if (scriptId === undefined) return undefined
+    const copyUrl = this.appLibraryCopyUrlOf(scriptId)
+    if (copyUrl !== undefined) return copyUrl
+    const serverStops = this.stops.filter((stop) =>
+      this.isAppLibraryServerStop(stop),
+    )
+    const stop = serverStops.find((candidate) =>
+      this.isPauseInModuleOf(event, candidate),
+    )
+    // A pause at a line a server stop of the file declares is that stop's (or its repeat render, judged elsewhere).
+    if (
+      !stop ||
+      serverStops.some(
+        (candidate) =>
+          candidate.source.path === stop.source.path &&
+          this.isPauseOfStop(event, candidate),
+      )
+    )
+      return undefined
+    return (
+      this.participants.server.scriptUrls.get(scriptId) ?? stop.bundle.scriptUrl
+    )
   }
 
   /** Tells {@link bindParsedScript} whether a server stop's module announced again under a new script id is a coexisting instance and no change of the sealed module: a stop of a server participant, in an App Router run and, since a recompile or HMR of a page's server compile announces it again, in a Pages run too (browser stops keep failing on a re-announced module). @example this.isCoexistingModule(stop, 'server') // true for a server stop of an App Router run or a Pages run */
@@ -7846,7 +8274,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       | 'stop.module-parsed'
       | 'stop.instance-sealed'
       | 'stop.instance-coexisting'
-      | 'stop.instance-refused',
+      | 'stop.instance-refused'
+      | 'stop.library-copy'
+      | 'stop.library-identify-failed',
     payload: Record<string, unknown>,
   ): void {
     const journaled = this.stopModuleJournaled.get(type) ?? 0
@@ -8792,6 +9222,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           sourceMaps: true,
           sourceMapPathOverrides: {
             'webpack://_N_E/./*': `${this.packageRoot}/*`,
+            // Exact keys only: one per server library stop file of an App Router app.
+            ...this.appLibraryOverrides('server'),
           },
           timeout: ACTIVE_TIMEOUT_MS,
         },
@@ -10235,10 +10667,21 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (event.event === 'stopped') {
       const body: DebugProtocol.StoppedEvent['body'] = event.body
       // The editor sends a server stop's breakpoint to the browser session too, and the page's stub of a "use server" module maps the same line: that browser pause belongs to the server stop's breakpoint, not to a stop of the page, so it is resumed.
-      const serverStop =
+      const libraryCopyOf =
         name === 'browser'
-          ? this.serverStopOfBrowserPause(session, body)
+          ? this.browserLibraryCopyOf(session, body)
           : undefined
+      const serverStop =
+        libraryCopyOf?.stop ??
+        (name === 'browser'
+          ? this.serverStopOfBrowserPause(session, body)
+          : undefined)
+      if (libraryCopyOf)
+        this.journalResumedHit({
+          action: 'resume',
+          event: 'breakpoint.library-copy',
+          scriptUrl: libraryCopyOf.scriptUrl,
+        })
       this.recordStopVerdict(session, participant, serverStop !== undefined)
       if (serverStop) {
         this.track(
@@ -10450,6 +10893,77 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       session,
       body.hitBreakpointIds ?? [],
     )
+  }
+
+  /**
+   * Finds the server library stop whose breakpoint a browser pause hit, when that pause is the page's copy of a library file that holds stops of both participants (D19).
+   * Why it exists: such a file is mapped in the browser launch, so a server stop's breakpoint (an editor breakpoint bound in every session) binds the page's copy too. A browser pause in that file is the stop only at the place of a browser stop of the file (judged from the pause the page already reported, whether held, transient, admitted as the browser's stop or queued; the declared lines only while no pause is known); a pause that hit only server stops' breakpoints (live ones, or ones the run retired) is nobody's stop and is resumed. Called by {@link onEvent} for a browser `stopped`.
+   * @param session - The browser session that sent the event.
+   * @param body - The event's body.
+   * @returns The server stop to resume for and the pause's script address (empty when the page's runtime has not announced the pause yet); `undefined` when the pause is anything else, including a pause that also hit a breakpoint that is no server stop's.
+   * @example this.browserLibraryCopyOf(session, { reason: 'breakpoint', threadId: 1, hitBreakpointIds: [1] }) // { stop, scriptUrl: 'webpack-internal:///packages/lib/…' }
+   */
+  private browserLibraryCopyOf(
+    session: vscode.DebugSession,
+    body: DebugProtocol.StoppedEvent['body'],
+  ): { stop: PreparedStop; scriptUrl: string } | undefined {
+    const hitIds = body.hitBreakpointIds ?? []
+    if (
+      !Number.isInteger(body.threadId) ||
+      body.reason !== 'breakpoint' ||
+      hitIds.length === 0 ||
+      this.browserHoldsOwnPause()
+    )
+      return undefined
+    // Only a file that holds stops of both participants is mapped in the browser and in the server.
+    const serverStops = this.stops.filter(
+      (stop) =>
+        this.isAppLibraryServerStop(stop) &&
+        this.stops.some(
+          (other) =>
+            other.participant === 'browser' &&
+            other.source.path === stop.source.path,
+        ),
+    )
+    const isServerId = (id: number): boolean =>
+      Boolean(this.retiredServerCopyIds.get(session.id)?.has(id)) ||
+      serverStops.some(
+        (stop) => stop.breakpoint?.acknowledgedId(session) === id,
+      )
+    if (serverStops.length === 0 || !hitIds.every(isServerId)) return undefined
+    // The pause's event: one the intake already admitted as the browser's stop or queued behind a continuation counts too, because the DAP `stopped` can arrive after the CDP pause was judged.
+    const held =
+      this.participants.browser.unannouncedPause ??
+      this.transientBrowserPause ??
+      this.participants.browser.stopped ??
+      (this.pendingCdpStop?.participant === 'browser'
+        ? this.pendingCdpStop
+        : undefined)
+    // An id says which breakpoint was hit, not which participant's stop the pause is: a retired id maps to no stop at all. The pause's place decides; a pause at the place of a browser stop of the file is that stop's. While the page's runtime has not reported the place, a server stop that shares its line with a browser stop of the file cannot be told apart by id, so the pause is observed, never resumed.
+    const isAtBrowserStopPlace =
+      held === undefined
+        ? serverStops.some((stop) =>
+            this.stops.some(
+              (other) =>
+                other.participant === 'browser' &&
+                other.source.path === stop.source.path &&
+                other.source.line === stop.source.line,
+            ),
+          )
+        : this.stops.some(
+            (other) =>
+              other.participant === 'browser' &&
+              serverStops.some(
+                (stop) => stop.source.path === other.source.path,
+              ) &&
+              this.isPauseOfStop(held.event, other),
+          )
+    if (isAtBrowserStopPlace) return undefined
+    const url = held ? this.pageScriptUrlOf(held.event) : undefined
+    return {
+      stop: serverStops[0]!,
+      scriptUrl: url === undefined ? '' : this.journalScriptUrlOf(url),
+    }
   }
 
   /**

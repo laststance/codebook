@@ -624,7 +624,9 @@ export async function configuredRuntimeHarness(
   const sourceRoot =
     (options.nextPages && options.serverRuntime) ||
     viteLibrary ||
-    (library && options.participant === 'browser')
+    (library && options.participant === 'browser') ||
+    // An App Router server library stop runs in the checked-out source, named by its real path.
+    (library?.appRouterServer && options.serverRuntime)
       ? await realpath(repository.directory)
       : repository.directory
   // A browser library stop of a Next Pages run: the page executes the library's `(pages-dir-browser)` module, and the debugger reports its built line.
@@ -907,6 +909,56 @@ export async function configuredRuntimeHarness(
     },
   }
   const breakpoints: TestBreakpoint[] = [userBreakpoint]
+  /**
+   * Gives the id the stand-in browser adapter numbers an editor breakpoint with. A run that stages an App Router server compile numbers them by the breakpoint's own count (`owned-breakpoint` is 1, `owned-breakpoint-2` is 2), so a pause can name one stop's breakpoint and not another's; every other run keeps the single id 1.
+   * @param breakpointId - The editor breakpoint's id in this harness.
+   * @returns The adapter's id.
+   * @example browserAdapterIdOf('owned-breakpoint-2') // 2 in an App Router server run, else 1
+   */
+  const browserAdapterIdOf = (breakpointId: string): number => {
+    if (!library?.appRouterServer) return 1
+    // `owned-breakpoint` is 1; a suffixed id carries its number. Any other id would silently share id 1 with an owned breakpoint.
+    if (breakpointId === 'owned-breakpoint') return 1
+    const suffix = /^owned-breakpoint-(\d+)$/.exec(breakpointId)?.[1]
+    if (suffix === undefined)
+      throw new Error(
+        `browserAdapterIdOf: ${breakpointId} is no owned breakpoint of an App Router server run`,
+      )
+    return Number(suffix)
+  }
+  /** Sends the page session's `setBreakpoints` request and the adapter's answer for the editor's breakpoints in the library file, as the page's adapter acknowledges them. */
+  const acknowledgeBrowserBreakpoints = (): void => {
+    const owned = breakpoints.filter((breakpoint) =>
+      breakpoint.id.startsWith('owned-breakpoint'),
+    )
+    const sequence = ++requestSequence
+    run.onRequest(selected, {
+      seq: sequence,
+      type: 'request',
+      command: 'setBreakpoints',
+      arguments: {
+        source: { path: sourcePath },
+        breakpoints: owned.map((breakpoint) =>
+          sourceBreakpointRequest(breakpoint.location.range.start),
+        ),
+      },
+    })
+    run.onResponse(selected, {
+      seq: ++requestSequence,
+      type: 'response',
+      command: 'setBreakpoints',
+      request_seq: sequence,
+      success: true,
+      body: {
+        breakpoints: owned.map((breakpoint) => ({
+          id: browserAdapterIdOf(breakpoint.id),
+          verified: true,
+          line: breakpoint.location.range.start.line + 1,
+          column: breakpoint.location.range.start.character + 1,
+        })),
+      },
+    })
+  }
   const root: DebugSession = {
     id: 'owned-root',
     type: 'pwa-chrome',
@@ -1031,7 +1083,7 @@ export async function configuredRuntimeHarness(
         return undefined
       return bound && !rejectBinding && owned
         ? {
-            id: 1,
+            id: browserAdapterIdOf(owned.id),
             verified: true,
             line: reported?.line ?? owned.location.range.start.line + 1,
             column:
@@ -1639,7 +1691,9 @@ export async function configuredRuntimeHarness(
     ? library
       ? `webpack-internal:///(pages-dir-node)/${library.runtimePath}`
       : `webpack-internal:///(pages-dir-node)/./${packageSourcePath}`
-    : `webpack-internal:///(${options.serverSeal === 'rsc' ? 'rsc' : 'action-browser'})/./${packageSourcePath}`
+    : library?.appRouterServer
+      ? library.appRouterServer.rscAddress
+      : `webpack-internal:///(${options.serverSeal === 'rsc' ? 'rsc' : 'action-browser'})/./${packageSourcePath}`
   const serverParticipant = options.serverRuntime
     ? createServerParticipant({
         run: () => run,
@@ -1687,6 +1741,9 @@ export async function configuredRuntimeHarness(
         breakpoints.push(...added)
         if (serverParticipant)
           queueMicrotask(() => serverParticipant.acknowledgeBreakpoints())
+        // The editor sends every breakpoint to the page's session too; an App Router server run's page numbers them ({@link browserAdapterIdOf}).
+        if (library?.appRouterServer)
+          queueMicrotask(() => acknowledgeBrowserBreakpoints())
       },
       async startDebugging(
         _folder: unknown,
@@ -2340,13 +2397,25 @@ export async function configuredRuntimeHarness(
       currentColumn = column
       currentLine = line
     },
-    /** Sends the debugger's `stopped` alone, for a pause the runtime reported earlier. */
-    emitStopped(): void {
+    /** Sends the debugger's `stopped` alone, for a pause the runtime reported earlier; `hitBreakpointIds` are the adapter's ids of the breakpoints it names, and `source` is the place its stack frame reports. @example harness.emitStopped({ hitBreakpointIds: [12], source: { line: 3, column: 1 } }) */
+    emitStopped(options?: {
+      hitBreakpointIds?: number[]
+      source?: { line: number; column: number }
+    }): void {
+      if (options?.source) {
+        currentLine = options.source.line
+        currentColumn = options.source.column
+      }
+      const hitBreakpointIds = options?.hitBreakpointIds
       run.onEvent(selected, {
         seq: ++requestSequence,
         type: 'event',
         event: 'stopped',
-        body: { threadId: 1, reason: 'breakpoint' },
+        body: {
+          threadId: 1,
+          reason: 'breakpoint',
+          ...(hitBreakpointIds ? { hitBreakpointIds } : {}),
+        },
       })
     },
     /** Announces a script of the owned page, as the debugger does for every module it parses. */
@@ -2564,6 +2633,43 @@ export async function configuredRuntimeHarness(
     /** How many times the run asked whether the server was settled (the dependency optimizer idle). */
     settledQuestionCount(): number {
       return settledQuestions
+    },
+    /** The id the stand-in browser adapter gives an editor breakpoint (see {@link browserAdapterIdOf}). @example harness.browserAdapterIdOf('owned-breakpoint') // 1 */
+    browserAdapterIdOf,
+    /**
+     * Pauses the page in a script at a generated place and reports the DAP `stopped` of that pause, as the adapter does for a breakpoint hit in the page's copy of a library module; the stack the run reads then names this source place.
+     * @param pause - The script, its generated place, the source place of the DAP frame and the adapter ids of the breakpoints hit (none when omitted).
+     * @example harness.pauseBrowserInLibrary({ scriptId: 'browser-lib', generated: { line: 11, column: 2 }, source: { line: 2, column: 1 }, hitBreakpointIds: [1] })
+     */
+    pauseBrowserInLibrary(pause: {
+      scriptId: string
+      generated: { line: number; column: number }
+      source: { line: number; column: number }
+      hitBreakpointIds?: number[]
+    }): void {
+      currentLine = pause.source.line
+      currentColumn = pause.source.column
+      listeners.get('Debugger.paused')?.(
+        debuggerPausedEvent({
+          callFrameId: 'selected-frame',
+          scriptId: pause.scriptId,
+          lineNumber: pause.generated.line,
+          columnNumber: pause.generated.column,
+          hitBreakpoints: ['mapped-source'],
+        }),
+      )
+      run.onEvent(selected, {
+        seq: ++requestSequence,
+        type: 'event',
+        event: 'stopped',
+        body: {
+          threadId: 1,
+          reason: 'breakpoint',
+          ...(pause.hitBreakpointIds
+            ? { hitBreakpointIds: pause.hitBreakpointIds }
+            : {}),
+        },
+      })
     },
     /** Re-announces the sealed module the way the new page generation parses it. @example harness.announceSealedModule('second') */
     announceSealedModule(scriptId: string): void {

@@ -58,3 +58,28 @@ export function libraryMapOverrides(
       if (!path.includes('*')) overrides[path] = checkedOutFile
   return overrides
 }
+
+/** One frozen App Router library stop with the participants that declare a stop at its place. */
+type ParticipantLibraryEntry = LibraryMapEntry & {
+  participants: ReadonlySet<'browser' | 'server'>
+}
+
+/**
+ * Builds the exact `sourceMapPathOverrides` entries for one participant's debugger from the frozen stops of a nested App Router app.
+ *
+ * Why it exists: the owned browser launch and the server attach each map the app-resolved paths of their own library stops onto the checked-out files, and a file only the browser declares must give the server no entry (and the other way round). One function of the frozen entries serves both, so the two sides cannot drift apart. Called by {@link ConfiguredBrowserRun} for the browser launch and for the server attach.
+ * @param entries - Every frozen library stop of the app, with the participants that declare a stop there.
+ * @param participant - Whose debugger the entries are for.
+ * @returns Exact keys only ({@link libraryMapOverrides}), for the stops that name the participant.
+ * @example
+ * libraryMapOverridesFor([{ appResolvedPaths: ['/repo/src/core.ts'], checkedOutFile: '/repo/packages/lib/src/core.ts', participants: new Set(['server']) }], 'browser')
+ * // => {}
+ */
+export function libraryMapOverridesFor(
+  entries: readonly ParticipantLibraryEntry[],
+  participant: 'browser' | 'server',
+): Record<string, string> {
+  return libraryMapOverrides(
+    entries.filter((entry) => entry.participants.has(participant)),
+  )
+}
