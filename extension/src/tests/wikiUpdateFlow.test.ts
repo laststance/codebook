@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type { WikiFreshness } from '../utils/inspectDeepWikiFreshness'
 import { sleepUntilAborted } from '../utils/sleepUntilAborted'
 import type { WikiUpdateStatus } from '../utils/wikiUpdateRun'
@@ -4174,22 +4175,18 @@ test('the reservation a stopped watch left on one Wiki output leaves the disk at
     await wiki.clickUpdate()
     progress[1]!.cancel()
     await waitForEnd(wiki.status)
-    const secondEndedAtMs = Date.now()
     const wasFirstReservedMeanwhile = await isOnDisk(
       `${wiki.outputDirectory}.update-run.json`,
     )
 
-    // Act: the watch bound of both stopped watches passes; the removals then run on the real disk, so the test waits until both reservations have left it (the limit is only a safety net), never for a fixed time after the bound.
-    await new Promise((resolveWait) =>
-      setTimeout(resolveWait, secondEndedAtMs + 3_000 - Date.now()),
+    // Act: the watch bound of both stopped watches passes; the removals then run on the real disk, so the test waits until both reservations have left it, never for a fixed time after the bound. The 30 s budget is only a safety net far above the 3 s bound; at it the wait fails naming what stayed.
+    await waitUntil(
+      async () =>
+        !(await isOnDisk(`${wiki.outputDirectory}.update-run.json`)) &&
+        !(await isOnDisk(`${secondOutput}.update-run.json`)),
+      'both stopped watches’ reservations to leave the disk',
+      30_000,
     )
-    const waitLimitAtMs = Date.now() + 30_000
-    while (
-      Date.now() < waitLimitAtMs &&
-      ((await isOnDisk(`${wiki.outputDirectory}.update-run.json`)) ||
-        (await isOnDisk(`${secondOutput}.update-run.json`)))
-    )
-      await new Promise((resolveWait) => setTimeout(resolveWait, 20))
 
     // Assert
     assert.deepEqual(

@@ -23,6 +23,9 @@ const isExecutable = (path: string): Promise<boolean> =>
 /** Longest wait for Chrome's `exit` after the probe's kill attempt; after it the probe settles as a timeout even if Chrome is still alive, so no path waits unbounded. */
 const REAL_CHROME_PROBE_EXIT_GRACE_MS = 5_000
 
+/** Bound of each fake-child settle test: a probe that never settles fails that test by name instead of hanging the run; far above the fakes' 20 ms bound and 50 ms grace, so load cannot reach it. */
+const PROBE_SETTLE_TEST_TIMEOUT_MS = 10_000
+
 /** The part of a child process the probe uses; a fake implements it in the settle-path tests. */
 interface ProbeChild {
   pid?: number
@@ -162,82 +165,92 @@ function fakeChild(pid: number | undefined): ProbeChild & {
   }
 }
 
-// protects=the real-Chrome probe's 60 s bound on Windows when taskkill cannot start; fails_when=taskkill's error event is unhandled (the process dies) or the probe waits for Chrome's exit forever; no_claim=a real Windows taskkill
-test('a probe whose taskkill cannot start still settles as a timeout within the exit grace', async () => {
-  // Arrange
-  const chrome = fakeChild(4242)
-  const deps: ChromeProbeDeps = {
-    spawnChild: (command) => {
-      if (command !== 'taskkill') return chrome
-      const killer = fakeChild(undefined)
-      setImmediate(() => killer.emitter.emit('error', new Error('ENOENT')))
-      return killer
-    },
-    killProcessGroup: () => {},
-    platform: 'win32',
-    boundMs: 20,
-    exitGraceMs: 50,
-  }
-  // Act
-  const outcome = await runChromeProbe('chrome', '/tmp/p', deps)
-  // Assert
-  assert.equal(
-    outcome.result,
-    'timed-out (kill: taskkill failed to start: ENOENT; Chrome still alive)',
-  )
-  assert.ok(outcome.elapsedMs < 1_000)
-})
+// protects=the real-Chrome probe's 60 s bound on Windows when taskkill cannot start; fails_when=taskkill's error event is unhandled (the process dies) or the probe waits for Chrome's exit forever (the test times out); no_claim=a real Windows taskkill; only the grace timer writes "Chrome still alive", so the result names the settle path without a wall-clock check
+test(
+  'a probe whose taskkill cannot start still settles as a timeout within the exit grace',
+  { timeout: PROBE_SETTLE_TEST_TIMEOUT_MS },
+  async () => {
+    // Arrange
+    const chrome = fakeChild(4242)
+    const deps: ChromeProbeDeps = {
+      spawnChild: (command) => {
+        if (command !== 'taskkill') return chrome
+        const killer = fakeChild(undefined)
+        setImmediate(() => killer.emitter.emit('error', new Error('ENOENT')))
+        return killer
+      },
+      killProcessGroup: () => {},
+      platform: 'win32',
+      boundMs: 20,
+      exitGraceMs: 50,
+    }
+    // Act
+    const outcome = await runChromeProbe('chrome', '/tmp/p', deps)
+    // Assert
+    assert.equal(
+      outcome.result,
+      'timed-out (kill: taskkill failed to start: ENOENT; Chrome still alive)',
+    )
+  },
+)
 
-// protects=the real-Chrome probe's bound when taskkill exits non-zero and Chrome stays alive; fails_when=the probe waits for Chrome's exit forever; no_claim=a real Windows taskkill
-test('a probe whose taskkill exits non-zero with a Chrome that never exits settles as a timeout within the exit grace', async () => {
-  // Arrange
-  const chrome = fakeChild(4242)
-  const deps: ChromeProbeDeps = {
-    spawnChild: (command) => {
-      if (command !== 'taskkill') return chrome
-      const killer = fakeChild(undefined)
-      setImmediate(() => killer.emitter.emit('exit', 128, null))
-      return killer
-    },
-    killProcessGroup: () => {},
-    platform: 'win32',
-    boundMs: 20,
-    exitGraceMs: 50,
-  }
-  // Act
-  const outcome = await runChromeProbe('chrome', '/tmp/p', deps)
-  // Assert
-  assert.equal(
-    outcome.result,
-    'timed-out (kill: taskkill exited 128; Chrome still alive)',
-  )
-  assert.ok(outcome.elapsedMs < 1_000)
-})
+// protects=the real-Chrome probe's bound when taskkill exits non-zero and Chrome stays alive; fails_when=the probe waits for Chrome's exit forever (the test times out); no_claim=a real Windows taskkill; only the grace timer writes "Chrome still alive", so the result names the settle path without a wall-clock check
+test(
+  'a probe whose taskkill exits non-zero with a Chrome that never exits settles as a timeout within the exit grace',
+  { timeout: PROBE_SETTLE_TEST_TIMEOUT_MS },
+  async () => {
+    // Arrange
+    const chrome = fakeChild(4242)
+    const deps: ChromeProbeDeps = {
+      spawnChild: (command) => {
+        if (command !== 'taskkill') return chrome
+        const killer = fakeChild(undefined)
+        setImmediate(() => killer.emitter.emit('exit', 128, null))
+        return killer
+      },
+      killProcessGroup: () => {},
+      platform: 'win32',
+      boundMs: 20,
+      exitGraceMs: 50,
+    }
+    // Act
+    const outcome = await runChromeProbe('chrome', '/tmp/p', deps)
+    // Assert
+    assert.equal(
+      outcome.result,
+      'timed-out (kill: taskkill exited 128; Chrome still alive)',
+    )
+  },
+)
 
-// protects=the probe's bound off Windows when both kills throw; fails_when=the throw escapes the timer (process dies) or the probe waits forever; no_claim=a real process group
-test('a probe whose process kills both throw still settles as a timeout within the exit grace', async () => {
-  // Arrange
-  const chrome = fakeChild(4242)
-  chrome.kill = () => {
-    throw new Error('EPERM')
-  }
-  const deps: ChromeProbeDeps = {
-    spawnChild: () => chrome,
-    killProcessGroup: () => {
-      throw new Error('ESRCH')
-    },
-    platform: 'linux',
-    boundMs: 20,
-    exitGraceMs: 50,
-  }
-  // Act
-  const outcome = await runChromeProbe('chrome', '/tmp/p', deps)
-  // Assert
-  assert.equal(
-    outcome.result,
-    'timed-out (kill: kill threw: Error: EPERM; Chrome still alive)',
-  )
-})
+// protects=the probe's bound off Windows when both kills throw; fails_when=the throw escapes the timer (process dies) or the probe waits forever (the test times out); no_claim=a real process group
+test(
+  'a probe whose process kills both throw still settles as a timeout within the exit grace',
+  { timeout: PROBE_SETTLE_TEST_TIMEOUT_MS },
+  async () => {
+    // Arrange
+    const chrome = fakeChild(4242)
+    chrome.kill = () => {
+      throw new Error('EPERM')
+    }
+    const deps: ChromeProbeDeps = {
+      spawnChild: () => chrome,
+      killProcessGroup: () => {
+        throw new Error('ESRCH')
+      },
+      platform: 'linux',
+      boundMs: 20,
+      exitGraceMs: 50,
+    }
+    // Act
+    const outcome = await runChromeProbe('chrome', '/tmp/p', deps)
+    // Assert
+    assert.equal(
+      outcome.result,
+      'timed-out (kill: kill threw: Error: EPERM; Chrome still alive)',
+    )
+  },
+)
 
 // protects=route A mechanics (the pipe transport against the real Chrome), after a direct warm-up run that logs REAL_CHROME_PROBE_MS (the runner's cold-start time); fails_when=Browser.getVersion does not answer over fds 3/4, Browser.close does not end the process, the exit is not observed, or the warm-up run fails or passes 60 s; no_claim=a headed window, the keychain, a persistent cookie surviving Done (native check)
 test('a real Chrome answers Browser.getVersion over the debugging pipe and exits gracefully on Browser.close', async (context) => {
