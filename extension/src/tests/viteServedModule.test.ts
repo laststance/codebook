@@ -431,6 +431,62 @@ test('refuses a map source entry with a malformed percent escape with the coded 
   )
 })
 
+// protects=an app stop whose served map has a source entry that is not a parseable URL ends with the coded seal refusal; fails_when=the raw TypeError of new URL reaches the caller; no_claim=a real Vite server (the module is a scripted text)
+test('refuses a map source entry that is not a parseable URL with the coded seal failure', async (context) => {
+  // Arrange
+  const fixture = await startFixture(context, {
+    '/src/theme.ts': {
+      status: 200,
+      type: 'text/javascript',
+      body: servedModule({ ...GOOD_MAP, sources: ['theme.ts', 'http://'] }),
+    },
+  })
+  // Act
+  const error = await refusalOf(
+    readViteServedModule(
+      fixture.root,
+      fixture.origin,
+      fixture.stop,
+      new AbortController().signal,
+      fixture.stop.path,
+    ),
+  )
+  // Assert
+  assert.equal(error.code, 'VITE_SEAL_FAILED')
+  assert.match(
+    error.message,
+    /has the source entry "http:\/\/", which is not a valid URL/,
+  )
+})
+
+// protects=an app module whose map names only a /@fs/ file outside the package is not sealed as the stop file; fails_when=the /@fs/ branch makes an outside file count as the stop's file; no_claim=a real Vite server (the module is a scripted text)
+test('refuses an app module whose map names only a /@fs/ file outside the package', async (context) => {
+  // Arrange
+  const fixture = await startFixture(context, {
+    '/src/theme.ts': {
+      status: 200,
+      type: 'text/javascript',
+      body: servedModule({
+        ...GOOD_MAP,
+        sources: ['/@fs/elsewhere/outside/theme.ts'],
+      }),
+    },
+  })
+  // Act
+  const error = await refusalOf(
+    readViteServedModule(
+      fixture.root,
+      fixture.origin,
+      fixture.stop,
+      new AbortController().signal,
+      fixture.stop.path,
+    ),
+  )
+  // Assert
+  assert.equal(error.code, 'VITE_SEAL_FAILED')
+  assert.match(error.message, /does not name the stop's file exactly once/)
+})
+
 test('matches an announced script to its sealed address on any loopback host and ignores the hot-update query', () => {
   // Arrange
   const sealed = 'http://127.0.0.1:3010/src/theme.ts'

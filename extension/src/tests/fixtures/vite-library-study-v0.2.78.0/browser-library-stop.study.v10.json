@@ -1,0 +1,249 @@
+{
+  "version": 10,
+  "workspaceKey": "0000000000000000000000000000000000000000000000000000000000000000",
+  "id": "f2a18977-32d8-4d65-9f08-e3601d2ed21a_b006b144-5f73-448b-9caa-4a33c6e9a7a2",
+  "instanceId": "f2a18977-32d8-4d65-9f08-e3601d2ed21a",
+  "runId": "b006b144-5f73-448b-9caa-4a33c6e9a7a2",
+  "profile": "repository-browser",
+  "createdAt": "2026-11-02T00:07:16.547Z",
+  "savedAt": "2026-11-02T00:07:16.566Z",
+  "state": "paused-browser",
+  "terminal": false,
+  "finalOutcome": "pending-teardown",
+  "materialSignature": "aaf206413b171e4300f1ad193bdd662c409304b3bf0956a2cae4930164f69e28",
+  "configuration": {
+    "version": 3,
+    "adapter": "vite-dev",
+    "book": {
+      "bookId": "interface",
+      "revision": 1,
+      "nodeId": "theme",
+      "anchorIndex": 0
+    },
+    "source": {
+      "path": "packages/core/src/a.ts",
+      "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
+      "line": 1,
+      "column": 1
+    },
+    "participant": "browser",
+    "afterOperation": 1,
+    "before": [
+      {
+        "kind": "visible",
+        "selector": "button"
+      }
+    ],
+    "after": [
+      {
+        "kind": "text",
+        "selector": "label",
+        "equals": "Dark"
+      }
+    ],
+    "operations": [
+      {
+        "kind": "click",
+        "title": "Create Invoice",
+        "selector": "#submit"
+      }
+    ],
+    "inspections": [
+      {
+        "path": "nextTheme",
+        "mode": "value",
+        "required": true
+      },
+      {
+        "path": "setTheme",
+        "mode": "type",
+        "required": true
+      },
+      {
+        "path": "enabled",
+        "mode": "value",
+        "required": false
+      },
+      {
+        "path": "selection",
+        "mode": "value",
+        "required": false
+      },
+      {
+        "path": "renderLocal",
+        "mode": "value",
+        "required": false
+      }
+    ],
+    "packageRoot": "examples/react/basic"
+  },
+  "configurationHash": "5970280600ba8478018ab87994607834a71e5bdf3c48e3685ff81cab39d60bb0",
+  "descriptor": {
+    "itemId": "repository/interface/theme",
+    "bookTitle": "Interface",
+    "nodeTitle": "Theme",
+    "anchors": [
+      {
+        "path": "packages/core/src/a.ts",
+        "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
+        "startLine": 1,
+        "endLine": 1
+      },
+      {
+        "path": "src/mode.ts",
+        "hash": "f6d4386593d51ec67ad6d6811031238456f33ee12b3fa92a9df833159a355501",
+        "startLine": 1,
+        "endLine": 1
+      }
+    ],
+    "citationContext": {
+      "kind": "citations",
+      "hash": "4e64a968924a86548fd6783759cd6a0034589d58648f6e9a2bb37e359a465337",
+      "anchors": [
+        {
+          "path": "packages/core/src/a.ts",
+          "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
+          "startLine": 1,
+          "endLine": 1
+        },
+        {
+          "path": "src/mode.ts",
+          "hash": "f6d4386593d51ec67ad6d6811031238456f33ee12b3fa92a9df833159a355501",
+          "startLine": 1,
+          "endLine": 1
+        }
+      ]
+    },
+    "sources": [
+      {
+        "path": "packages/core/src/a.ts",
+        "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
+        "text": "const nextTheme = \"dark\";\n",
+        "lineCount": 2
+      },
+      {
+        "path": "src/mode.ts",
+        "hash": "f6d4386593d51ec67ad6d6811031238456f33ee12b3fa92a9df833159a355501",
+        "text": "export const mode = \"display\";\n",
+        "lineCount": 2
+      }
+    ]
+  },
+  "operation": {
+    "id": "516fa259-7919-48fc-8881-048e02027a79",
+    "key": "op-1",
+    "inputDispatched": true,
+    "inputAcknowledged": true,
+    "afterVerified": false
+  },
+  "operations": [
+    {
+      "index": 1,
+      "kind": "click",
+      "title": "Create Invoice",
+      "atMs": 0.436541,
+      "state": "paused",
+      "ack": "pending",
+      "valueCheck": "n/a",
+      "effect": "pending"
+    }
+  ],
+  "observations": [
+    {
+      "id": "browser-session:1",
+      "itemId": "repository/interface/theme",
+      "actionId": "repository-click",
+      "capturePhase": "paused-browser",
+      "snapshotUri": "codebook://f2a18977-32d8-4d65-9f08-e3601d2ed21a/runs/b006b144-5f73-448b-9caa-4a33c6e9a7a2/snapshots/browser-session%3A1",
+      "participant": "browser",
+      "capturedAt": "2026-11-02T00:07:16.564Z",
+      "elapsedMs": 0.966125,
+      "pause": {
+        "sessionId": "browser-session",
+        "threadId": 1,
+        "generation": 1
+      },
+      "source": {
+        "text": "const nextTheme = \"dark\";\n",
+        "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
+        "line": 1,
+        "column": 1,
+        "javascriptHash": "2042c6fe52df9319ec236c67addbea3ef8b10b0289ca37b855fdbbc4a0aa1353",
+        "mapHash": "116f07e7df2ceeeeba78b95a746f89df78d504ea0f9aa92ceb6b2d17663aa45d",
+        "scriptId": "42",
+        "scriptUrl": "http://127.0.0.1:41731/@fs/home/example/repository/packages/core/build/modern/a.js",
+        "generated": {
+          "line": 0,
+          "column": 0
+        },
+        "binding": {
+          "declaredLine": 1,
+          "boundLine": 1,
+          "mappedLinesBetween": 0
+        }
+      },
+      "values": {
+        "value:nextTheme": "dark",
+        "type:setTheme": "function",
+        "value:enabled": false,
+        "value:selection": null
+      },
+      "unavailableValues": [
+        {
+          "path": "value:renderLocal",
+          "reason": "Optimized out at this frame."
+        }
+      ],
+      "interpretations": [],
+      "debugger": {
+        "version": 1,
+        "frames": [
+          {
+            "name": "(anonymous)",
+            "line": 1,
+            "column": 1,
+            "source": {
+              "name": "packages/core/src/a.ts",
+              "text": "const nextTheme = \"dark\";\n",
+              "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
+              "line": 1
+            },
+            "scopes": [
+              {
+                "name": "Module",
+                "variables": [0]
+              }
+            ]
+          }
+        ],
+        "variables": [
+          {
+            "name": "nextTheme",
+            "value": "\"dark\"",
+            "type": "string",
+            "children": []
+          }
+        ],
+        "limitations": []
+      }
+    }
+  ],
+  "captures": [
+    {
+      "phase": "before",
+      "status": "absent",
+      "reason": "No confirmed image for this phase."
+    },
+    {
+      "phase": "paused-browser",
+      "status": "absent",
+      "reason": "No confirmed image for this phase."
+    },
+    {
+      "phase": "after",
+      "status": "absent",
+      "reason": "No confirmed image for this phase."
+    }
+  ],
+  "links": []
+}

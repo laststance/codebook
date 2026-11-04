@@ -5,11 +5,16 @@ import type { PortCheckOptions } from './utils/assertDevelopmentPortFree'
 import type { DevelopmentLockIdentity } from './utils/assertDevelopmentWorkspace'
 import type { NextPagesDiscoveryCache } from './utils/createNextPagesDiscoveryCache'
 import type { launchDevelopmentServer } from './utils/launchDevelopmentServer'
-import type { FrozenLibraryBuild } from './utils/libraryBuildStop'
+import type {
+  FrozenLibraryBuild,
+  LibraryPackage,
+} from './utils/libraryBuildStop'
 import type { DeclaredDevelopmentPort } from './utils/readDeclaredDevelopmentPort'
 import type { DevelopmentServerLayer } from './utils/readDevelopmentBundle'
 import type { ResolvedNextPackage } from './utils/resolveNextPackage'
 import type { ResolvedVitePackage } from './utils/resolveVitePackage'
+import type { ViteLibraryModuleSource } from './utils/selectViteLibraryCandidate'
+import type { ViteLibraryModules } from './utils/viteLibraryModules'
 
 /** The name a repository-browser configuration gives its development server (`adapter`), the one key of {@link DevelopmentServerAdapter}. */
 export type DevelopmentServerAdapterName = RepositoryConfiguration['adapter']
@@ -77,6 +82,15 @@ export type DevelopmentBundleRequest = {
   }
   /** Set for a server stop in a workspace library: the frozen build the stop is sealed through ({@link sealLibraryServerStop}) instead of the stop file's own module. Absent for every other stop. */
   library?: LibraryStopSealInput
+  /** Set for a browser stop of a nested Vite run in a workspace library the app reaches: the library and the page generation's served modules the stop is sealed through ({@link sealViteLibraryStop}) instead of the app's own module. Absent for every other stop. */
+  viteLibrary?: ViteLibraryStopSealInput
+}
+
+/** What the Vite library seal needs besides the stop: the detected library and the generation's module source. */
+export type ViteLibraryStopSealInput = {
+  library: LibraryPackage
+  /** The launcher's walk and the served modules of this library for the current page generation. */
+  moduleSource: ViteLibraryModuleSource
 }
 
 /** What the library seal needs besides the stop: the frozen build, the app's package root (repository-relative) and the real repository root. */
@@ -105,6 +119,8 @@ export type BrowserDebugFields = {
   sourceMaps: true
   sourceMapPathOverrides?: Record<string, string>
   perScriptSourcemaps?: 'yes'
+  /** Maps a URL prefix the server serves to a folder on disk (`/@fs/` to `/` for a Vite workspace library served outside the app's root). */
+  pathMapping?: Record<string, string>
 }
 
 /**
@@ -147,6 +163,15 @@ export interface DevelopmentServerAdapter {
   ): Promise<void>
   /** Seals the module one declared stop runs in. */
   readBundle(request: DevelopmentBundleRequest): Promise<DevelopmentBundle>
+  /**
+   * Asks the owned server which modules of one library folder the page reaches from its entry modules (Vite's client graph, inside the launcher); only Vite has it.
+   * Called by the run once per page generation for a library stop.
+   */
+  walkLibraryModules?(
+    app: DevelopmentApp,
+    request: { entries: string[]; libraryFolder: string },
+    signal: AbortSignal,
+  ): Promise<ViteLibraryModules>
   /** The js-debug launch fields of the browser that opens the app. */
   browserDebugFields(workspace: string): BrowserDebugFields
   /** Tells whether a script URL a runtime announced is the sealed module's address. */

@@ -38,6 +38,13 @@ export type StubViteBehavior = {
   exits?: number
   /** Gives the stub a client dependency optimizer whose one discovered dependency stays in processing this long (milliseconds) from the moment the launcher is first asked whether the optimizer is idle. */
   optimizerBusyMs?: number
+  /** The module graph the stub's client environment serves, keyed by served URL: `transformRequest(url)` answers `{ code }` (or throws), and `getModuleByUrl(url)` answers `{ file, staticImportedUrls }` once the URL was transformed. */
+  graph?: Record<
+    string,
+    { file: string; code?: string; imports?: string[]; throws?: boolean }
+  >
+  /** The optimizer's `metadata.optimized` entries (`src` and `file`), keyed by dependency name; gives the stub a client dependency optimizer. */
+  optimized?: Record<string, { src: string; file: string }>
   /** Variables the stub's config sets in `process.env` while it loads, as a config that loads an env file itself (`process.loadEnvFile`, `dotenv/config`) does. */
   setsEnv?: Record<string, string>
 }
@@ -109,6 +116,7 @@ export async function createServer(inline) {
   }
   let http
   let optimizer
+  const transformed = new Set()
   return {
     config,
     httpServer: null,
@@ -126,11 +134,29 @@ export async function createServer(inline) {
     },
     environments: {
       client: {
+        config: { cacheDir: config.cacheDir },
+        // Like Vite's, a module is in the graph only after it was transformed.
+        async transformRequest(url) {
+          const entry = behavior.graph?.[url]
+          if (!entry || entry.throws) throw new Error('cannot transform ' + url)
+          transformed.add(url)
+          return { code: entry.code ?? '' }
+        },
+        moduleGraph: {
+          async getModuleByUrl(url) {
+            const entry = behavior.graph?.[url]
+            if (!entry || !transformed.has(url)) return undefined
+            return { file: entry.file, staticImportedUrls: new Set(entry.imports ?? []) }
+          },
+        },
         // The busy period starts when the launcher first reads the optimizer, so a slow start never shortens it.
         get depsOptimizer() {
-          if (behavior.optimizerBusyMs === undefined) return undefined
+          if (behavior.optimizerBusyMs === undefined && !behavior.optimized) return undefined
           optimizer ??= {
-            metadata: { discovered: { late: { processing: new Promise((resolve) => setTimeout(resolve, behavior.optimizerBusyMs)) } } },
+            metadata: {
+              discovered: behavior.optimizerBusyMs === undefined ? {} : { late: { processing: new Promise((resolve) => setTimeout(resolve, behavior.optimizerBusyMs)) } },
+              optimized: behavior.optimized ?? {},
+            },
           }
           return optimizer
         },

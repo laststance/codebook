@@ -6,12 +6,17 @@ import {
   REPOSITORY_GIT_TIMEOUT_MS,
   REPOSITORY_SETUP_TIMEOUT_MS,
   VITE_APP_SELECTION_RULE,
+  VITE_LIBRARY_STOP_MINIMUM_API,
   VITE_PACKAGE_ROOT_MINIMUM_API,
   VITE_PACKAGE_ROOT_MINIMUM_EXTENSION,
   VITE_STOP_EXTENSIONS,
   VITE_SUPPORTED_MAJOR,
 } from './constants'
-import { PACKAGE_ROOT_REFUSALS, packageRootAnchor } from './nextHelp'
+import {
+  LIBRARY_STOP_REASONS,
+  PACKAGE_ROOT_REFUSALS,
+  packageRootAnchor,
+} from './nextHelp'
 import {
   VITE_REFUSAL_CODES,
   viteHelpAnchor,
@@ -113,9 +118,72 @@ const VITE_PACKAGE_ROOT_REFUSALS = {
     code: 'VITE_SEAL_FAILED',
     meaning:
       'A stop file lies outside packageRoot (a shared package the app imports, for example); details.files lists every such stop and details.packageRoot the app folder. Refused before the server starts: nothing ran (details.sideEffects none). The anchor is shared with the Next app, whose code for this reason is NEXT_STOP_NOT_SEALED.',
-    fix: 'Declare stops only in files inside details.packageRoot, or tell the learner that code outside the app folder cannot be observed in this version (a stop in a workspace library through Vite is not supported). Do not start another run with the same stops.',
+    fix: 'Declare stops only in files inside details.packageRoot or in a workspace library the app imports through links inside the repository (API 1.21 or later; see libraryStops), or tell the learner that code outside the app folder cannot be observed in this version: this refusal means no workspace library the app reaches holds the stop file. Do not start another run with the same stops.',
   },
 } as const
+
+/** What a refused library stop under `vite-dev` says about side effects: the owned Vite server started, but no browser opened and no page or app code ran. */
+const VITE_LIBRARY_SIDE_EFFECTS_SENTENCE =
+  'details.sideEffects is none: refused before the browser opened (no browser opened, no page or app code ran, no learner file or build output was written by Codebook; the owned Vite server started and may have written its own dependency cache).'
+
+/**
+ * The library-stop rows that differ from the Next app's, keyed by reason: the code, the cause list and the side effects are Vite's own, while the anchor and the fix of a reason the two adapters share come from {@link PACKAGE_ROOT_REFUSALS}.
+ * `library-place-ambiguous` is absent on purpose: the placement rule of an app stop always returns a position under `vite-dev`, so the reason does not occur.
+ */
+const VITE_LIBRARY_ROWS: Record<
+  Exclude<(typeof LIBRARY_STOP_REASONS)[number], 'library-place-ambiguous'>,
+  { code: string; meaning: string; fix: string }
+> = {
+  'library-build-stale': {
+    code: 'VITE_SEAL_FAILED',
+    meaning: `A browser stop lies in the checked-out source of a workspace library the app imports, and the source map of the library module Vite serves carries source text that differs from the checked-out file: the library was edited after it was built. ${VITE_LIBRARY_SIDE_EFFECTS_SENTENCE}`,
+    fix: PACKAGE_ROOT_REFUSALS['library-build-stale'].fix,
+  },
+  'library-build-unmapped': {
+    code: 'VITE_SEAL_FAILED',
+    meaning: `A browser stop lies in the checked-out source of a workspace library the app imports, but no module Vite serves can be tied to that file; details.cause says why: no-map (no served library module has a source map that names the file), malformed (a served map cannot be parsed), no-content (a map names the file without its source text), no-line (no mapping lies on the stop's line or within its citation after it), prebundled (Vite serves the library as an optimized dependency, so the served chunk is not the library's built file), bound (the search for the library modules the page reaches hit its module or byte limit) or deadline (the search ran out of time). ${VITE_LIBRARY_SIDE_EFFECTS_SENTENCE} A further cause, lazy-import, is raised during the run, before the operation is sent: the operation itself loads the library module lazily, so the module is not yet parsed in the page when the stop is armed, and the operation was not sent; details.sideEffects is then unknown, because the browser had opened and the entry page's code had run.`,
+    fix: "Tell the learner the cause. For no-map, no-content and malformed the learner can rebuild the library with source maps that include the source text (sourcesContent); for no-line declare the stop on a line that runs; for prebundled explain that the app serves the library pre-bundled, so a library stop cannot run, and offer a stop in the app's own files (an Example-side stop) instead; for lazy-import choose a stop in a module the page has already loaded before the operation, or a stop in the app; for bound and deadline this version cannot search the page, so a rebuild does not help. Codebook never builds and you never run the build. Do not retry with the same stop.",
+  },
+  'library-not-in-build': {
+    code: 'VITE_SEAL_FAILED',
+    meaning: `Not exactly one module Vite serves for the page maps the stop file and its line: none of the modules the entry page reaches under the library's folder does, or more than one does (another build, such as a legacy build, may be the one the page loads); details.candidates lists the module URLs, and is empty when the page reaches no module under the library's folder. ${VITE_LIBRARY_SIDE_EFFECTS_SENTENCE}`,
+    fix: "Tell the learner the page does not load that library file (or loads it from more than one build), or choose a stop on a line the page's code runs. Do not start another run with the same stop.",
+  },
+  'library-build-changed': {
+    code: 'RUNTIME_FAILED',
+    meaning:
+      'During the run, the library module the browser executed differs from the bytes Codebook sealed, when the stop was armed or when the run paused (a hot update that replaced the module counts, and so does a library rebuilt while the run was open). details.sideEffects is unknown: the browser had been opened and the app code had run.',
+    fix: PACKAGE_ROOT_REFUSALS['library-build-changed'].fix,
+  },
+}
+
+/**
+ * Builds the refusal rows of a browser stop in a workspace library under `vite-dev`, one per reason of the shared {@link LIBRARY_STOP_REASONS} that occurs for Vite.
+ *
+ * Why it exists: the Next and Vite help list the same library reasons with the same anchors, so the reason list is shared and a reason cannot be added to one adapter without choosing its Vite row. Called by {@link vitePackageRoot}.
+ *
+ * @returns The rows keyed by reason, each with its anchor (`codebook://help/repository-browser#<reason>`), code, meaning and fix.
+ * @example
+ * viteLibraryRefusals()['library-build-stale'].anchor // => 'codebook://help/repository-browser#library-build-stale'
+ */
+function viteLibraryRefusals() {
+  return Object.fromEntries(
+    LIBRARY_STOP_REASONS.flatMap((reason) =>
+      // library-place-ambiguous never occurs under vite-dev (D14); every other reason must have a row, which the table's key type enforces
+      reason === 'library-place-ambiguous'
+        ? []
+        : [
+            [
+              reason,
+              {
+                anchor: packageRootAnchor(reason),
+                ...VITE_LIBRARY_ROWS[reason],
+              },
+            ] as const,
+          ],
+    ),
+  )
+}
 
 /**
  * Builds the `vitePackageRoot` key of `codebook://help/repository-browser`: how to run a Vite app that lives below the repository root (API 1.20).
@@ -145,19 +213,28 @@ function vitePackageRoot() {
     configurationNested: VITE_NESTED_CONFIGURATION,
     example:
       'configurationNested: a browser stop in a component of a Vite app whose folder is packageRoot, reached by one declared click (a browser stop declares afterOperation from 1). source.path stays repository-relative and starts with packageRoot; entryPath is the page the app serves. The folder, file, line, selectors and inspection are placeholders: replace them, the book and the hash with the app the question is about.',
-    refusals: Object.fromEntries(
-      Object.entries(VITE_PACKAGE_ROOT_REFUSALS).map(([reason, entry]) => [
-        reason,
-        { anchor: packageRootAnchor(reason), ...entry },
-      ]),
-    ),
+    libraryStops: {
+      anchor: packageRootAnchor('vite-library-stops'),
+      minimumApi: VITE_LIBRARY_STOP_MINIMUM_API,
+      rule: 'In a version 3 vite-dev run with a packageRoot other than ".", a browser stop (participant browser) may lie in the checked-out source of a workspace library the app reaches through links inside the repository (directly or through other workspace libraries), for example packages/<library>/src/…; a stop outside the root of a root run (packageRoot absent or ".") stays refused as outside-package. Codebook never builds the library and you never run its build: the learner builds it, with source maps that include sourcesContent. Codebook asks its own Vite server which library modules the entry page reaches, keeps the one served module (/@fs/…) whose source map names the stop file and maps the line, seals it and pauses there; the native debugger shows the library line and values. The run is saved as study format 10 with no new field, and the replay shows the library line. When the library is refused, follow the fix of the refusal\'s details.reason in refusals (one anchor per reason); do not retry with the same stop.',
+      reasons: Object.keys(viteLibraryRefusals()),
+    },
+    refusals: {
+      ...Object.fromEntries(
+        Object.entries(VITE_PACKAGE_ROOT_REFUSALS).map(([reason, entry]) => [
+          reason,
+          { anchor: packageRootAnchor(reason), ...entry },
+        ]),
+      ),
+      ...viteLibraryRefusals(),
+    },
     savedSession:
       'A Vite run with packageRoot other than "." starts with a fresh browser profile and never loads the repository\'s saved sign-in session; the run resource reports savedSessionSkipped "package-root".',
     studies:
       "A nested Vite run is saved as study format 10 (.study.v10.json) with packageRoot in its configuration; recorded sources and book citations stay repository-relative. A root Vite run keeps the format it takes today. Codebook 0.2.77.0 lists a format 10 study as saved by a newer Codebook; update Codebook to open it. Format 10 replays from recorded evidence, also after the app's folder is removed.",
     limits: [
       "Codebook starts the app's own Vite from its folder and reads its dev script without running it (the same dev script forms as a root app). Vite resolves as Node would from the app's folder: the first node_modules/vite from packageRoot up to the repository root, never above it, whose real path is inside the repository (a pnpm link and a hoisted install inside the repository qualify; Yarn PnP and NODE_PATH count as not installed).",
-      "Stops must lie in the app's own files; a stop in a workspace library the app imports is refused with VITE_SEAL_FAILED (outside-package). Browser stops only.",
+      "Stops must lie in the app's own files or, since API 1.21, in the checked-out source of a workspace library the app reaches through links inside the repository (see libraryStops); a stop in any other file outside the app is refused with VITE_SEAL_FAILED (outside-package). Browser stops only.",
       "The app's own environment files are read and their values are masked, as for a root app. A Vite config temp file left in the app's own node_modules/.vite-temp or beside its config is removed; one in a shared ancestor node_modules/.vite-temp is never touched.",
       'One run at a time per window: a root run beside a nested run is refused with BUSY.',
     ],
@@ -213,6 +290,7 @@ export function viteHelp() {
         'A root app (the workspace root is the package root), or, in a version 3 configuration (API 1.20 or later), a Vite app in a folder below the repository root declared as packageRoot (see vitePackageRoot).',
         'A dev script of the form [NAME=value ...] vite [dev|serve] [--host] [--open] [--port N] [--mode M] [--config F] with --config naming a file inside the package root; --port, --mode and --config (also written --port=N) are forwarded to Vite as the script would, --host and --open are ignored (Codebook binds 127.0.0.1 and opens no browser of its own). Codebook never runs the dev script itself.',
         `Stops in JavaScript or TypeScript files under the package root (${VITE_STOP_EXTENSIONS.join(', ')}) that the entry page loads.`,
+        'In a version 3 configuration with a packageRoot other than "." (API 1.21 or later), a browser stop in the checked-out source of a workspace library the app imports (see libraryStops in vitePackageRoot).',
         'Browser stops only.',
       ],
       unsupported: [

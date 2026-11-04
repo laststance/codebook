@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.2.79.0] - 2026-11-04 (development candidate)
+
+Cycle 0078 ([Issue #202](https://github.com/laststance/codebook/issues/202)), a feature cycle. A **browser stop in the checked-out source of a workspace library** that a Vite app below the repository root imports now pauses in that library, with the library's real values in the native debugger. Most library Examples work this way, for example TanStack Query's `examples/react/*` importing `packages/query-core`. Before, Codebook refused such a stop as `outside-package`, so a chat could only explain the library from its source.
+
+**Pause in a workspace library through a nested Vite app.**
+- **When it applies:** a version 3 `vite-dev` run whose `packageRoot` is not `"."`, with a browser stop in the checked-out source (for example `packages/<library>/src/…`) of a workspace library the app reaches through links inside the repository, directly or through other workspace libraries. A Vite run from the repository root keeps refusing a stop outside its root.
+- **How it finds the code the browser runs:** Codebook asks its own Vite server which library modules the app's entry page reaches, through Vite's module graph (at most 500 modules, 20 MB of transformed code and 15 seconds). The question follows plugin-generated (virtual) modules, and treats a `?raw` or `?url` import as a different module from the file's code. Codebook keeps the one served `/@fs/` module whose source map names the stop file and maps its line, checks the map's source text against the checked-out file, and pauses there.
+- **In the native debugger:** the browser debug session maps `/@fs/` paths to files on disk, so the debugger opens the real library file and shows its source line and values as it does for the app's own code.
+- **Codebook never builds the library:** you build it, with source maps that include `sourcesContent`.
+
+**Clear refusals.**
+- **Before the browser opens** (`details.sideEffects` is `none`; Codebook's own Vite server had started), each with `VITE_SEAL_FAILED`:
+  - `library-build-stale` when the build is older than the checked-out source, which a rebuild of the library, run by you, fixes;
+  - `library-build-unmapped` with `details.cause`: `bound`, `deadline`, `prebundled` (new: Vite serves the library as an optimized dependency, so a stop in the app's own files is the choice), `no-map`, `malformed`, `no-content` or `no-line`. A page that lists more than 64 entry module scripts is refused as `bound`;
+  - `library-not-in-build` when no served module, or more than one, maps the line (`details.candidates`, at most five listed).
+- **During the run:** `library-build-unmapped` with the new cause `lazy-import` when the operation itself would load the library module, so it is refused before the operation is sent; `library-build-changed` (`RUNTIME_FAILED`, `details.sideEffects` `unknown`) when the library module the browser runs differs from the sealed bytes, a hot update included.
+- Every library refusal names `details.library`, `details.file` and `details.packageRoot`. A stop outside the app that lies in no workspace library the app reaches keeps `outside-package`.
+
+**Saved as study format 10, with no new field.** A library stop is saved with the library file's repository-relative path, hash and line, and replays from the recorded evidence, showing the library's source line and values.
+
+**Compatibility.** MCP API 1.21 (additive), bundled skill 1.0.70 (one sentence: under `vite-dev` with a nested `packageRoot` a browser stop may lie in a workspace library the app imports, and when it is refused as stale the chat tells you to build the library yourself), study format 10. Root Vite runs, Vite and Next apps below the root, and Next library server stops are unchanged.
+
 ## [0.2.78.0] - 2026-11-04 (development candidate)
 
 Cycle 0077 ([Issue #200](https://github.com/laststance/codebook/issues/200)), a feature cycle. A **Vite app in a folder below the repository root** now runs, pauses in its own source, saves and replays, with the repository root open. Most library Examples are such apps, for example about twenty of TanStack Query's `examples/react/*`. Before, Codebook refused them before anything started, so you had to open the Example folder alone and leave the library's source outside the workspace.

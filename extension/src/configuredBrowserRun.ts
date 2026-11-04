@@ -202,6 +202,7 @@ import {
   type NextPagesDiscoveryCache,
 } from './utils/createNextPagesDiscoveryCache'
 import { createVerdictBudget } from './utils/createVerdictBudget'
+import { createViteLibraryModuleSource } from './utils/createViteLibraryModuleSource'
 import { cutCauseForDisplay } from './utils/cutCauseForDisplay'
 import { deadlineText } from './utils/deadlineText'
 import { declarationStatementEndLine } from './utils/declarationStatementEndLine'
@@ -355,12 +356,18 @@ import {
 } from './utils/startIpv6LoopbackForwarder'
 import { takenStopPosition } from './utils/takenStopPosition'
 import { thrownMessage } from './utils/thrownMessage'
+import { ViteLibraryRegistry } from './utils/viteLibraryRegistry'
 import { withFinalPeriod } from './utils/withFinalPeriod'
 import {
   withUnannouncedPauses,
   type UnannouncedPausePlace,
 } from './utils/withUnannouncedPauses'
 import { VITE_DEV_ADAPTER } from './viteDevAdapter'
+import {
+  viteLibraryBuildChangedFailure,
+  viteLibraryFailureText,
+  viteLibraryRefusal,
+} from './viteLibraryRefusals'
 import {
   viteRefusal,
   viteReloadText,
@@ -869,6 +876,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private vitePackage?: ResolvedVitePackage
   /** The frozen library builds of the run's library stops, by `path:line:column`, taken before any process starts. */
   private readonly libraryFreezes = new Map<string, LibraryFreeze>()
+  /** The browser stops of a nested Vite run that lie in a workspace library the app reaches, and the library modules of each page generation. */
+  private readonly viteLibraries = new ViteLibraryRegistry()
   /** The discovery budget every library stop's freeze charges, so N library stops cannot multiply the bounds. */
   private readonly libraryBudget = { readBytes: 0, spentMs: 0 }
   /** The adapter of the configuration, chosen at the start of preparation. */
@@ -1313,10 +1322,102 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       { suggest: () => suggestVitePackageRoots(this.options.workspace) },
     )
     if (vitePackage.isRoot) return vitePackage
-    const outside = await this.stopFilesOutside(vitePackage)
+    // A browser stop of a version 3 run in a workspace library the app reaches is sealed from the served library module; anything else outside stays refused.
+    const outside = await this.stopFilesOutside(vitePackage, (stop) =>
+      this.registerViteLibraryStop(stop, vitePackage),
+    )
     if (outside.length)
       throw viteOutsidePackageRefusal(vitePackage.packageRootRelative, outside)
     return vitePackage
+  }
+
+  /**
+   * Records a browser stop that lies outside the nested Vite app in a workspace library the app reaches, before any process starts.
+   * Called by {@link resolveVitePackageOfRun} for each stop outside the app; shares {@link detectLibraryPackage} with the Next path (decision D9: Next's build-folder freeze is not used).
+   * @param stop - A stop whose file lies outside the app.
+   * @param vitePackage - The resolved nested Vite app.
+   * @returns `true` when the stop is a library stop; `false` when it stays an `outside-package` stop (not a browser stop, not a version 3 run, no linked workspace library holds the file or the app does not reach it).
+   * @example
+   * if (!(await this.registerViteLibraryStop(stop, vitePackage))) outside.push(stop.source.path)
+   */
+  private async registerViteLibraryStop(
+    stop: ReturnType<typeof configuredStops>[number],
+    vitePackage: ResolvedVitePackage,
+  ): Promise<boolean> {
+    if (
+      stop.participant !== 'browser' ||
+      this.definition.configuration.version !== OPERATIONS_CONFIG_VERSION
+    )
+      return false
+    const library = await detectLibraryPackage(
+      this.options.workspace,
+      vitePackage,
+      stop.source.path,
+      this.abort.signal,
+    )
+    if (!library) return false
+    this.viteLibraries.register(stop.source, library)
+    return true
+  }
+
+  /**
+   * Gives the library part of a bundle request for a stop in a workspace library, or nothing for an app stop.
+   * Called by {@link sealDeclaredStop}; all stops of one page generation get the same module source per library folder (decision D13), so the launcher's walk runs once per generation.
+   * @param stop - The declared stop.
+   * @param adapter - The run's adapter, which walks the launcher's graph.
+   * @param ownedOrigin - The origin the owned server reported.
+   * @param generation - The page generation a renewal belongs to; absent for the first seal.
+   * @returns `{ viteLibrary }` for a library stop; an empty object otherwise.
+   * @example
+   * const request = { ...(await this.viteLibraryRequest(stop, adapter, ownedOrigin)) }
+   */
+  private viteLibraryRequest(
+    stop: ReturnType<typeof configuredStops>[number],
+    adapter: DevelopmentServerAdapter,
+    ownedOrigin: string,
+    generation = 0,
+  ): Pick<DevelopmentBundleRequest, 'viteLibrary'> {
+    const library = this.viteLibraries.libraryOf(stop.source)
+    if (!library || !adapter.walkLibraryModules) return {}
+    const walk = adapter.walkLibraryModules
+    return {
+      viteLibrary: {
+        library,
+        moduleSource: this.viteLibraries.moduleSourceFor(
+          generation,
+          library,
+          () =>
+            createViteLibraryModuleSource({
+              ownedOrigin,
+              entryPath: this.definition.configuration.entryPath ?? '/',
+              libraryRealFolder: library.realFolder,
+              requestWalk: (entries, libraryFolder) =>
+                walk(this.app!, { entries, libraryFolder }, this.abort.signal),
+              signal: this.abort.signal,
+            }),
+        ),
+      },
+    }
+  }
+
+  /**
+   * Builds the failure of a library stop whose executed bytes differ from the sealed ones.
+   * Called where the executed-bytes check finds a difference for a stop {@link registerViteLibraryStop} recorded.
+   * @param stop - The library stop.
+   * @param library - The library holding it.
+   * @returns The `library-build-changed` failure ({@link viteLibraryBuildChangedFailure}).
+   * @example
+   * throw this.viteLibraryChanged(stop, library)
+   */
+  private viteLibraryChanged(
+    stop: PreparedStop,
+    library: NonNullable<ReturnType<ViteLibraryRegistry['libraryOf']>>,
+  ): StudyError {
+    return viteLibraryBuildChangedFailure({
+      packageRoot: this.vitePackage?.packageRootRelative ?? '.',
+      library: library.name,
+      file: stop.source.path,
+    })
   }
 
   /**
@@ -1648,7 +1749,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const firstAhead = this.stops[this.stopIndex]
     // Its set is armed with it: the stops of a render run concurrently (D15).
     if (firstAhead && this.isStopDueBy(firstAhead, 1))
-      await this.armStopSet(this.stopIndex)
+      await this.armStopSet(this.stopIndex, true)
     // A later browser stop is armed only in its turn, but a module that is already loaded can be compared with its sealed bundle now, before any application effect.
     for (const laterStop of this.stops.slice(1))
       if (laterStop.participant === 'browser' && laterStop.script)
@@ -3737,6 +3838,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       workspace: this.options.workspace,
       ...(this.nextPackage ? { nextPackage: this.nextPackage } : {}),
       ...(this.vitePackage ? { vitePackage: this.vitePackage } : {}),
+      ...this.viteLibraryRequest(stop, adapter, ownedOrigin, generation),
       ...(freeze && this.nextPackage
         ? {
             library: {
@@ -3921,6 +4023,26 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         // A renewal fails after the browser opened: the refusal says so and that one new start may pass, unlike a first seal.
         if (!(error instanceof StudyError) || error.code !== 'VITE_SEAL_FAILED')
           throw error
+        // A library refusal keeps its reason and fields; the page had loaded, so its side effects are no longer none.
+        if (
+          typeof error.details?.reason === 'string' &&
+          error.details.reason.startsWith('library-')
+        ) {
+          const resealMessage = viteResealFailureSentence(
+            generation,
+            error.message,
+          )
+          throw new StudyError(
+            error.code,
+            resealMessage,
+            // The cause words the renewal that failed, like the message, not the first seal's text.
+            resealMessage,
+            // The general recovery covers a seal renewed after a page load; the library one says nothing ran.
+            undefined,
+            undefined,
+            { ...error.details, sideEffects: 'unknown' },
+          )
+        }
         throw viteRefusal(
           'VITE_SEAL_FAILED',
           viteResealFailureSentence(generation, error.message),
@@ -4982,10 +5104,56 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       { scriptId: module.script!.scriptId },
     )
     this.alive()
-    if (sha256(executed.scriptSource) !== module.verifier.hashes.javascript)
+    if (sha256(executed.scriptSource) !== module.verifier.hashes.javascript) {
+      // A library module that changed after the seal (a rebuild, a hot update) is a changed build, not a generic mismatch.
+      const library = this.viteLibraries.libraryOf(stop.source)
+      if (library) throw this.viteLibraryChanged(stop, library)
       throw new Error(
         `Executed module of declared stop ${this.declaredAt(stop)} differs from its sealed bundle (checked ${phase})`,
       )
+    }
+  }
+
+  /**
+   * Words the failure of a stop whose module was parsed again under a new script after the seal.
+   * Called by {@link bindParsedScript}: a library module replaced after the seal (a hot update parsed as `?t=<n>`) is a changed build, a Pages run names the changed file with `SOURCE_CHANGED`, and every other run keeps its text.
+   * @param stop - The declared stop whose module changed.
+   * @returns The failure text.
+   * @example
+   * this.fail(this.changedAfterSealingText(stop)) // 'Selected module changed after sealing'
+   */
+  private changedAfterSealingText(stop: PreparedStop): string {
+    const library = this.viteLibraries.libraryOf(stop.source)
+    const libraryText =
+      library && viteLibraryFailureText(this.viteLibraryChanged(stop, library))
+    if (libraryText) return libraryText
+    return this.pagesRun
+      ? this.sourceChangedText(stop)
+      : 'Selected module changed after sealing'
+  }
+
+  /**
+   * Refuses a library stop whose module the page has not parsed when the stop is armed before its operation is sent.
+   * Called first by {@link armStop} for a browser stop (decision D11): a module that only the operation loads (a click-triggered `import()`) can never be waited for here, because arming comes before the operation.
+   * @param stop - The browser stop being armed.
+   * @param beforeOperation - Whether the stop is armed before its operation is sent (before input, or in its operation's turn); a stop armed inside the preceding continuation may wait for its module.
+   * @throws `VITE_SEAL_FAILED` with `details.reason` `library-build-unmapped` and `details.cause` `lazy-import` (`sideEffects: "unknown"`, the page's own code ran).
+   * @example
+   * this.refuseLazyLibraryModule(stop, true) // throws for a library module loaded by the click
+   */
+  private refuseLazyLibraryModule(
+    stop: PreparedStop,
+    beforeOperation: boolean,
+  ): void {
+    const library = this.viteLibraries.libraryOf(stop.source)
+    if (!library || stop.script || !beforeOperation) return
+    throw viteLibraryRefusal({
+      reason: 'library-build-unmapped',
+      cause: 'lazy-import',
+      packageRoot: this.vitePackage?.packageRootRelative ?? '.',
+      library: library.name,
+      file: stop.source.path,
+    })
   }
 
   /**
@@ -4993,13 +5161,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * The breakpoint is requested at {@link PreparedStop.armed}: the declared position, or, because the debugger verifies nothing on a line without a mapped position, the first mapped position after such a declared line ({@link resolveArmedPlace}). The stop's rule is measured from that requested line. The requested column is a preference: a browser stop records the debugger's verified binding as its position, on the requested line or on a line the rule accepts, and a server stop's owned breakpoint is given the same rule for its acknowledgement.
    * For both participants, a binding acknowledged on a later line although the requested line can pause is answered with one more request, at that line's break location before the requested column ({@link rearmOnRequestedLine}), whether the stop's rule accepts that later line or refuses it; the stop is refused only when the second request is bound on a later line again, or no break location lies before the requested column. A later line the rule refuses is refused as such only when the requested line cannot pause, or the debugger cannot say.
    * @param stop - The declared stop that is next in order.
+   * @param beforeOperation - Whether the stop is armed before its operation is sent; a library stop whose module is not yet parsed is then refused ({@link refuseLazyLibraryModule}).
    * @throws When a browser binding lands on a line the rule refuses or never verifies, a server registration is refused, a second request is bound past its line again, or a server stop's place lies inside the statement that declares a binding it requires and its module is not loaded yet ({@link confirmRequestedPlace}); each failure names the declared stop.
    * @example
    * ```ts
    * await this.armStop(this.stops[0]!)
    * ```
    */
-  private async armStop(stop: PreparedStop): Promise<void> {
+  private async armStop(
+    stop: PreparedStop,
+    beforeOperation = false,
+  ): Promise<void> {
     const position = stop.source,
       participant = this.participants[stop.participant]
     if (!participant.selected || !participant.cdp)
@@ -5010,6 +5182,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         stop === this.stops[0]
           ? 'before input'
           : 'while arming it inside the preceding continuation'
+      this.refuseLazyLibraryModule(stop, beforeOperation)
       await waitUntil(
         () => stop.script,
         `the loaded module of declared stop ${this.declaredAt(stop)} (${phase})`,
@@ -7004,12 +7177,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         continue
       }
       if (this.isSealedAsAnotherScript(stop, event)) {
-        // A Pages run names the changed file with SOURCE_CHANGED; every other run keeps its text.
-        this.fail(
-          this.pagesRun
-            ? this.sourceChangedText(stop)
-            : 'Selected module changed after sealing',
-        )
+        this.fail(this.changedAfterSealingText(stop))
         return
       }
       stop.script = event
@@ -9020,7 +9188,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const stop = this.stops[this.stopIndex]
     if (!stop || afterOperationOf(stop) !== index || this.armedStops.has(stop))
       return
-    await this.armStopSet(this.stopIndex)
+    // Armed before the operation is sent: a library module the operation itself would load is refused, never waited for.
+    await this.armStopSet(this.stopIndex, true)
   }
 
   /**
@@ -9049,10 +9218,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @param startIndex - The index in {@link stops} of the set's first unpaused stop.
    * @example await this.armStopSet(this.stopIndex + 1)
    */
-  private async armStopSet(startIndex: number): Promise<void> {
+  private async armStopSet(
+    startIndex: number,
+    beforeOperation = false,
+  ): Promise<void> {
     for (const member of this.stopSetFrom(startIndex)) {
       if (this.armedStops.has(member)) continue
-      await this.armStop(member)
+      await this.armStop(member, beforeOperation)
       this.armedStops.add(member)
       this.alive()
     }
@@ -11024,15 +11196,26 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     current()
     // The executed script is verified against its own instance: another layer's generated code differs from the sealed one.
     const executedModule = this.moduleOf(stop, callFrame.location.scriptId)
-    executedModule.verifier.verify(
-      executed.scriptSource,
-      executedModule.bundle.source,
-      callFrame.location,
-      executedModule.script!.scriptId,
-      frame.line,
-      frame.column,
-      { lineOnly: Boolean(stop.library) },
-    )
+    try {
+      executedModule.verifier.verify(
+        executed.scriptSource,
+        executedModule.bundle.source,
+        callFrame.location,
+        executedModule.script!.scriptId,
+        frame.line,
+        frame.column,
+        { lineOnly: Boolean(stop.library) },
+      )
+    } catch (error) {
+      // A library module whose executed bytes differ at the pause is a changed build.
+      const viteLibrary = this.viteLibraries.libraryOf(stop.source)
+      const isChangedText =
+        sha256(executed.scriptSource) !==
+        executedModule.verifier.hashes.javascript
+      throw viteLibrary && isChangedText
+        ? this.viteLibraryChanged(stop, viteLibrary)
+        : error
+    }
     // The refused-getter list only words a failure message; the snapshot (and the study it saves into) keeps values and unavailability alone.
     const { sideEffectRefused = [], ...facts } = await inspectConfiguredValues(
       (parameters) =>
@@ -12629,7 +12812,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         if (this.cleaning) return
         // An operation's refusal keeps its code and fields; any other failure keeps its text.
         if (error instanceof OperationRefusal) this.failOperation(error)
-        else this.fail(libraryFailureText(error) ?? String(error))
+        else
+          this.fail(
+            viteLibraryFailureText(error) ??
+              libraryFailureText(error) ??
+              String(error),
+          )
       })
       .finally(() => this.activities.delete(tracked))
     this.activities.add(tracked)

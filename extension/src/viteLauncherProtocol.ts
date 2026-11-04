@@ -43,6 +43,35 @@ export type ViteLauncherReport =
   | { type: 'vite-listening'; port: number }
   /** The dependency optimizer of Vite's client environment has nothing left to process (or there is none). */
   | { type: 'vite-optimizer-idle' }
+  /** The answer to one {@link ViteLibraryModulesCommand}. */
+  | ViteLibraryModulesReport
+
+/** Why a walk of Vite's client module graph ended early: too many modules, too much transformed code, or its time limit. */
+export type ViteLibraryWalkBound = 'modules' | 'bytes' | 'deadline'
+
+/** Asks the launcher which modules of one library folder Vite's client graph reaches from the entry modules. */
+export type ViteLibraryModulesCommand = {
+  type: 'vite-library-modules'
+  /** Echoed in the answer, so an answer is never taken for another request's. */
+  requestId: number
+  /** The entry module URLs, as the served `index.html` lists them in its module scripts (e.g. `/src/main.tsx`). */
+  entries: string[]
+  /** The real (symlink-resolved) absolute path of the library's folder. */
+  libraryFolder: string
+}
+
+/** What the launcher answers to a {@link ViteLibraryModulesCommand}. */
+export type ViteLibraryModulesReport = {
+  type: 'vite-library-modules-result'
+  /** The `requestId` of the command this answers. */
+  requestId: number
+  /** The served URLs (e.g. `/@fs/…/build/modern/query.js`) of every reached module whose real file path lies inside the library folder, in walk order, without duplicates. */
+  modules: string[]
+  /** Whether one of Vite's optimized dependencies has its source inside the library folder (the page may then reach the library pre-bundled). */
+  optimizedLibrary: boolean
+  /** The bound that ended the walk before it finished; absent when the walk finished. */
+  bound?: ViteLibraryWalkBound
+}
 
 /** What the extension tells the launcher after the facts. */
 export type ViteLauncherCommand =
@@ -50,3 +79,5 @@ export type ViteLauncherCommand =
   | { type: 'vite-refuse' }
   /** Sent after listening: the launcher answers `vite-optimizer-idle` once Vite's dependency optimizer is idle. */
   | { type: 'vite-await-optimizer' }
+  /** Sent after listening: the launcher answers `vite-library-modules-result`. */
+  | ViteLibraryModulesCommand

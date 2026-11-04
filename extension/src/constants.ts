@@ -5,6 +5,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 /**
  * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ * 1.21 is additive: a browser stop under `vite-dev` with a nested `packageRoot` (configuration version 3) may lie in the checked-out source of a workspace library that the app reaches through links inside the repository (directly or through other workspace libraries); a root `vite-dev` run keeps refusing a stop outside its root. Codebook asks the owned Vite server which library modules the entry page reaches, seals the one served module whose map names the stop file, and never builds the library. `VITE_SEAL_FAILED` gains `details.reason` `library-build-stale`, `library-build-unmapped` (with `details.cause` `bound`, `deadline`, `prebundled`, `no-map`, `malformed`, `no-content` or `no-line`) and `library-not-in-build`, each with `details.library`, `details.file`, `details.packageRoot` and `details.sideEffects: "none"` before the browser opens; during the run, a library module that the operation loads lazily ends it before the operation is sent with `library-build-unmapped` and the new `details.cause` `lazy-import`, and a library module that differs from its sealed bytes at arming or at the pause (a hot update included) ends it with `library-build-changed` (`details.sideEffects: "unknown"`); `library-place-ambiguous` does not occur under `vite-dev`. A saved library stop keeps study format 10 with no new field. Live feature: a library stop needs a Codebook that serves this API.
  * 1.20 is additive: a Vite app below the repository root runs from the repository root (`vite-dev`, configuration version 3 only). A version 3 `vite-dev` configuration may declare `packageRoot` (a repository-relative folder, absent or `"."` for the repository root); configuration versions 1 and 2 still refuse it. The `vite-dev` readiness gains `rootIsApp`, `packages` (entries `{ packageRoot, installed, ready, version?, missing }`), `packagesTruncated` and `packagesTruncatedReason` (`limit`, `manifest-cap`, `deadline`, `skipped-path` or `git-failed`), as `next-dev-webpack` does since 1.18; a Vite app is a tracked `package.json` that declares `vite` and holds an `index.html` or a `dev` script Codebook accepts. The refusals gain `details.field`, `details.packageRoot`, `details.reason` (`outside-repository`, `link-leaves-repository`, `not-a-folder`, `missing`, `unreadable`, `not-a-vite-app`) and `details.suggestions`, and `VITE_SEAL_FAILED` gains `details.reason` `outside-package` (with `details.files` and `details.packageRoot`); the run resource of a nested Vite run reports `savedSessionSkipped: "package-root"`; a nested Vite run is saved as study format 10 (`.study.v10.json`, retained configuration with `packageRoot`), while a root Vite run keeps the format it takes today (5 to 7). An older Codebook refuses `packageRoot` under `vite-dev` as an unknown key and lists a format 10 study as saved by a newer Codebook. Live feature: a nested Vite run needs Codebook 0.2.78.0 with this API.
  * 1.19 is additive: a server stop in the checked-out source of a workspace library that a nested Next Pages app reaches through links inside the repository (directly or through other workspace libraries) runs when the library's build carries source maps with `sourcesContent` equal to the checked-out source. The refusals gain five `details.reason` values: `library-build-stale`, `library-build-unmapped` (with `details.cause`), `library-not-in-build`, `library-place-ambiguous` (each `NEXT_STOP_NOT_SEALED`) and `library-build-changed` (`RUNTIME_FAILED`), and `codebook://help/repository-browser` gains one anchor per reason. A saved study keeps its run's format and gains no field.
  * 1.18 is additive: a Next app below the repository root runs from the repository root (`next-dev-webpack`, configuration version 3 only). A version 3 configuration may declare `packageRoot` (a repository-relative folder, absent or `"."` for the repository root); the `next-dev-webpack` readiness gains `rootIsApp`, `packages` (entries `{ packageRoot, routerKind, installed, ready, version?, missing }`), `packagesTruncated` and `packagesTruncatedReason` (`limit`, `manifest-cap`, `deadline`, `skipped-path` or `git-failed`); the refusals gain `details.field`, `details.packageRoot`, `details.reason` (`outside-repository`, `link-leaves-repository`, `not-a-folder`, `missing`, `unreadable`, `not-a-next-app`) and `details.suggestions`, `NEXT_STOP_NOT_SEALED` gains `details.reason` `outside-package` (with `details.files` and `details.packageRoot`) and `SIGN_IN_REQUIRED` gains `details.reason` `package-root-fresh-session`; the run resource of a nested run reports `savedSessionSkipped: "package-root"` (a run below the root never loads the repository's saved sign-in session); `SERVICE_WORKER_NOT_ATTACHED` carries `details.workerStartSends` and `details.wakeBoundMs`; a nested run is saved as study format 9 (`.study.v9.json`, retained configuration with `packageRoot`), while a root run keeps the format it takes today (3 to 8). An older Codebook refuses `packageRoot` as an unknown key and lists a format 9 study as saved by a newer Codebook.
@@ -22,7 +23,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.9 is additive: a node-server run is saved as a Server replay. `codebook_explain_node_history` accepts a server history's material (steps citing the request, a stop, output, the response or the request failure), the server run resource gains `nodeServer.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing` and `captureMissing`, `nextActions` offers `save-node-learning`, and `codebook://help/node-server` has a save section.
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
-export const API_VERSION = '1.20'
+export const API_VERSION = '1.21'
 
 /** The Codebook version that first serves a Next app below the repository root (API 1.18, skill 1.0.67). */
 export const NEXT_PACKAGE_ROOT_MINIMUM_EXTENSION = '0.2.75.0'
@@ -33,6 +34,9 @@ export const NEXT_PACKAGE_ROOT_MINIMUM_API = '1.18'
 export const VITE_PACKAGE_ROOT_MINIMUM_EXTENSION = '0.2.78.0'
 /** The API that first accepts `packageRoot` in a version 3 `vite-dev` configuration. */
 export const VITE_PACKAGE_ROOT_MINIMUM_API = '1.20'
+
+/** The API that first accepts a browser stop in a workspace library under a nested `vite-dev` run (skill 1.0.70). */
+export const VITE_LIBRARY_STOP_MINIMUM_API = '1.21'
 
 /**
  * The selection rule for a Vite question, shared word for word by the repository-browser help (`startHere`, `vitePackageRoot`) and the MCP initial instructions; the bundled skill paraphrases it for every app kind and a test pins the paraphrase.
@@ -57,7 +61,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.78'
+export const EXTENSION_VERSION = '0.2.79'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -2802,6 +2806,9 @@ export const VITE_LAUNCHER_FACTS_TIMEOUT_MS = 30_000
 /** How long one request for a module the Vite dev server serves may take while a stop is sealed. */
 export const VITE_MODULE_FETCH_TIMEOUT_MS = 15_000
 
+/** The most bytes of the served entry `index.html` Codebook reads to list the page's module scripts for a library stop. */
+export const VITE_ENTRY_PAGE_LIMIT_BYTES = 1024 * 1024
+
 /** The longest `node --version` may take when a run's Node executable is checked. */
 export const NODE_VERSION_TIMEOUT_MS = 10_000
 
@@ -2940,7 +2947,45 @@ export const VITE_LAUNCHER_MESSAGES = {
   awaitOptimizer: 'vite-await-optimizer',
   /** Report answering {@link VITE_LAUNCHER_MESSAGES.awaitOptimizer}: the optimizer has nothing left to process. */
   optimizerIdle: 'vite-optimizer-idle',
+  /** Command after listening: asks the launcher to walk Vite's client module graph from the entry modules and list the modules inside one library folder. */
+  libraryModules: 'vite-library-modules',
+  /** Report answering {@link VITE_LAUNCHER_MESSAGES.libraryModules}: the library's modules, whether an optimized dependency holds the library, and the bound that ended the walk. */
+  libraryModulesResult: 'vite-library-modules-result',
 } as const
+
+/** The most modules one walk of Vite's client module graph visits before it ends with the `modules` bound (a library stop is then refused, never guessed). */
+export const VITE_LIBRARY_WALK_MODULE_LIMIT_COUNT = 500
+
+/** The most transformed code one walk of Vite's client module graph reads before it ends with the `bytes` bound. */
+export const VITE_LIBRARY_WALK_CODE_LIMIT_BYTES = 20 * 1024 * 1024
+
+/** The most entry URLs one library-modules command may carry, and so the most module scripts one entry page may list for a library stop's walk: a page listing more is refused as `library-build-unmapped` with cause `bound` before any command is sent, and a longer list in a command is malformed and refused. */
+export const VITE_LIBRARY_WALK_ENTRY_LIMIT_COUNT = 64
+
+/** The longest one walk of Vite's client module graph runs before it ends with the `deadline` bound. */
+export const VITE_LIBRARY_WALK_DEADLINE_MS = 15_000
+
+/** The most candidate module URLs a Vite `library-not-in-build` refusal lists in its message and in `details.candidates`; the rest is counted ("and N more"). */
+export const VITE_LIBRARY_CANDIDATE_LIST_LIMIT_COUNT = 5
+
+/** How many served library modules one selection reads at the same time. */
+export const VITE_LIBRARY_READ_CONCURRENCY_COUNT = 8
+
+/** How long the extension waits for the launcher's answer to one walk: the walk's own deadline plus room for the IPC round trip. */
+export const VITE_LIBRARY_WALK_ANSWER_TIMEOUT_MS =
+  VITE_LIBRARY_WALK_DEADLINE_MS + 5_000
+
+/** The path segment of Vite's optimized-dependency cache (`node_modules/.vite/deps`): the library walk never transforms or follows a module served from there. */
+export const VITE_OPTIMIZED_DEPS_PATH_SEGMENT = '/node_modules/.vite/'
+
+/** URL prefixes of Vite's own client helpers (its client and env scripts, React Refresh): the library walk neither transforms nor follows them, since they import no application code. Plugin virtual modules (`/@id/__x00__…`, `/@id/virtual:…`) are not listed: a generated module may import a library, so the walk follows them. */
+export const VITE_CLIENT_HELPER_URL_PREFIXES = [
+  '/@vite/',
+  '/@react-refresh',
+] as const
+
+/** The URL query parameters Vite adds only to bust caches or mark an import (`t` timestamp, `v` optimizer version, `import` non-JS import); the library walk ignores them when it decides that two URLs name one module. Any other parameter (`raw`, `url`, `worker`, `inline`, …) changes the module and stays. */
+export const VITE_CACHE_BUSTING_QUERY_PARAMS = ['t', 'v', 'import'] as const
 
 /**
  * What an agent reads as the recovery when the Study placement guard refuses a presentation or an arrangement because the editor changed a group, a tab or the focus while Codebook arranged the Study.

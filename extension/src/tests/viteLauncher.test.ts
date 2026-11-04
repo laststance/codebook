@@ -26,6 +26,7 @@ import {
   listViteTimestampFiles,
   removeNewViteTimestampFiles,
 } from '../utils/viteConfigTimestampFiles'
+import { requestViteLibraryModules } from '../utils/viteLibraryModules'
 import { vitePortRefusal } from '../utils/vitePortRefusal'
 
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
@@ -46,7 +47,8 @@ async function startVite(
   context: TestContext,
   options: {
     dev?: string
-    behavior: StubViteBehavior
+    /** The stub's behavior; a function receives the package root, for paths inside it. */
+    behavior: StubViteBehavior | ((root: string) => StubViteBehavior)
     portCheck?: (signal: AbortSignal) => Promise<void>
     files?: Record<string, string>
     /** Replaces the facts timeout so a hanging launcher is refused quickly; production keeps 30 s. */
@@ -54,7 +56,11 @@ async function startVite(
   },
 ) {
   const repository = await createViteRepository(context, { dev: options.dev })
-  await repository.behave(options.behavior)
+  await repository.behave(
+    typeof options.behavior === 'function'
+      ? options.behavior(repository.root)
+      : options.behavior,
+  )
   for (const [name, text] of Object.entries(options.files ?? {})) {
     await mkdir(dirname(join(repository.root, name)), { recursive: true })
     await writeFile(join(repository.root, name), text)
@@ -944,6 +950,123 @@ test('the launcher answers the optimizer wait at once when Vite has no dependenc
   )
   // Assert
   await assert.doesNotReject(answered)
+})
+
+/** A scripted graph of an app entry that imports a library through a re-export chain, rooted in a package root. */
+function libraryGraphBehavior(root: string, port: number): StubViteBehavior {
+  return {
+    port,
+    graph: {
+      '/src/main.tsx': {
+        file: join(root, 'src/main.tsx'),
+        imports: ['/@fs/lib/index.js', '/node_modules/.vite/deps/react.js'],
+      },
+      '/@fs/lib/index.js': {
+        file: join(root, 'packages/lib/index.js'),
+        imports: ['/@fs/lib/query.js'],
+      },
+      '/@fs/lib/query.js': { file: join(root, 'packages/lib/query.js') },
+    },
+    optimized: {
+      react: { src: join(root, 'node_modules/react/index.js'), file: 'x' },
+    },
+  }
+}
+
+// protects=the launcher answers a library-modules command after listening with the library's modules in walk order and the optimizer flag; fails_when=the launcher ignores the command, answers another request's id, or walks the wrong environment; no_claim=real Vite (the stub Vite serves a scripted graph); the browser
+test('the launcher answers a library-modules command with the library modules in walk order and the optimized flag', async (context) => {
+  // Arrange
+  const port = await freePort()
+  const run = await startVite(context, {
+    behavior: (root) => libraryGraphBehavior(root, port),
+  })
+  await run.started
+  const libraryFolder = join(run.repository.root, 'packages/lib')
+  // Act
+  const answer = await requestViteLibraryModules(
+    run.app(),
+    { entries: ['/src/main.tsx'], libraryFolder },
+    5_000,
+    run.controller.signal,
+  )
+  // Assert
+  assert.deepEqual(answer, {
+    modules: ['/@fs/lib/index.js', '/@fs/lib/query.js'],
+    optimizedLibrary: false,
+  })
+})
+
+// protects=an optimized dependency whose source is the library is reported through the launcher; fails_when=the launcher drops the optimizer's metadata; no_claim=real Vite
+test('the launcher reports optimizedLibrary true when an optimized dependency has its source inside the library folder', async (context) => {
+  // Arrange
+  const port = await freePort()
+  const run = await startVite(context, {
+    behavior: (root) => libraryGraphBehavior(root, port),
+  })
+  await run.started
+  const libraryFolder = join(run.repository.root, 'node_modules/react')
+  // Act
+  const answer = await requestViteLibraryModules(
+    run.app(),
+    { entries: [], libraryFolder },
+    5_000,
+    run.controller.signal,
+  )
+  // Assert
+  assert.deepEqual(answer, { modules: [], optimizedLibrary: true })
+})
+
+// protects=a malformed library-modules command gets no answer and does not stop the launcher; fails_when=the launcher crashes, answers the bad command, or stops answering valid ones; no_claim=real Vite
+test('the launcher ignores a malformed library-modules command and still answers the next valid one', async (context) => {
+  // Arrange
+  const port = await freePort()
+  const run = await startVite(context, {
+    behavior: (root) => libraryGraphBehavior(root, port),
+  })
+  await run.started
+  const libraryFolder = join(run.repository.root, 'packages/lib')
+  run.app().send({
+    type: 'vite-library-modules',
+    requestId: 'one',
+    entries: ['/src/main.tsx'],
+    libraryFolder,
+  })
+  // Act
+  const answer = await requestViteLibraryModules(
+    run.app(),
+    { entries: ['/src/main.tsx'], libraryFolder },
+    5_000,
+    run.controller.signal,
+  )
+  // Assert
+  assert.deepEqual(answer.modules, ['/@fs/lib/index.js', '/@fs/lib/query.js'])
+})
+
+// protects=two library-modules requests in a row are each answered with their own id; fails_when=the second answer is lost, duplicated or taken for the first; no_claim=concurrent requests (they are sequential)
+test('the launcher answers two library-modules requests in a row, each for its own library', async (context) => {
+  // Arrange
+  const port = await freePort()
+  const run = await startVite(context, {
+    behavior: (root) => libraryGraphBehavior(root, port),
+  })
+  await run.started
+  const { root } = run.repository
+  // Act
+  const first = await requestViteLibraryModules(
+    run.app(),
+    { entries: ['/src/main.tsx'], libraryFolder: join(root, 'packages/lib') },
+    5_000,
+    run.controller.signal,
+  )
+  const second = await requestViteLibraryModules(
+    run.app(),
+    { entries: ['/src/main.tsx'], libraryFolder: join(root, 'src') },
+    5_000,
+    run.controller.signal,
+  )
+  // Assert
+  assert.deepEqual(first.modules, ['/@fs/lib/index.js', '/@fs/lib/query.js'])
+  assert.deepEqual(second.modules, ['/src/main.tsx'])
 })
 
 // Value: protects=one .env secret never reaches any output of a Vite run (the refusal, the evidence journal, the kept study module, the run state, the saved study JSON, the MCP tool result text and the source-map resource); fails_when=any channel stops masking the env-file values; why_new=the channels were only tested one by one; seam=the run harnesses stand in for the browser, the service harness for the editor, and the launcher mask feeds both; no_claim=native debugger capture

@@ -8,6 +8,7 @@ import {
 } from '../nextRefusals'
 import { formatRefusalFailure } from '../utils/formatRefusalFailure'
 import { refusalFailureOf } from '../utils/refusalFailureOf'
+import { viteLibraryBuildChangedFailure } from '../viteLibraryRefusals'
 
 // Value: protects=a Vite run's timer failures keep restoring exactly as before the registry (code + message, no override); fails_when=the registry drops a Vite code, cuts the message differently or adds a recovery override; why_new=Cycle 0065 one refusal registry replaces viteFailureOf in the service; seam=none
 test('every Vite refusal code restores from a failure text with its code and message, as before the registry', () => {
@@ -289,6 +290,20 @@ test('a library refusal text restores the recovery its builder gives', () => {
     assert.equal(restored?.recoveryOverride, error.describe().recovery, text)
     assert.ok(restored?.libraryDetails, text)
   }
+})
+
+// protects=a Vite library build-change error never becomes Next text, so its package root, library and file survive and no Pages router field appears; fails_when=libraryFailureText accepts an error without details.router; no_claim=the run's own conversion order (viteLibraryStop tests)
+test('a Vite library build-change error is not written as a Next library failure', () => {
+  // Arrange
+  const error = viteLibraryBuildChangedFailure({
+    packageRoot: 'examples/app',
+    library: '@scope/core',
+    file: 'packages/core/src/a.ts',
+  })
+  // Act
+  const text = libraryFailureText(error)
+  // Assert
+  assert.equal(text, undefined)
 })
 
 // protects=an unknown library variant restores the code alone, with no recovery override; fails_when=an unknown variant restores a recovery; no_claim=the known variants

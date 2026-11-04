@@ -44,6 +44,13 @@ const reportSchema = z.discriminatedUnion('type', [
     port: z.number().int(),
   }),
   z.object({ type: z.literal(VITE_LAUNCHER_MESSAGES.optimizerIdle) }),
+  z.object({
+    type: z.literal(VITE_LAUNCHER_MESSAGES.libraryModulesResult),
+    requestId: z.number().int(),
+    modules: z.array(z.string()),
+    optimizedLibrary: z.boolean(),
+    bound: z.enum(['modules', 'bytes', 'deadline']).optional(),
+  }),
 ])
 
 /**
