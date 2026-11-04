@@ -106,7 +106,8 @@ test("a nested app starts from its folder on the port of its own dev script with
   assert.equal(run.started.port, port)
   assert.equal(response.status, 200)
   assert.deepEqual(run.declared, [{ port, source: 'the dev script --port' }])
-  assert.match(run.app().outputTail(), new RegExp(`CWD ${run.appFolder}`))
+  // A literal substring: the folder is a runtime path that may hold regex or backslash characters
+  assert.ok(run.app().outputTail().includes(`CWD ${run.appFolder}`))
 })
 
 // protects=Task 4 env masking: a value in the app folder's .env is masked in the server output the run keeps, and the repository root's own .env value is not treated as the app's; fails_when=the app folder's env file is not read (the secret shows) or the output is not masked; no_claim=the saved study (the same mask feeds the existing saved-study masking tests)

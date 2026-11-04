@@ -140,6 +140,7 @@ function vitePackageRoot() {
         'vite-dev readiness: true when the root package.json declares vite and the root holds an index.html or a dev script Codebook accepts. Only then is the root a candidate; the root ready keeps its meaning.',
       packages: `Array of the Vite apps below the root that tracked package.json files declare (depth ${NEXT_PACKAGE_DISCOVERY_MAX_DEPTH} or less, at most ${NEXT_PACKAGE_DISCOVERY_APP_LIMIT}): { packageRoot, installed, ready, version?, missing[] }. packageRoot is the exact value to declare; ready and missing are what a start with that packageRoot checks (the dev script form, the Vite installation, Vite's engines.node). Untracked apps are not listed.`,
       packagesTruncated: `true when the list is incomplete; packagesTruncatedReason says why: limit (more than ${NEXT_PACKAGE_DISCOVERY_APP_LIMIT} apps), manifest-cap (more than ${NEXT_PACKAGE_DISCOVERY_MANIFEST_LIMIT} manifests), deadline (the ${REPOSITORY_GIT_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s discovery bound), skipped-path (a path was skipped) or git-failed.`,
+      whenTruncated: `When packagesTruncated is true and the app the question names is not in packages, declare its repository-relative packageRoot from the repository's files (the folder that holds its package.json); the start checks it and, if it is not an app, refuses with the reason and suggestions.`,
     },
     configurationNested: VITE_NESTED_CONFIGURATION,
     example:
