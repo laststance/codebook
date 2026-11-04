@@ -66,7 +66,7 @@ export async function readRootIsApp(workspace: string): Promise<boolean> {
  * @returns `true` for a root Vite app; `false` for an unreadable manifest, no `vite` declaration, or neither `index.html` nor an accepted `dev` script (a Vitest-only root).
  * @example await readRootIsViteApp('/repo') // => false for a monorepo root that only hoists Vite
  */
-export async function readRootIsViteApp(workspace: string): Promise<boolean> {
+async function readRootIsViteApp(workspace: string): Promise<boolean> {
   const text = await readRepositoryBuildText(
     workspace,
     'package.json',
@@ -116,7 +116,7 @@ export type StatusReadinessOptions = {
 }
 
 /**
- * Reads the repository-browser readiness `codebook_status` reports: {@link readRepositoryAdapterReadiness} plus `rootIsApp` and the Next apps below the root.
+ * Reads the repository-browser readiness `codebook_status` reports: {@link readRepositoryAdapterReadiness} plus `rootIsApp` and the Next apps and Vite apps below the root (one discovery pass, {@link discoverPackages}).
  *
  * Why it exists: AC 4, 5 and 13. The chat chooses the app from `packages` (each entry's `ready` and `missing` are what a start with that `packageRoot` checks), and a workspace opened below the Git root reports every adapter not ready with the adapter-aware recovery, because source authoring refuses every run there. The discovery starts beside the other adapters' reads and the answer waits for it until its one deadline (5 s). Called by the environment's `prerequisites` for `codebook_status`.
  *

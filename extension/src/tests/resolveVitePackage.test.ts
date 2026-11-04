@@ -13,6 +13,7 @@ import { dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { StudyError } from '../errors'
+import { selectedVitePackageStartPrerequisites } from '../utils/repositoryBrowserStartPrerequisites'
 import { resolveVitePackage } from '../utils/resolveVitePackage'
 import { viteOutsidePackageRefusal } from '../viteRefusals'
 
@@ -233,4 +234,42 @@ test('a Vite packageRoot below a folder that cannot be read is refused as unread
   assert.equal(error.code, 'INVALID_CONFIGURATION')
   assert.equal(error.details?.reason, 'unreadable')
   assert.equal(error.details?.errno, 'EACCES')
+})
+
+// protects=Task 2 start preflight: a nested vite-dev start is judged by its own folder, so a root without Vite never blocks it, a folder that is no Vite app is refused with its reason, and a root start keeps the caller's readiness; fails_when=the preflight returns undefined for a nested start (the root's readiness would refuse it), accepts a non-app, or judges a root start; no_claim=Vite's installation, version and dev script (the run's workspace check)
+test('the start preflight of a nested vite-dev run is judged by its folder and not by the root', async (context) => {
+  // Arrange
+  const root = await makeRepository(context)
+  await viteManifest(join(root, 'examples/react/basic'), { dev: 'vite' })
+  await put(join(root, 'tools/cli/package.json'), '{"name":"cli"}')
+  const shared = { ready: true, missing: [] as string[] }
+  const configuration = (packageRoot?: string) => ({
+    adapter: 'vite-dev',
+    ...(packageRoot === undefined ? {} : { packageRoot }),
+  })
+  // Act
+  const nested = await selectedVitePackageStartPrerequisites(
+    shared,
+    'repository-browser',
+    configuration('examples/react/basic'),
+    root,
+  )
+  const rootStart = await selectedVitePackageStartPrerequisites(
+    shared,
+    'repository-browser',
+    configuration(),
+    root,
+  )
+  const refusal = await refusalOf(() =>
+    selectedVitePackageStartPrerequisites(
+      shared,
+      'repository-browser',
+      configuration('tools/cli'),
+      root,
+    ),
+  )
+  // Assert
+  assert.deepEqual(nested, { ready: true, missing: [] })
+  assert.equal(rootStart, undefined)
+  assert.equal(refusal.details?.reason, 'not-a-vite-app')
 })

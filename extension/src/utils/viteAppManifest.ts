@@ -23,7 +23,7 @@ const viteManifestFieldsSchema = z.looseObject({
  * manifestDeclaresVite({ devDependencies: { vite: '^8.3.5' } }) // => true
  * manifestDeclaresVite({ dependencies: { vitest: '^3.0.0' } }) // => false
  */
-export function manifestDeclaresVite(manifest: unknown): boolean {
+function manifestDeclaresVite(manifest: unknown): boolean {
   const parsed = viteManifestFieldsSchema.safeParse(manifest)
   if (!parsed.success) return false
   const { dependencies, devDependencies } = parsed.data
