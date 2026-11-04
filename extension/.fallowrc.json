@@ -7,8 +7,18 @@
     "src/nativeNodeTestBootstrap.ts",
     "src/viteLauncher.ts",
     "src/agentConsole.ts",
-    "src/tests/**/*.test.ts",
-    "scripts/**/*.mjs"
+    "src/tests/**/*.test.ts"
+  ],
+  "framework": [
+    {
+      "name": "codebook-tool-scripts",
+      "detection": {
+        "type": "fileExists",
+        "pattern": "scripts/**/*.mjs"
+      },
+      "entryPoints": ["scripts/**/*.mjs"],
+      "entryPointRole": "support"
+    }
   ],
   "ignorePatterns": ["dist/**", "artifacts/**", "examples/**"],
   "ignoreFindings": ["src/tests/**", "scripts/**"],
