@@ -307,9 +307,10 @@ test('a nested App Router library stop whose module differs between the two clie
       ...AT_SEAL,
     },
   })
+  assert.equal(harness.inputsSeen(), 0)
 })
 
-// protects=AC 3 a module whose map names the file at another path than the flavour's app-resolved path is refused library-not-in-build and names the path the map gave; fails_when=the module is sealed and the override would point at a path nothing maps; no_claim=a module with several sources (this row is the other-path case)
+// protects=AC 3 a module whose map names the file at another path than the flavour's app-resolved path is refused library-not-in-build and names the path the map gave; fails_when=the module is sealed and the override would point at a path nothing maps; no_claim=a map without any source (library unit tests)
 test('a nested App Router library stop whose map names another path than Next writes is refused as not-in-build', async (context) => {
   // Arrange
   const staged = stageApp({ mapSources: ['/elsewhere/src/core.ts'] })
@@ -324,6 +325,30 @@ test('a nested App Router library stop whose map names another path than Next wr
       ...LIBRARY_IDENTITY,
       candidates: ['packages/lib/build/modern/core.js'],
       mapSource: '/elsewhere/src/core.ts',
+      ...AT_SEAL,
+    },
+  })
+  assert.equal(harness.inputsSeen(), 0)
+})
+
+// protects=AC 3 (row 5) a module whose map has several sources is refused library-not-in-build even when one of them is the path Next writes, and the refusal names the first source; fails_when=a map with extra sources is sealed or the first source is not named; no_claim=which source Next would bind
+test('a nested App Router library stop whose map has several sources is refused as not-in-build', async (context) => {
+  // Arrange
+  const staged = stageApp({
+    mapSources: (appResolved) => [appResolved, '/elsewhere/x.ts'],
+  })
+  const harness = await openRun(context, staged)
+  const { appResolved } = await pathsOf(harness)
+  // Act
+  const failure = await preparationFailure(harness)
+  // Assert
+  assert.deepEqual(refusalOf(failure), {
+    code: 'NEXT_STOP_NOT_SEALED',
+    details: {
+      reason: 'library-not-in-build',
+      ...LIBRARY_IDENTITY,
+      candidates: ['packages/lib/build/modern/core.js'],
+      mapSource: appResolved,
       ...AT_SEAL,
     },
   })

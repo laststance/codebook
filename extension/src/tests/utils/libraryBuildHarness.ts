@@ -43,6 +43,9 @@ export const BROWSER_PAUSE_COLUMN = 19
 /** The built columns the segments of a browser eval module line map. */
 const BROWSER_BUILT_COLUMNS = [0, 2, 4] as const
 
+/** How many generated lines the App Router fixture's module spends per source line, so a pause's generated line differs from its source line by more than the wrapper (the translation through the module's own map is then needed). */
+const APP_GENERATED_LINES_PER_SOURCE_LINE = 2
+
 /** The webpack layer of an eval module. */
 type EvalLayer = 'pages-dir-node' | 'pages-dir-browser' | 'app-pages-browser'
 
@@ -76,8 +79,9 @@ export type LibraryFixtureSpec = {
     }
     /** Gives the `page.js` copy another wrapper size, so the two chunks carry differing copies. */
     differingPageCopy?: boolean
-    /** Replaces the `sources` of the module's map (absolute paths). */
-    mapSources?: readonly string[]
+    /** Replaces the `sources` of the module's map (absolute paths), or builds them from the path Next writes for the library, which only the staged repository knows. */
+    mapSources?:
+      readonly string[] | ((appResolved: string) => readonly string[])
     /** Replaces the `sourcesContent` of the module's map. */
     mapContent?: string
     /** Adds a second module to `layout.js` whose map names the same path as the library module. */
@@ -182,6 +186,8 @@ export function libraryEvalModule(input: {
   wrapperLines?: number
   /** The webpack layer the module's `sourceURL` names; `pages-dir-node` by default. */
   layer?: EvalLayer
+  /** How many generated lines each built line takes: the first carries the map segments, the others are unmapped. 1 by default, which keeps every Pages module line for line. */
+  generatedLinesPerBuiltLine?: number
   /** Replaces the map's `sources` and `sourcesContent`. */
   mapOverride?: {
     sources?: readonly string[]
@@ -194,9 +200,10 @@ export function libraryEvalModule(input: {
     input.wrapperLines ??
     (isBrowser ? BROWSER_WRAPPER_LINE_COUNT : WRAPPER_LINE_COUNT)
   const builtLines = input.builtText.split('\n')
+  const extraLines = Math.max(0, (input.generatedLinesPerBuiltLine ?? 1) - 1)
   const code = [
     ...Array.from({ length: wrapper }, () => '/* wrapper */'),
-    ...builtLines.map((_, index) =>
+    ...builtLines.flatMap((_, index) => [
       isBrowser
         ? // Three statements per line, starting at the segment columns.
           [
@@ -209,11 +216,16 @@ export function libraryEvalModule(input: {
             '',
           )
         : `work${index + 1}();`,
-    ),
+      // Lines a transpiler adds that no source line owns.
+      ...Array.from(
+        { length: extraLines },
+        (__, extra) => `extra${index + 1}x${extra + 1}();`,
+      ),
+    ]),
   ].join('\n')
   let previous = 0
   let previousBuiltColumn = 0
-  const segments = builtLines.map((_, index) => {
+  const segments = builtLines.flatMap((_, index) => {
     // A browser line holds several segments, none at column 0; a node line holds one at column 0.
     const columns = isBrowser ? BROWSER_SEGMENT_COLUMNS : [0]
     const line = columns
@@ -225,7 +237,7 @@ export function libraryEvalModule(input: {
       })
       .join(',')
     previous = index
-    return line
+    return [line, ...Array.from({ length: extraLines }, () => '')]
   })
   const map = {
     version: 3,
@@ -546,8 +558,12 @@ async function writeAppRouterBuild(input: {
       runtimePath: input.runtimePathOf(flavour),
       layer: 'app-pages-browser',
       wrapperLines,
+      generatedLinesPerBuiltLine: APP_GENERATED_LINES_PER_SOURCE_LINE,
       mapOverride: {
-        sources: spec.mapSources,
+        sources:
+          typeof spec.mapSources === 'function'
+            ? spec.mapSources(mapSource)
+            : spec.mapSources,
         sourcesContent:
           spec.mapContent === undefined ? undefined : [spec.mapContent],
       },
@@ -598,7 +614,9 @@ async function writeAppRouterBuild(input: {
     hitAt: (sourceLine) => ({
       // The module's own map leads to the source line, so the hit is in source terms.
       generated: {
-        line: sourceLine - 1 + BROWSER_WRAPPER_LINE_COUNT,
+        line:
+          (sourceLine - 1) * APP_GENERATED_LINES_PER_SOURCE_LINE +
+          BROWSER_WRAPPER_LINE_COUNT,
         // The first segment of the line, which maps the line's first source column exactly.
         column: BROWSER_SEGMENT_COLUMNS[0],
       },
