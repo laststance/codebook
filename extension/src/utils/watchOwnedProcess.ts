@@ -62,8 +62,9 @@ export function watchOwnedProcess(
       if (child.pid === undefined) resolve({ exitCode: null, signal: null })
     })
   })
-  child.once('error', (cause) => {
-    spawnError = cause
+  // Every `error` event needs a listener (an unheard one throws in the extension host); the first cause is the one reported.
+  child.on('error', (cause) => {
+    spawnError ??= cause
   })
   const capture = captureProcessOutput(child, output)
   return {

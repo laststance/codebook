@@ -550,6 +550,57 @@ test('a script run opens the debugger request window before the release and clos
   )
 })
 
+// protects=a learner's own editor Continue after a declared stop hands the keyboard back, because the request window closes at each captured stop and only the run's own continue reopens it; fails_when=the window stays open from the release to the end, so a stop the learner resumed into reads as Codebook's; no_claim=the real stop ledger and focus hand-over (the vscode debugger and workspace tests own those)
+test("a captured script stop closes the request window and only the run's own continue reopens it", async () => {
+  // Arrange
+  const harness = await runningHarness()
+  const windowEntries = (): string[] =>
+    harness.order.filter((entry) => entry.startsWith('window:'))
+  await hit(harness, 0)
+  const atStop = windowEntries()
+  const pause = harness.run.view().pause
+  assert.ok(pause)
+
+  // Act
+  await harness.run.continue(pause)
+
+  // Assert
+  assert.deepEqual(atStop, ['window:true', 'window:false'])
+  assert.deepEqual(windowEntries(), [
+    'window:true',
+    'window:false',
+    'window:true',
+  ])
+  const resumedAt = harness.order.findLastIndex((entry) =>
+    entry.startsWith('resume:'),
+  )
+  assert.ok(resumedAt > harness.order.lastIndexOf('window:true'))
+})
+
+// protects=a continuation the adapter rejects leaves the next stop to the learner; fails_when=the window opened for the run's continue stays open after the continue failed; no_claim=how the service answers the failed continue
+test('a failed continue of a script stop closes the request window again', async () => {
+  // Arrange
+  const harness = await runningHarness({
+    resumeFails: new Error('continue rejected'),
+  })
+  await hit(harness, 0)
+  const pause = harness.run.view().pause
+  assert.ok(pause)
+
+  // Act
+  const failure = await harness.run.continue(pause).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.ok(failure instanceof Error)
+  assert.deepEqual(
+    harness.order.filter((entry) => entry.startsWith('window:')),
+    ['window:true', 'window:false', 'window:true', 'window:false'],
+  )
+})
+
 // protects=a script run's failure sentence names the script and the node-script profile, never the server; fails_when=the shared core words a script run's failure as the server's; no_claim=the server's sentences (nodeServer tests keep them byte for byte)
 test('a script run that fails while attaching the debugger says script and never server', async () => {
   // Arrange

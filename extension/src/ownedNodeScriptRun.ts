@@ -119,6 +119,7 @@ class OwnedNodeScriptRun implements NodeScriptRuntime {
       clock,
       () => this.endWithLimit('running-time'),
     )
+    const historyHooks = createNodeRunHistoryHooks(input.history)
     this.core = new NodeProcessRun({
       workspace: input.workspace,
       runId: input.runId,
@@ -140,7 +141,12 @@ class OwnedNodeScriptRun implements NodeScriptRuntime {
         releaseLimits: () => this.runningTime.release(),
         onStopAdmitted: () => this.cancelTimers(),
         onProcessOutput: (event) => this.onScriptOutput(event),
-        ...createNodeRunHistoryHooks(input.history),
+        ...historyHooks,
+        onStopCaptured: (elapsedMs, pause, generation, read) => {
+          historyHooks.onStopCaptured?.(elapsedMs, pause, generation, read)
+          // The stop's verdict is in the stop ledger: the script's next stop is Codebook's again only after the run itself continues, so a learner's own Continue hands the keyboard back.
+          this.setRequestWindow(false)
+        },
         onDebuggerSessionEnded: () => this.boundExitAfterSession(),
       },
     })
@@ -445,8 +451,26 @@ class OwnedNodeScriptRun implements NodeScriptRuntime {
     })
   }
 
-  continue(identity: PauseIdentity): Promise<void> {
-    return this.core.continue(identity)
+  async continue(identity: PauseIdentity): Promise<void> {
+    // The run's own continuation: the declared stop the script reaches next is Codebook's.
+    this.setRequestWindow(true)
+    try {
+      await this.core.continue(identity)
+    } catch (error) {
+      // A continuation that failed leaves the thread where it was, so a later resume is the learner's.
+      this.setRequestWindow(false)
+      throw error
+    }
+  }
+
+  /**
+   * Opens or closes the debugger's ownership window, which decides whether the stop ledger records the script's next stop as Codebook's or the learner's.
+   * Called at a captured stop (closed) and by {@link OwnedNodeScriptRun.continue} (opened); a run with no bound debugger changes nothing.
+   * @param open - Whether the next stop is Codebook's.
+   * @example this.setRequestWindow(true) // before the run's own continue
+   */
+  private setRequestWindow(open: boolean): void {
+    this.core.debuggerSession?.setRequestWindow(open)
   }
 
   // ---------------------------------------------------------------- the end
@@ -478,7 +502,7 @@ class OwnedNodeScriptRun implements NodeScriptRuntime {
     // The run is over: the debugger's ownership window closes so a later pause of the learner stays theirs.
     if (this.core.lifecycle === 'stopped' && !this.didCloseWindow) {
       this.didCloseWindow = true
-      this.core.debuggerSession?.setRequestWindow(false)
+      this.setRequestWindow(false)
     }
     if (this.end || this.core.lifecycle !== 'stopped' || !this.core.launched)
       return

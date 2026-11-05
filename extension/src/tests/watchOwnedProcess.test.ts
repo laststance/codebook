@@ -57,3 +57,27 @@ test('an error on a live spawned child leaves the exit event pending until the r
   assert.deepEqual(fact, { exitCode: 7, signal: null })
   assert.equal(watched.exitFact()?.exitCode, 7)
 })
+
+// protects=a second error event on a live child (a repeated failed kill) is heard instead of throwing in the extension host, and the first cause stays the reported failure; fails_when=the failure listener is a once-listener, so the second error has no listener and EventEmitter throws it; no_claim=which Node operations raise the errors
+test('a second error on a live child is heard and the first cause stays the failure', async () => {
+  // Arrange
+  const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 300)'])
+  const watched = watchOwnedProcess(child, {
+    startedAt: process.hrtime.bigint(),
+    pendingLimitBytes: 1_024,
+    overflowMessage: 'overflow',
+    failurePrefix: 'failed',
+  })
+  await new Promise((resolve) => child.once('spawn', resolve))
+  const first = new Error('kill EPERM')
+
+  // Act
+  child.emit('error', first)
+  const emitSecond = (): boolean =>
+    child.emit('error', new Error('kill EPERM again'))
+
+  // Assert
+  assert.doesNotThrow(emitSecond)
+  assert.equal(watched.failure(), first)
+  await watched.exit
+})
