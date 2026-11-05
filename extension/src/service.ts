@@ -2977,7 +2977,7 @@ export class StudyService {
       }
       if (resolved?.profile === 'node-script') {
         const { store: scriptStore } = resolved
-        // A partial script run (stops never reached, stopped, limit) saves like a complete one: its missing parts are named by the summary's verdicts.
+        // A partial script run (stops never reached, stopped, limit, or an exit before the first stop) saves like a complete one: its missing parts are named by the summary's verdicts.
         const scriptMaterial = await withKnownNodeHistory(
           scriptStore,
           identity.studyId,

@@ -27,6 +27,8 @@ export type NodeServerJournalProgress = {
   sources: Set<string>
   hasOutputTruncated: boolean
   hasEnd: boolean
+  /** Whether a node-script journal holds an observed result: output, or an `end` the run itself reached (exit, signal or limit), as opposed to the `stopped` end a seal derives when the run gave none. */
+  hasObservedResult: boolean
 }
 
 /**
@@ -46,6 +48,7 @@ export function newNodeServerJournalProgress(): NodeServerJournalProgress {
     sources: new Set<string>(),
     hasOutputTruncated: false,
     hasEnd: false,
+    hasObservedResult: false,
   }
 }
 
@@ -251,14 +254,21 @@ const SCRIPT_ENTRY_RULES: {
     header: RuleHeader,
   ) => void
 } = {
-  output: (progress) => acceptOutput(progress, SCRIPT_SUBJECT),
-  'output-truncated': (progress) =>
-    acceptOutputTruncated(progress, SCRIPT_SUBJECT),
+  output: (progress) => {
+    acceptOutput(progress, SCRIPT_SUBJECT)
+    progress.hasObservedResult = true
+  },
+  'output-truncated': (progress) => {
+    acceptOutputTruncated(progress, SCRIPT_SUBJECT)
+    progress.hasObservedResult = true
+  },
   source: (progress, entry) => acceptSource(progress, entry, SCRIPT_SUBJECT),
   stop: (progress, entry, header) =>
     acceptCountedStop(progress, entry, header, SCRIPT_SUBJECT),
-  end: (progress) => {
+  end: (progress, entry) => {
     progress.hasEnd = true
+    // A `stopped` end is what a seal derives for a run that gave none; the run's own exit, signal or limit is an observed result.
+    if (entry.kind !== 'stopped') progress.hasObservedResult = true
   },
 }
 

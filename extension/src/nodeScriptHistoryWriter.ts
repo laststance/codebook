@@ -25,8 +25,9 @@ const NODE_SCRIPT_RULE_PROFILE: NodeRunRuleProfile<NodeScriptHistoryTypes> = {
   accept: acceptNodeScriptEntry,
   evaluate: evaluateNodeScriptCapture,
   describeEntry: describeLastNodeServerEntry,
-  // A script history with no captured stop holds nothing to replay, as an extension history with no stop does.
-  holdsNothingToReplay: (progress) => progress.stopCount === 0,
+  // A script that ended before its first stop still has an observed result (its output, its exit): kept, with the missing stops named. Only a run that never ran (no stop, no output, no end of its own) holds nothing to replay.
+  holdsNothingToReplay: (progress) =>
+    progress.stopCount === 0 && !progress.hasObservedResult,
 }
 
 /**

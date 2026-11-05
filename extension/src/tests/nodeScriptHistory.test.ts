@@ -220,7 +220,7 @@ test('a run that spent its 16-hit capture budget lists the stops after it as not
     [
       'SCRIPT_HISTORY_STOP_NOT_OBSERVED',
       'SCRIPT_HISTORY_STOP_NOT_OBSERVED',
-      'SERVER_HISTORY_CAPTURE_BUDGET_EXHAUSTED',
+      'SCRIPT_HISTORY_CAPTURE_BUDGET_EXHAUSTED',
     ],
   )
   assert.equal(
@@ -253,7 +253,7 @@ test("a history sealed without the run's end gets a stopped end that names the s
   assert.deepEqual(end?.type === 'end' ? end.stopsNeverReached : undefined, [1])
   assert.deepEqual(
     summary.captureMissing.map((reason) => reason.code),
-    ['SCRIPT_HISTORY_RUN_STOPPED', 'SERVER_HISTORY_STOP_NOT_REACHED'],
+    ['SCRIPT_HISTORY_RUN_STOPPED', 'SCRIPT_HISTORY_STOP_NOT_REACHED'],
   )
 })
 
@@ -391,4 +391,109 @@ test('a step that cites a stop sequence as the end is refused as an invalid refe
   assert.ok(refusal instanceof StudyError)
   assert.equal(refusal.code, 'INVALID_REFERENCE')
   assert.match(refusal.message, /the end/)
+})
+
+// protects=a script that exits before its first stop (a missing module) is kept, listed and saveable with its end and output as the observed result and its stops named missing; fails_when=the seal removes the history as empty because no stop was captured; no_claim=the run's own exit handling
+test('a script that exits with code 1 before its first stop is kept, listed with its missing stops and saveable', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { repository } = await openServerRepository(context)
+  const { studyId } = await runScriptHistory(
+    context,
+    {
+      declaredStops: 2,
+      hits: [],
+      output: ["Error: Cannot find module './seed'\n"],
+      end: {
+        kind: 'exited',
+        exitCode: 1,
+        stopsReached: [],
+        stopsNeverReached: [0, 1],
+      },
+    },
+    repository,
+  )
+  harness.service.nodeHistoryStore = repository.testHistories
+  harness.service.nodeHistoryRepository = repository
+
+  // Act
+  const summary = await onlyScriptSummary(repository)
+  const saved = await harness.service.explainNodeHistory({
+    studyId,
+    expectedRevision: 0,
+    content: scriptMaterialCiting([
+      { type: 'output', sequence: 1, channel: 'stdout' },
+      { type: 'end', sequence: 2 },
+    ]),
+  })
+
+  // Assert
+  assert.equal(summary.stopCount, 0)
+  assert.equal(summary.endKind, 'exited')
+  assert.deepEqual(
+    summary.captureMissing.map((reason) => reason.code),
+    ['SCRIPT_HISTORY_STOP_NOT_REACHED', 'SCRIPT_HISTORY_STOP_NOT_REACHED'],
+  )
+  assert.equal(saved.revision, 1)
+})
+
+// protects=a script run that never ran (no output, no stop, no end of its own) leaves no history folder; fails_when=a never-started run is listed as a Script replay; no_claim=a run stopped after output, which is kept
+test('a script run that never started leaves no history', async (context) => {
+  // Arrange / Act
+  const { repository } = await runScriptHistory(context, {
+    declaredStops: 2,
+    hits: [],
+  })
+  const { scripts } = await repository.listByProfile()
+
+  // Assert
+  assert.deepEqual(scripts, [])
+})
+
+// protects=every capture reason of a script history carries a SCRIPT_HISTORY code, never a node-server one; fails_when=a shared reason keeps its SERVER_HISTORY_ code in a script history; no_claim=the node-server codes, whose tests are unchanged
+test('a script history names every capture gap with a SCRIPT_HISTORY code', async (context) => {
+  // Arrange
+  const { repository } = await runScriptHistory(context, {
+    declaredStops: 3,
+    hits: Array.from({ length: 16 }, () => 0),
+    budgetExhausted: true,
+    output: ['x'],
+    end: {
+      kind: 'exited',
+      exitCode: 0,
+      stopsReached: [0],
+      stopsNeverReached: [],
+      captureBudgetExhausted: true,
+      stopsNotObserved: [1, 2],
+    },
+  })
+  await runScriptHistory(
+    context,
+    {
+      declaredStops: 2,
+      hits: [0],
+      end: {
+        kind: 'exited',
+        exitCode: 0,
+        stopsReached: [0],
+        stopsNeverReached: [1],
+      },
+    },
+    repository,
+  )
+
+  // Act
+  const { scripts } = await repository.listByProfile()
+
+  // Assert
+  const codes = scripts.flatMap((summary) =>
+    summary.captureMissing.map((reason) => reason.code),
+  )
+  assert.ok(codes.includes('SCRIPT_HISTORY_STOP_NOT_REACHED'))
+  assert.ok(codes.includes('SCRIPT_HISTORY_CAPTURE_BUDGET_EXHAUSTED'))
+  assert.equal(
+    codes.every((code) => code.startsWith('SCRIPT_HISTORY_')),
+    true,
+  )
 })

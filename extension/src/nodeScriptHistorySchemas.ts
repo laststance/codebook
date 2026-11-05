@@ -70,22 +70,43 @@ export const nodeScriptHistoryHeaderSchema = z
  * The one `end` entry of a script history: how the run ended and which declared stops it reached.
  * `stopsNeverReached` is always present; once the capture budget was spent, the stops not reached before that are `stopsNotObserved`, never never-reached, because their breakpoints were retired.
  */
-const nodeScriptEndEntrySchema = z.strictObject({
-  type: z.literal('end'),
-  ...nodeRunEntryBase,
-  kind: z.enum(NODE_SCRIPT_END_KINDS),
-  exitCode: z.number().int().nullable().optional(),
-  signal: z.string().max(32).nullable().optional(),
-  /** Why the exit code could not be read, when it could not. */
-  exitUnknown: z.string().max(NODE_SCRIPT_EXIT_UNKNOWN_LIMIT_CHARS).optional(),
-  limit: z.enum(NODE_SCRIPT_END_LIMITS).optional(),
-  stopsReached: declaredStopIndexList,
-  stopsNeverReached: declaredStopIndexList,
-  captureBudgetExhausted: z.literal(true).optional(),
-  stopsNotObserved: declaredStopIndexList.optional(),
-  /** Why the group was not signalled after the script's own exit (E10): its id was gone, belonged to another process, or could not be confirmed. */
-  groupNotSignalled: z.enum(['gone', 'replaced', 'unverifiable']).optional(),
-})
+const nodeScriptEndEntrySchema = z
+  .strictObject({
+    type: z.literal('end'),
+    ...nodeRunEntryBase,
+    kind: z.enum(NODE_SCRIPT_END_KINDS),
+    exitCode: z.number().int().nullable().optional(),
+    signal: z.string().max(32).nullable().optional(),
+    /** Why the exit code could not be read, when it could not. */
+    exitUnknown: z
+      .string()
+      .max(NODE_SCRIPT_EXIT_UNKNOWN_LIMIT_CHARS)
+      .optional(),
+    limit: z.enum(NODE_SCRIPT_END_LIMITS).optional(),
+    stopsReached: declaredStopIndexList,
+    stopsNeverReached: declaredStopIndexList,
+    captureBudgetExhausted: z.literal(true).optional(),
+    stopsNotObserved: declaredStopIndexList.optional(),
+    /** Why the group was not signalled after the script's own exit (E10): its id was gone, belonged to another process, or could not be confirmed. */
+    groupNotSignalled: z.enum(['gone', 'replaced', 'unverifiable']).optional(),
+  })
+  // The kind decides which fields tell the story: an `end` that names its kind but not its cause could mislead every reader.
+  .superRefine((end, context) => {
+    const refuse = (message: string): void =>
+      context.addIssue({ code: 'custom', message })
+    if (
+      end.kind === 'exited' &&
+      typeof end.exitCode !== 'number' &&
+      end.exitUnknown === undefined
+    )
+      refuse('An exited end needs a numeric exitCode or exitUnknown.')
+    if (end.kind === 'signal' && !end.signal)
+      refuse('A signal end needs its signal.')
+    if (end.kind === 'limit' && end.limit === undefined)
+      refuse('A limit end needs its limit.')
+    if (end.kind === 'stopped' && (end.limit !== undefined || end.signal))
+      refuse('A stopped end takes neither a limit nor a signal.')
+  })
 
 /** One entry of a node-script journal; each carries its journal `sequence` and `elapsedMs` since launch. */
 export const nodeScriptHistoryEntrySchema = z.discriminatedUnion('type', [

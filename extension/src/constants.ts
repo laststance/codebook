@@ -2616,13 +2616,21 @@ export const NODE_SERVER_HISTORY_REASON_CODES = {
   captureBudgetExhausted: 'SERVER_HISTORY_CAPTURE_BUDGET_EXHAUSTED',
   outputTruncated: 'SERVER_HISTORY_OUTPUT_TRUNCATED',
 } as const
-/** The stable codes of the reasons a node-script history is partial, beside the node-server codes it shares for stops, appends, size, capture budget and output. */
+/** The stable codes of the reasons a node-script history is partial; every code in its `captureMissing` is one of these, none is a node-server code. */
 export const NODE_SCRIPT_HISTORY_REASON_CODES = {
   endMissing: 'SCRIPT_HISTORY_END_MISSING',
   runStopped: 'SCRIPT_HISTORY_RUN_STOPPED',
   runLimit: 'SCRIPT_HISTORY_RUN_LIMIT',
   exitUnknown: 'SCRIPT_HISTORY_EXIT_UNKNOWN',
   stopNotObserved: 'SCRIPT_HISTORY_STOP_NOT_OBSERVED',
+  stopNotReached: 'SCRIPT_HISTORY_STOP_NOT_REACHED',
+  snapshotMissing: 'SCRIPT_HISTORY_SNAPSHOT_MISSING',
+  sourceUnavailable: 'SCRIPT_HISTORY_SOURCE_UNAVAILABLE',
+  valueUnavailable: 'SCRIPT_HISTORY_VALUE_UNAVAILABLE',
+  appendFailed: 'SCRIPT_HISTORY_APPEND_FAILED',
+  sizeLimit: 'SCRIPT_HISTORY_SIZE_LIMIT',
+  captureBudgetExhausted: 'SCRIPT_HISTORY_CAPTURE_BUDGET_EXHAUSTED',
+  outputTruncated: 'SCRIPT_HISTORY_OUTPUT_TRUNCATED',
 } as const
 /** The profile of a run of the opened repository's unpacked Manifest V3 extension in a browser Codebook owns. */
 export const CHROME_EXTENSION_PROFILE = 'chrome-extension'

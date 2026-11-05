@@ -77,11 +77,12 @@ export function evaluateNodeScriptCapture(
             params: { stop: index + 1 },
             text: `Declared stop ${index + 1} was not observed: the capture budget was used up before the script reached it.`,
           }
-        : stopNotReachedReason(index),
+        : stopNotReachedReason(index, CODES),
     ),
     ...capturedStopReasons(
       stops,
       entries.filter((entry) => entry.type === 'source'),
+      CODES,
     ),
     ...closingReasons(
       {
@@ -91,6 +92,7 @@ export function evaluateNodeScriptCapture(
           end?.captureBudgetExhausted === true,
       },
       entries.some((entry) => entry.type === 'output-truncated'),
+      CODES,
     ),
   ]
 }

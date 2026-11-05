@@ -122,7 +122,7 @@ function nodeScriptSaveHelp() {
       'codebook_continue until the run reads ended, then explain the stops in chat as before.',
       'codebook_stop (or the learner presses Save learning replay) seals the history; a history that is unavailable or failed saves nothing.',
       'codebook_explain_node_history with expectedRevision 0 (or the current revision) and content whose steps cite every stop you explained, the end, and optionally the output.',
-      'Claim a saved replay only on complete coverage: the run resource reports learningCoverage complete and captureMissing an empty list. A partial run (stops never reached, stopped, limit) saves with its missing stops named.',
+      'Claim a saved replay only on complete coverage: the run resource reports learningCoverage complete and captureMissing an empty list. A partial run (stops never reached, stopped, limit) saves with its missing stops named. A script that ended before its first stop (for example Cannot find module) is kept too: its output and end are the observed result, and its declared stops are named never reached; only a run that never started leaves no history.',
     ],
     example: {
       tool: 'codebook_explain_node_history',
