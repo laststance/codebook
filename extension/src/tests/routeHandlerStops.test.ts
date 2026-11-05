@@ -54,6 +54,39 @@ test('a route-handler stop declared after operation 1 pauses in the POST the pag
   assert.equal(journalTypes(harness).includes('route-handler.armed'), true)
 })
 
+// Value: protects=AC 2 at a route-handler pause the chat-facing inspection reads the handler's locals (text, body.text) as primitives, and the request object (a NextRequest Proxy) is kept as an object marker, never a member; fails_when=the route-handler pause publishes no values, reads a declared path as undefined, or records a member of the request; no_claim=a real NextRequest Proxy (a plain object stands in; the marker rule is typeof) and the saved replay's native debugger scope (covered by the shared capture tests)
+// why_new=routeHandler*.test.ts never declare an inspection, so the shared inspection tests never ran on a route-handler snapshot; seam=none
+test('a route-handler pause records the typed text and body text as values and the request as an object marker', async (context) => {
+  // Arrange
+  const harness = await routeHandlerRunHarness(context, {
+    extra: {
+      inspections: [
+        { path: 'text', mode: 'value', required: true },
+        { path: 'body.text', mode: 'value', required: true },
+        { path: 'request', mode: 'value', required: false },
+      ],
+      inspectionScope: {
+        text: 'Learn route handlers',
+        body: { text: 'Learn route handlers' },
+        request: { method: 'POST', url: 'request-member-4c1e' },
+      },
+    },
+  })
+  await harness.run.prepare()
+  await sendOperation(harness, 1)
+  sendRequest(harness, '9', 'POST', '/api/todos')
+  // Act
+  routeHandlerHit(harness)
+  const snapshot = await publishedPause(harness)
+  // Assert
+  assert.deepEqual(JSON.parse(JSON.stringify(snapshot.values)), {
+    'value:text': 'Learn route handlers',
+    'value:body.text': 'Learn route handlers',
+    'value:request': { type: 'object' },
+  })
+  assert.doesNotMatch(JSON.stringify(harness.run.view()), /request-member-4c1e/)
+})
+
 // Value: protects=a chat that follows the documented flow can read the manifest before input in a run whose only stop is a route handler; fails_when=ready is published with no manifest, the manifest names JavaScript or map hashes of a module that does not exist yet, or sealedAtPause is missing; no_claim=the hashes of the pause (the pause seals its own)
 test('a run whose only stop is a route handler has a manifest with the route file hash before any operation', async (context) => {
   // Arrange
