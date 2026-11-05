@@ -171,6 +171,9 @@ export async function nativeParticipantsHarness(
     sequence = 0,
     breakpointNumber = 0,
     currentIndex = 0
+  // The timer of a delayed server target start; a stopped server run starts no target later.
+  let serverTargetTimer: NodeJS.Timeout | undefined
+  let serverRunStopped = false
   let pausedLine = 1,
     pausedColumn = 1
   let pausedPath: string | undefined
@@ -906,16 +909,26 @@ export async function nativeParticipantsHarness(
           run.addSession(foreignServerChild)
         }
         const startTargets = (): void => {
+          // A stop that came first leaves nothing to start.
+          if (serverRunStopped) return
           run.addSession(serverParent)
           if (serverChild) run.addSession(serverChild)
         }
         if (options.serverTargetStartDelayMs)
-          setTimeout(startTargets, options.serverTargetStartDelayMs)
+          serverTargetTimer = setTimeout(
+            startTargets,
+            options.serverTargetStartDelayMs,
+          )
         else startTargets()
         return true
       },
       async stopDebugging(selected: DebugSession): Promise<void> {
         released.push(selected.id)
+        // Releasing the server run cancels a target start still waiting.
+        if (selected === serverRoot || selected === serverParent) {
+          serverRunStopped = true
+          clearTimeout(serverTargetTimer)
+        }
         run.terminated(selected)
         if (selected === root) run.terminated(sessions.browser)
         if (selected === foreignServerRoot) run.terminated(foreignServerChild)

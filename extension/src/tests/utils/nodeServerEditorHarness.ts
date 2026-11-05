@@ -66,6 +66,9 @@ export async function editorHarness(
   const stoppedSessionIds: string[] = []
   // When the target child session was announced to the debugger's tracker factory.
   let childStartedAt: number | undefined
+  // The timer of a delayed target start, and whether the run was stopped: a target never starts on a stopped run.
+  let childStartTimer: NodeJS.Timeout | undefined
+  let runStopped = false
   let tracker: vscode.DebugAdapterTracker | undefined
   let trackerFactory: vscode.DebugAdapterTrackerFactory | undefined
   let terminate: ((session: vscode.DebugSession) => void) | undefined
@@ -154,6 +157,8 @@ export async function editorHarness(
       command: string,
       arguments_?: unknown,
     ): Promise<unknown> {
+      // The target answers the binding's `requestCDPProxy` probe; it is no part of the DAP traffic the tests count.
+      if (command === 'requestCDPProxy') return {}
       // The editor passes Codebook's own requests through the same tracker as the learner's.
       const sequence = ++requestSequence
       tracker?.onWillReceiveMessage?.({
@@ -272,6 +277,8 @@ export async function editorHarness(
         // js-debug announces its root first; the root has no target and its adapter is never read.
         await trackerFactory?.createDebugAdapterTracker(rootSession)
         const startTarget = async (): Promise<void> => {
+          // A stop that came first leaves nothing to start.
+          if (runStopped) return
           childStartedAt = Date.now()
           tracker =
             (await trackerFactory?.createDebugAdapterTracker(session)) ??
@@ -288,12 +295,15 @@ export async function editorHarness(
         }
         // The target child follows its root at once, or after the delay a test asks for.
         if (options.childStartDelayMs)
-          setTimeout(startTarget, options.childStartDelayMs)
+          childStartTimer = setTimeout(startTarget, options.childStartDelayMs)
         else await startTarget()
         return true
       },
       async stopDebugging(stopped?: vscode.DebugSession): Promise<void> {
         stoppedSessionIds.push(stopped?.id ?? 'no session named')
+        // A stopped run starts no target later.
+        runStopped = true
+        clearTimeout(childStartTimer)
         // The release stops js-debug's root as well as the target; only requests for the target and its children are counted and failed, as before the root was modelled.
         if (stopped === rootSession) return
         calls.push('stopDebugging')
@@ -325,6 +335,8 @@ export async function editorHarness(
           _assertActive: unknown,
           name?: string,
         ) => {
+          // As the real binding does, ask the session before adopting it: a root that never answers holds this call open.
+          await bound.customRequest('requestCDPProxy')
           bindings.push({ name, workingDirectory })
           boundSessionIds.push(bound.id)
           return {

@@ -224,6 +224,9 @@ async function nodeRunHarness({
   const eventTimes: Array<{ type: string; at: number }> = []
   // When the target child session was announced to the run's tracker factory.
   let childStartedAt: number | undefined
+  // The timer of a delayed target start, and whether the run was stopped: a target never starts on a stopped run.
+  let childStartTimer: NodeJS.Timeout | undefined
+  let runStopped = false
   // How often the run began to check and seal its test, the step that asks Vitest for its files: nothing of the test is listed, launched or attached before it.
   let launchPreparations = 0
   /** The failed releases the launch's own listing callback heard of, beside the run's journal. */
@@ -346,6 +349,8 @@ async function nodeRunHarness({
       }
     },
     async customRequest(command: string): Promise<unknown> {
+      // The target answers the binding's `requestCDPProxy` probe; it is no part of the DAP traffic the tests count.
+      if (command === 'requestCDPProxy') return {}
       // The editor passes Codebook's own requests through the same tracker as the learner's.
       clientRequest(command)
       // A hung adapter leaves this one request unanswered for as long as the caller waits.
@@ -657,6 +662,8 @@ async function nodeRunHarness({
         listedSessions.add(rootSession.id)
         await trackerFactory?.createDebugAdapterTracker(rootSession)
         const startTarget = async (): Promise<void> => {
+          // A stop that came first leaves nothing to start.
+          if (runStopped) return
           childStartedAt = Date.now()
           listedSessions.add(session.id)
           const created =
@@ -671,12 +678,16 @@ async function nodeRunHarness({
           )
         }
         // The target child follows its root at once, or after the delay a test asks for.
-        if (childStartDelayMs > 0) setTimeout(startTarget, childStartDelayMs)
+        if (childStartDelayMs > 0)
+          childStartTimer = setTimeout(startTarget, childStartDelayMs)
         else await startTarget()
         return true
       },
       async stopDebugging(stopped?: vscode.DebugSession): Promise<void> {
         stoppedSessionIds.push(stopped?.id ?? 'no session named')
+        // A stopped run starts no target later.
+        runStopped = true
+        clearTimeout(childStartTimer)
         // The release stops js-debug's root as well as the target; only requests for the target and its children are counted and failed, as before the root was modelled.
         if (stopped === rootSession) return
         calls.push('stop-debugging')
@@ -811,7 +822,18 @@ async function nodeRunHarness({
           value: vscode.DebugSession,
           _runId: string,
           workingDirectory: string,
+          _processGroup: number,
+          signal: AbortSignal,
         ) => {
+          // As the real binding does, ask the session before adopting it: a root that never answers holds this call open until the run is stopped.
+          await Promise.race([
+            value.customRequest('requestCDPProxy'),
+            new Promise<never>((_resolve, reject) =>
+              signal.addEventListener('abort', () =>
+                reject(new Error('the run was stopped')),
+              ),
+            ),
+          ])
           boundDirectories.push(workingDirectory)
           boundSessionIds.push(value.id)
           return {
@@ -914,6 +936,8 @@ async function nodeRunHarness({
     bindingReadStarted,
     unansweredRequestStarted,
     cleanup: async (): Promise<void> => {
+      runStopped = true
+      clearTimeout(childStartTimer)
       await rm(directory, { recursive: true, force: true })
       await rm(reportDirectory, { recursive: true, force: true })
     },
@@ -973,7 +997,7 @@ test('a test that runs in its package binds its worker in that package while the
   }
 })
 
-// Value: protects=a Vitest run binds the child session that holds its worker, so its first stop is not held for the 20 s answer bound by js-debug's silent attach root; fails_when=the binding loop offers the root first (the editor stand-in adopts it, or the real binding waits its 20 s bound), so the verified worker is not the child, the root is offered, or the verification comes later than 1 s after the child started; why_new=Cycle 0085: the editor fake had one session that always answered, so the root's silence was never modelled; seam=the editor's session tree (a root whose requestCDPProxy never settles, and the target child started 100 ms later) and a binding stand-in that records the sessions it is offered; no_claim=real Vitest and js-debug timing (native check C85-3)
+// Value: protects=a Vitest run binds the child session that holds its worker, so its first stop is not held for the 20 s answer bound by js-debug's silent attach root; fails_when=the binding loop offers the root first, so the stand-in asks the root `requestCDPProxy` as the real binding does and waits on a request that never answers (the real binding waits its 20 s bound), and the preparation does not finish within 2 s, the root received a request, the verified worker is not the child, or the verification comes later than 1 s after the child started; why_new=Cycle 0085: the editor fake had one session that always answered, so the root's silence was never modelled; seam=the editor's session tree (a root whose requestCDPProxy never settles, and the target child started 100 ms later) and a binding stand-in that records the sessions it is offered; no_claim=real Vitest and js-debug timing (native check C85-3)
 test('a Vitest run verifies its worker in the target child within a second of the child starting while the attach root never answers', async () => {
   // Arrange
   const harness = await nodeRunHarness({ childStartDelayMs: 100 })
