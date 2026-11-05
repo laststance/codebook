@@ -26,7 +26,8 @@ function isPreparationWithoutApplication(
   capture: ConfiguredStudy['captures'][number],
 ): boolean {
   return (
-    study.version === MODULE_EVALUATION_STUDY_VERSION &&
+    // Formats 12 and 13 both keep the preparation attribution.
+    study.version >= MODULE_EVALUATION_STUDY_VERSION &&
     capture.status === 'absent' &&
     study.observations.some(
       (observation) =>

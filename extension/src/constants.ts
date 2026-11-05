@@ -1813,8 +1813,10 @@ export const VITE_PACKAGE_ROOT_STUDY_VERSION = 10
 export const REACT_SCRIPTS_STUDY_VERSION = 11
 /** The format of a Next study (at the repository root or with a `packageRoot`) that holds a module-evaluation observation (`scope: "module"`) or a pause in Codebook's own preparation request (`attribution: "preparation"`): the format 8 rules plus those two fields. Every other Next study keeps {@link SERVER_RENDER_STUDY_VERSION} or {@link PACKAGE_ROOT_STUDY_VERSION}; the suffix `.study.v12.json` makes Codebook 0.2.85 and older list such a study as saved by a newer Codebook and keep it. */
 export const MODULE_EVALUATION_STUDY_VERSION = 12
+/** The format of a Next study (at the repository root or with a `packageRoot`) that holds a route-handler observation (`execution: "route-handler"` with its `routeHandler` object): the format 8 rules plus those fields, and any module-evaluation field format 12 keeps. Every other Next study keeps {@link SERVER_RENDER_STUDY_VERSION}, {@link PACKAGE_ROOT_STUDY_VERSION} or {@link MODULE_EVALUATION_STUDY_VERSION}; the suffix `.study.v13.json` makes Codebook 0.2.86 and older list such a study as saved by a newer Codebook, never as a server render. */
+export const ROUTE_HANDLER_STUDY_VERSION = 13
 /** The highest study format this Codebook reads; a saved study above it is listed as saved by a newer Codebook. */
-export const READABLE_STUDY_VERSION = MODULE_EVALUATION_STUDY_VERSION
+export const READABLE_STUDY_VERSION = ROUTE_HANDLER_STUDY_VERSION
 /** The replay's operation marks closer than this many pixels stack vertically instead of overlapping. */
 export const OPERATION_MARK_STACK_PX = 24
 /** Below this webview width in pixels the operation marks show their numbers only. */
@@ -1826,6 +1828,12 @@ export const CONFIGURED_STUDY_METADATA_SUFFIX = '.study.meta.v3.json'
 // Highest existing version owns a logical study, including when its bytes are corrupt.
 // A change of the saved study format that an older Codebook cannot read takes the next format number and its own `.study.v<n>.json` suffix in this table; an older Codebook then lists such a study as saved by a newer one and keeps it, instead of failing on its schema.
 export const STUDY_STORAGE_FORMATS = [
+  {
+    version: ROUTE_HANDLER_STUDY_VERSION,
+    format: 'v13',
+    archiveSuffix: '.study.v13.json',
+    metadataSuffix: '.study.meta.v13.json',
+  },
   {
     version: MODULE_EVALUATION_STUDY_VERSION,
     format: 'v12',

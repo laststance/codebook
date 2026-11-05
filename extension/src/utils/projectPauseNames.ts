@@ -12,6 +12,7 @@ type PauseFields = {
   execution?: unknown
   attribution?: unknown
   scope?: unknown
+  routeHandler?: unknown
   operationIndex?: unknown
   declaredIndex?: unknown
   executionIndex?: unknown
@@ -35,6 +36,7 @@ const EXECUTIONS: readonly string[] = [
   'browser',
   'server-action',
   'server-render',
+  'route-handler',
 ]
 const ATTRIBUTIONS: readonly string[] = [
   'entry-load',
@@ -72,6 +74,24 @@ function pathOfStop(
   return stops[declaredIndex ?? position]?.source.path ?? 'unknown source'
 }
 
+/**
+ * Reads the request of a route-handler observation (format 13) from its loosely typed fields.
+ * Called by {@link nameOf}; other observations carry none.
+ * @param fields - The observation's fields.
+ * @returns `{ routeHandler: { method, route } }` when both are strings, else an empty object.
+ * @example routeHandlerOf({ routeHandler: { method: 'POST', route: '/api/todos', path: '/api/todos' } }) // => { routeHandler: { method: 'POST', route: '/api/todos' } }
+ */
+function routeHandlerOf(fields: PauseFields): {
+  routeHandler?: { method: string; route: string }
+} {
+  const request = fields.routeHandler as
+    { method?: unknown; route?: unknown } | undefined
+  return typeof request?.method === 'string' &&
+    typeof request.route === 'string'
+    ? { routeHandler: { method: request.method, route: request.route } }
+    : {}
+}
+
 /** Names the pause of one observation. @example nameOf({ participant: 'server' }, stops) // the Server action name */
 function nameOf(
   fields: PauseFields,
@@ -93,6 +113,7 @@ function nameOf(
     execution,
     attribution,
     ...(fields.scope === 'module' && { scope: 'module' as const }),
+    ...routeHandlerOf(fields),
     operationIndex: numberOf(fields.operationIndex),
     path: pathOfStop(stops, fields, position),
     line: lineOf(fields) ?? 1,

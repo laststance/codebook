@@ -15,7 +15,7 @@ export function assertStudyCheckpoint(
   // Configured intent, copied sources and admitted operation become immutable once acquired.
   {
     if (
-      // A Next study moves from format 8 or 9 to 12 at its first module-evaluation or preparation observation, with the configuration unchanged.
+      // A Next study moves from format 8 or 9 to 12 at its first module-evaluation or preparation observation, and from 8, 9 or 12 to 13 at its first route-handler observation, with the configuration unchanged.
       (study.version !== prior.version &&
         !isModuleEvaluationUpgrade(prior.version, study.version)) ||
       prior.configurationHash !== study.configurationHash ||

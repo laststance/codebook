@@ -388,8 +388,10 @@ export type ConfiguredRuntimeSnapshot = Omit<
   ConfiguredObservation,
   'snapshotUri' | 'interpretations'
 > & {
-  /** What ran at this pause: the page, a server action or a server render (the paused script's layer decides between the last two). */
-  execution?: 'browser' | 'server-action' | 'server-render'
+  /** What ran at this pause: the page, a server action, a server render (the paused script's layer decides between those two) or an App Router route handler, which is observed after an operation. */
+  execution?: 'browser' | 'server-action' | 'server-render' | 'route-handler'
+  /** Route-handler pauses only: the HTTP method of the matched browser request, the route pattern from the file path (`/api/boards/[id]`) and the request's pathname (`/api/boards/42`). */
+  routeHandler?: { method: string; route: string; path: string }
   /** The position of the stop in the declared stop list. */
   declaredIndex?: number
   /** The order in which the run paused its stops (0-based). */

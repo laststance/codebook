@@ -15,6 +15,7 @@ import {
   OPERATIONS_STUDY_VERSION,
   PACKAGE_ROOT_STUDY_VERSION,
   MODULE_EVALUATION_STUDY_VERSION,
+  ROUTE_HANDLER_STUDY_VERSION,
   REACT_SCRIPTS_STUDY_VERSION,
   VITE_PACKAGE_ROOT_STUDY_VERSION,
   SERVER_RENDER_STUDY_VERSION,
@@ -81,7 +82,17 @@ export const configuredObservationSchema = z.strictObject({
   snapshotUri: shortText,
   participant: z.enum(['browser', 'server']),
   // Format 8 only (checked by validateConfiguredStudyEvidence, which refuses them in format 7 and requires `execution`, `declaredIndex` and `executionIndex` in format 8): where the paused code runs, why a server render ran, and the stop's place in the declared list and in the order the run paused.
-  execution: z.enum(['browser', 'server-action', 'server-render']).optional(),
+  // `route-handler` and `routeHandler` exist in format 13 only (checked by assertObservationFormatFields): a pause in an App Router route handler's function, observed after an operation.
+  execution: z
+    .enum(['browser', 'server-action', 'server-render', 'route-handler'])
+    .optional(),
+  routeHandler: z
+    .strictObject({
+      method: shortText,
+      route: shortText,
+      path: shortText,
+    })
+    .optional(),
   // `preparation` and `scope` exist in format 12 only (checked by assertObservationFormatFields): a pause in Codebook's own preparation request, and a pause inside a module's evaluation.
   attribution: z
     .enum(['entry-load', 'after-operation', 'unconfirmed', 'preparation'])
@@ -187,6 +198,7 @@ export const configuredStudySchema = z.strictObject({
     z.literal(VITE_PACKAGE_ROOT_STUDY_VERSION),
     z.literal(REACT_SCRIPTS_STUDY_VERSION),
     z.literal(MODULE_EVALUATION_STUDY_VERSION),
+    z.literal(ROUTE_HANDLER_STUDY_VERSION),
   ]),
   workspaceKey: repositoryHashSchema,
   id: studyIdSchema,
