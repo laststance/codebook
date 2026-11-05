@@ -539,6 +539,70 @@ test('a stack refresh of a held preparation pause keeps the pause and the run co
   assert.equal(snapshot.attribution, 'preparation')
 })
 
+// Value: protects=AC 8 / R5 (two holds): a second preparation pause that pauses before the first continue is answered keeps the first hold's time, so the setup budget does not run out right after the last continue; fails_when=the second pause overwrites the start of the first hold and only its own time moves the deadline; no_claim=real Next
+test('a second preparation pause that pauses before the first continue is answered keeps the first hold in the held time', async (context) => {
+  // Arrange
+  const { harness, prepared } = await heldReadiness(
+    context,
+    {
+      operations: {
+        operations: [],
+        stopOperations: [0, 0],
+        stopParticipants: ['server', 'server'],
+      },
+    },
+    [SECOND_STOP],
+  )
+  evaluateModule(harness, { hitBreakpoints: ['owned-breakpoint'] })
+  const first = await publishedPause(harness)
+  // Act: the learner holds the first pause for a while
+  // gstack-timing-ok: the held time is wall time by contract; 500 ms of real hold of the first pause (far above the few polling ticks the second pause is held for) gives the lower bound the assertion below reads, and a lower bound cannot flake.
+  await new Promise((resolve) => setTimeout(resolve, 500))
+  // The first continue is sent, its resume events arrive, its answer is still pending
+  const releaseAnswer = harness.server!.holdNextContinueAnswer()
+  const firstContinued = harness.run.continue('server', first.pause)
+  await waitUntil(
+    () => harness.server!.continues.length === 1,
+    'the first continue sent',
+  )
+  // The second stop pauses in the same request before the first answer arrives
+  harness.server!.setScriptText(
+    'server',
+    harness.server!.instanceText(';AAAA,MAAM', harness.server!.sealedUrl),
+  )
+  harness.server!.hit({
+    stack: 'evaluation',
+    generated: { line: 1, column: 6 },
+    source: { line: 1, column: 7 },
+    hitBreakpoints: ['owned-breakpoint-2'],
+  })
+  await waitUntil(
+    () =>
+      journalTypes(harness).filter((type) => type === 'source.sealed')
+        .length === 2,
+    'the second stop sealed while the first answer is pending',
+  )
+  releaseAnswer()
+  await firstContinued
+  const second = await waitUntil(
+    () => harness.run.view().snapshots[1],
+    'the second pause',
+  )
+  await harness.run.continue('server', second.pause)
+  harness.releaseReadiness()
+  await waitUntil(
+    () => harness.navigations.length >= 1,
+    'the entry navigation started',
+  )
+  harness.setDocumentReadyState('complete')
+  await prepared
+  // Assert
+  assert.deepEqual([...harness.run.view().failures], [])
+  // The first hold's 500 ms still count although the second pause started before its continue was answered.
+  // gstack-timing-ok: a lower bound of the wall time the test itself held the first pause for.
+  assert.ok((harness.run.view().preparationHeldMs ?? 0) >= 500)
+})
+
 // Value: protects=R11 (complete run): a preparation pause owes no image, so a run whose only server stop paused in the readiness request still ends with every owed image held; fails_when=the absent image makes the capture outcome incomplete and the study partial; no_claim=the before and after images of a real page
 test('a run whose server stop paused in the readiness request keeps the pause image absent and its capture outcome complete', async (context) => {
   // Arrange

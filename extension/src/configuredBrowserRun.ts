@@ -2796,7 +2796,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     participant.unannouncedPause = undefined
     // The readiness request and the warm-up page wait for the continue; their bounds stop counting.
     window.timeout.hold()
-    window.heldAtMs = Date.now()
+    // A hold that is still open (the earlier stop's continue is unanswered) keeps its start, so its time is not lost.
+    window.heldAtMs ??= Date.now()
     window.heldDuringRequest = true
     participant.stopped = { event: held.event }
     this.settledStops.add(event)
