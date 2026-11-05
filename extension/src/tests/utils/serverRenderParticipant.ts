@@ -110,9 +110,14 @@ export interface ServerHit {
    * The pause stands in a function of the module (`call`) or in the module's own top-level code while Next evaluates it for the first time (`evaluation`): the recorded stack of E2 has the module script's anonymous top frame, the module factory named like the script's address, then `__webpack_require__`.
    * Without it the pause has the one frame of the stop.
    */
-  stack?: 'call' | 'evaluation' | 'route-handler' | 'route-handler-after-await'
+  stack?:
+    | 'call'
+    | 'evaluation'
+    | 'route-handler'
+    | 'route-handler-after-await'
+    | 'route-handler-after-timer'
   /**
-   * With `stack: 'route-handler'` or `'route-handler-after-await'`: the handler frame's function name (default `POST`). The raw CDP stacks E2 recorded (Cycle 0087, Next 16.2, `next dev --webpack`): before the handler's first `await`, the handler frame in the route file, then `run` (the async context) and `do` (Next's route module); after it, the handler frame and `processTicksAndRejections`, with `run` and `do` at the head of the `asyncStackTrace`. A debugger's display names them `AsyncLocalStorage.run` and `AppRouteRouteModule.do`, as E1 recorded through DAP; an alias (`export { handle as POST }`) runs a function named `handle`.
+   * With `stack: 'route-handler'`, `'route-handler-after-await'` or `'route-handler-after-timer'`: the handler frame's function name (default `POST`). The raw CDP stacks E2 recorded (Cycle 0087, Next 16.2, `next dev --webpack`): before the handler's first `await`, the handler frame in the route file, then `run` (the async context) and `do` (Next's route module); after it, the handler frame and `processTicksAndRejections`, with `run` and `do` at the head of the `asyncStackTrace`. A debugger's display names them `AsyncLocalStorage.run` and `AppRouteRouteModule.do`, as E1 recorded through DAP; an alias (`export { handle as POST }`) runs a function named `handle`. After an awaited timer (E3, Cycle 0087, the same Next, `await new Promise((resolve) => setTimeout(resolve, 500))`) the handler frame stands alone, the async stack's first segment holds only `processTicksAndRejections` and `run` and `do` lead the segment before it.
    */
   handlerName?: string
   /** The reason both channels report for the pause (default `breakpoint` for the DAP `stopped`, `other` for the CDP pause), such as `exception`. */
@@ -625,10 +630,11 @@ export function createServerParticipant(parts: ServerParticipantParts) {
     } else if (!announced.has(scriptId)) announce(scriptId)
     currentHit = ++hitNumber
     if (hit.stack === 'evaluation') evaluationHits.add(currentHit)
-    if (
+    const isRouteHandlerStack =
       hit.stack === 'route-handler' ||
-      hit.stack === 'route-handler-after-await'
-    )
+      hit.stack === 'route-handler-after-await' ||
+      hit.stack === 'route-handler-after-timer'
+    if (isRouteHandlerStack)
       routeHandlerHits.set(currentHit, hit.handlerName ?? 'POST')
     currentStopReason = hit.stopReason ?? 'breakpoint'
     currentHitBreakpointIds = hit.hitBreakpoints?.map((id) => adapterId({ id }))
@@ -650,8 +656,7 @@ export function createServerParticipant(parts: ServerParticipantParts) {
             functionName:
               hit.stack === 'call'
                 ? 'serverStep'
-                : hit.stack === 'route-handler' ||
-                    hit.stack === 'route-handler-after-await'
+                : isRouteHandlerStack
                   ? (hit.handlerName ?? 'POST')
                   : '',
           }),
@@ -691,6 +696,42 @@ export function createServerParticipant(parts: ServerParticipantParts) {
               columnNumber: 0,
             },
           ],
+        },
+      })
+    }
+    if (hit.stack === 'route-handler-after-timer') {
+      // Resumed after an awaited timer: the handler alone, a first async segment of Node's continuation only, Next's caller in the segment before it (E3).
+      Object.assign(own, {
+        asyncStackTrace: {
+          description: 'await',
+          callFrames: [
+            {
+              functionName: 'processTicksAndRejections',
+              scriptId: 'server-node',
+              url: 'node:internal/process/task_queues',
+              lineNumber: 104,
+              columnNumber: 0,
+            },
+          ],
+          parent: {
+            description: 'await',
+            callFrames: [
+              {
+                functionName: 'run',
+                scriptId: 'server-node-context',
+                url: 'node:internal/async_local_storage/async_context_frame',
+                lineNumber: 60,
+                columnNumber: 0,
+              },
+              {
+                functionName: 'do',
+                scriptId: 'server-app-route',
+                url: 'file:///repo/node_modules/next/dist/compiled/next-server/app-route.runtime.dev.js',
+                lineNumber: 4,
+                columnNumber: 0,
+              },
+            ],
+          },
         },
       })
     }

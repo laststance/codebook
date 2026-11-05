@@ -108,6 +108,51 @@ test('a GET handler hit while only a POST was sent is resumed and the POST then 
   )
 })
 
+// Value: protects=native C87-2 a hit the run resumes (here the polling GET) that names the stop's own breakpoint id, as js-debug's stopped event always does, is resumed and the POST then pauses; fails_when=the stop's own id counts as a learner's breakpoint, the hit is left to the ordinary handling and the run fails "Unexpected or additional server stop"; no_claim=real js-debug numbering (the harness adapter numbers the stop's breakpoint)
+test("a GET handler hit naming the stop's own breakpoint id is resumed and the POST then pauses", async (context) => {
+  // Arrange
+  const harness = await routeHandlerRunHarness(context)
+  await harness.run.prepare()
+  await sendOperation(harness, 1)
+  sendRequest(harness, '9', 'POST', '/api/todos')
+  // Act
+  routeHandlerHit(harness, {
+    handlerName: 'GET',
+    hitBreakpoints: ['owned-breakpoint'],
+  })
+  await waitUntil(
+    () =>
+      harness.server!.continues.length === 1 ||
+      harness.run.view().failures.length > 0,
+    'the GET hit resumed or the run failed',
+  )
+  routeHandlerHit(harness, {
+    handlerName: 'POST',
+    hitBreakpoints: ['owned-breakpoint'],
+  })
+  const snapshot = await waitUntil(
+    () =>
+      harness.run.view().participants.server?.snapshot ??
+      (harness.run.view().failures.length > 0 ? 'failed' : undefined),
+    'the POST pause or a failure',
+  )
+  // Assert
+  assert.deepEqual(
+    {
+      method:
+        typeof snapshot === 'string' ? snapshot : snapshot.routeHandler?.method,
+      resumed: harness.run
+        .view()
+        .events.filter(
+          (event) => event.type === 'breakpoint.route-handler-resumed',
+        )
+        .map((event) => (event.detail as { reason: string }).reason),
+      failures: [...harness.run.view().failures],
+    },
+    { method: 'POST', resumed: ['other-method'], failures: [] },
+  )
+})
+
 // Value: protects=identity contract a hit with no browser request (the server fetching its own API) is resumed after the bounded wait, counted per reason, and the run then ends SERVER_STOP_NOT_REACHED with details.routeHandler and the resumed hits; fails_when=the hit is published, or the failure lacks the route, the reason or the count; no_claim=the 20 s not-reached bound in real time (the harness clock stands for it; the 1000 ms wait for the browser request runs in real time)
 test('a route-handler hit with no browser request is resumed and the run ends SERVER_STOP_NOT_REACHED naming the route and the resumed hit', async (context) => {
   // Arrange

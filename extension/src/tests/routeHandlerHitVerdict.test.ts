@@ -266,12 +266,91 @@ test('the route-handler stack is recognised by the raw CDP frame names, also aft
   // Act
   const results = [
     routeHandlerStackOf([handler, run, routeModule], '12', undefined, urlOf),
-    routeHandlerStackOf([handler, resumed], '12', asyncCallers, urlOf),
+    routeHandlerStackOf(
+      [handler, resumed],
+      '12',
+      { callFrames: asyncCallers },
+      urlOf,
+    ),
     routeHandlerStackOf([handler, resumed], '12', undefined, urlOf),
     routeHandlerStackOf(
       [handler, resumed],
       '12',
-      [{ functionName: 'do', url: 'file:///repo/lib/queue.js' }],
+      {
+        callFrames: [{ functionName: 'do', url: 'file:///repo/lib/queue.js' }],
+      },
+      urlOf,
+    ),
+  ]
+  // Assert
+  assert.deepEqual(results, [
+    { handlerName: 'POST' },
+    { handlerName: 'POST' },
+    undefined,
+    undefined,
+  ])
+})
+
+// Value: protects=native C87-2 after an awaited timer (E3: the handler alone on the synchronous stack, Node's continuation alone in the async stack's first segment, `run` and `do` in the segment before it) the stack is still the route handler's; fails_when=only the first async segment is read, so a stop after any timer is resumed as unclassified; no_claim=Next versions other than E3's 16.2
+test('the route-handler stack is recognised after the handler awaited a timer', () => {
+  // Arrange
+  const handler = { functionName: 'POST', location: { scriptId: '3543' } }
+  const routeModuleSegment = {
+    callFrames: [
+      {
+        functionName: 'run',
+        url: 'node:internal/async_local_storage/async_context_frame',
+      },
+      {
+        functionName: 'do',
+        url: 'file:///repo/node_modules/next/dist/compiled/next-server/app-route.runtime.dev.js',
+      },
+    ],
+  }
+  const continuationOnly = {
+    callFrames: [
+      {
+        functionName: 'processTicksAndRejections',
+        url: 'node:internal/process/task_queues',
+      },
+    ],
+  }
+  const timerFrames = [
+    { functionName: 'runNextTicks', location: { scriptId: '33' } },
+    { functionName: 'listOnTimeout', location: { scriptId: '34' } },
+    { functionName: 'processTimers', location: { scriptId: '34' } },
+  ]
+  const urls: Record<string, string> = {
+    '33': 'node:internal/process/task_queues',
+    '34': 'node:internal/timers',
+  }
+  const urlOf = (scriptId: string): string | undefined => urls[scriptId]
+  // Act
+  const results = [
+    routeHandlerStackOf(
+      [handler],
+      '3543',
+      { ...continuationOnly, parent: routeModuleSegment },
+      urlOf,
+    ),
+    routeHandlerStackOf(
+      [handler, ...timerFrames],
+      '3543',
+      routeModuleSegment,
+      urlOf,
+    ),
+    routeHandlerStackOf([handler], '3543', continuationOnly, urlOf),
+    routeHandlerStackOf(
+      [handler],
+      '3543',
+      {
+        ...continuationOnly,
+        parent: {
+          callFrames: [
+            { functionName: 'do', url: 'file:///repo/lib/queue.js' },
+          ],
+        },
+      },
       urlOf,
     ),
   ]

@@ -4,6 +4,8 @@ import { readFile, realpath } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+
 import {
   ROUTE_FILE,
   journalTypes,
@@ -79,6 +81,44 @@ test('a route-handler stop on a line after the handler awaited the request body 
         route: '/api/todos',
         path: '/api/todos',
       },
+      continues: 0,
+      failures: [],
+    },
+  )
+})
+
+// Value: protects=native C87-2 a stop on a line after the handler awaited a timer (the random 500 branch) pauses in the POST when the hit names the stop's own breakpoint, as js-debug does; fails_when=the classifier reads only the async stack's first segment (Node's continuation alone) and resumes the hit as unclassified, or the stop's own id counts as a learner's and the run fails "Unexpected or additional server stop"; no_claim=real Next timing (the harness answers the raw CDP stack E3 recorded after the timer)
+test('a route-handler stop on a line after the handler awaited a timer pauses in the POST', async (context) => {
+  // Arrange
+  const harness = await routeHandlerRunHarness(context)
+  await harness.run.prepare()
+  await sendOperation(harness, 1)
+  sendRequest(harness, '9', 'POST', '/api/todos')
+  // Act
+  routeHandlerHit(harness, {
+    stack: 'route-handler-after-timer',
+    hitBreakpoints: ['owned-breakpoint'],
+  })
+  const snapshot = await waitUntil(
+    () =>
+      harness.run.view().participants.server?.snapshot ??
+      (harness.run.view().failures.length > 0 ? 'failed' : undefined),
+    'the route-handler pause or a failure',
+  )
+  // Assert
+  assert.deepEqual(
+    {
+      execution: typeof snapshot === 'string' ? snapshot : snapshot.execution,
+      method:
+        typeof snapshot === 'string'
+          ? undefined
+          : snapshot.routeHandler?.method,
+      continues: harness.server!.continues.length,
+      failures: [...harness.run.view().failures],
+    },
+    {
+      execution: 'route-handler',
+      method: 'POST',
       continues: 0,
       failures: [],
     },

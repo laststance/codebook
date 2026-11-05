@@ -10,15 +10,23 @@ export interface RouteHandlerAsyncFrame {
   url?: string
 }
 
+/** The part of `Debugger.paused`'s `asyncStackTrace` that {@link routeHandlerStackOf} reads: one segment's frames and the segment before it. */
+export interface RouteHandlerAsyncStack {
+  callFrames: readonly RouteHandlerAsyncFrame[]
+  parent?: RouteHandlerAsyncStack
+}
+
 /** Next's route module method that calls a route handler: CDP names it `do` (E2, Cycle 0087, Next 16.2 `next dev --webpack`); a debugger's display adds the class (`AppRouteRouteModule.do`). */
 const ROUTE_MODULE_METHOD = 'do'
 /** The async-context frame Next puts between the handler and its route module: CDP's `run` (`AsyncLocalStorage.run` in a debugger's display). */
 const ASYNC_CONTEXT_METHOD = 'run'
 /** The script of Next's route module: the compiled `app-route` runtime (`next/dist/compiled/next-server/app-route.runtime.dev.js`) or its source module (`route-modules/app-route/module`). */
 const ROUTE_MODULE_SCRIPT = /app-route|route-modules/
-/** The Node frames that resume an async function after an `await` (E2: `processTicksAndRejections`); nothing of the caller is left on the synchronous stack. */
+/** The Node frames that resume an async function after an `await`: the microtask queue (E2: `processTicksAndRejections`) or a timer or immediate that settled the awaited promise; nothing of the caller is left on the synchronous stack. */
 const CONTINUATION_FRAME =
-  /^(?:process\.)?(?:processTicksAndRejections|runMicrotasks)$/
+  /^(?:process\.)?(?:processTicksAndRejections|runMicrotasks|runNextTicks|listOnTimeout|processTimers|processImmediate)$/
+/** The address prefix of Node's own scripts (`node:internal/timers`). */
+const NODE_INTERNAL_SCRIPT = 'node:'
 
 /**
  * Gives a frame name's method part: `AppRouteRouteModule.do` and `do` both read `do`.
@@ -64,13 +72,51 @@ function calledByRouteModule(
 }
 
 /**
+ * Says whether a frame is Node's own work that resumes an awaiting function: a continuation frame by name, or any frame of Node's own scripts.
+ * @param name - The frame's function name.
+ * @param url - The frame's script address; `undefined` or empty when unknown.
+ * @returns `true` for Node's continuation work.
+ * @example isContinuationFrame('listOnTimeout', 'node:internal/timers') // => true
+ */
+function isContinuationFrame(
+  name: string | undefined,
+  url: string | undefined,
+): boolean {
+  return (
+    CONTINUATION_FRAME.test(name ?? '') ||
+    Boolean(url?.startsWith(NODE_INTERNAL_SCRIPT))
+  )
+}
+
+/**
+ * Gives the first async stack segment that holds a caller: segments of only Node's continuation work (a timer list that resumed the awaiting function) are passed over.
+ * @param stack - The paused event's async stack; `undefined` when the event has none.
+ * @returns The segment's frames with their names and script addresses; empty when no segment holds a caller.
+ * @example firstCallerSegment({ callFrames: [{ functionName: 'listOnTimeout', url: 'node:internal/timers' }], parent: { callFrames: [{ functionName: 'do', url: '…/app-route.runtime.dev.js' }] } }) // => [{ name: 'do', url: '…/app-route.runtime.dev.js' }]
+ */
+function firstCallerSegment(
+  stack: RouteHandlerAsyncStack | undefined,
+): { name?: string; url?: string }[] {
+  // The chain is short (Node's default async stack depth); each segment is read once.
+  for (let segment = stack; segment; segment = segment.parent) {
+    const frames = segment.callFrames.map((frame) => ({
+      name: frame.functionName,
+      url: frame.url,
+    }))
+    if (frames.some((frame) => !isContinuationFrame(frame.name, frame.url)))
+      return frames
+  }
+  return []
+}
+
+/**
  * Reads the handler frame of a route-handler stack, or `undefined` when the stack is no route-handler call.
  *
  * Why it exists: the same line of a route file only is a route-handler hit when the handler was called by Next's route module, and the handler's function name is the evidence for the method. Called by {@link ConfiguredBrowserRun} for each hit of an armed route-handler stop; a stack Next changed is resumed as `unclassified`, never published.
- * E2 (Cycle 0087) recorded both shapes CDP gives: before the handler's first `await` the synchronous frames are the handler, `run` and `do`; after it they are the handler and `processTicksAndRejections`, and `run` and `do` lead the `asyncStackTrace`.
+ * E2 (Cycle 0087) recorded both shapes CDP gives: before the handler's first `await` the synchronous frames are the handler, `run` and `do`; after it they are the handler and `processTicksAndRejections`, and `run` and `do` lead the `asyncStackTrace`. After an awaited timer (C87-2: `await new Promise((resolve) => setTimeout(resolve, 500))`) Node's timer frames may stand below the handler, and a segment of only those may come before the caller's.
  * @param frames - The paused event's call frames, top frame first.
  * @param moduleScriptId - The id of the route file's script (the top frame must be in it).
- * @param asyncFrames - The first segment of the event's `asyncStackTrace` call frames; `undefined` when the event has none.
+ * @param asyncStack - The event's `asyncStackTrace`; `undefined` when the event has none.
  * @param urlOf - Gives a synchronous frame's script address by its script id (CDP frames carry none); `undefined` when unknown.
  * @returns
  * - `{ handlerName }` when the frames from the top down to the handler are in the route file and the handler is called by Next's route module, on the synchronous stack or, after an `await`, at the head of the async stack
@@ -82,13 +128,13 @@ function calledByRouteModule(
  *     { functionName: 'processTicksAndRejections', location: { scriptId: '32' } },
  *   ],
  *   '12',
- *   [{ functionName: 'run', url: 'node:internal/async_local_storage/async_context_frame' }, { functionName: 'do', url: 'file:///app/node_modules/next/dist/compiled/next-server/app-route.runtime.dev.js' }],
+ *   { callFrames: [{ functionName: 'run', url: 'node:internal/async_local_storage/async_context_frame' }, { functionName: 'do', url: 'file:///app/node_modules/next/dist/compiled/next-server/app-route.runtime.dev.js' }] },
  * ) // => { handlerName: 'POST' }
  */
 export function routeHandlerStackOf(
   frames: readonly RouteHandlerFrame[],
   moduleScriptId: string,
-  asyncFrames?: readonly RouteHandlerAsyncFrame[],
+  asyncStack?: RouteHandlerAsyncStack,
   urlOf: (scriptId: string) => string | undefined = () => undefined,
 ): { handlerName: string } | undefined {
   if (frames[0]?.location?.scriptId !== moduleScriptId) return undefined
@@ -104,13 +150,11 @@ export function routeHandlerStackOf(
     url: frame.location ? urlOf(frame.location.scriptId) : undefined,
   }))
   if (calledByRouteModule(synchronousCallers)) return handler
-  // Resumed after an `await`: only Node's continuation frames follow, and the caller leads the async stack.
-  const isResumed = below.every((frame) =>
-    CONTINUATION_FRAME.test(frame.functionName ?? ''),
+  // Resumed after an `await`: only Node's continuation work follows, and the caller leads the async stack.
+  const isResumed = synchronousCallers.every((frame) =>
+    isContinuationFrame(frame.name, frame.url),
   )
-  const asyncCallers = (asyncFrames ?? []).map((frame) => ({
-    name: frame.functionName,
-    url: frame.url,
-  }))
-  return isResumed && calledByRouteModule(asyncCallers) ? handler : undefined
+  return isResumed && calledByRouteModule(firstCallerSegment(asyncStack))
+    ? handler
+    : undefined
 }

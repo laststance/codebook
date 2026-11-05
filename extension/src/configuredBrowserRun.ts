@@ -2986,7 +2986,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const handler = routeHandlerStackOf(
       held.event.callFrames,
       scriptId,
-      held.event.asyncStackTrace?.callFrames,
+      held.event.asyncStackTrace,
       (frameScriptId) => participant.scriptUrls.get(frameScriptId),
     )
     const hitRoute = handler
@@ -3925,9 +3925,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /**
    * Tells whether a server pause names a breakpoint id that no server stop of the run owns, for {@link unexpectedHitVerdict}'s React-copy branch.
    * Why it exists: React's copy of an owned stop's module is resumed only when the run's own breakpoints caused the pause; a learner's breakpoint at the same place must keep the ordinary handling (D12/D19).
+   * Also called by {@link settleRouteHandlerHit} before it resumes a route-handler hit: an armed route-handler stop's breakpoint is the run's own, though its pause has not adopted it into the stops yet.
    * @param session - The server session whose adapter numbered the breakpoints.
    * @param hitIds - The adapter's ids of the breakpoints the pause hit.
-   * @returns `true` when at least one id is named and some id is not a server stop's breakpoint (live or retired); `false` for no ids or only the run's own.
+   * @returns `true` when at least one id is named and some id is neither a server stop's breakpoint (live or retired) nor an armed route-handler stop's; `false` for no ids or only the run's own.
    * @example this.namesForeignServerBreakpoint(session, [41, 9]) // true when 9 is the learner's breakpoint
    */
   private namesForeignServerBreakpoint(
@@ -3935,9 +3936,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     hitIds: readonly number[] | undefined,
   ): boolean {
     if (!hitIds || hitIds.length === 0) return false
+    const routeHandlerIds = new Set(
+      this.routeHandlerStops.map((entry) =>
+        entry.breakpoint?.acknowledgedId(session),
+      ),
+    )
+    // An armed route-handler stop's id is the run's own; only the ids left decide.
+    const otherIds = hitIds.filter((id) => !routeHandlerIds.has(id))
+    if (otherIds.length === 0) return false
     return !this.hitsOnlyBreakpointsOf(
       session,
-      hitIds,
+      otherIds,
       (stop) => stop.participant === 'server',
     )
   }
