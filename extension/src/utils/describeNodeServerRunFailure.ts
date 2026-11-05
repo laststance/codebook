@@ -2,6 +2,7 @@ import { homedir } from 'node:os'
 
 import {
   NODE_SERVER_FAILED_STOPS_NAMING_PID,
+  NODE_SERVER_RUN_WORDS,
   NODE_SERVER_FAILURE_CAUSE_LIMIT_CHARS,
   NODE_SERVER_READY_TIMEOUT_MS,
   NODE_SERVER_STOP_DEADLINE_MS,
@@ -61,11 +62,15 @@ export function sanitizeRunCause(
     .slice(0, NODE_SERVER_FAILURE_CAUSE_LIMIT_CHARS)
 }
 
+/** The words a run's sentences use for what it runs: the noun ("server", "script") and the profile name ("node-server", "node-script"). */
+export type NodeRunWords = { noun: string; profile: string }
+
 /**
  * Builds the `RUNTIME_FAILED` of a failed preparation step, naming the step and the sanitized cause.
  * @param step - What the run was doing, as a gerund phrase ("attaching the debugger").
  * @param cause - What was thrown.
  * @param workspace - The opened repository's real root.
+ * @param words - What the run calls itself; the server's by default.
  * @returns The typed error.
  * @example stepFailedError('attaching the debugger', new Error('refused'), '/repo').message // => 'The node-server run failed while attaching the debugger: refused.'
  */
@@ -73,11 +78,12 @@ export function stepFailedError(
   step: string,
   cause: unknown,
   workspace: string,
+  words: NodeRunWords = NODE_SERVER_RUN_WORDS,
 ): StudyError {
   const text = sanitizeRunCause(cause, workspace)
   return new StudyError(
     'RUNTIME_FAILED',
-    `The node-server run failed while ${step}: ${text.replace(/\.$/, '')}.`,
+    `The ${words.profile} run failed while ${step}: ${text.replace(/\.$/, '')}.`,
     text,
   )
 }
@@ -134,16 +140,18 @@ export function serverNotListeningError(
  * Builds the retryable `RUNTIME_FAILED` of a stop that did not finish inside its deadline, naming what remains; from the second failure it names the pid for the learner to end.
  * @param remaining - The owned pid still running and the declared port.
  * @param failedStops - How many stops failed including this one.
+ * @param noun - What the run calls the process it runs; the server's by default.
  * @returns The typed error.
  * @example stopFailedError({ pid: 4242, port: 4100 }, 2).message // => '... Ask the learner to end process 4242 ...'
  */
 export function stopFailedError(
   remaining: { pid?: number; port: number },
   failedStops: number,
+  noun: string = NODE_SERVER_RUN_WORDS.noun,
 ): StudyError {
   const what =
     remaining.pid === undefined
-      ? `the debug session of the server on port ${remaining.port}`
+      ? `the debug session of the ${noun} on port ${remaining.port}`
       : `process ${remaining.pid} (it holds port ${remaining.port})`
   const retry =
     failedStops >= NODE_SERVER_FAILED_STOPS_NAMING_PID &&
@@ -152,6 +160,6 @@ export function stopFailedError(
       : ' Stop again with codebook_stop.'
   return new StudyError(
     'RUNTIME_FAILED',
-    `Codebook could not finish stopping the server within ${NODE_SERVER_STOP_DEADLINE_MS / 1_000} s: ${what} is still there.${retry}`,
+    `Codebook could not finish stopping the ${noun} within ${NODE_SERVER_STOP_DEADLINE_MS / 1_000} s: ${what} is still there.${retry}`,
   )
 }

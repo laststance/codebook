@@ -18,7 +18,7 @@ export type WatchedProcess = {
   exit: Promise<void>
   /** Says whether the process has closed. */
   hasExited(): boolean
-  /** Settles when the process has exited, which its `exit` event reports before `close`: a descendant that holds the output pipes open delays `close` but not this. */
+  /** Settles when the process has exited, which its `exit` event reports before `close`, or with no code and no signal when it never started: a descendant that holds the output pipes open delays `close` but not this. */
   exitEvent: Promise<OwnedProcessExitFact>
   /** How the process ended once its `exit` event fired, or `undefined` before. */
   exitFact(): OwnedProcessExitFact | undefined
@@ -51,12 +51,14 @@ export function watchOwnedProcess(
       resolve()
     }),
   )
-  const exitEvent = new Promise<OwnedProcessExitFact>((resolve) =>
+  const exitEvent = new Promise<OwnedProcessExitFact>((resolve) => {
     child.once('exit', (exitCode, signal) => {
       exitFact = { exitCode, signal }
       resolve(exitFact)
-    }),
-  )
+    })
+    // A spawn failure emits `error` and no `exit`: settle with a fact that says the process never ran, so a waiter does not hang. `exitFact()` stays `undefined`.
+    child.once('error', () => resolve({ exitCode: null, signal: null }))
+  })
   child.once('error', (cause) => {
     spawnError = cause
   })

@@ -1,6 +1,7 @@
 import type { ConfiguredDescriptor } from './configuredStudySchemas'
 import {
   NODE_SERVER_EXIT_SETTLE_MS,
+  NODE_SERVER_RUN_WORDS,
   NODE_SERVER_REQUEST_CAPTURE_LIMIT,
   NODE_SERVER_STOP_DEADLINE_MS,
   NODE_TEST_ATTACH_TIMEOUT_MS,
@@ -28,6 +29,7 @@ import {
   type LaunchedGroupVerdict,
 } from './utils/confirmLaunchedGroup'
 import {
+  type NodeRunWords,
   sanitizeRunCause,
   serverExitedError,
   stepFailedError,
@@ -143,6 +145,8 @@ export type NodeProcessRunInput = {
   notify: () => void
   hooks: NodeProcessRunHooks
   options?: NodeProcessRunOptions
+  /** The nouns the run's error and refusal sentences use; the server's when absent. */
+  words?: NodeRunWords
 }
 
 /** What one preparation does that depends on what is run. */
@@ -302,6 +306,16 @@ export class NodeProcessRun {
     return this.input.dependencies
   }
 
+  /** The nouns this run's sentences use (the server's unless its owner passed others). */
+  private get words(): NodeRunWords {
+    return this.input.words ?? NODE_SERVER_RUN_WORDS
+  }
+
+  /** The `RUNTIME_FAILED` of a failed step, worded for this run's kind ({@link stepFailedError}). */
+  private stepFailed(step: string, cause: unknown): StudyError {
+    return stepFailedError(step, cause, this.input.workspace, this.words)
+  }
+
   private get hooks(): NodeProcessRunHooks {
     return this.input.hooks
   }
@@ -456,7 +470,7 @@ export class NodeProcessRun {
       return serverExitedError(exit, server.output(), this.input.workspace)
     return error instanceof StudyError
       ? error
-      : stepFailedError('preparing', error, this.input.workspace)
+      : this.stepFailed('preparing', error)
   }
 
   /**
@@ -479,7 +493,7 @@ export class NodeProcessRun {
       return await work()
     } catch (error) {
       if (error instanceof StudyError) throw error
-      throw stepFailedError(name, error, this.input.workspace)
+      throw this.stepFailed(name, error)
     }
   }
 
@@ -504,7 +518,9 @@ export class NodeProcessRun {
     const debug = this.requireDebugger()
     await this.attachAndArm(server, launched.packageRoot, stops, attachSignal)
     preparation.beforeRelease?.()
-    await this.step('releasing the server', () => debug.releaseEntry(signal))
+    await this.step(`releasing the ${this.words.noun}`, () =>
+      debug.releaseEntry(signal),
+    )
     this.released = true
     await preparation.afterRelease()
   }
@@ -600,7 +616,7 @@ export class NodeProcessRun {
     if (pid === undefined || processGroup === undefined)
       throw new StudyError(
         'RUNTIME_FAILED',
-        'The node-server run failed while starting the server: the process has no pid.',
+        `The ${this.words.profile} run failed while starting the ${this.words.noun}: the process has no pid.`,
       )
     return { pid, processGroup }
   }
@@ -707,10 +723,9 @@ export class NodeProcessRun {
     // The owner may keep a session that ended while its process lives as its own matter (a script run bounds it by a deadline).
     if (this.hooks.onDebuggerSessionEnded?.(reason)) return
     this.failRun(
-      stepFailedError(
+      this.stepFailed(
         'watching the debug session',
         new Error(`The debug session ended: ${reason}`),
-        this.input.workspace,
       ),
     )
   }
@@ -773,7 +788,7 @@ export class NodeProcessRun {
     this.failRun(
       new StudyError(
         'PAUSE_HOLD_EXPIRED',
-        `The server stayed paused for more than ${REPOSITORY_PAUSE_HOLD_TIMEOUT_MS / 1_000} s, so Codebook ended the run without resuming the paused code.`,
+        `The ${this.words.noun} stayed paused for more than ${REPOSITORY_PAUSE_HOLD_TIMEOUT_MS / 1_000} s, so Codebook ended the run without resuming the paused code.`,
       ),
     )
   }
@@ -827,11 +842,7 @@ export class NodeProcessRun {
       .resume(pause, this.abort.signal)
       .catch((error: unknown) =>
         this.failRun(
-          stepFailedError(
-            'continuing a stop hit before readiness',
-            error,
-            this.input.workspace,
-          ),
+          this.stepFailed('continuing a stop hit before readiness', error),
         ),
       )
     this.notify()
@@ -890,11 +901,7 @@ export class NodeProcessRun {
       this.failRun(
         error instanceof StudyError
           ? error
-          : stepFailedError(
-              'capturing a declared stop',
-              error,
-              this.input.workspace,
-            ),
+          : this.stepFailed('capturing a declared stop', error),
       )
     }
   }
@@ -985,8 +992,8 @@ export class NodeProcessRun {
     throw new StudyError(
       'LEARNER_PAUSED',
       held?.kind === 'unattributed'
-        ? 'The server stopped at a declared line outside the request; Codebook never resumes it. Ask the learner to continue it in the debugger.'
-        : 'The learner paused the server; Codebook never resumes it. Ask the learner to continue it in the debugger.',
+        ? `The ${this.words.noun} stopped at a declared line outside the request; Codebook never resumes it. Ask the learner to continue it in the debugger.`
+        : `The learner paused the ${this.words.noun}; Codebook never resumes it. Ask the learner to continue it in the debugger.`,
     )
   }
 
@@ -1008,7 +1015,7 @@ export class NodeProcessRun {
     if (!pause)
       throw new StudyError(
         'NO_PAUSE',
-        'The server is not paused at a declared stop.',
+        `The ${this.words.noun} is not paused at a declared stop.`,
       )
     if (
       this.reservedGeneration !== undefined ||
@@ -1031,7 +1038,7 @@ export class NodeProcessRun {
       this.reservedGeneration = undefined
       throw error instanceof StudyError
         ? error
-        : stepFailedError('continuing the server', error, this.input.workspace)
+        : this.stepFailed(`continuing the ${this.words.noun}`, error)
     }
     this.reservedGeneration = undefined
     if (this.pause === pause) this.pause = undefined
@@ -1100,7 +1107,7 @@ export class NodeProcessRun {
       this.notify()
       throw error instanceof StudyError
         ? error
-        : stepFailedError('stopping the server', error, this.input.workspace)
+        : this.stepFailed(`stopping the ${this.words.noun}`, error)
     } finally {
       cancelDeadline()
     }
@@ -1131,6 +1138,7 @@ export class NodeProcessRun {
     return stopFailedError(
       { pid: alive, port: this.input.declaredPort },
       this.failedStops + 1,
+      this.words.noun,
     )
   }
 
@@ -1245,7 +1253,7 @@ export class NodeProcessRun {
     if (afterNaturalExit) return this.confirmedAfterNaturalExit(verdict)
     if (verdict === 'unverifiable')
       throw new Error(
-        'The server process group could not be confirmed as the one Codebook started, so it was not signalled again.',
+        `The ${this.words.noun} process group could not be confirmed as the one Codebook started, so it was not signalled again.`,
       )
     return verdict === 'launched'
   }

@@ -526,3 +526,20 @@ test('a stop hit while the script is released is captured and pauses', async () 
   assert.equal(harness.run.view().state, 'paused')
   assert.equal(harness.run.view().pause?.declaredStopIndex, 0)
 })
+
+// protects=a script run's failure sentence names the script and the node-script profile, never the server; fails_when=the shared core words a script run's failure as the server's; no_claim=the server's sentences (nodeServer tests keep them byte for byte)
+test('a script run that fails while attaching the debugger says script and never server', async () => {
+  // Arrange
+  const harness = createScriptHarness({ attachFails: new Error('refused') })
+
+  // Act
+  const failure = await harness.run.prepare().catch((error: unknown) => error)
+
+  // Assert
+  assert.ok(failure instanceof StudyError)
+  assert.equal(
+    failure.message,
+    'The node-script run failed while attaching the debugger: refused.',
+  )
+  assert.doesNotMatch(failure.message, /server/)
+})

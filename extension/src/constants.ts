@@ -3120,3 +3120,9 @@ export const LIBRARY_MAP_SOURCE_DETAIL_LIMIT_CHARS = 512
 
 /** How deep an indexed source map's sections may nest before the App Router library seal's collision check counts the map as unreadable (and so as possibly naming the stop file). */
 export const LIBRARY_SECTION_DEPTH_LIMIT = 8
+
+/** The words the shared process core uses in its sentences for a server run; a script run passes its own ({@link NODE_SCRIPT_RUN_WORDS}). */
+export const NODE_SERVER_RUN_WORDS = { noun: 'server', profile: 'node-server' }
+
+/** The words the shared process core uses in its sentences for a script run. */
+export const NODE_SCRIPT_RUN_WORDS = { noun: 'script', profile: 'node-script' }

@@ -1,6 +1,7 @@
 import type { ConfiguredDescriptor } from './configuredStudySchemas'
 import {
   NODE_SCRIPT_RUN_TIMEOUT_MS,
+  NODE_SCRIPT_RUN_WORDS,
   NODE_SERVER_EXIT_SETTLE_MS,
   NODE_SERVER_STOP_DEADLINE_MS,
   REPOSITORY_PAUSE_HOLD_TIMEOUT_MS,
@@ -121,6 +122,7 @@ class OwnedNodeScriptRun implements NodeScriptRuntime {
       record: (type, detail) => this.recordFromCore(type, detail),
       citedSources: input.citedSources,
       declaredPort: 0,
+      words: NODE_SCRIPT_RUN_WORDS,
       privateRoots: input.privateRoots,
       dependencies: input.dependencies,
       notify: () => this.onCoreChange(),
