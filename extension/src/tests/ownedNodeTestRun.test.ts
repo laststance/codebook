@@ -1018,6 +1018,7 @@ test('a Vitest run verifies its worker in the target child within a second of th
     assert.deepEqual(harness.boundSessionIds, ['owned-node-session'])
     assert.deepEqual(harness.rootRequests, [])
     assert.notEqual(outcome, 'timed out')
+    // gstack-timing-ok: the defect this guards waits the 20 s answer bound; the binding takes about 0.1-0.25 s here, so the 1 s bound only tells the two apart and the adopted-session and root-request assertions above carry the outcome
     assert.ok(
       verifiedAt !== undefined &&
         verifiedAt - harness.childStartedAt()! < 1_000,

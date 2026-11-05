@@ -576,6 +576,7 @@ test('a Next server run selects its target session within a second of the sessio
     })
     assert.deepEqual(harness.serverRootRequests, [])
     assert.notEqual(outcome, 'timed out')
+    // gstack-timing-ok: the defect this guards waits the 20 s answer bound; the binding takes about 0.1-0.25 s here, so the 1 s bound only tells the two apart and the adopted-session and root-request assertions above carry the outcome
     assert.ok(
       selected !== undefined &&
         targetStarted !== undefined &&

@@ -110,6 +110,7 @@ test('a node-server run binds its target child within a second of the child star
     assert.deepEqual(editor.boundSessionIds, ['node-server-session'])
     assert.deepEqual(editor.rootRequests, [])
     assert.equal(typeof outcome, 'number')
+    // gstack-timing-ok: the defect this guards waits the 20 s answer bound; the binding takes about 0.1-0.25 s here, so the 1 s bound only tells the two apart and the adopted-session and root-request assertions above carry the outcome
     assert.ok(
       (outcome as number) - editor.childStartedAt()! < 1_000,
       'the binding came 1 s or more after the child started',
