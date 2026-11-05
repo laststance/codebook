@@ -491,7 +491,7 @@ test('the README documents the Node script run, its confirmation, its end and it
     "At stops the chat declares in the package's own source",
     'A nonzero exit is the script failing, not a Codebook error',
     'saved through `codebook_explain_node_history` as a Script replay',
-    'with **MCP API 1.26**',
+    'with **MCP API 1.27**',
     '`SCRIPT_NOT_CONFIRMED`',
     "so Cursor's managed skill updates to **1.0.76**",
   ])
