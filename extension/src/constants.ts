@@ -3156,3 +3156,19 @@ export const NODE_SERVER_RUN_WORDS = { noun: 'server', profile: 'node-server' }
 
 /** The words the shared process core uses in its sentences for a script run. */
 export const NODE_SCRIPT_RUN_WORDS = { noun: 'script', profile: 'node-script' }
+/** The most the pause waits for the browser's request of a route-handler hit to be seen: the server's pause and the page's `Network` event reach the run on different connections, so a hit may come first. */
+export const ROUTE_HANDLER_REQUEST_WAIT_MS = 1000
+/** How often that wait reads the tracked requests again. */
+export const ROUTE_HANDLER_REQUEST_POLL_MS = 50
+/** The most app-origin API requests the run keeps for route-handler correlation; the oldest is dropped past it. */
+export const ROUTE_HANDLER_REQUEST_LIMIT = 256
+/** The HTTP method names a route handler exports; the one list the classifier and the help read. */
+export const HTTP_METHOD_NAMES = [
+  'GET',
+  'HEAD',
+  'POST',
+  'PUT',
+  'PATCH',
+  'DELETE',
+  'OPTIONS',
+] as const

@@ -1,0 +1,86 @@
+import { ROUTE_HANDLER_REQUEST_LIMIT } from '../constants'
+
+import { routeHandlerPathMatches } from './routeHandlerPathMatches'
+
+/** One kept request: what the correlation needs and never a header or body. */
+export type TrackedRouteHandlerRequest = {
+  id: string
+  method: string
+  pathname: string
+  window: number
+  startedAtMs: number
+}
+
+/**
+ * Keeps the app-origin API requests the page sent whose pathname matches a declared route pattern, with the operation window each started in.
+ *
+ * Why it exists: a route-handler pause is the learner's only when the browser sent a request for it after the stop's operation, and the browser's own `Network` events are the only record of that. Created once per run by {@link ConfiguredBrowserRun}, fed by the browser participant's `Network.requestWillBeSent`; it keeps at most {@link ROUTE_HANDLER_REQUEST_LIMIT} requests, oldest dropped.
+ * @example
+ * const tracker = new RouteHandlerRequests(['/api/todos'])
+ * tracker.start({ requestId: '7', method: 'POST', url: 'http://localhost:3000/api/todos' }, 2, 100)
+ * tracker.list() // => [{ id: '7', method: 'POST', pathname: '/api/todos', window: 2, startedAtMs: 100 }]
+ */
+export class RouteHandlerRequests {
+  private readonly requests = new Map<string, TrackedRouteHandlerRequest>()
+
+  /**
+   * @param routes - The route patterns the run's route-handler stops declare.
+   * @param isApplicationOrigin - Says whether an origin is the run's application origin; other origins are not kept.
+   */
+  constructor(
+    private readonly routes: readonly string[],
+    private readonly isApplicationOrigin: (origin: string) => boolean = () =>
+      true,
+  ) {}
+
+  /**
+   * Notes a request the browser sent when its pathname matches a declared route.
+   * @param event - The method and URL of `Network.requestWillBeSent`.
+   * @param window - The number of operations dispatched so far.
+   * @param nowMs - The run's clock reading.
+   * @example tracker.start({ requestId: '7', method: 'GET', url: 'http://localhost:3000/api/todos' }, 0, 5)
+   */
+  start(
+    event: { requestId: string; method: string; url: string },
+    window: number,
+    nowMs: number,
+  ): void {
+    let parsed: URL
+    try {
+      parsed = new URL(event.url)
+    } catch {
+      // A URL that does not parse names no route.
+      return
+    }
+    if (
+      !this.isApplicationOrigin(parsed.origin) ||
+      !this.routes.some((route) =>
+        routeHandlerPathMatches(route, parsed.pathname),
+      )
+    )
+      return
+    // A redirect of the same request keeps its first start.
+    if (this.requests.has(event.requestId)) return
+    this.requests.set(event.requestId, {
+      id: event.requestId,
+      method: event.method.toUpperCase(),
+      pathname: parsed.pathname,
+      window,
+      startedAtMs: nowMs,
+    })
+    // The oldest request goes first when the bound is passed.
+    if (this.requests.size > ROUTE_HANDLER_REQUEST_LIMIT) {
+      const oldest = this.requests.keys().next().value
+      if (oldest !== undefined) this.requests.delete(oldest)
+    }
+  }
+
+  /**
+   * Lists the kept requests, oldest first.
+   * @returns A copy of the list.
+   * @example tracker.list().length // => 0
+   */
+  list(): readonly TrackedRouteHandlerRequest[] {
+    return [...this.requests.values()]
+  }
+}

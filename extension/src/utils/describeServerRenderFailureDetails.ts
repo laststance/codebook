@@ -23,7 +23,7 @@ export function describeServerRenderFailureDetails(
   const { operationIndex: _operationIndex, ...operationFields } =
     describeOperationFailureDetails(failure, runUri)
   if (failure.serverRender) {
-    const { phase, stop, pausedStops, notReachedStops, pages } =
+    const { phase, stop, pausedStops, notReachedStops, pages, routeHandler } =
       failure.serverRender
     return {
       phase,
@@ -35,6 +35,16 @@ export function describeServerRenderFailureDetails(
       pausedStops,
       notReachedStops,
       firstExecutionObserved: false,
+      // A route-handler stop names its route and method and the hits the run resumed, by reason.
+      ...(routeHandler
+        ? {
+            routeHandler: {
+              route: routeHandler.route,
+              ...(routeHandler.method ? { method: routeHandler.method } : {}),
+            },
+            resumedHits: routeHandler.resumedHits,
+          }
+        : {}),
       // A Pages run says so, which hits of the stop it resumed, how hits are attributed and the Next version.
       ...(pages ? { router: 'pages', ...pages } : {}),
       ...operationFields,

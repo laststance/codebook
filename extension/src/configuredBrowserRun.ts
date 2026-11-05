@@ -61,6 +61,8 @@ import {
   SERVER_RENDER_PAUSE_POLL_MS,
   SERVER_RENDER_RESUMED_HIT_JOURNAL_LIMIT,
   SERVER_RENDER_ROUTE_EXPRESSION,
+  ROUTE_HANDLER_REQUEST_POLL_MS,
+  ROUTE_HANDLER_REQUEST_WAIT_MS,
   REPOSITORY_RUN_TIMEOUT_MS,
   REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT,
   SECRET_FRAME_SOURCE_URL,
@@ -97,6 +99,7 @@ import {
   libraryPlaceAmbiguousRefusal,
   nextRefusal,
   outsidePackageRefusal,
+  routeHandlerStopRefusal,
   PAGES_STOP_REFUSAL_DETAILS,
   READINESS_FAILURE_RECOVERY,
   UNCODED_SETUP_DEADLINE_TEXT,
@@ -358,6 +361,14 @@ import {
   rootVitePackage,
   type ResolvedVitePackage,
 } from './utils/resolveVitePackage'
+import {
+  routeHandlerHitVerdictOf,
+  type RouteHandlerResumeReason,
+} from './utils/routeHandlerHitVerdictOf'
+import { routeHandlerPathMatches } from './utils/routeHandlerPathMatches'
+import { RouteHandlerRequests } from './utils/routeHandlerRequests'
+import { routeHandlerRouteOf } from './utils/routeHandlerRouteOf'
+import { routeHandlerStackOf } from './utils/routeHandlerStackOf'
 import { sameScriptUrl } from './utils/sameScriptUrl'
 import { sanitizeCause } from './utils/sanitizeCause'
 import {
@@ -643,6 +654,13 @@ type PreparationHitVerdict = {
   action: 'resume'
   event: 'breakpoint.preparation-hit-resumed'
 }
+/** The verdict for a hit of a route-handler stop that is not the learner's request (Cycle 0087): resumed, journaled with its reason and counted in the stop's `resumedHits`. */
+type RouteHandlerHitResumeVerdict = {
+  action: 'resume'
+  event: 'breakpoint.route-handler-resumed'
+  reason: RouteHandlerResumeReason
+  declaredIndex: number
+}
 /** The verdict for a server pause in a server library stop's file that is nobody's stop: another layer's copy of the module (the `(ssr)` one) or a line only a browser stop declares; resumed and journaled with the script address, never counted and never observed. */
 type LibraryCopyVerdict = {
   action: 'resume'
@@ -655,6 +673,10 @@ const PAGE_REQUEST_END_EVENTS = [
   'Network.loadingFailed',
   'Network.loadingFinished',
 ] as const
+/** The file name of an App Router route handler. */
+const ROUTE_FILE_NAME = /^route\.(?:ts|js|tsx|jsx)$/
+/** A route file that declares the Edge runtime, which Codebook's Node debugger cannot pause. */
+const EDGE_RUNTIME_DECLARATION = /export\s+const\s+runtime\s*=\s*(['"])edge\1/
 /** Keys a stop's library freeze by its declared place. @example libraryFreezeKey({ path: 'a.ts', line: 3, column: 1 }) // 'a.ts:3:1' */
 function libraryFreezeKey(source: {
   path: string
@@ -707,6 +729,28 @@ type ProvisionalStop = {
   /** Set once the stop paused as a module evaluation and was sealed from the paused script. */
   prepared?: PreparedStop
 }
+/** One server stop in an App Router route handler (Cycle 0087): armed by source in its operation's turn, sealed at the pause, never sealed before the browser opens. */
+type RouteHandlerStop = {
+  stop: ReturnType<typeof configuredStops>[number]
+  /** The stop's declared index. */
+  index: number
+  /** The route pattern from the file path (`/api/boards/[id]`). */
+  route: string
+  /** The stop's `afterOperation` (1 or later). */
+  operationIndex: number
+  sourcePath: string
+  sourceText: string
+  packageRelative: string
+  requestedLine: number
+  /** Set while the stop is armed and has not paused. */
+  breakpoint?: OwnedRepositoryBreakpoint
+  /** The request id this stop claimed (at most one). */
+  claimedRequest?: string
+  /** Set once the stop paused and was sealed from the paused script. */
+  prepared?: PreparedStop
+  /** The hits of this stop the run resumed, by reason. */
+  resumed: Map<RouteHandlerResumeReason, number>
+}
 /** The preparation window of a Next run with an entry-render server stop: provisional breakpoints stay open through the readiness request and the saved-session warm load. */
 type PreparationWindow = {
   /** Which of Codebook's own requests is running. */
@@ -722,6 +766,8 @@ type PreparationWindow = {
 type PreparedStop = ReturnType<typeof configuredStops>[number] & {
   /** Set when the stop paused during the preparation window, with the request that evaluated the module. */
   preparationRequest?: 'readiness' | 'warm-load'
+  /** Set for a route-handler stop once it paused: the method of the browser request it was matched to, its route pattern and that request's pathname. */
+  routeHandler?: { method: string; route: string; path: string }
   /** Set for a stop in a workspace library: `source.line` and `armed` are built-file lines, and {@link LibraryStopState} translates them. */
   library?: LibraryStopState
   /** The stop's place in the declared stop list, fixed when it was sealed; the run reorders the stops of a server set into the order they pause, so this index names the declaration, never the position in {@link ConfiguredBrowserRun.stops}. */
@@ -1047,6 +1093,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private readonly preparationCoveredStops = new Set<number>()
   /** Whether {@link selectServer} already ran before the readiness request. */
   private serverSelectedEarly = false
+  /** The run's route-handler stops (Cycle 0087), in declared order; empty for every run without one. */
+  private routeHandlerStops: RouteHandlerStop[] = []
+  /** The app-origin API requests the page sent that match a declared route handler; created with the stops. */
+  private routeHandlerRequests?: RouteHandlerRequests
   /** The time preparation was held at continued preparation pauses, by which the setup deadline moved; the run resource's deadline adds it. */
   private preparationHeldMs = 0
   /** Whether the viewport was attached, so a warm-up pause cannot be drawn before it. */
@@ -1850,6 +1900,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.alive()
     // A server stop in `_document` or an API route is refused before any process starts: no server stop is valid there in either router.
     if (hasPagesFolder) await this.refuseLexicalPagesServerStops()
+    // A route-handler stop is refused here when its file, its operation or its runtime rules it out; the others stay unsealed until their pause.
+    if (adapter.name === 'next-dev-webpack')
+      await this.collectRouteHandlerStops()
     this.nextSetupStep = NEXT_SETUP_STEPS.startingNext
     // The app runs on the port the project declares (its auth origin points there); a busy port refuses the start instead of moving the app.
     const started = await adapter.start({
@@ -2464,6 +2517,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.definition.configuration,
     ).entries()) {
       if (this.stops.some((paused) => paused.declaredIndex === index)) continue
+      // A route-handler stop has no compiled module yet: it is armed in its operation's turn and sealed at its pause.
+      if (this.routeHandlerStops.some((entry) => entry.index === index))
+        continue
       this.stops.push(
         await this.sealDeclaredStop(stop, index, adapter, ownedOrigin),
       )
@@ -2519,6 +2575,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       if (stop.breakpoint) owned.add(stop.breakpoint)
     for (const entry of this.preparationWindow?.provisional ?? [])
       owned.add(entry.breakpoint)
+    for (const entry of this.routeHandlerStops)
+      if (entry.breakpoint) owned.add(entry.breakpoint)
     return [...owned]
   }
 
@@ -2772,15 +2830,51 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       })
       return
     }
+    await this.settleSealedPause(session, event, held, {
+      seal: () =>
+        this.sealPausedStop(
+          entry,
+          entry.breakpoint,
+          scriptId,
+          scriptUrl!,
+          window.request,
+          layerOf(entry)!,
+        ),
+      adopt: (prepared) => {
+        entry.prepared = prepared
+        this.stops.push(prepared)
+        // The readiness request and the warm-up page wait for the continue; their bounds stop counting.
+        window.timeout.hold()
+        // A hold that is still open (the earlier stop's continue is unanswered) keeps its start, so its time is not lost.
+        window.heldAtMs ??= Date.now()
+        window.heldDuringRequest = true
+      },
+    })
+  }
+
+  /**
+   * Seals a paused stop from the bytes that paused and publishes the pause through the stop machinery: the one path a module-evaluation pause and a route-handler pause share.
+   * Why it exists: both pauses hit a provisional breakpoint in a module no stop was sealed from, so the stop is sealed only now, from the paused script, and nothing is shown before that. A seal that fails resumes the runtime and ends the stop with the seal's refusal. Called by {@link settlePreparationStop} and {@link settleRouteHandlerHit}.
+   * @param session - The server session.
+   * @param event - The `stopped` event.
+   * @param held - The held pause the `stopped` belongs to.
+   * @param steps - `seal` builds the prepared stop from the paused script; `adopt` places it among the run's stops, once sealed and before the pause is announced to the stop machinery.
+   * @throws The seal's refusal after the runtime was resumed.
+   * @example await this.settleSealedPause(session, event, held, { seal, adopt })
+   */
+  private async settleSealedPause(
+    session: vscode.DebugSession,
+    event: DebugProtocol.Event,
+    held: { event: Protocol.Debugger.PausedEvent },
+    steps: {
+      seal: () => Promise<PreparedStop>
+      adopt: (prepared: PreparedStop) => void
+    },
+  ): Promise<void> {
+    const participant = this.participants.server
     let prepared: PreparedStop
     try {
-      prepared = await this.sealPreparationStop(
-        entry,
-        scriptId,
-        scriptUrl!,
-        window.request,
-        layerOf(entry)!,
-      )
+      prepared = await steps.seal()
     } catch (error) {
       // The bytes that ran are not the declared ones: nothing is shown, the runtime goes on and the stop is refused.
       this.dropCopyPause()
@@ -2790,38 +2884,204 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       )
       throw error
     }
-    entry.prepared = prepared
-    this.stops.push(prepared)
+    steps.adopt(prepared)
     this.armedStops.add(prepared)
     this.dropCopyPause()
     participant.unannouncedPause = undefined
-    // The readiness request and the warm-up page wait for the continue; their bounds stop counting.
-    window.timeout.hold()
-    // A hold that is still open (the earlier stop's continue is unanswered) keeps its start, so its time is not lost.
-    window.heldAtMs ??= Date.now()
-    window.heldDuringRequest = true
     participant.stopped = { event: held.event }
     this.settledStops.add(event)
     this.onEvent(session, event)
   }
 
   /**
+   * Decides what a server pause at a route-handler stop's breakpoint is: the learner's pause (sealed from the paused script and published) or a hit the run resumes and counts.
+   * Why it exists: a route handler also runs for requests that are nobody's stop (the entry load, polling, the server's own fetch), and only the first request the page sent after the stop's operation, at the stop's line, is shown. Called by {@link settleServerStop} for the `stopped` event of a pause the armed route-handler stops hold.
+   * @param session - The server session.
+   * @param event - The `stopped` event.
+   * @returns `true` when the pause was a route-handler stop's (published or resumed); `false` when no armed route-handler stop owns it, so the other handling goes on.
+   * @throws The seal's refusal after the runtime was resumed.
+   * @example if (await this.settleRouteHandlerHit(session, event)) return
+   */
+  private async settleRouteHandlerHit(
+    session: vscode.DebugSession,
+    event: DebugProtocol.Event,
+  ): Promise<boolean> {
+    const participant = this.participants.server
+    const held = participant.copyPause ?? participant.unannouncedPause
+    const scriptId = held?.event.callFrames[0]?.location.scriptId
+    if (!held || scriptId === undefined) return false
+    const scriptUrl = participant.scriptUrls.get(scriptId)
+    const inFile = this.routeHandlerStops.filter(
+      (candidate) =>
+        candidate.breakpoint !== undefined &&
+        !candidate.prepared &&
+        scriptUrl !== undefined &&
+        sameScriptUrl(
+          `webpack-internal:///(rsc)/./${candidate.packageRelative}`,
+          scriptUrl,
+        ),
+    )
+    // The breakpoint the adapter names is the one that hit; a pause that names others (a learner's own breakpoint) is not the stop's. Only a pause that names none takes a lone candidate.
+    const hitIds: readonly number[] =
+      (event.body?.hitBreakpointIds as number[] | undefined) ?? []
+    const entry = hitIds.length
+      ? inFile.find((candidate) => {
+          const id = candidate.breakpoint!.acknowledgedId(session)
+          return id !== undefined && hitIds.includes(id)
+        })
+      : inFile.length === 1
+        ? inFile[0]
+        : undefined
+    if (!entry || event.body?.reason !== 'breakpoint') return false
+    // A pause during the continuation of the stop before it is judged once that continuation is complete, so the stop takes its place in order.
+    await waitUntil(
+      () => !this.continuation,
+      'the continuation before a route-handler pause',
+      ACTIVE_TIMEOUT_MS,
+      this.abort.signal,
+    )
+    const handler = routeHandlerStackOf(held.event.callFrames, scriptId)
+    const hitRoute = handler
+      ? await this.routeOfHeldPause(event.body?.threadId)
+      : undefined
+    const verdict = await this.routeHandlerVerdictOf(
+      entry,
+      handler?.handlerName,
+      hitRoute,
+    )
+    if (verdict.action === 'resume') {
+      entry.resumed.set(
+        verdict.reason,
+        (entry.resumed.get(verdict.reason) ?? 0) + 1,
+      )
+      await this.resumeUnexpectedHit(session, event, {
+        action: 'resume',
+        event: 'breakpoint.route-handler-resumed',
+        reason: verdict.reason,
+        declaredIndex: entry.index,
+      })
+      return true
+    }
+    // The stop claims the request it is matched to; a second stop of the same operation claims its own.
+    entry.claimedRequest = verdict.request.id
+    await this.settleSealedPause(session, event, held, {
+      seal: () =>
+        this.sealPausedStop(
+          entry,
+          entry.breakpoint!,
+          scriptId,
+          scriptUrl!,
+          'route-handler',
+          'rsc',
+        ),
+      adopt: (prepared) => {
+        prepared.routeHandler = {
+          method: verdict.request.method,
+          route: entry.route,
+          path: verdict.request.pathname,
+        }
+        entry.prepared = prepared
+        // Every stop before this one was continued: it takes the place of the first stop still ahead.
+        this.stops.splice(this.stopIndex, 0, prepared)
+        // A run whose only stops are route handlers freezes its manifest at the first of their pauses.
+        if (!this.sealedManifest) this.freezeSealedStops()
+      },
+    })
+    return true
+  }
+
+  /**
+   * Reads the route Next renders on the held server pause's top frame, for {@link settleRouteHandlerHit}.
+   * @param threadId - The paused thread.
+   * @returns The route, or `undefined` when the work store is absent or the read failed.
+   * @example await this.routeOfHeldPause(1) // '/api/todos'
+   */
+  private async routeOfHeldPause(
+    threadId: number | undefined,
+  ): Promise<string | undefined> {
+    if (threadId === undefined) return undefined
+    const rendered = await this.readRenderedRoute(this.participants.server, {
+      threadId,
+    })
+    return rendered.state === 'read' ? rendered.route : undefined
+  }
+
+  /**
+   * Applies the identity contract ({@link routeHandlerHitVerdictOf}) to a hit, waiting up to {@link ROUTE_HANDLER_REQUEST_WAIT_MS} for the browser's `Network` event when the pause arrived before it.
+   * Called by {@link settleRouteHandlerHit}; the server's pause and the page's events come on different connections, so a verdict that resumes may only mean the request was not seen yet.
+   * @param entry - The armed route-handler stop that was hit.
+   * @param handlerName - The handler frame's function name; `undefined` for an unclassified stack.
+   * @param hitRoute - The route the work store reports; `undefined` when unreadable.
+   * @returns The verdict after the wait.
+   * @example await this.routeHandlerVerdictOf(entry, 'POST', '/api/todos') // { action: 'publish', request }
+   */
+  private async routeHandlerVerdictOf(
+    entry: RouteHandlerStop,
+    handlerName: string | undefined,
+    hitRoute: string | undefined,
+  ): Promise<ReturnType<typeof routeHandlerHitVerdictOf>> {
+    const judge = (): ReturnType<typeof routeHandlerHitVerdictOf> =>
+      routeHandlerHitVerdictOf({
+        stopRoute: entry.route,
+        hitRoute,
+        handlerName,
+        operationIndex: entry.operationIndex,
+        requests: (this.routeHandlerRequests?.list() ?? []).map((request) => ({
+          id: request.id,
+          method: request.method,
+          pathname: request.pathname,
+          window: request.window,
+          claimed: entry.claimedRequest === request.id,
+        })),
+      })
+    // A stack Next changed or a request already claimed is not cured by waiting.
+    const isWaitable = (
+      verdict: ReturnType<typeof routeHandlerHitVerdictOf>,
+    ): boolean =>
+      verdict.action === 'resume' &&
+      verdict.reason !== 'unclassified' &&
+      verdict.reason !== 'after-retired'
+    let verdict = judge()
+    if (!isWaitable(verdict)) return verdict
+    try {
+      await waitUntil(
+        () => {
+          verdict = judge()
+          return !isWaitable(verdict)
+        },
+        'the browser request of a route-handler hit',
+        ROUTE_HANDLER_REQUEST_WAIT_MS,
+        this.abort.signal,
+        ROUTE_HANDLER_REQUEST_POLL_MS,
+      )
+    } catch (error) {
+      if (!(error instanceof WaitTimeoutError)) throw error
+    }
+    return verdict
+  }
+
+  /**
    * Seals a stop from the script that is paused in its module: reads the script's source and inline map, requires the map's retained original to equal the declared source, and saves the sealed evidence before anything is read out.
-   * Called by {@link settlePreparationStop} for the first evaluation of a stop's module.
-   * @param entry - The provisional stop whose breakpoint hit.
+   * Called by {@link settlePreparationStop} for the first evaluation of a stop's module and by {@link settleRouteHandlerHit} for a route handler's module.
+   * @param entry - The stop whose breakpoint hit: its declaration and declared source.
+   * @param breakpoint - The provisional breakpoint the prepared stop takes over as its own.
    * @param scriptId - The paused script.
    * @param scriptUrl - The address the script was announced under.
-   * @param request - Which of Codebook's own requests evaluated the module.
+   * @param origin - Which of Codebook's own requests evaluated the module, or `route-handler` for a pause in a route handler.
    * @param layer - The webpack layer the paused script belongs to, recorded as the layer the stop was sealed from.
    * @returns The prepared stop with the provisional breakpoint as its own.
    * @throws When the script does not hold the declared module or its map retains another original text.
-   * @example const prepared = await this.sealPreparationStop(entry, '12', url, 'readiness', 'rsc')
+   * @example const prepared = await this.sealPausedStop(entry, entry.breakpoint, '12', url, 'readiness', 'rsc')
    */
-  private async sealPreparationStop(
-    entry: ProvisionalStop,
+  private async sealPausedStop(
+    entry: Pick<
+      ProvisionalStop,
+      'stop' | 'index' | 'sourcePath' | 'sourceText'
+    >,
+    breakpoint: OwnedRepositoryBreakpoint,
     scriptId: string,
     scriptUrl: string,
-    request: 'readiness' | 'warm-load',
+    origin: 'readiness' | 'warm-load' | 'route-handler',
     layer: 'rsc' | 'action-browser',
   ): Promise<PreparedStop> {
     const executed = await this.participants.server.cdp!.request(
@@ -2844,12 +3104,20 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const prepared = this.assemblePreparedStop(
       entry.stop,
       entry.index,
-      { bundle, discovery: { preparation: request }, layer },
+      {
+        bundle,
+        discovery:
+          origin === 'route-handler'
+            ? { routeHandler: true }
+            : { preparation: origin },
+        layer,
+      },
       undefined,
       true,
     )
-    prepared.breakpoint = entry.breakpoint
-    prepared.preparationRequest = request
+    prepared.breakpoint = breakpoint
+    // A route-handler pause is no preparation pause: it is a pause of the learner's operation.
+    if (origin !== 'route-handler') prepared.preparationRequest = origin
     prepared.script = {
       scriptId,
       url: scriptUrl,
@@ -2861,11 +3129,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       hash: '',
       buildId: '',
     }
-    const fileStem = `sealed-${entry.index}-preparation`
+    const fileStem =
+      origin === 'route-handler'
+        ? `sealed-${entry.index}-route-handler`
+        : `sealed-${entry.index}-preparation`
     const archivedModule = await this.saveSealedEvidence(fileStem, bundle)
     this.evidence.record('source.sealed', {
       index: entry.index,
-      preparation: request,
+      ...(origin === 'route-handler'
+        ? { routeHandler: true }
+        : { preparation: origin }),
       redacted: archivedModule.redacted,
       participant: 'server',
       scriptUrl,
@@ -3230,6 +3503,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         )
       : []
     const renderMessage = describeRenderRunMessage({
+      ...(held?.execution === 'route-handler' &&
+      held.routeHandler &&
+      held.operationIndex !== undefined
+        ? {
+            routeHandler: {
+              ...held.routeHandler,
+              operationIndex: held.operationIndex,
+            },
+          }
+        : {}),
       // An entry-render pause has no operation: labelled entry-load, or unconfirmed when its page could not be proven.
       isEntryRenderPaused:
         held?.execution === 'server-render' &&
@@ -3261,6 +3544,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     return (
       this.operationsConfiguration !== undefined &&
       (this.preparationWindow !== undefined ||
+        this.routeHandlerStops.length > 0 ||
         this.stops.some((stop) => stop.participant === 'server'))
     )
   }
@@ -3317,6 +3601,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       await this.settlePreparationStop(session, event)
       return
     }
+    // A hit of an armed route-handler stop is judged by the request that caused it before any other handling.
+    if (await this.settleRouteHandlerHit(session, event)) return
     const verdict = await this.unexpectedHitVerdict(session, event)
     if (verdict === 'gone') return
     if (verdict) {
@@ -3897,7 +4183,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       | Extract<ServerRenderHitVerdict, { action: 'resume' }>
       | BrowserLibraryCopyVerdict
       | LibraryCopyVerdict
-      | PreparationHitVerdict,
+      | PreparationHitVerdict
+      | RouteHandlerHitResumeVerdict,
   ): Promise<void> {
     const participant = this.participants.server
     this.journalResumedHit(verdict)
@@ -4023,6 +4310,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     event: Protocol.Debugger.PausedEvent,
   ): Promise<ServerHitVerdict | undefined> {
     if (this.isPagesServerStop(stop)) return this.classifyPagesHit(stop, event)
+    // A route-handler stop was matched to the page's request when it paused, before it was sealed.
+    if (stop.routeHandler)
+      return { action: 'pause', attribution: 'after-operation' }
     // A module evaluation of an entry-render stop runs outside any render: no route can be read, and the pause is the stop's own first evaluation ({@link isModuleEvaluationPause} leaves after-operation stops to today's route read).
     if (stop.preparationRequest || this.isModuleEvaluationPause(stop, event))
       return { action: 'pause', attribution: 'entry-load' }
@@ -4294,7 +4584,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    */
   private async readRenderedRoute(
     participant: DebugParticipant,
-    pause: PauseIdentity,
+    pause: Pick<PauseIdentity, 'threadId'>,
   ): Promise<RenderedRoute> {
     const session = participant.selected
     if (!session) return { state: 'unreadable' }
@@ -4539,7 +4829,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       | ResumeHitVerdict
       | BrowserLibraryCopyVerdict
       | LibraryCopyVerdict
-      | PreparationHitVerdict,
+      | PreparationHitVerdict
+      | RouteHandlerHitResumeVerdict,
   ): void {
     const count = (this.resumedHitCounts.get(verdict.event) ?? 0) + 1
     this.resumedHitCounts.set(verdict.event, count)
@@ -4553,7 +4844,20 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         ? { route: this.maskRunText(verdict.route) }
         : verdict.event === 'breakpoint.library-copy'
           ? { scriptUrl: verdict.scriptUrl }
-          : {},
+          : verdict.event === 'breakpoint.route-handler-resumed'
+            ? {
+                reason: verdict.reason,
+                declaredIndex: verdict.declaredIndex,
+                // The browser's request the hit was compared with: method and pathname only, never a header or body.
+                requests: (this.routeHandlerRequests?.list() ?? [])
+                  .slice(-3)
+                  .map(({ method, pathname, window }) => ({
+                    method,
+                    pathname: this.maskRunText(pathname),
+                    window,
+                  })),
+              }
+            : {},
     )
   }
 
@@ -4578,15 +4882,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     | 'operationIndex'
     | 'scope'
     | 'preparationRequest'
+    | 'routeHandler'
   > {
     const group = afterOperationOf(stop)
     // An entry-render stop (group 0) is a page-load pause whichever layer it paused in, and a server pause of a Pages run is a server render also after an operation; otherwise the script's layer says what ran.
     const execution =
       stop.participant === 'browser'
         ? ('browser' as const)
-        : group === 0 || this.isPagesServerStop(stop)
-          ? ('server-render' as const)
-          : serverExecutionOfScriptUrl(scriptUrl)
+        : stop.routeHandler
+          ? ('route-handler' as const)
+          : group === 0 || this.isPagesServerStop(stop)
+            ? ('server-render' as const)
+            : serverExecutionOfScriptUrl(scriptUrl)
     const isUnconfirmed = this.unconfirmedHit
     // The attribution belongs to this pause only.
     this.unconfirmedHit = false
@@ -4596,6 +4903,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       executionIndex: this.snapshots.length,
       ...(execution === 'server-render' && group !== undefined
         ? serverRenderAttributionOf(group, isUnconfirmed)
+        : {}),
+      // A route-handler pause is observed after the operation whose request reached the handler.
+      ...(stop.routeHandler && group !== undefined
+        ? {
+            attribution: 'after-operation' as const,
+            operationIndex: group,
+            routeHandler: { ...stop.routeHandler },
+          }
         : {}),
       ...(isModuleEvaluation ? { scope: 'module' as const } : {}),
       // A pause in Codebook's own request names that request, never the page load.
@@ -5159,7 +5474,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Saves the sealed source, module and map of a stop under a file stem, so the run keeps the bytes its hashes name.
-   * Called by {@link sealDeclaredStop} for a module read from the compiled chunk and by {@link sealPreparationStop} for the module a paused script holds.
+   * Called by {@link sealDeclaredStop} for a module read from the compiled chunk and by {@link sealPausedStop} for the module a paused script holds.
    * @param fileStem - The name the three evidence files share, such as `sealed-0`.
    * @param bundle - The sealed module.
    * @returns The archived module text, whose `redacted` flag the journal entry repeats.
@@ -5205,7 +5520,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * ```
    */
   private freezeSealedStops(): void {
-    const first = this.firstDeclaredStop()!
+    // A run whose only stops are route handlers has none sealed yet: its manifest is frozen at the first route-handler pause.
+    const first = this.firstDeclaredStop() ?? this.stops[0]
+    if (!first) return
     const { itemId, bookTitle, nodeTitle, anchors, citationContext } =
       this.definition.descriptor
     this.sealedManifest = {
@@ -5805,6 +6122,89 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Finds the run's route-handler stops and refuses, before any process starts, the ones Codebook can judge unsupported from the configuration and the source text alone.
+   * Called by {@link prepareOwned} for a Next run, beside {@link refuseLexicalPagesServerStops}; every other server stop keeps its path.
+   * @throws `NEXT_STOP_NOT_SEALED` with `details.reason` `route-handler-not-app-source` (a route file in node_modules or a workspace library), `route-handler-before-operation` (`afterOperation` 0) or `route-handler-edge-runtime` (the file declares the Edge runtime), each with `details.sideEffects` `none`.
+   * @example
+   * await this.collectRouteHandlerStops() // throws for a stop in app/api/todos/route.ts declared afterOperation 0
+   */
+  private async collectRouteHandlerStops(): Promise<void> {
+    const root = await realpath(this.packageRoot)
+    const found: RouteHandlerStop[] = []
+    for (const [index, stop] of configuredStops(
+      this.definition.configuration,
+    ).entries()) {
+      // Only a server stop in a file named like a route file can be a route handler.
+      if (
+        stop.participant !== 'server' ||
+        !ROUTE_FILE_NAME.test(stop.source.path.split('/').at(-1) ?? '')
+      )
+        continue
+      const place = `${stop.source.path}:${stop.source.line}`
+      if (
+        this.libraryFreezes.has(libraryFreezeKey(stop.source)) ||
+        stop.source.path.split('/').includes('node_modules')
+      )
+        throw routeHandlerStopRefusal(
+          'route-handler-not-app-source',
+          place,
+          index,
+        )
+      const packageRelative = this.nextPackageOrRoot.toPackageRelative(
+        stop.source.path,
+      )
+      const route =
+        packageRelative === undefined
+          ? undefined
+          : routeHandlerRouteOf(packageRelative)?.route
+      // A file named route.ts outside the app tree (lib/route.ts) is an ordinary server stop.
+      if (packageRelative === undefined || route === undefined) continue
+      const operationIndex = afterOperationOf(stop) ?? 0
+      if (operationIndex < 1)
+        throw routeHandlerStopRefusal(
+          'route-handler-before-operation',
+          place,
+          index,
+        )
+      const sourcePath = join(root, packageRelative)
+      const sourceText = await readRepositoryBuildText(
+        root,
+        sourcePath,
+        REPOSITORY_SOURCE_LIMIT_BYTES,
+        this.abort.signal,
+      ).catch(() => undefined)
+      this.alive()
+      // An unreadable or changed source is left to the verification and the seal at the pause, which refuse it as they always did.
+      if (sourceText === undefined) continue
+      if (EDGE_RUNTIME_DECLARATION.test(sourceText))
+        throw routeHandlerStopRefusal(
+          'route-handler-edge-runtime',
+          place,
+          index,
+        )
+      found.push({
+        stop,
+        index,
+        route,
+        operationIndex,
+        sourcePath,
+        sourceText,
+        packageRelative,
+        requestedLine: this.windowRequestedLine(stop, sourceText),
+        resumed: new Map(),
+      })
+    }
+    this.routeHandlerStops = found
+    if (found.length)
+      this.routeHandlerRequests = new RouteHandlerRequests(
+        [...new Set(found.map((entry) => entry.route))],
+        (origin) =>
+          this.origin !== undefined &&
+          isOwnedApplicationOrigin(origin, this.origin, this.ownsIpv6Loopback),
+      )
+  }
+
+  /**
    * Refuses a sealed browser stop of a Pages run whose declared line is established as server-only (the page's server compile maps it and the browser module does not), also when a later line of its citation could bind; then a stop whose line can never bind as not sealed, which says it is not thereby server-only.
    * Called by {@link prepareOwned} after the seal and before {@link freezeSealedStops}, which keeps the general refusal for every other stop. It reads browser stops only: a server stop is sealed from the server build, and its line is judged against the page's client compile when it is sealed ({@link sealPagesServerStop}).
    * @param pagesRun - The resolved Pages route and the run's discovery cache.
@@ -6004,7 +6404,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Builds the prepared stop of a sealed module: the stop with its bundle, verifier, scan, requested place and binding rule.
-   * Called by {@link sealDeclaredStop} for a module read from the compiled chunk and by {@link sealPreparationStop} for the module a paused script holds.
+   * Called by {@link sealDeclaredStop} for a module read from the compiled chunk and by {@link sealPausedStop} for the module a paused script holds.
    * @param stop - The configured stop.
    * @param index - Its zero-based place among the declared stops.
    * @param acquired - The sealed module.
@@ -9252,10 +9652,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.stops.some((stop) => stop.participant === 'server')
     if (tracksPageRequests)
       events.push(...this.trackOutstandingPageRequests(cdp))
-    await cdp.subscribe(events)
+    // A run with a route-handler stop follows the page's API requests: they name the request a route-handler hit belongs to.
+    const tracksRouteRequests =
+      name === 'browser' && this.routeHandlerRequests !== undefined
+    if (tracksRouteRequests) events.push(...this.trackRouteHandlerRequests(cdp))
+    await cdp.subscribe([...new Set(events)])
     this.alive()
     // The page's network events flow only when its Network domain is enabled; a refusal leaves the page read to the stack.
-    if (tracksPageRequests)
+    if (tracksPageRequests || tracksRouteRequests)
       await cdp.request('Network.enable', {}).catch(() => undefined)
     this.alive()
   }
@@ -9286,6 +9690,28 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Listens to the page's API requests and keeps the ones that match a declared route handler, with the operation window each started in.
+   * Called by {@link observeParticipant} for the browser of a run that declares a route-handler stop; the pause of a route-handler hit is matched with these requests ({@link settleRouteHandlerHit}).
+   * @param cdp - The page's channel.
+   * @returns The event names to subscribe.
+   * @example this.trackRouteHandlerRequests(cdp) // ['Network.requestWillBeSent']
+   */
+  private trackRouteHandlerRequests(cdp: Cdp): string[] {
+    cdp.on('Network.requestWillBeSent', (event) =>
+      this.routeHandlerRequests?.start(
+        {
+          requestId: event.requestId,
+          method: event.request.method,
+          url: event.request.url,
+        },
+        this.operationsDispatched,
+        performance.now(),
+      ),
+    )
+    return ['Network.requestWillBeSent']
+  }
+
+  /**
    * Hands a server pause to {@link onCdpPaused} once the address of its script is known: a server module Next evaluated before the debugger attached is never announced by the proxy (it forwards only scripts parsed after its subscription), so the pause is held while the script's text is read once and its address bound like an announced script ({@link discoverUnannouncedScript}).
    * Why it exists: without the address the pause cannot be matched to the stop's module, the copy hold cannot recognise a pre-attach React copy, and a saved-session run (whose warm-up load renders the entry route before the attach) fails with the source-bound wait. Called for every `Debugger.paused` of {@link observeParticipant}.
    * @param name - The participant whose runtime paused; only the server's pauses are discovered (the page attaches before it loads).
@@ -9308,6 +9734,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       participant.discovering ||
       !(
         this.preparationWindow ||
+        this.routeHandlerStops.length > 0 ||
         this.stops.some((stop) => stop.participant === 'server')
       )
     ) {
@@ -10030,6 +10457,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private async selectServer(
     options: { pauseForSourceMap?: boolean } = {},
   ): Promise<void> {
+    // A run that declares a route-handler stop binds its provisional breakpoint before the route's first compile runs: the route is compiled on the request of its operation.
+    const pauseForSourceMap =
+      options.pauseForSourceMap ?? this.routeHandlerStops.length > 0
     const endpoint = await this.app!.inspectorEndpoint(this.abort.signal)
     this.alive()
     const launched = await this.acquire(
@@ -10048,7 +10478,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           continueOnAttach: false,
           sourceMaps: true,
           // Only a run with a preparation window pays for the pause before each mapped script: its module-scope stops must be bound before their module runs.
-          ...(options.pauseForSourceMap ? { pauseForSourceMap: true } : {}),
+          ...(pauseForSourceMap ? { pauseForSourceMap: true } : {}),
           sourceMapPathOverrides: {
             'webpack://_N_E/./*': `${this.packageRoot}/*`,
             // Exact keys only: one per server library stop file of an App Router app.
@@ -10489,6 +10919,67 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Finds the armed route-handler stop of an operation (or an earlier one) that has not paused yet, for the operation's completion and its unreached wording.
+   * @param index - The operation (1-based).
+   * @returns The first such stop in declared order; `undefined` when none is armed and waiting.
+   * @example this.pendingRouteHandlerStop(2)?.route // '/api/todos' while the POST has not reached the handler
+   */
+  private pendingRouteHandlerStop(index: number): RouteHandlerStop | undefined {
+    return this.routeHandlerStops.find(
+      (entry) =>
+        entry.operationIndex <= index &&
+        entry.breakpoint !== undefined &&
+        !entry.prepared,
+    )
+  }
+
+  /**
+   * Words and records the failure of a route-handler stop no request reached after its operation: `SERVER_STOP_NOT_REACHED` with phase `after-operation`, `details.routeHandler` and the hits the run resumed.
+   * Inputs were sent, so the failure says so and the chat never starts again unasked. The causes are possibilities, never the established one.
+   * @param entry - The armed stop that never paused.
+   * @returns The coded failure text.
+   * @example this.routeHandlerNotReachedText(entry) // 'SERVER_STOP_NOT_REACHED: Declared stop app/api/todos/route.ts:25 (route handler /api/todos) was not reached within 20 s after operation 2. …'
+   */
+  private routeHandlerNotReachedText(entry: RouteHandlerStop): string {
+    const place = `${entry.stop.source.path}:${entry.stop.source.line}`
+    // The method the page used for this route in the operation's window, when the browser sent one.
+    const sent = (this.routeHandlerRequests?.list() ?? []).find(
+      (request) =>
+        request.window === entry.operationIndex &&
+        routeHandlerPathMatches(entry.route, request.pathname),
+    )
+    this.operationFailure ??= {
+      code: 'SERVER_STOP_NOT_REACHED',
+      operationIndex: entry.operationIndex,
+      sent: 'sent',
+      sideEffects: 'unknown',
+      logId: `${this.options.control?.runId ?? this.id}#${entry.operationIndex}`,
+      serverRender: {
+        phase: 'after-operation',
+        stop: place,
+        pausedStops: this.stops
+          .slice(0, this.stopIndex)
+          .filter((other) => afterOperationOf(other) === entry.operationIndex)
+          .map((other) => this.declaredAt(other)),
+        notReachedStops: [place],
+        routeHandler: {
+          route: entry.route,
+          ...(sent ? { method: sent.method } : {}),
+          resumedHits: [...entry.resumed].map(([reason, count]) => ({
+            reason,
+            count,
+          })),
+        },
+      },
+    }
+    // parent: replace with ROUTE_HANDLER_NOT_REACHED_POSSIBILITIES
+    return formatRefusalFailure(
+      'SERVER_STOP_NOT_REACHED',
+      `Declared stop ${place} (route handler ${entry.route}) was not reached within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s after operation ${entry.operationIndex}. Possibilities, not the established cause: the page sent no request with that method to that route after the operation (client-side validation, a cached answer, a request to another path), it sent one before the operation, or the line sits in a branch that did not run. The inputs were sent and their side effects are unknown: explain what ran, offer the partial replay and do not start again unasked.`,
+    )
+  }
+
+  /**
    * Words the failure of an operation whose input or stop did not follow within the active bound, read when the progress deadline expires.
    * @param index - The operation in flight (1-based).
    * @returns The declared stop's reason when the operation's stop was not hit, otherwise that the input was not sent or acknowledged.
@@ -10514,6 +11005,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         return `${opening}: declared stop ${this.declaredAt(stop)} is paused at ${paused}, but the debugger did not announce that stop within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s of the accepted action`
       return this.notHitFirstStopReason(stop, opening)
     }
+    // An armed route-handler stop of this operation whose request never reached its line.
+    const pendingRoute = this.pendingRouteHandlerStop(index)
+    if (pendingRoute && this.operationsDispatched >= index)
+      return this.routeHandlerNotReachedText(pendingRoute)
     return this.operationsDispatched >= index
       ? `Operation ${index} was sent, but its input was not acknowledged within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s`
       : `Operation ${index} was accepted, but its input was not sent within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s`
@@ -10770,11 +11265,47 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @example await this.armStopsOfOperation(2)
    */
   private async armStopsOfOperation(index: number): Promise<void> {
+    await this.armRouteHandlerStops(index)
     const stop = this.stops[this.stopIndex]
     if (!stop || afterOperationOf(stop) !== index || this.armedStops.has(stop))
       return
     // Armed before the operation is sent: a library module the operation itself would load is refused, never waited for.
     await this.armStopSet(this.stopIndex, true)
+  }
+
+  /**
+   * Arms the route-handler stops of an operation by source, just before that operation's input: one provisional native breakpoint each, acknowledged before the input is sent.
+   * Why it exists: a route handler is compiled on the request of its operation, so it cannot be sealed before the browser opens; the breakpoint is bound by the debugger when the route compiles, and the stop is sealed from the script that paused. Armed no earlier, so the entry load's own request never pauses it. Called by {@link armStopsOfOperation}.
+   * @param index - The operation about to be sent (1-based).
+   * @throws The registration failures of {@link OwnedRepositoryBreakpoint.registered}.
+   * @example await this.armRouteHandlerStops(2) // journal: route-handler.armed
+   */
+  private async armRouteHandlerStops(index: number): Promise<void> {
+    const session = this.participants.server.selected
+    for (const entry of this.routeHandlerStops) {
+      if (entry.operationIndex !== index || entry.breakpoint || entry.prepared)
+        continue
+      if (!session) throw new Error('Declared debugger was not acquired')
+      const citationEndLine =
+        this.definition.descriptor.anchors[entry.stop.anchorIndex]!.endLine
+      entry.breakpoint = new OwnedRepositoryBreakpoint(
+        entry.sourcePath,
+        entry.requestedLine,
+        entry.requestedLine === entry.stop.source.line
+          ? entry.stop.source.column
+          : 1,
+        // js-debug binds a pending breakpoint when its module compiles; any line of the citation from the declared one is a place of this stop.
+        (line) => line >= entry.stop.source.line && line <= citationEndLine,
+      )
+      await entry.breakpoint.registered(session, this.abort.signal)
+      this.alive()
+      this.evidence.record('route-handler.armed', {
+        declaredIndex: entry.index,
+        operationIndex: index,
+        route: entry.route,
+        requestedLine: entry.requestedLine,
+      })
+    }
   }
 
   /**
@@ -10883,8 +11414,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const record = this.operationRecords[index - 1]
     const stop = this.stops[this.stopIndex]
     // A stop of this operation (or an earlier one) is still ahead or paused: the operation is not done.
+    // A route-handler stop of this operation (or an earlier one) that is armed and has not paused keeps the operation open too.
     const hasPendingStop =
-      stop !== undefined && (afterOperationOf(stop) ?? Infinity) <= index
+      (stop !== undefined && (afterOperationOf(stop) ?? Infinity) <= index) ||
+      this.pendingRouteHandlerStop(index) !== undefined
     if (
       !record ||
       this.cleaning ||
@@ -11492,6 +12025,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): void {
     for (const entry of this.preparationWindow?.provisional ?? [])
       if (!this.stops.some((stop) => stop.breakpoint === entry.breakpoint))
+        entry.breakpoint.onEvent(session, event)
+    for (const entry of this.routeHandlerStops)
+      if (entry.breakpoint && !entry.prepared)
         entry.breakpoint.onEvent(session, event)
     for (const stop of this.stops) {
       const refusedBefore = stop.breakpoint?.refusedPlace(session)
@@ -14437,6 +14973,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           description: 'provisional breakpoint',
           release: (): void => entry.breakpoint.remove(),
         })),
+        ...this.routeHandlerStops.flatMap((entry) =>
+          entry.breakpoint && !entry.prepared
+            ? [
+                {
+                  description: 'route-handler breakpoint',
+                  release: (): void => entry.breakpoint!.remove(),
+                },
+              ]
+            : [],
+        ),
       ])),
     )
     failures.push(...(await this.stopKnownDebuggers()))

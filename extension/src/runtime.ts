@@ -386,7 +386,7 @@ export type ChromeExtensionRunInput = {
 
 export type ConfiguredRuntimeSnapshot = Omit<
   ConfiguredObservation,
-  'snapshotUri' | 'interpretations'
+  'snapshotUri' | 'interpretations' | 'execution'
 > & {
   /** What ran at this pause: the page, a server action, a server render (the paused script's layer decides between those two) or an App Router route handler, which is observed after an operation. */
   execution?: 'browser' | 'server-action' | 'server-render' | 'route-handler'
@@ -446,6 +446,12 @@ export type ServerRenderFailure = {
   stop: string
   pausedStops: string[]
   notReachedStops: string[]
+  /** Set only for a route-handler stop that no request reached: its route pattern, the method of the page's request in the window when one was seen, and the hits the run resumed by reason. */
+  routeHandler?: {
+    route: string
+    method?: string
+    resumedHits: { reason: string; count: number }[]
+  }
   /** Set only for a Pages run: what the failure adds there (`details.router`, `resumedHits`, `attributionMode`, `nextVersion`). */
   pages?: PagesNotReachedFacts
 }

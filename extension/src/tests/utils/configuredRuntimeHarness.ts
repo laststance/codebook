@@ -2603,11 +2603,12 @@ export async function configuredRuntimeHarness(
         url: string,
         type = 'Document',
         frameId = 'main',
+        method = 'GET',
       ): void {
         listeners.get('Network.requestWillBeSent')?.({
           requestId,
           frameId,
-          request: { url },
+          request: { url, method },
           type,
         })
       },

@@ -110,7 +110,11 @@ export interface ServerHit {
    * The pause stands in a function of the module (`call`) or in the module's own top-level code while Next evaluates it for the first time (`evaluation`): the recorded stack of E2 has the module script's anonymous top frame, the module factory named like the script's address, then `__webpack_require__`.
    * Without it the pause has the one frame of the stop.
    */
-  stack?: 'call' | 'evaluation'
+  stack?: 'call' | 'evaluation' | 'route-handler'
+  /**
+   * With `stack: 'route-handler'`: the handler frame's function name (default `POST`). The recorded stack of E1 (Cycle 0087, Next 16, `next dev --webpack`) is the handler frame in the route file, then `AsyncLocalStorage.run`, then Next's `AppRouteRouteModule.do`; an alias (`export { handle as POST }`) runs a function named `handle`.
+   */
+  handlerName?: string
   /** The reason both channels report for the pause (default `breakpoint` for the DAP `stopped`, `other` for the CDP pause), such as `exception`. */
   stopReason?: string
   /** The editor breakpoints (by their id in the harness) the DAP `stopped` names in `hitBreakpointIds`, as the adapter does for a breakpoint hit; none are named by default. */
@@ -174,6 +178,8 @@ export function createServerParticipant(parts: ServerParticipantParts) {
   const frames = new Map<number, { line: number; column: number }>()
   /** The hits that stand in the module's own top-level code (`stack: 'evaluation'`); their top frame answers the module-evaluation scope chain. */
   const evaluationHits = new Set<number>()
+  /** The hits that stand in a route handler (`stack: 'route-handler'`), with the handler frame's name; their top frame answers E1's recorded scope chain. */
+  const routeHandlerHits = new Map<number, string>()
   let currentHit = 0
   let currentStopReason = 'breakpoint'
   let currentHitBreakpointIds: number[] | undefined
@@ -264,7 +270,7 @@ export function createServerParticipant(parts: ServerParticipantParts) {
           stackFrames: [
             {
               id: currentHit,
-              name: frameName,
+              name: routeHandlerHits.get(currentHit) ?? frameName,
               source: { path: pausedFramePath() },
               line: frame.line,
               column: frame.column,
@@ -292,6 +298,47 @@ export function createServerParticipant(parts: ServerParticipantParts) {
               },
               {
                 name: `Closure (${parts.scriptUrl.replace('webpack-internal:///', '')})`,
+                presentationHint: 'arguments',
+                variablesReference: MODULE_FACTORY_SCOPE_REFERENCE,
+                expensive: false,
+              },
+              {
+                name: 'Global',
+                variablesReference: GLOBAL_SCOPE_REFERENCE,
+                expensive: true,
+              },
+            ],
+          }
+        // A pause in a route handler answers the chain E1 recorded: the handler's locals, four closures and the expensive global scope.
+        if (frameId !== undefined && routeHandlerHits.has(frameId))
+          return {
+            scopes: [
+              {
+                name: `Local: ${routeHandlerHits.get(frameId)}`,
+                presentationHint: 'locals',
+                variablesReference: LOCAL_SCOPE_REFERENCE,
+                expensive: false,
+              },
+              {
+                name: 'Closure',
+                presentationHint: 'arguments',
+                variablesReference: MODULE_FACTORY_SCOPE_REFERENCE,
+                expensive: false,
+              },
+              {
+                name: `Closure (${parts.scriptUrl.replace('webpack-internal:///', '')})`,
+                presentationHint: 'arguments',
+                variablesReference: MODULE_FACTORY_SCOPE_REFERENCE,
+                expensive: false,
+              },
+              {
+                name: 'Closure',
+                presentationHint: 'arguments',
+                variablesReference: MODULE_FACTORY_SCOPE_REFERENCE,
+                expensive: false,
+              },
+              {
+                name: 'Closure',
                 presentationHint: 'arguments',
                 variablesReference: MODULE_FACTORY_SCOPE_REFERENCE,
                 expensive: false,
@@ -578,6 +625,8 @@ export function createServerParticipant(parts: ServerParticipantParts) {
     } else if (!announced.has(scriptId)) announce(scriptId)
     currentHit = ++hitNumber
     if (hit.stack === 'evaluation') evaluationHits.add(currentHit)
+    if (hit.stack === 'route-handler')
+      routeHandlerHits.set(currentHit, hit.handlerName ?? 'POST')
     currentStopReason = hit.stopReason ?? 'breakpoint'
     currentHitBreakpointIds = hit.hitBreakpoints?.map((id) => adapterId({ id }))
     routes.set(
@@ -594,8 +643,27 @@ export function createServerParticipant(parts: ServerParticipantParts) {
       ...(hit.stopReason === undefined ? {} : { reason: hit.stopReason }),
       ...(hit.stack === undefined
         ? {}
-        : { functionName: hit.stack === 'call' ? 'serverStep' : '' }),
+        : {
+            functionName:
+              hit.stack === 'call'
+                ? 'serverStep'
+                : hit.stack === 'route-handler'
+                  ? (hit.handlerName ?? 'POST')
+                  : '',
+          }),
     })
+    if (hit.stack === 'route-handler') {
+      const nextFrame = (functionName: string, id: number) => ({
+        callFrameId: `server-next-${currentHit}-${id}`,
+        functionName,
+        location: { scriptId: 'server-chunk', lineNumber: 10, columnNumber: 0 },
+      })
+      // The handler, then the async context and Next's route module that called it (E1).
+      own.callFrames.push(
+        nextFrame('AsyncLocalStorage.run', 1),
+        nextFrame('AppRouteRouteModule.do', 2),
+      )
+    }
     if (hit.stack === 'evaluation') {
       const address = announced.get(scriptId) ?? parts.scriptUrl
       const factoryName = address.replace(/^about:\/\/React\/Server\//, '')

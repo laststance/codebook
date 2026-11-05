@@ -95,6 +95,59 @@ export function outsidePackageRefusal(
   })
 }
 
+/** The reasons a route-handler stop is refused before any process starts. */
+export type RouteHandlerRefusalReason =
+  | 'route-handler-before-operation'
+  | 'route-handler-edge-runtime'
+  | 'route-handler-not-app-source'
+
+/** What each route-handler refusal says, as `[what was refused, what to change]`. */
+const ROUTE_HANDLER_REFUSAL_TEXT: Record<
+  RouteHandlerRefusalReason,
+  readonly [string, string]
+> = {
+  'route-handler-before-operation': [
+    'is a route handler declared afterOperation 0; a route handler runs for a request the page sends after an operation',
+    'set afterOperation to the operation after which the page sends the request',
+  ],
+  'route-handler-edge-runtime': [
+    'is a route handler that declares export const runtime = "edge", which Codebook cannot pause',
+    'explain the handler from its source and say it cannot be paused; no field change makes it observable',
+  ],
+  'route-handler-not-app-source': [
+    "is a route handler in node_modules or a workspace library, not in the app's own source",
+    "declare the stop in a route.ts under the app's own app folder",
+  ],
+}
+
+/**
+ * Builds the refusal of a route-handler stop that Codebook can judge unsupported from the configuration and the source text alone, raised before any process starts.
+ * Called by {@link ConfiguredBrowserRun} from its lexical route-handler pass.
+ * @param reason - Which condition refused the stop.
+ * @param place - The stop's `<path>:<line>`.
+ * @param index - The stop's zero-based declared index.
+ * @returns The `NEXT_STOP_NOT_SEALED` error with `details.reason`, `stopIndex`, `file` and `sideEffects: "none"`.
+ * @example
+ * throw routeHandlerStopRefusal('route-handler-before-operation', 'app/api/todos/route.ts:25', 0)
+ */
+export function routeHandlerStopRefusal(
+  reason: RouteHandlerRefusalReason,
+  place: string,
+  index: number,
+): StudyError {
+  const [what, fix] = ROUTE_HANDLER_REFUSAL_TEXT[reason]
+  const file = place.slice(0, place.lastIndexOf(':'))
+  return nextRefusal(
+    'NEXT_STOP_NOT_SEALED',
+    `Declared stop ${place} ${what}, so the run was refused before the server started.`,
+    {
+      details: { reason, stopIndex: index, file, sideEffects: 'none' },
+      // parent: replace with ROUTE_HANDLER_REFUSAL_RECOVERY[reason]
+      recovery: `Fix the stop: ${fix}, then one new start. Nothing was started: no server, no browser and no input (details.sideEffects is none). See codebook://help/repository-browser#NEXT_STOP_NOT_SEALED.`,
+    },
+  )
+}
+
 /** The help anchor of one library refusal reason: the per-reason section, not the code's general one. */
 const libraryHelpAnchor = (reason: string): string =>
   `codebook://help/repository-browser#${reason}`
