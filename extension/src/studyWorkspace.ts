@@ -29802,7 +29802,8 @@ export class StudyWorkspace {
     this.diagnostics?.log({
       surface,
       studyId,
-      profile: NODE_TEST_PROFILE,
+      // A script replay shows its source in the same slot, so the entry names the replay's own profile.
+      profile: this.replayOpenDiagnosticIdentity(studyId).profile,
       cause,
       ...(stack ? { stack } : {}),
     })

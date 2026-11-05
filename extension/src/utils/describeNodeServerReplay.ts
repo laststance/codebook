@@ -310,18 +310,22 @@ export function describeServerStudyStatus(input: {
 
 /**
  * Words how a server replay answered, for its status line and the response row of its event list.
- * @param terminal - The recorded response or request failure, absent when the journal holds neither.
- * @returns `Response <status>`, `Request failed: <code>` or `No response recorded`.
+ * @param terminal - The recorded response, request failure or script end, absent when the journal holds none.
+ * @param profile - The replay's profile; a script has no response, so its missing end reads `No end recorded`. Defaults to the server wording.
+ * @returns `Response <status>`, `Request failed: <code>`, the script's end headline, `No response recorded` or, for a script, `No end recorded`.
  * @example describeServerAnswer(model.terminal) // => 'Response 201'
  */
 export function describeServerAnswer(
   terminal: ServerReplayModel['terminal'],
+  profile: 'node-server' | 'node-script' = 'node-server',
 ): string {
   if (terminal?.type === 'response')
     return `${NODE_SERVER_REPLAY_TEXT.eventResult} ${terminal.status}`
   // A script replay answers with how its run ended.
   if (terminal?.type === 'end') return describeScriptEndHeadline(terminal)
-  return terminal ? `Request failed: ${terminal.code}` : 'No response recorded'
+  if (terminal) return `Request failed: ${terminal.code}`
+  // An interrupted script history has no end entry, and a script never has a response.
+  return profile === 'node-script' ? 'No end recorded' : 'No response recorded'
 }
 
 /**

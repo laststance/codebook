@@ -1,5 +1,7 @@
 import type { NodeScriptView } from '../nodeScriptRuntimeTypes'
 
+import { describeScriptEndHeadline } from './describeNodeScriptEndRegion'
+
 /**
  * Words where a script run stands for the status bar item: waiting for the learner, starting, running, paused at a stop, how it ended, stopping or stopped.
  * Called by the workspace when it draws a script run's Save item.
@@ -26,9 +28,12 @@ export function describeNodeScriptViewStatus(
         ? `Paused at stop ${view.pause.stopNumber} of ${view.stops.length}`
         : 'Paused by you in the debugger'
     case 'ended':
-      return view.end?.kind === 'exited' && view.end.exitCode !== undefined
-        ? `Script exited ${view.end.exitCode}`
-        : `Script ended (${view.end?.kind ?? 'unknown'})`
+      // An unreadable exit code (`null`) must not read as "Script exited null".
+      if (view.end?.kind === 'exited')
+        return view.end.exitCode !== undefined && view.end.exitCode !== null
+          ? `Script exited ${view.end.exitCode}`
+          : `Script ${describeScriptEndHeadline(view.end).toLowerCase()}`
+      return `Script ended (${view.end?.kind ?? 'unknown'})`
     case 'stopping':
       return 'Stopping'
     case 'stopped':

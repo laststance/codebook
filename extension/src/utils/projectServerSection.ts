@@ -49,7 +49,7 @@ export function projectServerSection(
     ? { sameMomentStepIds: [] as string[] }
     : momentSteps(selected, learning, input.chosenStepId)
   const stops = model.events.filter((event) => event.type === 'stop')
-  const answer = describeServerAnswer(model.terminal)
+  const answer = describeServerAnswer(model.terminal, model.header.profile)
   return {
     status: statusLine(input, stops, answer),
     ...captureReasonLine(model.status, replay.captureReasons),

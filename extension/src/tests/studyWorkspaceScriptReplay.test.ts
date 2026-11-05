@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { before, test } from 'node:test'
 
 import { sha256 } from '../runtimeSupport/utils/sha256'
+import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
 
 import { workspaceHarness } from './studyWorkspaceHarness'
 import {
@@ -304,6 +305,55 @@ test('a Script replay cannot be deleted from Saved studies and the refusal names
 
     // Assert
     assert.equal(refusal, 'Script replays cannot be deleted here yet.')
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=the Output › Codebook entry of a Script replay's recorded-source slot failure names the script profile; fails_when=the entry logs node-test for a script replay; no_claim=the Study row's wording of the failure
+test('a recorded-source slot failure of a Script replay is logged with the node-script profile', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  try {
+    const { studyId } = await runScriptHistory(
+      context,
+      {
+        declaredStops: 1,
+        hits: [0],
+        end: {
+          kind: 'exited',
+          exitCode: 0,
+          stopsReached: [0],
+          stopsNeverReached: [],
+        },
+      },
+      repositoryOf(harness),
+    )
+    harness.failCurrentSourceOpen()
+
+    // Act
+    await openServerReplay(harness, studyId)
+
+    // Assert
+    assert.deepEqual(
+      logged.map(({ surface, studyId: loggedId, profile }) => ({
+        surface,
+        loggedId,
+        profile,
+      })),
+      [
+        {
+          surface: 'open:recorded-source',
+          loggedId: studyId,
+          profile: 'node-script',
+        },
+      ],
+    )
   } finally {
     await harness.close()
   }
