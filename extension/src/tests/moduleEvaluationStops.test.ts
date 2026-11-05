@@ -472,6 +472,7 @@ test('a preparation pause held past the 90 s setup budget fails nothing and the 
   const snapshot = await publishedPause(harness)
   // Act: the learner reads for 100 s on the run's clock (and 50 ms of wall time pass)
   harness.advance(100_000)
+  // gstack-timing-ok: the held time is wall time by contract (it moves the wall-clock preparationDeadlineAt); 50 ms of real hold gives the lower bound the assertion below reads, and a lower bound cannot flake.
   await new Promise((resolve) => setTimeout(resolve, 50))
   assert.deepEqual([...harness.run.view().failures], [])
   await harness.run.continue('server', snapshot.pause)
@@ -489,6 +490,7 @@ test('a preparation pause held past the 90 s setup budget fails nothing and the 
   )
   assert.deepEqual([...harness.run.view().failures], [])
   // The run resource's setup deadline moves by the held wall time, as the runtime's own budget did.
+  // gstack-timing-ok: a lower bound of the wall time the test itself held the pause for, which is the reported contract.
   assert.ok((harness.run.view().preparationHeldMs ?? 0) >= 50)
 })
 
