@@ -99,6 +99,7 @@ test('the react-scripts help states its limits and has an anchor for each refusa
     'node-modules',
     'unmapped-line',
     'map-limit',
+    'map-unreadable',
   ])
   assert.ok(section.studies.includes('study format 11 (.study.v11.json)'))
   assert.ok(help.startHere.includes('reactScriptsQuickStart'))

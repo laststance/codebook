@@ -62,6 +62,8 @@ const REACT_SCRIPTS_REFUSAL_REASONS = {
       'No position of the served bundle maps to the stop line or within its citation (details.file, details.line, details.citationEndLine). Move the stop to a line the compiled app runs. The owned server was stopped and no click was sent.',
     'map-limit':
       "The served source map exceeds a reading limit (details.limit, details.limitValue), so the stop cannot be sealed. Tell the learner; choose a stop in a smaller module of the app's own source.",
+    'map-unreadable':
+      'The served bundle or its source map cannot be read as react-scripts serves it (details.problem: an oversized bundle, a missing or foreign sourceMappingURL, or a map that is not a flat version 3 JSON map), so the stop cannot be sealed. The owned server was stopped and no click was sent; tell the learner this app cannot be observed in this version.',
   },
 } as const satisfies Record<
   (typeof REACT_SCRIPTS_REFUSAL_CODES)[number],
