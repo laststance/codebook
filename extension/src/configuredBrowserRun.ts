@@ -11448,27 +11448,66 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         success: response.success,
       })
   }
+  /**
+   * Hands the adapter's news about breakpoints to every owned breakpoint: the provisional ones of the preparation window that no stop took over, then each stop's, judging a stop's refused place again by break locations when the news changed it.
+   * Called by {@link onEvent} for a `breakpoint` event.
+   * @param session - The session that sent the news.
+   * @param event - The `breakpoint` event.
+   * @param name - The participant of that session.
+   * @example this.deliverBreakpointNews(session, event, 'server')
+   */
+  private deliverBreakpointNews(
+    session: vscode.DebugSession,
+    event: DebugProtocol.Event,
+    name: Participant,
+  ): void {
+    for (const entry of this.preparationWindow?.provisional ?? [])
+      if (!this.stops.some((stop) => stop.breakpoint === entry.breakpoint))
+        entry.breakpoint.onEvent(session, event)
+    for (const stop of this.stops) {
+      const refusedBefore = stop.breakpoint?.refusedPlace(session)
+      stop.breakpoint?.onEvent(session, event)
+      // News of the stop's own participant that the source map alone refused is judged once more by the debugger's break locations as it arrives, so the stop's pause is matched at once and a deadline names no refusal they would lift.
+      if (
+        stop.participant === name &&
+        stop.breakpoint?.refusedPlace(session) !== refusedBefore
+      )
+        this.track(this.retakeNewsByBreakLocations(stop, session))
+    }
+  }
+
+  /**
+   * Resumes a pause of the warm-up page at a provisional breakpoint of the preparation window, which the editor also sends to the page's session: it is nobody's stop.
+   * Called by {@link onEvent} for a `stopped` event before any stop admission.
+   * @param session - The session that stopped.
+   * @param name - The participant of that session.
+   * @param body - The `stopped` event's body.
+   * @returns `true` when the pause was such a hit and its resume is under way; `false` otherwise.
+   * @example if (this.resumesBrowserPreparationHit(session, 'browser', body)) return
+   */
+  private resumesBrowserPreparationHit(
+    session: vscode.DebugSession,
+    name: Participant,
+    body: DebugProtocol.StoppedEvent['body'],
+  ): boolean {
+    if (
+      name !== 'browser' ||
+      !this.preparationWindow ||
+      !this.hitsOnlyProvisionalBreakpoints(session, body.hitBreakpointIds)
+    )
+      return false
+    this.track(this.resumeBrowserPreparationHit(session, body))
+    return true
+  }
+
   /** Reserves stops in declared order, retaining per-session generations across participant transitions. An accepted stop starts the pause hold and its inspection; the status becomes `paused-<participant>` only when {@link inspect} commits the observation. @example run.onEvent(selected, stopped) */
   onEvent(session: vscode.DebugSession, event: DebugProtocol.Event): void {
     const name = this.participantName(session)
     if (this.cleaning || !name) return
     const participant = this.participants[name]
     // The adapter's later news about an owned breakpoint (a pending one verified when its module loads) gives that stop its place.
-    if (event.event === 'breakpoint') {
-      for (const entry of this.preparationWindow?.provisional ?? [])
-        if (!this.stops.some((stop) => stop.breakpoint === entry.breakpoint))
-          entry.breakpoint.onEvent(session, event)
-      for (const stop of this.stops) {
-        const refusedBefore = stop.breakpoint?.refusedPlace(session)
-        stop.breakpoint?.onEvent(session, event)
-        // News of the stop's own participant that the source map alone refused is judged once more by the debugger's break locations as it arrives, so the stop's pause is matched at once and a deadline names no refusal they would lift.
-        if (
-          stop.participant === name &&
-          stop.breakpoint?.refusedPlace(session) !== refusedBefore
-        )
-          this.track(this.retakeNewsByBreakLocations(stop, session))
-      }
-    }
+    if (event.event === 'breakpoint')
+      this.deliverBreakpointNews(session, event, name)
     if (
       event.event === 'stopped' &&
       name === 'server' &&
@@ -11481,15 +11520,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     if (event.event === 'stopped') {
       const body: DebugProtocol.StoppedEvent['body'] = event.body
-      // The warm-up page may pause at a provisional breakpoint of the window, which the editor also sends to the page's session: nobody's stop.
-      if (
-        name === 'browser' &&
-        this.preparationWindow &&
-        this.hitsOnlyProvisionalBreakpoints(session, body.hitBreakpointIds)
-      ) {
-        this.track(this.resumeBrowserPreparationHit(session, body))
-        return
-      }
+      if (this.resumesBrowserPreparationHit(session, name, body)) return
       // The editor sends a server stop's breakpoint to the browser session too, and the page's stub of a "use server" module maps the same line: that browser pause belongs to the server stop's breakpoint, not to a stop of the page, so it is resumed.
       const libraryCopyOf =
         name === 'browser'
