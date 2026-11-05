@@ -1,8 +1,6 @@
 import { join } from 'node:path'
 
 import {
-  DEVELOPMENT_SERVER_DEFAULT_PORT,
-  DEVELOPMENT_SERVER_MAX_PORT,
   REACT_SCRIPTS_COMPILER_LINE_MAX_CHARS,
   REACT_SCRIPTS_OUTPUT_DRAIN_MS,
   REACT_SCRIPTS_OUTPUT_POLL_MS,
@@ -29,15 +27,18 @@ import {
   drainDevelopmentServerOutput,
   launchDevelopmentServer,
 } from './launchDevelopmentServer'
-import { buildViteEnvironment } from './launchViteDevelopmentServer'
 import {
   longestMaskedLength,
   maskEnvValues,
   maskKnownValues,
 } from './maskKnownValues'
+import {
+  buildReactScriptsEnvironment,
+  declaredReactScriptsPort,
+} from './reactScriptsChildEnvironment'
 
-/** The name prefix react-scripts inlines into the bundle. */
-const REACT_SCRIPTS_INLINED_PREFIX = 'REACT_APP_'
+/** The names react-scripts inlines into the bundle: it selects client env with `/^REACT_APP_/i`, so the prefix is matched case-insensitively. */
+const REACT_SCRIPTS_INLINED_NAME = /^REACT_APP_/i
 
 /** What the owned react-scripts start learned, besides the process. */
 export type ReactScriptsLaunch = {
@@ -47,48 +48,6 @@ export type ReactScriptsLaunch = {
   maskText: (text: string) => string
   /** Masks the secret-named and inlined `REACT_APP_*` env values in sealed module text. */
   maskModuleText: (text: string) => string
-}
-
-/**
- * Builds the complete environment of the react-scripts process: the allowlist, the script's assignments, then the values Codebook sets, which win.
- *
- * Why it exists: `HOST`, `PORT` and `BROWSER` decide where the server listens and whether it opens a browser, and `CI=true` keeps start.js from exiting when its stdin (none) ends; a script assignment of the same name must not change them. Called by {@link launchReactScriptsDevelopmentServer} once per launch.
- * @param assignments - The `NAME=value` assignments of the accepted `start` script.
- * @param port - The port the run listens on.
- * @returns The environment.
- * @example buildReactScriptsEnvironment({ PORT: '4000', HOST: '0.0.0.0' }, 3000) // => { …, PORT: '3000', HOST: '127.0.0.1', BROWSER: 'none', CI: 'true' }
- */
-function buildReactScriptsEnvironment(
-  assignments: Record<string, string>,
-  port: number,
-): NodeJS.ProcessEnv {
-  // The Vite environment is the neutral allowlist + assignments + no colors; only the overrides below are react-scripts' own.
-  return {
-    ...buildViteEnvironment(assignments),
-    HOST: '127.0.0.1',
-    PORT: String(port),
-    BROWSER: 'none',
-    CI: 'true',
-  }
-}
-
-/**
- * Reads the port a react-scripts start declares: the script's `PORT` assignment, else react-scripts' default.
- * @param assignments - The `start` script's assignments.
- * @returns The port and where it was declared.
- * @example declaredReactScriptsPort({ PORT: '4000' }) // => { port: 4000, source: 'the start script PORT' }
- */
-function declaredReactScriptsPort(assignments: Record<string, string>): {
-  port: number
-  source: string
-} {
-  const port = Number(assignments.PORT)
-  if (Number.isInteger(port) && port > 0 && port <= DEVELOPMENT_SERVER_MAX_PORT)
-    return { port, source: 'the start script PORT' }
-  return {
-    port: DEVELOPMENT_SERVER_DEFAULT_PORT,
-    source: "react-scripts' default port",
-  }
 }
 
 /**
@@ -217,11 +176,10 @@ export async function launchReactScriptsDevelopmentServer(
   )
   request.alive()
   request.onStep(VITE_SETUP_STEPS.startingReactScripts)
-  // Secret-named values (script assignments and .env files) and every REACT_APP_* value are masked: react-scripts inlines the latter into the bundle the run archives, as the Vite path masks the values it inlines. The shared redaction covers secret shapes.
+  // Secret-named values (script assignments, the child environment and .env files, settled as react-scripts settles them) and every REACT_APP_* value are masked: react-scripts inlines the latter into the bundle the run archives, as the Vite path masks the values it inlines. The shared redaction covers secret shapes.
   const maskedValues = Object.entries(workspace.environment)
     .filter(
-      ([name]) =>
-        isSecretName(name) || name.startsWith(REACT_SCRIPTS_INLINED_PREFIX),
+      ([name]) => isSecretName(name) || REACT_SCRIPTS_INLINED_NAME.test(name),
     )
     .map(([, value]) => value)
   const maskText = (text: string): string => maskKnownValues(text, maskedValues)

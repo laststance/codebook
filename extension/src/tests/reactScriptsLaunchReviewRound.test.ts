@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
 import { access } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
+import { promisify } from 'node:util'
 
+import { REACT_SCRIPTS_ENV_FILE_LIMIT_BYTES } from '../constants'
 import type { DevelopmentBundleRequest } from '../developmentServerAdapter'
 import { StudyError } from '../errors'
 import { REACT_SCRIPTS_DEV_ADAPTER } from '../reactScriptsDevAdapter'
@@ -219,6 +222,89 @@ test('env file secrets inlined in the bundle are masked in the archived bundle t
   assert.equal(sealed.bundle.javascript.includes(secret), true)
   assert.equal(archived.includes(secret), false)
   assert.equal(archived.includes('private.example.com'), false)
+})
+
+// Value: protects=a value reached through a chain of .env references is masked in the archived bundle, as react-scripts inlines the final value; fails_when=the bundle text keeps synthetic-only-value; no_claim=values from the learner's real shell
+test('a REACT_APP_ value reached through a chain of references is masked in the archived bundle text', async (context) => {
+  // Arrange
+  const secret = 'synthetic-only-value'
+  const { launch, sealed } = await startAndSeal(
+    context,
+    { bundleLiteral: secret },
+    (repository) =>
+      repository.write(
+        '.env',
+        `REACT_APP_TOKEN=$ALIAS\nALIAS=$BASE\nBASE=${secret}\n`,
+      ),
+  )
+  // Act
+  assert.ok(launch.maskModuleText)
+  const archived = launch.maskModuleText(sealed.bundle.javascript)
+  // Assert
+  assert.equal(sealed.bundle.javascript.includes(secret), true)
+  assert.equal(archived.includes(secret), false)
+})
+
+// Value: protects=react-scripts selects client env with /^REACT_APP_/i, so a lowercase name is inlined and must be masked; fails_when=react_app_lower stays in the archived bundle; no_claim=names react-scripts does not inline
+test('a lowercase react_app_ value is masked in the archived bundle text', async (context) => {
+  // Arrange
+  const secret = 'synthetic-lower-value'
+  const { launch, sealed } = await startAndSeal(
+    context,
+    { bundleLiteral: secret },
+    (repository) => repository.write('.env', `react_app_lower=${secret}\n`),
+  )
+  // Act
+  assert.ok(launch.maskModuleText)
+  const archived = launch.maskModuleText(sealed.bundle.javascript)
+  // Assert
+  assert.equal(sealed.bundle.javascript.includes(secret), true)
+  assert.equal(archived.includes(secret), false)
+})
+
+// Value: protects=an .env over the size limit, which react-scripts still reads, refuses before anything starts instead of leaving its values unmasked; fails_when=the app starts or the reason is not env-file-unreadable; no_claim=the wording
+test('an .env file over the limit is refused with reason env-file-unreadable before anything starts', async (context) => {
+  // Arrange
+  const oversized = await startAdapter(context, {}, (repository) =>
+    repository.write(
+      '.env',
+      `REACT_APP_KEY=${'x'.repeat(REACT_SCRIPTS_ENV_FILE_LIMIT_BYTES)}\n`,
+    ),
+  )
+  // Act
+  const error = await oversized.started().then(
+    () => undefined,
+    (thrown: unknown) => thrown,
+  )
+  // Assert
+  assert.ok(error instanceof StudyError)
+  assert.equal(error.code, 'REACT_SCRIPTS_UNSUPPORTED')
+  assert.equal(error.details?.reason, 'env-file-unreadable')
+  assert.equal(error.details?.sideEffects, 'none')
+  assert.match(error.message, /\.env/)
+  await assert.rejects(access(oversized.repository.pidFile))
+})
+
+// Value: protects=an .env that is a FIFO never hangs the extension host and is refused; fails_when=the read waits for a writer or the app starts; no_claim=sockets and devices (same branch)
+test('an .env file that is a FIFO is refused promptly instead of hanging', async (context) => {
+  // Arrange
+  if (process.platform === 'win32') {
+    context.skip('FIFOs do not exist on Windows')
+    return
+  }
+  const fifo = await startAdapter(context, {}, async (repository) => {
+    await promisify(execFile)('mkfifo', [join(repository.appRoot, '.env')])
+  })
+  // Act
+  const error = await fifo.started().then(
+    () => undefined,
+    (thrown: unknown) => thrown,
+  )
+  // Assert
+  assert.ok(error instanceof StudyError)
+  assert.equal(error.details?.reason, 'env-file-unreadable')
+  assert.equal(error.details?.sideEffects, 'none')
+  await assert.rejects(access(fifo.repository.pidFile))
 })
 
 // Value: protects=a redirecting entry page is not followed and a page over the entry limit is not scanned, so the app is not ready from either; fails_when=the entry fetch follows a redirect or reads an unbounded body; no_claim=the real dev server's own redirects

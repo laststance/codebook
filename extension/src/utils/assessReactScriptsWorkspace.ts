@@ -24,7 +24,7 @@ export type ReactScriptsWorkspace = {
   installationDirectory: string
   /** The leading `NAME=value` assignments of the accepted `start` script. */
   assignments: Record<string, string>
-  /** The environment react-scripts builds: the start script's assignments over the app's `.env` files. */
+  /** The environment react-scripts settles: the child's own environment with the app's `.env` files loaded and expanded over it; the mask list is built from it. */
   environment: Record<string, string>
   /** The path the development server serves the app at (`/` unless a `homepage` or `PUBLIC_URL` moves it). */
   publicPath: string
@@ -72,7 +72,7 @@ async function refusalOfGaps(
  * Why it exists: `codebook_status` and the start must use one judgement (DX-9), so a start never runs an app status called not ready. Called by the adapter's `assertWorkspace` and `start`.
  * @param reactScriptsPackage - The app the run resolved.
  * @returns The installed `react-scripts` folder, the start script's assignments, the settled environment and the public path.
- * @throws `REACT_SCRIPTS_UNSUPPORTED` naming the first gap (`not-a-react-scripts-app`, `not-installed`, `react-scripts-version`, `start-script-not-react-scripts`, `prestart-script`, `https`).
+ * @throws `REACT_SCRIPTS_UNSUPPORTED` naming the first gap (`not-a-react-scripts-app`, `not-installed`, `react-scripts-version`, `start-script-not-react-scripts`, `prestart-script`, `https`, `env-file-unreadable`).
  * @example const { installationDirectory } = await assessReactScriptsWorkspace(reactScriptsPackage)
  */
 export async function assessReactScriptsWorkspace(

@@ -559,3 +559,25 @@ export function reactScriptsHttpsRefusal(): StudyError {
     { reason: 'https', sideEffects: 'none' },
   )
 }
+
+/**
+ * Builds the `REACT_SCRIPTS_UNSUPPORTED` refusal of an `.env` file react-scripts reads but Codebook cannot read safely: over the size limit, or not a regular file (a FIFO, socket or device).
+ *
+ * Why it exists: react-scripts inlines the `REACT_APP_*` values of every `.env` file it can read, so a file Codebook skips would leave those values unmasked in the archived bundle and hide an `HTTPS=true`. Called by {@link readReactScriptsEnvFile} before any process starts.
+ * @param file - The app-relative file name, one of the fixed `.env*` names.
+ * @param problem - Why the file is refused, one clause without a final period.
+ * @returns The refusal: `details.reason: "env-file-unreadable"`, `file` and `sideEffects: "none"`.
+ * @example
+ * reactScriptsEnvFileRefusal('.env', 'it is not a regular file').details?.reason // => 'env-file-unreadable'
+ */
+export function reactScriptsEnvFileRefusal(
+  file: string,
+  problem: string,
+): StudyError {
+  return reactScriptsRefusal(
+    'REACT_SCRIPTS_UNSUPPORTED',
+    `The app's ${file} cannot be read safely (${problem}), and react-scripts would still read it. Nothing was started.`,
+    `Tell the learner that ${file} is over the size limit or is not a regular file (details.file); never edit the project or its .env files. ${recoveryEnd('REACT_SCRIPTS_UNSUPPORTED')}`,
+    { reason: 'env-file-unreadable', file, sideEffects: 'none' },
+  )
+}
