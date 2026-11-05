@@ -183,3 +183,35 @@ test('the help and README state the route-handler identity limits, except route 
     ),
   )
 })
+
+// Value: protects=native C87-1 (a required request.method inspection ended the run at its pause): the help, the README and the skill tell the chat that request.method, request.url and headers are getters Codebook refuses and that routeHandler names the method and path; fails_when=a text again calls request.method readable, so a chat declares it and the run stops before its outcome; no_claim=chat behaviour
+test('the help, README and skill say the request getters are never inspections and routeHandler names the method', async () => {
+  // Arrange
+  const values = serverRenderHelp().routeHandlerStops.values
+  const readme = await readPackaged('README.md')
+  const skill = await readPackaged('skills', 'codebook', 'SKILL.md')
+  // Act
+  const texts = [values, readme, skill]
+  // Assert
+  assert.ok(
+    values.includes(
+      "request.method, request.url and request.headers are getters of the Request object, which Codebook's side-effect-free inspection refuses",
+    ),
+  )
+  assert.ok(
+    readme.includes(
+      "`request.method`, `request.url` and the headers are getters that Codebook's side-effect-free inspection refuses, so never declare them as inspections",
+    ),
+  )
+  assert.ok(
+    skill.includes(
+      'never declare `request.method`, `request.url` or a header as an inspection',
+    ),
+  )
+  assert.deepEqual(
+    texts.map((text) =>
+      /request\.method`? (and|,) `?request\.url`? are readable/.test(text),
+    ),
+    [false, false, false],
+  )
+})
