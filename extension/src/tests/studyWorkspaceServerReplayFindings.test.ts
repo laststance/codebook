@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { existsSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { before, test } from 'node:test'
@@ -107,14 +108,21 @@ test('an understanding choice for a server replay whose folder is gone answers t
       workspaceKey: workspaceKeyOf(harness),
     })
     await openServerReplay(harness, header.studyId)
-    await rm(
-      join(
-        harness.service.nodeHistoryStore!.learningDirectory,
-        NODE_SERVER_HISTORY_DIRECTORY,
-        header.studyId,
-      ),
-      { recursive: true, force: true },
+    const folder = join(
+      harness.service.nodeHistoryStore!.learningDirectory,
+      NODE_SERVER_HISTORY_DIRECTORY,
+      header.studyId,
     )
+    // Opening commits the first moment and writes its reader position in the background (F197): the folder is removed only after that write landed, so the removal never races with it.
+    await waitUntil(
+      () => existsSync(join(folder, 'reader-position.json')),
+      'the opening position is written',
+      READER_RESULT_BOUND_MS,
+    )
+    await repositoryOf(harness)
+      .resolve(header.studyId)!
+      .store.settleReaderPositionWrites()
+    await rm(folder, { recursive: true, force: true })
 
     // Act
     harness.receiveContext({
@@ -153,6 +161,21 @@ test('a held position write of a server replay whose folder is removed meanwhile
     )
     await openServerReplay(harness, header.studyId)
     const store = repositoryOf(harness).resolve(header.studyId)!.store
+    // The opening moment's own position write lands first, so the removal below races only with the held write.
+    await waitUntil(
+      () =>
+        existsSync(
+          join(
+            harness.service.nodeHistoryStore!.learningDirectory,
+            NODE_SERVER_HISTORY_DIRECTORY,
+            header.studyId,
+            'reader-position.json',
+          ),
+        ),
+      'the opening position is written',
+      READER_RESULT_BOUND_MS,
+    )
+    await store.settleReaderPositionWrites()
     const write = store.saveReaderPosition.bind(store)
     let release: () => void = () => undefined
     const gate = new Promise<void>((resolve) => {
