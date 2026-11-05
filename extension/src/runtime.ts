@@ -394,8 +394,12 @@ export type ConfiguredRuntimeSnapshot = Omit<
   declaredIndex?: number
   /** The order in which the run paused its stops (0-based). */
   executionIndex?: number
-  /** Server-render pauses only: why the pause is attributed to the entry route's render. */
-  attribution?: 'entry-load' | 'after-operation' | 'unconfirmed'
+  /** Server-render pauses only: why the pause is attributed to the entry route's render; `preparation` is a pause in a request Codebook itself made while preparing the run (its readiness request or a saved-session warm load), see {@link ConfiguredRuntimeSnapshot.preparationRequest}. */
+  attribution?: 'entry-load' | 'after-operation' | 'unconfirmed' | 'preparation'
+  /** Present (`module`) only on a server-render pause made while a module was being evaluated: the paused stack holds that module's own top-level frame. */
+  scope?: 'module'
+  /** With `preparation`: which of Codebook's own requests evaluated the module; a live field only, never saved in a study. */
+  preparationRequest?: 'readiness' | 'warm-load'
   /** With `after-operation`: the operation (k >= 1) after which the render was observed. */
   operationIndex?: number
 }

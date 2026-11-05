@@ -186,7 +186,7 @@ test('API_VERSION is 1.25 and its 1.18 note names the packageRoot fields', async
       .split('\n')
       .find((line) => line.startsWith(' * 1.18 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.26')
+  assert.equal(API_VERSION, '1.27')
   for (const phrase of [
     '`packageRoot`',
     '`rootIsApp`',
