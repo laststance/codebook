@@ -166,7 +166,7 @@ export function nodeScriptHelp() {
       "The entry is the file a package.json script runs as exactly `node <file>` (or `tsx <file>` through the repository's own tsx), or a file the learner names. A script with node options, arguments, environment assignments or several commands (`&&`, `;`) cannot run as declared: say which single plain part can run, if any, and never invent an option or argument.",
     end: {
       field:
-        'nodeScript.end: { kind: "exited" | "signal" | "stopped" | "limit", exitCode?, signal?, exitUnknown?, limit?, stopsReached, stopsNeverReached, captureBudgetExhausted?, stopsNotObserved?, output: { tail, truncated } }',
+        'nodeScript.end: { kind: "exited" | "signal" | "stopped" | "limit", exitCode?, signal?, exitUnknown?, limit?, stopsReached, stopsNeverReached, captureBudgetExhausted?, stopsNotObserved?, groupNotSignalled?, output: { tail, truncated } }',
       kinds: {
         exited: 'The script exited by itself; exitCode is its code (0 or not).',
         signal:
@@ -180,6 +180,7 @@ export function nodeScriptHelp() {
         "A cause Codebook started (a stop, a limit) names the end over the signal it sent. Otherwise the process's own exit code or signal does.",
         'A nonzero exit is an observed end, not an error: the run reads ended. Tell the learner the script failed, with its exit code, and read the output tail before naming a cause.',
         'exitUnknown carries the reason when an exit code could not be read.',
+        'groupNotSignalled (gone, replaced or unverifiable) says that Codebook sent no signal to the process group after the script exited, because the group was not confirmed as the one it started.',
         'stopsNeverReached is always present. Once the capture budget is spent, captureBudgetExhausted is true and the remaining declared stops are listed as stopsNotObserved, never as never reached.',
       ],
       output: `stdout and stderr are recorded as printed; the restricted environment passes no secrets, so no value masking is promised and the chat repeats no secret it finds. Output stays open until both pipes close, or ${NODE_SERVER_EXIT_SETTLE_MS} ms after the exit.`,

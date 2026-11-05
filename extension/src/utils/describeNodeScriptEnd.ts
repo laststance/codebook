@@ -23,6 +23,8 @@ export type NodeScriptEndInput = {
   /** Declared stops captured, in hit order (repeats allowed). */
   stopsReached: number[]
   captureBudgetExhausted: boolean
+  /** Set when a signal after the script's own exit was withheld because the group was not confirmed as the launched one ({@link NodeProcessRun.unsignalledGroup}). */
+  groupNotSignalled?: 'gone' | 'replaced' | 'unverifiable'
   /** The combined output as the launcher kept it. */
   output: string
   roots: CauseRoots
@@ -73,6 +75,10 @@ export function describeNodeScriptEnd(
           captureBudgetExhausted: true as const,
           stopsNotObserved: unreached,
         }
+      : {}),
+    // A withheld signal is said in the end, so the learner and the chat know the cleanup did not reach the group.
+    ...(input.groupNotSignalled
+      ? { groupNotSignalled: input.groupNotSignalled }
       : {}),
     output: outputTail(input.output, input.roots),
   }

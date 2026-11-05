@@ -14099,12 +14099,13 @@ export class StudyWorkspace {
         this.recordOfStudy(studyId)?.profile === NODE_SERVER_PROFILE)
     if (isServer)
       return { surface: 'open:server-replay', profile: NODE_SERVER_PROFILE }
-    // A script replay is logged as its own surface, never as a server or test replay.
+    // A script replay, listed or just saved by this window, is logged as its own surface, never as a server or test replay.
     if (
       !isListedTest &&
-      this.nodeScriptHistoryCatalog.some(
+      (this.nodeScriptHistoryCatalog.some(
         (history) => history.studyId === studyId,
-      )
+      ) ||
+        this.recordOfStudy(studyId)?.profile === NODE_SCRIPT_PROFILE)
     )
       return { surface: 'open:script-replay', profile: NODE_SCRIPT_PROFILE }
     // An Extension replay is logged as its own surface, never as a test replay.

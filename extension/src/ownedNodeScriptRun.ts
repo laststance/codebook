@@ -454,6 +454,7 @@ class OwnedNodeScriptRun implements NodeScriptRuntime {
         .stops.map((stop) => stop.declaredStopIndex),
       stopsReached: accounting.stopsReached,
       captureBudgetExhausted: accounting.captureBudgetExhausted,
+      groupNotSignalled: this.core.unsignalledGroup(),
       output: this.core.launched.output(),
       roots: this.core.privateRoots(),
     })

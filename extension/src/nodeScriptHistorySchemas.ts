@@ -83,6 +83,8 @@ const nodeScriptEndEntrySchema = z.strictObject({
   stopsNeverReached: declaredStopIndexList,
   captureBudgetExhausted: z.literal(true).optional(),
   stopsNotObserved: declaredStopIndexList.optional(),
+  /** Why the group was not signalled after the script's own exit (E10): its id was gone, belonged to another process, or could not be confirmed. */
+  groupNotSignalled: z.enum(['gone', 'replaced', 'unverifiable']).optional(),
 })
 
 /** One entry of a node-script journal; each carries its journal `sequence` and `elapsedMs` since launch. */
