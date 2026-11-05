@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.2.83.0] - 2026-11-05 (development candidate)
+
+Cycle 0083 ([Issue #217](https://github.com/laststance/codebook/issues/217)), a feature cycle. A **Create React App app** (react-scripts 5) at the repository root or below it now runs under live explanation and pauses in its own source, with real values in the native debugger. A learner who opens Redux's own Examples (most of P03 `reduxjs/redux`'s browser Examples, and P05's `action-listener/counter`) can now follow a click into the app's components, thunks and reducers, and save the run as a learning replay that reopens after the app has stopped.
+
+**Run a Create React App Example: the `react-scripts-dev` adapter.**
+- **When it applies:** a version 3 `repository-browser` configuration with `adapter: "react-scripts-dev"`, with `packageRoot` absent, `"."` or the app's folder (for example `examples/counter`). The app's `start` script must be `react-scripts start`, with only `NAME=value` assignments before it, and react-scripts 5 must be installed in the app.
+- **How it starts:** Codebook starts the app's own `react-scripts` on a loopback port. It sets `HOST`, `PORT`, `BROWSER=none` and `CI=true` itself, and they win over the start script's assignments; only the script's `PORT=` chooses the port. The app is ready after its first compile, warnings included. A `homepage` or `PUBLIC_URL` moves where the bundle is served, and Codebook follows it.
+- **Where it pauses:** browser stops in the app's own source (`src/…`). A stop is sealed only when the served source map names the file with byte-equal content and maps the line.
+- **Values the bundle holds stay out of the saved run:** react-scripts inlines every `REACT_APP_*` value into the bundle the run archives. Codebook reads the app's `.env` files the way react-scripts 5 does (precedence, recursive `$NAME` expansion, the child's environment) and masks every inlined `REACT_APP_*` value and every secret-named value in the saved bundle. It refuses to start when it cannot settle those values. That happens for an `.env` file over 64 KiB or not a regular file, and for one whose `$NAME` expansion goes past Codebook's limits (a reference cycle, a chain more than 64 deep, or expansions that grow past 1 MiB). `NODE_ENV` and `BABEL_ENV` settle to `development`, as react-scripts sets them.
+- **In the native debugger:** Variables, Call Stack and the editor show the app's file at the pause; the chat, the recorded source and the replay use the same file.
+- **Saved as study format 11.** An older Codebook lists such a study as saved by a newer Codebook. Set Up Saved Session still offers only Next and Vite.
+
+**Clear refusals**, each with `details.reason` and `details.sideEffects`:
+- `REACT_SCRIPTS_UNSUPPORTED`: `not-installed`, `react-scripts-version` (react-scripts 4 and older), `start-script-not-react-scripts`, `prestart-script`, `https`, `not-a-react-scripts-app`, `env-file-unreadable`;
+- `REACT_SCRIPTS_LAUNCHER_FAILED`: `compile-failed`, `exited`;
+- `REACT_SCRIPTS_PORT_UNAVAILABLE`: `port-in-use`, naming the start script's `PORT=` as the lever;
+- `REACT_SCRIPTS_SETUP_DEADLINE`: `setup-deadline`, within the existing 90-second preparation bound;
+- `REACT_SCRIPTS_SEAL_FAILED`: `outside-package`, `node-modules`, `ambiguous-source`, `unmapped-line`, `map-limit`, `map-unreadable`. A stop in a published package (`node_modules`) is refused before the server starts.
+
+**Compatibility.** MCP API 1.25 (additive): the `react-scripts-dev` adapter, its readiness under `codebook_status` (`ready`, `missing`, `packages` with `startScript`) and `codebook://help/repository-browser`'s `reactScriptsQuickStart`. Bundled skill 1.0.74 (one routing sentence). Study format 11 for `react-scripts-dev` runs; formats 3–10 keep their choice.
+
+**Fixed.** A flaky test of the Node server launcher no longer fails when Node prints its own "Waiting for the debugger to disconnect..." line after the fixture's last line.
+
 ## [0.2.82.1] - 2026-11-05 (development candidate)
 
 Cycle 0082 ([Issue #215](https://github.com/laststance/codebook/issues/215)), a bug-fix cycle. Nothing changes in how Codebook behaves for a learner, and the packaged extension keeps version 0.2.82.
