@@ -35,6 +35,7 @@ export type RouteHandlerHitVerdict =
  * @param input.stopRoute - The stop's route pattern (`/api/todos`).
  * @param input.hitRoute - The route the work store reports on the paused frame; `undefined` when unreadable.
  * @param input.handlerName - The handler frame's function name; `undefined` when the stack is no route-handler stack. It only rejects a contradicting HTTP method name; an alias has no method name and is accepted.
+ * @param input.handlerMethods - The HTTP methods the route file exports the handler under ({@link routeHandlerMethodsOf}); empty when the source names none. Used only when the handler name is no method name: with methods, only a request of one of them matches; without, the hit is published only when every unclaimed request of the window has one method.
  * @param input.operationIndex - The stop's `afterOperation`.
  * @param input.requests - The tracked browser requests, with this stop's claims.
  * @returns
@@ -48,10 +49,18 @@ export function routeHandlerHitVerdictOf(input: {
   stopRoute: string
   hitRoute: string | undefined
   handlerName: string | undefined
+  handlerMethods?: readonly string[]
   operationIndex: number
   requests: readonly RouteHandlerBrowserRequest[]
 }): RouteHandlerHitVerdict {
-  const { stopRoute, hitRoute, handlerName, operationIndex, requests } = input
+  const {
+    stopRoute,
+    hitRoute,
+    handlerName,
+    handlerMethods = [],
+    operationIndex,
+    requests,
+  } = input
   if (handlerName === undefined)
     return { action: 'resume', reason: 'unclassified' }
   if (hitRoute !== undefined && hitRoute !== stopRoute)
@@ -80,13 +89,22 @@ export function routeHandlerHitVerdictOf(input: {
   const isMethodName = (HTTP_METHOD_NAMES as readonly string[]).includes(
     handlerName,
   )
-  const sameMethod = matching.filter(
-    (request) => !isMethodName || request.method === handlerName,
+  const sameMethod = matching.filter((request) =>
+    isMethodName
+      ? request.method === handlerName
+      : handlerMethods.length === 0 || handlerMethods.includes(request.method),
   )
   if (sameMethod.length === 0)
     return { action: 'resume', reason: 'other-method' }
-  const unclaimed = sameMethod.find((request) => !request.claimed)
-  return unclaimed
-    ? { action: 'publish', request: unclaimed }
-    : { action: 'resume', reason: 'after-retired' }
+  const unclaimedRequests = sameMethod.filter((request) => !request.claimed)
+  const unclaimed = unclaimedRequests[0]
+  if (!unclaimed) return { action: 'resume', reason: 'after-retired' }
+  // An alias the source does not tie to a method serves whatever method reached it: publish only when the window offers one method.
+  if (
+    !isMethodName &&
+    handlerMethods.length === 0 &&
+    unclaimedRequests.some((request) => request.method !== unclaimed.method)
+  )
+    return { action: 'resume', reason: 'unclassified' }
+  return { action: 'publish', request: unclaimed }
 }

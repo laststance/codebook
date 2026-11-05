@@ -147,6 +147,37 @@ test('a route.ts helper in a node_modules package is not refused as a route hand
   assert.notEqual(reason, 'route-handler-not-app-source')
 })
 
+// Value: protects=FX-G2 an Edge declaration after another statement on the same line is still refused; fails_when=only a declaration at the start of a line is found and the run starts the server; no_claim=a runtime set by re-export
+test('a route file whose Edge declaration follows another statement on its line is refused before next dev starts', async (context) => {
+  // Arrange
+  const harness = await routeHandlerRunHarness(context, {
+    extra: {
+      fixture: {
+        source:
+          'export const dynamic = "force-dynamic"; export const runtime = "edge"\nvar nextTheme = "dark";\nvar between = 1;\n',
+        citationEndLine: 2,
+        declaredLine: 2,
+      },
+    },
+  })
+  // Act
+  const failure = await preparationFailure(harness)
+  // Assert
+  assert.deepEqual(refusalFacts(harness, failure), {
+    code: 'NEXT_STOP_NOT_SEALED',
+    details: {
+      reason: 'route-handler-edge-runtime',
+      stopIndex: 0,
+      file: ROUTE_FILE,
+      sideEffects: 'none',
+    },
+    developmentServers: 0,
+    serverDebuggers: 0,
+    browsers: 0,
+    inputs: 0,
+  })
+})
+
 // Value: protects=FX-B2 a commented-out Edge declaration does not refuse a Node route handler; fails_when=the run is refused as route-handler-edge-runtime; no_claim=a runtime set by re-export
 test('a commented-out Edge runtime declaration does not refuse the route handler', async (context) => {
   // Arrange

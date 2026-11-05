@@ -248,3 +248,29 @@ test('a route-handler pause whose module differs from the declared source resume
     [0, 1, true],
   )
 })
+
+// Value: protects=FX-G3 a hit that names a learner's breakpoint beside the stop's is not resumed by Codebook; fails_when=the hit is resumed as no-browser-request and the learner's breakpoint is skipped; no_claim=how the learner's pause is then shown
+test("a route-handler hit that also names a learner's breakpoint is not resumed by the run", async (context) => {
+  // Arrange
+  const harness = await routeHandlerRunHarness(context)
+  await harness.run.prepare()
+  await sendOperation(harness, 1)
+  // Act
+  routeHandlerHit(harness, {
+    hitBreakpoints: ['owned-breakpoint', 'learner-owned'],
+  })
+  // The run waits up to 1000 ms for a browser request before it would resume a hit.
+  await new Promise((resolve) => setTimeout(resolve, 1600))
+  // Assert
+  assert.deepEqual(
+    {
+      continues: harness.server!.continues.length,
+      resumedEvents: harness.run
+        .view()
+        .events.filter(
+          (event) => event.type === 'breakpoint.route-handler-resumed',
+        ).length,
+    },
+    { continues: 0, resumedEvents: 0 },
+  )
+})

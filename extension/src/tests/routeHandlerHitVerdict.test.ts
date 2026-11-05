@@ -283,3 +283,44 @@ test('the route-handler stack is recognised by the raw CDP frame names, also aft
     undefined,
   ])
 })
+
+// Value: protects=FX-G1 an alias exported as GET never publishes a POST of the window; fails_when=an alias accepts every method so the POST is published with the GET's locals; no_claim=that the source text names the alias
+test('an alias exported as GET with only a POST in the window is resumed as other-method', () => {
+  // Arrange
+  const input = { ...BASE, handlerName: 'readTodos', handlerMethods: ['GET'] }
+  // Act
+  const verdict = routeHandlerHitVerdictOf(input)
+  // Assert
+  assert.deepEqual(verdict, { action: 'resume', reason: 'other-method' })
+})
+
+// Value: protects=FX-G1 an alias exported as GET is published with the window's GET, not the earlier POST; fails_when=the first request of the window wins whatever its method; no_claim=timing of the polling
+test('an alias exported as GET with a POST then a GET in the window is published with the GET', () => {
+  // Arrange
+  const get = { ...POST_IN_WINDOW_2, id: '10', method: 'GET' }
+  const input = {
+    ...BASE,
+    handlerName: 'readTodos',
+    handlerMethods: ['GET'],
+    requests: [POST_IN_WINDOW_2, get],
+  }
+  // Act
+  const verdict = routeHandlerHitVerdictOf(input)
+  // Assert
+  assert.deepEqual(verdict, { action: 'publish', request: get })
+})
+
+// Value: protects=FX-G1 an alias the source does not tie to a method is published only when the window has one method; fails_when=a POST then GET window publishes the first request for an unknown alias; no_claim=aliases the parser knows
+test('an unknown alias with a POST and a GET in the window is resumed as unclassified', () => {
+  // Arrange
+  const get = { ...POST_IN_WINDOW_2, id: '10', method: 'GET' }
+  const input = {
+    ...BASE,
+    handlerName: 'handle',
+    requests: [POST_IN_WINDOW_2, get],
+  }
+  // Act
+  const verdict = routeHandlerHitVerdictOf(input)
+  // Assert
+  assert.deepEqual(verdict, { action: 'resume', reason: 'unclassified' })
+})

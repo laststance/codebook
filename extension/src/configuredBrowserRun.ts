@@ -367,6 +367,7 @@ import {
   routeHandlerHitVerdictOf,
   type RouteHandlerResumeReason,
 } from './utils/routeHandlerHitVerdictOf'
+import { routeHandlerMethodsOf } from './utils/routeHandlerMethodsOf'
 import { routeHandlerPathMatches } from './utils/routeHandlerPathMatches'
 import { RouteHandlerRequests } from './utils/routeHandlerRequests'
 import {
@@ -679,9 +680,9 @@ const PAGE_REQUEST_END_EVENTS = [
   'Network.loadingFailed',
   'Network.loadingFinished',
 ] as const
-/** A route file that declares the Edge runtime, which Codebook's Node debugger cannot pause: a line starting with the declaration, with or without a type annotation. Read on code only ({@link blankCommentsAndTemplates}). */
+/** A route file that declares the Edge runtime, which Codebook's Node debugger cannot pause: a declaration that starts a statement (at a line start or after `;`, `{` or `}`), with or without a type annotation. Read on code only ({@link blankCommentsAndTemplates}). */
 const EDGE_RUNTIME_DECLARATION =
-  /^[ \t]*export\s+const\s+runtime\s*(?::[^=\n]+)?=\s*(['"])edge\1/m
+  /(?:^|[;{}])[ \t]*export\s+const\s+runtime\s*(?::[^=\n]+)?=\s*(['"])edge\1/m
 /** Keys a stop's library freeze by its declared place. @example libraryFreezeKey({ path: 'a.ts', line: 3, column: 1 }) // 'a.ts:3:1' */
 function libraryFreezeKey(source: {
   path: string
@@ -2997,6 +2998,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       hitRoute,
     )
     if (verdict.action === 'resume') {
+      // A pause that also names a learner's breakpoint is theirs to see: Codebook does not resume it, so the other handling goes on (a publish still stands, since the pause is shown).
+      if (this.namesForeignServerBreakpoint(session, hitIds)) return false
       entry.resumed.set(
         verdict.reason,
         (entry.resumed.get(verdict.reason) ?? 0) + 1,
@@ -3072,6 +3075,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         stopRoute: entry.route,
         hitRoute,
         handlerName,
+        handlerMethods: routeHandlerMethodsOf(entry.sourceText).get(
+          handlerName ?? '',
+        ),
         operationIndex: entry.operationIndex,
         requests: (this.routeHandlerRequests?.list() ?? []).map((request) => ({
           id: request.id,
