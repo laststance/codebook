@@ -19,15 +19,25 @@ import { ERROR_RECOVERY, type ErrorCode } from './errors'
 import { nodeServerConfigSchema } from './nodeServerConfigSchemas'
 import { nodeServerSaveHelp } from './nodeServerSaveHelp'
 
-/** The start every sample shares: values that come from another answer are written as placeholders naming that answer, and a test replaces them before it parses each sample with {@link nodeServerConfigSchema}. */
-function sampleStart(configuration: Record<string, unknown>) {
+/**
+ * Builds the start every Node profile sample shares: values that come from another answer are written as placeholders naming that answer, and a test replaces them before it parses each sample with the profile's live schema.
+ * Called by {@link nodeServerHelp} and the node-script help for their samples.
+ * @param profile - The profile and adapter name the sample starts.
+ * @param configuration - The profile's own fields, merged after the shared `version`, `adapter` and `book`.
+ * @returns The `codebook_start` arguments with placeholders.
+ * @example nodeSampleStart('node-script', { entry: 'check.mjs' }).configuration.adapter // => 'node-script'
+ */
+export function nodeSampleStart(
+  profile: string,
+  configuration: Record<string, unknown>,
+) {
   return {
     instanceId: '<instanceId from codebook_status>',
-    profile: NODE_SERVER_PROFILE,
+    profile,
     key: '<a new key for this start>',
     configuration: {
       version: 1,
-      adapter: NODE_SERVER_PROFILE,
+      adapter: profile,
       book: {
         bookId: '<bookId from codebook_publish_book>',
         revision: '<revision from codebook_publish_book>',
@@ -37,6 +47,11 @@ function sampleStart(configuration: Record<string, unknown>) {
       ...configuration,
     },
   }
+}
+
+/** The server sample start: {@link nodeSampleStart} for the node-server profile. */
+function sampleStart(configuration: Record<string, unknown>) {
+  return nodeSampleStart(NODE_SERVER_PROFILE, configuration)
 }
 
 /** The handler stop the samples declare: a source position copied from `codebook_source`, with the value to read there. */

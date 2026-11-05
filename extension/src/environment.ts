@@ -428,6 +428,7 @@ export async function createEnvironment(
         checkedConfigured,
         vitestSearch,
         machineMissing,
+        scriptMachineMissing,
       ] = await Promise.all([
         resolvePrerequisites(),
         // Even during a run, recheck dependencies and directories; only its exact live lock is permitted.
@@ -447,6 +448,8 @@ export async function createEnvironment(
         })),
         // The machine's part of node-server: a supported system, a listener tool and ps.
         nodeServerMachineGaps(),
+        // The machine's part of node-script: the same system and ps, but no listener tool.
+        nodeServerMachineGaps({ profile: 'node-script' }),
       ])
       // A managed run that is preparing or releasing blocks a new start under either adapter.
       const managedRunState = releasingConfiguredRun
@@ -536,6 +539,11 @@ export async function createEnvironment(
           'node-server': {
             ready: nodeMissing.length === 0 && machineMissing.length === 0,
             missing: [...nodeMissing, ...machineMissing],
+          },
+          'node-script': {
+            ready:
+              nodeMissing.length === 0 && scriptMachineMissing.length === 0,
+            missing: [...nodeMissing, ...scriptMachineMissing],
           },
           'chrome-extension': (() => {
             // The editor's gaps (a disabled js-debug, a workspace mismatch) count; the Node executable does not.

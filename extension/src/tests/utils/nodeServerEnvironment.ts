@@ -23,6 +23,8 @@ export async function createEnvironmentWith(
     chromeVersionText?: string
     /** Whether the bundled JavaScript Debugger is enabled in the fake editor; enabled by default. */
     jsDebugEnabled?: boolean
+    /** Whether no external Node executable resolves, as on a machine without Node; one resolves by default. */
+    nodeUnavailable?: boolean
   },
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-server-env-'))
@@ -49,7 +51,10 @@ export async function createEnvironmentWith(
     {
       './configuredBrowserRun': {},
       './utils/resolveExternalNodeExecutable': {
-        resolveExternalNodeExecutable: async () => '/external/node',
+        resolveExternalNodeExecutable: async () => {
+          if (options.nodeUnavailable) throw new Error('no node')
+          return '/external/node'
+        },
       },
       './utils/nodeServerMachineGaps': {
         nodeServerMachineGaps: async () => options.gaps,

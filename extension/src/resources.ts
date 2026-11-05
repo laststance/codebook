@@ -38,6 +38,7 @@ import {
 import { ERROR_RECOVERY, EvidenceIntegrityError, StudyError } from './errors'
 import { nextHelp, REPOSITORY_BROWSER_START_HERE } from './nextHelp'
 import type { NodeHistorySummary } from './nodeHistorySummary'
+import { nodeScriptHelp } from './nodeScriptHelp'
 import { nodeServerHelp } from './nodeServerHelp'
 import { nodeTestConfigSchema } from './nodeTestConfigSchemas'
 import { operationsHelp } from './operationsHelp'
@@ -306,6 +307,7 @@ export async function readResource(
         'Configured Study v3-v6 (every new save is v6), books v1/v2, progress v1-v4, recordings v1/v2/v3. Version 2 intent saves recording v3 with per-stop source and participant identity. Corrupt or unsupported preferred formats fail without fallback or deletion. A study saved in a newer format is refused as saved by a newer Codebook and is kept. Direct entry offers Open article; Return to Wiki requires a saved actual origin.',
     })
   if (uri === 'codebook://help/node-server') return json(nodeServerHelp())
+  if (uri === 'codebook://help/node-script') return json(nodeScriptHelp())
   if (uri === 'codebook://help/chrome-extension')
     return json(chromeExtensionHelp())
   if (uri === 'codebook://help/node-test')

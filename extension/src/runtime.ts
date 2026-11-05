@@ -27,6 +27,7 @@ import type {
 } from './configuredStudySchemas'
 import type {
   CHROME_EXTENSION_PROFILE,
+  NODE_SCRIPT_PROFILE,
   NODE_SERVER_PROFILE,
   NODE_TEST_PROFILE,
   REPOSITORY_BROWSER_ACTION,
@@ -653,6 +654,7 @@ export interface StudyEnvironment {
         | typeof REPOSITORY_BROWSER_PROFILE
         | typeof NODE_TEST_PROFILE
         | typeof NODE_SERVER_PROFILE
+        | typeof NODE_SCRIPT_PROFILE
         | typeof CHROME_EXTENSION_PROFILE,
         {
           ready: boolean
