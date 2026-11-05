@@ -211,6 +211,10 @@ export function serverRenderHelp() {
           'In a readiness-request pause no browser is open yet and no input has been sent: the application image reads as not yet available, and the chat says nothing was sent. In a warm-load pause the warm-up page is still loading, so its image reads as not yet available too. Such a pause owes no image (capture status absent), so the run can still complete. Continue with the current continueArguments as for any pause.',
         absentBindings:
           'A module-level binding that is not yet initialized at the pause is simply absent from the values; do not read the absence as a value. A required inspection of such a binding fails the stop as unavailable: declare it required: false, or require a binding that is already initialized at the pause line.',
+        savedValues:
+          "The bindings the module has set by the pause line (its imports included) are the pause's own values: they are saved with the pause, masked like any value, so the replay's native debugger shows them; the enclosing scopes (the bundler's module wrapper, the global scope) are not saved.",
+        importedNames:
+          "Declare an imported name as the source writes it (formatDate.name for import { formatDate } from './format', a placeholder). webpack renames imports in the code it runs, so when the paused frame does not hold the name, Codebook reads it from the module object webpack bound the import to; a local of the same name is read as declared.",
         firstExecution:
           'firstExecutionObserved stays false: render code that ran during preparation was not observed. Say only that the module evaluation was paused, never that the page rendered.',
         notReached:

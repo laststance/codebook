@@ -23,6 +23,7 @@ import { boundedClassNameOf } from './boundedClassNameOf'
 import { cutToSavedTextLimit } from './cutToSavedTextLimit'
 import { isInsideFolder } from './isInsideFolder'
 import { maskSavedDebugSnapshot } from './maskSavedDebugSnapshot'
+import { moduleScopePositionOf } from './moduleScopePositionOf'
 import { redactSecretText } from './redactSecretText'
 import {
   previewShowsCredentialShape,
@@ -41,6 +42,7 @@ const scopeResponse = z.object({
     z.object({
       name: z.string(),
       presentationHint: z.string().optional(),
+      expensive: z.boolean().optional(),
       variablesReference: z.number().int().nonnegative(),
     }),
   ),
@@ -74,6 +76,8 @@ interface CaptureInput {
   workspaceRoot?: string
   /** Masks the values a Vite run learned from its env files in every saved string; absent for a run without such values. */
   maskKnownText?(text: string): string
+  /** The stop paused in its module's own top-level code (a module evaluation): the stopped frame's module scope ({@link moduleScopePositionOf}, js-debug's Eval scope of Next's eval-wrapped module) holds the stop's own values, so it is copied like local values, every top-level binding before any is expanded (one imported module object cannot use the whole budget). */
+  moduleEvaluation?: boolean
   limits?: {
     timeoutMs: number
     maxFrames: number
@@ -264,7 +268,35 @@ function savedFrameHeaderOf(
   }
 }
 
-/** Called at a verified live pause to persist bounded values, never live DAP handles; stale pauses abort the whole capture. Only the stopped frame's local scopes are copied ({@link shouldCaptureReplayScope}). @example await captureReplayDebugSnapshot({ stack, verifiedSource, request, assertCurrent }) */
+/**
+ * Says whether a capture saves every top-level value of the stopped frame before expanding any; called by {@link captureReplayDebugSnapshot}.
+ * @param input - The capture's input: a caller's `topLevelFirst` limit, or a module evaluation, whose module scope holds whole imported module objects.
+ * @returns `true` when either asks for it.
+ * @example isTopLevelFirstCapture({ ...input, moduleEvaluation: true }) // => true
+ */
+function isTopLevelFirstCapture(input: CaptureInput): boolean {
+  return Boolean(input.limits?.topLevelFirst || input.moduleEvaluation)
+}
+
+/**
+ * Finds a frame's module scope to copy: only the stopped frame of a module evaluation has one ({@link moduleScopePositionOf}); called by {@link captureReplayDebugSnapshot} for each frame.
+ * @param frameIndex - The recorded stack-frame position.
+ * @param isModuleEvaluation - Whether the stop paused in its module's own top-level code.
+ * @param scopes - The frame's scopes as the adapter answered them.
+ * @returns The scope's position, or `undefined` for every other frame and pause.
+ * @example ownModuleScopePositionOf(0, true, [{}, { presentationHint: 'arguments' }]) // => 0
+ */
+function ownModuleScopePositionOf(
+  frameIndex: number,
+  isModuleEvaluation: boolean | undefined,
+  scopes: Parameters<typeof moduleScopePositionOf>[0],
+): number | undefined {
+  return frameIndex === 0 && isModuleEvaluation
+    ? moduleScopePositionOf(scopes)
+    : undefined
+}
+
+/** Called at a verified live pause to persist bounded values, never live DAP handles; stale pauses abort the whole capture. Only the stopped frame's local scopes are copied ({@link shouldCaptureReplayScope}), and a module evaluation's own module scope ({@link moduleScopePositionOf}). @example await captureReplayDebugSnapshot({ stack, verifiedSource, request, assertCurrent }) */
 export async function captureReplayDebugSnapshot(
   input: CaptureInput,
 ): Promise<ReplayDebugSnapshot> {
@@ -290,14 +322,17 @@ export async function captureReplayDebugSnapshot(
     input.limits?.maxDepth ?? REPLAY_DEBUG_MAX_DEPTH,
     REPLAY_DEBUG_MAX_DEPTH,
   )
-  // Every stop copies only its own local values; a caller filter can only narrow that policy, never widen it.
+  // Every stop copies only its own local values (a module evaluation's own module scope included); a caller filter can only narrow that policy, never widen it.
   const includeScope = (
     frameIndex: number,
     scopeName: string,
-    presentationHint?: string,
+    presentationHint: string | undefined,
+    isOwnModuleScope: boolean,
   ) =>
-    shouldCaptureReplayScope(frameIndex, scopeName, presentationHint) &&
+    (isOwnModuleScope ||
+      shouldCaptureReplayScope(frameIndex, scopeName, presentationHint)) &&
     (input.limits?.includeScope?.(frameIndex, scopeName) ?? true)
+  const isTopLevelFirst = isTopLevelFirstCapture(input)
   const deadline = performance.now() + timeoutMs
   // Masks secrets before the cut, for every field: a secret straddling the cut would otherwise leave a fragment shorter than any pattern's minimum.
   // Terminal controls go first: js-debug colors a DOM node's preview with ANSI SGR codes (`\u001b[34m<button …`), which are display noise in a saved value and would otherwise split a secret pattern.
@@ -515,8 +550,22 @@ export async function captureReplayDebugSnapshot(
       if (response.scopes.length > REPLAY_DEBUG_MAX_SCOPES)
         saved.unavailable = 'Historical scope count limit reached.'
       const pending: PendingExpansion[] = []
-      for (const scope of response.scopes.slice(0, REPLAY_DEBUG_MAX_SCOPES)) {
-        if (!includeScope(index, scope.name, scope.presentationHint)) {
+      const ownModuleScope = ownModuleScopePositionOf(
+        index,
+        input.moduleEvaluation,
+        response.scopes,
+      )
+      for (const [position, scope] of response.scopes
+        .slice(0, REPLAY_DEBUG_MAX_SCOPES)
+        .entries()) {
+        if (
+          !includeScope(
+            index,
+            scope.name,
+            scope.presentationHint,
+            position === ownModuleScope,
+          )
+        ) {
           saved.scopes.push({
             name: shorten(scope.name),
             variables: [],
@@ -524,7 +573,7 @@ export async function captureReplayDebugSnapshot(
           })
           continue
         }
-        if (input.limits?.topLevelFirst) {
+        if (isTopLevelFirst) {
           const shallow = await captureScopeShallow(scope.variablesReference)
           pending.push(...shallow.pending)
           saved.scopes.push({

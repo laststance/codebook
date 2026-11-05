@@ -713,3 +713,37 @@ test('a binding the debugger scope omits is not shown as a value at a module eva
   assert.match(names, /connectionString/)
   assert.doesNotMatch(names, /"client"/)
 })
+
+// Value: protects=AC 2 and AC 5 (values in the saved replay): at a module evaluation js-debug lists the module's top-level bindings in its Eval scope, which has no Local hint, and those values are saved while the factory closure and the global scope stay out; fails_when=the capture copies only hinted local scopes, so a module evaluation saves no value at all (native C86-2); no_claim=js-debug's translated scope names
+test('a module evaluation saves the values of the module scope and leaves the enclosing scopes out', async (context) => {
+  // Arrange
+  const { harness } = await heldReadiness(context)
+  harness.server!.setScope({ connectionString: 'postgres://localhost/app' })
+  // Act
+  evaluateModule(harness)
+  const snapshot = await publishedPause(harness)
+  // Assert
+  const recorded = snapshot.debugger!
+  assert.deepEqual(
+    recorded.frames[0]!.scopes.map((scope) => ({
+      name: scope.name,
+      saved: scope.variables.map((index) => recorded.variables[index]!.name),
+      unavailable: scope.unavailable,
+    })),
+    [
+      { name: 'Eval', saved: ['connectionString'], unavailable: undefined },
+      {
+        name: 'Closure ((rsc)/./src/theme.ts)',
+        saved: [],
+        unavailable:
+          "This scope was not captured; replay keeps only the stopped frame's local values.",
+      },
+      {
+        name: 'Global',
+        saved: [],
+        unavailable:
+          "This scope was not captured; replay keeps only the stopped frame's local values.",
+      },
+    ],
+  )
+})

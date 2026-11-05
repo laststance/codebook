@@ -22,15 +22,21 @@ const INSPECTION_REJECTED_REASON =
 const INSPECTION_UNBOUNDED_REASON =
   'No bounded primitive value is available at this exact frame.'
 
-/** Captures declared bounded facts for {@link ConfiguredBrowserRun}; an object or function is captured as its `{ type }` marker, because its members are not bounded, and explicit unavailability preserves other facts while the caller gates continuation. @param maskKnownText - Masks the values a Vite run learned from its env files in a captured string; the identity for a run without such values. @example await inspectConfiguredValues(evaluate, callFrameId, configuration.inspections, assertCurrent) */
+/** Evaluates one expression on the paused call frame, as `Debugger.evaluateOnCallFrame` does. */
+type EvaluateOnCallFrame = (
+  parameters: Protocol.Debugger.EvaluateOnCallFrameRequest,
+) => Promise<Protocol.Debugger.EvaluateOnCallFrameResponse>
+
+/** Captures declared bounded facts for {@link ConfiguredBrowserRun}; an object or function is captured as its `{ type }` marker, because its members are not bounded, and explicit unavailability preserves other facts while the caller gates continuation. @param maskKnownText - Masks the values a Vite run learned from its env files in a captured string; the identity for a run without such values. @param compiledImportOf - Rewrites a path whose first name is an import the compiler renamed ({@link webpackImportPathOf}); used only when that name is not in scope at the pause, and the fact keeps the declared path. @example await inspectConfiguredValues(evaluate, callFrameId, configuration.inspections, assertCurrent) */
 export async function inspectConfiguredValues(
-  evaluate: (
-    parameters: Protocol.Debugger.EvaluateOnCallFrameRequest,
-  ) => Promise<Protocol.Debugger.EvaluateOnCallFrameResponse>,
+  evaluate: EvaluateOnCallFrame,
   callFrameId: string,
   inspections: RepositoryConfiguration['inspections'],
   assertCurrent: () => void,
   maskKnownText: (text: string) => string = (text) => text,
+  compiledImportOf: (
+    path: string,
+  ) => { name: string; compiledPath: string } | undefined = () => undefined,
 ) {
   const values: ConfiguredObservation['values'] = {},
     unavailableValues: ConfiguredObservation['unavailableValues'] = [],
@@ -38,11 +44,18 @@ export async function inspectConfiguredValues(
   for (const inspection of inspections) {
     assertCurrent()
     const path = `${inspection.mode}:${inspection.path}`
+    const evaluatedPath = await pathInScopeOf(
+      evaluate,
+      callFrameId,
+      inspection.path,
+      compiledImportOf(inspection.path),
+    )
+    assertCurrent()
     // Tag actual undefined, objects and functions before serialization: an object's members are not bounded, so only a fresh marker crosses the transport and application lookalike tags never do.
     const expression =
       inspection.mode === 'type'
-        ? `typeof ${inspection.path}`
-        : `((value) => typeof value === 'undefined' ? { type: 'undefined' } : value === null || typeof value === 'boolean' || typeof value === 'number' && value - value === 0 || typeof value === 'string' && value.length <= ${REPOSITORY_LITERAL_LIMIT_CHARS} ? value : typeof value === 'object' || typeof value === 'function' ? { type: typeof value } : void 0)(${inspection.path})`
+        ? `typeof ${evaluatedPath}`
+        : `((value) => typeof value === 'undefined' ? { type: 'undefined' } : value === null || typeof value === 'boolean' || typeof value === 'number' && value - value === 0 || typeof value === 'string' && value.length <= ${REPOSITORY_LITERAL_LIMIT_CHARS} ? value : typeof value === 'object' || typeof value === 'function' ? { type: typeof value } : void 0)(${evaluatedPath})`
     const response = await evaluate({
       callFrameId,
       expression,
@@ -81,6 +94,43 @@ export async function inspectConfiguredValues(
     unavailableValues,
     ...(sideEffectRefused.length ? { sideEffectRefused } : {}),
   }
+}
+
+/**
+ * Chooses the path to evaluate for a declared inspection: the declared one, or the compiler's name for an import binding the pause does not hold under its source name.
+ *
+ * Why: a `typeof` of a name that is not in scope answers `undefined` instead of throwing, so the import's compiled name must be chosen before the inspection runs, and only when the source name is truly absent (a local of the same name wins). Called by {@link inspectConfiguredValues} for each inspection.
+ * @param evaluate - Evaluates on the paused call frame.
+ * @param callFrameId - The paused call frame.
+ * @param declaredPath - The inspection path as declared.
+ * @param compiledImport - The import rewrite of the path ({@link webpackImportPathOf}), if its first name is a renamed import.
+ * @returns
+ * - the compiled path when the rewrite exists and the source name throws `ReferenceError: <name> is not defined` on the frame
+ * - the declared path otherwise
+ * @example await pathInScopeOf(evaluate, 'frame-1', 'useSelector.name', { name: 'useSelector', compiledPath: 'react_redux__WEBPACK_IMPORTED_MODULE_4__.useSelector.name' }) // => 'react_redux__WEBPACK_IMPORTED_MODULE_4__.useSelector.name'
+ */
+async function pathInScopeOf(
+  evaluate: EvaluateOnCallFrame,
+  callFrameId: string,
+  declaredPath: string,
+  compiledImport: { name: string; compiledPath: string } | undefined,
+): Promise<string> {
+  if (compiledImport === undefined) return declaredPath
+  const probe = await evaluate({
+    callFrameId,
+    expression: `void ${compiledImport.name}`,
+    returnByValue: true,
+    throwOnSideEffect: true,
+    timeout: REPOSITORY_INSPECTION_TIMEOUT_MS,
+  })
+  const exception = probe.exceptionDetails?.exception
+  // Only V8's undeclared-name error proves the source name absent; a binding before its initialization throws another message.
+  const isUndeclared =
+    exception?.className === 'ReferenceError' &&
+    (exception.description ?? '').startsWith(
+      `ReferenceError: ${compiledImport.name} is not defined`,
+    )
+  return isUndeclared ? compiledImport.compiledPath : declaredPath
 }
 
 /**

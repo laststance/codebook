@@ -21,6 +21,10 @@ const FIRST_SERVER_ADAPTER_BREAKPOINT_ID = 40
 const LOCAL_SCOPE_REFERENCE = 601
 /** The first reference of an object member in a scripted scope. */
 const FIRST_SCRIPTED_VARIABLE_REFERENCE = 700
+/** The `variablesReference` of the module factory's closure at a module evaluation, which holds webpack's own arguments. */
+const MODULE_FACTORY_SCOPE_REFERENCE = 602
+/** The `variablesReference` of the global scope at a module evaluation. */
+const GLOBAL_SCOPE_REFERENCE = 603
 
 /** One variable of a DAP `variables` answer. */
 /** A caller frame the scripted DAP stack reports under the stopped frame. */
@@ -168,6 +172,8 @@ export function createServerParticipant(parts: ServerParticipantParts) {
   const failingScriptReads = new Map<string, string | undefined>()
   const routes = new Map<number, ServerRouteAnswer>()
   const frames = new Map<number, { line: number; column: number }>()
+  /** The hits that stand in the module's own top-level code (`stack: 'evaluation'`); their top frame answers the module-evaluation scope chain. */
+  const evaluationHits = new Set<number>()
   let currentHit = 0
   let currentStopReason = 'breakpoint'
   let currentHitBreakpointIds: number[] | undefined
@@ -273,15 +279,62 @@ export function createServerParticipant(parts: ServerParticipantParts) {
           ],
         }
       }
-      if (command === 'scopes')
+      if (command === 'scopes') {
+        const frameId = (arguments_ as { frameId?: number }).frameId
+        // A pause in the module's own top-level code answers js-debug's chain for Next's eval-wrapped module (E2): the module's Eval scope without a hint, the factory's closure, the expensive global scope.
+        if (frameId !== undefined && evaluationHits.has(frameId))
+          return {
+            scopes: [
+              {
+                name: 'Eval',
+                variablesReference: LOCAL_SCOPE_REFERENCE,
+                expensive: false,
+              },
+              {
+                name: `Closure (${parts.scriptUrl.replace('webpack-internal:///', '')})`,
+                presentationHint: 'arguments',
+                variablesReference: MODULE_FACTORY_SCOPE_REFERENCE,
+                expensive: false,
+              },
+              {
+                name: 'Global',
+                variablesReference: GLOBAL_SCOPE_REFERENCE,
+                expensive: true,
+              },
+            ],
+          }
         return {
           scopes: [
             { name: 'Local', variablesReference: LOCAL_SCOPE_REFERENCE },
           ],
         }
+      }
       if (command === 'variables') {
         const reference = (arguments_ as { variablesReference?: number })
           .variablesReference
+        // The enclosing scopes of a module evaluation hold what a capture must never copy: webpack's arguments and the process.
+        if (reference === MODULE_FACTORY_SCOPE_REFERENCE)
+          return {
+            variables: [
+              {
+                name: '__webpack_require__',
+                value: 'ƒ __webpack_require__(moduleId)',
+                type: 'function',
+                variablesReference: 0,
+              },
+            ],
+          }
+        if (reference === GLOBAL_SCOPE_REFERENCE)
+          return {
+            variables: [
+              {
+                name: 'process',
+                value: 'process {version: v24.22.1}',
+                type: 'object',
+                variablesReference: 0,
+              },
+            ],
+          }
         const scripted = scriptedVariables.get(reference ?? -1)
         if (scripted) return { variables: scripted }
         return {
@@ -450,8 +503,13 @@ export function createServerParticipant(parts: ServerParticipantParts) {
               value: parts.evaluateOnCallFrame(parameters?.expression),
             },
           }
-        } catch {
-          // A local the frame does not hold (an optional inspection) is an exception of the evaluation, as natively.
+        } catch (error) {
+          // A local the frame does not hold (an optional inspection) is an exception of the evaluation, as natively; a name not in scope is V8's ReferenceError.
+          const isReferenceError =
+            typeof error === 'object' &&
+            error !== null &&
+            'name' in error &&
+            error.name === 'ReferenceError'
           return {
             result: { type: 'undefined' },
             exceptionDetails: {
@@ -459,6 +517,16 @@ export function createServerParticipant(parts: ServerParticipantParts) {
               text: 'Unavailable test local',
               lineNumber: 0,
               columnNumber: 0,
+              ...(isReferenceError && 'message' in error
+                ? {
+                    exception: {
+                      type: 'object' as const,
+                      subtype: 'error' as const,
+                      className: 'ReferenceError',
+                      description: `ReferenceError: ${String(error.message)}`,
+                    },
+                  }
+                : {}),
             },
           }
         }
@@ -509,6 +577,7 @@ export function createServerParticipant(parts: ServerParticipantParts) {
       )
     } else if (!announced.has(scriptId)) announce(scriptId)
     currentHit = ++hitNumber
+    if (hit.stack === 'evaluation') evaluationHits.add(currentHit)
     currentStopReason = hit.stopReason ?? 'breakpoint'
     currentHitBreakpointIds = hit.hitBreakpoints?.map((id) => adapterId({ id }))
     routes.set(

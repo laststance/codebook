@@ -385,6 +385,7 @@ import {
 import { takenStopPosition } from './utils/takenStopPosition'
 import { thrownMessage } from './utils/thrownMessage'
 import { ViteLibraryRegistry } from './utils/viteLibraryRegistry'
+import { webpackImportPathOf } from './utils/webpackImportPathOf'
 import { withFinalPeriod } from './utils/withFinalPeriod'
 import {
   withUnannouncedPauses,
@@ -12933,10 +12934,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       stop.inspections,
       current,
       this.maskRunText,
+      // A source name webpack renamed (an import) is read through the module object the executed text binds.
+      (path) =>
+        webpackImportPathOf(path, stop.bundle.source, executed.scriptSource),
     )
     current()
     // A library stop pauses in the built file; the record names the library source at the translated place.
     const recorded = this.recordedPlaceOf(stop, frame)
+    // A module evaluation's own values live in the module's scope, which carries no Local hint.
+    const isModuleEvaluation =
+      Boolean(stop.preparationRequest) ||
+      this.isModuleEvaluationPause(stop, stopped.event)
     const debuggerSnapshot = await captureReplayDebugSnapshot({
       stack,
       verifiedSource: {
@@ -12952,6 +12960,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       signal: this.abort.signal,
       workspaceRoot: this.options.workspace,
       maskKnownText: this.maskRunText,
+      moduleEvaluation: isModuleEvaluation,
     })
     current()
     let inspectionFailure: Error | undefined
@@ -13013,8 +13022,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       ...this.pauseLabelFields(
         stop,
         executedModule.script?.url,
-        Boolean(stop.preparationRequest) ||
-          this.isModuleEvaluationPause(stop, stopped.event),
+        isModuleEvaluation,
       ),
       pause: { ...pause },
       capturedAt: receipt.wallTime,
