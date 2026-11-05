@@ -70,43 +70,51 @@ export const nodeScriptHistoryHeaderSchema = z
  * The one `end` entry of a script history: how the run ended and which declared stops it reached.
  * `stopsNeverReached` is always present; once the capture budget was spent, the stops not reached before that are `stopsNotObserved`, never never-reached, because their breakpoints were retired.
  */
-const nodeScriptEndEntrySchema = z
-  .strictObject({
-    type: z.literal('end'),
-    ...nodeRunEntryBase,
-    kind: z.enum(NODE_SCRIPT_END_KINDS),
-    exitCode: z.number().int().nullable().optional(),
-    signal: z.string().max(32).nullable().optional(),
-    /** Why the exit code could not be read, when it could not. */
-    exitUnknown: z
-      .string()
-      .max(NODE_SCRIPT_EXIT_UNKNOWN_LIMIT_CHARS)
-      .optional(),
-    limit: z.enum(NODE_SCRIPT_END_LIMITS).optional(),
-    stopsReached: declaredStopIndexList,
-    stopsNeverReached: declaredStopIndexList,
-    captureBudgetExhausted: z.literal(true).optional(),
-    stopsNotObserved: declaredStopIndexList.optional(),
-    /** Why the group was not signalled after the script's own exit (E10): its id was gone, belonged to another process, or could not be confirmed. */
-    groupNotSignalled: z.enum(['gone', 'replaced', 'unverifiable']).optional(),
-  })
-  // The kind decides which fields tell the story: an `end` that names its kind but not its cause could mislead every reader.
-  .superRefine((end, context) => {
-    const refuse = (message: string): void =>
-      context.addIssue({ code: 'custom', message })
-    if (
-      end.kind === 'exited' &&
-      typeof end.exitCode !== 'number' &&
-      end.exitUnknown === undefined
-    )
-      refuse('An exited end needs a numeric exitCode or exitUnknown.')
-    if (end.kind === 'signal' && !end.signal)
-      refuse('A signal end needs its signal.')
-    if (end.kind === 'limit' && end.limit === undefined)
-      refuse('A limit end needs its limit.')
-    if (end.kind === 'stopped' && (end.limit !== undefined || end.signal))
-      refuse('A stopped end takes neither a limit nor a signal.')
-  })
+const nodeScriptEndShape = z.strictObject({
+  type: z.literal('end'),
+  ...nodeRunEntryBase,
+  kind: z.enum(NODE_SCRIPT_END_KINDS),
+  exitCode: z.number().int().nullable().optional(),
+  signal: z.string().max(32).nullable().optional(),
+  /** Why the exit code could not be read, when it could not. */
+  exitUnknown: z.string().max(NODE_SCRIPT_EXIT_UNKNOWN_LIMIT_CHARS).optional(),
+  limit: z.enum(NODE_SCRIPT_END_LIMITS).optional(),
+  stopsReached: declaredStopIndexList,
+  stopsNeverReached: declaredStopIndexList,
+  captureBudgetExhausted: z.literal(true).optional(),
+  stopsNotObserved: declaredStopIndexList.optional(),
+  /** Why the group was not signalled after the script's own exit (E10): its id was gone, belonged to another process, or could not be confirmed. */
+  groupNotSignalled: z.enum(['gone', 'replaced', 'unverifiable']).optional(),
+})
+
+/** An `end` entry as its fields read before the kind's own rule is checked. */
+type NodeScriptEndShape = z.infer<typeof nodeScriptEndShape>
+
+/** For each end kind, the sentence that refuses an `end` missing what that kind needs, or `undefined` when the `end` tells its story. */
+const NODE_SCRIPT_END_KIND_RULES: Record<
+  NodeScriptEndShape['kind'],
+  (end: NodeScriptEndShape) => string | undefined
+> = {
+  exited: (end) =>
+    typeof end.exitCode === 'number' || end.exitUnknown !== undefined
+      ? undefined
+      : 'An exited end needs a numeric exitCode or exitUnknown.',
+  signal: (end) => (end.signal ? undefined : 'A signal end needs its signal.'),
+  limit: (end) =>
+    end.limit === undefined ? 'A limit end needs its limit.' : undefined,
+  stopped: (end) =>
+    end.limit !== undefined || end.signal
+      ? 'A stopped end takes neither a limit nor a signal.'
+      : undefined,
+}
+
+// The kind decides which fields tell the story: an `end` that names its kind but not its cause could mislead every reader.
+const nodeScriptEndEntrySchema = nodeScriptEndShape.superRefine(
+  (end, context) => {
+    const problem = NODE_SCRIPT_END_KIND_RULES[end.kind](end)
+    if (problem) context.addIssue({ code: 'custom', message: problem })
+  },
+)
 
 /** One entry of a node-script journal; each carries its journal `sequence` and `elapsedMs` since launch. */
 export const nodeScriptHistoryEntrySchema = z.discriminatedUnion('type', [
