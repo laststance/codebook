@@ -9355,7 +9355,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * ```
    */
   private isActiveServerSession(session: vscode.DebugSession): boolean {
-    // js-debug's server root holds no target and never answers; only its descendants are asked.
+    // A session without a parent is taken as js-debug's target-less server root and never asked (its requestCDPProxy never answers).
     return (
       isDebugTargetSession(session) &&
       this.activeSessions.has(session.id) &&
@@ -9471,11 +9471,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       throw new Error('Ambiguous owned server')
     this.alive()
     this.participants.server.selected = selected.session
+    this.participants.server.cdp = selected.cdp
+    // Journaled once both are set, so the record never names a half-selected server.
     this.evidence.record('server.selected', {
       sessionId: selected.session.id,
       parentId: selected.session.parentSession?.id,
     })
-    this.participants.server.cdp = selected.cdp
     return true
   }
 

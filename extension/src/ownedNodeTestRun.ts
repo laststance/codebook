@@ -314,7 +314,7 @@ export class OwnedNodeTestRun {
     this.bound = await waitUntil(
       async () => {
         for (const session of this.active.values()) {
-          // js-debug's attach root holds no target and never answers; only its child is asked.
+          // A session without a parent is taken as js-debug's target-less attach root and never asked (its requestCDPProxy never answers).
           if (!isDebugTargetSession(session)) continue
           try {
             // The worker runs in the Vitest root it was started in; the debugger's attach stays bound to the opened checkout.
