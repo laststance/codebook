@@ -2835,6 +2835,15 @@ export const REACT_SCRIPTS_OUTPUT_POLL_MS = 100
 /** The most characters of a compiler error line a `REACT_SCRIPTS_LAUNCHER_FAILED` refusal quotes. */
 export const REACT_SCRIPTS_COMPILER_LINE_MAX_CHARS = 300
 
+/** The most bytes of the entry page a `react-scripts-dev` run reads to find the bundle's address; a larger page is not the app's development page. */
+export const REACT_SCRIPTS_ENTRY_LIMIT_BYTES = 1_048_576
+
+/** The most bytes of one `.env` file of a react-scripts app Codebook reads; a larger file is left unread. */
+export const REACT_SCRIPTS_ENV_FILE_LIMIT_BYTES = 65_536
+
+/** How long the start of a `react-scripts-dev` run waits for the output of an ended process to arrive before it words the ending. */
+export const REACT_SCRIPTS_OUTPUT_DRAIN_MS = 500
+
 /** Vite's own default dev-server port, used when neither the project's config nor its `dev` script names one. */
 export const VITE_DEFAULT_PORT = 5173
 

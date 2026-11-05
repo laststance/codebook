@@ -12,7 +12,7 @@ import { StudyError } from '../errors'
 import {
   reactScriptsAmbiguousSourceRefusal,
   reactScriptsMapLimitRefusal,
-  reactScriptsNodeModulesRefusal,
+  reactScriptsSealedNodeModulesRefusal,
   reactScriptsSealedOutsidePackageRefusal,
   reactScriptsUnmappedLineRefusal,
   type ReactScriptsMapLimit,
@@ -144,6 +144,42 @@ function sourceChangedRefusal(path: string): StudyError {
 }
 
 /**
+ * Finds the one `sources` entry of the served map that names the stop file.
+ * @param served - The bundle and map read.
+ * @param stopPath - The stop file's canonical path.
+ * @param request - The seal request, for the refusal.
+ * @returns The map, its normalized sources, the stop's index and the retained text.
+ * @throws `REACT_SCRIPTS_SEAL_FAILED` (`outside-package`) unless the map names the file exactly once.
+ * @example locateStop(served, '/app/src/App.js', request).stopIndex // => 0
+ */
+function locateStop(
+  served: Awaited<ReturnType<typeof readReactScriptsServedBundle>>,
+  stopPath: string,
+  request: ReactScriptsSealRequest,
+) {
+  const sources = served.map.sources.map(normalizeMapSource)
+  const matches = sources.flatMap((entry, index) =>
+    ABSOLUTE_PATH.test(entry) && mapSourceNamesStop(entry, stopPath)
+      ? [index]
+      : [],
+  )
+  // A map that does not name the file names another folder; one that names it twice leaves the executed copy unknown.
+  if (matches.length === 0)
+    throw reactScriptsSealedOutsidePackageRefusal(request.packageRootRelative, [
+      request.source.path,
+    ])
+  if (matches.length > 1)
+    throw reactScriptsAmbiguousSourceRefusal(request.source.path)
+  const stopIndex = matches[0]!
+  return {
+    served,
+    sources,
+    stopIndex,
+    retained: served.map.sourcesContent?.[stopIndex],
+  }
+}
+
+/**
  * Seals one declared browser stop from the single bundle react-scripts serves, before the browser opens.
  *
  * Why it exists: the executed bytes are checked against these served bytes before the click. The stop file must be named in the served map by the canonical path of the app (real root joined with the package-relative path), with retained text equal to the checked-out file. Called by the react-scripts adapter's `readBundle` once per stop.
@@ -160,7 +196,7 @@ export async function sealReactScriptsStop(request: ReactScriptsSealRequest) {
   const segments = packageRelativePath.split('/')
   // A published package is not the checked-out library, wherever the app keeps it.
   if (segments.includes('node_modules'))
-    throw reactScriptsNodeModulesRefusal([source.path])
+    throw reactScriptsSealedNodeModulesRefusal([source.path])
   // The seal runs after the owned server started, so its refusals say the server was stopped.
   if (segments.includes('..'))
     throw reactScriptsSealedOutsidePackageRefusal(request.packageRootRelative, [
@@ -175,27 +211,35 @@ export async function sealReactScriptsStop(request: ReactScriptsSealRequest) {
   )
   if (sha256(sourceText) !== source.hash)
     throw sourceChangedRefusal(source.path)
-  const served = await readReactScriptsServedBundle(
-    request.ownedOrigin,
-    request.signal,
-    request.cache,
-  )
   const stopPath = canonicalForwardSlashPath(join(realRoot, ...segments))
-  const sources = served.map.sources.map(normalizeMapSource)
-  const matches = sources.flatMap((entry, index) =>
-    ABSOLUTE_PATH.test(entry) && mapSourceNamesStop(entry, stopPath)
-      ? [index]
-      : [],
+  const mapReadsBefore = request.cache.mapReads
+  let located = locateStop(
+    await readReactScriptsServedBundle(
+      request.ownedOrigin,
+      request.signal,
+      request.cache,
+    ),
+    stopPath,
+    request,
   )
-  // A map that does not name the file names another folder; one that names it twice leaves the executed copy unknown.
-  if (matches.length === 0)
-    throw reactScriptsSealedOutsidePackageRefusal(request.packageRootRelative, [
-      source.path,
-    ])
-  if (matches.length > 1) throw reactScriptsAmbiguousSourceRefusal(source.path)
-  const stopIndex = matches[0]!
-  const retained = served.map.sourcesContent?.[stopIndex]
-  if (retained !== sourceText) throw sourceChangedRefusal(source.path)
+  // The cache is keyed by the bundle bytes, which an edit can leave unchanged while the map differs: a cached map that disagrees with the checked-out file is read once more before the stop is refused.
+  if (
+    located.retained !== sourceText &&
+    request.cache.mapReads === mapReadsBefore
+  ) {
+    request.cache.entry = undefined
+    located = locateStop(
+      await readReactScriptsServedBundle(
+        request.ownedOrigin,
+        request.signal,
+        request.cache,
+      ),
+      stopPath,
+      request,
+    )
+  }
+  if (located.retained !== sourceText) throw sourceChangedRefusal(source.path)
+  const { served, sources, stopIndex } = located
   const scan = sourceMapMappedPositions(
     served.map.mappings,
     stopIndex,

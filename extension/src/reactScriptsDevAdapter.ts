@@ -7,25 +7,23 @@ import { launchReactScriptsDevelopmentServer } from './utils/launchReactScriptsD
 import { ReactScriptsBundleCache } from './utils/readReactScriptsServedBundle'
 import { sealReactScriptsStop } from './utils/sealReactScriptsStop'
 
-/** The bundle caches of the runs that are alive, by owned origin; a cache is dropped when its server closes. */
-const bundleCaches = new Map<string, ReactScriptsBundleCache>()
+/** The origin and bundle cache of each started server, by its handle, so the settle wait finds them and nothing outlives the server. */
+const runsByApp = new WeakMap<
+  object,
+  { origin: string; cache: ReactScriptsBundleCache }
+>()
 
-/** The owned origin of each started server, so the settle wait can find it from the handle. */
-const originsByApp = new WeakMap<object, string>()
+/** The caches of the runs that are alive, by owned origin: a seal request carries the origin, not the handle. Only `start` adds an entry, and it is dropped when the server closes. */
+const aliveCachesByOrigin = new Map<string, ReactScriptsBundleCache>()
 
 /**
- * Gives the run's bundle cache for an origin, creating it on first use.
+ * Gives the cache of a started run for its origin.
  * @param origin - The owned origin.
- * @returns The cache every read of this run shares.
+ * @returns The run's cache; a fresh unshared one for an origin no run of this adapter started, so a read for it keeps nothing.
  * @example bundleCacheOf('http://127.0.0.1:3000').mapReads // => 0
  */
 function bundleCacheOf(origin: string): ReactScriptsBundleCache {
-  let cache = bundleCaches.get(origin)
-  if (!cache) {
-    cache = new ReactScriptsBundleCache()
-    bundleCaches.set(origin, cache)
-  }
-  return cache
+  return aliveCachesByOrigin.get(origin) ?? new ReactScriptsBundleCache()
 }
 
 /**
@@ -57,20 +55,23 @@ export const REACT_SCRIPTS_DEV_ADAPTER: DevelopmentServerAdapter = {
       workspace,
       // The run's cache is dropped with its server.
       async (port) => {
-        bundleCaches.delete(`http://127.0.0.1:${port}`)
+        aliveCachesByOrigin.delete(`http://127.0.0.1:${port}`)
       },
     )
-    originsByApp.set(launch.app, `http://127.0.0.1:${launch.port}`)
+    const cache = new ReactScriptsBundleCache(workspace.publicPath)
+    const origin = `http://127.0.0.1:${launch.port}`
+    aliveCachesByOrigin.set(origin, cache)
+    runsByApp.set(launch.app, { origin, cache })
     return launch
   },
   // react-scripts has no development lock.
   readOwnedLock: async () => undefined,
   async waitForServerSettled(app, timeoutMs, signal) {
-    const origin = originsByApp.get(app)
-    if (origin === undefined) return
+    const run = runsByApp.get(app)
+    if (run === undefined) return
     await awaitReactScriptsFirstCompile(
-      origin,
-      bundleCacheOf(origin),
+      run.origin,
+      run.cache,
       timeoutMs,
       signal,
     )

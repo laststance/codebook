@@ -1,8 +1,4 @@
-import {
-  REACT_SCRIPTS_BUNDLE_PATH,
-  REACT_SCRIPTS_READINESS_POLL_MS,
-  VITE_MODULE_FETCH_TIMEOUT_MS,
-} from '../constants'
+import { REACT_SCRIPTS_READINESS_POLL_MS } from '../constants'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import {
@@ -12,34 +8,7 @@ import {
 } from './readReactScriptsServedBundle'
 
 /**
- * Reads the entry page once and says whether it loads the development bundle.
- * @param origin - The owned origin.
- * @param signal - Ends the read when the run is cancelled.
- * @returns `true` when the page's HTML names {@link REACT_SCRIPTS_BUNDLE_PATH}; `false` for a failed request or another page.
- * @example await entryNamesBundle('http://127.0.0.1:3000', signal) // => true
- */
-async function entryNamesBundle(
-  origin: string,
-  signal: AbortSignal,
-): Promise<boolean> {
-  const response = await fetch(origin, {
-    signal: AbortSignal.any([
-      signal,
-      AbortSignal.timeout(VITE_MODULE_FETCH_TIMEOUT_MS),
-    ]),
-  }).catch(() => {
-    signal.throwIfAborted()
-    return undefined
-  })
-  if (!response?.ok) {
-    await response?.body?.cancel()
-    return false
-  }
-  return (await response.text()).includes(REACT_SCRIPTS_BUNDLE_PATH)
-}
-
-/**
- * Waits until react-scripts has finished its first compile: the entry page loads the bundle, and the bundle and its map are read once.
+ * Waits until react-scripts has finished its first compile: the entry page (at the app's public path) names the bundle, and the bundle and its map are read once.
  *
  * Why it exists: the origin line appears when the compile finishes, but a stop is sealed from the bundle and its map, so readiness is proven by reading them (DX-7). Called as the adapter's `waitForServerSettled` before the stops are sealed, inside the run's preparation deadline.
  * @param origin - The owned origin, `http://127.0.0.1:<port>`.
@@ -55,11 +24,12 @@ export async function awaitReactScriptsFirstCompile(
   timeoutMs: number,
   signal: AbortSignal,
 ): Promise<void> {
+  // Every request of a poll ends with the budget, so the wait cannot overshoot it by a request's own timeout.
+  const deadlineAtMs = performance.now() + timeoutMs
   await waitUntil(
     async () => {
-      if (!(await entryNamesBundle(origin, signal))) return false
       try {
-        await readReactScriptsServedBundle(origin, signal, cache)
+        await readReactScriptsServedBundle(origin, signal, cache, deadlineAtMs)
         return true
       } catch (error) {
         // A server that does not serve the bundle yet is polled again; any coded refusal is final.

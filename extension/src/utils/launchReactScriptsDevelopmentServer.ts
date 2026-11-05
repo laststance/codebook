@@ -4,6 +4,7 @@ import {
   DEVELOPMENT_SERVER_DEFAULT_PORT,
   DEVELOPMENT_SERVER_MAX_PORT,
   REACT_SCRIPTS_COMPILER_LINE_MAX_CHARS,
+  REACT_SCRIPTS_OUTPUT_DRAIN_MS,
   REACT_SCRIPTS_OUTPUT_POLL_MS,
   REPOSITORY_SETUP_TIMEOUT_MS,
   VITE_SETUP_STEPS,
@@ -24,7 +25,10 @@ import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import type { ReactScriptsWorkspace } from './assessReactScriptsWorkspace'
 import { isSecretName } from './isSecretName'
-import { launchDevelopmentServer } from './launchDevelopmentServer'
+import {
+  drainDevelopmentServerOutput,
+  launchDevelopmentServer,
+} from './launchDevelopmentServer'
 import { buildViteEnvironment } from './launchViteDevelopmentServer'
 import {
   longestMaskedLength,
@@ -32,13 +36,16 @@ import {
   maskKnownValues,
 } from './maskKnownValues'
 
+/** The name prefix react-scripts inlines into the bundle. */
+const REACT_SCRIPTS_INLINED_PREFIX = 'REACT_APP_'
+
 /** What the owned react-scripts start learned, besides the process. */
 export type ReactScriptsLaunch = {
   app: DevelopmentApp
   port: number
-  /** Masks values the start learned (secret-named assignments) and secret shapes in text the run keeps. */
+  /** Masks values the start learned (secret-named env values) and secret shapes in text the run keeps. */
   maskText: (text: string) => string
-  /** Masks only the secret-named assignment values in sealed module text. */
+  /** Masks the secret-named and inlined `REACT_APP_*` env values in sealed module text. */
   maskModuleText: (text: string) => string
 }
 
@@ -106,10 +113,49 @@ function compilerLineOf(output: string): string | undefined {
   )
 }
 
+/** The lines react-scripts prints when a compile ends without errors: with or without warnings. */
+const COMPILE_ENDED_LINE =
+  /Compiled successfully!|Compiled with warnings\.|webpack compiled/
+
 /**
- * Waits until react-scripts prints its origin, ends, or reports a compile failure, and words each ending as its refusal.
+ * Tells from react-scripts' output that its first compile ended without errors.
+ *
+ * Why it exists: react-dev-utils prints the origin line only after a compile with no warnings, so a start whose first compile has warnings prints `Compiled with warnings.` and no URL. Called by {@link awaitReactScriptsListening} and as the shared launcher's listening evidence.
+ * @param output - The text react-scripts printed.
+ * @param port - The port the run listens on.
+ * @returns `true` after `Compiled successfully!`, `Compiled with warnings.`, `webpack compiled` or the origin line.
+ * @example hasReactScriptsCompiled('Compiled with warnings.\n', 3000) // => true
+ */
+function hasReactScriptsCompiled(output: string, port: number): boolean {
+  return (
+    COMPILE_ENDED_LINE.test(output) ||
+    new RegExp(`http://127\\.0\\.0\\.1:${port}(?=\\D)`).test(output)
+  )
+}
+
+/**
+ * Words what the output says of the start so far: a busy port and a compile error refuse, a finished compile is ready.
+ * @param output - The masked output tail.
+ * @param port - The port the run listens on.
+ * @returns `true` when the first compile ended without errors; `false` while it has not.
+ * @throws `REACT_SCRIPTS_PORT_UNAVAILABLE` (the port-conflict line), `REACT_SCRIPTS_LAUNCHER_FAILED` (`compile-failed`).
+ * @example classifyReactScriptsOutput('Compiled successfully!', 3000) // => true
+ */
+function classifyReactScriptsOutput(output: string, port: number): boolean {
+  const busyPort = reactScriptsPortConflictOf(output)
+  if (busyPort !== undefined)
+    throw reactScriptsPortRefusal(busyPort, 'react-scripts-exit')
+  const compilerLine = compilerLineOf(output)
+  if (compilerLine !== undefined)
+    throw reactScriptsCompileFailedRefusal(compilerLine)
+  return hasReactScriptsCompiled(output, port)
+}
+
+/**
+ * Waits until react-scripts' first compile ended, it ends, or it reports a compile failure, and words each ending as its refusal.
  *
  * Why it exists: the shared readiness only looks for the origin line, so a busy port (react-scripts exits), a compile error (the server stays up) and an exit would all read as a timeout. Called by {@link launchReactScriptsDevelopmentServer} right after the spawn.
+ * The output of an ended process is drained before the ending is worded, so a line printed just before the exit still counts.
  * @param app - The spawned server.
  * @param port - The port the run listens on.
  * @param signal - Ends the wait when the run is cancelled.
@@ -121,29 +167,18 @@ async function awaitReactScriptsListening(
   port: number,
   signal: AbortSignal,
 ): Promise<void> {
-  const origin = new RegExp(`http://127\\.0\\.0\\.1:${port}(?=\\D)`)
   try {
     await waitUntil(
-      () => {
-        const output = app.outputTail()
-        const busyPort = reactScriptsPortConflictOf(output)
-        if (busyPort !== undefined)
-          throw reactScriptsPortRefusal(busyPort, 'react-scripts-exit')
-        const compilerLine = compilerLineOf(output)
-        if (compilerLine !== undefined)
-          throw reactScriptsCompileFailedRefusal(compilerLine)
-        if (origin.test(output)) return true
-        if (!app.isRunning()) {
-          const { exitCode, signal: exitSignal } = app.exitStatus()
-          throw reactScriptsExitedRefusal({
-            exitCode,
-            signal: exitSignal,
-            journalPath: 'the run journal',
-          })
-        }
-        return false
+      async () => {
+        if (classifyReactScriptsOutput(app.outputTail(), port)) return true
+        if (app.isRunning()) return false
+        // The exit can arrive before the last output: read what is left, then word the ending.
+        await drainDevelopmentServerOutput(app, REACT_SCRIPTS_OUTPUT_DRAIN_MS)
+        if (classifyReactScriptsOutput(app.outputTail(), port)) return true
+        const { exitCode, signal: exitSignal } = app.exitStatus()
+        throw reactScriptsExitedRefusal({ exitCode, signal: exitSignal })
       },
-      'the react-scripts origin',
+      'the react-scripts first compile',
       REPOSITORY_SETUP_TIMEOUT_MS,
       signal,
       REACT_SCRIPTS_OUTPUT_POLL_MS,
@@ -159,7 +194,7 @@ async function awaitReactScriptsListening(
 }
 
 /**
- * Starts the owned react-scripts server through the shared launcher on the run's declared port, and returns once it printed its origin.
+ * Starts the owned react-scripts server through the shared launcher on the run's declared port, and returns once its first compile ended.
  *
  * Why it exists: the react-scripts adapter needs no launcher module (eng D2): `node_modules/react-scripts/scripts/start.js` runs as the child of {@link launchDevelopmentServer}, which owns its process group. Called by the adapter's `start`.
  * The process is handed to the run the moment it exists (`onApp`), so any refusal below is closed by the run's cleanup.
@@ -182,9 +217,12 @@ export async function launchReactScriptsDevelopmentServer(
   )
   request.alive()
   request.onStep(VITE_SETUP_STEPS.startingReactScripts)
-  // Only secret-named assignment values are known secrets; the shared redaction covers secret shapes.
-  const maskedValues = Object.entries(workspace.assignments)
-    .filter(([name]) => isSecretName(name))
+  // Secret-named values (script assignments and .env files) and every REACT_APP_* value are masked: react-scripts inlines the latter into the bundle the run archives, as the Vite path masks the values it inlines. The shared redaction covers secret shapes.
+  const maskedValues = Object.entries(workspace.environment)
+    .filter(
+      ([name]) =>
+        isSecretName(name) || name.startsWith(REACT_SCRIPTS_INLINED_PREFIX),
+    )
     .map(([, value]) => value)
   const maskText = (text: string): string => maskKnownValues(text, maskedValues)
   const app = launchDevelopmentServer(
@@ -202,6 +240,8 @@ export async function launchReactScriptsDevelopmentServer(
       mask: maskText,
       maskHoldback: () => longestMaskedLength(maskedValues),
       name: 'react-scripts',
+      isListening: (rawOutput) =>
+        hasReactScriptsCompiled(rawOutput, declared.port),
       afterClose: () => afterClose(declared.port),
     },
   )

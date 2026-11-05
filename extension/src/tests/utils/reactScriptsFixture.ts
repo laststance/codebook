@@ -1,9 +1,10 @@
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
-import { createServer, type Server } from 'node:http'
+import { createServer, type Server, type ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { TestContext } from 'node:test'
 
+import { REACT_SCRIPTS_ENTRY_LIMIT_BYTES } from '../../constants'
 import type {
   DevelopmentApp,
   DevelopmentServerStart,
@@ -25,7 +26,14 @@ export const APP_SOURCE_TEXT = [
 
 /** What the fake `start.js` does after it starts. */
 export type FakeReactScriptsMode =
-  'ok' | 'compile-error' | 'port-conflict' | 'never-serves-bundle'
+  | 'ok'
+  | 'compile-error'
+  | 'port-conflict'
+  | 'never-serves-bundle'
+  /** The first compile has warnings: react-scripts prints `Compiled with warnings.` and no origin line. */
+  | 'warnings'
+  /** The process exits at once while a child still prints the busy-port line a moment later. */
+  | 'port-conflict-after-exit'
 
 /** The settings of one fake react-scripts app. */
 export type ReactScriptsFixtureOptions = {
@@ -36,6 +44,12 @@ export type ReactScriptsFixtureOptions = {
   startScript?: (port: number) => string
   /** The installed react-scripts version. */
   version?: string
+  /** The path the fake server serves the app at, as a `homepage` or `PUBLIC_URL` moves it (`/` or `/app/`). */
+  publicPath?: string
+  /** The `homepage` written to the app's `package.json`. */
+  homepage?: string
+  /** A literal the fake bundle inlines, as react-scripts inlines a `REACT_APP_*` value. */
+  bundleLiteral?: string
 }
 
 /**
@@ -46,7 +60,12 @@ export type ReactScriptsFixtureOptions = {
  * @returns The script text.
  * @example fakeStartScript('ok', '/tmp/app') // => "'use strict' …"
  */
-function fakeStartScript(mode: FakeReactScriptsMode, appRoot: string): string {
+function fakeStartScript(
+  mode: FakeReactScriptsMode,
+  appRoot: string,
+  publicPath: string,
+  bundleLiteral: string,
+): string {
   return `'use strict'
 const http = require('node:http')
 const fs = require('node:fs')
@@ -54,6 +73,8 @@ const path = require('node:path')
 const { spawn } = require('node:child_process')
 const mode = ${JSON.stringify(mode)}
 const appRoot = ${JSON.stringify(appRoot)}
+const publicPath = ${JSON.stringify(publicPath)}
+const bundleLiteral = ${JSON.stringify(bundleLiteral)}
 const host = process.env.HOST
 const port = Number(process.env.PORT)
 fs.writeFileSync(path.join(appRoot, 'fake-server.pid'), String(process.pid))
@@ -61,6 +82,11 @@ fs.writeFileSync(path.join(appRoot, 'fake-server.pid'), String(process.pid))
 const worker = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
 fs.writeFileSync(path.join(appRoot, 'fake-worker.pid'), String(worker.pid))
 fs.writeFileSync(path.join(appRoot, 'fake-env.json'), JSON.stringify({ HOST: host, PORT: process.env.PORT, BROWSER: process.env.BROWSER, CI: process.env.CI, TOKEN: process.env.API_TOKEN }))
+if (mode === 'port-conflict-after-exit') {
+  // The line comes from a child after this process has exited, as buffered output can.
+  spawn(process.execPath, ['-e', 'setTimeout(() => console.log("Something is already running on port " + process.argv[1] + "."), 150)', String(port)], { stdio: ['ignore', 'inherit', 'inherit'], detached: true }).unref()
+  process.exit(0)
+}
 if (mode === 'port-conflict') {
   console.log('Something is already running on port ' + port + '.')
   process.exit(0)
@@ -75,18 +101,19 @@ const map = JSON.stringify({
   names: [],
   mappings: 'AAAA;AACA;AACA;AACA',
 })
-const bundle = 'console.log("compiled")\\n//# sourceMappingURL=bundle.js.map\\n'
+const bundle = 'console.log("compiled", ' + JSON.stringify(bundleLiteral) + ')\\n//# sourceMappingURL=bundle.js.map\\n'
 const server = http.createServer((request, response) => {
-  if (request.url === '/') {
+  // Like webpack-dev-server's history fallback, any page path answers the entry page.
+  if (request.url === '/' || request.url === publicPath) {
     response.setHeader('content-type', 'text/html')
-    response.end('<!doctype html><script src="/static/js/bundle.js"></script>')
+    response.end('<!doctype html><script defer src="' + publicPath + 'static/js/bundle.js"></script>')
   } else if (mode === 'never-serves-bundle') {
     response.statusCode = 404
     response.end('not compiled')
-  } else if (request.url === '/static/js/bundle.js') {
+  } else if (request.url === publicPath + 'static/js/bundle.js') {
     response.setHeader('content-type', 'application/javascript; charset=utf-8')
     response.end(bundle)
-  } else if (request.url === '/static/js/bundle.js.map') {
+  } else if (request.url === publicPath + 'static/js/bundle.js.map') {
     response.setHeader('content-type', 'application/json')
     response.end(map)
   } else {
@@ -97,6 +124,10 @@ const server = http.createServer((request, response) => {
 server.listen(port, host, () => {
   if (mode === 'compile-error') {
     console.log('Failed to compile.\\n\\n./src/App.js\\nModule not found: Can\\'t resolve \\'./missing\\' API_TOKEN=' + process.env.API_TOKEN + '\\n')
+    return
+  }
+  if (mode === 'warnings') {
+    console.log('Starting the development server...\\nCompiled with warnings.\\n\\nsrc/App.js\\n  Line 1:  unused\\n')
     return
   }
   console.log('You can now view app in the browser.\\n\\n  Local:            http://' + host + ':' + port + '\\n')
@@ -138,6 +169,7 @@ export async function createReactScriptsRepository(
       name: 'counter',
       dependencies: { 'react-scripts': '5.0.1' },
       scripts: { start: startScript },
+      ...(options.homepage === undefined ? {} : { homepage: options.homepage }),
     }),
   )
   await write(
@@ -149,7 +181,12 @@ export async function createReactScriptsRepository(
   )
   await write(
     'node_modules/react-scripts/scripts/start.js',
-    fakeStartScript(options.mode ?? 'ok', appRoot),
+    fakeStartScript(
+      options.mode ?? 'ok',
+      appRoot,
+      options.publicPath ?? '/',
+      options.bundleLiteral ?? '',
+    ),
   )
   await write('src/App.js', APP_SOURCE_TEXT)
   return {
@@ -212,6 +249,16 @@ export type ServedMapOptions = {
   padToBytes?: number
 }
 
+/** How the in-process fixture server misbehaves, one detail per test. */
+export type FakeBundleBehavior = {
+  /** The path the entry page and bundle are served at; `/` by default. */
+  publicPath?: string
+  /** `redirect` answers the entry with a 302 to `/elsewhere/`; `huge` pads the page past the entry limit before its script tag; `hang` never answers; `reset-once` cuts the first entry body short. */
+  entry?: 'redirect' | 'huge' | 'hang' | 'reset-once'
+  /** `reset` cuts the bundle body short; `invalid-utf8` serves bytes that are not UTF-8. */
+  bundle?: 'reset' | 'invalid-utf8'
+}
+
 /**
  * Serves an entry page, a bundle and a source map from one in-process loopback server, counting how often the map is read.
  *
@@ -224,20 +271,31 @@ export type ServedMapOptions = {
 export async function serveFakeBundle(
   context: TestContext,
   map: () => ServedMapOptions,
+  behavior: FakeBundleBehavior = {},
 ) {
   let generation = 0
-  const counts = { bundle: 0, map: 0 }
+  const counts = { bundle: 0, map: 0, entry: 0, redirected: 0 }
+  const publicPath = behavior.publicPath ?? '/'
+  const scriptTag = `<script src="${publicPath}static/js/bundle.js"></script>`
   const server: Server = createServer((request, response) => {
-    if (request.url === '/') {
+    if (request.url === '/elsewhere/') {
+      counts.redirected += 1
       response.setHeader('content-type', 'text/html')
-      response.end('<script src="/static/js/bundle.js"></script>')
-    } else if (request.url === '/static/js/bundle.js') {
+      response.end(scriptTag)
+    } else if (request.url === publicPath) {
+      counts.entry += 1
+      serveEntry(response, behavior, scriptTag, counts.entry)
+    } else if (request.url === `${publicPath}static/js/bundle.js`) {
       counts.bundle += 1
+      if (behavior.bundle) {
+        serveBrokenBundle(response, behavior.bundle)
+        return
+      }
       response.setHeader('content-type', 'application/javascript')
       response.end(
         `console.log(${generation})\n//# sourceMappingURL=bundle.js.map\n`,
       )
-    } else if (request.url === '/static/js/bundle.js.map') {
+    } else if (request.url === `${publicPath}static/js/bundle.js.map`) {
       counts.map += 1
       const options = map()
       const body = {
@@ -270,4 +328,46 @@ export async function serveFakeBundle(
       generation += 1
     },
   }
+}
+
+/** Answers the entry page the way {@link FakeBundleBehavior.entry} says. */
+function serveEntry(
+  response: ServerResponse,
+  behavior: FakeBundleBehavior,
+  scriptTag: string,
+  entryRequests: number,
+): void {
+  response.setHeader('content-type', 'text/html')
+  if (behavior.entry === 'hang') return
+  if (behavior.entry === 'redirect') {
+    response.statusCode = 302
+    response.setHeader('location', '/elsewhere/')
+    response.end()
+  } else if (behavior.entry === 'huge') {
+    // The page names the bundle only after more bytes than the entry limit.
+    response.end(
+      `${'x'.repeat(REACT_SCRIPTS_ENTRY_LIMIT_BYTES + 1)}${scriptTag}`,
+    )
+  } else if (behavior.entry === 'reset-once' && entryRequests === 1) {
+    response.setHeader('content-length', '1000')
+    response.write('<html>')
+    setTimeout(() => response.destroy(), 20)
+  } else {
+    response.end(scriptTag)
+  }
+}
+
+/** Answers the bundle request with a body that is cut short or is not UTF-8. */
+function serveBrokenBundle(
+  response: ServerResponse,
+  kind: NonNullable<FakeBundleBehavior['bundle']>,
+): void {
+  response.setHeader('content-type', 'application/javascript')
+  if (kind === 'invalid-utf8') {
+    response.end(Buffer.from([0xff, 0xfe, 0xfd]))
+    return
+  }
+  response.setHeader('content-length', '1000')
+  response.write('console.log(1)')
+  setTimeout(() => response.destroy(), 20)
 }

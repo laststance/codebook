@@ -55,6 +55,8 @@ export type DevelopmentLaunchSpec = {
   acceptMessage?: (message: unknown) => boolean
   /** Names the server in timeout and exit sentences: `owned <name> listener`. */
   name?: string
+  /** Says from the raw output that the server listens, for a server whose origin line is not always printed (react-scripts prints it only after a compile with no warnings). The origin is then the declared port on loopback. */
+  isListening?: (rawOutput: string) => boolean
   /** Runs once the owned process group is gone, for cleanup of files the server leaves behind. */
   afterClose?: () => Promise<void>
 }
@@ -234,6 +236,9 @@ export function launchDevelopmentServer(
           )
         // A launcher with an IPC channel reports its verified listening port before `ready` is called, so its origin never depends on printed URLs (a project's logLevel can silence them).
         if (spec?.ipc) return `http://127.0.0.1:${declaredPort}`
+        // A launcher that knows its own listening evidence says so; the origin is still the declared port.
+        if (spec?.isListening?.(log.toString('utf8')))
+          return `http://127.0.0.1:${declaredPort}`
         // Process chunks may split a port; only a received delimiter proves its complete value. Only the declared port counts: another local URL in the log (an API, a proxy) is not the app's origin (F552).
         return new RegExp(`http://127\\.0\\.0\\.1:${declaredPort}(?=\\D)`).exec(
           log.toString('utf8'),
@@ -272,7 +277,7 @@ export function launchDevelopmentServer(
     cwd: target,
     secretEnvironmentInherited: false,
   })
-  return {
+  const handle = {
     pid: child.pid,
     isRunning: () =>
       child.pid !== undefined &&
@@ -562,4 +567,36 @@ export function launchDevelopmentServer(
       }
     },
   }
+  outputDrains.set(handle, (timeoutMs) => {
+    const ended = [stdout, stderr].map(
+      (stream) =>
+        new Promise<void>((resolve) => {
+          if (stream.readableEnded || stream.destroyed) resolve()
+          else stream.once('close', () => resolve())
+        }),
+    )
+    return Promise.race([
+      Promise.all(ended).then(() => undefined),
+      new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
+    ])
+  })
+  return handle
+}
+
+/** The waits for an owned server's output pipes to end, by handle. */
+const outputDrains = new WeakMap<object, (timeoutMs: number) => Promise<void>>()
+
+/**
+ * Waits until the output pipes of an owned server ended (everything it printed is read), or the bound passes when a child that outlives it keeps a pipe open.
+ *
+ * Why it exists: the exit event can arrive before the last output does, and a refusal words an ending from that output. Called by the react-scripts launcher after it sees the process end. A handle this module did not create has nothing to wait for.
+ * @param app - The server handle {@link launchDevelopmentServer} returned.
+ * @param timeoutMs - The longest the wait takes.
+ * @example await drainDevelopmentServerOutput(app, 500)
+ */
+export async function drainDevelopmentServerOutput(
+  app: object,
+  timeoutMs: number,
+): Promise<void> {
+  await outputDrains.get(app)?.(timeoutMs)
 }

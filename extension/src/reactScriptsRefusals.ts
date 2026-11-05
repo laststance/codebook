@@ -211,16 +211,14 @@ export function reactScriptsCompileFailedRefusal(
 export type ReactScriptsExit = {
   exitCode: number | null
   signal: string | null
-  /** The path of the run journal that holds the process output; absent when the caller has none to name. */
-  journalPath?: string
 }
 
 /**
  * Builds the `REACT_SCRIPTS_LAUNCHER_FAILED` refusal of a react-scripts process that ended before the page was ready.
- * @param exit - The exit code, signal and, when known, the run journal path.
- * @returns The refusal: `details.reason: "exited"`, `exitCode`, `signal`, `journalPath` (only when given) and `sideEffects: "partial"`.
+ * @param exit - The exit code and signal.
+ * @returns The refusal: `details.reason: "exited"`, `exitCode`, `signal` and `sideEffects: "partial"`.
  * @example
- * reactScriptsExitedRefusal({ exitCode: 1, signal: null, journalPath: '/j.log' }).details?.exitCode // => 1
+ * reactScriptsExitedRefusal({ exitCode: 1, signal: null }).details?.exitCode // => 1
  */
 export function reactScriptsExitedRefusal(exit: ReactScriptsExit): StudyError {
   const ended =
@@ -230,14 +228,11 @@ export function reactScriptsExitedRefusal(exit: ReactScriptsExit): StudyError {
   return reactScriptsRefusal(
     'REACT_SCRIPTS_LAUNCHER_FAILED',
     `react-scripts ended ${ended} before the app was ready.`,
-    `Read details.exitCode and details.signal (and, when details.journalPath is present, the run journal there) for the cause, then tell the learner; start once more with a new key only when the journal shows a transient cause.${REACT_SCRIPTS_QUOTE_NOTE} The process had ended and nothing was left running. ${recoveryEnd('REACT_SCRIPTS_LAUNCHER_FAILED')}`,
+    `Read details.exitCode, details.signal and the run journal for the cause, then tell the learner; start once more with a new key only when the journal shows a transient cause.${REACT_SCRIPTS_QUOTE_NOTE} The process had ended and nothing was left running. ${recoveryEnd('REACT_SCRIPTS_LAUNCHER_FAILED')}`,
     {
       reason: 'exited',
       exitCode: exit.exitCode,
       signal: exit.signal,
-      ...(exit.journalPath === undefined
-        ? {}
-        : { journalPath: exit.journalPath }),
       sideEffects: 'partial',
     },
   )
@@ -451,6 +446,26 @@ export function reactScriptsNodeModulesRefusal(
 }
 
 /**
+ * Builds the `REACT_SCRIPTS_SEAL_FAILED` refusal of a stop file in `node_modules` found at seal time, after the server started.
+ *
+ * Why it exists: {@link reactScriptsNodeModulesRefusal} is raised before the start and says nothing started; the seal keeps the same check for a stop whose real path reaches `node_modules` (a link), where the owned server already ran. Called by the seal only.
+ * @param files - The offending repository-relative stop files.
+ * @returns The refusal: `details.reason: "node-modules"`, `files` and `sideEffects: "partial"`.
+ * @example
+ * reactScriptsSealedNodeModulesRefusal(['app/node_modules/lib/index.js']).details?.sideEffects // => 'partial'
+ */
+export function reactScriptsSealedNodeModulesRefusal(
+  files: readonly string[],
+): StudyError {
+  return reactScriptsRefusal(
+    'REACT_SCRIPTS_SEAL_FAILED',
+    `Stop file${files.length === 1 ? '' : 's'} ${files.join(', ')} reach${files.length === 1 ? 'es' : ''} node_modules, a published package and not the checked-out library, so the stops cannot be sealed; the owned server was stopped and no click was sent.`,
+    `A published package in node_modules is not the checked-out library, so put the stop in the Example's own source (a file listed in details.files reaches node_modules); otherwise tell the learner this version observes only the app's own files. The owned server was stopped and no click was sent (details.sideEffects is partial). ${recoveryEnd('REACT_SCRIPTS_SEAL_FAILED')}`,
+    { reason: 'node-modules', files: [...files], sideEffects: 'partial' },
+  )
+}
+
+/**
  * Builds the `REACT_SCRIPTS_SEAL_FAILED` refusal of a stop line that no served source-map position reaches.
  * @param file - The repository-relative stop file.
  * @param line - The declared stop line.
@@ -525,5 +540,22 @@ export function reactScriptsMapUnreadableRefusal(problem: string): StudyError {
     `The served bundle of the app cannot be sealed: ${problem}.`,
     `Tell the learner the compiled app's bundle or source map is not in the form this version reads (details.problem names what is wrong); never edit the project. The owned server was stopped and no click was sent. ${recoveryEnd('REACT_SCRIPTS_SEAL_FAILED')}`,
     { reason: 'map-unreadable', problem, sideEffects: 'partial' },
+  )
+}
+
+/**
+ * Builds the `REACT_SCRIPTS_UNSUPPORTED` refusal of an app that starts its development server over HTTPS (`HTTPS=true` in the start script or an `.env` file).
+ *
+ * Why it exists: Codebook observes the server over `http://127.0.0.1`, which an HTTPS server does not answer. Called by {@link assessReactScriptsWorkspace} before any process starts.
+ * @returns The refusal: `details.reason: "https"` and `sideEffects: "none"`.
+ * @example
+ * reactScriptsHttpsRefusal().details?.reason // => 'https'
+ */
+export function reactScriptsHttpsRefusal(): StudyError {
+  return reactScriptsRefusal(
+    'REACT_SCRIPTS_UNSUPPORTED',
+    'The app starts its development server over HTTPS (HTTPS=true), which Codebook cannot observe over http://. Nothing was started.',
+    `Tell the learner that HTTPS=true in the start script or an .env file makes the server answer only over HTTPS, so this version cannot observe the app; never edit the project, its scripts or its .env files. ${recoveryEnd('REACT_SCRIPTS_UNSUPPORTED')}`,
+    { reason: 'https', sideEffects: 'none' },
   )
 }

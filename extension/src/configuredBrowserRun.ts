@@ -113,6 +113,7 @@ import {
 } from './ownedRepositoryBreakpoint'
 import { REACT_SCRIPTS_DEV_ADAPTER } from './reactScriptsDevAdapter'
 import {
+  reactScriptsNodeModulesRefusal,
   reactScriptsOutsidePackageRefusal,
   reactScriptsSetupDeadlineRefusal,
   reactScriptsSetupDeadlineText,
@@ -305,6 +306,7 @@ import { pausePlace } from './utils/pausePlace'
 import { placeAfterDeclaringLine } from './utils/placeAfterDeclaringLine'
 import { preparedInputsOf } from './utils/preparedInputsOf'
 import { prepareRepositoryInputs } from './utils/prepareRepositoryInputs'
+import { publishedStopFiles } from './utils/publishedStopFiles'
 import { readDeclaredDevelopmentPort } from './utils/readDeclaredDevelopmentPort'
 import {
   readDevelopmentBundle,
@@ -1345,7 +1347,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Resolves the react-scripts app once, then refuses stop files outside it, both before any process starts.
    * Called at the start of preparation for a `react-scripts-dev` run; the refusal order is the real path, the react-scripts app rule, then stops outside the package. The installation is judged next by the adapter's workspace check.
    * @returns The resolved package; the root package for an absent or `"."` packageRoot.
-   * @throws `INVALID_CONFIGURATION` from {@link resolveReactScriptsPackage}; `REACT_SCRIPTS_UNSUPPORTED` (`not-a-react-scripts-app`); `REACT_SCRIPTS_SEAL_FAILED` (reason `outside-package`) for stops outside the package.
+   * @throws `INVALID_CONFIGURATION` from {@link resolveReactScriptsPackage}; `REACT_SCRIPTS_UNSUPPORTED` (`not-a-react-scripts-app`); `REACT_SCRIPTS_SEAL_FAILED` (reason `outside-package`) for stops outside the package, and (reason `node-modules`) for stops in the app's node_modules.
    * @example this.reactScriptsPackage = await this.resolveReactScriptsPackageOfRun()
    */
   private async resolveReactScriptsPackageOfRun(): Promise<ResolvedPackage> {
@@ -1363,6 +1365,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         reactScriptsPackage.packageRootRelative,
         outside,
       )
+    // A published package in the app's node_modules is not the checked-out library: refused here, before the server starts.
+    const published = publishedStopFiles(
+      configuredStops(this.definition.configuration).map(
+        (stop) => stop.source.path,
+      ),
+      (path) => reactScriptsPackage.toPackageRelative(path),
+    )
+    if (published.length) throw reactScriptsNodeModulesRefusal(published)
     return reactScriptsPackage
   }
 

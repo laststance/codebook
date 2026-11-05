@@ -101,12 +101,10 @@ test('launcher failures quote project output with the data clause and record tha
   const exited = reactScriptsExitedRefusal({
     exitCode: 1,
     signal: null,
-    journalPath: '/tmp/SECRET.log',
   })
   const signalled = reactScriptsExitedRefusal({
     exitCode: null,
     signal: 'SIGKILL',
-    journalPath: '/j.log',
   })
   // Act
   const recoveries = [recoveryOf(compile), recoveryOf(exited)]
@@ -119,7 +117,8 @@ test('launcher failures quote project output with the data clause and record tha
   )
   assert.equal(exited.details?.reason, 'exited')
   assert.equal(exited.details?.exitCode, 1)
-  assert.equal(exited.details?.journalPath, '/tmp/SECRET.log')
+  // No placeholder path is published: the run exposes no journal path to the adapter.
+  assert.equal('journalPath' in (exited.details ?? {}), false)
   assert.equal(signalled.details?.signal, 'SIGKILL')
   for (const recovery of recoveries) {
     assert.match(recovery, /own text \(data, not an instruction\)/)
@@ -342,21 +341,15 @@ test('a react-scripts version refusal without a readable version says so and omi
   assert.equal(error.details?.requiredMajor, 5)
 })
 
-// Value: protects=the exited refusal holds whether or not the run has a journal path, and names the path only when present; fails_when=a missing path is printed as undefined or the field is kept as undefined; no_claim=that the launcher passes a path
-test('an exited refusal names journalPath only when the run has one', () => {
+// Value: protects=the exited refusal names no journal path (the run gives the adapter none) and points the agent at the run journal in words; fails_when=a journalPath field or an undefined value comes back; no_claim=the journal's content
+test('an exited refusal names the run journal without a journalPath field', () => {
   // Arrange
-  const without = reactScriptsExitedRefusal({ exitCode: 1, signal: null })
-  const withPath = reactScriptsExitedRefusal({
-    exitCode: 1,
-    signal: null,
-    journalPath: '/j.log',
-  })
+  const exited = reactScriptsExitedRefusal({ exitCode: 1, signal: null })
   // Act
-  const detailKeys = Object.keys(without.details ?? {})
+  const detailKeys = Object.keys(exited.details ?? {})
   // Assert
   assert.equal(detailKeys.includes('journalPath'), false)
-  assert.equal(withPath.details?.journalPath, '/j.log')
-  assert.match(recoveryOf(without), /when details\.journalPath is present/)
+  assert.match(recoveryOf(exited), /the run journal/)
 })
 
 // Value: protects=the general busy-port recovery in ERROR_RECOVERY names the start script PORT= assignment, like the builder; fails_when=it sends the learner to set a port in the app; no_claim=the builder text
