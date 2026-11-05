@@ -2841,14 +2841,17 @@ export const REACT_SCRIPTS_ENTRY_LIMIT_BYTES = 1_048_576
 /** The most bytes of one `.env` file of a react-scripts app Codebook reads; a larger file (react-scripts still reads it) is refused before anything starts. */
 export const REACT_SCRIPTS_ENV_FILE_LIMIT_BYTES = 65_536
 
-/** The deepest chain of `$NAME` references Codebook follows in one env value; react-scripts itself overflows its stack on a cycle, Codebook stops expanding past this depth. */
+/** The deepest chain of `$NAME` references Codebook follows in one env value; past it (a cycle, which overflows react-scripts' own stack, or a deeper chain) the start is refused, because the value react-scripts inlines is unknown. */
 export const REACT_SCRIPTS_ENV_EXPANSION_MAX_DEPTH = 64
 
-/** The most `$NAME` substitutions Codebook makes while settling the `.env` files of one app; past it the remaining values stay unexpanded (a chain of doubling references would otherwise take exponential time). */
+/** The most `$NAME` substitutions Codebook makes while settling the `.env` files of one app; past it the start is refused (a chain of doubling references would otherwise take exponential time). */
 export const REACT_SCRIPTS_ENV_EXPANSION_MAX_STEPS = 10_000
 
-/** The longest an expanded env value may grow, in characters, before Codebook stops expanding it. */
+/** The longest an expanded env value may grow, in characters, before the start is refused. */
 export const REACT_SCRIPTS_ENV_VALUE_MAX_CHARS = 1_048_576
+
+/** The most characters the `$NAME` substitutions of one app's `.env` files may copy in total (each substitution rebuilds its value); past it the start is refused, so repeated references to a long value cannot block the extension host. */
+export const REACT_SCRIPTS_ENV_EXPANSION_MAX_COPIED_CHARS = 16_777_216
 
 /** How long the start of a `react-scripts-dev` run waits for the output of an ended process to arrive before it words the ending. */
 export const REACT_SCRIPTS_OUTPUT_DRAIN_MS = 500

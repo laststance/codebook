@@ -40,7 +40,7 @@ const REACT_SCRIPTS_REFUSAL_REASONS = {
     https:
       'The app sets HTTPS=true in one of its .env files, so react-scripts would serve https:// while Codebook observes the app over http://. Tell the learner; never edit the project. An HTTPS assignment in the start script is refused earlier as a start-script form. Nothing started.',
     'env-file-unreadable':
-      "One of the app's .env files (details.file) is over the size limit or is not a regular file, and react-scripts would still read it, so its REACT_APP_* values could not be masked. Tell the learner; never edit the project. Nothing started.",
+      "One of the app's .env files (details.file) is over the size limit, is not a regular file, or holds values that expand past Codebook's limits (a cycle, a very deep chain or very long expansions), and react-scripts would still read it, so its REACT_APP_* values could not be masked. Tell the learner; never edit the project. Nothing started.",
     'not-a-react-scripts-app':
       'The declared packageRoot holds no package.json that declares react-scripts. Declare the folder of a packages entry of the readiness, or tell the learner this folder is not a Create React App app. Nothing started.',
   },

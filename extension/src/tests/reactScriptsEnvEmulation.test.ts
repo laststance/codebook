@@ -61,15 +61,95 @@ test('a reference to the child environment resolves to the run port', async (con
   assert.equal(environment.REACT_APP_P, `${port}@127.0.0.1`)
 })
 
-// Value: protects=a reference cycle neither hangs nor throws in the extension host; fails_when=settling A=$B, B=$A overflows the stack or never returns; no_claim=what react-scripts itself does with a cycle (it overflows its own stack)
-test('a cyclic .env reference settles without hanging or throwing', async (context) => {
+// Value: protects=a reference cycle (react-scripts itself overflows its stack on it) refuses the start instead of masking an unexpanded "$B"; fails_when=settling A=$B, B=$A hangs, throws something else or lets the run start; no_claim=what react-scripts prints for the cycle
+test('a cyclic .env reference refuses the start before anything runs', async (context) => {
   // Arrange
   const files = { '.env': 'A=$B\nB=$A\nREACT_APP_OK=fine\n' }
   // Act
+  const settling = settledEnvironmentOf(context, files)
+  // Assert
+  await assert.rejects(settling, {
+    code: 'REACT_SCRIPTS_UNSUPPORTED',
+    details: {
+      reason: 'env-file-unreadable',
+      file: '.env',
+      sideEffects: 'none',
+    },
+  })
+})
+
+// Value: protects=a finite reference chain deeper than Codebook follows refuses the start, so the value react-scripts resolves is never left out of the masks; fails_when=REACT_APP_TOKEN settles to "$A65" and the run starts with the real value unmasked; no_claim=chains up to the depth bound (the chained-value test covers those)
+test('a reference chain deeper than 64 refuses the start instead of masking an unexpanded name', async (context) => {
+  // Arrange
+  const chain = Array.from(
+    { length: 69 },
+    (_, index) => `A${index}=$A${index + 1}`,
+  )
+  const files = {
+    '.env': `REACT_APP_TOKEN=$A0\n${chain.join('\n')}\nA69=synthetic-private-value\n`,
+  }
+  // Act
+  const settling = settledEnvironmentOf(context, files)
+  // Assert
+  await assert.rejects(settling, {
+    code: 'REACT_SCRIPTS_UNSUPPORTED',
+    details: {
+      reason: 'env-file-unreadable',
+      file: '.env',
+      sideEffects: 'none',
+    },
+  })
+})
+
+// Value: protects=spending the substitution budget on names that are not masked cannot leave a later REACT_APP_* value unexpanded and unmasked; fails_when=REACT_APP_TOKEN settles to "$BASE" and the run starts; no_claim=the exact budget size
+test('exhausting the substitution budget refuses the start instead of leaving a later value unexpanded', async (context) => {
+  // Arrange
+  const files = {
+    '.env': `A=x\nB=${'$A'.repeat(10_001)}\nREACT_APP_TOKEN=$BASE\nBASE=synthetic-private-value\n`,
+  }
+  // Act
+  const settling = settledEnvironmentOf(context, files)
+  // Assert
+  await assert.rejects(settling, {
+    code: 'REACT_SCRIPTS_UNSUPPORTED',
+    details: {
+      reason: 'env-file-unreadable',
+      file: '.env',
+      sideEffects: 'none',
+    },
+  })
+})
+
+// Value: protects=repeated references to a long value cannot grow a value without bound and block the extension host; fails_when=B is built to tens of megabytes (O(n^2) copying, a hang or a RangeError) instead of a refusal; no_claim=the exact character bounds
+test('repeated references that would grow a value past its bound refuse the start', async (context) => {
+  // Arrange
+  const files = {
+    '.env': `A=${'x'.repeat(30_000)}\nB=${'${A}'.repeat(1_100)}\n`,
+  }
+  // Act
+  const settling = settledEnvironmentOf(context, files)
+  // Assert
+  await assert.rejects(settling, {
+    code: 'REACT_SCRIPTS_UNSUPPORTED',
+    details: {
+      reason: 'env-file-unreadable',
+      file: '.env',
+      sideEffects: 'none',
+    },
+  })
+})
+
+// Value: protects=NODE_ENV and BABEL_ENV settle to development as react-scripts' start.js sets them before reading .env, so PUBLIC_URL and inlined values match the bundle; fails_when=${NODE_ENV} expands to an empty string; no_claim=other variables start.js sets
+test('a reference to NODE_ENV or BABEL_ENV settles to development as in react-scripts start', async (context) => {
+  // Arrange
+  const files = {
+    '.env': 'PUBLIC_URL=/preview/${NODE_ENV}\nREACT_APP_MODE=$BABEL_ENV-mode\n',
+  }
+  // Act
   const { environment } = await settledEnvironmentOf(context, files)
   // Assert
-  assert.equal(typeof environment.A, 'string')
-  assert.equal(environment.REACT_APP_OK, 'fine')
+  assert.equal(environment.PUBLIC_URL, '/preview/development')
+  assert.equal(environment.REACT_APP_MODE, 'development-mode')
 })
 
 // Value: protects=an escaped dollar stays a literal dollar like dotenv-expand; fails_when=\$BASE is expanded; no_claim=other escapes

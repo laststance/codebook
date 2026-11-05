@@ -577,7 +577,7 @@ export function reactScriptsEnvFileRefusal(
   return reactScriptsRefusal(
     'REACT_SCRIPTS_UNSUPPORTED',
     `The app's ${file} cannot be read safely (${problem}), and react-scripts would still read it. Nothing was started.`,
-    `Tell the learner that ${file} is over the size limit or is not a regular file (details.file); never edit the project or its .env files. ${recoveryEnd('REACT_SCRIPTS_UNSUPPORTED')}`,
+    `Tell the learner that ${file} is over the size limit, is not a regular file, or holds values that expand past Codebook's limits (details.file); never edit the project or its .env files. ${recoveryEnd('REACT_SCRIPTS_UNSUPPORTED')}`,
     { reason: 'env-file-unreadable', file, sideEffects: 'none' },
   )
 }

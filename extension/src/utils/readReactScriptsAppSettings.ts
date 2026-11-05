@@ -1,6 +1,12 @@
 import { z } from 'zod'
 
-import { REACT_SCRIPTS_ENV_EXPANSION_MAX_STEPS } from '../constants'
+import {
+  REACT_SCRIPTS_ENV_EXPANSION_MAX_COPIED_CHARS,
+  REACT_SCRIPTS_ENV_EXPANSION_MAX_DEPTH,
+  REACT_SCRIPTS_ENV_EXPANSION_MAX_STEPS,
+  REACT_SCRIPTS_ENV_VALUE_MAX_CHARS,
+} from '../constants'
+import { reactScriptsEnvFileRefusal } from '../reactScriptsRefusals'
 
 import { expandDotenvFile } from './expandDotenvFile'
 import {
@@ -71,7 +77,7 @@ async function readHomepage(appRoot: string): Promise<string | undefined> {
  * @param appRoot - The app's folder.
  * @param assignments - The accepted `start` script's assignments; with Codebook's own values they are the process environment, which `.env` never overrides.
  * @returns The settled environment and the homepage.
- * @throws `REACT_SCRIPTS_UNSUPPORTED` (`env-file-unreadable`) for an `.env` file over the limit or not a regular file.
+ * @throws `REACT_SCRIPTS_UNSUPPORTED` (`env-file-unreadable`) for an `.env` file over the limit or not a regular file, or one whose values expand past Codebook's bounds.
  * @example await readReactScriptsAppSettings('/app', { PORT: '3000' }) // => { environment: { PORT: '3000', REACT_APP_KEY: 'k', … }, homepage: undefined }
  */
 export async function readReactScriptsAppSettings(
@@ -86,12 +92,25 @@ export async function readReactScriptsAppSettings(
   const environment = new Map<string, string>()
   for (const [name, value] of Object.entries(childEnvironment))
     if (value !== undefined) environment.set(name, value)
-  const budget = { remainingSteps: REACT_SCRIPTS_ENV_EXPANSION_MAX_STEPS }
+  // react-scripts' start.js sets both before env.js loads the .env files, so a reference to them settles to development.
+  environment.set('BABEL_ENV', 'development')
+  environment.set('NODE_ENV', 'development')
+  const budget = {
+    remainingSteps: REACT_SCRIPTS_ENV_EXPANSION_MAX_STEPS,
+    remainingCopiedChars: REACT_SCRIPTS_ENV_EXPANSION_MAX_COPIED_CHARS,
+    exceeded: false,
+  }
   // Files load one after the other, as react-scripts' env.js does; each sees what the earlier ones set.
   for (const name of ENV_FILES) {
     const text = await readReactScriptsEnvFile(appRoot, name)
-    if (text !== undefined)
-      expandDotenvFile(parseEnvText(text), environment, budget)
+    if (text === undefined) continue
+    expandDotenvFile(parseEnvText(text), environment, budget)
+    // Past a bound the values react-scripts inlines are unknown, so they could not be masked: nothing may start.
+    if (budget.exceeded)
+      throw reactScriptsEnvFileRefusal(
+        name,
+        `its values expand past ${REACT_SCRIPTS_ENV_VALUE_MAX_CHARS} characters, ${REACT_SCRIPTS_ENV_EXPANSION_MAX_DEPTH} nested references or ${REACT_SCRIPTS_ENV_EXPANSION_MAX_STEPS} substitutions`,
+      )
   }
   return {
     environment: Object.fromEntries(environment),
