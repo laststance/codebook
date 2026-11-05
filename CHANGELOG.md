@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.2.85.0] - 2026-11-05 (development candidate)
+
+Cycle 0085 ([Issue #222](https://github.com/laststance/codebook/issues/222)), a feature cycle. **A live explanation of a Node test, server or script, or of a Next app's server side, now reaches its first pause within seconds of the debugger attaching.** Before, every such run waited about 20 s first. In both VS Code and Cursor the first pause now follows the attach within half a second to a second and a half.
+
+**The first pause follows the attach.**
+- **What changed:** Codebook binds the debug session that holds the started process, not the editor's empty top-level session. That top-level session holds no process and never answers, and Codebook used to wait out a 20 s bound on it before it reached the right session.
+- **Where it applies:** every owned Node run: a `node-test` run (Vitest), a `node-server` run, a `node-script` run, and the server side of a Next run with server stops (`next-dev-webpack`).
+- **What stays the same:** the checks that the session belongs to this run and to the process it started; how a run chooses among several sessions of one process; every time limit. The server readiness bound (30 s) and the script running-time limit (60 s) start after the binding, as before.
+- **Measured** on development targets (no nine-project credit):
+
+  | Run | Host | First pause or line after attach | Before |
+  | --- | --- | --- | --- |
+  | Node server | VS Code | 1.5 s | 20.3 s |
+  | Node script | Cursor | 0.4 s | 20.2 s |
+  | Vitest test | VS Code | 0.5 s | 20.2 s |
+  | Next server selection | VS Code | 0.3 s | 19.5 s |
+
+**Release details:** the run journal of a Next run with server stops records `server.selected` with the session it chose. Dependencies: devtools-protocol 0.0.1734725.
+
 ## [0.2.84.0] - 2026-11-05 (development candidate)
 
 Cycle 0084 ([Issue #220](https://github.com/laststance/codebook/issues/220)), a feature cycle. A **repository's own Node script** now runs once under live explanation and pauses in its own source, with real values in the native debugger. A learner can ask what a script such as P05's `examples/publish-ci/node/test-esm.mjs` does and watch it stop at the lines the chat chose. They follow it to its exit code and output, then save the run as a Script replay that reopens after the process ended.
