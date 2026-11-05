@@ -217,7 +217,7 @@ export async function captureStudy(
     record.profile === REPOSITORY_BROWSER_PROFILE
       ? {
           // A study of ordered operations has its own format, so an older Codebook lists it as saved by a newer one instead of failing on its schema.
-          // The format is a pure function of the sealed configuration, so it is the same at every checkpoint of the run.
+          // The format follows the sealed configuration, except that a Next study moves once from format 8 or 9 to 12 at its first module-evaluation or preparation observation (assertStudyCheckpoint allows only that move).
           version: studyVersion,
           configuration: canonicalConfiguration,
           configurationHash: sha256(JSON.stringify(canonicalConfiguration)),

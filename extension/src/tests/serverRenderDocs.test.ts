@@ -225,7 +225,8 @@ test('the bundled skill allows a top-level App Router stop only on API 1.27 and 
     'a top-level line (module scope) is allowed only when `codebook_status` reports API 1.27 or later',
     'in a workspace without a Pages folder',
     'pauses at the module\'s first evaluation (`scope: "module"`)',
-    'on older APIs, in Pages runs and in workspaces with a Pages folder the stop stays inside a function',
+    'the stop has `afterOperation: 0`',
+    'on older APIs, in Pages runs, in workspaces with a Pages folder and after an operation the stop stays inside a function',
     'A pause with `attribution` `preparation`',
     '`preparationRequest` `readiness` or `warm-load`',
     'never by the page load',
@@ -261,7 +262,9 @@ test('the README describes module-evaluation pauses, preparation labels, the not
     'after a statement that did not run',
     'format 12 (`.study.v12.json`)',
     'Codebook 0.2.85 and older list it as saved by a newer Codebook',
-    'on an older API, in a Pages run and in a workspace with a Pages folder, keep the stop inside a function',
+    'declared with `afterOperation: 0`',
+    'on an older API, in a Pages run, in a workspace with a Pages folder and after an operation, keep the stop inside a function',
+    'A Pages run, and any run in a workspace with a Pages folder, does not observe module evaluation',
   ])
     assert.ok(section.includes(phrase), phrase)
   assert.equal(section.includes('Module-scope code runs once'), false)

@@ -63,5 +63,5 @@ test('a frame without a location is not an evaluation and does not throw', () =>
   // Act
   const result = isModuleEvaluationStack(frames, '12', MODULE_URL)
   // Assert
-  assert.equal(result, true)
+  assert.equal(result, false)
 })

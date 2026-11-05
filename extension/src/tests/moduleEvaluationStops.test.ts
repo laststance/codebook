@@ -173,8 +173,53 @@ test('a module-scope server stop pauses in the saved-session warm load, labelled
       snapshot.preparationRequest,
       snapshot.scope,
       harness.heldNavigationCount(),
+      harness.run.view().snapshotCaptures?.[snapshot.id]?.status,
     ],
-    ['preparation', 'warm-load', 'module', 1],
+    ['preparation', 'warm-load', 'module', 1, 'absent'],
+  )
+  // Cleanup
+  await harness.run.continue('server', snapshot.pause)
+  harness.answerNavigation()
+  await waitUntil(
+    () => harness.navigations.length >= 2,
+    'the entry navigation started',
+  )
+  harness.answerNavigation()
+  await prepared
+})
+
+// Value: protects=AC 1 (sign-in, slow compile): while the server has not answered the warm-up load (Next still compiles the route), the old document already reads complete, but the warm load keeps waiting for the answer and the preparation window stays open, so the module's later first evaluation still pauses there; fails_when=the warm load judges the old document as settled, closes the window and the evaluation runs without a breakpoint; no_claim=Next's real compile time
+test('the warm load waits for the server to answer before it judges the page, so a slow compile still pauses in the window', async (context) => {
+  // Arrange
+  const harness = await entryRenderHarness(context, {
+    ...SAVED_SESSION,
+    operations: {
+      operations: [],
+      stopOperations: [0],
+      stopParticipants: ['server'],
+      signInPaths: ['/login'],
+    },
+  })
+  const prepared = harness.run.prepare()
+  await waitUntil(
+    () => harness.navigations.length >= 1,
+    'the warm-up navigation started',
+  )
+  // Act: the compile outlasts the page's quiet window while the answer is held
+  await new Promise((resolve) => setTimeout(resolve, 1_500))
+  const closedWhileCompiling = journalTypes(harness).includes(
+    'preparation.window-closed',
+  )
+  evaluateModule(harness)
+  const snapshot = await publishedPause(harness)
+  // Assert
+  assert.deepEqual(
+    [
+      closedWhileCompiling,
+      snapshot.preparationRequest,
+      harness.navigations.length,
+    ],
+    [false, 'warm-load', 1],
   )
   // Cleanup
   await harness.run.continue('server', snapshot.pause)
@@ -309,6 +354,38 @@ test('a stop declared after operation 1 gets no provisional breakpoint', async (
   })
 })
 
+// Value: protects=O2 / AC 3 (after-operation stops keep today's path): a stop declared after operation 1 whose module is evaluated after the operation pauses as an after-operation render with today's labels, never as a module evaluation; fails_when=the evaluation-shaped stack labels it scope module (saved as format 12, named "After operation 1 · Module evaluation") or skips the route read; no_claim=a real client navigation
+test('a stop after operation 1 hit with the stack of a module evaluation pauses as an after-operation render without scope module', async (context) => {
+  // Arrange
+  const harness = await entryRenderHarness(context, {
+    realSourceRoot: true,
+    operations: {
+      operations: [
+        {
+          kind: 'text',
+          title: 'Search',
+          selector: 'input[placeholder="Search invoices..."]',
+          text: 'de',
+        },
+      ],
+      stopOperations: [1],
+      stopParticipants: ['server'],
+    },
+    documentReadyState: 'complete',
+  })
+  await harness.run.prepare()
+  harness.run.action('op-1', 'repository-operation')
+  await waitUntil(() => harness.inputsSeen() === 1, 'the text was typed')
+  // Act
+  harness.server!.hit({ stack: 'evaluation' })
+  const snapshot = await publishedPause(harness)
+  // Assert
+  assert.deepEqual(
+    [snapshot.attribution, snapshot.operationIndex, snapshot.scope],
+    ['after-operation', 1, undefined],
+  )
+})
+
 // Value: protects=R3 (React copies): a hit in React's fabricated copy of the module is never a module evaluation, even with the evaluation's stack; fails_when=E1's false matches reach the learner; no_claim=real React
 test('a hit in a React server copy of the module is resumed and journaled, never published as a module evaluation', async (context) => {
   // Arrange
@@ -345,14 +422,15 @@ test('bytes that differ from the declared source are refused at the pause and th
   assert.equal(server.continues.length, 1)
 })
 
-// Value: protects=AC 8 / R5 (hold): a preparation pause held for longer than the 90 s setup budget fails nothing, and the run continues and completes after the continue; fails_when=the setup deadline or a request bound fires while the learner reads; no_claim=real time (the run's manual clock moves; production bounds stay)
+// Value: protects=AC 8 / R5 (hold): a preparation pause held for longer than the 90 s setup budget fails nothing, the run continues and completes after the continue, and the held time is reported so the run resource's preparationDeadlineAt moves with it; fails_when=the setup deadline or a request bound fires while the learner reads, or the reported deadline stays in the past; no_claim=real time (the run's manual clock moves; production bounds stay)
 test('a preparation pause held past the 90 s setup budget fails nothing and the run completes after the continue', async (context) => {
   // Arrange
   const { harness, prepared } = await heldReadiness(context)
   evaluateModule(harness)
   const snapshot = await publishedPause(harness)
-  // Act: the learner reads for 100 s
+  // Act: the learner reads for 100 s on the run's clock (and 50 ms of wall time pass)
   harness.advance(100_000)
+  await new Promise((resolve) => setTimeout(resolve, 50))
   assert.deepEqual([...harness.run.view().failures], [])
   await harness.run.continue('server', snapshot.pause)
   harness.releaseReadiness()
@@ -368,6 +446,8 @@ test('a preparation pause held past the 90 s setup budget fails nothing and the 
     'the run completed',
   )
   assert.deepEqual([...harness.run.view().failures], [])
+  // The run resource's setup deadline moves by the held wall time, as the runtime's own budget did.
+  assert.ok((harness.run.view().preparationHeldMs ?? 0) >= 50)
 })
 
 // Value: protects=R11 (complete run): a preparation pause owes no image, so a run whose only server stop paused in the readiness request still ends with every owed image held; fails_when=the absent image makes the capture outcome incomplete and the study partial; no_claim=the before and after images of a real page

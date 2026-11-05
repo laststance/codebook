@@ -6,7 +6,7 @@ export interface HoldAwareTimeout {
   hold(): void
   /** Starts the clock again with the time that was left when it stopped. */
   release(): void
-  /** Ends the timer without aborting the signal. */
+  /** Ends the timer without aborting the signal, for good: a later release starts no timer. */
   dispose(): void
 }
 
@@ -33,7 +33,10 @@ export function createHoldAwareTimeout(
   let startedAtMs = now()
   let timer: ReturnType<typeof setTimeout> | undefined
   let isHeld = false
+  let isDisposed = false
   const start = (): void => {
+    // A disposed timeout never counts again, whatever continue arrives late.
+    if (isDisposed) return
     startedAtMs = now()
     timer = setTimeout(() => {
       timer = undefined
@@ -59,6 +62,7 @@ export function createHoldAwareTimeout(
       if (!controller.signal.aborted) start()
     },
     dispose(): void {
+      isDisposed = true
       clearTimeout(timer)
       timer = undefined
     },

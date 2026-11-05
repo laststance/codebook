@@ -478,6 +478,7 @@ export function launchDevelopmentServer(
      * @param signal - Ends a repeated root request when the run is cancelled.
      * @param entryPath - The configured entry path.
      * @param entry - The answer `readyEntry` read.
+     * @param observer - The run's readiness record; only its hold-aware bound is used, so a preparation pause held in the follow-up request does not run out its time.
      * @throws `Application root failed: <status>: <output>` or `Selected application page failed or redirected: <status>. …`, exactly as `ready` throws them.
      * @example
      * await app.confirmAppEntry(signal, '/', { status: 307, location: { sameOrigin: true, path: '/en' } }) // asks / again, following the redirect
@@ -486,6 +487,7 @@ export function launchDevelopmentServer(
       signal: AbortSignal,
       entryPath: string,
       entry: NextEntryResponse,
+      observer?: ReadinessObserver,
     ): Promise<void> {
       if (origin === undefined)
         throw new Error('The owned listener was not awaited')
@@ -494,7 +496,7 @@ export function launchDevelopmentServer(
         const status =
           entry.status >= HTTP_REDIRECT_STATUS_MIN &&
           entry.status < HTTP_REDIRECT_STATUS_END
-            ? (await rootAnswer(origin, signal)).status
+            ? (await rootAnswer(origin, signal, observer)).status
             : entry.status
         if (!isSuccessStatus(status))
           throw new Error(

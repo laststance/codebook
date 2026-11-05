@@ -974,13 +974,13 @@ test('the served help keeps the readiness record out of the saved study and stat
   )
 })
 
-// Value: protects=the bundled skill keeps the "may run once or come from a cache" advice to an App Router page and gives a Pages run its own not-reached sentence (the module-scope and cache causes do not apply; the message names the entry page's data function; an unconfirmed pause is never proof and an all-unconfirmed run is stopped), pointing to the help without copying it; fails_when=the cache advice is stated for every router again, the Pages sentence or the unconfirmed rule leaves the skill, or the skill copies the help's contract (a configuration or the not-reached message); no_claim=how a chat follows the rules
-test('the bundled skill scopes the run-once and cache advice to App Router and gives a Pages run its own not-reached and unconfirmed sentences', async () => {
+// Value: protects=the bundled skill keeps the not-reached possibilities (a cache, a module not imported or evaluated before arming, a line that did not run) to an App Router page, never as the cause, and gives a Pages run its own not-reached sentence (the module-scope and cache causes do not apply; the message names the entry page's data function; an unconfirmed pause is never proof and an all-unconfirmed run is stopped), pointing to the help without copying it; fails_when=the cache advice is stated for every router again, the Pages sentence or the unconfirmed rule leaves the skill, or the skill copies the help's contract (a configuration or the not-reached message); no_claim=how a chat follows the rules
+test('the bundled skill scopes the not-reached possibilities to App Router and gives a Pages run its own not-reached and unconfirmed sentences', async () => {
   // Arrange
   const paragraph = await readServerRendersSkillParagraph()
   // Act
   const appRouterAdvice =
-    'say the stop was not reached and that the first execution was not observed (`firstExecutionObserved: false`); for an App Router page add that its code may run once or come from a cache.'
+    "say the stop was not reached and that the render was not observed (`firstExecutionObserved: false`); for an App Router page give the message's own possibilities (a cache, a module that the entry route does not import or that Next evaluated before the stop was armed, a line that did not run), never one of them as the cause."
   const pagesNotReached =
     "When `SERVER_STOP_NOT_REACHED` ends a Pages run, the module-scope and cache causes do not apply: say what its message says, that the line did not run inside the entry page's data function for the observed request, and read the help's `SERVER_STOP_NOT_REACHED` section for the recovery."
   const pagesUnconfirmed =

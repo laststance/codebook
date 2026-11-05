@@ -51,10 +51,12 @@ export function isModuleEvaluationStack(
   const factoryName = moduleScriptUrl.startsWith(WEBPACK_INTERNAL_PREFIX)
     ? moduleScriptUrl.slice(WEBPACK_INTERNAL_PREFIX.length)
     : moduleScriptUrl
-  // The factory runs in the chunk's script, not in the module's own one.
+  // The factory runs in the chunk's script, not in the module's own one; a factory frame without a location (a malformed event) proves nothing.
+  const factoryLocation = factory?.location
   return (
-    factory !== undefined &&
-    factory.location?.scriptId !== moduleScriptId &&
-    factory.functionName === factoryName
+    factoryLocation !== undefined &&
+    factoryLocation !== null &&
+    factoryLocation.scriptId !== moduleScriptId &&
+    factory?.functionName === factoryName
   )
 }

@@ -37,3 +37,19 @@ test('a disposed timeout never fires', (context) => {
   // Assert
   assert.equal(timeout.signal.aborted, false)
 })
+
+// Value: protects=cleanup (a held pause continued after the run ended): a timeout disposed while held never starts counting again when the late release arrives; fails_when=release restarts the timer and aborts a signal nobody reads after cleanup; no_claim=the run's own cleanup order
+test('a timeout disposed while held stays quiet when a late release arrives', (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  let nowMs = 0
+  const timeout = createHoldAwareTimeout(1_000, () => nowMs)
+  timeout.hold()
+  // Act
+  timeout.dispose()
+  timeout.release()
+  nowMs = 5_000
+  context.mock.timers.tick(5_000)
+  // Assert
+  assert.equal(timeout.signal.aborted, false)
+})

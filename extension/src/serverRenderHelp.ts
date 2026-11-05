@@ -210,7 +210,7 @@ export function serverRenderHelp() {
         readinessPause:
           'In a readiness-request pause no browser is open yet and no input has been sent: the application image reads as not yet available, and the chat says nothing was sent. In a warm-load pause the warm-up page is still loading, so its image reads as not yet available too. Such a pause owes no image (capture status absent), so the run can still complete. Continue with the current continueArguments as for any pause.',
         absentBindings:
-          'A module-level binding that is not yet initialized at the pause is simply absent from the values; do not read the absence as a value or as an error.',
+          'A module-level binding that is not yet initialized at the pause is simply absent from the values; do not read the absence as a value. A required inspection of such a binding fails the stop as unavailable: declare it required: false, or require a binding that is already initialized at the pause line.',
         firstExecution:
           'firstExecutionObserved stays false: render code that ran during preparation was not observed. Say only that the module evaluation was paused, never that the page rendered.',
         notReached:
@@ -222,7 +222,7 @@ export function serverRenderHelp() {
         savedStudy: `A study with such a pause is saved as format 12 (.study.v12.json); Codebook 0.2.85 and older list it as saved by a newer Codebook. Minimum: Codebook ${SERVER_RENDER_MODULE_MINIMUM_EXTENSION} or later, API ${SERVER_RENDER_MODULE_MINIMUM_API} or later.`,
       },
       afterOperationRule:
-        'afterOperation: 0 means the entry load (the page load itself) and is allowed only for a stop with participant "server"; a browser stop still declares afterOperation from 1. A stop with afterOperation k from 1 is armed for the render observed after operation k (Pages Router: for the data function run after operation k, see pagesAfterOperation).',
+        'afterOperation: 0 means the entry load (the page load itself; a module evaluation in a preparation request of Codebook reads attribution preparation instead, so name a pause by its attribution) and is allowed only for a stop with participant "server"; a browser stop still declares afterOperation from 1. A stop with afterOperation k from 1 is armed for the render observed after operation k (Pages Router: for the data function run after operation k, see pagesAfterOperation).',
       omittedOperations:
         'When every stop has afterOperation 0, omit operations entirely. An empty operations array [] is refused with INVALID_CONFIGURATION naming the field operations. A run without operations needs no confirmation: the run resource reads confirmation: "not-needed" for a saved session too, because Codebook sends nothing that changes the app.',
       configurationEntryRender: SERVER_RENDER_ENTRY_CONFIGURATION,
@@ -261,7 +261,7 @@ export function serverRenderHelp() {
         'Read the run resource it names and branch on its state. preparing: wait and poll. paused: read inspectionUri and sourceUri, explain the values in the chat, then codebook_continue with the current continueArguments. ready: follow nextActions (an operation left means repository-operation). failed: read the code and follow its recovery. complete: read the result.',
         "Each pause reads execution server-render, with attribution entry-load (the page load) or after-operation with operationIndex k, meaning the render was observed after operation k. attribution unconfirmed means Codebook could not confirm the pause: for an App Router page it could not read which route rendered; for a Pages Router page the pause may come from the page's render rather than its data function (pagesUnconfirmed). Say so and claim neither an operation, nor the entry load, nor that the data function paused.",
         "Say only what the pauses show. When the run did not pause in a render, never describe that render; the run resource reads firstExecutionObserved false for a server stop, because the first execution (the first cache fill during the warm-up, a Pages run's readiness request, the render code that ran during preparation) was not observed.",
-        'A pause with scope "module" is a module evaluation (moduleScope). attribution preparation means Codebook\'s own request (preparationRequest readiness or warm-load) evaluated the module: never call it the page load, and say nothing was sent yet for readiness.',
+        'A pause with scope "module" is a module evaluation (moduleScope). attribution preparation means Codebook\'s own request (preparationRequest readiness or warm-load) evaluated the module: never call it the page load, and for readiness say that no app input was sent yet (only the readiness request of Codebook to the entry path was).',
       ],
       wording:
         'after-operation is "observed after operation k". An operation is never said to cause a render; the unreached causes below are possibilities ("may"), never the established cause.',
@@ -270,7 +270,7 @@ export function serverRenderHelp() {
         'App Router: a stop in a client component is refused with NEXT_STOP_NOT_SEALED (details.reason client-component); a render hit of another route is resumed and not counted.',
         PAGES_NOT_PAUSED,
         'There is no timeout override: each wait is bounded at 20 s, restarting at each continue, and the pause hold and run deadline stay as they are. There is no attribution override: Codebook reads the rendering route itself (a Pages run reads the data function from the paused stack).',
-        'A cache fill during the warm-up, and in a Pages run the first execution of a run-once module, are not observed; the render code that ran during preparation was not observed either (firstExecutionObserved false). App Router module evaluation is paused from API 1.27 (moduleScope).',
+        'A cache fill during the warm-up is not observed, and neither is the render code that ran during preparation (firstExecutionObserved false). The first evaluation of a run-once module is paused only as moduleScope says (API 1.27 or later, App Router, no Pages folder, afterOperation 0); in a Pages run, in a workspace with a Pages folder, after an operation and on older APIs it is not observed.',
       ],
     },
     serverRenderMigration: {

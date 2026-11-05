@@ -1896,14 +1896,19 @@ export async function configuredRuntimeHarness(
     if (!options.holdReadiness) return
     observer?.sent()
     readinessRequestHeld = true
-    // The run's stop ends the request, as it ends a real one.
-    await Promise.race([
-      readinessGate.promise,
-      new Promise<never>((_resolve, reject) =>
-        signal.addEventListener('abort', () => reject(signal.reason)),
-      ),
-    ])
-    readinessRequestHeld = false
+    // The run's stop ends the request, as it ends a real one; the request is no longer held either way.
+    try {
+      await Promise.race([
+        readinessGate.promise,
+        new Promise<never>((_resolve, reject) =>
+          signal.addEventListener('abort', () => reject(signal.reason), {
+            once: true,
+          }),
+        ),
+      ])
+    } finally {
+      readinessRequestHeld = false
+    }
   }
   const fakeApplication = {
     ready: async (

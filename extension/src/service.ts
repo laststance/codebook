@@ -4133,10 +4133,13 @@ export class StudyService {
       runtimeState: runtime?.status ?? record.nodePhase,
       createdAt: new Date(record.createdAt).toISOString(),
       deadlineAt: new Date(record.deadlineAt).toISOString(),
+      // The setup deadline moves by the time a preparation pause was held (Cycle 0086), as the runtime's own budget does.
       preparationDeadlineAt:
         record.profile === REPOSITORY_BROWSER_PROFILE
           ? new Date(
-              record.createdAt + REPOSITORY_SETUP_TIMEOUT_MS,
+              record.createdAt +
+                REPOSITORY_SETUP_TIMEOUT_MS +
+                (runtime?.preparationHeldMs ?? 0),
             ).toISOString()
           : undefined,
       activeTimeoutMs: ACTIVE_TIMEOUT_MS,
@@ -4481,7 +4484,10 @@ export class StudyService {
         ? undefined
         : Math.max(
             0,
-            record.createdAt + REPOSITORY_SETUP_TIMEOUT_MS - observedAtMs,
+            record.createdAt +
+              REPOSITORY_SETUP_TIMEOUT_MS +
+              (runtime?.preparationHeldMs ?? 0) -
+              observedAtMs,
           )
     return {
       ...material,

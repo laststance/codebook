@@ -511,7 +511,9 @@ export type ConfiguredRuntimeView = {
   /** Codebook's own readiness request for the entry: open from its send, closed with the HTTP status or a status-free outcome. Present for a Next run once the request was sent. */
   readinessRequest?: ReadinessEntryRequest
   status: string
-  /** Present as `false` when the configuration declares a server stop: Codebook loads the page once before it arms a stop, so the first execution (module scope, first cache fill) is not observed. */
+  /** The milliseconds preparation was held at continued preparation pauses (Cycle 0086): the setup deadline moved by that much, so the run resource's `preparationDeadlineAt` moves with it. Absent until such a pause was continued. */
+  preparationHeldMs?: number
+  /** Present as `false` when the configuration declares a server stop: Codebook loads the page once before it arms a render stop, so the render code of that load (a first cache fill included) is not observed; a module evaluation that paused in the preparation window is observed and has its own pause. */
   firstExecutionObserved?: false
   /** The words for a server render in progress (an entry-render pause held, or the wait for the next stop of a set), for the run resource's `message`. */
   renderMessage?: string

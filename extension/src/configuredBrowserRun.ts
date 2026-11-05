@@ -1046,6 +1046,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private readonly preparationCoveredStops = new Set<number>()
   /** Whether {@link selectServer} already ran before the readiness request. */
   private serverSelectedEarly = false
+  /** The time preparation was held at continued preparation pauses, by which the setup deadline moved; the run resource's deadline adds it. */
+  private preparationHeldMs = 0
   /** Whether the viewport was attached, so a warm-up pause cannot be drawn before it. */
   private viewportAttached = false
   /** The render stops that already published a pause; a later hit of one is a repeat and is resumed. */
@@ -2394,7 +2396,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.holdEntryBehindSignIn(entry.redirectsToSignIn)
       return origin
     }
-    await this.app!.confirmAppEntry(this.abort.signal, entryPath, entry)
+    await this.app!.confirmAppEntry(
+      this.abort.signal,
+      entryPath,
+      entry,
+      this.readiness.observer,
+    )
     return origin
   }
 
@@ -2722,23 +2729,32 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const scriptId = frame?.location.scriptId
     const scriptUrl =
       scriptId === undefined ? undefined : participant.scriptUrls.get(scriptId)
+    // The webpack layer whose module address the paused script carries, if the candidate's file is that module.
+    const layerOf = (
+      candidate: ProvisionalStop,
+    ): 'rsc' | 'action-browser' | undefined =>
+      scriptUrl === undefined
+        ? undefined
+        : (['rsc', 'action-browser'] as const).find((layer) =>
+            sameScriptUrl(
+              `webpack-internal:///(${layer})/./${candidate.packageRelative}`,
+              scriptUrl,
+            ),
+          )
     const candidates = window.provisional.filter(
-      (candidate) =>
-        !candidate.prepared &&
-        scriptUrl !== undefined &&
-        ['rsc', 'action-browser'].some((layer) =>
-          sameScriptUrl(
-            `webpack-internal:///(${layer})/./${candidate.packageRelative}`,
-            scriptUrl,
-          ),
-        ),
+      (candidate) => !candidate.prepared && layerOf(candidate) !== undefined,
     )
-    // Several stops in one module: the breakpoint the adapter names is the one that hit.
-    const hitIds = event.body?.hitBreakpointIds as number[] | undefined
-    const entry =
-      candidates.find((candidate) =>
-        hitIds?.includes(candidate.breakpoint.acknowledgedId(session) ?? -1),
-      ) ?? candidates[0]
+    // The breakpoint the adapter names is the one that hit: a pause that names others (a learner's own breakpoint in the module) is no stop's. Only a pause that names none takes a lone candidate, never a guess between two.
+    const hitIds: readonly number[] =
+      (event.body?.hitBreakpointIds as number[] | undefined) ?? []
+    const entry = hitIds.length
+      ? candidates.find((candidate) => {
+          const id = candidate.breakpoint.acknowledgedId(session)
+          return id !== undefined && hitIds.includes(id)
+        })
+      : candidates.length === 1
+        ? candidates[0]
+        : undefined
     if (
       !entry ||
       scriptId === undefined ||
@@ -2758,6 +2774,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         scriptId,
         scriptUrl!,
         window.request,
+        layerOf(entry)!,
       )
     } catch (error) {
       // The bytes that ran are not the declared ones: nothing is shown, the runtime goes on and the stop is refused.
@@ -2789,15 +2806,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @param scriptId - The paused script.
    * @param scriptUrl - The address the script was announced under.
    * @param request - Which of Codebook's own requests evaluated the module.
+   * @param layer - The webpack layer the paused script belongs to, recorded as the layer the stop was sealed from.
    * @returns The prepared stop with the provisional breakpoint as its own.
    * @throws When the script does not hold the declared module or its map retains another original text.
-   * @example const prepared = await this.sealPreparationStop(entry, '12', url, 'readiness')
+   * @example const prepared = await this.sealPreparationStop(entry, '12', url, 'readiness', 'rsc')
    */
   private async sealPreparationStop(
     entry: ProvisionalStop,
     scriptId: string,
     scriptUrl: string,
     request: 'readiness' | 'warm-load',
+    layer: 'rsc' | 'action-browser',
   ): Promise<PreparedStop> {
     const executed = await this.participants.server.cdp!.request(
       'Debugger.getScriptSource',
@@ -2819,7 +2838,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const prepared = this.assemblePreparedStop(
       entry.stop,
       entry.index,
-      { bundle, discovery: { preparation: request }, layer: 'rsc' },
+      { bundle, discovery: { preparation: request }, layer },
       undefined,
       true,
     )
@@ -2871,8 +2890,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.continuation = undefined
     this.status = 'preparing'
     // The setup budget did not run while the pause was held.
-    if (window.heldAtMs !== undefined)
-      this.preparationDeadlineAt += Date.now() - window.heldAtMs
+    if (window.heldAtMs !== undefined) {
+      const heldMs = Date.now() - window.heldAtMs
+      this.preparationDeadlineAt += heldMs
+      this.preparationHeldMs += heldMs
+    }
     window.heldAtMs = undefined
     window.timeout.release()
     this.progressDeadline(
@@ -2885,7 +2907,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Tells whether a server pause is the first evaluation of the stop's module, by the stack, for the label `scope: "module"` of a stop that paused outside the preparation window.
    * @param stop - The stop that paused.
    * @param event - The paused event.
-   * @returns `true` when the top frame is the module's own top-level code.
+   * @returns `true` when the stop is an entry-render server stop of a workspace without a Pages folder and the top frame is the module's own top-level code; `false` for every other stop, whatever its stack.
    * @example this.isModuleEvaluationPause(stop, event) // true for the db/index.ts:12 pause of the first evaluation
    */
   private isModuleEvaluationPause(
@@ -2896,6 +2918,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const scriptId = event.callFrames[0]?.location?.scriptId
     return (
       stop.participant === 'server' &&
+      // Module evaluation is observed only for entry-render stops of a run in a workspace without a Pages folder; after-operation stops and Pages-capable workspaces keep today's path and labels.
+      afterOperationOf(stop) === 0 &&
+      !this.pagesCapable &&
       scriptId !== undefined &&
       isModuleEvaluationStack(
         event.callFrames,
@@ -2961,10 +2986,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (!this.entryBehindSignIn) return
     await this.launchOwnedBrowser(adapter)
     const window = this.preparationWindow
-    // A module-evaluation pause holds the page's answer until the last continue: the navigation's own timer must not bound the wait.
+    // A module-evaluation pause holds the page's answer until the last continue: the navigation's own timer must not bound the wait, and the load waits for that answer, because until the server answers the page still shows the document before it, which would read as settled.
     await this.navigateToEntry(
       this.requireCdp(),
-      window ? { answerMayBeHeld: true } : {},
+      window ? { answerMayBeHeld: true, awaitHeldAnswer: true } : {},
     )
     await this.settleWarmedPage(window)
     this.alive()
@@ -3016,11 +3041,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Asks the owned page to load the configured entry path, from which main-frame navigations count for the run.
    * Called by {@link prepareOwned} for the run's real entry load and by {@link warmEntryBehindSignIn} for the load that compiles the route first.
    * @param cdp - The selected page's channel.
+   * @param options - `answerMayBeHeld` when a server pause may hold the page's answer: the run's deadline bounds the request instead of its own timer, and the answer is tracked rather than awaited; `awaitHeldAnswer` awaits that held answer all the same (the saved-session warm load, which must not judge the page before the server answered).
    * @example await this.navigateToEntry(cdp) // the page loads http://localhost:3000/dashboard
    */
   private async navigateToEntry(
     cdp: Cdp,
-    options: { answerMayBeHeld?: boolean } = {},
+    options: { answerMayBeHeld?: boolean; awaitHeldAnswer?: boolean } = {},
   ): Promise<void> {
     this.setupStep = VITE_SETUP_STEPS.loadingEntryPage
     this.nextSetupStep = NEXT_SETUP_STEPS.loadingEntryPage
@@ -3033,7 +3059,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       // A pause before the shell flush holds the answer until the last continue: the entry-load rules, not the request's own timer, bound the wait (X17).
       options.answerMayBeHeld ? REPOSITORY_RUN_TIMEOUT_MS : undefined,
     )
-    if (options.answerMayBeHeld) this.track(navigation)
+    // The entry load tracks a held answer and judges the page by its loader instead; every other load waits for the answer.
+    if (options.answerMayBeHeld && !options.awaitHeldAnswer)
+      this.track(navigation)
     else await navigation
     this.alive()
   }
@@ -3975,7 +4003,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     event: Protocol.Debugger.PausedEvent,
   ): Promise<ServerHitVerdict | undefined> {
     if (this.isPagesServerStop(stop)) return this.classifyPagesHit(stop, event)
-    // A module evaluation runs outside any render: no route can be read, and the pause is the stop's own first evaluation.
+    // A module evaluation of an entry-render stop runs outside any render: no route can be read, and the pause is the stop's own first evaluation ({@link isModuleEvaluationPause} leaves after-operation stops to today's route read).
     if (stop.preparationRequest || this.isModuleEvaluationPause(stop, event))
       return { action: 'pause', attribution: 'entry-load' }
     return this.classifyRenderHit(
@@ -4685,7 +4713,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         : `The page did not reach declared stop ${place} within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s of the entry navigation.`
     // A stop the preparation window covered would have paused at its module's first evaluation, so module scope is no longer a cause of its own; the other candidates are named instead.
     const candidates = this.preparationCoveredStops.has(stop.declaredIndex)
-      ? 'It may have run only in a function whose result Next serves from a cache, the entry route may not import its module, Next may have evaluated the module before the stop could be armed (another route, a hot reload), or this render did not reach it. Check that the entry route imports the module and that the line runs when the module loads, or declare the stop inside the component or function that runs on every render, then start a new run.'
+      ? 'It may have run only while Codebook prepared the page (a module Next evaluated before the stop could be armed, or a cached result), the entry route may not import its module, or this render did not reach it. Check that the entry route imports the module and that the line runs when the module loads, or declare the stop inside the component or function that runs on every render, then start a new run.'
       : 'It may have run only while Codebook prepared the page (code at module scope, or a cached result), or this render did not reach it. Declare the stop inside the component or function that runs on every render, then start a new run.'
     return formatRefusalFailure(
       'SERVER_STOP_NOT_REACHED',
@@ -5566,7 +5594,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.nextRoute = { router: 'app', route: manifests.route.key }
       // An App route keeps today's readiness verdict, judged on the answer already read; an entry behind sign-in was proven by the saved session's own load instead.
       if (entry.redirectsToSignIn === undefined)
-        await this.app!.confirmAppEntry(this.abort.signal, entryPath, entry)
+        await this.app!.confirmAppEntry(
+          this.abort.signal,
+          entryPath,
+          entry,
+          this.readiness.observer,
+        )
       return
     }
     // Only an App route is supported behind sign-in; the warm load opened a browser, so the Pages refusal's words do not fit.
@@ -13922,6 +13955,19 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     return allCaptured ? 'complete' : 'incomplete'
   }
   /**
+   * The run resource's held preparation time, left out until a preparation pause was continued.
+   * @returns `{ preparationHeldMs }` or an empty object.
+   * @example this.preparationHeldView() // => { preparationHeldMs: 120000 } after a preparation pause held for two minutes
+   */
+  private preparationHeldView(): Pick<
+    ConfiguredRuntimeView,
+    'preparationHeldMs'
+  > {
+    return this.preparationHeldMs
+      ? { preparationHeldMs: this.preparationHeldMs }
+      : {}
+  }
+  /**
    * The run resource's count of images the secret frame gate withheld, left out when none was.
    * @returns `{ withheldImages }` or an empty object.
    * @example this.withheldImagesView() // => { withheldImages: { crossOriginFrame: 2, secretNotVerified: 0 } }
@@ -14009,6 +14055,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         ? { readinessRequest: this.readiness.view() }
         : {}),
       status: this.status,
+      ...this.preparationHeldView(),
       ...(configuredStops(this.definition.configuration).some(
         (stop) => stop.participant === 'server',
       )
@@ -14278,6 +14325,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       participant.gate.invalidate()
     this.browser.resumeViewport()
     clearTimeout(this.progressTimer)
+    // A run that ends inside the preparation window leaves no readiness bound counting behind it.
+    this.preparationWindow?.timeout.dispose()
     // A cancelled deadline leaves no bound for {@link restoreActiveBound} to re-arm.
     this.activeBound = undefined
     clearTimeout(this.runTimer)
