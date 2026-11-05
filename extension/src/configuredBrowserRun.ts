@@ -2974,11 +2974,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         ? inFile[0]
         : undefined
     if (!entry || event.body?.reason !== 'breakpoint') return false
-    // A pause during the continuation of the stop before it is judged once that continuation is complete, so the stop takes its place in order.
+    // A pause while another stop of the run is held or being continued is judged once that stop is continued, so the stop takes its place in order. The server stays paused meanwhile; the held stop's own deadline (and the run's) still ends the wait.
     await waitUntil(
-      () => !this.continuation,
-      'the continuation before a route-handler pause',
-      ACTIVE_TIMEOUT_MS,
+      () => !this.continuation && !this.acceptedStop,
+      'the held stop before a route-handler pause',
+      REPOSITORY_RUN_TIMEOUT_MS,
       this.abort.signal,
     )
     const handler = routeHandlerStackOf(held.event.callFrames, scriptId)
@@ -3019,7 +3019,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         prepared.routeHandler = {
           method: verdict.request.method,
           route: entry.route,
-          path: verdict.request.pathname,
+          path: this.maskRunText(verdict.request.pathname),
         }
         entry.prepared = prepared
         // Every stop before this one was continued: it takes the place of the first stop still ahead.
