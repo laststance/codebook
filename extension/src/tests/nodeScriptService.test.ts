@@ -51,7 +51,7 @@ async function startFakeScriptRun(
   const receipt = service.start({
     instanceId: service.instanceId,
     profile: NODE_SCRIPT_PROFILE,
-    key: options.key ?? 'script-run',
+    key: options.key ?? 'first',
     configuration: scriptConfigurationOf(harness),
   })
   const record = service.record(receipt)
@@ -184,7 +184,7 @@ test('a start while the confirmation dialog is open answers BUSY with reason awa
     service.start({
       instanceId: service.instanceId,
       profile: NODE_SCRIPT_PROFILE,
-      key: 'second-script',
+      key: 'second',
       configuration: scriptConfigurationOf(harness),
     })
   } catch (error) {
