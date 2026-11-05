@@ -60,6 +60,7 @@ import { readExtensionHistoryResource } from './utils/readExtensionHistoryResour
 import { readMaskedJsonPage } from './utils/readMaskedJsonPage'
 import { readRecordingResource } from './utils/readRecordingResource'
 import { readRepositoryResource } from './utils/readRepositoryResource'
+import { readScriptHistoryResource } from './utils/readScriptHistoryResource'
 import { readServerHistoryResource } from './utils/readServerHistoryResource'
 import {
   readTestEntryDetail,
@@ -150,7 +151,7 @@ export async function readResource(
         'NOT_FOUND',
         'Node history storage is unavailable for this workspace.',
       )
-    // The repository lists test and server histories together; a service without one lists its test store.
+    // The repository lists test, server, extension and script histories together; a service without one lists its test store.
     const histories: NodeHistorySummary[] = service.nodeHistoryRepository
       ? await service.nodeHistoryRepository.list()
       : await service.nodeHistoryStore.list()
@@ -188,6 +189,12 @@ export async function readResource(
       )
     if (resolved?.profile === 'chrome-extension')
       return readExtensionHistoryResource(
+        resolved.store,
+        studyId,
+        nodeHistoryMatch[2],
+      )
+    if (resolved?.profile === 'node-script')
+      return readScriptHistoryResource(
         resolved.store,
         studyId,
         nodeHistoryMatch[2],

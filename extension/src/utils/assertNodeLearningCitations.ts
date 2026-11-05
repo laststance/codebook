@@ -48,6 +48,7 @@ function describeEventKind(
   if (type === 'pause') return 'a pause'
   if (type === 'request') return 'the request'
   if (type === 'response') return 'the response'
+  if (type === 'end') return 'the end'
   return 'the request failure'
 }
 

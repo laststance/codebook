@@ -151,8 +151,23 @@ export function describeServerStop(
     : `Stop ${stopNumber}`
 }
 
-/** What a saved row words: the status after `Server replay · <request line> → <answer>`. */
-function describeServerRowStatus(summary: NodeServerHistorySummary): string {
+/** The fields of a node run's summary (server or script) that its saved row's status reads. */
+export type ReplayRowStatusSummary = Pick<
+  NodeServerHistorySummary,
+  | 'verification'
+  | 'status'
+  | 'reason'
+  | 'captureMissing'
+  | 'captureMissingCount'
+  | 'captureComplete'
+  | 'learningCoverage'
+  | 'learningMissingCount'
+>
+
+/** What a saved row words: the status after `Server replay · <request line> → <answer>` or `Script replay · <entry> → <end>`. */
+export function describeServerRowStatus(
+  summary: ReplayRowStatusSummary,
+): string {
   if (summary.verification === 'unavailable') return 'Unavailable'
   if (summary.status === 'recording') return 'Recording'
   if (summary.status === 'interrupted')

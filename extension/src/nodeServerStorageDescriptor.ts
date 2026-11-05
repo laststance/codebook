@@ -3,9 +3,12 @@ import {
   NODE_SERVER_HISTORY_HEADER_FORMAT_VERSION,
   NODE_SERVER_HISTORY_LIMIT_BYTES,
   NODE_SERVER_HISTORY_SEAL_LIMIT_BYTES,
-  NODE_TEST_LEARNING_MATERIAL_VERSION,
 } from './constants'
 import type { HistoryStorageDescriptor } from './historyStorageDescriptor'
+import {
+  buildNodeRunLearningCodec,
+  citedSequencesOf,
+} from './nodeRunLearningCodec'
 import {
   nodeServerHistoryEntrySchema,
   nodeServerHistoryHeaderSchema,
@@ -22,7 +25,6 @@ import {
   nodeServerLearningMaterialContentSchema,
   nodeServerLearningMaterialSchema,
 } from './nodeServerLearningSchemas'
-import { assertNodeLearningCitations } from './utils/assertNodeLearningCitations'
 import { capMissingList } from './utils/capMissingList'
 import { evaluateNodeServerCapture } from './utils/evaluateNodeServerCapture'
 import { evaluateNodeServerLearning } from './utils/evaluateNodeServerLearning'
@@ -109,21 +111,10 @@ export const nodeServerStorageDescriptor: HistoryStorageDescriptor<NodeServerHis
       noSeal: 'Node server history has no verified final seal.',
       subject: 'Node server history',
     },
-    learningMaterial: {
-      parseMaterial: (value) => nodeServerLearningMaterialSchema.parse(value),
-      parseContent: (value) =>
-        nodeServerLearningMaterialContentSchema.parse(value),
-      buildMaterial: (input) =>
-        nodeServerLearningMaterialSchema.parse({
-          version: NODE_TEST_LEARNING_MATERIAL_VERSION,
-          ...input,
-        }),
-      assertCitations: (content, citable, lead) =>
-        assertNodeLearningCitations(content, citable, {
-          lead,
-          withNearest: true,
-        }),
-    },
+    learningMaterial: buildNodeRunLearningCodec<NodeServerHistoryTypes>(
+      nodeServerLearningMaterialSchema,
+      nodeServerLearningMaterialContentSchema,
+    ),
     stampHeader: (input) => ({
       ...input,
       formatVersion: NODE_SERVER_HISTORY_HEADER_FORMAT_VERSION,
@@ -170,14 +161,9 @@ export const nodeServerStorageDescriptor: HistoryStorageDescriptor<NodeServerHis
           interrupted: history.status === 'interrupted',
         })
       const capture = capMissingList(reasons)
-      const cited = new Set(
-        (materialContent?.steps ?? []).flatMap((step) =>
-          step.reference ? [step.reference.sequence] : [],
-        ),
-      )
       const learning = evaluateNodeServerLearning(
         entries,
-        materialContent ? cited : undefined,
+        materialContent ? citedSequencesOf(materialContent) : undefined,
       )
       const learningMissing = capMissingList(learning.missing)
       const summary: NodeServerHistorySummary = {

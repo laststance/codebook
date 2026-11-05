@@ -149,6 +149,10 @@ import {
 import { NodeHistoryRepository } from './nodeHistoryRepository'
 import { NodeLearningSave, type NodeLearningSaveHost } from './nodeLearningSave'
 import type {
+  NodeScriptHistorySummary,
+  NodeScriptHistoryTypes,
+} from './nodeScriptHistoryTypes'
+import type {
   NodeServerHistorySummary,
   NodeServerHistoryTypes,
 } from './nodeServerHistoryTypes'
@@ -302,6 +306,7 @@ import {
   describeNodeRecordedSource,
   NODE_RECORDED_SOURCE_TEXT,
 } from './utils/describeNodeRecordedSource'
+import { describeScriptReplayRow } from './utils/describeNodeScriptReplay'
 import {
   describeServerEventRow,
   describeServerReplayRow,
@@ -938,6 +943,8 @@ export class StudyWorkspace {
   private nodeHistoryCatalog: NodeTestHistorySummary[] = []
   /** The saved server replays Saved studies lists, texts free of controls, listed with {@link nodeHistoryCatalog} ({@link listNodeHistoryCatalog}). */
   private nodeServerHistoryCatalog: NodeServerHistorySummary[] = []
+  /** The saved Script replays Saved studies lists, texts free of controls, listed with {@link nodeHistoryCatalog} ({@link listNodeHistoryCatalog}). */
+  private nodeScriptHistoryCatalog: NodeScriptHistorySummary[] = []
   private selectedNodeHistory?: NodeTestHistoryIndex
   private selectedNodeHistoryLearningDecision?: NodeTestHistoryLearningDecision
   private selectedNodeHistoryLearningMaterial?: NodeLearningMaterialOfHistory
@@ -15573,6 +15580,7 @@ export class StudyWorkspace {
     | NodeHistoryStore<NodeTestHistoryTypes>
     | NodeHistoryStore<NodeServerHistoryTypes>
     | NodeHistoryStore<ExtensionHistoryTypes>
+    | NodeHistoryStore<NodeScriptHistoryTypes>
     | undefined {
     // An unresolved id answers that no history has it; it is not read from the test store.
     if (!this.nodeHistoryRepository) return this.nodeHistoryStore
@@ -15848,7 +15856,7 @@ export class StudyWorkspace {
     repository: NodeHistoryRepository,
   ): Promise<void> {
     await repository.listByProfile().then(
-      ({ tests, servers, extensions, unavailable }) => {
+      ({ tests, servers, extensions, scripts, unavailable }) => {
         const failed = new Set(unavailable.map(({ profile }) => profile))
         if (!failed.has('chrome-extension'))
           this.nodeExtensionHistoryCatalog = extensions.map((summary) => ({
@@ -15867,6 +15875,10 @@ export class StudyWorkspace {
           )
         if (!failed.has('node-server'))
           this.nodeServerHistoryCatalog = servers.map((summary) =>
+            stripNodeHistorySummaryTexts(summary),
+          )
+        if (!failed.has('node-script'))
+          this.nodeScriptHistoryCatalog = scripts.map((summary) =>
             stripNodeHistorySummaryTexts(summary),
           )
         for (const { error } of unavailable) this.report('archive', error)
@@ -16018,6 +16030,7 @@ export class StudyWorkspace {
         ...this.nodeHistoryCatalog,
         ...this.nodeServerHistoryCatalog,
         ...this.nodeExtensionHistoryCatalog,
+        ...this.nodeScriptHistoryCatalog,
       ].map((history) => ({
         id: history.studyId,
         savedAt: history.createdAt,
@@ -16027,12 +16040,14 @@ export class StudyWorkspace {
         outcome:
           history.profile === 'node-server'
             ? describeServerReplayRow(history)
-            : history.profile === 'chrome-extension'
-              ? describeExtensionReplayRow(history)
-              : describeNodeTestReplay({
-                  kind: 'saved-row',
-                  summary: history,
-                }),
+            : history.profile === 'node-script'
+              ? describeScriptReplayRow(history)
+              : history.profile === 'chrome-extension'
+                ? describeExtensionReplayRow(history)
+                : describeNodeTestReplay({
+                    kind: 'saved-row',
+                    summary: history,
+                  }),
         metadata:
           history.verification === 'verified'
             ? ('validated' as const)

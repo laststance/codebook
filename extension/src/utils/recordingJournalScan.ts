@@ -43,6 +43,8 @@ export type CitableEvent =
   | { type: 'request' }
   | { type: 'response' }
   | { type: 'request-failed' }
+  /** The end of a node-script run, citable by a Script replay's learning step. */
+  | { type: 'end' }
 
 /** What the journal's ordering rules have accepted so far; the same rules verify a whole journal ({@link NodeTestHistoryStore.read}) and each appended part of one still being written ({@link advanceRecordingScan}). */
 export type JournalProgress = {

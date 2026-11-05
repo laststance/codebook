@@ -1399,6 +1399,24 @@ export const NODE_SCRIPT_PROFILE = 'node-script'
 export const NODE_SCRIPT_RUN_TIMEOUT_MS = 60_000
 /** The folder of node-script histories beside `node-servers.v1`, so older Codebooks never read it. */
 export const NODE_SCRIPT_HISTORY_DIRECTORY = 'node-scripts.v1'
+/** The `version` of a node-script history's header, seal and every record. */
+export const NODE_SCRIPT_HISTORY_FORMAT_VERSION = 1
+/** How a script run ended, as the `end` entry of its history records it: it exited by itself, a signal Codebook did not send ended it, `codebook_stop` ended it, or a limit Codebook enforced did. */
+export const NODE_SCRIPT_END_KINDS = [
+  'exited',
+  'signal',
+  'stopped',
+  'limit',
+] as const
+/** The limit that ended a script run whose end kind is `limit`. */
+export const NODE_SCRIPT_END_LIMITS = [
+  'running-time',
+  'run-deadline',
+  'pause-hold',
+  'exit-deadline',
+] as const
+/** The most characters of the reason a script's exit code could not be read. */
+export const NODE_SCRIPT_EXIT_UNKNOWN_LIMIT_CHARS = 256
 /** The one action a node-server run offers: send its declared request. */
 export const NODE_SERVER_ACTION = 'http-request'
 /** The prefix of the debug session name of a node-server run (`codebook node server <runId>`): the run recognizes only sessions whose root carries its own name. */
@@ -2589,6 +2607,14 @@ export const NODE_SERVER_HISTORY_REASON_CODES = {
   sizeLimit: 'SERVER_HISTORY_SIZE_LIMIT',
   captureBudgetExhausted: 'SERVER_HISTORY_CAPTURE_BUDGET_EXHAUSTED',
   outputTruncated: 'SERVER_HISTORY_OUTPUT_TRUNCATED',
+} as const
+/** The stable codes of the reasons a node-script history is partial, beside the node-server codes it shares for stops, appends, size, capture budget and output. */
+export const NODE_SCRIPT_HISTORY_REASON_CODES = {
+  endMissing: 'SCRIPT_HISTORY_END_MISSING',
+  runStopped: 'SCRIPT_HISTORY_RUN_STOPPED',
+  runLimit: 'SCRIPT_HISTORY_RUN_LIMIT',
+  exitUnknown: 'SCRIPT_HISTORY_EXIT_UNKNOWN',
+  stopNotObserved: 'SCRIPT_HISTORY_STOP_NOT_OBSERVED',
 } as const
 /** The profile of a run of the opened repository's unpacked Manifest V3 extension in a browser Codebook owns. */
 export const CHROME_EXTENSION_PROFILE = 'chrome-extension'

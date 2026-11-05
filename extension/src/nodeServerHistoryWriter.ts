@@ -1,132 +1,43 @@
 import {
   NODE_SERVER_HISTORY_FORMAT_VERSION,
-  NODE_SERVER_HISTORY_LIMIT_BYTES,
   NODE_SERVER_HISTORY_LOCATION_LIMIT_CHARS,
-  NODE_SERVER_HISTORY_MAX_ENTRIES,
-  NODE_SERVER_HISTORY_SEAL_LIMIT_BYTES,
-  NODE_SERVER_OUTPUT_BUDGET_BYTES,
-  NODE_SERVER_OUTPUT_BUDGET_ENTRIES,
-  NODE_SERVER_SOURCE_TEXT_LIMIT_BYTES,
-  NODE_SERVER_STRUCTURAL_HEADROOM_BYTES,
-  NODE_SERVER_STRUCTURAL_HEADROOM_ENTRIES,
-  NODE_SERVER_WRITER_QUEUE_LIMIT_BYTES,
-  NODE_SERVER_WRITER_QUEUE_LIMIT_ENTRIES,
 } from './constants'
-import type { HistoryWriterRules } from './historyStorageDescriptor'
 import { HistoryJournalWriter } from './nodeHistoryJournalWriter'
+import {
+  appendStopEvidence,
+  NodeRunEntryAccounting,
+  type NodeRunWriterStop,
+} from './nodeRunHistoryEvidence'
+import {
+  NodeRunWriterRules,
+  type NodeRunRuleProfile,
+} from './nodeRunWriterRules'
 import {
   nodeServerHistoryEntrySchema,
   nodeServerHistorySealSchema,
   type NodeServerHistoryEntry,
   type NodeServerHistoryEntryInput,
   type NodeServerHistoryHeader,
-  type NodeServerHistorySeal,
-  type NodeServerStopEntry,
 } from './nodeServerHistorySchemas'
 import type { NodeServerHistoryTypes } from './nodeServerHistoryTypes'
-import type { ReplayDebugSnapshot } from './replayDebugSchemas'
-import { sha256 } from './runtimeSupport/utils/sha256'
-import { cutHistoryReason } from './utils/cutHistoryReason'
 import { cutTextToLength } from './utils/cutTextToLength'
-import { dehydrateServerStopSnapshot } from './utils/dehydrateServerStopSnapshot'
 import {
   describeLastNodeServerEntry,
   evaluateNodeServerCapture,
 } from './utils/evaluateNodeServerCapture'
 import { maskSecretQueryValues } from './utils/maskSecretQueryValues'
-import {
-  acceptNodeServerEntry,
-  cloneNodeServerJournalProgress,
-  newNodeServerJournalProgress,
-} from './utils/nodeServerJournalRules'
-import {
-  parseJournalEntries,
-  structuredSealFields,
-} from './utils/structuredSealFields'
+import { acceptNodeServerEntry } from './utils/nodeServerJournalRules'
 
-/** The node-server profile's writer rules: the journal rules every reader shares, plus the evaluator that builds the seal; holds the state of one writer. */
-class NodeServerWriterRules implements HistoryWriterRules<NodeServerHistoryTypes> {
-  readonly journalLimitBytes = NODE_SERVER_HISTORY_LIMIT_BYTES
-  readonly maxEntries = NODE_SERVER_HISTORY_MAX_ENTRIES
-  readonly sealLimitBytes = NODE_SERVER_HISTORY_SEAL_LIMIT_BYTES
-  private readonly progress = newNodeServerJournalProgress()
-  private lastEntry?: NodeServerHistoryEntry
-  captureBudgetExhausted = false
-
-  constructor(
-    private readonly header: NodeServerHistoryHeader,
-    private readonly describeCause: (error: unknown) => string,
-  ) {}
-
-  parseEntry(value: unknown): NodeServerHistoryEntry {
-    return nodeServerHistoryEntrySchema.parse(value)
-  }
-
-  check(entry: NodeServerHistoryEntry): void {
-    // The same function the incremental scan and the full read call, tried on a copy: an entry that is then refused or never becomes durable changes nothing.
-    acceptNodeServerEntry(
-      cloneNodeServerJournalProgress(this.progress),
-      entry,
-      this.header,
-    )
-  }
-
-  commit(entry: NodeServerHistoryEntry): void {
-    // The line is durable: the rules now count the entry.
-    acceptNodeServerEntry(this.progress, entry, this.header)
-    this.lastEntry = entry
-  }
-
-  /** The time of the last durable entry, the earliest an `end` may carry. */
-  get lastElapsedMs(): number {
-    return this.progress.lastElapsedMs
-  }
-
-  /** A server history with no request holds nothing to replay. */
-  holdsNothingToReplay(): boolean {
-    return this.progress.lastAttempt === 0
-  }
-
-  /** The seal's status comes from the evaluator, so any requested status is accepted and then decided by the evidence. */
-  assertSealable(): void {}
-
-  buildSeal(input: {
-    studyId: string
-    journal: Buffer
-    entryCount: number
-    endedAt: string
-    appendFailure?: Error
-    limitReached: boolean
-  }): NodeServerHistorySeal {
-    const entries = parseJournalEntries(input.journal, (value) =>
-      this.parseEntry(value),
-    )
-    const reasons = evaluateNodeServerCapture(this.header, entries, {
-      ...(input.appendFailure
-        ? {
-            appendFailure: {
-              lastEntry: this.lastEntry
-                ? describeLastNodeServerEntry(this.lastEntry)
-                : 'the start of the history',
-              // Cut to the seal's param bound so a long cause never makes the whole seal unwritable.
-              cause: cutHistoryReason(this.describeCause(input.appendFailure)),
-            },
-          }
-        : {}),
-      sizeLimitReached: input.limitReached,
-      captureBudgetExhausted: this.captureBudgetExhausted,
-    })
-    return nodeServerHistorySealSchema.parse(
-      structuredSealFields({
-        version: NODE_SERVER_HISTORY_FORMAT_VERSION,
-        studyId: input.studyId,
-        entryCount: input.entryCount,
-        journal: input.journal,
-        endedAt: input.endedAt,
-        reasons,
-      }),
-    )
-  }
+/** What differs between the node-server writer's rules and the node-script writer's. */
+const NODE_SERVER_RULE_PROFILE: NodeRunRuleProfile<NodeServerHistoryTypes> = {
+  sealVersion: NODE_SERVER_HISTORY_FORMAT_VERSION,
+  parseEntry: (value) => nodeServerHistoryEntrySchema.parse(value),
+  parseSeal: (value) => nodeServerHistorySealSchema.parse(value),
+  accept: acceptNodeServerEntry,
+  evaluate: evaluateNodeServerCapture,
+  describeEntry: describeLastNodeServerEntry,
+  // A server history with no request holds nothing to replay.
+  holdsNothingToReplay: (progress) => progress.lastAttempt === 0,
 }
 
 type EntryInputOf<Type extends NodeServerHistoryEntry['type']> = Omit<
@@ -137,24 +48,8 @@ type EntryInputOf<Type extends NodeServerHistoryEntry['type']> = Omit<
 /** The entry `end` of a run, without its sequence; what {@link NodeServerHistoryWriter.seal} appends. */
 export type NodeServerEndInput = Omit<EntryInputOf<'end'>, 'type'>
 
-/** What the history sink hands the writer for one stop hit: the run's capture, shaped for the journal ({@link NodeServerStopCapture} is what the debugger reads). */
-export type NodeServerWriterStop = {
-  elapsedMs: number
-  declaredStopIndex: number
-  hit: number
-  generation: number
-  source: { path: string; hash: string; line: number; column: number }
-  frameName: string
-  facts: NodeServerStopEntry['facts']
-  unavailable: Array<{ path: string; reason: string }>
-  /** The redacted snapshot, its top frame still carrying the executed source text. */
-  snapshot: ReplayDebugSnapshot
-}
-
-/** Estimates the bytes of an entry's journal line before it is numbered; close enough to keep the bounds honest. */
-function estimateLineBytes(input: unknown): number {
-  return Buffer.byteLength(JSON.stringify(input)) + 24
-}
+/** What the history sink hands the writer for one stop hit; shared with the node-script writer as {@link NodeRunWriterStop}. */
+export type NodeServerWriterStop = NodeRunWriterStop
 
 /**
  * Writes a node-server run's evidence as it happens: output, request attempts, executed sources, stops, the response and the end, in the one verified order every reader checks.
@@ -163,23 +58,13 @@ function estimateLineBytes(input: unknown): number {
  * @example const writer = await servers.start(header); await writer.appendRequest({ … }); await writer.seal({ reason: 'stopped', elapsedMs: 900 })
  */
 export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHistoryTypes> {
-  private readonly serverRules: NodeServerWriterRules
-  /** The `(hash)` of sources this writer already queued, by path and hash. */
+  private readonly serverRules: NodeRunWriterRules<NodeServerHistoryTypes>
+  /** The `(path, hash)` keys of sources this writer already queued. */
   private readonly queuedSources = new Set<string>()
-  private acceptedEntries = 0
-  private acceptedBytes = 0
-  /** The largest time of any entry accepted so far, durable or still queued: `end` may never carry less. */
-  private latestAcceptedMs = 0
-  private outputEntries = 0
-  private outputBytes = 0
-  private outputWasCut = false
-  private pendingEntries = 0
-  private pendingBytes = 0
+  private readonly accounting = new NodeRunEntryAccounting()
   private sealOperation?: Promise<string | undefined>
   /** The one write of `end`, kept so a retried seal never writes it twice. */
   private endOperation?: Promise<void>
-  /** Set in the turn the seal began: from then on the writer is closed to new appends while the accepted ones drain. */
-  private closedToAppends = false
 
   constructor(
     directory: string,
@@ -187,7 +72,11 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
     onClosed: () => void,
     describeCause: (error: unknown) => string,
   ) {
-    const rules = new NodeServerWriterRules(header, describeCause)
+    const rules = new NodeRunWriterRules(
+      header,
+      describeCause,
+      NODE_SERVER_RULE_PROFILE,
+    )
     super(directory, header, onClosed, rules)
     this.serverRules = rules
   }
@@ -200,18 +89,9 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
    */
   appendEntry(input: NodeServerHistoryEntryInput): Promise<void> {
     // Closed to new appends from the moment the seal began: the entry is not written and is no failure, so a run that ended cleanly still seals complete.
-    if (this.closedToAppends) return Promise.resolve()
-    const bytes = estimateLineBytes(input)
-    this.latestAcceptedMs = Math.max(this.latestAcceptedMs, input.elapsedMs)
-    this.acceptedEntries++
-    this.acceptedBytes += bytes
-    this.pendingEntries++
-    this.pendingBytes += bytes
+    if (this.accounting.closedToAppends) return Promise.resolve()
+    const release = this.accounting.admit(input)
     const operation = this.append(input)
-    const release = (): void => {
-      this.pendingEntries--
-      this.pendingBytes -= bytes
-    }
     operation.then(release, release)
     return operation
   }
@@ -227,21 +107,9 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
     channel: 'stdout' | 'stderr'
     text: string
   }): Promise<void> {
-    if (this.outputWasCut) return Promise.resolve()
-    const input = { type: 'output' as const, ...event }
-    const bytes = estimateLineBytes(input)
-    const limit = this.outputBoundReached(bytes)
-    if (limit) {
-      this.outputWasCut = true
-      return this.appendEntry({
-        type: 'output-truncated',
-        elapsedMs: event.elapsedMs,
-        limit,
-      })
-    }
-    this.outputEntries++
-    this.outputBytes += bytes
-    return this.appendEntry(input)
+    return this.accounting.appendOutput(event, (input) =>
+      this.appendEntry(input),
+    )
   }
 
   /**
@@ -249,35 +117,7 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
    * @example if (writer.outputCut) return
    */
   get outputCut(): boolean {
-    return (
-      this.outputWasCut ||
-      this.appendFailure !== undefined ||
-      this.closedToAppends
-    )
-  }
-
-  /** Names the bound an output entry of `bytes` would cross, or `undefined` when it fits every one. */
-  private outputBoundReached(
-    bytes: number,
-  ): 'entries' | 'bytes' | 'queue' | undefined {
-    if (
-      this.pendingEntries >= NODE_SERVER_WRITER_QUEUE_LIMIT_ENTRIES ||
-      this.pendingBytes + bytes > NODE_SERVER_WRITER_QUEUE_LIMIT_BYTES
-    )
-      return 'queue'
-    if (
-      this.outputEntries >= NODE_SERVER_OUTPUT_BUDGET_ENTRIES ||
-      this.acceptedEntries + NODE_SERVER_STRUCTURAL_HEADROOM_ENTRIES >=
-        NODE_SERVER_HISTORY_MAX_ENTRIES
-    )
-      return 'entries'
-    if (
-      this.outputBytes + bytes > NODE_SERVER_OUTPUT_BUDGET_BYTES ||
-      this.acceptedBytes + bytes + NODE_SERVER_STRUCTURAL_HEADROOM_BYTES >
-        NODE_SERVER_HISTORY_LIMIT_BYTES
-    )
-      return 'bytes'
-    return undefined
+    return this.accounting.isOutputCut(this.appendFailure !== undefined)
   }
 
   /**
@@ -326,48 +166,10 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
    * @returns Settles when the stop (and its source entry, if new) is durable.
    * @example await writer.appendStop({ elapsedMs: 60, declaredStopIndex: 0, hit: 1, generation: 1, source, frameName: 'handler', facts: {}, unavailable: [], snapshot })
    */
-  async appendStop(capture: NodeServerWriterStop): Promise<void> {
-    const { source } = capture
-    const key = `${source.path}\u0000${source.hash}`
-    const queued: Array<Promise<void>> = []
-    // Decided in the caller's turn: two stops of one turn queue one source entry.
-    if (!this.queuedSources.has(key)) {
-      this.queuedSources.add(key)
-      queued.push(this.appendEntry(this.sourceEntryFor(capture)))
-    }
-    queued.push(
-      this.appendEntry({
-        type: 'stop',
-        elapsedMs: capture.elapsedMs,
-        declaredStopIndex: capture.declaredStopIndex,
-        hit: capture.hit,
-        generation: capture.generation,
-        source,
-        frame: { name: capture.frameName },
-        facts: capture.facts,
-        unavailable: capture.unavailable,
-        debuggerSnapshot: dehydrateServerStopSnapshot(capture.snapshot),
-      }),
+  appendStop(capture: NodeServerWriterStop): Promise<void> {
+    return appendStopEvidence(capture, this.queuedSources, (input) =>
+      this.appendEntry(input),
     )
-    await Promise.all(queued)
-  }
-
-  /** Builds the `source` entry of a stop's executed file: its text when verified and small enough, else its hash with the reason. */
-  private sourceEntryFor(
-    capture: NodeServerWriterStop,
-  ): NodeServerHistoryEntryInput {
-    const text = capture.snapshot.frames[0]?.source?.text
-    const base = {
-      type: 'source' as const,
-      elapsedMs: capture.elapsedMs,
-      path: capture.source.path,
-      hash: capture.source.hash,
-    }
-    if (text === undefined || sha256(text) !== capture.source.hash)
-      return { ...base, sourceUnavailable: 'not captured' }
-    if (Buffer.byteLength(text) > NODE_SERVER_SOURCE_TEXT_LIMIT_BYTES)
-      return { ...base, sourceUnavailable: 'too large' }
-    return { ...base, text }
   }
 
   /** Records the response the run shows: its status, content type, the shown body, its size, whether the read was cut, the redirect (with the values of secret query parameters and of `code` masked, {@link maskSecretQueryValues}) and the request's duration. @example await writer.appendResponse({ elapsedMs: 90, status: 200, contentType: 'application/json', body: '{}', bodyBytes: 2, readCut: false, location: null, requestDurationMs: 50 }) */
@@ -418,13 +220,13 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
   seal(end: NodeServerEndInput): Promise<string | undefined> {
     if (this.sealOperation) return this.sealOperation
     // Decided in this turn, before any later append is offered.
-    this.closedToAppends = true
+    this.accounting.closedToAppends = true
     // The end is queued in this turn, behind every entry accepted before it, through the base door that the closed flag does not shut.
     // The end carries the largest accepted time, queued entries included, so a run that ended cleanly never seals partial for time moving backward.
     this.endOperation ??= this.append({
       type: 'end',
       ...end,
-      elapsedMs: Math.max(end.elapsedMs, this.latestAcceptedMs),
+      elapsedMs: Math.max(end.elapsedMs, this.accounting.latestAcceptedMs),
     }).catch(() => undefined)
     this.sealOperation = this.endOperation.then(() => super.finish('partial'))
     // A failed seal may be tried again.
@@ -448,7 +250,7 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
       // The largest accepted time, queued entries included, as {@link NodeServerHistoryWriter.seal} takes it.
       elapsedMs: Math.max(
         this.serverRules.lastElapsedMs,
-        this.latestAcceptedMs,
+        this.accounting.latestAcceptedMs,
       ),
       reason: 'stopped',
     })

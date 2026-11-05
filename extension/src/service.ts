@@ -77,6 +77,7 @@ import {
   type LearningSummary,
 } from './learningSummarySchemas'
 import type { NodeHistoryRepository } from './nodeHistoryRepository'
+import { nodeScriptLearningMaterialContentSchema } from './nodeScriptLearningSchemas'
 import {
   nodeServerConfigSchema,
   type NodeServerConfiguration,
@@ -2817,6 +2818,25 @@ export class StudyService {
           serverMaterial,
         )
         return serverMaterial
+      }
+      if (resolved?.profile === 'node-script') {
+        const { store: scriptStore } = resolved
+        // A partial script run (stops never reached, stopped, limit) saves like a complete one: its missing parts are named by the summary's verdicts.
+        const scriptMaterial = await withKnownNodeHistory(
+          scriptStore,
+          identity.studyId,
+          () =>
+            scriptStore.saveLearningMaterial(
+              identity.studyId,
+              identity.expectedRevision,
+              nodeScriptLearningMaterialContentSchema.parse(input.content),
+            ),
+        )
+        this.presentationController?.nodeHistoryLearningMaterialSaved(
+          identity.studyId,
+          scriptMaterial,
+        )
+        return scriptMaterial
       }
       const material = await withKnownNodeHistory(store, identity.studyId, () =>
         store.saveLearningMaterial(

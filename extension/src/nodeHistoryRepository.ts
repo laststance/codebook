@@ -5,6 +5,11 @@ import type {
 import { chromeExtensionStorageDescriptor } from './chromeExtensionStorageDescriptor'
 import type { NodeHistorySummary } from './nodeHistorySummary'
 import type {
+  NodeScriptHistorySummary,
+  NodeScriptHistoryTypes,
+} from './nodeScriptHistoryTypes'
+import { nodeScriptStorageDescriptor } from './nodeScriptStorageDescriptor'
+import type {
   NodeServerHistorySummary,
   NodeServerHistoryTypes,
 } from './nodeServerHistoryTypes'
@@ -17,10 +22,9 @@ import {
 } from './nodeTestHistoryStore'
 import { isNodeHistoryIdentity } from './utils/isNodeHistoryIdentity'
 
-/** What one store offers the others' admission: how many histories it lists. */
-type CountingStore = {
-  countListedHistories(places: number): Promise<number>
-}
+/** The profile of every history store the repository keeps. */
+type NodeHistoryProfile =
+  'node-test' | 'node-server' | 'chrome-extension' | 'node-script'
 
 /** The store a study id resolved to, with the profile that tells which. */
 export type ResolvedNodeHistory =
@@ -30,16 +34,21 @@ export type ResolvedNodeHistory =
       profile: 'chrome-extension'
       store: NodeHistoryStore<ExtensionHistoryTypes>
     }
+  | { profile: 'node-script'; store: NodeHistoryStore<NodeScriptHistoryTypes> }
 
 /**
- * Holds the stores of every history profile (test, server and chrome-extension) under one learning directory and resolves a study id to the store whose folder holds it, so the workspace, resources, MCP and deletion ask one place. It also wires the shared admission: each store counts the other profiles' histories and the saved studies together under the one storage lock, so a test, a server and a browser save race for the same last place and one wins.
- * Built where the workspace builds its history store; a live node-server run writes the server profile's histories.
+ * Holds the stores of every history profile (test, server, chrome-extension and script) under one learning directory and resolves a study id to the store whose folder holds it, so the workspace, resources, MCP and deletion ask one place. It also wires the shared admission: each store counts the other profiles' histories and the saved studies together under the one storage lock, so a test, a server, a script and a browser save race for the same last place and one wins.
+ * Every store sits in one list ({@link NodeHistoryRepository.stores}) that admission counting, listing and resolving walk, so a store added to the list cannot be left out of one of them.
+ * Built where the workspace builds its history store; a live node-server run writes the server profile's histories and a node-script run the script profile's.
  * @example const repository = new NodeHistoryRepository(directory, workspaceKey, () => 64, () => library.savedStudyCount())
  */
 export class NodeHistoryRepository {
   readonly testHistories: NodeTestHistoryStore
   readonly serverHistories: NodeHistoryStore<NodeServerHistoryTypes>
   readonly extensionHistories: NodeHistoryStore<ExtensionHistoryTypes>
+  readonly scriptHistories: NodeHistoryStore<NodeScriptHistoryTypes>
+  /** Every store with its profile, in the order histories resolve and count; the one list admission, listing and resolving walk. */
+  private readonly stores: readonly ResolvedNodeHistory[]
 
   /**
    * @param learningDirectory - The learning directory both profiles' folders live in.
@@ -82,10 +91,25 @@ export class NodeHistoryRepository {
       writerJudge,
       (places) => this.countOtherThan(this.extensionHistories, places),
     )
+    this.scriptHistories = new NodeHistoryStore(
+      nodeScriptStorageDescriptor,
+      learningDirectory,
+      workspaceKey,
+      capacity,
+      savedArtifactCount,
+      writerJudge,
+      (places) => this.countOtherThan(this.scriptHistories, places),
+    )
+    this.stores = [
+      { profile: 'node-test', store: this.testHistories },
+      { profile: 'node-server', store: this.serverHistories },
+      { profile: 'chrome-extension', store: this.extensionHistories },
+      { profile: 'node-script', store: this.scriptHistories },
+    ]
   }
 
   /**
-   * Counts the listed histories of every profile except one, up to `places`, for that profile's own admission: each store counts the other two, so one limit counts every kind.
+   * Counts the listed histories of every profile except one, up to `places`, for that profile's own admission: each store counts the others, so one limit counts every kind.
    * @param own - The store asking; it counts its own histories itself.
    * @param places - The places the other profiles may take; the count is not carried beyond it.
    * @returns The histories of the other stores, or `places` once that many are found.
@@ -93,16 +117,11 @@ export class NodeHistoryRepository {
    * @example await this.countOtherThan(this.testHistories, 10) // => 3
    */
   private async countOtherThan(
-    own: CountingStore,
+    own: ResolvedNodeHistory['store'],
     places: number,
   ): Promise<number> {
     let counted = 0
-    const stores: readonly CountingStore[] = [
-      this.testHistories,
-      this.serverHistories,
-      this.extensionHistories,
-    ]
-    for (const store of stores) {
+    for (const { store } of this.stores) {
       if (store === own) continue
       counted += await store.countListedHistories(Math.max(places - counted, 0))
     }
@@ -116,11 +135,12 @@ export class NodeHistoryRepository {
    * @example (await repository.list()).map((summary) => summary.profile) // => ['node-server', 'node-test']
    */
   async list(): Promise<NodeHistorySummary[]> {
-    const { tests, servers, extensions } = await this.listByProfile()
-    return [...tests, ...servers, ...extensions].sort((left, right) =>
-      right.createdAt === left.createdAt
-        ? left.studyId.localeCompare(right.studyId)
-        : right.createdAt.localeCompare(left.createdAt),
+    const { tests, servers, extensions, scripts } = await this.listByProfile()
+    return [...tests, ...servers, ...extensions, ...scripts].sort(
+      (left, right) =>
+        right.createdAt === left.createdAt
+          ? left.studyId.localeCompare(right.studyId)
+          : right.createdAt.localeCompare(left.createdAt),
     )
   }
 
@@ -134,37 +154,39 @@ export class NodeHistoryRepository {
     tests: NodeTestHistorySummary[]
     servers: NodeServerHistorySummary[]
     extensions: ExtensionHistorySummary[]
-    unavailable: Array<{
-      profile: 'node-test' | 'node-server' | 'chrome-extension'
-      error: unknown
-    }>
+    scripts: NodeScriptHistorySummary[]
+    unavailable: Array<{ profile: NodeHistoryProfile; error: unknown }>
   }> {
-    const [tests, servers, extensions] = await Promise.allSettled([
+    const [tests, servers, extensions, scripts] = await Promise.allSettled([
       this.testHistories.list(),
       this.serverHistories.list(),
       this.extensionHistories.list(),
+      this.scriptHistories.list(),
     ])
     if (
       tests.status === 'rejected' &&
       servers.status === 'rejected' &&
-      extensions.status === 'rejected'
+      extensions.status === 'rejected' &&
+      scripts.status === 'rejected'
     )
       throw tests.reason
+    const failures: Array<[NodeHistoryProfile, PromiseSettledResult<unknown>]> =
+      [
+        ['node-test', tests],
+        ['node-server', servers],
+        ['chrome-extension', extensions],
+        ['node-script', scripts],
+      ]
     return {
       tests: tests.status === 'fulfilled' ? tests.value : [],
       servers: servers.status === 'fulfilled' ? servers.value : [],
       extensions: extensions.status === 'fulfilled' ? extensions.value : [],
-      unavailable: [
-        ...(tests.status === 'rejected'
-          ? [{ profile: 'node-test' as const, error: tests.reason }]
-          : []),
-        ...(servers.status === 'rejected'
-          ? [{ profile: 'node-server' as const, error: servers.reason }]
-          : []),
-        ...(extensions.status === 'rejected'
-          ? [{ profile: 'chrome-extension' as const, error: extensions.reason }]
-          : []),
-      ],
+      scripts: scripts.status === 'fulfilled' ? scripts.value : [],
+      unavailable: failures.flatMap(([profile, settled]) =>
+        settled.status === 'rejected'
+          ? [{ profile, error: settled.reason }]
+          : [],
+      ),
     }
   }
 
@@ -176,13 +198,7 @@ export class NodeHistoryRepository {
    */
   resolve(studyId: string): ResolvedNodeHistory | undefined {
     if (!isNodeHistoryIdentity(studyId)) return undefined
-    if (this.testHistories.holdsHistoryFolder(studyId))
-      return { profile: 'node-test', store: this.testHistories }
-    if (this.serverHistories.holdsHistoryFolder(studyId))
-      return { profile: 'node-server', store: this.serverHistories }
-    if (this.extensionHistories.holdsHistoryFolder(studyId))
-      return { profile: 'chrome-extension', store: this.extensionHistories }
-    return undefined
+    return this.stores.find(({ store }) => store.holdsHistoryFolder(studyId))
   }
 
   /**
@@ -191,11 +207,9 @@ export class NodeHistoryRepository {
    * @example await repository.settleReaderPositionWrites()
    */
   async settleReaderPositionWrites(): Promise<void> {
-    await Promise.all([
-      this.testHistories.settleReaderPositionWrites(),
-      this.serverHistories.settleReaderPositionWrites(),
-      this.extensionHistories.settleReaderPositionWrites(),
-    ])
+    await Promise.all(
+      this.stores.map(({ store }) => store.settleReaderPositionWrites()),
+    )
   }
 
   /**
@@ -207,19 +221,12 @@ export class NodeHistoryRepository {
    */
   async countHistories(places: number): Promise<number> {
     // Fail-open on purpose: an unreadable history directory counts no history here, so it never blocks a browser save or a recording start (the histories' own start refuses on it).
-    const tests = await this.testHistories
-      .countListedHistories(places)
-      .catch(() => 0)
-    const servers = await this.serverHistories
-      .countListedHistories(Math.max(places - tests, 0))
-      .catch(() => 0)
-    return (
-      tests +
-      servers +
-      (await this.extensionHistories
-        .countListedHistories(Math.max(places - tests - servers, 0))
-        .catch(() => 0))
-    )
+    let counted = 0
+    for (const { store } of this.stores)
+      counted += await store
+        .countListedHistories(Math.max(places - counted, 0))
+        .catch(() => 0)
+    return counted
   }
 
   /**
@@ -236,7 +243,7 @@ export class NodeHistoryRepository {
     studyId: string,
     sequence: number,
   ): Promise<{
-    profile: 'node-test' | 'node-server' | 'chrome-extension'
+    profile: NodeHistoryProfile
     entry: { type: string }
   }> {
     const resolved = this.resolve(studyId)

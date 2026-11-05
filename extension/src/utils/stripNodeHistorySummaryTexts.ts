@@ -1,4 +1,5 @@
 import type { NodeHistorySummary } from '../nodeHistorySummary'
+import type { NodeScriptHistorySummary } from '../nodeScriptHistoryTypes'
 import type { NodeServerHistorySummary } from '../nodeServerHistoryTypes'
 
 import { stripTerminalControls } from './stripTerminalControls'
@@ -17,6 +18,9 @@ export function stripNodeHistorySummaryTexts(
   summary: NodeServerHistorySummary,
 ): NodeServerHistorySummary
 export function stripNodeHistorySummaryTexts(
+  summary: NodeScriptHistorySummary,
+): NodeScriptHistorySummary
+export function stripNodeHistorySummaryTexts(
   summary: NodeHistorySummary | { testFile: string; testTitles?: string[] },
 ): unknown {
   // A server history's recorded words are its question, saved title, request line and capture reasons.
@@ -33,6 +37,21 @@ export function stripNodeHistorySummaryTexts(
             ),
           }
         : {}),
+      ...(summary.reason
+        ? { reason: stripTerminalControls(summary.reason) }
+        : {}),
+      captureMissing: summary.captureMissing.map((reason) => ({
+        ...reason,
+        text: stripTerminalControls(reason.text),
+      })),
+    }
+  // A script history's recorded words are its question, saved title, entry file and capture reasons.
+  if ('profile' in summary && summary.profile === 'node-script')
+    return {
+      ...summary,
+      question: stripTerminalControls(summary.question),
+      ...(summary.title ? { title: stripTerminalControls(summary.title) } : {}),
+      entry: stripTerminalControls(summary.entry),
       ...(summary.reason
         ? { reason: stripTerminalControls(summary.reason) }
         : {}),

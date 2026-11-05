@@ -1,5 +1,9 @@
 import { NODE_SERVER_HISTORY_MAX_STOPS } from '../constants'
 import type {
+  NodeScriptHistoryEntry,
+  NodeScriptHistoryHeader,
+} from '../nodeScriptHistorySchemas'
+import type {
   NodeServerHistoryEntry,
   NodeServerHistoryHeader,
 } from '../nodeServerHistorySchemas'
@@ -85,13 +89,51 @@ export function acceptNodeServerEntry(
   entry: NodeServerHistoryEntry,
   header: Pick<NodeServerHistoryHeader, 'declaredStops'>,
 ): void {
-  if (progress.hasEnd)
-    throw new Error('Node server history has an entry after its end.')
+  acceptOrderedEntry(progress, entry, SERVER_SUBJECT, () =>
+    applyEntryRule(progress, entry, header),
+  )
+}
+
+/**
+ * Applies the node-script journal's ordering rules to the next entry: consecutive sequences, time that never goes back, stops only at declared stops after their `source` exists and within the stop limit, and `end` last. A script has no request, so a stop needs no open window. The writer, the incremental scan and the full read each call it, so all three accept the same journals.
+ * @param progress - What the entries before this one established; updated only when the entry is accepted.
+ * @param entry - The next parsed entry.
+ * @param header - The history's header, whose declared stops bound `declaredStopIndex`.
+ * @throws When the entry breaks an ordering rule; `progress` is left as it was.
+ * @example acceptNodeScriptEntry(progress, stopEntry, header) // progress.stopCount => 1
+ */
+export function acceptNodeScriptEntry(
+  progress: NodeServerJournalProgress,
+  entry: NodeScriptHistoryEntry,
+  header: Pick<NodeScriptHistoryHeader, 'declaredStops'>,
+): void {
+  acceptOrderedEntry(progress, entry, SCRIPT_SUBJECT, () => {
+    // The table is keyed by type, so each entry meets exactly its own rule; the lookup is the one place the union is narrowed.
+    const rule = SCRIPT_ENTRY_RULES[entry.type] as (
+      progress: NodeServerJournalProgress,
+      entry: NodeScriptHistoryEntry,
+      header: RuleHeader,
+    ) => void
+    rule(progress, entry, header)
+  })
+}
+
+const SERVER_SUBJECT = 'Node server history'
+const SCRIPT_SUBJECT = 'Node script history'
+
+/** The checks every profile shares before an entry's own rule: nothing after `end`, consecutive sequences, time that never goes back; then the entry's rule, then the progress moves on. */
+function acceptOrderedEntry(
+  progress: NodeServerJournalProgress,
+  entry: { sequence: number; elapsedMs: number },
+  subject: string,
+  applyRule: () => void,
+): void {
+  if (progress.hasEnd) throw new Error(`${subject} has an entry after its end.`)
   if (entry.sequence !== progress.entryCount + 1)
-    throw new Error('Node server history sequence is not consecutive.')
+    throw new Error(`${subject} sequence is not consecutive.`)
   if (entry.elapsedMs < progress.lastElapsedMs)
-    throw new Error('Node server history time moved backward.')
-  applyEntryRule(progress, entry, header)
+    throw new Error(`${subject} time moved backward.`)
+  applyRule()
   progress.lastElapsedMs = entry.elapsedMs
   progress.entryCount++
 }
@@ -102,6 +144,37 @@ type EntryOfType<Type extends NodeServerHistoryEntry['type']> = Extract<
 >
 type RuleHeader = Pick<NodeServerHistoryHeader, 'declaredStops'>
 
+/** The rule of an `output` entry: nothing follows an output cut. */
+const acceptOutput = (
+  progress: NodeServerJournalProgress,
+  subject: string,
+): void => {
+  if (progress.hasOutputTruncated)
+    throw new Error(`${subject} output follows its truncation.`)
+}
+
+/** The rule of an `output-truncated` entry: the cut is recorded once. */
+const acceptOutputTruncated = (
+  progress: NodeServerJournalProgress,
+  subject: string,
+): void => {
+  if (progress.hasOutputTruncated)
+    throw new Error(`${subject} truncates its output twice.`)
+  progress.hasOutputTruncated = true
+}
+
+/** The rule of a `source` entry: each `(path, hash)` is written once. */
+const acceptSource = (
+  progress: NodeServerJournalProgress,
+  entry: { path: string; hash: string },
+  subject: string,
+): void => {
+  const key = nodeServerSourceKey(entry.path, entry.hash)
+  if (progress.sources.has(key))
+    throw new Error(`${subject} repeats a source entry.`)
+  progress.sources.add(key)
+}
+
 /** One rule per entry type: checks the entry against the progress and records what it establishes. */
 const ENTRY_RULES: {
   [Type in NodeServerHistoryEntry['type']]: (
@@ -110,15 +183,9 @@ const ENTRY_RULES: {
     header: RuleHeader,
   ) => void
 } = {
-  output: (progress) => {
-    if (progress.hasOutputTruncated)
-      throw new Error('Node server history output follows its truncation.')
-  },
-  'output-truncated': (progress) => {
-    if (progress.hasOutputTruncated)
-      throw new Error('Node server history truncates its output twice.')
-    progress.hasOutputTruncated = true
-  },
+  output: (progress) => acceptOutput(progress, SERVER_SUBJECT),
+  'output-truncated': (progress) =>
+    acceptOutputTruncated(progress, SERVER_SUBJECT),
   request: (progress, entry) => {
     if (progress.hasTerminal || progress.openAttempt !== undefined)
       throw new Error(
@@ -140,13 +207,12 @@ const ENTRY_RULES: {
       throw new Error('Node server history marks no open request as sent.')
     progress.openAttemptSent = true
   },
-  source: (progress, entry) => {
-    const key = nodeServerSourceKey(entry.path, entry.hash)
-    if (progress.sources.has(key))
-      throw new Error('Node server history repeats a source entry.')
-    progress.sources.add(key)
+  source: (progress, entry) => acceptSource(progress, entry, SERVER_SUBJECT),
+  stop: (progress, entry, header) => {
+    if (progress.openAttempt === undefined || progress.hasTerminal)
+      throw new Error('Node server history stops outside an open request.')
+    acceptCountedStop(progress, entry, header, SERVER_SUBJECT)
   },
-  stop: acceptStop,
   response: (progress) => {
     if (progress.openAttempt === undefined || !progress.openAttemptSent)
       throw new Error('Node server history answers a request never sent.')
@@ -177,27 +243,45 @@ function applyEntryRule(
   rule(progress, entry, header)
 }
 
-/** Checks one `stop` entry against the open attempt, the declared stops, the stop limit, the hit count and its `source` entry. */
-function acceptStop(
+/** The rules for the script journal: the shared output, source and stop rules (a stop needs no request window) and an `end` that closes the journal. */
+const SCRIPT_ENTRY_RULES: {
+  [Type in NodeScriptHistoryEntry['type']]: (
+    progress: NodeServerJournalProgress,
+    entry: Extract<NodeScriptHistoryEntry, { type: Type }>,
+    header: RuleHeader,
+  ) => void
+} = {
+  output: (progress) => acceptOutput(progress, SCRIPT_SUBJECT),
+  'output-truncated': (progress) =>
+    acceptOutputTruncated(progress, SCRIPT_SUBJECT),
+  source: (progress, entry) => acceptSource(progress, entry, SCRIPT_SUBJECT),
+  stop: (progress, entry, header) =>
+    acceptCountedStop(progress, entry, header, SCRIPT_SUBJECT),
+  end: (progress) => {
+    progress.hasEnd = true
+  },
+}
+
+/** Checks one `stop` entry against the declared stops, the stop limit, the hit count and its `source` entry, and counts it. */
+function acceptCountedStop(
   progress: NodeServerJournalProgress,
   entry: EntryOfType<'stop'>,
   header: RuleHeader,
+  subject: string,
 ): void {
-  if (progress.openAttempt === undefined || progress.hasTerminal)
-    throw new Error('Node server history stops outside an open request.')
   if (entry.declaredStopIndex >= header.declaredStops.length)
-    throw new Error('Node server history stops at an undeclared stop.')
+    throw new Error(`${subject} stops at an undeclared stop.`)
   if (progress.stopCount >= NODE_SERVER_HISTORY_MAX_STOPS)
-    throw new Error('Node server history exceeds its stop limit.')
+    throw new Error(`${subject} exceeds its stop limit.`)
   const hits = progress.hitsByStop.get(entry.declaredStopIndex) ?? 0
   if (entry.hit !== hits + 1)
-    throw new Error('Node server history stop hits are not counted.')
+    throw new Error(`${subject} stop hits are not counted.`)
   if (
     !progress.sources.has(
       nodeServerSourceKey(entry.source.path, entry.source.hash),
     )
   )
-    throw new Error('Node server history stop has no earlier source entry.')
+    throw new Error(`${subject} stop has no earlier source entry.`)
   progress.hitsByStop.set(entry.declaredStopIndex, entry.hit)
   progress.stopCount++
 }

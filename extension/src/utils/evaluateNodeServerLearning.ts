@@ -1,5 +1,71 @@
 import type { NodeServerHistoryEntry } from '../nodeServerHistorySchemas'
 
+/** One citation a node run's learning material still owes, and the journal sequences that would satisfy it. */
+export type LearningNeed<Part> = { part: Part; satisfiedBy: number[] }
+
+/** A stop citation a learning material owes: the first recorded hit of a reached declared stop. */
+export type StopLearningPart = {
+  type: 'stop'
+  sequence: number
+  declaredStopIndex: number
+  hit: number
+}
+
+/**
+ * Lists one need per reached declared stop: the material must cite at least one recorded hit of it.
+ * @param entries - The journal's entries.
+ * @returns The stop needs in declared-stop order of first hit.
+ * @example stopLearningNeeds(entries)[0]?.part.declaredStopIndex // => 0
+ */
+export function stopLearningNeeds(
+  entries: ReadonlyArray<{
+    type: string
+    sequence: number
+    declaredStopIndex?: number
+    hit?: number
+  }>,
+): Array<LearningNeed<StopLearningPart>> {
+  const hitsByStop = new Map<number, Array<{ sequence: number; hit: number }>>()
+  for (const { type, sequence, declaredStopIndex, hit } of entries)
+    if (type === 'stop' && declaredStopIndex !== undefined && hit !== undefined)
+      hitsByStop.set(declaredStopIndex, [
+        ...(hitsByStop.get(declaredStopIndex) ?? []),
+        { sequence, hit },
+      ])
+  return [...hitsByStop].map(([declaredStopIndex, hits]) => ({
+    part: {
+      type: 'stop',
+      sequence: hits[0]!.sequence,
+      declaredStopIndex,
+      hit: hits[0]!.hit,
+    },
+    satisfiedBy: hits.map((hit) => hit.sequence),
+  }))
+}
+
+/**
+ * Decides the verdict of a set of needs against the sequences the saved material cites: `none` when needs exist and none is cited, `complete` when all are, else `partial`.
+ * @param needs - Every citation the material owes.
+ * @param citedSequences - The sequences the saved material cites; `undefined` before any material was saved.
+ * @returns The coverage and every citation still owed, in journal order.
+ * @example settleLearningNeeds([], undefined) // => { coverage: 'complete', missing: [] }
+ */
+export function settleLearningNeeds<Part extends { sequence: number }>(
+  needs: ReadonlyArray<LearningNeed<Part>>,
+  citedSequences: ReadonlySet<number> | undefined,
+): { coverage: NodeServerLearningCoverage; missing: Part[] } {
+  const unmet = needs.filter(
+    ({ satisfiedBy }) =>
+      !satisfiedBy.some((sequence) => citedSequences?.has(sequence)),
+  )
+  const missing = unmet
+    .map(({ part }) => part)
+    .sort((left, right) => left.sequence - right.sequence)
+  if (needs.length > 0 && unmet.length === needs.length)
+    return { coverage: 'none', missing }
+  return { coverage: missing.length === 0 ? 'complete' : 'partial', missing }
+}
+
 /** One citation a server history's learning material still owes: the entry a step should cite, with its declared stop and hit for a stop. */
 export type NodeServerLearningPart =
   | { type: 'request' | 'response' | 'request-failed'; sequence: number }
@@ -20,31 +86,14 @@ export function evaluateNodeServerLearning(
   entries: readonly NodeServerHistoryEntry[],
   citedSequences: ReadonlySet<number> | undefined,
 ): { coverage: NodeServerLearningCoverage; missing: NodeServerLearningPart[] } {
-  const needs: Array<{ part: NodeServerLearningPart; satisfiedBy: number[] }> =
-    []
+  const needs: Array<LearningNeed<NodeServerLearningPart>> = []
   const request = entries.findLast((entry) => entry.type === 'request')
   if (request)
     needs.push({
       part: { type: 'request', sequence: request.sequence },
       satisfiedBy: [request.sequence],
     })
-  const hitsByStop = new Map<number, Array<{ sequence: number; hit: number }>>()
-  for (const entry of entries)
-    if (entry.type === 'stop')
-      hitsByStop.set(entry.declaredStopIndex, [
-        ...(hitsByStop.get(entry.declaredStopIndex) ?? []),
-        { sequence: entry.sequence, hit: entry.hit },
-      ])
-  for (const [declaredStopIndex, hits] of hitsByStop)
-    needs.push({
-      part: {
-        type: 'stop',
-        sequence: hits[0]!.sequence,
-        declaredStopIndex,
-        hit: hits[0]!.hit,
-      },
-      satisfiedBy: hits.map((hit) => hit.sequence),
-    })
+  needs.push(...stopLearningNeeds(entries))
   const terminal = entries.find(
     (entry) => entry.type === 'response' || entry.type === 'request-failed',
   )
@@ -56,14 +105,5 @@ export function evaluateNodeServerLearning(
       part: { type: terminal.type, sequence: terminal.sequence },
       satisfiedBy: [terminal.sequence],
     })
-  const unmet = needs.filter(
-    ({ satisfiedBy }) =>
-      !satisfiedBy.some((sequence) => citedSequences?.has(sequence)),
-  )
-  const missing = unmet
-    .map(({ part }) => part)
-    .sort((left, right) => left.sequence - right.sequence)
-  if (needs.length > 0 && unmet.length === needs.length)
-    return { coverage: 'none', missing }
-  return { coverage: missing.length === 0 ? 'complete' : 'partial', missing }
+  return settleLearningNeeds(needs, citedSequences)
 }

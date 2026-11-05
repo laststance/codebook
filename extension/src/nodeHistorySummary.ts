@@ -1,4 +1,5 @@
 import type { ExtensionHistorySummary } from './chromeExtensionHistoryTypes'
+import type { NodeScriptHistorySummary } from './nodeScriptHistoryTypes'
 import type { NodeServerHistorySummary } from './nodeServerHistoryTypes'
 import type { NodeTestHistorySummary } from './nodeTestHistoryTypes'
 
@@ -7,4 +8,7 @@ import type { NodeTestHistorySummary } from './nodeTestHistoryTypes'
  * Produced by {@link NodeHistoryRepository.list}; the Study workspace words each row through the profile's UI adapter.
  */
 export type NodeHistorySummary =
-  NodeTestHistorySummary | NodeServerHistorySummary | ExtensionHistorySummary
+  | NodeTestHistorySummary
+  | NodeServerHistorySummary
+  | ExtensionHistorySummary
+  | NodeScriptHistorySummary
