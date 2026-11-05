@@ -15,6 +15,7 @@ import type * as NewerStudyFormatMessageModule from '../utils/newerStudyFormatMe
 import { pauseLabelOf } from '../utils/pauseLabelOf'
 import { projectPauseNames } from '../utils/projectPauseNames'
 import { studyFormatOfEvidence } from '../utils/studyFormatOfConfiguration'
+import { validateConfiguredStudyEvidence } from '../utils/validateConfiguredStudyEvidence'
 
 import { createOperationsStudy } from './utils/createOperationsStudy'
 import { loadModule } from './utils/loadModule'
@@ -344,4 +345,44 @@ test('the route-handler pause message and label carry the handler, its request a
     'Paused in the route handler POST /api/todos (request /api/todos), observed after operation 2',
   )
   assert.deepEqual(label, snapshot)
+})
+
+// Value: protects=format 7 stays the strict 0.2.72.0 shape: a routeHandler object alone (with no other format 8 field) is refused there like every execution field, while the same study without it passes that check and stops at a later one; fails_when=the format 7 check lists every format 8 field but routeHandler, so a forged format 7 study keeps it; no_claim=the writer, which never writes it outside format 13
+test('a format 7 study whose observation carries only a routeHandler object is refused as keeping an execution field, and the same study without it passes that check', () => {
+  // Arrange
+  const { firstExecutionObserved: _firstExecutionObserved, ...complete } =
+    createOperationsStudy()
+  const browserOnly = { ...complete.configuration, additionalStops: [] }
+  const {
+    execution: _execution,
+    attribution: _attribution,
+    operationIndex: _operationIndex,
+    declaredIndex: _declaredIndex,
+    executionIndex: _executionIndex,
+    scope: _scope,
+    routeHandler: _routeHandler,
+    ...plain
+  } = complete.observations[0]!
+  const formatSeven = (observation: Observation): ConfiguredStudy => ({
+    ...complete,
+    version: 7,
+    configuration: browserOnly,
+    configurationHash: sha256(JSON.stringify(browserOnly)),
+    observations: [observation],
+  })
+  const withoutField = formatSeven(plain)
+  const forged = formatSeven({ ...plain, routeHandler: ROUTE_HANDLER })
+  // Act
+  const acceptPlain = (): void =>
+    validateConfiguredStudyEvidence(withoutField, withoutField.workspaceKey)
+  const acceptForged = (): void =>
+    validateConfiguredStudyEvidence(forged, forged.workspaceKey)
+  // Assert
+  // The study without the field fails only a later check: its single pause leaves operation 2 without its declared pauses.
+  assert.throws(acceptPlain, {
+    message: 'Operation 2 is done without its declared pauses continued.',
+  })
+  assert.throws(acceptForged, {
+    message: 'Only a study of format 8 keeps execution fields.',
+  })
 })

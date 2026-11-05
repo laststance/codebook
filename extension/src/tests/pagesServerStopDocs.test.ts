@@ -510,7 +510,7 @@ test('the migration table separates the saved Pages run (format 8 unchanged) fro
     row.item.startsWith('saved study of a Pages Router server run'),
   )
   // Assert
-  assert.equal(table.length, 9)
+  assert.equal(table.length, 10)
   assert.ok(
     table.some((row) => row.change.startsWith('format 12 (.study.v12.json)')),
   )

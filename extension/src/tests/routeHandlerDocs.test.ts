@@ -136,3 +136,40 @@ test('the README documents route-handler stops under API 1.28 and no longer list
   assert.ok(readme.includes('`route-handler-before-operation`'))
   assert.equal(readme.includes('route handlers (`route.ts`)'), false)
 })
+
+// Value: protects=the chat-facing texts state the identity contract's limits (a server fetch of its own route, a late request from before the operation, the earliest unclaimed request among several), keep a route handler out of the "other routes" limit and list format 13 in the migration table; fails_when=the help or README promises that only the page's own request can pause, calls every non-entry route unsupported, or omits format 13; no_claim=that the limits are the only ones
+test('the help and README state the route-handler identity limits, except route handlers from the other-routes limit and list format 13', async () => {
+  // Arrange
+  const help = serverRenderHelp()
+  const readme = await readPackaged('README.md')
+  // Act
+  const identityRule = help.routeHandlerStops.identityRule
+  const limit = help.serverRenderQuickStart.limits[0] ?? ''
+  const migrationRows = help.serverRenderMigration.table.map((row) => row.item)
+  // Assert
+  assert.ok(
+    identityRule.includes(
+      "Limits: Codebook matches a pause to the browser's request by route, method and operation window, not by the request itself",
+    ),
+  )
+  assert.ok(
+    limit.includes(
+      'other routes than the entry route (except an App Router route handler with afterOperation 1 or more from API 1.28, routeHandlerStops)',
+    ),
+  )
+  assert.ok(
+    migrationRows.includes(
+      'saved study of an App Router route-handler pause (API 1.28)',
+    ),
+  )
+  assert.ok(
+    readme.includes(
+      "Codebook matches a pause to the browser's request by route, method and operation, not by the request itself",
+    ),
+  )
+  assert.ok(
+    readme.includes(
+      'in the server code of any route other than the entry route (an App Router route handler is the exception from MCP API 1.28, see **Route handlers** below)',
+    ),
+  )
+})

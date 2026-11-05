@@ -250,7 +250,7 @@ export function serverRenderHelp() {
       fields:
         'The pause reads execution "route-handler", attribution "after-operation", operationIndex k and routeHandler { method, route, path }: the HTTP method of the matched browser request, the route pattern from the file path (/api/boards/[id]) and the request pathname (/api/boards/42). The message reads "Paused in the route handler POST /api/todos (request /api/todos), observed after operation 2"; never call it a server render or a page load.',
       identityRule:
-        "Only the browser's own request after the operation pauses: the first qualifying request (the stop's route and method, sent by the browser after operation k and claimed by no other stop) to reach the line pauses; every other hit is resumed and listed in details.resumedHits with a reason (before-operation, other-method, other-path, no-browser-request, after-retired, unclassified) and a count. A request Codebook itself sent never pauses.",
+        "Only the browser's own request after the operation pauses: the first qualifying request (the stop's route and method, sent by the browser after operation k and claimed by no other stop) to reach the line pauses; every other hit is resumed and listed in details.resumedHits with a reason (before-operation, other-method, other-path, no-browser-request, after-retired, unclassified) and a count. A request Codebook itself sent never pauses. Limits: Codebook matches a pause to the browser's request by route, method and operation window, not by the request itself, so a request the server sends to its own route with the same method in that window, or a request the page sent before the operation that reaches the line late, can be the one that pauses; with several qualifying requests (for example to one dynamic route) routeHandler names the earliest unclaimed one by start. Say so when the explanation depends on which request paused.",
       values:
         'The request body cannot be read at the pause without a side effect (request.json() consumes it and the debugger refuses the call): declare the stop on a line after the handler parsed the body and inspect that variable. request.method and request.url are readable. Header values pass through the existing redaction, and a header that carries a credential (cookie, authorization) is never a required inspection.',
       refusals: {
@@ -342,7 +342,7 @@ export function serverRenderHelp() {
       wording:
         'after-operation is "observed after operation k". An operation is never said to cause a render; the unreached causes below are possibilities ("may"), never the established cause.',
       limits: [
-        'Not supported in either router: server-side code of other routes than the entry route, Pages API routes, middleware or proxy, and Turbopack (Codebook always starts next dev --webpack, whatever the dev script says).',
+        'Not supported in either router: server-side code of other routes than the entry route (except an App Router route handler with afterOperation 1 or more from API 1.28, routeHandlerStops), Pages API routes, middleware or proxy, and Turbopack (Codebook always starts next dev --webpack, whatever the dev script says).',
         'App Router: a stop in a client component is refused with NEXT_STOP_NOT_SEALED (details.reason client-component); a render hit of another route is resumed and not counted.',
         PAGES_NOT_PAUSED,
         'There is no timeout override: each wait is bounded at 20 s, restarting at each continue, and the pause hold and run deadline stay as they are. There is no attribution override: Codebook reads the rendering route itself (a Pages run reads the data function from the paused stack).',
@@ -393,6 +393,11 @@ export function serverRenderHelp() {
         {
           item: 'saved study of an App Router module-evaluation pause (API 1.27)',
           change: `format 12 (.study.v12.json), for a study whose observation carries scope module. Codebook 0.2.85 and older list it as saved by a newer Codebook; update Codebook (${SERVER_RENDER_MODULE_MINIMUM_EXTENSION} or later) to open it (moduleScope)`,
+        },
+        {
+          item: 'saved study of an App Router route-handler pause (API 1.28)',
+          change:
+            'format 13 (.study.v13.json), for a study whose observation carries execution route-handler. Codebook 0.2.86 and older list it as saved by a newer Codebook; update Codebook to open it (routeHandlerStops)',
         },
       ],
     },

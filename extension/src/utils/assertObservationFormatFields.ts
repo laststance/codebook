@@ -141,6 +141,7 @@ export function assertObservationFormatFields(
       study.observations.some(
         (observation) =>
           observation.scope !== undefined ||
+          observation.routeHandler !== undefined ||
           observation.execution !== undefined ||
           observation.attribution !== undefined ||
           observation.operationIndex !== undefined ||

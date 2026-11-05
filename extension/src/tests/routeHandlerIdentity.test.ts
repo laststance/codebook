@@ -108,7 +108,7 @@ test('a GET handler hit while only a POST was sent is resumed and the POST then 
   )
 })
 
-// Value: protects=identity contract a hit with no browser request (the server fetching its own API) is resumed after the bounded wait, counted per reason, and the run then ends SERVER_STOP_NOT_REACHED with details.routeHandler and the resumed hits; fails_when=the hit is published, or the failure lacks the route, the reason or the count; no_claim=the 20 s bound in real time (the harness clock stands for it)
+// Value: protects=identity contract a hit with no browser request (the server fetching its own API) is resumed after the bounded wait, counted per reason, and the run then ends SERVER_STOP_NOT_REACHED with details.routeHandler and the resumed hits; fails_when=the hit is published, or the failure lacks the route, the reason or the count; no_claim=the 20 s not-reached bound in real time (the harness clock stands for it; the 1000 ms wait for the browser request runs in real time)
 test('a route-handler hit with no browser request is resumed and the run ends SERVER_STOP_NOT_REACHED naming the route and the resumed hit', async (context) => {
   // Arrange
   const harness = await routeHandlerRunHarness(context)

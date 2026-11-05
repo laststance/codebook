@@ -203,7 +203,7 @@ test('SERVER_STOP_NOT_REACHED lists the module-evaluation candidates as possibil
     "Next evaluated the module before the stop could be armed (another route's module, a hot reload)",
     'after a statement that did not run',
     'Never present any cause as established',
-    'Check that the entry route imports the module and that the line runs when the module loads',
+    'For a stop at module scope, check that the entry route imports the module and that the line runs when the module loads',
     'then start one new run',
     'module evaluation is observed only in App Router runs without a Pages folder',
   ])
