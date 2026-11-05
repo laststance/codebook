@@ -34,7 +34,7 @@ export class RouteHandlerRequests {
   ) {}
 
   /**
-   * Notes a request the browser sent when its pathname matches a declared route.
+   * Notes a request the browser sent when its pathname matches a declared route; a redirect hop to another declared route or with another method is kept as its own entry (id `<requestId> <METHOD> <pathname>`).
    * @param event - The method and URL of `Network.requestWillBeSent`.
    * @param window - The number of operations dispatched so far.
    * @param nowMs - The run's clock reading.
@@ -59,11 +59,17 @@ export class RouteHandlerRequests {
       )
     )
       return
-    // A redirect of the same request keeps its first start.
-    if (this.requests.has(event.requestId)) return
-    this.requests.set(event.requestId, {
-      id: event.requestId,
-      method: event.method.toUpperCase(),
+    const method = event.method.toUpperCase()
+    const first = this.requests.get(event.requestId)
+    // Chrome reports each redirect hop under the request's id: the same method and path is the same hop, another one is a hop of its own.
+    if (first?.method === method && first.pathname === parsed.pathname) return
+    const id = first
+      ? `${event.requestId} ${method} ${parsed.pathname}`
+      : event.requestId
+    if (this.requests.has(id)) return
+    this.requests.set(id, {
+      id,
+      method,
       pathname: parsed.pathname,
       window,
       startedAtMs: nowMs,

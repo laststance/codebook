@@ -129,11 +129,8 @@ test('a route.ts under a lib folder is not refused as a route handler', async (c
   // Act
   const failure = await preparationFailure(harness)
   // Assert
-  assert.equal(
-    failure instanceof StudyError &&
-      String(failure.details?.reason).startsWith('route-handler'),
-    false,
-  )
+  // The ordinary entry-render path goes on to load the entry page, which this stand-in never answers; a route-handler refusal would stop before it.
+  assert.equal(String(failure), 'Error: Cancelled entry page load')
 })
 
 // Value: protects=R10 a helper named route.ts inside a node_modules package (no App Router tree) keeps its ordinary server-stop path; fails_when=it is refused as route-handler-not-app-source; no_claim=a workspace library freeze (same check, covered by the library suites)

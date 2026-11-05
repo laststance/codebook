@@ -163,6 +163,11 @@ test('the help and README state the route-handler identity limits, except route 
     ),
   )
   assert.ok(
+    help.routeHandlerStops.savedStudy.startsWith(
+      'A study with a route-handler pause is saved as format 13 (.study.v13.json)',
+    ),
+  )
+  assert.ok(
     readme.includes(
       "Codebook matches a pause to the browser's request by route, method and operation, not by the request itself",
     ),

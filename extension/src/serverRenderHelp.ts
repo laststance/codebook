@@ -260,6 +260,8 @@ export function serverRenderHelp() {
       notReached: `${ROUTE_HANDLER_NOT_REACHED_POSSIBILITIES} details.routeHandler is { route, method } of the stop. After-operation inputs were sent and side effects are unknown: explain what ran, offer the partial replay and never start again unasked.`,
       notSupported:
         'Pages API routes (pages/api), middleware and proxy stay unsupported, and so does a route file that declares the edge runtime.',
+      savedStudy:
+        'A study with a route-handler pause is saved as format 13 (.study.v13.json), which also keeps the fields of format 12; Codebook 0.2.86 and older list it as saved by a newer Codebook, and opening it needs a Codebook on API 1.28 or later.',
     },
     serverRenderQuickStart: {
       anchor: 'codebook://help/repository-browser#server-render-quick-start',

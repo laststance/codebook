@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { ROUTE_HANDLER_REQUEST_LIMIT } from '../constants'
 import {
   routeHandlerHitVerdictOf,
   type RouteHandlerBrowserRequest,
@@ -190,7 +189,7 @@ test('the request tracker keeps matching requests of the application origin and 
     0,
     2,
   )
-  for (let id = 0; id < ROUTE_HANDLER_REQUEST_LIMIT + 4; id++)
+  for (let id = 0; id < 260; id++)
     tracker.start(
       {
         requestId: `r${id}`,
@@ -204,11 +203,37 @@ test('the request tracker keeps matching requests of the application origin and 
   // Assert
   assert.deepEqual(
     [kept.length, kept[0]!.id, kept[0]!.method, kept.at(-1)!.id],
+    [256, 'r4', 'POST', 'r259'],
+  )
+})
+
+// Value: protects=CodeRabbit a redirect that Chrome reports under the same request id keeps its target when that is another declared route or method, and a repeated event adds nothing; fails_when=the tracker keeps only the first hop, so a stop in the redirect target's handler finds no browser request; no_claim=a real redirect (the test feeds the Network events)
+test('the request tracker keeps a redirect hop to another declared route under its own id and ignores a repeated event', () => {
+  // Arrange
+  const tracker = new RouteHandlerRequests(['/api/start', '/api/target'])
+  // Act
+  tracker.start(
+    { requestId: 'r1', method: 'POST', url: 'http://localhost:4321/api/start' },
+    2,
+    10,
+  )
+  tracker.start(
+    { requestId: 'r1', method: 'POST', url: 'http://localhost:4321/api/start' },
+    2,
+    11,
+  )
+  tracker.start(
+    { requestId: 'r1', method: 'GET', url: 'http://localhost:4321/api/target' },
+    2,
+    12,
+  )
+  const kept = tracker.list()
+  // Assert
+  assert.deepEqual(
+    kept.map((request) => [request.id, request.method, request.pathname]),
     [
-      ROUTE_HANDLER_REQUEST_LIMIT,
-      'r4',
-      'POST',
-      `r${ROUTE_HANDLER_REQUEST_LIMIT + 3}`,
+      ['r1', 'POST', '/api/start'],
+      ['r1 GET /api/target', 'GET', '/api/target'],
     ],
   )
 })
