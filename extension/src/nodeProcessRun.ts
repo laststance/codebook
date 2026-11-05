@@ -42,8 +42,15 @@ import type { RunClock } from './utils/runningTimeLimit'
 import type { CauseRoots } from './utils/sanitizeCause'
 import type { signalProcessGroup } from './utils/signalProcessGroup'
 
-/** The process the launcher started ({@link launchNodeServer}). */
-export type OwnedNodeProcess = Awaited<ReturnType<typeof launchNodeServer>>
+/** What the launcher returns ({@link launchNodeServer}). */
+type LaunchedNodeProcess = Awaited<ReturnType<typeof launchNodeServer>>
+
+/** The process the launcher started ({@link launchNodeServer}); its exit-event members are optional, so a launcher without them leaves the close fact as the only exit fact. */
+export type OwnedNodeProcess = Omit<
+  LaunchedNodeProcess,
+  'exitedEvent' | 'whenExitEvent'
+> &
+  Partial<Pick<LaunchedNodeProcess, 'exitedEvent' | 'whenExitEvent'>>
 
 /** What a run needs from outside to own a Node process under the debugger, injected so the whole state machine runs against fakes. */
 export type NodeProcessRunDependencies = {
@@ -51,7 +58,9 @@ export type NodeProcessRunDependencies = {
   /** The external Node executable and its version. */
   node: { executable: string; version: string }
   createDebugger(input: NodeServerDebuggerInput): NodeServerDebugger
-  launch: typeof launchNodeServer
+  launch(
+    ...launchArguments: Parameters<typeof launchNodeServer>
+  ): Promise<OwnedNodeProcess>
   signalGroup: typeof signalProcessGroup
   isGroupGone: typeof isProcessGroupGone
   /** Whether no process has an id (signal 0 to the pid), to tell the survivors of a leader that exited from a group that took its id ({@link confirmLaunchedGroup}). */
@@ -105,6 +114,14 @@ export type NodeProcessRunHooks = {
   onStopped?(): Promise<void>
 }
 
+/** How a run's owner chooses between the stop paths the server run keeps and the ones a script run needs; every option is off by default, which is the server's behavior. */
+export type NodeProcessRunOptions = {
+  /** When the leader already exited by itself (its `exit` event fired), every signal, the first included, is sent only after the group is confirmed as the launched one; a gone, replaced or unverifiable group receives nothing and the outcome is reported ({@link NodeProcessRun.unsignalledGroup}). */
+  confirmEverySignalAfterNaturalExit?: boolean
+  /** A stop during or after a failed preparation, or of a run that was never released, kills the group first and never lets the debugger resume the paused process. */
+  killFirstUnlessReleased?: boolean
+}
+
 /** What a run's owner fixes when it creates the core. */
 export type NodeProcessRunInput = {
   /** The opened repository's real root. */
@@ -123,6 +140,7 @@ export type NodeProcessRunInput = {
   /** Tells the owner's listeners the view changed. */
   notify: () => void
   hooks: NodeProcessRunHooks
+  options?: NodeProcessRunOptions
 }
 
 /** What one preparation does that depends on what is run. */
@@ -161,6 +179,17 @@ export type NodeProcessSnapshot = {
   runFailure?: StudyError
   failedStops: number
 }
+
+/** Which declared stops a run reached before its capture budget was spent, and whether it was spent. */
+export type NodeProcessCaptureAccounting = {
+  /** Zero-based indices of the declared stops captured, in hit order. */
+  stopsReached: number[]
+  /** True once a hit beyond the capture limit retired the owned breakpoints. */
+  captureBudgetExhausted: boolean
+}
+
+/** What a group id turned out to be when a signal after the leader's own exit was withheld ({@link NodeProcessRun.unsignalledGroup}). */
+export type UnsignalledGroupVerdict = Exclude<LaunchedGroupVerdict, 'launched'>
 
 /** A stop's release that detaches the debugger before it signals (no kill-first), while its close is under way: whether it is a retry, and whether a late pause already asked to end the group. */
 type DetachRelease = { isRetry: boolean; killed: boolean }
@@ -244,6 +273,12 @@ export class NodeProcessRun {
   /** The release that detaches the debugger before it signals (no kill-first), while its close is under way; a pause reported meanwhile ends the group at once. */
   private detachRelease?: DetachRelease
   private frozenPrivateRoots?: CauseRoots
+  /** Set once the entry release returned: from then on the process may run on. */
+  private released = false
+  /** Set when a preparation failed: whatever it started is ended without letting the process run. */
+  private preparationFailed = false
+  /** Why the last signal after the leader's own exit was withheld, if one was. */
+  private withheldGroup?: UnsignalledGroupVerdict
   // Pauses.
   private generation = 0
   private pause?: OwnedPause
@@ -315,6 +350,29 @@ export class NodeProcessRun {
     this.prepared = true
   }
 
+  /**
+   * Which declared stops were captured before the capture budget was spent, and whether it was.
+   * Why: the owner reports a stop first reached after the budget as not observed, never as never reached. Called by the owner's end report.
+   * @returns The captured stops in hit order and the budget flag.
+   * @example core.captureAccounting() // => { stopsReached: [0, 0, 1], captureBudgetExhausted: false }
+   */
+  captureAccounting(): NodeProcessCaptureAccounting {
+    return {
+      stopsReached: [...this.stopsReached],
+      captureBudgetExhausted: this.captureBudgetExhausted,
+    }
+  }
+
+  /**
+   * Why a signal after the leader's own exit was withheld: the group was `gone`, `replaced` by another process's id, or `unverifiable`.
+   * Why: the owner's end report says the group was left alone and why. Called by the owner after a stop.
+   * @returns The reason of the last withheld signal, or `undefined` when none was withheld.
+   * @example core.unsignalledGroup() // => 'replaced'
+   */
+  unsignalledGroup(): UnsignalledGroupVerdict | undefined {
+    return this.withheldGroup
+  }
+
   /** The run's state as the owner derives its view from. */
   snapshot(): NodeProcessSnapshot {
     const pause = this.pause
@@ -368,6 +426,7 @@ export class NodeProcessRun {
         'RUNTIME_FAILED',
         'The run was stopped while it was preparing.',
       )
+    this.preparationFailed = true
     const failure = await this.explainPreparationFailure(error)
     this.currentRunFailure ??= failure
     this.record('node-server.failure', {
@@ -444,6 +503,7 @@ export class NodeProcessRun {
     await this.attachAndArm(server, launched.packageRoot, stops, attachSignal)
     preparation.beforeRelease?.()
     await this.step('releasing the server', () => debug.releaseEntry(signal))
+    this.released = true
     await preparation.afterRelease()
   }
 
@@ -1089,7 +1149,9 @@ export class NodeProcessRun {
       if (this.killFirst && (await this.maySignal(server, isRetry)))
         this.dependencies.signalGroup(server.processGroup, 'SIGKILL')
       // The detach is under way from here until the close returns: a pause reported meanwhile is killed.
-      if (!this.killFirst) this.detachRelease = { isRetry, killed: false }
+      const confirmFirst = isRetry || this.exitedByItself(server)
+      if (!this.killFirst)
+        this.detachRelease = { isRetry: confirmFirst, killed: false }
       try {
         await server.close(
           this.killFirst
@@ -1097,9 +1159,9 @@ export class NodeProcessRun {
             : (): Promise<void> => this.debug?.release() ?? Promise.resolve(),
           {
             sinceAdmissionMs: () => this.clock.now() - this.stopAdmittedAtMs,
-            confirmGroup: () => this.confirmLaunchedGroup(server),
-            // An earlier stop may have signalled the group before its close ran (a SIGKILL that failed), so the close checks it from its first signal.
-            retried: isRetry,
+            confirmGroup: () => this.confirmForClose(server),
+            // An earlier stop may have signalled the group before its close ran (a SIGKILL that failed), and the group of a leader that exited by itself may be gone or reused, so the close checks it from its first signal.
+            retried: confirmFirst,
           },
         )
       } finally {
@@ -1118,6 +1180,19 @@ export class NodeProcessRun {
   }
 
   /**
+   * The identity check the launcher's close makes before each signal. After the leader's own exit (option on) an unverifiable group is withheld and reported, so the close signals nothing instead of failing.
+   * @param server - The launched process.
+   * @returns The verdict the close acts on; `gone` stands for every group that must not be signalled.
+   */
+  private async confirmForClose(
+    server: OwnedNodeProcess,
+  ): Promise<LaunchedGroupVerdict> {
+    const verdict = await this.confirmLaunchedGroup(server)
+    if (!this.exitedByItself(server)) return verdict
+    return this.confirmedAfterNaturalExit(verdict) ? 'launched' : 'gone'
+  }
+
+  /**
    * Reads whether the group is still the launched one: the leader's start and folder against the launch's ({@link confirmLaunchedGroup}).
    * @param server - The launched server.
    * @returns The verdict; `unverifiable` when the launch start was never read (a folder alone identifies nothing) or the server has no pid.
@@ -1129,7 +1204,7 @@ export class NodeProcessRun {
     return confirmLaunchedGroup({
       pid: server.pid,
       startedAt: this.launchedStartedAt,
-      leaderExited: server.exited() !== undefined,
+      leaderExited: this.leaderExited(server),
       readProcessStart: this.dependencies.readProcessStart,
       readProcessCwd: this.dependencies.readProcessCwd,
       isGroupGone: this.dependencies.isGroupGone,
@@ -1138,23 +1213,57 @@ export class NodeProcessRun {
   }
 
   /**
+   * Whether the leader is known to have exited: by its `exit` event when the option names the exit-event fact (a descendant holding the output pipes open hides the close), else by the launcher's close.
+   * @param server - The launched process.
+   * @returns `true` once the leader exited.
+   */
+  private leaderExited(server: OwnedNodeProcess): boolean {
+    const closeFact = server.exited()
+    if (!this.input.options?.confirmEverySignalAfterNaturalExit)
+      return closeFact !== undefined
+    return (server.exitedEvent?.() ?? closeFact) !== undefined
+  }
+
+  /**
    * Decides whether the run's own SIGKILL may be sent: the first release always, a retried one only while the group is still the launched one, so a reused group id never receives it.
    * @param server - The launched server.
    * @param isRetry - Whether an earlier release of this run already began.
    * @returns `true` to signal, `false` when the group has no member left or its id belongs to another process now (nothing is signalled; the launcher's close finds the same).
-   * @throws When a retry cannot tell whose group it is: the stop fails retryably and names the pid.
+   * @throws When a retry cannot tell whose group it is: the stop fails retryably and names the pid. After the leader's own exit, with the option on, an unverifiable group is withheld and reported instead ({@link NodeProcessRun.unsignalledGroup}).
    */
   private async maySignal(
     server: OwnedNodeProcess,
     isRetry: boolean,
   ): Promise<boolean> {
-    if (!isRetry) return true
+    const afterNaturalExit = this.exitedByItself(server)
+    if (!isRetry && !afterNaturalExit) return true
     const verdict = await this.confirmLaunchedGroup(server)
+    if (afterNaturalExit) return this.confirmedAfterNaturalExit(verdict)
     if (verdict === 'unverifiable')
       throw new Error(
         'The server process group could not be confirmed as the one Codebook started, so it was not signalled again.',
       )
     return verdict === 'launched'
+  }
+
+  /** Whether the option is on and the leader exited by itself: every signal then needs the group confirmed first. */
+  private exitedByItself(server: OwnedNodeProcess): boolean {
+    return (
+      this.input.options?.confirmEverySignalAfterNaturalExit === true &&
+      this.leaderExited(server)
+    )
+  }
+
+  /**
+   * Turns a verdict read after the leader's own exit into the answer to "may the group be signalled", and keeps why a signal was withheld.
+   * @param verdict - What {@link confirmLaunchedGroup} found.
+   * @returns `true` only for the launched group; a gone, replaced or unverifiable group is journaled and left alone.
+   */
+  private confirmedAfterNaturalExit(verdict: LaunchedGroupVerdict): boolean {
+    if (verdict === 'launched') return true
+    this.withheldGroup = verdict
+    this.record('node-server.group-not-signalled', { reason: verdict })
+    return false
   }
 
   /**
@@ -1206,6 +1315,12 @@ export class NodeProcessRun {
   /** D14 v3: a server paused in the debugger (a declared stop, the learner's own pause, or a stop the run has not classified yet), whose request is under way (paused or not: a stop it reaches during the detach would be resumed by it) or whose pause hold expired, is killed before its debugger lets go; a server that is not paused takes Stop v2. */
   private mustKillFirst(): boolean {
     if (this.holdExpired) return true
+    // A script run never lets a process that failed to prepare, or was never released, run on: its entry pause is not always reported yet.
+    if (
+      this.input.options?.killFirstUnlessReleased &&
+      (!this.released || this.preparationFailed)
+    )
+      return true
     if (this.hooks.inWindow()) return true
     if (this.debug?.hasUnreportedPause()) return true
     // Every native pause the run holds (declared, learner's, unattributed) is code the detach would resume.
