@@ -1309,9 +1309,10 @@ test('a library-path server stop of a root app is read by the app reader and att
   })
   // Act
   harness.run.prepare().catch(() => undefined)
+  // The preparation window registers a provisional breakpoint before the readiness request, so the reader's call is awaited itself.
   await waitUntil(
-    () => harness.server!.breakpointsAcknowledged() > 0,
-    'the server stop was registered',
+    () => harness.readerRoots.developmentBundle.length > 0,
+    'the app reader was given the stop',
   )
   // Assert
   assert.equal(harness.readerRoots.developmentBundle.length, 1)
