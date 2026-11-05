@@ -15,26 +15,32 @@ const sequence = z
   .positive()
   .max(NODE_SERVER_HISTORY_MAX_ENTRIES)
 
+/** The reference of a stop in a node run's learning material (server or script): its sequence and source hash, and optionally the declared stop it is a hit of. */
+export const nodeRunStopReferenceSchema = z.strictObject({
+  type: z.literal('stop'),
+  sequence,
+  sourceHash: repositoryHashSchema,
+  // Optional and additive: when given, the cited stop must be a hit of this declared stop (0-based, as the events list shows it).
+  declaredStopIndex: z
+    .number()
+    .int()
+    .nonnegative()
+    .max(NODE_SERVER_HISTORY_MAX_STOPS)
+    .optional(),
+})
+
+/** The reference of an output in a node run's learning material: its sequence and channel. */
+export const nodeRunOutputReferenceSchema = z.strictObject({
+  type: z.literal('output'),
+  sequence,
+  channel: z.enum(['stdout', 'stderr']),
+})
+
 /** The entries of a server history a learning step may cite: the request, a stop (with its source hash), an output (with its channel), the response or the request failure. */
 export const nodeServerLearningReferenceSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('request'), sequence }),
-  z.strictObject({
-    type: z.literal('stop'),
-    sequence,
-    sourceHash: repositoryHashSchema,
-    // Optional and additive: when given, the cited stop must be a hit of this declared stop (0-based, as the events list shows it).
-    declaredStopIndex: z
-      .number()
-      .int()
-      .nonnegative()
-      .max(NODE_SERVER_HISTORY_MAX_STOPS)
-      .optional(),
-  }),
-  z.strictObject({
-    type: z.literal('output'),
-    sequence,
-    channel: z.enum(['stdout', 'stderr']),
-  }),
+  nodeRunStopReferenceSchema,
+  nodeRunOutputReferenceSchema,
   z.strictObject({ type: z.literal('response'), sequence }),
   z.strictObject({ type: z.literal('request-failed'), sequence }),
 ])

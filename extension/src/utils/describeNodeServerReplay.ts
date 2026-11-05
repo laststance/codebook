@@ -4,6 +4,10 @@ import type {
   ServerReplayEvent,
   ServerReplayModel,
 } from './buildServerReplayModel'
+import {
+  describeScriptEndHeadline,
+  describeScriptEndRegion,
+} from './describeNodeScriptEndRegion'
 import { formatEventSeconds } from './formatEventSeconds'
 import { stripTerminalControls } from './stripTerminalControls'
 
@@ -151,8 +155,23 @@ export function describeServerStop(
     : `Stop ${stopNumber}`
 }
 
-/** What a saved row words: the status after `Server replay · <request line> → <answer>`. */
-function describeServerRowStatus(summary: NodeServerHistorySummary): string {
+/** The fields of a node run's summary (server or script) that its saved row's status reads. */
+export type ReplayRowStatusSummary = Pick<
+  NodeServerHistorySummary,
+  | 'verification'
+  | 'status'
+  | 'reason'
+  | 'captureMissing'
+  | 'captureMissingCount'
+  | 'captureComplete'
+  | 'learningCoverage'
+  | 'learningMissingCount'
+>
+
+/** What a saved row words: the status after `Server replay · <request line> → <answer>` or `Script replay · <entry> → <end>`. */
+export function describeServerRowStatus(
+  summary: ReplayRowStatusSummary,
+): string {
   if (summary.verification === 'unavailable') return 'Unavailable'
   if (summary.status === 'recording') return 'Recording'
   if (summary.status === 'interrupted')
@@ -236,6 +255,8 @@ export function describeServerPosition(
       return `${NODE_SERVER_REPLAY_TEXT.eventResult} ${event.status} · ${time}`
     case 'request-failed':
       return `Request failed: ${event.code} · ${time}`
+    case 'end':
+      return `${describeScriptEndHeadline(event)} · ${time}`
   }
 }
 
@@ -263,6 +284,8 @@ export function describeServerStepAction(
       return `Show response · ${time}`
     case 'request-failed':
       return `Show request failure · ${time}`
+    case 'end':
+      return `Show end · ${time}`
   }
 }
 
@@ -277,24 +300,32 @@ export function describeServerStudyStatus(input: {
   answer: string
   stopCount: number
   explainedStopCount: number
+  /** The replay's heading, `Server replay` unless a script replay words it. */
+  heading?: string
 }): string {
   return input.status === 'recording'
-    ? `${NODE_SERVER_REPLAY_TEXT.heading} · recording`
+    ? `${input.heading ?? NODE_SERVER_REPLAY_TEXT.heading} · recording`
     : `${input.answer} · capture ${input.status} · ${input.explainedStopCount} of ${input.stopCount} stops explained`
 }
 
 /**
  * Words how a server replay answered, for its status line and the response row of its event list.
- * @param terminal - The recorded response or request failure, absent when the journal holds neither.
- * @returns `Response <status>`, `Request failed: <code>` or `No response recorded`.
+ * @param terminal - The recorded response, request failure or script end, absent when the journal holds none.
+ * @param profile - The replay's profile; a script has no response, so its missing end reads `No end recorded`. Defaults to the server wording.
+ * @returns `Response <status>`, `Request failed: <code>`, the script's end headline, `No response recorded` or, for a script, `No end recorded`.
  * @example describeServerAnswer(model.terminal) // => 'Response 201'
  */
 export function describeServerAnswer(
   terminal: ServerReplayModel['terminal'],
+  profile: 'node-server' | 'node-script' = 'node-server',
 ): string {
   if (terminal?.type === 'response')
     return `${NODE_SERVER_REPLAY_TEXT.eventResult} ${terminal.status}`
-  return terminal ? `Request failed: ${terminal.code}` : 'No response recorded'
+  // A script replay answers with how its run ended.
+  if (terminal?.type === 'end') return describeScriptEndHeadline(terminal)
+  if (terminal) return `Request failed: ${terminal.code}`
+  // An interrupted script history has no end entry, and a script never has a response.
+  return profile === 'node-script' ? 'No end recorded' : 'No response recorded'
 }
 
 /**
@@ -347,6 +378,11 @@ export function describeServerEventRow(
       return {
         heading: `Request failed: ${event.code} · ${time}`,
         body: event.message,
+      }
+    case 'end':
+      return {
+        heading: `${describeScriptEndHeadline(event)} · ${time}`,
+        body: describeScriptEndRegion(event).note ?? '',
       }
   }
 }

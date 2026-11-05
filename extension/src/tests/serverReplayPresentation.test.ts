@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict'
 import { before, test } from 'node:test'
 
-import { presentServerHistory } from '../utils/presentServerHistory'
+import {
+  presentScriptHistory,
+  presentServerHistory,
+} from '../utils/presentServerHistory'
 import { projectServerSection } from '../utils/projectServerSection'
 
+import { runScriptHistory } from './utils/nodeScriptHistoryFixture'
 import {
   nodeServerHistoryHeader,
   openServerRepository,
@@ -168,4 +172,30 @@ test('the server section says no response was recorded and names a failed reques
   // Assert
   assert.match(unansweredStatus, /^No response recorded · capture partial · /)
   assert.match(failedStatus, /^Request failed: ECONNRESET · capture /)
+})
+
+// protects=a script history with no end entry (interrupted or partial) says no end was recorded in its Study status and verdict, never that no response was; fails_when=the script section reads "No response recorded"; no_claim=the wording of a recorded end
+test('the script section says no end was recorded when its history holds no end entry', async (context) => {
+  // Arrange
+  const { repository, studyId } = await runScriptHistory(context, {
+    declaredStops: 1,
+    hits: [0],
+    output: ['seeding\n'],
+  })
+  const history = await repository.scriptHistories.read(studyId)
+  const withoutEnd = {
+    ...history,
+    entries: history.entries.filter((entry) => entry.type !== 'end'),
+  }
+
+  // Act
+  const section = projectServerSection({
+    replay: presentScriptHistory(withoutEnd, undefined),
+    selectedStopVerified: false,
+    applicationClosed: false,
+  })
+
+  // Assert
+  assert.match(section.status, /^No end recorded · capture /)
+  assert.equal(section.verdict, 'No end recorded')
 })

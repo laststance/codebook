@@ -2,7 +2,7 @@ import { NODE_LEARNING_SAVE_ACTION } from './describeNodeLearningSave'
 import { stripTerminalControls } from './stripTerminalControls'
 
 /** The kind of replay a Save notice calls the saved study. */
-export type ReplayLabel = 'Server' | 'Extension'
+export type ReplayLabel = 'Server' | 'Extension' | 'Script'
 
 /** The three notices that end a Save whose history was sealed and read. */
 export type ProfileSaveOutcome =

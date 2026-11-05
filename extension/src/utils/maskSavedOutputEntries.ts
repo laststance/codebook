@@ -1,10 +1,12 @@
+import type { NodeScriptHistoryEntry } from '../nodeScriptHistorySchemas'
 import type { NodeServerHistoryEntry } from '../nodeServerHistorySchemas'
 import type { NodeTestHistoryEntry } from '../nodeTestHistorySchemas'
 
 import { createOutputRedactor } from './createOutputRedactor'
 
 /** The journals whose output entries and test results this module masks. */
-type OutputJournalEntry = NodeTestHistoryEntry | NodeServerHistoryEntry
+type OutputJournalEntry =
+  NodeTestHistoryEntry | NodeServerHistoryEntry | NodeScriptHistoryEntry
 
 /**
  * Masks the chunks of one output stream in order, as the live output redactor masks them, so a Cookie or Authorization line or a printed `rawHeaders` list split over chunks is judged whole.
@@ -39,6 +41,9 @@ export function maskSavedOutputEntries(
 export function maskSavedOutputEntries(
   entries: readonly NodeServerHistoryEntry[],
 ): NodeServerHistoryEntry[]
+export function maskSavedOutputEntries(
+  entries: readonly NodeScriptHistoryEntry[],
+): NodeScriptHistoryEntry[]
 export function maskSavedOutputEntries(
   entries: readonly OutputJournalEntry[],
 ): OutputJournalEntry[] {

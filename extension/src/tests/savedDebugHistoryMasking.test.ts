@@ -731,7 +731,8 @@ test('every reader of saved debugger history is classified and each serving read
     'utils/readExtensionHistoryResource.ts',
     'utils/readRecordingResource.ts',
     'utils/readTestHistoryEvents.ts',
-    'nodeServerHistorySink.ts',
+    // The shared node run sink masks every captured snapshot for the server and the script history.
+    'nodeRunHistorySink.ts',
   ]
   /** Serve the facts of a saved stop or study, in a list, a detail entry, a replay model, a recording context or the native debugger's extra scope. */
   const factServingModules = [

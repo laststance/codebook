@@ -24,7 +24,7 @@ export type CitedStopDeclaration = Pick<
  * @param configuration - The validated declaration of the run.
  * @param books - The workspace's retained articles.
  * @param control - Shared cancellation and preparation deadline.
- * @param subject - How the profile's refusals name the run, `Node test` or `Node server`.
+ * @param subject - How the profile's refusals name the run, `Node test`, `Node server` or `Node script`.
  * @param assertActive - Throws when the preparation expired or was cancelled; called after each awaited read.
  * @returns The article node's descriptor with its cited sources at the retained revision.
  * @throws `BOOK_UNAVAILABLE` for a missing node, `INVALID_CONFIGURATION` for a node with another identity or a stop that is no exact position of a citation, the source service's refusals for a changed file.
@@ -37,7 +37,7 @@ export async function pinCitedBookNode(
   control: Required<
     NonNullable<Parameters<RepositorySourceService['prepare']>[1]>
   >,
-  subject: 'Node test' | 'Node server',
+  subject: 'Node test' | 'Node server' | 'Node script',
   assertActive: () => void,
 ) {
   const selected = await books.readDefinition(

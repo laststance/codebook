@@ -1,5 +1,11 @@
 import type { NodeServerState, NodeServerView } from '../runtime'
 
+import {
+  currentNodePause,
+  nodeContinueArguments,
+  projectNodePause,
+} from './projectNodePause'
+
 /** What {@link projectNodeServerState} reads of the service's record of the run. */
 export type NodeServerProjectionInput = {
   instanceId: string
@@ -52,9 +58,11 @@ function nodeServerStateWord(
 export function projectNodeServerState(input: NodeServerProjectionInput) {
   const { view } = input
   const state = nodeServerStateWord(view, input.stopped, input.ending)
-  const pause = view?.pause
-  const capture = pause ? view?.captures[pause.captureIndex] : undefined
-  const isResumable = Boolean(input.controllable && pause && state === 'paused')
+  const { pause, capture, isResumable } = currentNodePause(
+    view,
+    state,
+    input.controllable,
+  )
   const nextActions = [
     input.controllable && state === 'ready' ? 'http-request' : undefined,
     isResumable ? 'continue-server' : undefined,
@@ -70,18 +78,7 @@ export function projectNodeServerState(input: NodeServerProjectionInput) {
       actionId: undefined,
       phase: pause ? ('paused' as const) : ('running' as const),
       resumable: isResumable,
-      continueArguments:
-        isResumable && pause
-          ? {
-              instanceId: input.instanceId,
-              runId: input.runId,
-              participant: 'server' as const,
-              sessionId: pause.sessionId,
-              threadId: pause.threadId,
-              generation: pause.generation,
-              answer: 'next' as const,
-            }
-          : undefined,
+      continueArguments: nodeContinueArguments(input, pause, isResumable),
     },
     nodeServer: view && {
       address: view.address,
@@ -89,23 +86,7 @@ export function projectNodeServerState(input: NodeServerProjectionInput) {
       stopsHitAtStart: view.stopsHitAtStart,
       stopsReached: view.stopsReached,
       pauseGeneration: view.pauseGeneration,
-      pause:
-        pause && capture
-          ? {
-              declaredStopIndex: pause.declaredStopIndex,
-              stopNumber: pause.stopNumber,
-              sessionId: pause.sessionId,
-              threadId: pause.threadId,
-              generation: pause.generation,
-              path: capture.path,
-              line: capture.line,
-              sourceHash: capture.sourceHash,
-              facts: capture.facts,
-              unavailable: capture.unavailable,
-              attribution: capture.attribution,
-              capturedAtMs: capture.capturedAtMs,
-            }
-          : undefined,
+      pause: projectNodePause(pause, capture),
       heldPause: view.heldPause && {
         ...view.heldPause,
         reason: input.sanitize(view.heldPause.reason),

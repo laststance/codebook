@@ -1,4 +1,7 @@
-import { NODE_SERVER_HISTORY_START_BOUND_MS } from './constants'
+import {
+  NodeRunHistoryRecorder,
+  type NodeRunHistoryBeginInput,
+} from './nodeRunHistoryRecorder'
 import {
   NodeServerHistorySinkImpl,
   type NodeServerHistorySinkInput,
@@ -8,216 +11,50 @@ import type {
   NodeServerEndInput,
   NodeServerHistoryWriter,
 } from './nodeServerHistoryWriter'
-import {
-  describeNodeServerSealFailure,
-  describeNodeServerSealTimeout,
-} from './utils/describeNodeServerSealFailure'
-import { sealWithTransientRetry } from './utils/sealWithTransientRetry'
-import {
-  SEAL_DEADLINE_PASSED,
-  startSealDeadline,
-} from './utils/startSealDeadline'
-import { startWithinBound } from './utils/startWithinBound'
-
-/** Where a server run's history stands: its writer takes entries, it was sealed, or it was abandoned because it could not be written or sealed. */
-export type NodeServerHistoryStatus = 'recording' | 'sealed' | 'failed'
 
 /** What {@link NodeServerHistoryRecorder.begin} needs from the service. */
-export type NodeServerHistoryBeginInput = {
-  /** Reserves the history and returns its writer; rejects when storage is unavailable, full or refuses the start. */
-  start: () => Promise<NodeServerHistoryWriter>
-  /** Words a failure for the learner without private paths. */
-  describeCause: (error: unknown) => string
-  sink: Omit<NodeServerHistorySinkInput, 'writer'>
-  /** The start's bound; {@link NODE_SERVER_HISTORY_START_BOUND_MS} unless a test names its own. */
-  startBoundMs?: number
-  /** Reads the sealed history's summary for the verdicts; `undefined` when it cannot be read. */
-  summarize: (studyId: string) => Promise<NodeServerHistorySummary | undefined>
-  /** Waits before the one retry of a transient seal failure. */
-  retryDelay?: (milliseconds: number) => Promise<void>
-}
+export type NodeServerHistoryBeginInput = NodeRunHistoryBeginInput<
+  NodeServerHistoryWriter,
+  Omit<NodeServerHistorySinkInput, 'writer'>,
+  NodeServerHistorySummary
+>
 
 /** The outcome of a start: the recorder, or why this run has no history (the live run goes on either way). */
 export type NodeServerHistoryBegun =
   { recorder: NodeServerHistoryRecorder } | { unavailable: string }
 
 /**
- * Owns one live node-server run's history from its start to its seal: the writer, the sink the run feeds, the one seal every ending joins, and the verdicts read once it sealed.
- * Why: Stop, `codebook_stop`, Save, dispose, self-exit and failure must give one seal, and a history that cannot start, be written or be sealed must never fail the run; this holds that state apart from {@link StudyService}.
+ * Owns one live node-server run's history from its start to its seal (see {@link NodeRunHistoryRecorder}).
  * Created by {@link StudyService} before it launches a node-server run; {@link NodeServerHistoryRecorder.seal} is called by its stop path.
  * @example
  * const begun = await NodeServerHistoryRecorder.begin(input)
  * if ('recorder' in begun) await begun.recorder.seal({ elapsedMs: 900, reason: 'stopped' }, 10_000)
  */
-export class NodeServerHistoryRecorder {
-  status: NodeServerHistoryStatus = 'recording'
-  /** Why the history was abandoned or its seal failed, without private paths. */
-  failure?: string
-  /** The sealed history's summary and journal hash, once sealed. */
-  sealed?: {
-    summary: NodeServerHistorySummary | undefined
-    hash: string | undefined
-    /** The number of the latest verdict read, so only that read writes the summary ({@link StudyService.refreshNodeServerSummary}). */
-    summaryReads?: number
-  }
-  private sealOperation?: Promise<void>
-
-  private constructor(
-    readonly writer: NodeServerHistoryWriter,
-    readonly sink: NodeServerHistorySinkImpl,
-    private readonly input: NodeServerHistoryBeginInput,
-  ) {}
-
+export class NodeServerHistoryRecorder extends NodeRunHistoryRecorder<
+  NodeServerHistoryWriter,
+  NodeServerHistorySinkImpl,
+  NodeServerHistorySummary,
+  NodeServerEndInput,
+  Omit<NodeServerHistorySinkInput, 'writer'>
+> {
   /**
    * Starts the history within its bound.
    * @param input - How to start, word and read the history.
-   * @returns The recorder, or the cause for a run that goes on without a history: storage unavailable, a full store, a refused start or a start slower than its bound (a late writer is sealed empty, which removes its folder).
+   * @returns The recorder, or the cause for a run that goes on without a history.
    * @example const begun = await NodeServerHistoryRecorder.begin(input) // => { recorder } | { unavailable: 'storage is full' }
    */
-  static async begin(
+  static begin(
     input: NodeServerHistoryBeginInput,
   ): Promise<NodeServerHistoryBegun> {
-    const bound = input.startBoundMs ?? NODE_SERVER_HISTORY_START_BOUND_MS
-    try {
-      const started = await startWithinBound(
-        input.start(),
-        bound,
-        // A start that finishes later is sealed with nothing in it, which removes its folder.
-        (late) => late.seal({ elapsedMs: 0, reason: 'stopped' }),
-      )
-      if ('timedOut' in started)
-        return {
-          unavailable: `the history did not start within ${bound / 1_000} s.`,
-        }
-      const sink = new NodeServerHistorySinkImpl({
-        ...input.sink,
-        writer: started.writer,
-      })
-      return {
-        recorder: new NodeServerHistoryRecorder(started.writer, sink, input),
-      }
-    } catch (error) {
-      return { unavailable: input.describeCause(error) }
-    }
-  }
-
-  /** Why the history stopped taking evidence while the run lives (a refused or failed append, a fault of the sink), without private paths; `undefined` while it writes. */
-  get appendFailure(): string | undefined {
-    const failure = this.writer.appendFailure
-    return failure ? this.input.describeCause(failure) : undefined
-  }
-
-  /** Whether the history still takes entries. Read by {@link NodeServerLearningSave}. */
-  // fallow-ignore-next-line unused-class-member
-  get isRecording(): boolean {
-    return this.status === 'recording'
-  }
-
-  /**
-   * Ends and seals the history; the first call decides, every later call joins it.
-   * @param end - How the run ended.
-   * @param boundMs - How long the seal may take; past it the writer is abandoned (the folder lists as interrupted) and the failure reads `Learning replay could not be saved: timed out after <s> s.`
-   * @returns Settles when the seal ended in a sealed or a failed state; never rejects. A seal published at the deadline settles at once sealed with an unknown summary, which the summary read fills when it answers.
-   * @example await recorder.seal({ elapsedMs: 900, reason: 'stopped' }, 10_000)
-   */
-  // fallow-ignore-next-line unused-class-member
-  seal(end: NodeServerEndInput, boundMs: number): Promise<void> {
-    this.sealOperation ??= this.runSeal(end, boundMs)
-    return this.sealOperation
-  }
-
-  /** Does the one seal: the output waiting to be coalesced first, then the writer's seal, bounded. */
-  private async runSeal(
-    end: NodeServerEndInput,
-    boundMs: number,
-  ): Promise<void> {
-    this.sink.flush()
-    const deadline = startSealDeadline(boundMs)
-    try {
-      const raced = await Promise.race([
-        this.sealWithRetry(end),
-        deadline.passed,
-      ])
-      // A writer whose seal is already published is never abandoned: the store lists it sealed, so the live run must read it sealed too.
-      const hash =
-        raced === SEAL_DEADLINE_PASSED ? this.writer.publishedSealHash : raced
-      if (raced === SEAL_DEADLINE_PASSED && hash === undefined) {
-        this.abandon(describeNodeServerSealTimeout(boundMs / 1_000))
-        return
-      }
-      this.status = 'sealed'
-      // The summary read is bounded too: past the bound the seal stands and the summary reads as unknown, so a stalled read never holds Stop, Save or the next run.
-      const reading = this.startSummaryRead()
-      // After an expiry the shared deadline already settled: the seal settles at once with an unknown summary and the read fills it when it answers; otherwise the read shares the seal's deadline.
-      const summary =
-        raced === SEAL_DEADLINE_PASSED
-          ? undefined
-          : await Promise.race([reading, deadline.passed.then(() => undefined)])
-      this.sealed = { summary, hash }
-      if (raced === SEAL_DEADLINE_PASSED)
-        this.fillSummaryWhenRead(reading, this.sealed)
-    } catch (error) {
-      // A seal that was published before the fault (a cleanup after the rename) is never abandoned: the store lists it sealed, so the run reads it sealed too.
-      const publishedHash = this.writer.publishedSealHash
-      if (publishedHash !== undefined) {
-        this.status = 'sealed'
-        // The read shares the seal's own deadline, so the whole seal settles within one bound.
-        const summary = await Promise.race([
-          this.startSummaryRead(),
-          deadline.passed.then(() => undefined),
-        ])
-        this.sealed = { summary, hash: publishedHash }
-        return
-      }
-      this.abandon(
-        describeNodeServerSealFailure(this.input.describeCause(error)),
-      )
-    } finally {
-      deadline.cancel()
-    }
-  }
-
-  /**
-   * Fills an unknown summary of a sealed state when its late read answers, without ever holding the seal.
-   * Why: a seal published at the deadline still deserves its verdicts; called by {@link NodeServerHistoryRecorder.runSeal} after an expiry.
-   * Nothing is notified: the run resource and Save read the store again, so the next read shows the summary.
-   * @param reading - The read from {@link NodeServerHistoryRecorder.startSummaryRead}; it never rejects.
-   * @param target - The sealed state the read was started for; a replaced state or a summary another read set is left alone.
-   */
-  private fillSummaryWhenRead(
-    reading: Promise<NodeServerHistorySummary | undefined>,
-    target: NonNullable<NodeServerHistoryRecorder['sealed']>,
-  ): void {
-    void reading.then((summary) => {
-      // Only the same sealed state with a still unknown summary takes the late answer.
-      if (summary && this.sealed === target && target.summary === undefined)
-        target.summary = summary
-    })
-  }
-
-  /**
-   * Starts the verdict read of the sealed history so that nothing it does can reject {@link NodeServerHistoryRecorder.seal}.
-   * Why: a synchronous throw of the reader would otherwise escape the seal; called by {@link NodeServerHistoryRecorder.runSeal} on every path that reads a summary.
-   * @returns The summary, or `undefined` when the read threw or rejected.
-   */
-  private startSummaryRead(): Promise<NodeServerHistorySummary | undefined> {
-    return Promise.resolve()
-      .then(() => this.input.summarize(this.writer.header.studyId))
-      .catch(() => undefined)
-  }
-
-  /** Abandons the writer, so a late seal publishes nothing and the folder lists as interrupted. */
-  private abandon(cause: string): void {
-    this.writer.abandon()
-    this.status = 'failed'
-    this.failure = cause
-  }
-
-  /** Seals, and once more after a short wait when the first attempt failed with a transient file-system code. */
-  private sealWithRetry(end: NodeServerEndInput): Promise<string | undefined> {
-    return sealWithTransientRetry(
-      () => this.writer.seal(end),
-      this.input.retryDelay,
+    return NodeRunHistoryRecorder.beginWith(
+      input,
+      (writer) =>
+        new NodeServerHistoryRecorder(
+          writer,
+          new NodeServerHistorySinkImpl({ ...input.sink, writer }),
+          input,
+        ),
+      (late) => late.seal({ elapsedMs: 0, reason: 'stopped' }),
     )
   }
 }

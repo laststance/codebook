@@ -6,12 +6,22 @@ import {
   type ProcessOutputOptions,
 } from './captureProcessOutput'
 
+/** How an owned process ended, as its `exit` event reports it. */
+export type OwnedProcessExitFact = {
+  exitCode: number | null
+  signal: NodeJS.Signals | null
+}
+
 /** What an owned launcher follows of the process it spawned: its exit, a start failure and its redacted output. */
 export type WatchedProcess = {
   /** Settles when the process has closed (exited and its streams ended). */
   exit: Promise<void>
   /** Says whether the process has closed. */
   hasExited(): boolean
+  /** Settles when the process has exited, which its `exit` event reports before `close`, or with no code and no signal when it never started: a descendant that holds the output pipes open delays `close` but not this. */
+  exitEvent: Promise<OwnedProcessExitFact>
+  /** How the process ended once its `exit` event fired, or `undefined` before. */
+  exitFact(): OwnedProcessExitFact | undefined
   /** The process's start failure, else its output capture's first failure, if any. */
   failure(): Error | undefined
   /** The redacted output capture ({@link captureProcessOutput}). */
@@ -19,7 +29,7 @@ export type WatchedProcess = {
 }
 
 /**
- * Follows an owned process from the moment it is spawned: its close, a failure to start, and its output through the redacted capture.
+ * Follows an owned process from the moment it is spawned: its exit event and its close, a failure to start, and its output through the redacted capture.
  * Called by {@link launchNodeTest} and {@link launchNodeServer} right after `spawn`, before any event can be missed.
  * @param child - The spawned process.
  * @param output - How its output is stamped, delivered and bounded ({@link ProcessOutputOptions}).
@@ -33,19 +43,34 @@ export function watchOwnedProcess(
   output: ProcessOutputOptions,
 ): WatchedProcess {
   let spawnError: Error | undefined,
-    exited = false
+    exited = false,
+    exitFact: OwnedProcessExitFact | undefined
   const exit = new Promise<void>((resolve) =>
     child.once('close', () => {
       exited = true
       resolve()
     }),
   )
-  child.once('error', (cause) => {
-    spawnError = cause
+  const exitEvent = new Promise<OwnedProcessExitFact>((resolve) => {
+    child.once('exit', (exitCode, signal) => {
+      exitFact = { exitCode, signal }
+      resolve(exitFact)
+    })
+    // A spawn failure emits `error` and no `exit`: settle with a fact that says the process never ran, so a waiter does not hang. `exitFact()` stays `undefined`.
+    // `error` also fires on a live child (failed kill or signal, failed message, stdio error): the process may still run, so only a child with no pid (never spawned) settles here and the real `exit` settles the rest.
+    child.once('error', () => {
+      if (child.pid === undefined) resolve({ exitCode: null, signal: null })
+    })
+  })
+  // Every `error` event needs a listener (an unheard one throws in the extension host); the first cause is the one reported.
+  child.on('error', (cause) => {
+    spawnError ??= cause
   })
   const capture = captureProcessOutput(child, output)
   return {
     exit,
+    exitEvent,
+    exitFact: () => exitFact,
     hasExited: () => exited,
     failure: () => spawnError ?? capture.failure(),
     capture,

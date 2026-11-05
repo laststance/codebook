@@ -1,10 +1,12 @@
+import type { NodeScriptHistoryRecorder } from '../nodeScriptHistoryRecorder'
+import type { NodeScriptHistorySummary } from '../nodeScriptHistoryTypes'
 import type { NodeServerHistoryRecorder } from '../nodeServerHistoryRecorder'
 import type { NodeServerHistorySummary } from '../nodeServerHistoryTypes'
 
-/** What {@link projectNodeServerHistory} reads of a server run's history. */
+/** What {@link projectNodeServerHistory} reads of a server or script run's history. */
 export type NodeServerHistoryProjectionInput = {
   studyId: string
-  recorder: NodeServerHistoryRecorder | undefined
+  recorder: NodeServerHistoryRecorder | NodeScriptHistoryRecorder | undefined
   /** Why no history started, when none did. */
   unavailable: string | undefined
   /** The history resource of this run, `codebook://node-history/<studyId>`. */
@@ -25,7 +27,9 @@ export type NodeServerHistoryProjection = {
   historyUri?: string
   historyIssue?: NodeServerHistoryIssue
   learningCoverage?: NodeServerHistorySummary['learningCoverage']
-  learningMissing?: NodeServerHistorySummary['learningMissing']
+  learningMissing?:
+    | NodeServerHistorySummary['learningMissing']
+    | NodeScriptHistorySummary['learningMissing']
   learningMissingCount?: number
   captureMissing?: NodeServerHistorySummary['captureMissing']
   captureMissingCount?: number

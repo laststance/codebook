@@ -20,6 +20,7 @@ function fieldPath(path: readonly PropertyKey[]): string {
  * Words every violation of a refused node-server declaration, each with its field path and the expected value or range, and names the profile's help, so that one `INVALID_CONFIGURATION` answer lets the agent fix all of them before its next start.
  * Called by the node-server start when {@link nodeServerConfigSchema} refuses a declaration.
  * @param issues - The schema's issues for the declaration.
+ * @param profile - The profile whose help the answer names; node-server unless a node-script declaration was refused.
  * @returns One sentence per distinct violation (`configuration.<field>: <expectation>`), in the schema's order, then `See codebook://help/node-server.`
  * @example
  * describeNodeServerConfigurationIssues(nodeServerConfigSchema.safeParse({ ...declaration, port: 80 }).error.issues)
@@ -27,6 +28,7 @@ function fieldPath(path: readonly PropertyKey[]): string {
  */
 export function describeNodeServerConfigurationIssues(
   issues: readonly z.core.$ZodIssue[],
+  profile: 'node-server' | 'node-script' = 'node-server',
 ): string {
   const sentences = issues.map((issue) => {
     const field = fieldPath(issue.path)
@@ -36,5 +38,5 @@ export function describeNodeServerConfigurationIssues(
       : issue.message
     return `${field}: ${/[.!?]$/.test(message) ? message : `${message}.`}`
   })
-  return [...new Set(sentences), 'See codebook://help/node-server.'].join(' ')
+  return [...new Set(sentences), `See codebook://help/${profile}.`].join(' ')
 }

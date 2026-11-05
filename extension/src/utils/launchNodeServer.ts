@@ -247,15 +247,16 @@ export async function launchNodeServer(
   const launchedStart = child.pid
     ? readProcessStart(child.pid).catch(() => undefined)
     : undefined
-  const { exit, hasExited, failure, capture } = watchOwnedProcess(child, {
-    startedAt,
-    onOutput,
-    pendingLimitBytes: NODE_SERVER_OUTPUT_PENDING_LIMIT_BYTES,
-    overflowMessage:
-      'Node server output capture failed: output outpaced its delivery beyond its limit.',
-    failurePrefix: 'Node server output capture failed',
-    ...(launch.privateRoots ? { privateRoots: launch.privateRoots } : {}),
-  })
+  const { exit, exitEvent, exitFact, hasExited, failure, capture } =
+    watchOwnedProcess(child, {
+      startedAt,
+      onOutput,
+      pendingLimitBytes: NODE_SERVER_OUTPUT_PENDING_LIMIT_BYTES,
+      overflowMessage:
+        'Node server output capture failed: output outpaced its delivery beyond its limit.',
+      failurePrefix: 'Node server output capture failed',
+      ...(launch.privateRoots ? { privateRoots: launch.privateRoots } : {}),
+    })
   const exitOf = (): NodeServerExit => ({
     exitCode: child.exitCode,
     signal: child.signalCode,
@@ -288,6 +289,10 @@ export async function launchNodeServer(
     /** How the process ended, or `undefined` while it runs. @example server.exited() // => { exitCode: 3, signal: null } */
     exited: (): NodeServerExit | undefined =>
       hasExited() ? exitOf() : undefined,
+    /** How the process ended once its `exit` event fired, or `undefined` before. Unlike {@link exited} it does not wait for the output pipes to close, so a descendant that holds them open does not hide the leader's exit. @example server.exitedEvent() // => { exitCode: 0, signal: null } */
+    exitedEvent: (): NodeServerExit | undefined => exitFact(),
+    /** Settles with how the process ended at its `exit` event, before `close` when a descendant holds the pipes open. @example (await server.whenExitEvent()).signal // => null */
+    whenExitEvent: (): Promise<NodeServerExit> => exitEvent,
     /** Settles with how the process ended once it exits, however long that takes; the run watches it to learn of an exit nobody asked for. @example (await server.whenExited()).exitCode // => 3 */
     whenExited: (): Promise<NodeServerExit> => exit.then(exitOf),
     /** Waits for this process's complete inspector announcement within {@link NODE_TEST_ATTACH_TIMEOUT_MS}, never guessing an endpoint from a partial line. @example await server.inspectorEndpoint(signal) // => 'ws://127.0.0.1:58209/…' */

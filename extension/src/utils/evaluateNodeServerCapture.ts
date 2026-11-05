@@ -13,6 +13,21 @@ import type {
 import { cutSealReasonPath } from './cutSealReasonPath'
 import { isPresentableServerStop } from './isPresentableServerStop'
 
+/** The codes of the reasons every node run profile shares for stops, snapshots, sources, values, appends, size, capture budget and output; a profile names its own so its history never shows another profile's codes. */
+export type NodeRunSharedReasonCodes = Readonly<
+  Record<
+    | 'stopNotReached'
+    | 'snapshotMissing'
+    | 'sourceUnavailable'
+    | 'valueUnavailable'
+    | 'appendFailed'
+    | 'sizeLimit'
+    | 'captureBudgetExhausted'
+    | 'outputTruncated',
+    string
+  >
+>
+
 /** What only the writer knows when it seals: the failed append, the bounds it reached and the run's capture budget. */
 export type NodeServerCaptureFacts = {
   /** The first failed append: the entry before the gap and the failure's cause (already without private paths). */
@@ -29,11 +44,13 @@ export type NodeServerCaptureFacts = {
  * @returns `stop 2 (entry 14)`, `the request (entry 3)`, `the response (entry 9)` or `output (entry 5)`.
  * @example describeLastNodeServerEntry(stopEntry) // => 'stop 2 (entry 14)'
  */
-export function describeLastNodeServerEntry(
-  entry: NodeServerHistoryEntry,
-): string {
+export function describeLastNodeServerEntry(entry: {
+  type: string
+  sequence: number
+  declaredStopIndex?: number
+}): string {
   const where = `(entry ${entry.sequence})`
-  if (entry.type === 'stop')
+  if (entry.type === 'stop' && entry.declaredStopIndex !== undefined)
     return `stop ${entry.declaredStopIndex + 1} ${where}`
   if (entry.type === 'request') return `the request ${where}`
   if (entry.type === 'response') return `the response ${where}`
@@ -93,22 +110,50 @@ function noResponseReason(
   }
 }
 
-/** The reasons of the stops a history holds: unreached declared stops, unpresentable snapshots, executed sources that were not stored and unreadable values. */
-function stopReasons(
+/**
+ * Lists the declared stops with no recorded hit as seal reasons, in declared order.
+ * @param header - The history's header (the declared stops).
+ * @param stops - The stop entries the journal holds.
+ * @param reasonOf - Words the reason of one unreached declared stop from its 0-based index.
+ * @returns One reason per unreached declared stop.
+ * @example unreachedStopReasons(header, [], (index) => ({ code: 'X', params: {}, text: `Stop ${index + 1}.` })) // => [{ code: 'X', … }]
+ */
+export function unreachedStopReasons(
   header: Pick<NodeServerHistoryHeader, 'declaredStops'>,
   stops: readonly NodeServerStopEntry[],
+  reasonOf: (declaredStopIndex: number) => NodeServerSealReason,
+): NodeServerSealReason[] {
+  const reached = new Set(stops.map((stop) => stop.declaredStopIndex))
+  return header.declaredStops.flatMap((_declared, index) =>
+    reached.has(index) ? [] : [reasonOf(index)],
+  )
+}
+
+/**
+ * The reason of a declared stop the run never reached.
+ * @param index - The 0-based declared stop index.
+ * @param codes - The profile's codes; the node-server ones by default.
+ * @returns The reason.
+ * @example stopNotReachedReason(1).params // => { stop: 2 }
+ */
+export function stopNotReachedReason(
+  index: number,
+  codes: NodeRunSharedReasonCodes = CODES,
+): NodeServerSealReason {
+  return {
+    code: codes.stopNotReached,
+    params: { stop: index + 1 },
+    text: `Declared stop ${index + 1} was not reached.`,
+  }
+}
+
+/** The reasons of the stops a history holds: unpresentable snapshots, executed sources that were not stored and unreadable values. */
+export function capturedStopReasons(
+  stops: readonly NodeServerStopEntry[],
   sources: readonly NodeServerSourceEntry[],
+  codes: NodeRunSharedReasonCodes = CODES,
 ): NodeServerSealReason[] {
   const reasons: NodeServerSealReason[] = []
-  const reached = new Set(stops.map((stop) => stop.declaredStopIndex))
-  header.declaredStops.forEach((_declared, index) => {
-    if (!reached.has(index))
-      reasons.push({
-        code: CODES.stopNotReached,
-        params: { stop: index + 1 },
-        text: `Declared stop ${index + 1} was not reached.`,
-      })
-  })
   const reportedSnapshots = new Set<number>()
   const reportedSources = new Set<number>()
   for (const stop of stops) {
@@ -119,7 +164,7 @@ function stopReasons(
     ) {
       reportedSnapshots.add(stop.declaredStopIndex)
       reasons.push({
-        code: CODES.snapshotMissing,
+        code: codes.snapshotMissing,
         params: { stop: number, hit: stop.hit },
         text: `The debugger state at stop ${number} was not recorded.`,
       })
@@ -137,7 +182,7 @@ function stopReasons(
     ) {
       reportedSources.add(stop.declaredStopIndex)
       reasons.push({
-        code: CODES.sourceUnavailable,
+        code: codes.sourceUnavailable,
         params: { stop: number, reason: unstored.sourceUnavailable },
         text: `The source at stop ${number} was not recorded (${unstored.sourceUnavailable}).`,
       })
@@ -145,7 +190,7 @@ function stopReasons(
     for (const value of stop.unavailable) {
       const path = cutSealReasonPath(value.path)
       reasons.push({
-        code: CODES.valueUnavailable,
+        code: codes.valueUnavailable,
         params: { path, stop: number, hit: stop.hit },
         text: `${path} at stop ${number} could not be read.`,
       })
@@ -174,34 +219,56 @@ export function evaluateNodeServerCapture(
     facts.interrupted === true && !facts.appendFailure,
   )
   if (noResponse) reasons.push(noResponse)
+  const stops = entries.filter((entry) => entry.type === 'stop')
   reasons.push(
-    ...stopReasons(
-      header,
-      entries.filter((entry) => entry.type === 'stop'),
+    ...unreachedStopReasons(header, stops, stopNotReachedReason),
+    ...capturedStopReasons(
+      stops,
       entries.filter((entry) => entry.type === 'source'),
     ),
+    ...closingReasons(
+      facts,
+      entries.some((entry) => entry.type === 'output-truncated'),
+    ),
   )
+  return reasons
+}
+
+/**
+ * The reasons only the writer's seal and the bounds know, shared by every node run profile: the failed append, the size limit, the spent capture budget and the cut output.
+ * @param facts - What the writer knows when it seals.
+ * @param outputTruncated - Whether the journal holds an `output-truncated` entry.
+ * @param codes - The profile's codes; the node-server ones by default.
+ * @returns The reasons that hold, in the table's order.
+ * @example closingReasons({ sizeLimitReached: true }, false)[0]?.code // => 'SERVER_HISTORY_SIZE_LIMIT'
+ */
+export function closingReasons(
+  facts: NodeServerCaptureFacts,
+  outputTruncated: boolean,
+  codes: NodeRunSharedReasonCodes = CODES,
+): NodeServerSealReason[] {
+  const reasons: NodeServerSealReason[] = []
   if (facts.appendFailure)
     reasons.push({
-      code: CODES.appendFailed,
+      code: codes.appendFailed,
       params: facts.appendFailure,
       text: `The history could not be written after ${facts.appendFailure.lastEntry}: ${facts.appendFailure.cause}.`,
     })
   if (facts.sizeLimitReached)
     reasons.push({
-      code: CODES.sizeLimit,
+      code: codes.sizeLimit,
       params: {},
       text: 'The history reached its size limit; later events were not recorded.',
     })
   if (facts.captureBudgetExhausted)
     reasons.push({
-      code: CODES.captureBudgetExhausted,
+      code: codes.captureBudgetExhausted,
       params: { hits: NODE_SERVER_REQUEST_CAPTURE_LIMIT },
       text: `The capture budget (${NODE_SERVER_REQUEST_CAPTURE_LIMIT} stop hits) was used up; later hits were not recorded.`,
     })
-  if (entries.some((entry) => entry.type === 'output-truncated'))
+  if (outputTruncated)
     reasons.push({
-      code: CODES.outputTruncated,
+      code: codes.outputTruncated,
       params: {},
       text: 'The history cut its output at the output budget; later output was not recorded.',
     })

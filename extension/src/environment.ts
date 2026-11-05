@@ -22,6 +22,8 @@ import {
   WSL_REMOTE_NAME,
 } from './constants'
 import { StudyError } from './errors'
+import type { NodeScriptConfiguration } from './nodeScriptConfigSchemas'
+import type { NodeScriptHistorySink } from './nodeScriptHistorySink'
 import type { NodeServerConfiguration } from './nodeServerConfigSchemas'
 import type { NodeServerHistorySink } from './nodeServerHistorySink'
 import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
@@ -56,6 +58,7 @@ import { composeAdapterReadiness } from './utils/composeAdapterReadiness'
 import { createChromeExecutableLookup } from './utils/createChromeExecutableLookup'
 import { createLearnerSecretAsker } from './utils/createLearnerSecretAsker'
 import { createMemoryOrphanStore } from './utils/createMemoryOrphanStore'
+import { createNodeScriptRunAsker } from './utils/createNodeScriptRunAsker'
 import { createNodeServerRunUtilities } from './utils/createNodeServerRunUtilities'
 import { createSavedSessionOperationsAsker } from './utils/createSavedSessionOperationsAsker'
 import { declaredStopOfSnapshot } from './utils/declaredStopOfSnapshot'
@@ -368,6 +371,21 @@ export async function createEnvironment(
         ...items,
       ),
   )
+  // One asker for the window's life: an answer to a dialog whose run already ended only shows a notice.
+  const confirmNodeScriptRun = createNodeScriptRunAsker(
+    (message, detail, ...items) =>
+      vscode.window.showWarningMessage(
+        message,
+        { modal: true, detail },
+        ...items,
+      ),
+    (shortRunId) =>
+      void showPlainNotice(
+        vscode.window,
+        'information',
+        `Codebook did not run the script: run ${shortRunId} already ended before the question was answered. Ask the chat to start a new run if you still want it.`,
+      ),
+  )
   // Each ask of the saved-session operations question is its own native modal (ENG-6).
   const confirmSavedSessionOperations = createSavedSessionOperationsAsker(
     (message, detail, ...items) =>
@@ -428,6 +446,7 @@ export async function createEnvironment(
         checkedConfigured,
         vitestSearch,
         machineMissing,
+        scriptMachineMissing,
       ] = await Promise.all([
         resolvePrerequisites(),
         // Even during a run, recheck dependencies and directories; only its exact live lock is permitted.
@@ -447,6 +466,8 @@ export async function createEnvironment(
         })),
         // The machine's part of node-server: a supported system, a listener tool and ps.
         nodeServerMachineGaps(),
+        // The machine's part of node-script: the same system and ps, but no listener tool.
+        nodeServerMachineGaps({ profile: 'node-script' }),
       ])
       // A managed run that is preparing or releasing blocks a new start under either adapter.
       const managedRunState = releasingConfiguredRun
@@ -537,6 +558,11 @@ export async function createEnvironment(
             ready: nodeMissing.length === 0 && machineMissing.length === 0,
             missing: [...nodeMissing, ...machineMissing],
           },
+          'node-script': {
+            ready:
+              nodeMissing.length === 0 && scriptMachineMissing.length === 0,
+            missing: [...nodeMissing, ...scriptMachineMissing],
+          },
           'chrome-extension': (() => {
             // The editor's gaps (a disabled js-debug, a workspace mismatch) count; the Node executable does not.
             const gaps = chromeExtensionGaps(
@@ -617,6 +643,14 @@ export async function createEnvironment(
       const [{ nodeMissing }, machineMissing] = await Promise.all([
         resolveNodePrerequisites(),
         nodeServerMachineGaps(),
+      ])
+      const missing = [...nodeMissing, ...machineMissing]
+      return { ready: missing.length === 0, missing }
+    },
+    async nodeScriptStartPrerequisites() {
+      const [{ nodeMissing }, machineMissing] = await Promise.all([
+        resolveNodePrerequisites(),
+        nodeServerMachineGaps({ profile: 'node-script' }),
       ])
       const missing = [...nodeMissing, ...machineMissing]
       return { ready: missing.length === 0, missing }
@@ -711,6 +745,42 @@ export async function createEnvironment(
         dependencies: createProductNodeServerRunDependencies({
           node,
           utilities: createNodeServerRunUtilities(orphanStore),
+        }),
+      })
+    },
+    async createNodeScriptRun(
+      configuration: NodeScriptConfiguration,
+      record: (type: string, detail?: unknown) => unknown,
+      citedSources: ConfiguredDescriptor['sources'],
+      runId: string,
+      history?: NodeScriptHistorySink,
+      privateRoots?: CauseRoots,
+      traceUri?: string,
+    ) {
+      const node = await resolveExternalNode(
+        await requireNodeRunPrerequisites('the Node script run'),
+      )
+      // Load the VS Code-backed run only after a caller selects this profile; environment unit tests run in plain Node.
+      const [
+        { createOwnedNodeScriptRun },
+        { createProductNodeScriptRunDependencies },
+      ] = await Promise.all([
+        import('./ownedNodeScriptRun.js'),
+        import('./nodeScriptRunDependencies.js'),
+      ])
+      return createOwnedNodeScriptRun({
+        workspace,
+        configuration,
+        record,
+        citedSources,
+        runId,
+        history,
+        traceUri,
+        ...(privateRoots ? { privateRoots } : {}),
+        dependencies: createProductNodeScriptRunDependencies({
+          node,
+          orphanStore,
+          confirmRun: confirmNodeScriptRun,
         }),
       })
     },

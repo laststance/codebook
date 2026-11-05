@@ -16,10 +16,12 @@ import {
   PRESENTATION_FOCUS_ACTIONS,
   STUDY_REMOVAL_REFUSALS,
   STUDY_REMOVAL_REFUSALS_WITHOUT_TRASH,
+  STUDY_REMOVAL_SCRIPT_HISTORY_REFUSAL,
   STUDY_REMOVAL_SERVER_HISTORY_REFUSAL,
   STUDY_REMOVAL_WITHOUT_TRASH_MESSAGE,
 } from '../constants'
 import { NODE_EXTENSION_REPLAY_TEXT } from '../utils/describeExtensionReplay'
+import { NODE_SCRIPT_REPLAY_TEXT } from '../utils/describeNodeScriptReplay'
 import { NODE_SERVER_REPLAY_TEXT } from '../utils/describeNodeServerReplay'
 import { NODE_TEST_REPLAY_TEXT } from '../utils/describeNodeTestReplay'
 import type { ShortcutHelpEntry } from '../utils/installShortcutHelp'
@@ -56,6 +58,9 @@ const TEST_PLAYHEAD_SELECTOR =
 /** The shared slider while it shows a server replay: the page marks it with its profile, so a server replay's shortcut entries name a server replay and never a test. */
 const SERVER_PLAYHEAD_SELECTOR =
   '#playhead[data-replay-family="test"][data-replay-profile="node-server"]'
+/** The shared slider while it shows a script replay: the page marks it with its profile, so a script replay's shortcut entries name a script replay. */
+const SCRIPT_PLAYHEAD_SELECTOR =
+  '#playhead[data-replay-family="test"][data-replay-profile="node-script"]'
 /** The shared slider while it shows an Extension replay: the page marks it with its profile, so an Extension replay's shortcut entries name an Extension replay and never a test. */
 const EXTENSION_PLAYHEAD_SELECTOR =
   '#playhead[data-replay-family="test"][data-replay-profile="chrome-extension"]'
@@ -81,6 +86,13 @@ const SERVER_REPLAY_TIMELINE_SHORTCUTS: ShortcutHelpEntry[] =
     ...entry,
     context: 'Focused server replay timeline',
     selector: SERVER_PLAYHEAD_SELECTOR,
+  }))
+/** The script replay timeline's keys: the test replay's, under the script replay's own name and slider. */
+const SCRIPT_REPLAY_TIMELINE_SHORTCUTS: ShortcutHelpEntry[] =
+  TEST_REPLAY_TIMELINE_SHORTCUTS.map((entry) => ({
+    ...entry,
+    context: 'Focused script replay timeline',
+    selector: SCRIPT_PLAYHEAD_SELECTOR,
   }))
 /** The Extension replay timeline's keys: the test replay's, under the Extension replay's own name and slider. */
 const EXTENSION_REPLAY_TIMELINE_SHORTCUTS: ShortcutHelpEntry[] =
@@ -139,6 +151,7 @@ export const STUDY_SHORTCUTS: ShortcutHelpEntry[] = [
   },
   ...TEST_REPLAY_TIMELINE_SHORTCUTS,
   ...SERVER_REPLAY_TIMELINE_SHORTCUTS,
+  ...SCRIPT_REPLAY_TIMELINE_SHORTCUTS,
   ...EXTENSION_REPLAY_TIMELINE_SHORTCUTS,
   {
     action: 'Previous / next content tab',
@@ -178,6 +191,8 @@ export const STUDY_UI_OPTIONS = {
   testReplay: NODE_TEST_REPLAY_TEXT,
   /** A server replay's fixed words, with the same keys; the pane switches to them while a server replay is shown. */
   serverReplay: NODE_SERVER_REPLAY_TEXT,
+  /** A script replay's fixed words, with the same keys; the pane switches to them while a script replay is shown. */
+  scriptReplay: NODE_SCRIPT_REPLAY_TEXT,
   /** An Extension replay's fixed words, with the same keys; the pane switches to them while an Extension replay is shown. */
   extensionReplay: NODE_EXTENSION_REPLAY_TEXT,
   /** The words of both transports' coverage strips. */
@@ -235,6 +250,7 @@ export const STUDY_UI_OPTIONS = {
   studyRemovalRefusalsWithoutTrash: STUDY_REMOVAL_REFUSALS_WITHOUT_TRASH,
   // Why a server replay cannot be deleted, in the words of a window with a Trash and of one without.
   serverHistoryRefusal: STUDY_REMOVAL_SERVER_HISTORY_REFUSAL,
+  scriptHistoryRefusal: STUDY_REMOVAL_SCRIPT_HISTORY_REFUSAL,
   // The note under the Saved studies list for a chosen entry that cannot be opened, and for one whose catalog checkpoint can be repaired: each says what is wrong and what the learner can still do in a window with a Trash and in one without.
   studyNotes: {
     unopenable: {
@@ -269,6 +285,10 @@ export const STUDY_UI_OPTIONS = {
   ).join('; '),
   // The same tooltip while the slider shows a server replay: its own name for the context, never `test`.
   serverReplayTimelineTitle: SERVER_REPLAY_TIMELINE_SHORTCUTS.map(
+    (entry) => `${entry.action} — ${entry.keys} (${entry.context})`,
+  ).join('; '),
+  // The same tooltip while the slider shows a script replay: its own name for the context.
+  scriptReplayTimelineTitle: SCRIPT_REPLAY_TIMELINE_SHORTCUTS.map(
     (entry) => `${entry.action} — ${entry.keys} (${entry.context})`,
   ).join('; '),
   // The same tooltip while the slider shows an Extension replay: its own name for the context.

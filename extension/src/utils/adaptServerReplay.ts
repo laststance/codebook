@@ -48,52 +48,101 @@ function sanitizeServerReplayModel(
   model: ServerReplayModel,
 ): ServerReplayModel {
   const shownOutput = stripOutputEntries(model.events)
-  const events = model.events.map((event): ServerReplayEvent => {
-    switch (event.type) {
-      case 'output':
-        return { ...event, text: shownOutput.get(event.sequence)! }
-      case 'request':
-        return { ...event, path: stripTerminalControls(event.path) }
-      case 'request-withdrawn':
-        return { ...event, code: stripTerminalControls(event.code) }
-      case 'stop':
-        return {
-          ...event,
-          source: {
-            ...event.source,
-            path: stripTerminalControls(event.source.path),
-          },
-          frame: { name: stripTerminalControls(event.frame.name) },
-        }
-      case 'response':
-        return {
-          ...event,
-          contentType:
-            event.contentType === null
-              ? null
-              : stripTerminalControls(event.contentType),
-          body: stripTerminalControls(event.body),
-          location:
-            event.location === null
-              ? null
-              : stripTerminalControls(event.location),
-        }
-      case 'request-failed':
-        return {
-          ...event,
-          code: stripTerminalControls(event.code),
-          message: stripTerminalControls(event.message),
-        }
-    }
-  })
+  const events = model.events.map((event) =>
+    sanitizeServerReplayEvent(event, shownOutput),
+  )
   const terminal = events.find(
-    (event) => event.type === 'response' || event.type === 'request-failed',
+    (event) =>
+      event.type === 'response' ||
+      event.type === 'request-failed' ||
+      event.type === 'end',
   )
   return {
     ...model,
     events,
-    ...(terminal?.type === 'response' || terminal?.type === 'request-failed'
+    ...(terminal?.type === 'response' ||
+    terminal?.type === 'request-failed' ||
+    terminal?.type === 'end'
       ? { terminal }
+      : {}),
+  }
+}
+
+/**
+ * Removes terminal and bidirectional controls from one recorded event of a server or script replay; called by {@link sanitizeServerReplayModel} for each event.
+ * @param event - The recorded event.
+ * @param shownOutput - Each output event's text as {@link stripOutputEntries} read its channel, by sequence.
+ * @returns The event with every printed text stripped; hashes, lines, columns, snapshots and counts untouched.
+ * @example sanitizeServerReplayEvent({ type: 'request', path: '/a\u202E', … }, shown) // => { type: 'request', path: '/a', … }
+ */
+function sanitizeServerReplayEvent(
+  event: ServerReplayEvent,
+  shownOutput: ReadonlyMap<number, string>,
+): ServerReplayEvent {
+  switch (event.type) {
+    case 'output':
+      return { ...event, text: shownOutput.get(event.sequence)! }
+    case 'request':
+      return { ...event, path: stripTerminalControls(event.path) }
+    case 'request-withdrawn':
+      return { ...event, code: stripTerminalControls(event.code) }
+    case 'stop':
+      return {
+        ...event,
+        source: {
+          ...event.source,
+          path: stripTerminalControls(event.source.path),
+        },
+        frame: { name: stripTerminalControls(event.frame.name) },
+      }
+    case 'response':
+      return sanitizeResponseEvent(event)
+    case 'request-failed':
+      return {
+        ...event,
+        code: stripTerminalControls(event.code),
+        message: stripTerminalControls(event.message),
+      }
+    case 'end':
+      return sanitizeEndEvent(event)
+  }
+}
+
+/**
+ * Strips a recorded response's printed texts; called by {@link sanitizeServerReplayEvent}.
+ * @param event - The recorded response.
+ * @returns The response with its content type, body and location stripped, `null` kept as `null`.
+ * @example sanitizeResponseEvent({ type: 'response', body: 'ok\u202E', contentType: null, location: null, … }) // => { …, body: 'ok' }
+ */
+function sanitizeResponseEvent(
+  event: Extract<ServerReplayEvent, { type: 'response' }>,
+): ServerReplayEvent {
+  return {
+    ...event,
+    contentType:
+      event.contentType === null
+        ? null
+        : stripTerminalControls(event.contentType),
+    body: stripTerminalControls(event.body),
+    location:
+      event.location === null ? null : stripTerminalControls(event.location),
+  }
+}
+
+/**
+ * Strips a script end's printed texts (its signal and the reason its exit code is unknown); called by {@link sanitizeServerReplayEvent}.
+ * @param event - The recorded end of a script run.
+ * @returns The end with those texts stripped; fields it lacks stay absent.
+ * @example sanitizeEndEvent({ type: 'end', kind: 'signal', signal: 'SIGTERM', … }) // => same end
+ */
+function sanitizeEndEvent(
+  event: Extract<ServerReplayEvent, { type: 'end' }>,
+): ServerReplayEvent {
+  return {
+    ...event,
+    ...(event.signal ? { signal: stripTerminalControls(event.signal) } : {}),
+    ...(event.exitUnknown
+      ? { exitUnknown: stripTerminalControls(event.exitUnknown) }
       : {}),
   }
 }
@@ -189,7 +238,8 @@ function toTestShapedHistory(model: ServerReplayModel): NodeTestHistoryIndex {
       createdAt: header.createdAt,
       configuration: {
         testFile: stripTerminalControls(
-          header.declaredStops[0]?.path ?? 'server',
+          header.declaredStops[0]?.path ??
+            (header.profile === 'node-script' ? 'script' : 'server'),
         ),
       },
     },

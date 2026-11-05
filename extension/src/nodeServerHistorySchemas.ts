@@ -27,12 +27,36 @@ import { replayDebugSnapshotSchema } from './replayDebugSchemas'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { repositoryHashSchema } from './sourceSchemas'
 
-const base = {
+/** The fields every entry of a node run's journal (server or script) carries: its consecutive `sequence` and the `elapsedMs` since launch. */
+export const nodeRunEntryBase = {
   sequence: z.number().int().positive().max(NODE_SERVER_HISTORY_MAX_ENTRIES),
   elapsedMs: z.number().finite().nonnegative(),
 }
+const base = nodeRunEntryBase
 const attempt = z.number().int().positive()
 const repositoryPath = z.string().min(1).max(REPOSITORY_PATH_LIMIT_CHARS)
+
+/** The declared stops a node run's header lists (server or script): a repository path and a line, at least one and at most the run's capture limit. */
+export const nodeRunDeclaredStopsSchema = z
+  .array(
+    z.strictObject({
+      path: repositoryPath,
+      line: z.number().int().positive(),
+    }),
+  )
+  .min(1)
+  .max(NODE_SERVER_HISTORY_MAX_STOPS)
+
+/** The repository revision a node run's header pins. */
+export const nodeRunRepositoryRevisionSchema = z.strictObject({
+  revision: z.string().min(1).max(1_024),
+  dirty: z.boolean(),
+})
+
+/** The hashes of the declared sources a node run's header lists. */
+export const nodeRunSourceHashesSchema = z
+  .array(z.strictObject({ path: repositoryPath, hash: repositoryHashSchema }))
+  .max(NODE_SERVER_HISTORY_MAX_STOPS)
 
 /**
  * The header of a node-server history: the run's identity, its question, the declaration it ran (secret-named values masked; {@link maskNodeServerConfiguration}), the declared request and stops, the repository revision and the hashes of the declared sources.
@@ -59,24 +83,9 @@ export const nodeServerHistoryHeaderSchema = z
       method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
       path: z.string().min(1).max(2_048),
     }),
-    declaredStops: z
-      .array(
-        z.strictObject({
-          path: repositoryPath,
-          line: z.number().int().positive(),
-        }),
-      )
-      .min(1)
-      .max(NODE_SERVER_HISTORY_MAX_STOPS),
-    repositoryRevision: z.strictObject({
-      revision: z.string().min(1).max(1_024),
-      dirty: z.boolean(),
-    }),
-    sourceHashes: z
-      .array(
-        z.strictObject({ path: repositoryPath, hash: repositoryHashSchema }),
-      )
-      .max(NODE_SERVER_HISTORY_MAX_STOPS),
+    declaredStops: nodeRunDeclaredStopsSchema,
+    repositoryRevision: nodeRunRepositoryRevisionSchema,
+    sourceHashes: nodeRunSourceHashesSchema,
   })
   .refine(
     (value) => value.studyId === `${value.instanceId}_${value.runId}`,
@@ -90,14 +99,71 @@ const stopSource = z.strictObject({
   column: z.number().int().positive(),
 })
 
+/** An output entry of a node run's journal (server or script): one redacted chunk of stdout or stderr. */
+export const nodeRunOutputEntrySchema = z.strictObject({
+  type: z.literal('output'),
+  ...base,
+  channel: z.enum(['stdout', 'stderr']),
+  text: z.string().min(1).max(NODE_SERVER_OUTPUT_TEXT_LIMIT_CHARS),
+})
+
+/** A source entry of a node run's journal: the text of an executed file once per hash, or its hash with the reason the text is unavailable. */
+export const nodeRunSourceEntrySchema = z
+  .strictObject({
+    type: z.literal('source'),
+    ...base,
+    path: repositoryPath,
+    hash: repositoryHashSchema,
+    text: z.string().max(NODE_SERVER_SOURCE_TEXT_LIMIT_BYTES).optional(),
+    sourceUnavailable: z.enum(['too large', 'not captured']).optional(),
+  })
+  .refine(
+    (entry) =>
+      entry.text === undefined
+        ? entry.sourceUnavailable !== undefined
+        : entry.sourceUnavailable === undefined &&
+          sha256(entry.text) === entry.hash,
+    'A source entry holds hash-verified text, or its hash with the reason its text is unavailable.',
+  )
+
+/** A stop entry of a node run's journal: one captured hit of a declared stop with its redacted debugger snapshot. */
+export const nodeRunStopEntrySchema = z.strictObject({
+  type: z.literal('stop'),
+  ...base,
+  declaredStopIndex: z
+    .number()
+    .int()
+    .nonnegative()
+    .max(NODE_SERVER_HISTORY_MAX_STOPS - 1),
+  hit: z.number().int().positive(),
+  generation: z.number().int().nonnegative(),
+  source: stopSource,
+  frame: z.strictObject({
+    name: z.string().max(NODE_SERVER_HISTORY_FRAME_NAME_LIMIT_CHARS),
+  }),
+  facts: z.record(z.string(), z.json()),
+  // One entry per inspection the declaration allows; every one becomes an uncut seal reason.
+  unavailable: z
+    .array(
+      z.strictObject({
+        path: z.string().max(NODE_SERVER_HISTORY_UNAVAILABLE_PATH_LIMIT_CHARS),
+        reason: z.string().max(1_024),
+      }),
+    )
+    .max(NODE_SERVER_STOP_UNAVAILABLE_LIMIT),
+  debuggerSnapshot: replayDebugSnapshotSchema,
+})
+
+/** The entry that says the output budget was spent: later output was not recorded. */
+export const nodeRunOutputTruncatedEntrySchema = z.strictObject({
+  type: z.literal('output-truncated'),
+  ...base,
+  limit: z.enum(['entries', 'bytes', 'queue']),
+})
+
 /** One entry of a node-server journal; each carries its journal `sequence` and `elapsedMs` since launch. */
 export const nodeServerHistoryEntrySchema = z.discriminatedUnion('type', [
-  z.strictObject({
-    type: z.literal('output'),
-    ...base,
-    channel: z.enum(['stdout', 'stderr']),
-    text: z.string().min(1).max(NODE_SERVER_OUTPUT_TEXT_LIMIT_CHARS),
-  }),
+  nodeRunOutputEntrySchema,
   z.strictObject({
     type: z.literal('request'),
     ...base,
@@ -113,51 +179,8 @@ export const nodeServerHistoryEntrySchema = z.discriminatedUnion('type', [
     code: z.string().min(1).max(NODE_SERVER_HISTORY_CODE_LIMIT_CHARS),
   }),
   z.strictObject({ type: z.literal('request-sent'), ...base, attempt }),
-  z
-    .strictObject({
-      type: z.literal('source'),
-      ...base,
-      path: repositoryPath,
-      hash: repositoryHashSchema,
-      text: z.string().max(NODE_SERVER_SOURCE_TEXT_LIMIT_BYTES).optional(),
-      sourceUnavailable: z.enum(['too large', 'not captured']).optional(),
-    })
-    .refine(
-      (entry) =>
-        entry.text === undefined
-          ? entry.sourceUnavailable !== undefined
-          : entry.sourceUnavailable === undefined &&
-            sha256(entry.text) === entry.hash,
-      'A source entry holds hash-verified text, or its hash with the reason its text is unavailable.',
-    ),
-  z.strictObject({
-    type: z.literal('stop'),
-    ...base,
-    declaredStopIndex: z
-      .number()
-      .int()
-      .nonnegative()
-      .max(NODE_SERVER_HISTORY_MAX_STOPS - 1),
-    hit: z.number().int().positive(),
-    generation: z.number().int().nonnegative(),
-    source: stopSource,
-    frame: z.strictObject({
-      name: z.string().max(NODE_SERVER_HISTORY_FRAME_NAME_LIMIT_CHARS),
-    }),
-    facts: z.record(z.string(), z.json()),
-    // One entry per inspection the declaration allows; every one becomes an uncut seal reason.
-    unavailable: z
-      .array(
-        z.strictObject({
-          path: z
-            .string()
-            .max(NODE_SERVER_HISTORY_UNAVAILABLE_PATH_LIMIT_CHARS),
-          reason: z.string().max(1_024),
-        }),
-      )
-      .max(NODE_SERVER_STOP_UNAVAILABLE_LIMIT),
-    debuggerSnapshot: replayDebugSnapshotSchema,
-  }),
+  nodeRunSourceEntrySchema,
+  nodeRunStopEntrySchema,
   z.strictObject({
     type: z.literal('response'),
     ...base,
@@ -181,11 +204,7 @@ export const nodeServerHistoryEntrySchema = z.discriminatedUnion('type', [
     code: z.string().min(1).max(NODE_SERVER_HISTORY_CODE_LIMIT_CHARS),
     message: z.string().max(NODE_SERVER_HISTORY_MESSAGE_LIMIT_CHARS),
   }),
-  z.strictObject({
-    type: z.literal('output-truncated'),
-    ...base,
-    limit: z.enum(['entries', 'bytes', 'queue']),
-  }),
+  nodeRunOutputTruncatedEntrySchema,
   z.strictObject({
     type: z.literal('end'),
     ...base,
@@ -220,6 +239,12 @@ export type NodeServerSourceEntry = Extract<
   NodeServerHistoryEntry,
   { type: 'source' }
 >
+/** The entries every node run's journal (server or script) holds apart from its own: output, executed sources, stops and the output cut, before their sequence is assigned. */
+export type NodeRunEvidenceEntryInput =
+  | Omit<z.infer<typeof nodeRunOutputEntrySchema>, 'sequence'>
+  | Omit<z.infer<typeof nodeRunSourceEntrySchema>, 'sequence'>
+  | Omit<z.infer<typeof nodeRunStopEntrySchema>, 'sequence'>
+  | Omit<z.infer<typeof nodeRunOutputTruncatedEntrySchema>, 'sequence'>
 /** A journal entry before its sequence is assigned, as the writer accepts it. */
 export type NodeServerHistoryEntryInput =
   NodeServerHistoryEntry extends infer Entry

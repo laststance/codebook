@@ -208,6 +208,8 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
    * @param error - What went wrong; the first failure stands.
    * @example writer.markFailed(new Error('A stop was captured after the response.'))
    */
+  // Called by the shared node run sink through its writer port, which static analysis cannot trace to this class.
+  // fallow-ignore-next-line unused-class-member
   markFailed(error: Error): void {
     this.pending = this.pending.then(() => {
       this.failure ??= error

@@ -4,11 +4,13 @@ import { psProgramPath } from './psProgramPath'
 /** What {@link nodeServerMachineGaps} looks with: the listener tool's inputs, and where `ps` may lie; each is the real one unless a test names its own. */
 export type NodeServerMachineInputs = ListenerToolInputs & {
   psPrograms?: readonly string[]
+  /** The profile whose gaps are listed: a `node-script` run needs no listener tool, since it listens on nothing; `node-server` unless named. */
+  profile?: 'node-server' | 'node-script'
 }
 
 /**
- * Lists what the machine lacks for a node-server run, apart from Node and the repository's own tsx: a supported system, a tool that reads which process listens on a port, and `ps`; each missing item is one sentence that names what to install or why the system cannot run it.
- * Called by the environment's prerequisite check, behind every `codebook_status` and every node-server start.
+ * Lists what the machine lacks for a node-server or node-script run, apart from Node and the repository's own tsx: a supported system, a tool that reads which process listens on a port, and `ps`; each missing item is one sentence that names what to install or why the system cannot run it.
+ * Called by the environment's prerequisite check, behind every `codebook_status` and every node-server start, and for the `node-script` readiness (no listener tool).
  * @param inputs - The system and where the programs may lie ({@link NodeServerMachineInputs}); the real ones when left out.
  * @returns The sentences, in this order: the system, the listener tool, `ps`. Empty when the machine can run the profile. Native Windows reads only its own sentence, since neither tool exists there.
  * @example
@@ -19,21 +21,23 @@ export async function nodeServerMachineGaps(
   inputs: NodeServerMachineInputs = {},
 ): Promise<string[]> {
   const platform = inputs.platform ?? process.platform
+  const profile = inputs.profile ?? 'node-server'
   if (platform === 'win32')
     return [
-      'node-server needs macOS, Linux or WSL; native Windows is not supported yet.',
+      `${profile} needs macOS, Linux or WSL; native Windows is not supported yet.`,
     ]
   const gaps: string[] = []
-  if (!(await listenerToolPath(inputs)))
+  // Only a server listens; a script run reads no port, so it needs no listener tool.
+  if (profile === 'node-server' && !(await listenerToolPath(inputs)))
     gaps.push(
       'node-server needs lsof (macOS or Linux, at /usr/sbin/lsof or /usr/bin/lsof) or ss (Linux, at /usr/bin/ss, /bin/ss, /usr/sbin/ss or /sbin/ss) to read which process listens on the declared port. Ask the learner to install one, then call codebook_status again.',
     )
-  await psProgramPath('node-server', {
+  await psProgramPath(profile, {
     psPrograms: inputs.psPrograms,
     isProgramFile: inputs.isProgramFile,
   }).catch(() =>
     gaps.push(
-      'node-server needs ps at /bin/ps or /usr/bin/ps to check that the listener is the process it started.',
+      `${profile} needs ps at /bin/ps or /usr/bin/ps to check that the ${profile === 'node-server' ? 'listener' : 'debugged process'} is the process it started.`,
     ),
   )
   return gaps

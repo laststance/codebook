@@ -45,7 +45,7 @@ function maskedFactsOfStop(
 /** The words a server stop adds to its debugger thread, as {@link NodeRecordedSourceMessage} names them. */
 type ServerStopThread = Pick<
   Extract<NodeRecordedSourceMessage, { kind: 'thread' }>,
-  'server'
+  'server' | 'script'
 >
 
 /**

@@ -23,7 +23,7 @@ export type NodeTestApplicationView = {
   /** Header line 2: the cited test, shown in at most two lines with this whole text in its tooltip; a server replay leaves it empty (its request has its own region). */
   test: string
   /** `node-server` for a server replay, whose document words its footer and Jump to latest with the server catalog and draws the two fixed regions below. */
-  profile?: 'node-server' | 'chrome-extension'
+  profile?: 'node-server' | 'node-script' | 'chrome-extension'
   /** An Extension replay's recorded surface frame for the moment; its document draws the image and the label instead of the output region. */
   frame?: {
     /** The PNG as a `data:` address; absent when no frame is recorded or loadable at this moment. */

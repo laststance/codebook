@@ -1,18 +1,57 @@
 import type {
+  NodeScriptEndEntry,
+  NodeScriptHistoryEntry,
+  NodeScriptHistoryHeader,
+} from '../nodeScriptHistorySchemas'
+import type {
   NodeServerHistoryEntry,
   NodeServerHistoryHeader,
   NodeServerStopEntry,
 } from '../nodeServerHistorySchemas'
 import type { NodeServerHistorySummary } from '../nodeServerHistoryTypes'
 
+import { maskSavedOutputEntries } from './maskSavedOutputEntries'
 import { maskSavedServerHeader } from './maskSavedServerHeader'
-import { rehydrateNodeServerEntries } from './rehydrateServerStopSnapshot'
+import {
+  rehydrateMaskedEntries,
+  rehydrateNodeServerEntries,
+} from './rehydrateServerStopSnapshot'
 
-/** The entries of a server journal a learner moves through: the request attempt and its withdrawal, output, a stop hit, the response and the request failure. `source` is storage only and `end` ends the timeline, so neither is an event. */
-export type ServerReplayEvent = Exclude<
-  NodeServerHistoryEntry,
-  { type: 'source' | 'end' | 'request-sent' | 'output-truncated' }
->
+/** The entries of a server journal a learner moves through: the request attempt and its withdrawal, output, a stop hit, the response and the request failure. `source` is storage only and a server's `end` ends the timeline, so neither is an event. A script journal has no request or response: its `end` entry is the moment that takes their place, so it is an event there. */
+export type ServerReplayEvent =
+  | Exclude<
+      NodeServerHistoryEntry,
+      { type: 'source' | 'end' | 'request-sent' | 'output-truncated' }
+    >
+  | NodeScriptEndEntry
+
+/** A script journal as the store reads it, which {@link buildServerReplayModel} dresses in the same replay model as a server journal. */
+type ScriptHistoryShape = {
+  header: NodeScriptHistoryHeader
+  entries: readonly NodeScriptHistoryEntry[]
+}
+
+/** A server journal as the store reads it. */
+type ServerHistoryShape = {
+  header: NodeServerHistoryHeader
+  entries: readonly NodeServerHistoryEntry[]
+}
+
+/** The journal a replay model is built from: a server's or a script's, told apart by its header's profile. */
+type RunHistoryShape = ServerHistoryShape | ScriptHistoryShape
+
+/** What the store's read adds to either journal: its status and its seal. */
+type ReadHistoryExtras = {
+  status: 'recording' | 'complete' | 'partial' | 'interrupted'
+  seal?: unknown
+}
+
+/** Says whether a run history is a script's, whose header has no request. */
+function isScriptHistory(
+  history: RunHistoryShape,
+): history is ScriptHistoryShape {
+  return history.header.profile === 'node-script'
+}
 
 /** What the model keeps of one request attempt: whether its bytes were handed to the socket, and the code of a refusal before that. */
 export type ServerReplayAttempt = {
@@ -36,14 +75,17 @@ export type ServerReplayVerdicts = {
  */
 export type ServerReplayModel = {
   studyId: string
-  header: NodeServerHistoryHeader
+  header: NodeServerHistoryHeader | NodeScriptHistoryHeader
   status: 'recording' | 'complete' | 'partial' | 'interrupted'
   events: readonly ServerReplayEvent[]
   /** The position of each event in {@link events}, by journal sequence. */
   indexBySequence: ReadonlyMap<number, number>
   attempts: readonly ServerReplayAttempt[]
   /** The recorded response or request failure, when the journal holds one. */
-  terminal?: Extract<ServerReplayEvent, { type: 'response' | 'request-failed' }>
+  terminal?: Extract<
+    ServerReplayEvent,
+    { type: 'response' | 'request-failed' | 'end' }
+  >
   /** The time the recording ended: the `end` entry's, else the last event's; the timeline ends here. */
   endedAtMs: number
   /** Whether the journal ended with neither a response nor a request failure. */
@@ -62,31 +104,48 @@ export type ServerReplayModel = {
  * @example const model = buildServerReplayModel(await store.read(studyId), { saved: true, captureComplete: true, learningCoverage: 'complete' })
  */
 export function buildServerReplayModel(
-  history: {
-    header: NodeServerHistoryHeader
-    entries: readonly NodeServerHistoryEntry[]
-    status: ServerReplayModel['status']
-    seal?: unknown
-  },
+  history: ServerHistoryShape & ReadHistoryExtras,
+  verdicts: ServerReplayVerdicts,
+): ServerReplayModel & { header: NodeServerHistoryHeader }
+export function buildServerReplayModel(
+  history: ScriptHistoryShape & ReadHistoryExtras,
+  verdicts: ServerReplayVerdicts,
+): ServerReplayModel & { header: NodeScriptHistoryHeader }
+export function buildServerReplayModel(
+  history: RunHistoryShape & ReadHistoryExtras,
+  verdicts: ServerReplayVerdicts,
+): ServerReplayModel
+export function buildServerReplayModel(
+  history: RunHistoryShape & ReadHistoryExtras,
   verdicts: ServerReplayVerdicts,
 ): ServerReplayModel {
-  const entries = rehydrateNodeServerEntries(history.entries)
-  const events = entries.filter(isReplayEvent)
+  const isScript = isScriptHistory(history)
+  // A script journal's output is masked and its stops rehydrated by the same two steps a server journal's are; only the server's request paths need the third.
+  const entries: readonly (NodeServerHistoryEntry | NodeScriptHistoryEntry)[] =
+    isScript
+      ? rehydrateMaskedEntries(maskSavedOutputEntries(history.entries))
+      : rehydrateNodeServerEntries(history.entries)
+  const events = entries.filter((entry) => isReplayEvent(entry, isScript))
   const terminal = events.find(
-    (event) => event.type === 'response' || event.type === 'request-failed',
+    (event) =>
+      event.type === 'response' ||
+      event.type === 'request-failed' ||
+      event.type === 'end',
   )
   const end = entries.find((entry) => entry.type === 'end')
   return {
     studyId: history.header.studyId,
-    // The header's declared request path is masked again: a history saved before `code` was masked kept the callback code in it, and the Application title reads it.
-    header: maskSavedServerHeader(history.header),
+    // The header's declared request path is masked again: a history saved before `code` was masked kept the callback code in it, and the Application title reads it. A script header declares no request.
+    header: isScript ? history.header : maskSavedServerHeader(history.header),
     status: history.status,
     events,
     indexBySequence: new Map(
       events.map((event, position) => [event.sequence, position]),
     ),
-    attempts: collectAttempts(entries),
-    ...(terminal?.type === 'response' || terminal?.type === 'request-failed'
+    attempts: isScript ? [] : collectAttempts(entries),
+    ...(terminal?.type === 'response' ||
+    terminal?.type === 'request-failed' ||
+    terminal?.type === 'end'
       ? { terminal }
       : {}),
     // The timeline ends at `end`; a journal with no `end` ends at its last event.
@@ -99,7 +158,7 @@ export function buildServerReplayModel(
 
 /** Reads each request attempt's send mark and withdrawal code from the journal's entries. */
 function collectAttempts(
-  entries: readonly NodeServerHistoryEntry[],
+  entries: readonly (NodeServerHistoryEntry | NodeScriptHistoryEntry)[],
 ): ServerReplayAttempt[] {
   const attempts = new Map<number, ServerReplayAttempt>()
   for (const entry of entries) {
@@ -135,13 +194,14 @@ function repeatedStopIndexes(
   )
 }
 
-/** Says whether a journal entry is a learner event. */
+/** Says whether a journal entry is a learner event: a script's `end` is one, a server's is not. */
 function isReplayEvent(
-  entry: NodeServerHistoryEntry,
+  entry: NodeServerHistoryEntry | NodeScriptHistoryEntry,
+  isScript: boolean,
 ): entry is ServerReplayEvent {
+  if (entry.type === 'end') return isScript
   return (
     entry.type !== 'source' &&
-    entry.type !== 'end' &&
     entry.type !== 'request-sent' &&
     entry.type !== 'output-truncated'
   )

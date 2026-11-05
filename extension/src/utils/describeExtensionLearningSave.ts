@@ -4,10 +4,31 @@ import {
   describeNodeServerSealFailure,
   NODE_SERVER_SEAL_FAILURE_PREFIX,
 } from './describeNodeServerSealFailure'
-import { describeReplayOutcome } from './describeReplayOutcome'
+import {
+  describeReplayOutcome,
+  type ReplayLabel,
+} from './describeReplayOutcome'
 import { stripTerminalControls } from './stripTerminalControls'
 
-/** What an extension run's Save asks or tells the learner. */
+/** What the words of a structured-history run's Save name: an extension run (pauses, frames, result) or a script run (stops, output, end). */
+export type StructuredSaveWords = {
+  noun: 'extension' | 'script'
+  label: ReplayLabel
+  /** What the replay keeps, for the recording tooltip. */
+  recorded: string
+  /** What the question counts beside the stops, as `result recorded` or `no result recorded yet, so the result will not be saved`. */
+  outcomeName: 'result' | 'end'
+}
+
+/** The words of an extension run's Save. */
+export const EXTENSION_SAVE_WORDS: StructuredSaveWords = {
+  noun: 'extension',
+  label: 'Extension',
+  recorded: 'pauses, executed source, debugger values, frames and result',
+  outcomeName: 'result',
+}
+
+/** What an extension or script run's Save asks or tells the learner. */
 export type ExtensionSaveMessage =
   | { kind: 'nothing-recorded' }
   | { kind: 'unavailable'; cause: string }
@@ -53,16 +74,18 @@ export type ExtensionLearningStatus =
  * Words what an extension run's Save says: the refusal before there is anything to save, the question that precedes stopping the run, and the one notice after the seal.
  * Called by {@link ChromeExtensionLearningSave}; the cause of an unavailable history is shown as it was worded when it was assigned, cut for display.
  * @param message - The question or notice.
+ * @param words - What the run is called and what it records; an extension run's unless a script run's are given.
  * @returns Its text and the actions it offers.
  * @example describeExtensionLearningSave({ kind: 'saved' }).text // => 'Extension replay saved.'
  */
 export function describeExtensionLearningSave(
   message: ExtensionSaveMessage,
+  words: StructuredSaveWords = EXTENSION_SAVE_WORDS,
 ): ExtensionSaveText {
   switch (message.kind) {
     case 'nothing-recorded':
       return {
-        text: 'Nothing to save: the extension run recorded no pause or result.',
+        text: `Nothing to save: the ${words.noun} run recorded no pause or ${words.outcomeName}.`,
       }
     case 'unavailable':
       return {
@@ -72,15 +95,15 @@ export function describeExtensionLearningSave(
       const recorded = `${message.reached} of ${message.declared} stops recorded`
       return {
         text: message.resultRecorded
-          ? `Saving stops the extension run (${recorded}, result recorded). Save now?`
-          : `Saving stops the extension run (${recorded}; no result recorded yet, so the result will not be saved). Save now?`,
+          ? `Saving stops the ${words.noun} run (${recorded}, ${words.outcomeName} recorded). Save now?`
+          : `Saving stops the ${words.noun} run (${recorded}; no ${words.outcomeName} recorded yet, so the ${words.outcomeName} will not be saved). Save now?`,
         actions: [NODE_LEARNING_SAVE_ACTION.saveAndStop],
       }
     }
     case 'saved':
     case 'partial':
     case 'explanation-missing':
-      return describeReplayOutcome('Extension', message)
+      return describeReplayOutcome(words.label, message)
     case 'failed': {
       const cause = cutCauseForDisplay(stripTerminalControls(message.cause))
       // A failure already worded by the seal is shown as it is, not prefixed twice.
@@ -98,18 +121,20 @@ export function describeExtensionLearningSave(
  * Called by {@link ChromeExtensionLearningSave.item} for the current extension run.
  * @param runText - The run's own status text (its phase).
  * @param learning - Where the run's learning replay stands.
+ * @param words - What the run is called and what it records.
  * @returns The item's `text` and `tooltip`.
  * @example describeExtensionStatus('Paused at stop 1 of 2', { kind: 'recording', reached: 1, declared: 2 }).text // => '$(record) Recording explanation · Paused at stop 1 of 2 · Save learning replay'
  */
 export function describeExtensionStatus(
   runText: string,
   learning: ExtensionLearningStatus,
+  words: StructuredSaveWords = EXTENSION_SAVE_WORDS,
 ): { text: string; tooltip: string } {
   switch (learning.kind) {
     case 'recording':
       return {
         text: `$(record) Recording explanation · ${runText} · Save learning replay`,
-        tooltip: `Save learning replay stops this extension run and saves its pauses, executed source, debugger values, frames and result (${learning.reached} of ${learning.declared} stops recorded).`,
+        tooltip: `Save learning replay stops this ${words.noun} run and saves its ${words.recorded} (${learning.reached} of ${learning.declared} stops recorded).`,
       }
     case 'append-failed':
       return {
@@ -120,19 +145,17 @@ export function describeExtensionStatus(
     case 'finished':
       return {
         text: '$(save) Recording finished · Save learning replay',
-        tooltip:
-          "Save learning replay saves the sealed extension history with the chat's learning material.",
+        tooltip: `Save learning replay saves the sealed ${words.noun} history with the chat's learning material.`,
       }
     case 'saving':
       return {
         text: '$(sync~spin) Saving learning…',
-        tooltip: 'Codebook is sealing the extension history.',
+        tooltip: `Codebook is sealing the ${words.noun} history.`,
       }
     case 'saved':
       return {
         text: '$(check) Learning saved · Open replay',
-        tooltip:
-          'Saved: the extension history is complete and the chat explained it. Opens the extension replay.',
+        tooltip: `Saved: the ${words.noun} history is complete and the chat explained it. Opens the ${words.noun} replay.`,
       }
     case 'partial':
       return {
@@ -143,7 +166,7 @@ export function describeExtensionStatus(
     case 'unavailable':
       return {
         text: `${runText} · Learning replay unavailable: ${cutCauseForDisplay(learning.cause)}`,
-        tooltip: `This extension run is not recorded for a learning replay: ${cutCauseForDisplay(learning.cause)}`,
+        tooltip: `This ${words.noun} run is not recorded for a learning replay: ${cutCauseForDisplay(learning.cause)}`,
       }
     case 'failed':
       return {

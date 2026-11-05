@@ -1,3 +1,4 @@
+import type { NodeScriptEndEntry } from '../nodeScriptHistorySchemas'
 import type { NodeServerHistoryEntry } from '../nodeServerHistorySchemas'
 import type { NodeTestHistoryIndex } from '../nodeTestHistorySchemas'
 
@@ -5,6 +6,12 @@ import { countCodePoints } from './countCodePoints'
 import { isSurrogatePairAt } from './isSurrogatePairAt'
 import { nodeTestOutputLineCost } from './nodeTestOutputLineCost'
 import { stripTerminalControlsAcross } from './stripTerminalControls'
+
+/** The journal entries whose output the index reads: a test's, a server's, or a script's own `end` (which a script replay keeps among its events and which carries no output). */
+type OutputReadableEntry =
+  | NodeTestHistoryIndex['entries'][number]
+  | NodeServerHistoryEntry
+  | NodeScriptEndEntry
 
 /** One line of a test's recorded output, as the Application pane shows it: the channel that wrote it and its text without a line end. */
 export type NodeTestOutputLine = {
@@ -65,9 +72,7 @@ const INSPECTOR_LINES = [
  * // => { lineCount: 1, pending: { channel: 'stdout', start: 4, end: 6, codePoints: 2 }, inspectorLines: 0 }
  */
 export function indexNodeTestOutput(
-  entries: readonly (
-    NodeTestHistoryIndex['entries'][number] | NodeServerHistoryEntry
-  )[],
+  entries: readonly OutputReadableEntry[],
 ): NodeTestOutputIndex {
   const outputEntries = entries.filter((entry) => entry.type === 'output')
   // The output is shown text already: stripping it again would pass over the whole output for nothing (F315, F339).
@@ -164,9 +169,7 @@ export function indexNodeTestOutput(
  * @example stripOutputEntries([{ type: 'output', sequence: 1, elapsedMs: 5, channel: 'stdout', text: '\u001b[3' }, { type: 'output', sequence: 2, elapsedMs: 6, channel: 'stdout', text: '2mok' }]) // => Map { 1 => '', 2 => 'ok' }
  */
 export function stripOutputEntries(
-  entries: readonly (
-    NodeTestHistoryIndex['entries'][number] | NodeServerHistoryEntry
-  )[],
+  entries: readonly OutputReadableEntry[],
 ): Map<number, string> {
   const shown = new Map<number, string>()
   for (const channel of ['stdout', 'stderr'] as const) {

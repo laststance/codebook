@@ -15,6 +15,9 @@ export const NODE_RECORDED_SOURCE_TEXT = {
   /** The placeholder of a server replay's slot: the same as the test replay's, naming the server journal. */
   serverPlaceholder:
     '// Recorded source · Not recorded at this moment\n// The server journal holds no source state for this moment.\n',
+  /** The placeholder of a script replay's slot: the same, naming the script journal. */
+  scriptPlaceholder:
+    '// Recorded source · Not recorded at this moment\n// The script journal holds no source state for this moment.\n',
   /** The placeholder of an Extension replay's slot: the same, naming the extension journal. */
   extensionPlaceholder:
     '// Recorded source · Not recorded at this moment\n// The extension journal holds no source state for this moment.\n',
@@ -39,6 +42,8 @@ export type NodeRecordedSourceMessage =
       line: number
       /** For a server replay: the hit's number and whether the stop was hit more than once; the thread then names a server stop and its hit. */
       server?: { hit: number; repeated: boolean }
+      /** For a script replay: the same, and the thread then names a script stop and its hit. */
+      script?: { hit: number; repeated: boolean }
     }
   | {
       /** The Study row of a slot that cannot open. */
@@ -75,6 +80,8 @@ export function describeNodeRecordedSource(
     case 'label':
       return `Recorded: ${stripTerminalControls(message.path)}:${message.line} · ${formatEventSeconds(message.elapsedMs)} s`
     case 'thread':
+      if (message.script)
+        return `Recorded script stop ${message.stop}${message.script.repeated ? ` · hit ${message.script.hit}` : ''} · ${stripTerminalControls(message.path)}:${message.line}`
       return message.server
         ? `Recorded server stop ${message.stop}${message.server.repeated ? ` · hit ${message.server.hit}` : ''} · ${stripTerminalControls(message.path)}:${message.line}`
         : `Recorded test stop ${message.stop} · ${stripTerminalControls(message.path)}:${message.line}`

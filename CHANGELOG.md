@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.2.84.0] - 2026-11-05 (development candidate)
+
+Cycle 0084 ([Issue #220](https://github.com/laststance/codebook/issues/220)), a feature cycle. A **repository's own Node script** now runs once under live explanation and pauses in its own source, with real values in the native debugger. A learner can ask what a script such as P05's `examples/publish-ci/node/test-esm.mjs` does and watch it stop at the lines the chat chose. They follow it to its exit code and output, then save the run as a Script replay that reopens after the process ended.
+
+**Run a Node script once: the `node-script` profile.**
+- **What runs:** a version 1 configuration with `adapter: "node-script"`. The `entry` is a file a `package.json` script runs as plain `node <file>` (or `tsx <file>` through the repository's own tsx), or a file the learner names; `packageRoot` is absent, `"."` or the package folder. Codebook starts only `node [--import <repository tsx>] <entry>`, with no node options, arguments, environment or standard input.
+- **You confirm every run.** Before anything is spawned, the editor asks the learner to confirm one run of the script, which may change files, databases or remote services. Cancel, or no answer within five minutes, runs nothing (`SCRIPT_NOT_CONFIRMED`). A late **Run once** starts nothing, and a new start while the dialog is open answers `BUSY`.
+- **Where it pauses:** at declared stops in the package's own source, armed before the script's first line runs. A stop in `node_modules` or outside the package is refused before the spawn.
+- **How it ends:** `nodeScript.end` names the end (`exited` with its exit code, an outside `signal`, `stopped`, or the `limit` Codebook enforced), the stops reached and never reached, and the last part of the output. A nonzero exit is an observed result, not an error.
+- **Limits:** 60 s of running time outside pauses, the shared 600 s run deadline and the 300 s pause hold. The whole process group, child processes included, ends with the run.
+- **The status bar** follows the run (`Waiting for your confirmation`, `Paused at stop <n> of <m>`, `Script exited <code>`) and offers **Save learning replay**.
+
+**Save it as a Script replay.** A script run is saved through `codebook_explain_node_history` in its own history store. Opening it from Saved studies never runs the script:
+- the Application pane shows the recorded output and its end;
+- the editor shows the recorded source at each stop;
+- the native debugger's Variables and Call Stack show that pause's recorded values.
+
+A run that ended before its first stop is kept with its output and end. An older Codebook neither lists nor changes a Script replay.
+
+**Clear refusals**, each with `details.reason` and `details.sideEffects`:
+- before anything is spawned: `NODE_SCRIPT_SOURCE_REFUSED` (`package-root`, `entry`, `stop-file`, `tsx-missing`, `outside-package`, `node-modules`, `source-refused`) and `SCRIPT_NOT_CONFIRMED`;
+- after the spawn: a failure reports `sideEffects: unknown` and ends the process group before the debugger detaches.
+
+**Compatibility.** MCP API 1.26 (additive): the `node-script` profile, its readiness under `codebook_status` (`profiles['node-script']`), `codebook://help/node-script` and the refusal codes. Bundled skill 1.0.75 routes a question about a script to the profile, and tells the learner before the start that they will confirm one run with the script's real effects. Existing node-server, node-test and extension histories decode unchanged.
+
 ## [0.2.83.0] - 2026-11-05 (development candidate)
 
 Cycle 0083 ([Issue #217](https://github.com/laststance/codebook/issues/217)), a feature cycle. A **Create React App app** (react-scripts 5) at the repository root or below it now runs under live explanation and pauses in its own source, with real values in the native debugger. A learner who opens Redux's own Examples (most of P03 `reduxjs/redux`'s browser Examples, and P05's `action-listener/counter`) can now follow a click into the app's components, thunks and reducers, and save the run as a learning replay that reopens after the app has stopped.

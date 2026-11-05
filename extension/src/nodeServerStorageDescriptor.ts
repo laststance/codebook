@@ -3,9 +3,15 @@ import {
   NODE_SERVER_HISTORY_HEADER_FORMAT_VERSION,
   NODE_SERVER_HISTORY_LIMIT_BYTES,
   NODE_SERVER_HISTORY_SEAL_LIMIT_BYTES,
-  NODE_TEST_LEARNING_MATERIAL_VERSION,
 } from './constants'
 import type { HistoryStorageDescriptor } from './historyStorageDescriptor'
+import {
+  buildNodeRunLearningCodec,
+  citableRunEvidenceEvent,
+  citedSequencesOf,
+  summarizeRunEvidence,
+  verifyRunSeal,
+} from './nodeRunStorageParts'
 import {
   nodeServerHistoryEntrySchema,
   nodeServerHistoryHeaderSchema,
@@ -22,8 +28,6 @@ import {
   nodeServerLearningMaterialContentSchema,
   nodeServerLearningMaterialSchema,
 } from './nodeServerLearningSchemas'
-import { assertNodeLearningCitations } from './utils/assertNodeLearningCitations'
-import { capMissingList } from './utils/capMissingList'
 import { evaluateNodeServerCapture } from './utils/evaluateNodeServerCapture'
 import { evaluateNodeServerLearning } from './utils/evaluateNodeServerLearning'
 import { maskSecretQueryValues } from './utils/maskSecretQueryValues'
@@ -44,15 +48,8 @@ function citableServerEvent(
 ): CitableEvent | undefined {
   switch (entry.type) {
     case 'stop':
-      return {
-        type: 'stop',
-        sourceHash: entry.source.hash,
-        path: entry.source.path,
-        line: entry.source.line,
-        declaredStopIndex: entry.declaredStopIndex,
-      }
     case 'output':
-      return { type: 'output', channel: entry.channel }
+      return citableRunEvidenceEvent(entry)
     case 'request':
     case 'response':
     case 'request-failed':
@@ -109,21 +106,10 @@ export const nodeServerStorageDescriptor: HistoryStorageDescriptor<NodeServerHis
       noSeal: 'Node server history has no verified final seal.',
       subject: 'Node server history',
     },
-    learningMaterial: {
-      parseMaterial: (value) => nodeServerLearningMaterialSchema.parse(value),
-      parseContent: (value) =>
-        nodeServerLearningMaterialContentSchema.parse(value),
-      buildMaterial: (input) =>
-        nodeServerLearningMaterialSchema.parse({
-          version: NODE_TEST_LEARNING_MATERIAL_VERSION,
-          ...input,
-        }),
-      assertCitations: (content, citable, lead) =>
-        assertNodeLearningCitations(content, citable, {
-          lead,
-          withNearest: true,
-        }),
-    },
+    learningMaterial: buildNodeRunLearningCodec<NodeServerHistoryTypes>(
+      nodeServerLearningMaterialSchema,
+      nodeServerLearningMaterialContentSchema,
+    ),
     stampHeader: (input) => ({
       ...input,
       formatVersion: NODE_SERVER_HISTORY_HEADER_FORMAT_VERSION,
@@ -145,59 +131,40 @@ export const nodeServerStorageDescriptor: HistoryStorageDescriptor<NodeServerHis
     },
     createWriter: (directory, header, onClosed, describeCause) =>
       new NodeServerHistoryWriter(directory, header, onClosed, describeCause),
-    verifySeal: ({ seal, entries, progress, hasIncompleteLine }) => {
-      if (
-        hasIncompleteLine ||
-        seal.entryCount !== entries.length ||
-        // A complete seal needs the whole story: the request closed by its terminal entry and the run's end.
-        (seal.status === 'complete' &&
-          !(progress.hasEnd && progress.hasTerminal))
-      )
-        throw new Error(
-          'Sealed Node server history does not contain what its seal claims.',
-        )
-    },
+    verifySeal: ({ seal, entries, progress, hasIncompleteLine }) =>
+      // A complete seal needs the whole story: the request closed by its terminal entry and the run's end.
+      verifyRunSeal('Node server history', {
+        seal,
+        entries,
+        hasIncompleteLine,
+        storyIsWhole: progress.hasEnd && progress.hasTerminal,
+      }),
     emptySummary: emptyNodeServerSummary,
     summarize: ({ history, materialContent, materialRevision }) => {
       const { header, entries, seal } = history
-      const stops = entries.filter((entry) => entry.type === 'stop')
       const response = entries.find((entry) => entry.type === 'response')
       const failure = entries.find((entry) => entry.type === 'request-failed')
-      // A sealed history keeps its reasons as sealed (identical after a restart); any other is judged from its journal now.
-      const reasons =
-        seal?.reasons ??
-        evaluateNodeServerCapture(header, entries, {
-          interrupted: history.status === 'interrupted',
-        })
-      const capture = capMissingList(reasons)
-      const cited = new Set(
-        (materialContent?.steps ?? []).flatMap((step) =>
-          step.reference ? [step.reference.sequence] : [],
-        ),
-      )
-      const learning = evaluateNodeServerLearning(
-        entries,
-        materialContent ? cited : undefined,
-      )
-      const learningMissing = capMissingList(learning.missing)
       const summary: NodeServerHistorySummary = {
         ...emptyNodeServerSummary(header),
-        status: history.status,
-        ...(history.reason ? { reason: history.reason } : {}),
-        verification: 'verified',
+        ...summarizeRunEvidence({
+          status: history.status,
+          reason: history.reason,
+          entries,
+          // A sealed history keeps its reasons as sealed (identical after a restart); any other is judged from its journal now.
+          reasons:
+            seal?.reasons ??
+            evaluateNodeServerCapture(header, entries, {
+              interrupted: history.status === 'interrupted',
+            }),
+          learning: evaluateNodeServerLearning(
+            entries,
+            materialContent ? citedSequencesOf(materialContent) : undefined,
+          ),
+          materialContent,
+          materialRevision,
+        }),
         ...(response ? { responseStatus: response.status } : {}),
         ...(failure ? { requestFailureCode: failure.code } : {}),
-        stopCount: stops.length,
-        reachedStopCount: new Set(stops.map((stop) => stop.declaredStopIndex))
-          .size,
-        captureComplete: reasons.length === 0,
-        captureMissing: capture.items,
-        captureMissingCount: capture.count,
-        learningCoverage: learning.coverage,
-        learningMissing: learningMissing.items,
-        learningMissingCount: learningMissing.count,
-        ...(materialContent ? { title: materialContent.title } : {}),
-        materialRevision: materialRevision ?? 0,
       }
       return { summary }
     },

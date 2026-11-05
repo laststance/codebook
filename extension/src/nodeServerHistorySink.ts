@@ -1,27 +1,20 @@
 import {
   NODE_SERVER_HISTORY_CODE_LIMIT_CHARS,
   NODE_SERVER_HISTORY_CONTENT_TYPE_LIMIT_CHARS,
-  NODE_SERVER_HISTORY_FRAME_NAME_LIMIT_CHARS,
   NODE_SERVER_HISTORY_LOCATION_LIMIT_CHARS,
   NODE_SERVER_HISTORY_MESSAGE_LIMIT_CHARS,
-  NODE_SERVER_HISTORY_UNAVAILABLE_PATH_LIMIT_CHARS,
-  NODE_SERVER_OUTPUT_COALESCE_MS,
-  NODE_SERVER_OUTPUT_TEXT_LIMIT_CHARS,
 } from './constants'
+import {
+  NodeRunHistorySinkBase,
+  type NodeRunHistorySinkInput,
+} from './nodeRunHistorySink'
 import type {
   NodeServerDebuggerPause,
   NodeServerStopCapture as NodeServerDebuggerCapture,
 } from './nodeServerDebugger'
 import type { NodeServerHistoryWriter } from './nodeServerHistoryWriter'
-import type { ReplayDebugSnapshot } from './replayDebugSchemas'
 import type { NodeServerResponse } from './runtime'
 import { cutTextToLength } from './utils/cutTextToLength'
-import { hideTrailingRootPrefix } from './utils/hideTrailingRootPrefix'
-import { maskSavedDebugSnapshot } from './utils/maskSavedDebugSnapshot'
-import { maskSavedFacts } from './utils/maskSavedFacts'
-import { redactSecretText } from './utils/redactSecretText'
-import { resolveServerStopFrame } from './utils/resolveServerStopFrame'
-import type { CauseRoots } from './utils/sanitizeCause'
 
 /**
  * What a live node-server run tells its history, in the run's own words and on the run's own clock (milliseconds since the launch). The run calls it synchronously at the moment each thing happens and never waits for it; a sink that fails marks its history failed and never reaches the run.
@@ -55,95 +48,8 @@ export interface NodeServerHistorySink {
 }
 
 /** What {@link NodeServerHistorySinkImpl} needs from outside. */
-export type NodeServerHistorySinkInput = {
-  writer: NodeServerHistoryWriter
-  /** Hides the private roots of a text (the service's storage, the workspace, the home directory); applied to every recorded text before it is masked. */
-  sanitize: (text: string) => string
-  /** The private roots behind `sanitize`, frozen for this run (the one snapshot the run's output stage and response sanitizer hide with too): a debugger text the capture cut inside a root is hidden by them, since `sanitize` cannot match a fragment. Every private root the service knows lies under the home root or is a workspace or storage root known at the start; a folder added mid-run is hidden from the next run on. */
-  roots?: CauseRoots
-  /** Runs `callback` once after `ms` and returns what cancels it; a test replaces the timer. */
-  schedule?: (callback: () => void, ms: number) => () => void
-  /** Told once, with the first fault of the sink itself (not a refused append, which the writer already holds). */
-  onFault?: (error: unknown) => void
-  /** Told once, when the first queued entry is refused or fails or the sink itself faults, so the status item says at once that recording stopped. */
-  onAppendFailed?: () => void
-}
-
-/** One output chunk run waiting to become an entry. */
-type PendingOutput = {
-  channel: 'stdout' | 'stderr'
-  /** The chunks so far, private roots hidden, secrets not yet masked: masking waits for the whole run so a secret split between two chunks is still seen whole. */
-  text: string
-  /** The time of its first chunk, the entry's time. */
-  at: number
-  /** The time of its latest chunk, which the next chunk is measured from. */
-  lastAt: number
-}
-
-/**
- * Hides private roots and masks secrets in every free text a captured snapshot carries (frame, scope and variable names, values, types, unavailable reasons, source names, recorded caller locations, limitations) before it is stored; the executed source text is the learner's own and stays as it ran.
- * @param snapshot - The run's captured snapshot.
- * @param hide - Hides private roots, then masks secrets, in one text ({@link NodeServerHistorySinkImpl}'s own).
- * @returns A copy with every such text hidden and masked.
- * @example maskSnapshot(snapshot, hide).frames[0]?.name // => 'handler Bearer [masked]'
- */
-function maskSnapshot(
-  snapshot: ReplayDebugSnapshot,
-  hide: (text: string) => string,
-): ReplayDebugSnapshot {
-  return {
-    ...snapshot,
-    frames: snapshot.frames.map((frame) => ({
-      ...frame,
-      name: hide(frame.name),
-      // An absent optional text stays absent.
-      ...(frame.source
-        ? { source: { ...frame.source, name: hide(frame.source.name) } }
-        : {}),
-      ...(frame.sourceUnavailable === undefined
-        ? {}
-        : { sourceUnavailable: hide(frame.sourceUnavailable) }),
-      // A caller frame's recorded location is the debugger's own text: its name and path lose private roots like every other captured path.
-      ...(frame.recordedLocation
-        ? {
-            recordedLocation: {
-              name: hide(frame.recordedLocation.name),
-              ...(frame.recordedLocation.path === undefined
-                ? {}
-                : { path: hide(frame.recordedLocation.path) }),
-            },
-          }
-        : {}),
-      ...(frame.unavailable === undefined
-        ? {}
-        : { unavailable: hide(frame.unavailable) }),
-      scopes: frame.scopes.map((scope) => ({
-        ...scope,
-        name: hide(scope.name),
-        ...(scope.unavailable === undefined
-          ? {}
-          : { unavailable: hide(scope.unavailable) }),
-      })),
-    })),
-    variables: snapshot.variables.map((variable) => ({
-      ...variable,
-      name: hide(variable.name),
-      value: hide(variable.value),
-      ...(variable.type === undefined ? {} : { type: hide(variable.type) }),
-      ...(variable.unavailable === undefined
-        ? {}
-        : { unavailable: hide(variable.unavailable) }),
-    })),
-    limitations: snapshot.limitations.map(hide),
-  }
-}
-
-/** The default timer: a real one that never keeps the process alive. */
-function realSchedule(callback: () => void, ms: number): () => void {
-  const timer = setTimeout(callback, ms)
-  timer.unref()
-  return (): void => clearTimeout(timer)
-}
+export type NodeServerHistorySinkInput =
+  NodeRunHistorySinkInput<NodeServerHistoryWriter>
 
 /**
  * Turns what a node-server run reports into the entries of its history: request attempts and their marks, coalesced and redacted output, hash-checked captures, the response exactly as the live run shows it and the request's duration, all on one monotonic clock, in the order the journal's rules accept.
@@ -153,23 +59,18 @@ function realSchedule(callback: () => void, ms: number): () => void {
  * const sink = new NodeServerHistorySinkImpl({ writer, sanitize })
  * sink.openRequest(40, { method: 'GET', path: '/api/healthz', bodyBytes: 0 })
  */
-export class NodeServerHistorySinkImpl implements NodeServerHistorySink {
-  private readonly schedule: NonNullable<NodeServerHistorySinkInput['schedule']>
-  /** The latest time any entry carried: the clock never moves back, whatever order the run's reports arrive in. */
-  private lastMs = 0
-  private pendingOutput?: PendingOutput
-  private cancelFlush?: () => void
+export class NodeServerHistorySinkImpl
+  extends NodeRunHistorySinkBase<NodeServerHistoryWriter>
+  implements NodeServerHistorySink
+{
   private attempts = 0
   private openAttempt?: number
   private sentMarked = false
   private terminal = false
-  private readonly hits = new Map<number, number>()
-  private faulted = false
-  /** Whether {@link NodeServerHistorySinkInput.onAppendFailed} was told. */
-  private appendFailureReported = false
 
-  constructor(private readonly input: NodeServerHistorySinkInput) {
-    this.schedule = input.schedule ?? realSchedule
+  /** The server writer, typed concretely so its request methods are traced to this sink. */
+  private get serverWriter(): NodeServerHistoryWriter {
+    return this.input.writer
   }
 
   openRequest(
@@ -182,7 +83,7 @@ export class NodeServerHistorySinkImpl implements NodeServerHistorySink {
       this.attempts++
       this.openAttempt = this.attempts
       this.sentMarked = false
-      return this.input.writer.appendRequest({
+      return this.serverWriter.appendRequest({
         elapsedMs: at,
         attempt: this.attempts,
         method: request.method as 'GET',
@@ -203,7 +104,7 @@ export class NodeServerHistorySinkImpl implements NodeServerHistorySink {
       const attempt = this.openAttempt
       if (attempt === undefined) return
       this.openAttempt = undefined
-      return this.input.writer.appendRequestWithdrawn({
+      return this.serverWriter.appendRequestWithdrawn({
         elapsedMs: at,
         attempt,
         code:
@@ -224,39 +125,6 @@ export class NodeServerHistorySinkImpl implements NodeServerHistorySink {
     })
   }
 
-  output(elapsedMs: number, channel: 'stdout' | 'stderr', text: string): void {
-    this.guard(() => {
-      // Once the writer drops output for good (cut, failed or closed), no later chunk is sanitized, queued or scheduled.
-      if (this.input.writer.outputCut) {
-        this.pendingOutput = undefined
-        this.cancelFlush?.()
-        this.cancelFlush = undefined
-        return
-      }
-      const at = this.tick(elapsedMs)
-      const raw = this.input.sanitize(text)
-      if (!raw) return
-      const pending = this.pendingOutput
-      // Chunks of one channel within the coalescing window join one entry, up to the entry's own bound.
-      if (
-        pending &&
-        pending.channel === channel &&
-        at - pending.lastAt <= NODE_SERVER_OUTPUT_COALESCE_MS &&
-        pending.text.length + raw.length <= NODE_SERVER_OUTPUT_TEXT_LIMIT_CHARS
-      ) {
-        pending.text += raw
-        pending.lastAt = at
-        return
-      }
-      this.flushOutput()
-      this.pendingOutput = { channel, text: raw, at, lastAt: at }
-      this.cancelFlush = this.schedule(
-        () => this.guard(() => this.flushOutput()),
-        NODE_SERVER_OUTPUT_COALESCE_MS,
-      )
-    })
-  }
-
   stop(
     elapsedMs: number,
     pause: Pick<NodeServerDebuggerPause, 'declaredStopIndex'>,
@@ -272,55 +140,7 @@ export class NodeServerHistorySinkImpl implements NodeServerHistorySink {
       // A stop the journal's rules cannot place (no request at all) is no entry: the writer is marked failed, so the seal says where the history ended.
       if (this.openAttempt === undefined)
         throw new Error('A stop was captured outside an open request.')
-      const index = pause.declaredStopIndex ?? 0
-      const hit = (this.hits.get(index) ?? 0) + 1
-      this.hits.set(index, hit)
-      const { column, frameName } = resolveServerStopFrame(read)
-      // The shape rules run here too, so a fact that did not come through the capture's masks is stored masked.
-      const facts = maskSavedFacts(
-        Object.fromEntries(
-          read.facts.map((fact) => [
-            this.hide(`${fact.mode}:${fact.path}`),
-            this.hide(fact.display),
-          ]),
-        ),
-      )
-      return this.input.writer.appendStop({
-        elapsedMs: at,
-        declaredStopIndex: index,
-        hit,
-        generation,
-        source: {
-          path: read.path,
-          hash: read.sourceHash,
-          line: read.line,
-          column,
-        },
-        frameName: cutTextToLength(
-          this.hide(frameName),
-          NODE_SERVER_HISTORY_FRAME_NAME_LIMIT_CHARS,
-        ),
-        facts,
-        unavailable: read.unavailable.map((path) => ({
-          path: cutTextToLength(
-            this.hide(path),
-            NODE_SERVER_HISTORY_UNAVAILABLE_PATH_LIMIT_CHARS,
-          ),
-          reason:
-            'The debugger could not read this required value at the stop.',
-        })),
-        // The saved-history rule runs here too, so a snapshot that did not come through the capture is stored masked.
-        snapshot: maskSavedDebugSnapshot(
-          maskSnapshot(read.snapshot, (text) =>
-            // A text the capture cut inside a private root loses that fragment first: the hider only matches whole roots.
-            this.hide(
-              this.input.roots
-                ? hideTrailingRootPrefix(text, this.input.roots)
-                : text,
-            ),
-          ),
-        ),
-      })
+      return this.captureStop(at, pause, generation, read)
     })
   }
 
@@ -332,7 +152,7 @@ export class NodeServerHistorySinkImpl implements NodeServerHistorySink {
       // The mark comes first when the bytes were handed over a moment before the report of it reached the sink.
       const mark = this.sendMark(at)
       this.terminal = true
-      const answer = this.input.writer.appendResponse({
+      const answer = this.serverWriter.appendResponse({
         elapsedMs: at,
         status: response.status,
         contentType:
@@ -367,7 +187,7 @@ export class NodeServerHistorySinkImpl implements NodeServerHistorySink {
       // The failure closes the open attempt, as the journal's rules do.
       this.openAttempt = undefined
       this.sentMarked = false
-      return this.input.writer.appendRequestFailed({
+      return this.serverWriter.appendRequestFailed({
         elapsedMs: at,
         code:
           cutTextToLength(
@@ -382,109 +202,11 @@ export class NodeServerHistorySinkImpl implements NodeServerHistorySink {
     })
   }
 
-  markCaptureBudgetExhausted(): void {
-    this.guard(() => this.input.writer.markCaptureBudgetExhausted())
-  }
-
-  /**
-   * Queues the output still waiting to be coalesced, so the seal's `end` follows it; called by the seal coordinator before it seals and before every structural entry.
-   * @example sink.flush()
-   */
-  flush(): void {
-    this.guard(() => this.flushOutput())
-  }
-
-  /** Hides private roots, then masks secrets, in one text. */
-  private hide(text: string): string {
-    return redactSecretText(this.input.sanitize(text))
-  }
-
-  /** Advances the one clock and returns the time an entry carries. */
-  private tick(elapsedMs: number): number {
-    this.lastMs = Math.max(
-      this.lastMs,
-      Number.isFinite(elapsedMs) ? elapsedMs : 0,
-    )
-    return this.lastMs
-  }
-
-  /** The time of a structural entry, after the output that came before it was queued: structural entries are never coalesced and keep the journal's order. */
-  private structural(elapsedMs: number): number {
-    this.flushOutput()
-    return this.tick(elapsedMs)
-  }
-
   /** Queues the mark that the open attempt's bytes left, once; `undefined` when there is none to write. */
   private sendMark(at: number): Promise<void> | undefined {
     const attempt = this.openAttempt
     if (attempt === undefined || this.sentMarked) return undefined
     this.sentMarked = true
-    return this.input.writer.appendRequestSent({ elapsedMs: at, attempt })
-  }
-
-  /** Masks the waiting output as one text and queues it in entries of at most the entry's bound. */
-  private flushOutput(): void {
-    const pending = this.pendingOutput
-    this.pendingOutput = undefined
-    this.cancelFlush?.()
-    this.cancelFlush = undefined
-    if (!pending) return
-    const text = redactSecretText(pending.text)
-    for (
-      let start = 0;
-      start < text.length;
-      start += NODE_SERVER_OUTPUT_TEXT_LIMIT_CHARS
-    )
-      this.watch(
-        this.input.writer.appendOutput({
-          elapsedMs: pending.at,
-          channel: pending.channel,
-          text: text.slice(start, start + NODE_SERVER_OUTPUT_TEXT_LIMIT_CHARS),
-        }),
-      )
-  }
-
-  /** Runs one report: a throw or a rejection marks the writer failed and goes no further. */
-  private guard(action: () => Promise<void> | void): void {
-    try {
-      this.watch(action())
-    } catch (error) {
-      this.fault(error)
-    }
-  }
-
-  /** Keeps a queued entry's refusal from reaching anyone: the writer already holds its first failure. */
-  private watch(queued: Promise<void> | void): void {
-    if (queued)
-      queued.catch(() => {
-        this.reportAppendFailed()
-      })
-  }
-
-  /** Tells {@link NodeServerHistorySinkInput.onAppendFailed} once, whether the first failure was a refused queued append or a synchronous fault of the sink. */
-  private reportAppendFailed(): void {
-    if (this.appendFailureReported) return
-    this.appendFailureReported = true
-    try {
-      this.input.onAppendFailed?.()
-    } catch {
-      // The listener failing is its own matter.
-    }
-  }
-
-  /** Marks the writer failed with the sink's own fault, once. */
-  private fault(error: unknown): void {
-    this.input.writer.markFailed(
-      error instanceof Error ? error : new Error(String(error)),
-    )
-    // A synchronous refusal never reaches a queued append, so the status item is told here too.
-    this.reportAppendFailed()
-    if (this.faulted) return
-    this.faulted = true
-    try {
-      this.input.onFault?.(error)
-    } catch {
-      // The listener failing is its own matter.
-    }
+    return this.serverWriter.appendRequestSent({ elapsedMs: at, attempt })
   }
 }

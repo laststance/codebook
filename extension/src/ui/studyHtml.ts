@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 
 import type { ExtensionHistorySummary } from '../chromeExtensionHistoryTypes'
 import { STUDY_RESTORE_CONTROL_LABEL } from '../constants'
+import type { NodeScriptHistorySummary } from '../nodeScriptHistoryTypes'
 import type { NodeServerHistorySummary } from '../nodeServerHistoryTypes'
 import type {
   NodeTestHistoryIndex,
@@ -122,12 +123,14 @@ export interface StudyViewMessage {
   nodeHistoryCatalog?: NodeTestHistorySummary[]
   /** The saved server replays, beside {@link nodeHistoryCatalog}. */
   nodeServerHistoryCatalog?: NodeServerHistorySummary[]
+  /** The saved script replays, beside {@link nodeHistoryCatalog}. */
+  nodeScriptHistoryCatalog?: NodeScriptHistorySummary[]
   /** The saved Extension replays, beside {@link nodeHistoryCatalog}. */
   nodeExtensionHistoryCatalog?: ExtensionHistorySummary[]
   nodeHistory?: NodeTestHistoryIndex
-  /** `node-server` or `chrome-extension` while a server or an Extension replay is shown, which switches the pane's fixed words to that catalog; absent for a test replay. */
-  nodeReplayProfile?: 'node-server' | 'chrome-extension'
-  /** The words of each event of the page `nodeHistory` holds, for a server replay: its heading and body, by journal sequence. */
+  /** `node-server`, `node-script` or `chrome-extension` while a server, a script or an Extension replay is shown, which switches the pane's fixed words to that catalog; absent for a test replay. */
+  nodeReplayProfile?: 'node-server' | 'node-script' | 'chrome-extension'
+  /** The words of each event of the page `nodeHistory` holds, for a server or a script replay: its heading and body, by journal sequence. */
   nodeServerEvents?: { sequence: number; heading: string; body: string }[]
   /** The same for an Extension replay. */
   nodeExtensionEvents?: { sequence: number; heading: string; body: string }[]
@@ -1953,32 +1956,56 @@ function studyClient(
     message.removalWithoutTrash
       ? options.studyRemovalRefusalsWithoutTrash
       : options.studyRemovalRefusals
+  /**
+   * Gives the sentence that refuses removing a saved Node replay, by its profile: a server or a script replay has its own refusal in this window's words, an Extension replay has none here, and any other is a test replay; read by {@link chosenStudyRefusal}.
+   * @param message - The current Study message (whether this window has a Trash).
+   * @param chosen - The chosen saved entry, a Node replay.
+   * @param sentences - This window's removal refusals ({@link removalRefusals}).
+   * @returns
+   * - A server or a script replay: its refusal for a window with or without a Trash
+   * - An Extension replay: `undefined`, so the later refusals decide
+   * - Any other Node replay: the test replay's refusal
+   * @example nodeReplayRefusal(message, { profile: 'node-script', … }, sentences) // => options.scriptHistoryRefusal.withTrash
+   */
+  const nodeReplayRefusal = (
+    message: StudyViewMessage,
+    chosen: SavedStudyEntry,
+    sentences: ReturnType<typeof removalRefusals>,
+  ): string | undefined => {
+    if (chosen.profile === 'chrome-extension') return undefined
+    const replayRefusal =
+      chosen.profile === 'node-server'
+        ? options.serverHistoryRefusal
+        : chosen.profile === 'node-script'
+          ? options.scriptHistoryRefusal
+          : undefined
+    if (!replayRefusal) return sentences.nodeHistory
+    return message.removalWithoutTrash
+      ? replayRefusal.withoutTrash
+      : replayRefusal.withTrash
+  }
   /** Says why the chosen entry cannot be removed, first match wins, in the words of this window ({@link removalRefusals}); empty when it can. @example chosenStudyRefusal(message, nodeEntry) // => 'Test replays cannot be deleted here yet.' */
   const chosenStudyRefusal = (
     message: StudyViewMessage,
     chosen: SavedStudyEntry,
   ): string => {
     const sentences = removalRefusals(message)
-    const refusals: [applies: boolean, sentence: string][] = [
+    const refusals: [applies: boolean, sentence: string | undefined][] = [
+      // A Node replay's own refusal; an Extension replay has none, so the entries below decide.
       [
-        chosen.format === 'node-test-history' &&
-          chosen.profile !== 'node-server' &&
-          chosen.profile !== 'chrome-extension',
-        sentences.nodeHistory,
-      ],
-      [
-        chosen.format === 'node-test-history' &&
-          chosen.profile === 'node-server',
-        message.removalWithoutTrash
-          ? options.serverHistoryRefusal.withoutTrash
-          : options.serverHistoryRefusal.withTrash,
+        chosen.format === 'node-test-history',
+        nodeReplayRefusal(message, chosen, sentences),
       ],
       // The host moves nothing of a study a newer Codebook saved: which files that format keeps is not known here.
       [chosen.format === 'newer', sentences.newerFormat],
       [message.unstoppedStudyId === chosen.id, sentences.runNotStopped],
       [message.contentTab === 'recording', sentences.recordingOpen],
     ]
-    return refusals.find(([applies]) => applies)?.[1] ?? ''
+    return (
+      refusals.find(
+        ([applies, sentence]) => applies && sentence !== undefined,
+      )?.[1] ?? ''
+    )
   }
   /** Says why the chosen entry cannot be removed now, first match wins: a chosen entry that is still opening, no entry, then the entry's own reason. Empty when it can be removed, and while a removal is in progress, which the status line names instead. A window without a Trash gets its own sentences, none of which speaks of deleting ({@link removalRefusals}). @example removalReason(message, undefined, false) // => 'Choose a saved study to delete.' */
   const removalReason = (
@@ -3099,18 +3126,23 @@ function studyClient(
   /**
    * Names the replay family whose words the page uses: the shown replay's profile, else, with no replay selected, the only family the workspace saved (test replays first, then server replays, then Extension replays), so a workspace holding only Extension replays is not asked to choose a test replay; called by {@link useReplayWords}.
    * @param message - The current Study message.
-   * @returns `node-server`, `chrome-extension`, or `undefined` for test replay words.
+   * @returns `node-server`, `node-script`, `chrome-extension`, or `undefined` for test replay words.
    * @example replayProfileOf({ nodeExtensionHistoryCatalog: [summary] }) // => 'chrome-extension'
    */
   const replayProfileOf = (
     message: StudyViewMessage,
   ): StudyViewMessage['nodeReplayProfile'] => {
     if (message.nodeReplayProfile) return message.nodeReplayProfile
-    if (message.nodeHistoryCatalog?.length) return undefined
-    if (message.nodeServerHistoryCatalog?.length) return 'node-server'
-    return message.nodeExtensionHistoryCatalog?.length
-      ? 'chrome-extension'
-      : undefined
+    // The first catalog that lists a replay decides the family, in this order; none decides test replay words.
+    const listedFamily = (
+      [
+        [message.nodeHistoryCatalog, undefined],
+        [message.nodeServerHistoryCatalog, 'node-server'],
+        [message.nodeScriptHistoryCatalog, 'node-script'],
+        [message.nodeExtensionHistoryCatalog, 'chrome-extension'],
+      ] as const
+    ).find(([catalog]) => Boolean(catalog?.length))
+    return listedFamily?.[1]
   }
   /**
    * Gives the fixed words of one replay family; called by {@link useReplayWords}.
@@ -3122,6 +3154,7 @@ function studyClient(
     profile: StudyViewMessage['nodeReplayProfile'],
   ): Readonly<Record<keyof typeof options.testReplay, string>> => {
     if (profile === 'chrome-extension') return options.extensionReplay
+    if (profile === 'node-script') return options.scriptReplay
     return profile === 'node-server' ? options.serverReplay : options.testReplay
   }
   /**
@@ -3182,6 +3215,10 @@ function studyClient(
       (entry) => entry.studyId === studyId,
     )
     if (serverSummary) return serverSummary.title ?? serverSummary.question
+    const scriptSummary = message.nodeScriptHistoryCatalog?.find(
+      (entry) => entry.studyId === studyId,
+    )
+    if (scriptSummary) return scriptSummary.title ?? scriptSummary.question
     // An Extension replay's header names its question, extension, surface and capture state.
     const extensionSummary = message.nodeExtensionHistoryCatalog?.find(
       (entry) => entry.studyId === studyId,
@@ -3237,6 +3274,7 @@ function studyClient(
   const idleReplayLine = (message: StudyViewMessage): string =>
     message.nodeHistoryCatalog?.length ||
     message.nodeServerHistoryCatalog?.length ||
+    message.nodeScriptHistoryCatalog?.length ||
     message.nodeExtensionHistoryCatalog?.length
       ? replayWords.chooseReplay
       : replayWords.noReplay
@@ -3552,6 +3590,8 @@ function studyClient(
     else delete playheadInput.dataset.replayProfile
     if (profile === 'node-server')
       playheadInput.title = options.serverReplayTimelineTitle
+    else if (profile === 'node-script')
+      playheadInput.title = options.scriptReplayTimelineTitle
     else if (profile === 'chrome-extension')
       playheadInput.title = options.extensionReplayTimelineTitle
     else playheadInput.title = options.testReplayTimelineTitle

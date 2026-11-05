@@ -5,6 +5,8 @@ import type {
   ServerReplayEvent,
   ServerReplayModel,
 } from './buildServerReplayModel'
+import { describeScriptEndRegion } from './describeNodeScriptEndRegion'
+import { NODE_SCRIPT_REPLAY_TEXT } from './describeNodeScriptReplay'
 import {
   describeServerRequestClaim,
   describeServerResponseState,
@@ -12,6 +14,7 @@ import {
 } from './describeNodeServerReplay'
 import { formatEventSeconds } from './formatEventSeconds'
 import { type NodeTestOutputIndex } from './indexNodeTestOutput'
+import { nodeRunProfileOf, nodeRunReplayWords } from './nodeRunReplayWords'
 import {
   leftOutLines,
   type NodeTestApplicationView,
@@ -20,14 +23,40 @@ import { stripTerminalControls } from './stripTerminalControls'
 
 /** What the Application pane shows of a server replay at one moment: the fixed request region, the fixed response region, then the output log. It is the test replay's Application view with its server fields, so one document draws both. Every field is text, rendered as text and never as markup. */
 export type NodeServerApplicationView = NodeTestApplicationView & {
-  profile: 'node-server'
+  profile: 'node-server' | 'node-script'
 }
 
-/** Words the Application pane's first line and name. */
-function timeWords(elapsedMs: number | undefined): string {
+/** Words the Application pane's first line and name: `Recorded server output` or, for a script replay, `Recorded script output`. */
+function timeWords(
+  elapsedMs: number | undefined,
+  subject: 'server' | 'script',
+): string {
   return elapsedMs === undefined
-    ? 'Recorded server output'
-    : `Recorded server output · ${formatEventSeconds(elapsedMs)} s`
+    ? `Recorded ${subject} output`
+    : `Recorded ${subject} output · ${formatEventSeconds(elapsedMs)} s`
+}
+
+/**
+ * Words the end region of a script replay for the selected moment, which takes the place of the response region: before the run's `end` the not-ended-yet line, at or after it how the run ended with the stops it never reached, and for a history that ended with no `end` the reason once the replay reaches its last event.
+ * @param model - The script replay model.
+ * @param selected - The selected event.
+ * @returns The region.
+ * @example endRegion(model, selected).state // => 'Exited with code 0'
+ */
+function endRegion(
+  model: ServerReplayModel,
+  selected: ServerReplayEvent,
+): NonNullable<NodeServerApplicationView['response']> {
+  const { terminal } = model
+  if (terminal?.type === 'end' && selected.sequence >= terminal.sequence)
+    return describeScriptEndRegion(terminal)
+  const reachedLast = selected.sequence === model.events.at(-1)?.sequence
+  return {
+    state:
+      terminal || !reachedLast
+        ? NODE_SCRIPT_REPLAY_TEXT.noEndYet
+        : 'No end was recorded: the history ended before the script ended.',
+  }
 }
 
 /**
@@ -132,6 +161,40 @@ function responseRegion(
 }
 
 /**
+ * Words what the replay's header declares the run was: a server's request line, or a script's entry file.
+ * @param header - The replay model's header.
+ * @returns `<METHOD> <path>` or the script's entry, free of terminal controls.
+ * @example describeDeclaredRun(model.header) // => 'POST /api/items'
+ */
+function describeDeclaredRun(header: ServerReplayModel['header']): string {
+  return header.profile === 'node-script'
+    ? stripTerminalControls(header.entry)
+    : `${header.declaredRequest.method} ${stripTerminalControls(header.declaredRequest.path)}`
+}
+
+/**
+ * Projects the two fixed regions of the Application pane for the selected moment: a server replay's request and response regions, or a script replay's end region, which takes the place of the response region and has no request region.
+ * @param model - The replay model.
+ * @param selected - The selected event.
+ * @param noResponseReason - The no-response reason of a server history that never answered.
+ * @returns The `request` (server only) and `response` fields of the view.
+ * @example momentRegions(scriptModel, end, undefined).response.state // => 'Exited with code 0'
+ */
+function momentRegions(
+  model: ServerReplayModel,
+  selected: ServerReplayEvent,
+  noResponseReason: string | undefined,
+): Pick<NodeServerApplicationView, 'request' | 'response'> {
+  if (model.header.profile === 'node-script')
+    return { response: endRegion(model, selected) }
+  const request = requestRegion(model, selected)
+  return {
+    ...(request ? { request } : {}),
+    response: responseRegion(model, selected, noResponseReason),
+  }
+}
+
+/**
  * Projects what the Application pane shows of a server replay at the selected moment: the request region, the response region and the output log up to the moment, reading the output with the test replay's window, follow and cut rules.
  * Called by the Study workspace for each Study message while a server replay is selected.
  * @param model - The replay model.
@@ -153,47 +216,46 @@ export function projectServerApplication(
   },
 ): NodeServerApplicationView {
   const { generation, loading = false, leaving = false } = options
+  const words = nodeRunReplayWords(model)
+  const profile = nodeRunProfileOf(model)
+  const subject = profile === 'node-script' ? 'script' : 'server'
   if (loading || !selected)
     return {
-      profile: 'node-server',
+      profile,
       test: '',
       generation,
-      time: timeWords(undefined),
-      name: NODE_SERVER_REPLAY_TEXT.heading,
+      time: timeWords(undefined, subject),
+      name: words.heading,
       lines: [],
       placeholder: loading
-        ? NODE_SERVER_REPLAY_TEXT.loading
+        ? words.loading
         : model.events.length
-          ? NODE_SERVER_REPLAY_TEXT.nothingYet
-          : NODE_SERVER_REPLAY_TEXT.noEntries,
+          ? words.nothingYet
+          : words.noEntries,
     }
   const tail = accumulateNodeTestOutput(index, selected.sequence)
   const last = model.events.at(-1)
+  const regions = momentRegions(model, selected, options.noResponseReason)
   return {
-    profile: 'node-server',
+    profile,
     test: '',
     generation,
-    time: timeWords(leaving ? undefined : selected.elapsedMs),
-    name: `${NODE_SERVER_REPLAY_TEXT.heading} · ${model.header.declaredRequest.method} ${stripTerminalControls(model.header.declaredRequest.path)}`,
-    ...(requestRegion(model, selected)
-      ? { request: requestRegion(model, selected) }
-      : {}),
-    response: responseRegion(model, selected, options.noResponseReason),
+    time: timeWords(leaving ? undefined : selected.elapsedMs, subject),
+    name: `${words.heading} · ${describeDeclaredRun(model.header)}`,
+    ...regions,
     ...(leaving
       ? {}
       : {
-          region: `Recorded server output up to ${formatEventSeconds(selected.elapsedMs)} s`,
+          region: `Recorded ${subject} output up to ${formatEventSeconds(selected.elapsedMs)} s`,
         }),
     lines: tail.lines,
     ...leftOutLines(tail),
-    ...(tail.hasOutput
-      ? {}
-      : { placeholder: NODE_SERVER_REPLAY_TEXT.nothingYet }),
+    ...(tail.hasOutput ? {} : { placeholder: words.nothingYet }),
     // A history that ended with no answer says so at its last event, while the recording is no longer being written.
     ...(model.status !== 'recording' &&
     model.endedBeforeAnswer &&
     last?.sequence === selected.sequence
-      ? { end: NODE_SERVER_REPLAY_TEXT.endedEarly }
+      ? { end: words.endedEarly }
       : {}),
   }
 }

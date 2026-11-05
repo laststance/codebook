@@ -5,6 +5,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 /**
  * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ * 1.26 is additive: the `node-script` profile runs one repository-owned Node script once under the debugger, in a version 1 configuration `{ version, adapter: "node-script", book, packageRoot?, entry, loader?, source, inspections, additionalStops? }` with no port, request, environment, node option or argument. `codebook_status` gains `profiles['node-script']` with `ready` and `missing` (Node, `ps` and a supported system, not native Windows; no listener tool). The learner confirms one run in the editor before anything is spawned; the script runs, pauses at declared stops in the package's own source (never `node_modules`) and ends with `nodeScript.end` (`kind` exited, signal, stopped or limit; `exitCode`, `signal`, `exitUnknown`, `limit` running-time, run-deadline, pause-hold or exit-deadline; `stopsReached`, `stopsNeverReached`, `captureBudgetExhausted`, `stopsNotObserved`; `output` with `tail` and `truncated`). The refusals gain two codes, each with `details.reason` and `details.sideEffects`: `NODE_SCRIPT_SOURCE_REFUSED` (`package-root`, `entry`, `stop-file`, `tsx-missing`, `outside-package`, `node-modules`, `source-refused`) and `SCRIPT_NOT_CONFIRMED`; `codebook://help/node-script` holds the walkthrough, three samples, the script selection rule, the end fields and one anchor per code. A script run is saved as a Script replay in its own history store, which an older Codebook never reads. Live feature: a script run needs a Codebook that serves this API.
  * 1.25 is additive: the `react-scripts-dev` adapter of the `repository-browser` profile runs a Create React App app (react-scripts 5) at the repository root or below it, in a version 3 configuration only (the adapter enum of versions 1 and 2 is unchanged). Codebook starts the app's own `react-scripts` on a loopback port (it sets `CI=true`, `HOST`, `PORT` and `BROWSER` itself, overriding the start script's assignments of the same names, and reads only the script's `PORT=` assignment as the port), treats the app as ready after its first compile and pauses at browser stops in the app's own source, which the native debugger shows. The `react-scripts-dev` readiness under `profiles[].prerequisites.adapters` gains `ready`, `missing` (`react-scripts-installed`, `react-scripts-5`, `start-script`, `prestart-script` or `not-a-react-scripts-app`), `rootIsApp`, `packages` (entries `{ packageRoot, installed, ready, version?, missing, startScript }`), `packagesTruncated` and `packagesTruncatedReason`. The refusals gain five codes, each with `details.reason` and `details.sideEffects`: `REACT_SCRIPTS_UNSUPPORTED` (`not-installed`, `react-scripts-version`, `start-script-not-react-scripts`, `prestart-script`, `https`, `env-file-unreadable`, `not-a-react-scripts-app`), `REACT_SCRIPTS_LAUNCHER_FAILED` (`compile-failed`, `exited`; `exited` carries `exitCode` and `signal`), `REACT_SCRIPTS_PORT_UNAVAILABLE` (`port-in-use`), `REACT_SCRIPTS_SETUP_DEADLINE` (`setup-deadline`) and `REACT_SCRIPTS_SEAL_FAILED` (`outside-package`, `ambiguous-source`, `node-modules`, `unmapped-line`, `map-limit`, `map-unreadable`; `outside-package` and `node-modules` carry `sideEffects` `none` when found before the start and `partial` when found after the server started); `codebook://help/repository-browser` gains `reactScriptsQuickStart` with one anchor per code. A `react-scripts-dev` run is saved as study format 11 (`.study.v11.json`, retained configuration), which an older Codebook lists as saved by a newer Codebook. Live feature: a react-scripts run needs a Codebook that serves this API.
  * 1.24 is additive: a server stop under `next-dev-webpack` with a nested `packageRoot` (configuration version 3) of an App Router app may lie in the checked-out source of a workspace library that the app reaches through links inside the repository, under the rules of the App Router browser library stop of 1.23 (a current build whose maps carry `sourcesContent`, and a module in the entry route's server code, the `(rsc)` layer; the library `details.reason` values of 1.19 apply under `NEXT_STOP_NOT_SEALED` with `details.router: "app"`, and a saved study gains no field). The pause happens in the server render of the entry route and the native debugger shows the checked-out library file with the library's values. The server and the client-component render on the server may run the same library file: a pause in another copy of the module, or at a line only a browser stop declares, is resumed and not recorded. A library stop of an app with both routers, of a root app and of a version 2 configuration stay refused as before.
  * 1.23 is additive: a browser stop under `next-dev-webpack` with a nested `packageRoot` (configuration version 3) of an App Router app may lie in the checked-out source of a workspace library that the app reaches through links inside the repository, under the rules of the Pages browser library stop of 1.22 (a current build whose maps carry `sourcesContent`, and a module among the `.js` chunks of the route's client-reference manifest; a module loaded later is refused as `library-not-in-build`; the library `details.reason` values of 1.19 apply, a refusal of an App Router app carries `details.router: "app"`, `library-not-in-build` carries `details.mapSource` when the module's map does not name the checked-out file, and a saved study gains no field). The native debugger shows the checked-out library file with the library's values. A server stop in a workspace library of an App Router app stayed refused as `outside-package` until 1.24, and a library stop of an app with both routers still is.
@@ -27,7 +28,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.9 is additive: a node-server run is saved as a Server replay. `codebook_explain_node_history` accepts a server history's material (steps citing the request, a stop, output, the response or the request failure), the server run resource gains `nodeServer.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing` and `captureMissing`, `nextActions` offers `save-node-learning`, and `codebook://help/node-server` has a save section.
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
-export const API_VERSION = '1.25'
+export const API_VERSION = '1.26'
 
 /** The Codebook version that first serves a Next app below the repository root (API 1.18, skill 1.0.67). */
 export const NEXT_PACKAGE_ROOT_MINIMUM_EXTENSION = '0.2.75.0'
@@ -49,6 +50,11 @@ export const VITE_LIBRARY_STOP_MINIMUM_API = '1.21'
  */
 export const VITE_APP_SELECTION_RULE =
   "Choose the Vite app the question is about: the repository root only when the vite-dev readiness reports rootIsApp true (the root package.json declares vite and the root holds an index.html or a dev script Codebook accepts), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.20 or later); a node_modules/vite at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
+
+/** The API that first serves the `node-script` profile (skill 1.0.75). */
+export const NODE_SCRIPT_MINIMUM_API = '1.26'
+/** The first extension version that offers the node-script profile, for the profile entry of `codebook_status` (API 1.26, skill 1.0.75). */
+export const NODE_SCRIPT_MINIMUM_EXTENSION_VERSION = '0.2.84'
 
 /** The API that first accepts the `react-scripts-dev` adapter in a version 3 configuration (skill 1.0.74). */
 export const REACT_SCRIPTS_MINIMUM_API = '1.25'
@@ -76,7 +82,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.83'
+export const EXTENSION_VERSION = '0.2.84'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -321,6 +327,12 @@ export const STUDY_REMOVAL_SERVER_HISTORY_REFUSAL = {
   withTrash: 'Server replays cannot be deleted here yet.',
   withoutTrash:
     'Codebook cannot list the files of a server replay for removal by hand yet.',
+} as const
+/** What Saved studies answers a removal request for a script replay with, in the same two window kinds, as a server replay's refusal does. */
+export const STUDY_REMOVAL_SCRIPT_HISTORY_REFUSAL = {
+  withTrash: 'Script replays cannot be deleted here yet.',
+  withoutTrash:
+    'Codebook cannot list the files of a script replay for removal by hand yet.',
 } as const
 /** What Saved studies answers a request for a study's files with in a window without a Trash; the "Remove by hand" disclosure shows it above the files the answer lists, and the reader deletes nothing itself. */
 export const STUDY_REMOVAL_WITHOUT_TRASH_MESSAGE =
@@ -1387,6 +1399,32 @@ export const OPERATIONS_REPOSITORY_BROWSER_ADAPTERS = [
 export const NODE_TEST_PROFILE = 'node-test'
 /** The profile of a run of the repository's own Node HTTP server: one declared request, stopped in its handler source. */
 export const NODE_SERVER_PROFILE = 'node-server'
+/** The profile of one run of a repository-owned Node script: no port and no request, stopped in the script's own source, ended by the script's exit. */
+export const NODE_SCRIPT_PROFILE = 'node-script'
+/** The most running time a node-script run may use outside pauses; pauses do not count (the shared run deadline and pause hold still apply). */
+export const NODE_SCRIPT_RUN_TIMEOUT_MS = 60_000
+/** The folder of node-script histories beside `node-servers.v1`, so older Codebooks never read it. */
+export const NODE_SCRIPT_HISTORY_DIRECTORY = 'node-scripts.v1'
+/** The `version` of a node-script history's header, seal and every record. */
+export const NODE_SCRIPT_HISTORY_FORMAT_VERSION = 1
+/** How a script run ended, as the `end` entry of its history records it: it exited by itself, a signal Codebook did not send ended it, `codebook_stop` ended it, or a limit Codebook enforced did. */
+export const NODE_SCRIPT_END_KINDS = [
+  'exited',
+  'signal',
+  'stopped',
+  'limit',
+] as const
+/** The limit that ended a script run whose end kind is `limit`. */
+export const NODE_SCRIPT_END_LIMITS = [
+  'running-time',
+  'run-deadline',
+  'pause-hold',
+  'exit-deadline',
+] as const
+/** How a script's entry is loaded, as the configuration's `loader` and the history header name it. */
+export const NODE_SCRIPT_LOADERS = ['tsx', 'node'] as const
+/** The most characters of the reason a script's exit code could not be read. */
+export const NODE_SCRIPT_EXIT_UNKNOWN_LIMIT_CHARS = 256
 /** The one action a node-server run offers: send its declared request. */
 export const NODE_SERVER_ACTION = 'http-request'
 /** The prefix of the debug session name of a node-server run (`codebook node server <runId>`): the run recognizes only sessions whose root carries its own name. */
@@ -2578,6 +2616,22 @@ export const NODE_SERVER_HISTORY_REASON_CODES = {
   captureBudgetExhausted: 'SERVER_HISTORY_CAPTURE_BUDGET_EXHAUSTED',
   outputTruncated: 'SERVER_HISTORY_OUTPUT_TRUNCATED',
 } as const
+/** The stable codes of the reasons a node-script history is partial; every code in its `captureMissing` is one of these, none is a node-server code. */
+export const NODE_SCRIPT_HISTORY_REASON_CODES = {
+  endMissing: 'SCRIPT_HISTORY_END_MISSING',
+  runStopped: 'SCRIPT_HISTORY_RUN_STOPPED',
+  runLimit: 'SCRIPT_HISTORY_RUN_LIMIT',
+  exitUnknown: 'SCRIPT_HISTORY_EXIT_UNKNOWN',
+  stopNotObserved: 'SCRIPT_HISTORY_STOP_NOT_OBSERVED',
+  stopNotReached: 'SCRIPT_HISTORY_STOP_NOT_REACHED',
+  snapshotMissing: 'SCRIPT_HISTORY_SNAPSHOT_MISSING',
+  sourceUnavailable: 'SCRIPT_HISTORY_SOURCE_UNAVAILABLE',
+  valueUnavailable: 'SCRIPT_HISTORY_VALUE_UNAVAILABLE',
+  appendFailed: 'SCRIPT_HISTORY_APPEND_FAILED',
+  sizeLimit: 'SCRIPT_HISTORY_SIZE_LIMIT',
+  captureBudgetExhausted: 'SCRIPT_HISTORY_CAPTURE_BUDGET_EXHAUSTED',
+  outputTruncated: 'SCRIPT_HISTORY_OUTPUT_TRUNCATED',
+} as const
 /** The profile of a run of the opened repository's unpacked Manifest V3 extension in a browser Codebook owns. */
 export const CHROME_EXTENSION_PROFILE = 'chrome-extension'
 /** The one action a chrome-extension run offers: perform its next declared click. */
@@ -3074,3 +3128,9 @@ export const LIBRARY_MAP_SOURCE_DETAIL_LIMIT_CHARS = 512
 
 /** How deep an indexed source map's sections may nest before the App Router library seal's collision check counts the map as unreadable (and so as possibly naming the stop file). */
 export const LIBRARY_SECTION_DEPTH_LIMIT = 8
+
+/** The words the shared process core uses in its sentences for a server run; a script run passes its own ({@link NODE_SCRIPT_RUN_WORDS}). */
+export const NODE_SERVER_RUN_WORDS = { noun: 'server', profile: 'node-server' }
+
+/** The words the shared process core uses in its sentences for a script run. */
+export const NODE_SCRIPT_RUN_WORDS = { noun: 'script', profile: 'node-script' }

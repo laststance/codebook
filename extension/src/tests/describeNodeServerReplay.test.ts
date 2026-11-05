@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import {
+  describeServerAnswer,
   describeServerRequestClaim,
   describeServerResponseState,
   describeServerStop,
@@ -76,4 +77,20 @@ test('the server catalog never uses the word test', () => {
 
   // Assert
   assert.deepEqual(withTest, [])
+})
+
+// protects=a script replay without a recorded end reads "No end recorded" while a server replay without a response keeps "No response recorded"; fails_when=a script is told it has no response, or the server wording changes; no_claim=the wording of a recorded terminal
+test('the answer of a replay without a terminal words a script as no end and a server as no response', () => {
+  // Arrange
+  const terminal = undefined
+
+  // Act
+  const script = describeServerAnswer(terminal, 'node-script')
+  const server = describeServerAnswer(terminal, 'node-server')
+  const unspecified = describeServerAnswer(terminal)
+
+  // Assert
+  assert.equal(script, 'No end recorded')
+  assert.equal(server, 'No response recorded')
+  assert.equal(unspecified, 'No response recorded')
 })

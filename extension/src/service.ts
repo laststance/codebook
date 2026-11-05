@@ -39,6 +39,7 @@ import {
   MAX_UI_TEXT_CHARS,
   EXTENSION_CLICK_ACTION,
   NODE_SERVER_ACTION,
+  NODE_SCRIPT_PROFILE,
   NODE_SERVER_PROFILE,
   NODE_SERVER_STATE_CHANGING_METHODS,
   NODE_TEST_MINIMUM_EXTENSION_VERSION,
@@ -77,6 +78,14 @@ import {
   type LearningSummary,
 } from './learningSummarySchemas'
 import type { NodeHistoryRepository } from './nodeHistoryRepository'
+import {
+  nodeScriptConfigSchema,
+  type NodeScriptConfiguration,
+} from './nodeScriptConfigSchemas'
+import type { NodeScriptHistoryRecorder } from './nodeScriptHistoryRecorder'
+import { nodeScriptLearningMaterialContentSchema } from './nodeScriptLearningSchemas'
+import { describeNodeScriptProfile } from './nodeScriptProfile'
+import type { NodeScriptRuntime } from './nodeScriptRuntimeTypes'
 import {
   nodeServerConfigSchema,
   type NodeServerConfiguration,
@@ -202,6 +211,7 @@ import { maskLearnerSecretData } from './utils/maskLearnerSecretData'
 import { maskLearnerSecretJsonText } from './utils/maskLearnerSecretJsonText'
 import { maskLearnerSecretText } from './utils/maskLearnerSecretText'
 import { namesLineNumber } from './utils/namesLineNumber'
+import { nextNodeScriptState } from './utils/nextNodeScriptState'
 import { nextNodeServerState } from './utils/nextNodeServerState'
 import { nodeTestResultKind } from './utils/nodeTestResultKind'
 import { numberSourceLines } from './utils/numberSourceLines'
@@ -209,11 +219,13 @@ import { parseChromeExtensionConfiguration } from './utils/parseChromeExtensionC
 import { pauseLabelOf } from './utils/pauseLabelOf'
 import type { NodeTestExecutionPlan } from './utils/planNodeTestExecution'
 import { pointRootStartToPackages } from './utils/pointRootStartToPackages'
+import { prepareNodeScriptStudy } from './utils/prepareNodeScriptStudy'
 import { prepareNodeServerStudy } from './utils/prepareNodeServerStudy'
 import { prepareNodeTestStudy } from './utils/prepareNodeTestStudy'
 import { prepareRepositoryStudy } from './utils/prepareRepositoryStudy'
 import { projectChromeExtensionHistory } from './utils/projectChromeExtensionHistory'
 import { projectChromeExtensionState } from './utils/projectChromeExtensionState'
+import { projectNodeScriptState } from './utils/projectNodeScriptState'
 import { projectNodeServerHistory } from './utils/projectNodeServerHistory'
 import { projectNodeServerState } from './utils/projectNodeServerState'
 import {
@@ -245,6 +257,7 @@ import { settledWithin } from './utils/settledWithin'
 import { sleepUntilAborted } from './utils/sleepUntilAborted'
 import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
 import { startChromeExtensionHistory } from './utils/startChromeExtensionHistory'
+import { startNodeScriptHistory } from './utils/startNodeScriptHistory'
 import { startNodeServerHistory } from './utils/startNodeServerHistory'
 import { StorageLockHeldError } from './utils/storageLockHeldError'
 import { studyErrorNamingCause } from './utils/studyErrorNamingCause'
@@ -359,6 +372,26 @@ export interface NodeServerRecordState {
   /** Why the run has no history (storage unavailable, a full store, a refused or slow start), shown beside the run's state and answered by Save; the live run goes on. */
   historyUnavailable?: string
 }
+/** What the service keeps of a node-script run beside the fields every run has. */
+export interface NodeScriptRecordState {
+  run?: NodeScriptRuntime
+  /** The configuration with its hash and the pinned article node, once the preparation pinned the cited sources. */
+  prepared?: {
+    configuration: NodeScriptConfiguration
+    configurationHash: string
+    descriptor: ConfiguredDescriptor
+  }
+  /** Stops listening to the run's changes once the run is released. */
+  subscription?: { dispose(): void }
+  /** The failures already written to the Output channel (by code), so one failure is written once. */
+  loggedFailures: Set<string>
+  /** The service's own terminal cause of the run's end, read by the history's seal. */
+  terminalFailure?: StudyError
+  /** The run's history, from before its launch to its seal; absent when none could start ({@link historyUnavailable}). */
+  history?: NodeScriptHistoryRecorder
+  /** Why the run has no history (storage unavailable, a full store, a refused or slow start); the live run goes on. */
+  historyUnavailable?: string
+}
 /** What the service keeps of a chrome-extension run beside the fields every run has (Cycle 0061 pt2). */
 export interface ChromeExtensionRecordState {
   run?: ChromeExtensionRuntime
@@ -388,6 +421,11 @@ type ChromeExtensionStudyRecord = StudyRecord & {
   profile: typeof CHROME_EXTENSION_PROFILE
   chromeExtension: ChromeExtensionRecordState
 }
+/** A node-script run's record with its script state, as the narrowing {@link isNodeScriptRecord} gives. */
+type NodeScriptStudyRecord = StudyRecord & {
+  profile: typeof NODE_SCRIPT_PROFILE
+  nodeScript: NodeScriptRecordState
+}
 /** A node-server run's record with its server state, as the narrowing {@link isNodeServerRecord} gives. */
 type NodeServerStudyRecord = StudyRecord & {
   profile: typeof NODE_SERVER_PROFILE
@@ -404,6 +442,7 @@ export type StudyRecord = StudyRecordState &
       execution?: NodeTestExecutionPlan
     }
     nodeServer?: NodeServerRecordState
+    nodeScript?: NodeScriptRecordState
     chromeExtension?: ChromeExtensionRecordState
   }
 /**
@@ -555,6 +594,7 @@ const SUPPORTED_PROFILES: readonly string[] = [
   REPOSITORY_BROWSER_PROFILE,
   NODE_TEST_PROFILE,
   NODE_SERVER_PROFILE,
+  NODE_SCRIPT_PROFILE,
   CHROME_EXTENSION_PROFILE,
 ]
 
@@ -584,6 +624,35 @@ function isNodeServerRecord(
 ): record is NodeServerStudyRecord {
   return (
     record.profile === NODE_SERVER_PROFILE && record.nodeServer !== undefined
+  )
+}
+
+/**
+ * Gives the fields a new run's record starts with because it is a node-script run: its events and its script state.
+ * @param profile - The profile of the start.
+ * @returns The fields for a node-script run; none for another profile.
+ * @example nodeScriptRecordFields('node-script').nodeEvents // => []
+ */
+function nodeScriptRecordFields(profile: string) {
+  return profile === NODE_SCRIPT_PROFILE
+    ? {
+        nodeEvents: [],
+        nodeScript: { loggedFailures: new Set<string>() },
+      }
+    : {}
+}
+
+/**
+ * Narrows a run's record to a node-script run, for the code paths that exist only for that profile.
+ * @param record - Any run's record.
+ * @returns `true` for a record of the node-script profile, which always holds its script state.
+ * @example if (isNodeScriptRecord(record)) record.nodeScript.run?.view()
+ */
+function isNodeScriptRecord(
+  record: StudyRecord,
+): record is NodeScriptStudyRecord {
+  return (
+    record.profile === NODE_SCRIPT_PROFILE && record.nodeScript !== undefined
   )
 }
 
@@ -755,6 +824,16 @@ export class StudyService {
     Promise<
       | Awaited<
           ReturnType<NodeHistoryRepository['serverHistories']['summarize']>
+        >
+      | undefined
+    >
+  >()
+  /** Each script history's summary read in flight, by study id; an entry is removed when its read settles. */
+  private readonly nodeScriptSummaryReads = new Map<
+    string,
+    Promise<
+      | Awaited<
+          ReturnType<NodeHistoryRepository['scriptHistories']['summarize']>
         >
       | undefined
     >
@@ -1225,6 +1304,8 @@ export class StudyService {
           profilePrerequisites,
           commonPrerequisites,
         ),
+        // Listed last so the older profiles keep their positions.
+        this.nodeScriptProfileEntry(profilePrerequisites, commonPrerequisites),
       ],
       capabilities: [
         'start',
@@ -1331,6 +1412,36 @@ export class StudyService {
         : ['Repository source/book storage is unavailable.']),
     ]
     return describeNodeServerProfile({
+      ready: reported.ready && missing.length === 0,
+      missing,
+    })
+  }
+
+  /**
+   * Describes the node-script profile for `codebook_status` with everything that keeps it from starting here: the environment's missing items (Node, `ps`, a supported system), a missing run factory and missing repository storage.
+   * @param profilePrerequisites - The environment's prerequisites by profile, when it reports any.
+   * @param commonPrerequisites - The shared prerequisites, used when the environment reports none for the profile.
+   * @returns The profile entry ({@link describeNodeScriptProfile}).
+   * @example this.nodeScriptProfileEntry(undefined, { ready: true, missing: [] }).prerequisites.ready // => true when the adapter and storage exist
+   */
+  private nodeScriptProfileEntry(
+    profilePrerequisites: Awaited<
+      ReturnType<StudyEnvironment['prerequisites']>
+    >['profiles'],
+    commonPrerequisites: { ready: boolean; missing: string[] },
+  ) {
+    const reported =
+      profilePrerequisites?.[NODE_SCRIPT_PROFILE] ?? commonPrerequisites
+    const missing = [
+      ...reported.missing,
+      ...(this.environment.createNodeScriptRun
+        ? []
+        : ['The owned Node script adapter is unavailable.']),
+      ...(this.repository
+        ? []
+        : ['Repository source/book storage is unavailable.']),
+    ]
+    return describeNodeScriptProfile({
       ready: reported.ready && missing.length === 0,
       missing,
     })
@@ -1788,6 +1899,7 @@ export class StudyService {
       return this.receipt(previous)
     }
     this.presentationController?.assertPresentationIdle()
+    this.refuseWhileScriptConfirmationIsOpen()
     if ([...this.records.values()].some((record) => !record.stopped))
       throw new StudyError('BUSY', 'Another run still owns resources.')
     this.reserveRunSlot(refusal)
@@ -1813,6 +1925,7 @@ export class StudyService {
         ? { nodeStops: [], nodeEvents: [], nodePhase: 'preparing' as const }
         : {}),
       ...nodeServerRecordFields(intent.profile),
+      ...nodeScriptRecordFields(intent.profile),
       ...chromeExtensionRecordFields(intent.profile),
       // A reader refresh can arrive before the admission answers; until then the run is not a checkpoint candidate.
       ...(intent.profile === REPOSITORY_BROWSER_PROFILE && this.recordings
@@ -1833,6 +1946,7 @@ export class StudyService {
    */
   private assertProfileDeclaration(input: StartInput): void {
     this.assertNodeServerDeclaration(input)
+    this.assertNodeScriptDeclaration(input)
     if (input.profile === CHROME_EXTENSION_PROFILE)
       parseChromeExtensionConfiguration(input.configuration)
   }
@@ -1850,6 +1964,39 @@ export class StudyService {
       throw new StudyError(
         'INVALID_CONFIGURATION',
         describeNodeServerConfigurationIssues(declaration.error.issues),
+      )
+  }
+
+  /**
+   * Refuses a start while the learner is asked to confirm a script run: it answers BUSY with the reason a dialog is open, never the generic one.
+   * @throws `BUSY` with reason `awaiting-confirmation` when a script run awaits the learner's answer.
+   * @example this.refuseWhileScriptConfirmationIsOpen() // throws while the dialog is open
+   */
+  private refuseWhileScriptConfirmationIsOpen(): void {
+    const asking = [...this.records.values()].find(
+      (record) =>
+        !record.stopped &&
+        record.nodeScript?.run?.view().confirmation === 'awaiting-learner',
+    )
+    if (asking) throw this.busyWhileAsking(asking, 'script-run')
+  }
+
+  /**
+   * Refuses a node-script start whose configuration does not parse, listing every violation with its field path and naming `codebook://help/node-script`; called by {@link StudyService.start} for a start that begins a new run.
+   * @param input - The start as the tool received it.
+   * @throws `INVALID_CONFIGURATION` with {@link describeNodeServerConfigurationIssues} for a node-script start; nothing for another profile.
+   * @example this.assertNodeScriptDeclaration({ ...input, configuration: { ...declaration, port: 80 } }) // throws 'configuration: Unrecognized key: "port". See codebook://help/node-script.'
+   */
+  private assertNodeScriptDeclaration(input: StartInput): void {
+    if (input.profile !== NODE_SCRIPT_PROFILE) return
+    const declaration = nodeScriptConfigSchema.safeParse(input.configuration)
+    if (!declaration.success)
+      throw new StudyError(
+        'INVALID_CONFIGURATION',
+        describeNodeServerConfigurationIssues(
+          declaration.error.issues,
+          'node-script',
+        ),
       )
   }
 
@@ -1893,6 +2040,7 @@ export class StudyService {
       retained.find(
         (record) =>
           (record.profile === NODE_SERVER_PROFILE ||
+            record.profile === NODE_SCRIPT_PROFILE ||
             record.profile === CHROME_EXTENSION_PROFILE) &&
           record.stopped,
       )
@@ -2065,6 +2213,13 @@ export class StudyService {
         startedAtMs,
         signal,
       )
+    if (server && isNodeScriptRecord(server))
+      return this.continueNodeScriptToNextState(
+        server,
+        input,
+        startedAtMs,
+        signal,
+      )
     if (server && isChromeExtensionRecord(server))
       return this.continueChromeExtensionToNextState(
         server,
@@ -2217,6 +2372,8 @@ export class StudyService {
     this.presentationController?.assertPresentationIdle()
     if (isNodeServerRecord(record))
       return this.continueNodeServer(record, input)
+    if (isNodeScriptRecord(record))
+      return this.continueNodeScript(record, input)
     if (isChromeExtensionRecord(record))
       return this.continueChromeExtension(record, input)
     if (record.profile === NODE_TEST_PROFILE) {
@@ -2818,6 +2975,26 @@ export class StudyService {
         )
         return serverMaterial
       }
+      if (resolved?.profile === 'node-script') {
+        const { store: scriptStore } = resolved
+        // A partial script run (stops never reached, stopped, limit, or an exit before the first stop) saves like a complete one: its missing parts are named by the summary's verdicts.
+        const scriptMaterial = await withKnownNodeHistory(
+          scriptStore,
+          identity.studyId,
+          () =>
+            scriptStore.saveLearningMaterial(
+              identity.studyId,
+              identity.expectedRevision,
+              nodeScriptLearningMaterialContentSchema.parse(input.content),
+            ),
+        )
+        await this.refreshNodeScriptSummary(identity.studyId)
+        this.presentationController?.nodeHistoryLearningMaterialSaved(
+          identity.studyId,
+          scriptMaterial,
+        )
+        return scriptMaterial
+      }
       const material = await withKnownNodeHistory(store, identity.studyId, () =>
         store.saveLearningMaterial(
           identity.studyId,
@@ -3030,6 +3207,57 @@ export class StudyService {
   }
 
   /**
+   * Says whether a script run has a history whose learning material does not cover it yet: sealed, with a stop captured, and not `complete` in learning coverage.
+   * @param record - The script run.
+   * @returns `true` while the chat can still save material for the history.
+   * @example this.nodeScriptLearningIncomplete(record) // => true for a sealed history with no material
+   */
+  private nodeScriptLearningIncomplete(record: StudyRecord): boolean {
+    const history = record.nodeScript?.history
+    // Only a sealed history can be saved, and a run that captured no stop leaves no history to explain.
+    if (history?.status !== 'sealed') return false
+    if (!record.nodeScript?.run?.view().captures.length) return false
+    return history.sealed?.summary?.learningCoverage !== 'complete'
+  }
+
+  /**
+   * Reads a script history's verdicts again after its material was saved, or when its resource is read, so the run resource and Save read the coverage of the latest material; a run this window does not hold, or one not sealed yet, keeps nothing to refresh.
+   * @param studyId - The history the material explains.
+   * @param joinReadInFlight - `true` for a resource read, which may share the read in flight.
+   * @example await this.refreshNodeScriptSummary(studyId)
+   */
+  private async refreshNodeScriptSummary(
+    studyId: string,
+    joinReadInFlight = false,
+  ): Promise<void> {
+    const sealed = this.recordOfStudyId(studyId)?.nodeScript?.history?.sealed
+    const histories = this.nodeHistoryRepository?.scriptHistories
+    if (!sealed || !histories) return
+    // Only the latest read of a history writes its summary, so an older read that finishes last cannot overwrite a newer revision's coverage.
+    const request = (sealed.summaryReads ?? 0) + 1
+    sealed.summaryReads = request
+    const summary = await this.sharedSummaryRead(
+      this.nodeScriptSummaryReads,
+      studyId,
+      () => histories.summarize(studyId),
+      joinReadInFlight,
+      this.nodeServerHistorySealBoundMs,
+    )
+    if (summary && sealed.summaryReads === request) sealed.summary = summary
+  }
+
+  /**
+   * Reads the stored history's verdicts again when a node-script run's resource is read, so the coverage follows the material another window saved; a run without a sealed history keeps nothing to refresh.
+   * Called by {@link readResource} before it states a run.
+   * @param record - The run whose resource is read.
+   * @example await service.refreshNodeScriptVerdicts(record)
+   */
+  async refreshNodeScriptVerdicts(record: StudyRecord): Promise<void> {
+    if (record.profile !== NODE_SCRIPT_PROFILE) return
+    await this.refreshNodeScriptSummary(`${this.instanceId}_${record.id}`, true)
+  }
+
+  /**
    * Gives a failed learning-material save the answer an agent can act on: a revision conflict names the current revision and the material to re-read, a citation that matches no entry names the history and says to re-read its events, and another window holding the storage lock is a retry.
    * @param error - What the save threw.
    * @param identity - The history and the revision the agent expected.
@@ -3174,6 +3402,11 @@ export class StudyService {
         'EVIDENCE_UNAVAILABLE',
         'Node test stops are saved in their durable history instead: read nodeTest.historyUri and its events, then save learning through codebook_explain_node_history.',
       )
+    if (record.profile === NODE_SCRIPT_PROFILE)
+      throw new StudyError(
+        'EVIDENCE_UNAVAILABLE',
+        'Script stops are explained in the chat: read nodeScript.pause in the run resource (path, line, source hash and the captured facts) and the native debugger, then continue with nodeScript.continueArguments. codebook_explain and codebook_reveal take only a repository-browser snapshot, and a script explanation is saved after the run ends through codebook_explain_node_history (codebook://help/node-script, section save).',
+      )
     if (record.profile === NODE_SERVER_PROFILE)
       throw new StudyError(
         'EVIDENCE_UNAVAILABLE',
@@ -3283,6 +3516,7 @@ export class StudyService {
     return (
       record.profile === NODE_TEST_PROFILE ||
       record.profile === NODE_SERVER_PROFILE ||
+      record.profile === NODE_SCRIPT_PROFILE ||
       record.profile === CHROME_EXTENSION_PROFILE ||
       historyExclusionState(record.historyExcluded) !== 'kept'
     )
@@ -3677,6 +3911,22 @@ export class StudyService {
           sanitize: (text) => this.sanitizedCause(text),
         })
       : undefined
+    // A script run's state, actions and `nodeScript` block come from its run.
+    const script = isNodeScriptRecord(record)
+      ? projectNodeScriptState({
+          instanceId: this.instanceId,
+          runId: record.id,
+          view: record.nodeScript.run?.view(),
+          itemId: record.nodeScript.prepared?.descriptor.itemId,
+          controllable: canControl,
+          stopped: record.stopped,
+          ending:
+            record.stopping ||
+            Boolean(record.cleanupError) ||
+            Boolean(record.error),
+          sanitize: (text) => this.sanitizedCause(text),
+        })
+      : undefined
     // An extension run's state, actions, pauses and observation come from its run (SR17).
     const extension = isChromeExtensionRecord(record)
       ? projectChromeExtensionState({
@@ -3778,6 +4028,7 @@ export class StudyService {
         : {}),
       ...(nodeParticipants ?? {}),
       ...(server ? { server: server.participant } : {}),
+      ...(script ? { server: script.participant } : {}),
       ...(extension ? { extension: extension.participant } : {}),
       browser: participantView('browser'),
     }
@@ -3835,17 +4086,25 @@ export class StudyService {
             ? ['save-node-learning']
             : []),
         ]
-      : server
+      : script
         ? [
-            ...server.nextActions,
-            // A server history whose learning material does not yet cover it asks for codebook_explain_node_history, as a test run's does.
-            ...(this.nodeServerLearningIncomplete(record)
+            ...script.nextActions,
+            // A script history whose learning material does not yet cover it asks for codebook_explain_node_history, as a server run's does.
+            ...(this.nodeScriptLearningIncomplete(record)
               ? ['save-node-learning']
               : []),
           ]
-        : record.cleanupError && !record.stopped
-          ? ['stop']
-          : availableActions
+        : server
+          ? [
+              ...server.nextActions,
+              // A server history whose learning material does not yet cover it asks for codebook_explain_node_history, as a test run's does.
+              ...(this.nodeServerLearningIncomplete(record)
+                ? ['save-node-learning']
+                : []),
+            ]
+          : record.cleanupError && !record.stopped
+            ? ['stop']
+            : availableActions
     // The words of a version 3 run's progress, for the chat as for the status item (DES-5).
     const operationStatus = describeOperationStatus(
       runtime?.operations,
@@ -4100,6 +4359,9 @@ export class StudyService {
       ...(server && isNodeServerRecord(record)
         ? this.nodeServerMaterial(record, server)
         : {}),
+      ...(script && isNodeScriptRecord(record)
+        ? this.nodeScriptMaterial(record, script)
+        : {}),
       ...(extension && isChromeExtensionRecord(record)
         ? this.chromeExtensionMaterial(record, extension)
         : {}),
@@ -4291,6 +4553,43 @@ export class StudyService {
   }
 
   /**
+   * Gives the fields of the run resource that a node-script run replaces: its state, its `nodeScript` block with the history's verdicts, the manifest it freezes and the run's own error.
+   * @param record - The node-script run.
+   * @param script - Its projection ({@link projectNodeScriptState}).
+   * @returns The fields, which the resource spreads over the generic ones so they enter the material signature.
+   * @example this.nodeScriptMaterial(record, script).state // => 'ended'
+   */
+  private nodeScriptMaterial(
+    record: NodeScriptStudyRecord,
+    script: ReturnType<typeof projectNodeScriptState>,
+  ) {
+    const prepared = record.nodeScript.prepared
+    return {
+      state: script.state,
+      // A script run is never saved as a study: it reads pending-teardown while it lives and not-demonstrated once it ended.
+      finalOutcome:
+        record.stopped || record.error
+          ? ('not-demonstrated' as const)
+          : ('pending-teardown' as const),
+      runtimeState: script.state,
+      runtimeRunId: record.nodeScript.run?.id,
+      nodeScript: script.nodeScript && {
+        ...script.nodeScript,
+        configurationHash: prepared?.configurationHash,
+        ...projectNodeServerHistory({
+          studyId: `${this.instanceId}_${record.id}`,
+          recorder: record.nodeScript.history,
+          unavailable: record.nodeScript.historyUnavailable,
+          historyUri: `codebook://node-history/${this.instanceId}_${record.id}`,
+        }),
+      },
+      manifestUri: prepared ? this.uri(record.id, 'manifest') : undefined,
+      manifestHash: prepared?.configurationHash,
+      error: record.error?.describe(),
+    }
+  }
+
+  /**
    * The declaration and hash a chrome-extension run's manifest resource serves: click input texts shown as `[pending]` until typed, masked when secret, with the hash over the canonical redacted form.
    * Called by {@link chromeExtensionMaterial} and the manifest resource.
    * @param record - A chrome-extension run whose declaration is prepared.
@@ -4467,6 +4766,7 @@ export class StudyService {
       if (record.stopped || record.stopping || record.cleanupError) continue
       // A server's own failure ends its run; a failed request never does (D1).
       this.adoptNodeServerFailure(record)
+      this.adoptNodeScriptEnd(record)
       this.adoptChromeExtensionEnd(record)
       const evidenceFailure = record.runtime?.evidence.failure
       if (evidenceFailure) {
@@ -4541,6 +4841,8 @@ export class StudyService {
     if (this.hasRunEnded(record)) return
     // A server whose request was answered or failed reaches the deadline as a normal stop: its request was observed, so no error is added.
     if (this.endNodeServerAtDeadline(record)) return
+    // A script run bounds itself by the same deadline and ends as a `run-deadline` limit, not as an error.
+    if (record.nodeScript?.run) return
     record.error ??= new StudyError(
       'RUNTIME_FAILED',
       'Study wall deadline expired; history only.',
@@ -4623,6 +4925,8 @@ export class StudyService {
   private async prepare(record: StudyRecord): Promise<void> {
     if (record.profile === NODE_SERVER_PROFILE)
       return this.prepareNodeServer(record)
+    if (record.profile === NODE_SCRIPT_PROFILE)
+      return this.prepareNodeScript(record)
     if (record.profile === CHROME_EXTENSION_PROFILE)
       return this.prepareChromeExtension(record)
     try {
@@ -5279,6 +5583,11 @@ export class StudyService {
         : record.nodeServer?.run
       const cancellingServer = cancellingServerRun?.stop()
       if (cancellingServer) void cancellingServer.catch(() => undefined)
+      const cancellingScriptRun = record.prepared
+        ? undefined
+        : record.nodeScript?.run
+      const cancellingScript = cancellingScriptRun?.stop()
+      if (cancellingScript) void cancellingScript.catch(() => undefined)
       const cancellingExtensionRun = record.prepared
         ? undefined
         : record.chromeExtension?.run
@@ -5288,6 +5597,8 @@ export class StudyService {
       await cancelling
       await cancellingNode
       await cancellingServer
+      // A script run stopped before it was prepared releases its process group before this stop reports stopped; a failed stop fails this stop, like the server run's.
+      await cancellingScript
       await cancellingExtension
       await Promise.allSettled(
         [...record.explanationKeys.values()].map((value) => value.result),
@@ -5334,6 +5645,9 @@ export class StudyService {
       if (serverRun && serverRun !== cancellingServerRun) await serverRun.stop()
       record.nodeServer?.subscription?.dispose()
       // The extension's browser, debugger and profile folder are released in the run's one cleanup path; it is safe to ask again.
+      const scriptRun = record.nodeScript?.run
+      if (scriptRun && scriptRun !== cancellingScriptRun) await scriptRun.stop()
+      record.nodeScript?.subscription?.dispose()
       const extensionRun = record.chromeExtension?.run
       if (extensionRun && extensionRun !== cancellingExtensionRun)
         await extensionRun.stop()
@@ -5341,6 +5655,7 @@ export class StudyService {
       await this.sealChromeExtensionHistory(record)
       // The history ends with the run: stopped, closed or failed, sealed once however many callers join this stop.
       await this.sealNodeServerHistory(record)
+      await this.sealNodeScriptHistory(record)
       // A root listing that was not released is the run's to release: one still running fails this stop, so the run stays unstopped, the next start answers BUSY, and the next stop tries again.
       if (record.unreleasedListings)
         await releaseVitestListings(record.unreleasedListings)
@@ -5562,6 +5877,11 @@ export class StudyService {
     if (isChromeExtensionRecord(record))
       return this.clickExtension(record, input)
     if (isNodeServerRecord(record)) return this.requestNodeServer(record, input)
+    if (isNodeScriptRecord(record))
+      throw new StudyError(
+        'INVALID_CONFIGURATION',
+        'A node-script run has no actions: the script starts itself once the learner confirms it. Read the run, continue its pauses and stop it.',
+      )
     return input.action === REPOSITORY_OPERATION_ACTION
       ? this.sendOperation(record, input)
       : this.action(input)
@@ -5719,12 +6039,14 @@ export class StudyService {
    */
   private busyWhileAsking(
     record: StudyRecord,
-    question: 'secret' | 'saved-session-operations',
+    question: 'secret' | 'saved-session-operations' | 'script-run',
   ): StudyError {
     const subject =
       question === 'secret'
         ? 'a secret'
-        : 'to confirm the operations of this run'
+        : question === 'script-run'
+          ? 'to confirm running a script'
+          : 'to confirm the operations of this run'
     return new StudyError(
       'BUSY',
       `The learner is being asked ${subject}. Do not retry this request; wait, then read the run.`,
@@ -6518,7 +6840,7 @@ export class StudyService {
     record: StudyRecord,
     failure: { code: string; message: string },
   ): void {
-    const logged = record.nodeServer?.loggedFailures
+    const logged = (record.nodeServer ?? record.nodeScript)?.loggedFailures
     const identity = `${failure.code}\u0000${failure.message}`
     if (!logged || logged.has(identity)) return
     logged.add(identity)
@@ -7003,8 +7325,21 @@ export class StudyService {
   private async prepareNodeServer(record: StudyRecord): Promise<void> {
     // Every node-server record is created with its server state.
     if (!isNodeServerRecord(record)) return
+    await this.prepareNodeRecord(record, () => this.startNodeServerRun(record))
+  }
+
+  /**
+   * Runs a node-server or node-script preparation: a rejection is the run's error unless a stop cancelled the preparation, and a failed run is released once the preparation settled.
+   * @param record - The run.
+   * @param start - The profile's preparation steps.
+   * @example await this.prepareNodeRecord(record, () => this.startNodeServerRun(record))
+   */
+  private async prepareNodeRecord(
+    record: StudyRecord,
+    start: () => Promise<void>,
+  ): Promise<void> {
     try {
-      await this.startNodeServerRun(record)
+      await start()
     } catch (error) {
       // A stop cancelled this preparation: the run ends as stopped, with no error of its own.
       if (record.stopping) return
@@ -7016,6 +7351,79 @@ export class StudyService {
       queueMicrotask(() => {
         void this.stopRecord(record).catch(() => undefined)
       })
+  }
+
+  /**
+   * The cancellation and the deadline a node run's preparation shares: the run's own signal and the earlier of its deadline and its setup time.
+   * @param record - The run.
+   * @returns The control the pinning steps take.
+   * @example await prepareNodeServerStudy(configuration, books, this.preparationControl(record), this.now)
+   */
+  private preparationControl(record: StudyRecord) {
+    return {
+      signal: record.cancellation.signal,
+      deadlineAt: Math.min(
+        record.deadlineAt,
+        record.createdAt + REPOSITORY_SETUP_TIMEOUT_MS,
+      ),
+    }
+  }
+
+  /**
+   * The journal a node run writes its events to: sanitized with the run's frozen roots, kept on the record and echoed to Output › Codebook.
+   * @param record - The run.
+   * @param runRoots - The run's frozen private roots.
+   * @returns The journal callback the environment's run factory takes.
+   */
+  private nodeRunJournal(record: StudyRecord, runRoots: CauseRoots) {
+    return createNodeServerJournal(record.nodeEvents ?? [], {
+      sanitize: (text) => this.sanitizedCause(text, runRoots),
+      onEvent: (type, detail) =>
+        this.writeNodeServerEventLine(record, type, detail),
+    })
+  }
+
+  /**
+   * What a node run's history start takes from the service beside the run's own header: how to hide roots and word a failure, the start bound and the two reports of a faulting sink.
+   * @param record - The run.
+   * @param runRoots - The run's frozen private roots.
+   * @returns The shared part of the history start.
+   */
+  private nodeHistoryStartOptions(
+    record: StudyRecord,
+    runRoots: CauseRoots,
+  ): Pick<
+    Parameters<typeof startNodeScriptHistory>[0],
+    | 'repository'
+    | 'workspace'
+    | 'hideRoots'
+    | 'roots'
+    | 'describeCause'
+    | 'startBoundMs'
+    | 'onFault'
+    | 'onAppendFailed'
+  > {
+    return {
+      repository: this.nodeHistoryRepository,
+      workspace: this.environment.workspace,
+      hideRoots: createRootHider(runRoots),
+      roots: runRoots,
+      describeCause: (error: unknown) =>
+        error instanceof SavedStudyStorageFullError
+          ? fullLibraryMessage('run', error.limit, this.removalAvailability)
+          : this.sanitizedCause(error),
+      startBoundMs: this.nodeServerHistoryStartBoundMs,
+      // A fault of the history's own sink reaches Output › Codebook, as a failed test-history seal does.
+      onFault: (error: unknown): void =>
+        this.diagnose(
+          'HISTORY_SINK_FAULT',
+          record,
+          error,
+          this.sanitizedCause(error),
+        ),
+      // The status item says at once that recording stopped, not at the next refresh.
+      onAppendFailed: () => this.presentationController?.publishLearningSave(),
+    }
   }
 
   /**
@@ -7039,13 +7447,7 @@ export class StudyService {
     state.prepared = await prepareNodeServerStudy(
       record.configuration,
       this.repository,
-      {
-        signal: record.cancellation.signal,
-        deadlineAt: Math.min(
-          record.deadlineAt,
-          record.createdAt + REPOSITORY_SETUP_TIMEOUT_MS,
-        ),
-      },
+      this.preparationControl(record),
       this.now,
     )
     this.environment.assertWorkspace?.()
@@ -7075,11 +7477,7 @@ export class StudyService {
     if (this.stopping || record.stopping) return
     const run = await this.environment.createNodeServerRun(
       state.prepared.configuration,
-      createNodeServerJournal(record.nodeEvents ?? [], {
-        sanitize: (text) => this.sanitizedCause(text, runRoots),
-        onEvent: (type, detail) =>
-          this.writeNodeServerEventLine(record, type, detail),
-      }),
+      this.nodeRunJournal(record, runRoots),
       state.prepared.descriptor.sources,
       record.id,
       state.history?.sink,
@@ -7105,29 +7503,11 @@ export class StudyService {
     const state = record.nodeServer
     if (!state.prepared) return
     const begun = await startNodeServerHistory({
-      repository: this.nodeHistoryRepository,
-      workspace: this.environment.workspace,
+      ...this.nodeHistoryStartOptions(record, runRoots),
       instanceId: this.instanceId,
       runId: record.id,
       createdAtMs: record.createdAt,
       prepared: state.prepared,
-      hideRoots: createRootHider(runRoots),
-      roots: runRoots,
-      describeCause: (error) =>
-        error instanceof SavedStudyStorageFullError
-          ? fullLibraryMessage('run', error.limit, this.removalAvailability)
-          : this.sanitizedCause(error),
-      startBoundMs: this.nodeServerHistoryStartBoundMs,
-      // A fault of the history's own sink reaches Output › Codebook, as a failed test-history seal does.
-      onFault: (error) =>
-        this.diagnose(
-          'HISTORY_SINK_FAULT',
-          record,
-          error,
-          this.sanitizedCause(error),
-        ),
-      // The status item says at once that recording stopped, not at the next refresh.
-      onAppendFailed: () => this.presentationController?.publishLearningSave(),
     })
     if ('recorder' in begun) state.history = begun.recorder
     else state.historyUnavailable = begun.unavailable
@@ -7199,10 +7579,269 @@ export class StudyService {
     const line = describeNodeServerOutputLine(record.id, type, detail)
     if (!line) return
     if (type === 'node-server.failure' && typeof detail.code === 'string')
-      record.nodeServer?.loggedFailures.add(
+      (record.nodeServer ?? record.nodeScript)?.loggedFailures.add(
         `${detail.code}\u0000${String(detail.cause)}`,
       )
     this.writeOutputLine(line)
+  }
+
+  // ---------------------------------------------------------------- node-script
+
+  /**
+   * Prepares a node-script run asynchronously: workspace trust first, the cited sources pinned from the published book node, the profile's prerequisites, then the environment's run and its own preparation (source checks, the learner's confirmation, launch); a rejection is the run's error and the run is released.
+   * @param record - The node-script run.
+   * @example record.preparation = this.prepareNodeScript(record)
+   */
+  private async prepareNodeScript(record: StudyRecord): Promise<void> {
+    // Every node-script record is created with its script state.
+    if (!isNodeScriptRecord(record)) return
+    await this.prepareNodeRecord(record, () => this.startNodeScriptRun(record))
+  }
+
+  /**
+   * The steps of a node-script preparation, each of which can refuse the run before the next one starts.
+   * @param record - The node-script run.
+   * @throws `PREREQUISITE_MISSING` for an untrusted workspace, missing storage, an unready profile or an environment without the run factory; the pinning's refusals; the run's rejection.
+   * @example await this.startNodeScriptRun(record)
+   */
+  private async startNodeScriptRun(
+    record: NodeScriptStudyRecord,
+  ): Promise<void> {
+    // A replay on screen refuses the run before any process or history recorder.
+    this.assertReaderFollowsRun(record)
+    this.environment.assertWorkspace?.()
+    if (!this.repository)
+      throw new StudyError(
+        'PREREQUISITE_MISSING',
+        'Repository source/book storage is unavailable in this editor.',
+      )
+    const state = record.nodeScript
+    state.prepared = await prepareNodeScriptStudy(
+      record.configuration,
+      this.repository,
+      this.preparationControl(record),
+      this.now,
+    )
+    this.environment.assertWorkspace?.()
+    const prerequisites = this.environment.nodeScriptStartPrerequisites
+      ? await this.environment.nodeScriptStartPrerequisites()
+      : await this.environment
+          .prerequisites()
+          .then(
+            (reported) => reported.profiles?.[NODE_SCRIPT_PROFILE] ?? reported,
+          )
+    if (!prerequisites.ready)
+      throw new StudyError(
+        'PREREQUISITE_MISSING',
+        prerequisites.missing.join('; '),
+      )
+    if (!this.environment.createNodeScriptRun)
+      throw new StudyError(
+        'PREREQUISITE_MISSING',
+        'The owned Node script adapter is unavailable.',
+      )
+    if (this.stopping || record.stopping) return
+    const runRoots = this.causeRoots
+    await this.beginNodeScriptHistory(record, runRoots)
+    // The history may have been started while a stop arrived: the stop path seals it, and no script launches.
+    if (this.stopping || record.stopping) return
+    const run = await this.environment.createNodeScriptRun(
+      state.prepared.configuration,
+      this.nodeRunJournal(record, runRoots),
+      state.prepared.descriptor.sources,
+      record.id,
+      state.history?.sink,
+      runRoots,
+      `codebook://node-history/${this.instanceId}_${record.id}`,
+    )
+    state.run = run
+    state.subscription = run.onDidChange(() => this.adoptNodeScriptEnd(record))
+    if (this.stopping || record.stopping) return
+    // The run shares the service's absolute deadline: it never outlives the bound the record carries.
+    await run.prepare({
+      runTimeoutMs: Math.max(0, record.deadlineAt - this.now()),
+    })
+    record.prepared = true
+  }
+
+  /**
+   * Starts the history of a node-script run, within its bound, before the script launches; a failure of any kind leaves the live run running and is kept as the cause the status shows and Save answers.
+   * @param record - The node-script run, whose configuration was pinned.
+   * @param runRoots - The run's frozen private roots, shared with the run itself.
+   * @example await this.beginNodeScriptHistory(record, this.causeRoots)
+   */
+  private async beginNodeScriptHistory(
+    record: NodeScriptStudyRecord,
+    runRoots: CauseRoots,
+  ): Promise<void> {
+    const state = record.nodeScript
+    if (!state.prepared) return
+    const { configuration, descriptor } = state.prepared
+    const begun = await startNodeScriptHistory({
+      ...this.nodeHistoryStartOptions(record, runRoots),
+      run: {
+        instanceId: this.instanceId,
+        runId: record.id,
+        createdAtMs: record.createdAt,
+        question: descriptor.nodeTitle,
+        packageRoot: configuration.packageRoot,
+        entry: configuration.entry,
+        loader: configuration.loader ?? 'node',
+        declaredStops: [
+          configuration.source,
+          ...(configuration.additionalStops ?? []),
+        ].map((stop) => ({ path: stop.path, line: stop.line })),
+        sourceHashes: descriptor.sources.map((source) => ({
+          path: source.path,
+          hash: source.hash,
+        })),
+      },
+    })
+    if ('recorder' in begun) state.history = begun.recorder
+    else state.historyUnavailable = begun.unavailable
+  }
+
+  /**
+   * Seals a node-script run's history once the run ended, through the one seal every ending joins: the script ended by itself, was stopped (learner, chat, Save or dispose), or failed. The run told the history its end already when it had one; a history that cannot be sealed is abandoned with its cause and never fails the stop.
+   * @param record - The node-script run whose process group was released.
+   * @example await this.sealNodeScriptHistory(record)
+   */
+  private async sealNodeScriptHistory(record: StudyRecord): Promise<void> {
+    await record.nodeScript?.history?.seal(
+      undefined,
+      this.nodeServerHistorySealBoundMs,
+    )
+  }
+
+  /**
+   * Gives a node-script run's own failure the run's error, and releases a run whose script ended (by itself, a limit or a stop) so its history seals and its resources free; a script's exit is an observed end and never an error.
+   * Called when the run reports a change and at each maintenance turn.
+   * @param record - The node-script run.
+   * @example run.onDidChange(() => this.adoptNodeScriptEnd(record))
+   */
+  private adoptNodeScriptEnd(record: StudyRecord): void {
+    const view = record.nodeScript?.run?.view()
+    if (!view || record.stopped || record.stopping) return
+    if (view.runFailure && !record.error) {
+      record.error = this.sanitizedError(view.runFailure)
+      this.logNodeServerFailure(record, record.error)
+    }
+    if (!view.runFailure && !view.end) return
+    void this.stopRecord(record).catch((error) => {
+      this.failByRelease(record, error)
+    })
+  }
+
+  /**
+   * Continues a node-script run's current pause with the arguments the run resource gave, after the refusals of the contract: `LEARNER_PAUSED` first, then a run that is ending or past its deadline, `NO_PAUSE`, and `STALE_PAUSE` for another pause; called by {@link StudyService.continue}.
+   * @param record - The node-script run.
+   * @param input - The continuation arguments.
+   * @returns The acknowledgement: `accepted` and the run's URI.
+   * @throws The codes above; what the run throws when it reserves the pause.
+   * @example await this.continueNodeScript(record, state.nodeScript.continueArguments)
+   */
+  private async continueNodeScript(
+    record: NodeScriptStudyRecord,
+    input: ContinueInput,
+  ) {
+    const run = record.nodeScript.run
+    const view = run?.view()
+    if (view?.heldPause)
+      throw new StudyError(
+        'LEARNER_PAUSED',
+        'The script is paused by the learner in the native debugger, which Codebook never resumes. Ask the learner to continue it there, then read the run.',
+      )
+    if (!run)
+      throw new StudyError(
+        'NO_PAUSE',
+        'The script run is not started yet, so nothing is paused. Read the run resource until it is running.',
+      )
+    // A run that is ending, failed or past its deadline has only historical pauses.
+    if (
+      record.stopping ||
+      record.stopped ||
+      record.error ||
+      record.cleanupError ||
+      this.now() >= record.deadlineAt
+    )
+      throw new StudyError(
+        'STALE_PAUSE',
+        'The script run is ending or has ended, so this pause is historical and cannot be resumed.',
+      )
+    const pause = view?.pause
+    if (!pause)
+      throw new StudyError(
+        'NO_PAUSE',
+        'The script is not paused at a declared stop. Read the run resource; continue only a pause it shows.',
+      )
+    if (
+      input.participant !== 'server' ||
+      input.sessionId !== pause.sessionId ||
+      input.threadId !== pause.threadId ||
+      input.generation !== pause.generation
+    )
+      throw new StudyError(
+        'STALE_PAUSE',
+        'This is not the current pause of the script. Copy nodeScript.continueArguments from the run resource.',
+      )
+    await run.continue({
+      sessionId: input.sessionId,
+      threadId: input.threadId,
+      generation: input.generation,
+    })
+    return { accepted: true, runUri: this.uri(record.id) }
+  }
+
+  /**
+   * Continues a node-script run and, with `answer: "next"`, waits for what the script does next: the next stop, its end, a pause of the learner, the run's stop or its failure (bounded as the other profiles' wait).
+   * @param record - The node-script run.
+   * @param input - The continuation arguments.
+   * @param startedAtMs - When the call began, for the call's budget.
+   * @param signal - The request's cancellation.
+   * @returns The acknowledgement; with `answer: "next"` also `next` (the word of {@link nextNodeScriptState}, absent at the bound) and the run's `state`.
+   * @throws What {@link StudyService.continueNodeScript} throws; nothing is awaited after a refusal.
+   * @example await this.continueNodeScriptToNextState(record, args, this.now())
+   */
+  private async continueNodeScriptToNextState(
+    record: NodeScriptStudyRecord,
+    input: ContinueInput,
+    startedAtMs: number,
+    signal?: AbortSignal,
+  ) {
+    const generationBefore = record.nodeScript.run?.view().pauseGeneration ?? 0
+    const receipt = await this.continue(input)
+    if (input.answer !== 'next') return receipt
+    const next = await this.waitForContinuation(
+      () => this.nextNodeScriptStep(record, generationBefore),
+      startedAtMs,
+      signal,
+    )
+    return { ...receipt, ...(next && { next }), state: this.state(record) }
+  }
+
+  /**
+   * Reads what a continued node-script run did, at every turn of the wait of {@link StudyService.continueNodeScriptToNextState}.
+   * @param record - The node-script run.
+   * @param generationBefore - The pause generation when the call began.
+   * @returns See {@link nextNodeScriptState}.
+   * @example this.nextNodeScriptStep(record, 1) // => 'ended' once the script exited
+   */
+  private nextNodeScriptStep(
+    record: NodeScriptStudyRecord,
+    generationBefore: number,
+  ) {
+    this.expireAtDeadline(record)
+    this.adoptNodeScriptEnd(record)
+    const view = record.nodeScript.run?.view()
+    return nextNodeScriptState(view, generationBefore, {
+      failed: Boolean(record.error || view?.runFailure),
+      ended: Boolean(
+        record.stopping ||
+        record.stopped ||
+        record.cleanupError ||
+        this.stopping,
+      ),
+    })
   }
 
   /** Returns the original preparing receipt even after later transitions, allowing safe same-key retries. @example this.receipt(record).runId */

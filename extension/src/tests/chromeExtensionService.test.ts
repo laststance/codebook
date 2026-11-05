@@ -64,7 +64,7 @@ test('codebook_status lists the chrome-extension profile with its extension-clic
   ])
   assert.equal(profile?.recording?.available, false)
   assert.equal(status.capabilities.includes('extension-click'), true)
-  assert.equal(status.apiVersion, '1.25')
+  assert.equal(status.apiVersion, '1.26')
 })
 
 // protects=an editor without the Chrome extension adapter reads the profile as not ready with the adapter named; fails_when=status says ready without the run factory; no_claim=the Chrome version check, which the environment reports
@@ -128,7 +128,7 @@ test('codebook_start for an unknown profile lists chrome-extension among the ava
       error instanceof StudyError &&
       error.code === 'UNSUPPORTED_PROFILE' &&
       error.message ===
-        'Available profiles: repository-browser, node-test, node-server, chrome-extension',
+        'Available profiles: repository-browser, node-test, node-server, node-script, chrome-extension',
   )
 })
 
