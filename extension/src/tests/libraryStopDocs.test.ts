@@ -126,7 +126,7 @@ test('the help states the library-stop rule and no longer says every library sta
   )
 })
 
-// protects=API 1.24 is served and the 1.19 note names the five reasons as additive; fails_when=the version or a reason of the note drifts; no_claim=the behavior behind the reasons
+// protects=API 1.25 is served and the 1.19 note names the five reasons as additive; fails_when=the version or a reason of the note drifts; no_claim=the behavior behind the reasons
 test('API_VERSION is 1.25 and its note names the five library-stop reasons', async () => {
   // Arrange
   const constants = await readPackaged('src', 'constants.ts')
@@ -453,7 +453,7 @@ test('the help names server library stops of a nested App Router app and the res
   )
 })
 
-// protects=API 1.24 is served and its note adds server library stops of a nested App Router app with the resumed copies and the unchanged both-routers refusal; fails_when=the version or a statement of the 1.24 note drifts; no_claim=the behavior behind the note
+// protects=API 1.25 is served and its note adds server library stops of a nested App Router app with the resumed copies and the unchanged both-routers refusal; fails_when=the version or a statement of the 1.24 note drifts; no_claim=the behavior behind the note
 test('API_VERSION is 1.25 and its note adds server library stops of a nested App Router app', async () => {
   // Arrange
   const constants = await readPackaged('src', 'constants.ts')
