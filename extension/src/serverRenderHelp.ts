@@ -1,4 +1,8 @@
 import { REPOSITORY_OPERATION_ACTION } from './constants'
+import {
+  ROUTE_HANDLER_NOT_REACHED_POSSIBILITIES,
+  ROUTE_HANDLER_REFUSAL_RECOVERY,
+} from './utils/routeHandlerWording'
 
 /** The Codebook version and API that first serve App Router server-render stops, as the migration table and the version check word them. */
 const SERVER_RENDER_MINIMUM_EXTENSION = '0.2.73.0'
@@ -9,6 +13,9 @@ const SERVER_RENDER_PAGES_MINIMUM_API = '1.17'
 /** The Codebook version and API that first pause an App Router server stop at a module evaluation (Cycle 0086). */
 const SERVER_RENDER_MODULE_MINIMUM_EXTENSION = '0.2.86.0'
 const SERVER_RENDER_MODULE_MINIMUM_API = '1.27'
+
+/** The API that first pauses a stop in an App Router route handler (Cycle 0087). */
+const ROUTE_HANDLER_MINIMUM_API = '1.28'
 
 /**
  * A complete version 3 configuration for an App Router entry render: the stop sits in a server function that runs on every render of the entry route, `afterOperation` is 0 and `operations` is omitted (never `[]`).
@@ -35,6 +42,46 @@ export const SERVER_RENDER_ENTRY_CONFIGURATION = {
   before: [{ kind: 'visible', selector: 'h1' }],
   after: [{ kind: 'text', selector: 'h1', equals: 'Dashboard' }],
   inspections: [{ path: 'numberOfInvoices', mode: 'value', required: true }],
+} as const
+
+/**
+ * A complete version 3 configuration for a route-handler stop (API 1.28): operation 1 fills a title field, operation 2 clicks the submit button, and the one server stop in an App Router `route.ts` has `afterOperation: 2`, the operation that sends the request.
+ * Served as `routeHandlerQuickStart.configuration` and parsed by the same test as {@link SERVER_RENDER_ENTRY_CONFIGURATION}. Every path, selector and line is a neutral placeholder, not any project's file or answer; the book identity and the source hash are placeholders the agent replaces. The run-level `after` is a shape example: it must hold only after the last operation.
+ */
+export const ROUTE_HANDLER_CONFIGURATION = {
+  version: 3,
+  adapter: 'next-dev-webpack',
+  book: {
+    bookId: 'my-article',
+    revision: 1,
+    nodeId: 'my-node',
+    anchorIndex: 0,
+  },
+  source: {
+    path: 'app/api/items/route.ts',
+    hash: '0000000000000000000000000000000000000000000000000000000000000000',
+    line: 12,
+    column: 3,
+  },
+  participant: 'server',
+  afterOperation: 2,
+  entryPath: '/items',
+  before: [{ kind: 'visible', selector: 'form button[type=submit]' }],
+  after: [{ kind: 'text', selector: 'ul li:last-child', equals: 'New item' }],
+  operations: [
+    {
+      kind: 'text',
+      title: 'Type the title',
+      selector: 'input[name=title]',
+      text: 'New item',
+    },
+    {
+      kind: 'click',
+      title: 'Submit the form',
+      selector: 'form button[type=submit]',
+    },
+  ],
+  inspections: [{ path: 'title', mode: 'value', required: true }],
 } as const
 
 /**
@@ -181,7 +228,7 @@ const PAGES_UNCONFIRMED =
  *
  * Why it exists: an agent that meets a Next question about code that runs while the server renders an App Router page, or about a Pages Router page's `getServerSideProps` or `getStaticProps`, needs the router's own minimums, the supported code, the exact configuration shape (`afterOperation: 0`, omitted `operations`) and the failure meanings before it reads the long contract sections. Called by the resource reader for the repository-browser help, which spreads these keys after {@link nextHelp}.
  *
- * @returns Keys to spread into the help object: `serverRenderQuickStart`, `serverRenderMigration` and `serverRenderErrors`.
+ * @returns Keys to spread into the help object: `routeHandlerQuickStart`, `routeHandlerStops`, `serverRenderQuickStart`, `serverRenderMigration` and `serverRenderErrors`.
  * @example
  * const help = { ...nextHelp(), ...serverRenderHelp() }
  * help.serverRenderQuickStart.anchor // => 'codebook://help/repository-browser#server-render-quick-start'
@@ -189,6 +236,31 @@ const PAGES_UNCONFIRMED =
  */
 export function serverRenderHelp() {
   return {
+    routeHandlerQuickStart: {
+      anchor: 'codebook://help/repository-browser#route-handler-quick-start',
+      summary:
+        'For a question about a Next App Router route handler (route.ts) that a page calls, declare one participant "server" stop in the route file with afterOperation of 1 or more, the operation after which the page sends the request. Placeholder paths only: replace every path, selector, line and the source hash with values read from the learner\'s own repository.',
+      minimumApi: ROUTE_HANDLER_MINIMUM_API,
+      configuration: ROUTE_HANDLER_CONFIGURATION,
+      note: 'Operation 1 fills input[name=title] and operation 2 clicks form button[type=submit], so the stop in app/api/items/route.ts has afterOperation 2. A route-handler stop with afterOperation 0 is refused (route-handler-before-operation); never copy serverRenderQuickStart.entryRender for a route handler.',
+    },
+    routeHandlerStops: {
+      anchor: 'codebook://help/repository-browser#route-handler-stops',
+      rule: `API ${ROUTE_HANDLER_MINIMUM_API} or later, App Router run (next-dev-webpack, configuration version 3): a participant "server" stop with afterOperation of 1 or more in a route file (route.ts, route.js, route.tsx or route.jsx under app/ or src/app/, route groups such as (group) and dynamic segments such as [id], [...slug] and [[...slug]] included, outside every Pages folder) pauses the real Next server in the handler that answers the browser's request.`,
+      fields:
+        'The pause reads execution "route-handler", attribution "after-operation", operationIndex k and routeHandler { method, route, path }: the HTTP method of the matched browser request, the route pattern from the file path (/api/boards/[id]) and the request pathname (/api/boards/42). The message reads "Paused in the route handler POST /api/todos (request /api/todos), observed after operation 2"; never call it a server render or a page load.',
+      identityRule:
+        "Only the browser's own request after the operation pauses: the first qualifying request (the stop's route and method, sent by the browser after operation k and claimed by no other stop) to reach the line pauses; every other hit is resumed and listed in details.resumedHits with a reason (before-operation, other-method, other-path, no-browser-request, after-retired, unclassified) and a count. A request Codebook itself sent never pauses.",
+      values:
+        'The request body cannot be read at the pause without a side effect (request.json() consumes it and the debugger refuses the call): declare the stop on a line after the handler parsed the body and inspect that variable. request.method and request.url are readable. Header values pass through the existing redaction, and a header that carries a credential (cookie, authorization) is never a required inspection.',
+      refusals: {
+        reasons: ROUTE_HANDLER_REFUSAL_RECOVERY,
+        note: 'Each is NEXT_STOP_NOT_SEALED with details.sideEffects none, raised before any process starts. A file outside packageRoot keeps the reason outside-package.',
+      },
+      notReached: `${ROUTE_HANDLER_NOT_REACHED_POSSIBILITIES} details.routeHandler is { route, method } of the stop. After-operation inputs were sent and side effects are unknown: explain what ran, offer the partial replay and never start again unasked.`,
+      notSupported:
+        'Pages API routes (pages/api), middleware and proxy stay unsupported, and so does a route file that declares the edge runtime.',
+    },
     serverRenderQuickStart: {
       anchor: 'codebook://help/repository-browser#server-render-quick-start',
       routerChoice: SERVER_RENDER_ROUTER_CHOICE,
@@ -270,7 +342,7 @@ export function serverRenderHelp() {
       wording:
         'after-operation is "observed after operation k". An operation is never said to cause a render; the unreached causes below are possibilities ("may"), never the established cause.',
       limits: [
-        'Not supported in either router: server-side code of other routes than the entry route, route handlers (route.ts), middleware or proxy, and Turbopack (Codebook always starts next dev --webpack, whatever the dev script says).',
+        'Not supported in either router: server-side code of other routes than the entry route, Pages API routes, middleware or proxy, and Turbopack (Codebook always starts next dev --webpack, whatever the dev script says).',
         'App Router: a stop in a client component is refused with NEXT_STOP_NOT_SEALED (details.reason client-component); a render hit of another route is resumed and not counted.',
         PAGES_NOT_PAUSED,
         'There is no timeout override: each wait is bounded at 20 s, restarting at each continue, and the pause hold and run deadline stay as they are. There is no attribution override: Codebook reads the rendering route itself (a Pages run reads the data function from the paused stack).',
