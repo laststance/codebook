@@ -3264,6 +3264,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Tells whether a server `stopped` is a new hit for the preparation window rather than the end of a stack refresh of a held pause.
+   * Why it exists: the refreshing `stopped` (after the debugger's `continued`) must reach the refresh check of {@link onEvent}, not the window's hit intake. Called by {@link settleServerStop}.
+   * @returns `true` while a preparation window is open and no refresh or deferred refresh of the server's pause is pending.
+   * @example if (this.isPreparationHit()) await this.settlePreparationStop(session, event)
+   */
+  private isPreparationHit(): boolean {
+    const { refresh, deferredRefresh } = this.participants.server
+    return this.preparationWindow !== undefined && !refresh && !deferredRefresh
+  }
+
+  /**
    * Settles what a server `stopped` event is before the stop machinery sees it: a hit in React's copy of an owned stop's module, a hit of the run's own browser library breakpoint in the server's copy of that module, or a repeat hit of a stop that already paused, is resumed by the run and journaled (F1, X15); every other stop goes on to {@link onEvent} unchanged.
    * Why it exists: the debugger's two channels have no common order, and these hits are nobody's declared pause, so the event must not fail the run as an unexpected stop. Called by {@link onEvent} for the server's `stopped` in a run that renders server stops.
    * @param session - The server session that sent the event.
@@ -3299,7 +3310,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       if (!participant.discovering) break
     }
     if (this.cleaning) return
-    if (this.preparationWindow) {
+    // A `stopped` that follows a `continued` of a held pause is the debugger's stack refresh of that pause, not a new hit: it goes to the refresh check in onEvent.
+    if (this.isPreparationHit()) {
       await this.settlePreparationStop(session, event)
       return
     }

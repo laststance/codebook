@@ -508,6 +508,37 @@ test('a preparation pause held past the 90 s setup budget fails nothing and the 
   assert.ok((harness.run.view().preparationHeldMs ?? 0) >= 50)
 })
 
+// Value: protects=AC 8 (hold): while a preparation pause is held, the debugger refreshes its stack with a `continued` and a `stopped` that resume nothing; the run keeps the pause, still accepts the continue and completes; fails_when=the refreshing `stopped` is taken for a new preparation hit and dropped, so the run fails 20 s later with "Native stack refresh did not confirm the retained pause" and the continue is refused; no_claim=a real js-debug adapter
+test('a stack refresh of a held preparation pause keeps the pause and the run completes after the continue', async (context) => {
+  // Arrange
+  const { harness, prepared } = await heldReadiness(context)
+  evaluateModule(harness)
+  const snapshot = await publishedPause(harness)
+  // Act: the debugger refreshes the stack of the held pause without resuming the runtime
+  harness.server!.emitContinued()
+  harness.server!.stopDap()
+  await waitUntil(
+    () => journalTypes(harness).includes('dap.pause-refreshed'),
+    'the stack refresh confirmed the retained pause',
+  )
+  const pauseAfterRefresh = harness.run.view().participants.server?.snapshot
+  await harness.run.continue('server', pauseAfterRefresh!.pause)
+  harness.releaseReadiness()
+  await waitUntil(
+    () => harness.navigations.length >= 1,
+    'the entry navigation started',
+  )
+  harness.setDocumentReadyState('complete')
+  await prepared
+  // Assert
+  await waitUntil(
+    () => harness.run.view().status === 'completed',
+    'the run completed',
+  )
+  assert.deepEqual([...harness.run.view().failures], [])
+  assert.equal(snapshot.attribution, 'preparation')
+})
+
 // Value: protects=R11 (complete run): a preparation pause owes no image, so a run whose only server stop paused in the readiness request still ends with every owed image held; fails_when=the absent image makes the capture outcome incomplete and the study partial; no_claim=the before and after images of a real page
 test('a run whose server stop paused in the readiness request keeps the pause image absent and its capture outcome complete', async (context) => {
   // Arrange
