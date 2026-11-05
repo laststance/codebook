@@ -371,6 +371,8 @@ test('the node-script help has an anchor and recovery for each code, and the new
     help.codes.map(({ code, anchor }) => [code, anchor]),
     [
       'NODE_SCRIPT_SOURCE_REFUSED',
+      'INVALID_CONFIGURATION',
+      'BUSY',
       'SCRIPT_NOT_CONFIRMED',
       'SOURCE_CHANGED',
       'NO_PAUSE',
@@ -380,7 +382,10 @@ test('the node-script help has an anchor and recovery for each code, and the new
     ].map((code) => [code, `codebook://help/node-script#${code}`]),
   )
   assert.equal(help.codes[0]?.recovery, refused)
-  assert.equal(help.codes[1]?.recovery, notConfirmed)
+  assert.equal(help.codes[1]?.recovery, ERROR_RECOVERY.INVALID_CONFIGURATION)
+  assert.equal(help.codes[2]?.recovery, ERROR_RECOVERY.BUSY)
+  assert.equal(help.codes[3]?.recovery, notConfirmed)
+  assert.ok(!JSON.stringify(help).includes('loader-mismatch'))
   assert.ok(
     refused.endsWith(
       'See codebook://help/node-script#NODE_SCRIPT_SOURCE_REFUSED.',

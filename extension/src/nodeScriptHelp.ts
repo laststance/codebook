@@ -70,7 +70,15 @@ const NODE_SCRIPT_HELP_SAMPLES = {
 const NODE_SCRIPT_CODES: readonly { code: ErrorCode; when: string }[] = [
   {
     code: 'NODE_SCRIPT_SOURCE_REFUSED',
-    when: "start: packageRoot, entry or a stop's file is missing or not a real path inside the opened repository (package-root, entry, stop-file), a TypeScript entry has no repository tsx (tsx-missing) or a node loader (loader-mismatch), or a stop lies outside the package or in node_modules (outside-package, node-modules)",
+    when: "start: packageRoot, entry or a stop's file is missing or not a real path inside the opened repository (package-root, entry, stop-file), a TypeScript entry has no usable repository tsx (tsx-missing), a stop lies outside the package or the tsx resolves outside the repository (outside-package), a stop lies in node_modules (node-modules), or a sentence is not classified (source-refused)",
+  },
+  {
+    code: 'INVALID_CONFIGURATION',
+    when: 'start: the strict schema refuses the declaration, for a port, request, environment, node option or argument, or a TypeScript entry declared with loader node (declare loader tsx)',
+  },
+  {
+    code: 'BUSY',
+    when: 'start (reason awaiting-confirmation): a new start arrived while the editor still asks the learner to confirm a run; read the run resource and send no other start',
   },
   {
     code: 'SCRIPT_NOT_CONFIRMED',

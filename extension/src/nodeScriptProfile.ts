@@ -14,7 +14,7 @@ import {
 
 /** What `codebook_status` says about the repository's own tsx: it depends on the declared entry, so it is checked at start, not here. */
 const NODE_SCRIPT_LOADER_NOTE =
-  "The repository's own tsx is checked at start, for a TypeScript entry only; a missing or outside-the-repository tsx is refused with NODE_SCRIPT_SOURCE_REFUSED (reason tsx-missing)."
+  "The repository's own tsx is checked at start, for a TypeScript entry only; a missing tsx, or one without a loader file inside the repository, is refused with NODE_SCRIPT_SOURCE_REFUSED (reason tsx-missing), and a tsx that resolves outside the repository with reason outside-package."
 
 /**
  * Describes the node-script profile for `codebook_status`: its identity, its limits and its machine prerequisites, so an agent knows before a start whether a script run can happen here and what is missing.

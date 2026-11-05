@@ -10,9 +10,9 @@ type NodeScriptRefusalReason =
   | 'entry'
   | 'stop-file'
   | 'tsx-missing'
-  | 'loader-mismatch'
   | 'outside-package'
   | 'node-modules'
+  | 'source-refused'
 
 /**
  * Builds the refusal of a script's source: the code, the reason an agent branches on, and `sideEffects: none` because nothing was spawned.
@@ -45,7 +45,14 @@ function reasonOfNodeServerRefusal(message: string): NodeScriptRefusalReason {
   if (/packageRoot .* is not a folder/.test(message)) return 'package-root'
   if (/entry .* is not a file inside packageRoot/.test(message)) return 'entry'
   if (/node-server's stop \d+/.test(message)) return 'stop-file'
-  return 'tsx-missing'
+  // The tsx sentences of resolveTsxLoader: none installed, outside the repository, or no loader file inside it.
+  if (/none is installed for/.test(message)) return 'tsx-missing'
+  if (/lies outside the opened repository by its real path/.test(message))
+    return 'outside-package'
+  if (/exports no loader file inside the repository/.test(message))
+    return 'tsx-missing'
+  // A sentence this mapping does not know is never guessed as a missing tsx.
+  return 'source-refused'
 }
 
 /**
@@ -63,7 +70,8 @@ export function describeNodeScriptRefusal(error: unknown): unknown {
     return error
   return refuseNodeScriptSource(
     reasonOfNodeServerRefusal(error.message),
-    error.message.replaceAll('node-server', 'node-script'),
+    // Only the profile prefix is renamed, so a declared path such as packages/node-server/run.mjs is echoed unchanged.
+    error.message.replace(/^node-server(?='s )/, 'node-script'),
   )
 }
 
