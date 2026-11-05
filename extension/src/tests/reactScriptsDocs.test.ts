@@ -200,6 +200,7 @@ test('the help, README and API note state the environment Codebook sets for a re
     ),
   )
   assert.ok(readme.includes('`Host=` or `port=`'))
+  assert.ok(readme.includes('Saved sessions cover Next.js and Vite apps only'))
 })
 
 // Value: protects=the bundled skill paraphrases the selection rule (root only with rootIsApp, ready packages entry with its packageRoot, hoisted install never the root, truncated list declared from the repository files); fails_when=a key phrase leaves the skill; no_claim=how a chat follows it

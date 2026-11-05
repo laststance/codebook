@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { REPOSITORY_MAP_LIMIT_BYTES } from '../constants'
+import { ERROR_RECOVERY } from '../errors'
 import {
   REACT_SCRIPTS_REFUSAL_CODES,
   reactScriptsCompileFailedRefusal,
@@ -356,4 +357,13 @@ test('an exited refusal names journalPath only when the run has one', () => {
   assert.equal(detailKeys.includes('journalPath'), false)
   assert.equal(withPath.details?.journalPath, '/j.log')
   assert.match(recoveryOf(without), /when details\.journalPath is present/)
+})
+
+// Value: protects=the general busy-port recovery in ERROR_RECOVERY names the start script PORT= assignment, like the builder; fails_when=it sends the learner to set a port in the app; no_claim=the builder text
+test('the general busy-port recovery names the start script PORT= assignment', () => {
+  // Arrange
+  const recovery = ERROR_RECOVERY.REACT_SCRIPTS_PORT_UNAVAILABLE
+  // Act / Assert
+  assert.match(recovery, /PORT= assignment in the start script of the app/)
+  assert.equal(recovery.includes('set another port in the app;'), false)
 })
