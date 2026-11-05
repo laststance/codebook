@@ -1862,6 +1862,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (this.definition.configuration.adapter === 'next-dev-webpack') {
       this.nextPackage = await this.resolveNextPackageOfRun()
       this.alive()
+      // A route-handler stop is refused here, before the sources are prepared, when its file, its operation or its runtime rules it out; the others stay unsealed until their pause.
+      await this.collectRouteHandlerStops()
+      this.alive()
     } else if (this.definition.configuration.adapter === 'vite-dev') {
       // A Vite app below the root is resolved the same way, before any process starts; no other adapter inherits it.
       this.vitePackage = await this.resolveVitePackageOfRun()
@@ -1900,9 +1903,6 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.alive()
     // A server stop in `_document` or an API route is refused before any process starts: no server stop is valid there in either router.
     if (hasPagesFolder) await this.refuseLexicalPagesServerStops()
-    // A route-handler stop is refused here when its file, its operation or its runtime rules it out; the others stay unsealed until their pause.
-    if (adapter.name === 'next-dev-webpack')
-      await this.collectRouteHandlerStops()
     this.nextSetupStep = NEXT_SETUP_STEPS.startingNext
     // The app runs on the port the project declares (its auth origin points there); a busy port refuses the start instead of moving the app.
     const started = await adapter.start({
@@ -2618,6 +2618,28 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Reads a stop file's current text with the bounds of the run's source reads (size, regular file, no links).
+   * Called by {@link readWindowSources} and {@link routeHandlerStopOf}, which judge the text themselves.
+   * @param root - The real path of the Next app's folder.
+   * @param sourcePath - The stop file inside it.
+   * @returns The text; `undefined` when the file cannot be read within the bounds.
+   * @example await this.readStopSourceText('/repo', '/repo/app/api/todos/route.ts')
+   */
+  private async readStopSourceText(
+    root: string,
+    sourcePath: string,
+  ): Promise<string | undefined> {
+    const text = await readRepositoryBuildText(
+      root,
+      sourcePath,
+      REPOSITORY_SOURCE_LIMIT_BYTES,
+      this.abort.signal,
+    ).catch(() => undefined)
+    this.alive()
+    return text
+  }
+
+  /**
    * Gives the line a provisional breakpoint is requested on, the place today's rule would request from the declared source text.
    * @param stop - The configured stop.
    * @param sourceText - The declared source text.
@@ -2664,13 +2686,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       const packageRelative = nextPackage.toPackageRelative(stop.source.path)
       if (packageRelative === undefined) continue
       const sourcePath = join(root, packageRelative)
-      const sourceText = await readRepositoryBuildText(
-        root,
-        sourcePath,
-        REPOSITORY_SOURCE_LIMIT_BYTES,
-        this.abort.signal,
-      ).catch(() => undefined)
-      this.alive()
+      const sourceText = await this.readStopSourceText(root, sourcePath)
       if (sourceText === undefined || sha256(sourceText) !== stop.source.hash)
         continue
       const requestedLine = this.windowRequestedLine(stop, sourceText)
@@ -2891,6 +2907,26 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     participant.stopped = { event: held.event }
     this.settledStops.add(event)
     this.onEvent(session, event)
+  }
+
+  /**
+   * Settles a server pause that a provisional breakpoint caused: a preparation-window hit, or a hit of an armed route-handler stop.
+   * Called by {@link settleServerStop} before the other classification.
+   * @param session - The server session.
+   * @param event - The `stopped` event.
+   * @returns `true` when the pause was settled here; `false` when it is neither's, so the other handling goes on.
+   * @throws The seal's refusal after the runtime was resumed.
+   * @example if (await this.settleProvisionalHit(session, event)) return
+   */
+  private async settleProvisionalHit(
+    session: vscode.DebugSession,
+    event: DebugProtocol.Event,
+  ): Promise<boolean> {
+    if (this.isPreparationHit()) {
+      await this.settlePreparationStop(session, event)
+      return true
+    }
+    return this.settleRouteHandlerHit(session, event)
   }
 
   /**
@@ -3597,12 +3633,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     if (this.cleaning) return
     // A `stopped` that follows a `continued` of a held pause is the debugger's stack refresh of that pause, not a new hit: it goes to the refresh check in onEvent.
-    if (this.isPreparationHit()) {
-      await this.settlePreparationStop(session, event)
-      return
-    }
-    // A hit of an armed route-handler stop is judged by the request that caused it before any other handling.
-    if (await this.settleRouteHandlerHit(session, event)) return
+    // A hit of a provisional breakpoint (the preparation window's, or an armed route-handler stop's) is judged before any other handling.
+    if (await this.settleProvisionalHit(session, event)) return
     const verdict = await this.unexpectedHitVerdict(session, event)
     if (verdict === 'gone') return
     if (verdict) {
@@ -6134,65 +6166,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     for (const [index, stop] of configuredStops(
       this.definition.configuration,
     ).entries()) {
-      // Only a server stop in a file named like a route file can be a route handler.
-      if (
-        stop.participant !== 'server' ||
-        !ROUTE_FILE_NAME.test(stop.source.path.split('/').at(-1) ?? '')
-      )
-        continue
-      const place = `${stop.source.path}:${stop.source.line}`
-      if (
-        this.libraryFreezes.has(libraryFreezeKey(stop.source)) ||
-        stop.source.path.split('/').includes('node_modules')
-      )
-        throw routeHandlerStopRefusal(
-          'route-handler-not-app-source',
-          place,
-          index,
-        )
-      const packageRelative = this.nextPackageOrRoot.toPackageRelative(
-        stop.source.path,
-      )
-      const route =
-        packageRelative === undefined
-          ? undefined
-          : routeHandlerRouteOf(packageRelative)?.route
-      // A file named route.ts outside the app tree (lib/route.ts) is an ordinary server stop.
-      if (packageRelative === undefined || route === undefined) continue
-      const operationIndex = afterOperationOf(stop) ?? 0
-      if (operationIndex < 1)
-        throw routeHandlerStopRefusal(
-          'route-handler-before-operation',
-          place,
-          index,
-        )
-      const sourcePath = join(root, packageRelative)
-      const sourceText = await readRepositoryBuildText(
-        root,
-        sourcePath,
-        REPOSITORY_SOURCE_LIMIT_BYTES,
-        this.abort.signal,
-      ).catch(() => undefined)
-      this.alive()
-      // An unreadable or changed source is left to the verification and the seal at the pause, which refuse it as they always did.
-      if (sourceText === undefined) continue
-      if (EDGE_RUNTIME_DECLARATION.test(sourceText))
-        throw routeHandlerStopRefusal(
-          'route-handler-edge-runtime',
-          place,
-          index,
-        )
-      found.push({
-        stop,
-        index,
-        route,
-        operationIndex,
-        sourcePath,
-        sourceText,
-        packageRelative,
-        requestedLine: this.windowRequestedLine(stop, sourceText),
-        resumed: new Map(),
-      })
+      const entry = await this.routeHandlerStopOf(stop, index, root)
+      if (entry) found.push(entry)
     }
     this.routeHandlerStops = found
     if (found.length)
@@ -6202,6 +6177,71 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           this.origin !== undefined &&
           isOwnedApplicationOrigin(origin, this.origin, this.ownsIpv6Loopback),
       )
+  }
+
+  /**
+   * Judges one configured stop for {@link collectRouteHandlerStops}: not a route handler, a refused one, or the route-handler stop to arm.
+   * @param stop - The configured stop.
+   * @param index - Its declared index.
+   * @param root - The real path of the Next app's folder.
+   * @returns The route-handler stop; `undefined` for every other stop.
+   * @throws The refusals of {@link collectRouteHandlerStops}.
+   * @example await this.routeHandlerStopOf(stop, 0, '/repo') // undefined for a stop in lib/data.ts
+   */
+  private async routeHandlerStopOf(
+    stop: ReturnType<typeof configuredStops>[number],
+    index: number,
+    root: string,
+  ): Promise<RouteHandlerStop | undefined> {
+    // Only a server stop in a file named like a route file can be a route handler.
+    if (
+      stop.participant !== 'server' ||
+      !ROUTE_FILE_NAME.test(stop.source.path.split('/').at(-1) ?? '')
+    )
+      return undefined
+    const place = `${stop.source.path}:${stop.source.line}`
+    if (
+      this.libraryFreezes.has(libraryFreezeKey(stop.source)) ||
+      stop.source.path.split('/').includes('node_modules')
+    )
+      throw routeHandlerStopRefusal(
+        'route-handler-not-app-source',
+        place,
+        index,
+      )
+    const packageRelative = this.nextPackageOrRoot.toPackageRelative(
+      stop.source.path,
+    )
+    const route =
+      packageRelative === undefined
+        ? undefined
+        : routeHandlerRouteOf(packageRelative)?.route
+    // A file named route.ts outside the app tree (lib/route.ts) is an ordinary server stop.
+    if (packageRelative === undefined || route === undefined) return undefined
+    const operationIndex = afterOperationOf(stop) ?? 0
+    if (operationIndex < 1)
+      throw routeHandlerStopRefusal(
+        'route-handler-before-operation',
+        place,
+        index,
+      )
+    const sourcePath = join(root, packageRelative)
+    const sourceText = await this.readStopSourceText(root, sourcePath)
+    // An unreadable or changed source is left to the verification and the seal at the pause, which refuse it as they always did.
+    if (sourceText === undefined) return undefined
+    if (EDGE_RUNTIME_DECLARATION.test(sourceText))
+      throw routeHandlerStopRefusal('route-handler-edge-runtime', place, index)
+    return {
+      stop,
+      index,
+      route,
+      operationIndex,
+      sourcePath,
+      sourceText,
+      packageRelative,
+      requestedLine: this.windowRequestedLine(stop, sourceText),
+      resumed: new Map(),
+    }
   }
 
   /**

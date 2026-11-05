@@ -13,7 +13,7 @@ export const ROUTE_FILE = 'app/api/todos/route.ts'
 export const APP_ORIGIN = 'http://localhost:4321'
 
 /** The operation the harness page accepts: the click that sends the request. */
-const ADD: RepositoryOperation = {
+export const ADD: RepositoryOperation = {
   kind: 'click',
   title: 'Add',
   selector: 'button[type=submit]',
@@ -54,6 +54,7 @@ export async function routeHandlerRunHarness(
     stopOperations?: number[]
     stopParticipants?: ('server' | 'browser')[]
     operations?: RepositoryOperation[]
+    additionalStops?: Parameters<typeof configuredRuntimeHarness>[2]
     extra?: Partial<Parameters<typeof configuredRuntimeHarness>[3]>
   } = {},
 ) {
@@ -61,7 +62,7 @@ export async function routeHandlerRunHarness(
   const harness = await configuredRuntimeHarness(
     context,
     controlOf(context),
-    [],
+    options.additionalStops ?? [],
     {
       participant: 'server',
       serverSeal: 'rsc',
@@ -131,9 +132,13 @@ export function routeHandlerHit(
     NonNullable<RouteHandlerRunHarness['server']>['hit']
   >[0] = {},
   order?: Parameters<NonNullable<RouteHandlerRunHarness['server']>['hit']>[1],
+  mappings = ';AAAA',
 ): number {
   const server = harness.server!
-  server.setScriptText('server', server.instanceText(';AAAA', server.sealedUrl))
+  server.setScriptText(
+    'server',
+    server.instanceText(mappings, server.sealedUrl),
+  )
   return server.hit(
     { stack: 'route-handler', generated: { line: 1, column: 0 }, ...extra },
     order,
