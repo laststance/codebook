@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.2.86.0] - 2026-11-06 (development candidate)
+
+Cycle 0086 ([Issue #224](https://github.com/laststance/codebook/issues/224)), a feature cycle. **A Next server stop on a module's top-level code now pauses when Next first evaluates that module.** A learner can now ask when a database client, a store or a library import is created, and the native debugger stops on that line with its values. Before, such a stop never paused, because Next had already run the module while Codebook prepared the run. For example, a Server Component that imports react-redux pauses where the import has just bound react-redux's server stub.
+
+**Module evaluation (MCP API 1.27).**
+- **Where it applies:** an App Router run (`next-dev-webpack`, configuration version 3) in a workspace without a Pages folder. The stop is a `participant: "server"` stop with `afterOperation: 0` on code that runs when Next first evaluates a server module of the entry route, such as the page's or layout's module scope, a module they import, or a function called while the module loads.
+- **What the chat sees:** the pause reads `scope: "module"`.
+  - When the evaluation happens in a request Codebook made while preparing the run, the pause reads `attribution: "preparation"` with `preparationRequest` set to `readiness` or `warm-load`, and its label reads `Preparation · Module evaluation · <path:line>`.
+  - When the entry load evaluated the module, the label reads `Page load · Module evaluation · <path:line>`.
+  - The chat continues it like any other pause.
+- **No image at that moment:** in a readiness-request pause no browser is open yet and no input has been sent, and in a warm-load pause the warm-up page is still loading. The application image reads as not yet available, the run can still complete, and the replay shows no frame for that moment.
+- **Values:** the bindings the module has set by the pause line, its imports included, are saved with the pause, masked like any value, so the replay's native debugger shows them; the enclosing scopes are not saved. A module-level binding that is not initialized yet at the pause is absent from the values.
+- **Imported names in a Next run:** declare an imported name as the source writes it. When the paused frame does not hold the name (webpack renames imports in the code it runs), Codebook reads it from the module object webpack bound the import to. A local of the same name is read as declared.
+- **When a stop is not reached:** `SERVER_STOP_NOT_REACHED` lists the remaining possibilities for a module-scope line. The entry route may not import the module, Next may have evaluated it before the stop could be armed, or the line may sit in a branch or after a statement that did not run.
+- **What stays the same:** Pages runs, runs in a workspace with a Pages folder, and after-operation stops do not observe module evaluation; keep the stop inside a function there. Stops inside functions keep their behavior.
+
+**Saved studies and updating.** A study with a module-evaluation pause is saved as format 12 (`.study.v12.json`); Codebook 0.2.85 and older list it as saved by a newer Codebook. After installing, run **Codebook: Set Up AI Chat** so Cursor's managed skill updates to **1.0.76**, whose guidance allows a top-level stop on API 1.27.
+
+**Release details:** checked in both editors on development targets (no nine-project credit):
+
+| Check | Host | Target | Pause |
+| --- | --- | --- | --- |
+| C86-1 | VS Code, Copilot Chat (GPT-6.1 Terra) | `nextjs-dashboard`, `db/index.ts` | warm load; settings and the client read, URL password masked |
+| C86-2 | Cursor, Agent (Grok 4.6 High) | P04 `rr-rsc-context`, `app/page.tsx` | readiness request; `useSelector` read as the server stub |
+
 ## [0.2.85.0] - 2026-11-05 (development candidate)
 
 Cycle 0085 ([Issue #222](https://github.com/laststance/codebook/issues/222)), a feature cycle. **A live explanation of a Node test, server or script, or of a Next app's server side, now reaches its first pause within seconds of the debugger attaching.** Before, every such run waited about 20 s first. In both VS Code and Cursor the first pause now follows the attach within half a second to a second and a half.
