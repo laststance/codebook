@@ -525,9 +525,10 @@ export type ConfiguredRuntimeView = {
   captures: Record<
     string,
     {
-      status: 'pending' | 'captured' | 'failed' | 'withheld'
+      /** `absent` is a pause in Codebook's own preparation request: no page could be drawn yet, so no image is owed and the capture outcome stays complete. */
+      status: 'pending' | 'captured' | 'failed' | 'withheld' | 'absent'
       file?: string
-      /** The failure; for `withheld` the sentence naming why the image was withheld. */
+      /** The failure; for `withheld` the sentence naming why the image was withheld; for `absent` the sentence saying the application was not available yet. */
       error?: string
       /** Set only for `withheld`: why the secret frame gate withheld the image. */
       withheldReason?: SecretFrameWithholdReason

@@ -208,7 +208,7 @@ export function serverRenderHelp() {
         preparation:
           'When the evaluation happens in a request Codebook made while preparing the run, the pause reads attribution "preparation" with preparationRequest readiness (the readiness request before the browser opens) or warm-load (the saved-session warm load). Its label reads "Preparation · Module evaluation · <path:line>"; when the entry load evaluated the module, it reads "Page load · Module evaluation · <path:line>". Never call a preparation pause the page load.',
         readinessPause:
-          'In a readiness-request pause no browser is open yet and no input has been sent: the application image reads as not yet available, and the chat says nothing was sent. Continue with the current continueArguments as for any pause.',
+          'In a readiness-request pause no browser is open yet and no input has been sent: the application image reads as not yet available, and the chat says nothing was sent. In a warm-load pause the warm-up page is still loading, so its image reads as not yet available too. Such a pause owes no image (capture status absent), so the run can still complete. Continue with the current continueArguments as for any pause.',
         absentBindings:
           'A module-level binding that is not yet initialized at the pause is simply absent from the values; do not read the absence as a value or as an error.',
         firstExecution:

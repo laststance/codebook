@@ -128,7 +128,7 @@ test('a module-scope server stop pauses in the readiness request, labelled as a 
   await prepared
 })
 
-// Value: protects=R11 (capture without a browser): a pause in the readiness request has no page to draw, so it publishes "application not yet available" and never an image; fails_when=the capture is attempted without a page and fails the pause, or an image of a later frame is borrowed; no_claim=the replay of the saved pause
+// Value: protects=R11 (capture without a browser): a pause in the readiness request has no page to draw, so it publishes "application not yet available" (status absent: no image is owed) and never an image; fails_when=the capture is attempted without a page and fails the pause, an image of a later frame is borrowed, or the missing image is reported as a failed capture; no_claim=the replay of the saved pause
 test('a preparation pause in the readiness request publishes without an image and says the application is not yet available', async (context) => {
   // Arrange
   const { harness } = await heldReadiness(context)
@@ -139,7 +139,7 @@ test('a preparation pause in the readiness request publishes without an image an
   assert.deepEqual(
     { ...harness.run.view().captures['paused-server'] },
     {
-      status: 'failed',
+      status: 'absent',
       error: STOP_IMAGE_APPLICATION_NOT_YET_AVAILABLE_TEXT,
     },
   )
@@ -368,6 +368,58 @@ test('a preparation pause held past the 90 s setup budget fails nothing and the 
     'the run completed',
   )
   assert.deepEqual([...harness.run.view().failures], [])
+})
+
+// Value: protects=R11 (complete run): a preparation pause owes no image, so a run whose only server stop paused in the readiness request still ends with every owed image held; fails_when=the absent image makes the capture outcome incomplete and the study partial; no_claim=the before and after images of a real page
+test('a run whose server stop paused in the readiness request keeps the pause image absent and its capture outcome complete', async (context) => {
+  // Arrange
+  const { harness, prepared } = await heldReadiness(context)
+  evaluateModule(harness)
+  const snapshot = await publishedPause(harness)
+  // Act
+  await harness.run.continue('server', snapshot.pause)
+  harness.releaseReadiness()
+  await waitUntil(
+    () => harness.navigations.length >= 1,
+    'the entry navigation started',
+  )
+  harness.setDocumentReadyState('complete')
+  await prepared
+  await waitUntil(
+    () => harness.run.view().status === 'completed',
+    'the run completed',
+  )
+  // Assert
+  const view = harness.run.view()
+  assert.deepEqual(
+    [view.snapshotCaptures?.[snapshot.id]?.status, view.captureOutcome],
+    ['absent', 'complete'],
+  )
+})
+
+// Value: protects=AC 4 / DX-10 (not reached after the window): a stop the preparation window covered that never paused names the candidates that remain (the entry route not importing the module, an earlier evaluation, a cache, a render that did not reach it) and no longer blames module scope as such; fails_when=the text still says the stop ran only at module scope while Codebook prepared the page, or states a cause as established; no_claim=which candidate applied
+test('a covered stop the page never reaches fails with the module-evaluation candidates, not the module-scope cause', async (context) => {
+  // Arrange: the readiness request ends without any evaluation of the stop's module
+  const { harness, prepared } = await heldReadiness(context)
+  prepared.catch(() => undefined)
+  // Act
+  harness.releaseReadiness()
+  await waitUntil(
+    () => harness.navigations.length >= 1,
+    'the entry navigation started',
+  )
+  harness.setDocumentReadyState('complete')
+  await waitUntil(
+    () => harness.run.view().failures.length > 0,
+    'the run failed',
+  )
+  // Assert
+  const failure = harness.run.view().failures[0]!
+  assert.match(
+    failure,
+    /^SERVER_STOP_NOT_REACHED: The page finished without reaching declared stop [^ ]+\. It may have run only in a function whose result Next serves from a cache, the entry route may not import its module, Next may have evaluated the module before the stop could be armed \(another route, a hot reload\), or this render did not reach it\./,
+  )
+  assert.equal(failure.includes('code at module scope'), false)
 })
 
 // Value: protects=O5 (Pages workspaces): a workspace with a Pages folder opens no preparation window, because its router is known only after readiness; fails_when=the window opens and consumes a Pages data function during Codebook's own request; no_claim=App Router entries of such mixed workspaces

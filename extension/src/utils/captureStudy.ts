@@ -21,10 +21,6 @@ import {
   usesServerRenderEvidence,
 } from './studyFormatOfConfiguration'
 
-/** The reason saved for a pause in Codebook's own readiness request: the browser was not open, so there is no application image, and the replay shows none. */
-const PREPARATION_WITHOUT_APPLICATION_REASON =
-  'The application was not yet available when Codebook paused here, so there is no image.'
-
 /** Copies only committed canonical evidence for {@link StudyWorkspace}; a changed read is discarded. @example await captureStudy(service, record, workspaceKey) */
 export async function captureStudy(
   service: StudyService,
@@ -166,7 +162,7 @@ export async function captureStudy(
           hash: sha256(Buffer.from(image.blob, 'base64')),
         })
       } else
-        // A withheld image is saved as an absent image with its reason sentence, so the saved format and older readers stay unchanged.
+        // A withheld image, and a preparation pause before any page could be drawn, are saved as absent images with the runtime's reason sentence, so the saved format and older readers stay unchanged.
         captures.push({
           ...identity,
           status:
@@ -179,13 +175,7 @@ export async function captureStudy(
             capture.error ??
               (capture.status === 'pending'
                 ? 'Capturing this observation…'
-                : observations.some(
-                      (observation) =>
-                        observation.id === capture.snapshotId &&
-                        observation.attribution === 'preparation',
-                    )
-                  ? PREPARATION_WITHOUT_APPLICATION_REASON
-                  : 'No confirmed image for this phase.'),
+                : 'No confirmed image for this phase.'),
           ),
         })
     }

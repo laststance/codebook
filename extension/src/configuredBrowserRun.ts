@@ -1042,6 +1042,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private entryLoad?: EntryLoadState
   /** The preparation window, open from before the readiness request until the saved-session warm load ended. */
   private preparationWindow?: PreparationWindow
+  /** The declared indices of the stops the preparation window covered with a provisional breakpoint, kept after it closed: a covered stop on module-scope code would have paused there, so its not-reached text names other causes. */
+  private readonly preparationCoveredStops = new Set<number>()
   /** Whether {@link selectServer} already ran before the readiness request. */
   private serverSelectedEarly = false
   /** Whether the viewport was attached, so a warm-up pause cannot be drawn before it. */
@@ -2690,6 +2692,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         await entry.breakpoint.retire(session, this.abort.signal)
     this.alive()
     this.preparationWindow = undefined
+    for (const entry of window.provisional)
+      this.preparationCoveredStops.add(entry.index)
     this.evidence.record('preparation.window-closed', {
       paused: window.provisional
         .filter((entry) => entry.prepared)
@@ -4675,11 +4679,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           resumedHits: this.pagesLedger.resumedHitsOf(place),
         }),
       )
+    const opening =
+      how === 'load-first'
+        ? `The page finished without reaching declared stop ${place}.`
+        : `The page did not reach declared stop ${place} within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s of the entry navigation.`
+    // A stop the preparation window covered would have paused at its module's first evaluation, so module scope is no longer a cause of its own; the other candidates are named instead.
+    const candidates = this.preparationCoveredStops.has(stop.declaredIndex)
+      ? 'It may have run only in a function whose result Next serves from a cache, the entry route may not import its module, Next may have evaluated the module before the stop could be armed (another route, a hot reload), or this render did not reach it. Check that the entry route imports the module and that the line runs when the module loads, or declare the stop inside the component or function that runs on every render, then start a new run.'
+      : 'It may have run only while Codebook prepared the page (code at module scope, or a cached result), or this render did not reach it. Declare the stop inside the component or function that runs on every render, then start a new run.'
     return formatRefusalFailure(
       'SERVER_STOP_NOT_REACHED',
-      how === 'load-first'
-        ? `The page finished without reaching declared stop ${place}. It may have run only while Codebook prepared the page (code at module scope, or a cached result), or this render did not reach it. Declare the stop inside the component or function that runs on every render, then start a new run.`
-        : `The page did not reach declared stop ${place} within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s of the entry navigation. It may have run only while Codebook prepared the page (code at module scope, or a cached result), or this render did not reach it. Declare the stop inside the component or function that runs on every render, then start a new run.`,
+      `${opening} ${candidates}`,
     )
   }
 
@@ -13693,7 +13703,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       !(this.participants.browser.cdp && this.viewportAttached)
     ) {
       this.captures[phase] = {
-        status: 'failed',
+        status: 'absent',
         error: STOP_IMAGE_APPLICATION_NOT_YET_AVAILABLE_TEXT,
       }
       this.evidence.record('capture.unavailable', {
@@ -13897,14 +13907,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Says whether every image the run owes was captured: each phase's, and each committed stop's.
    * An earlier stop's image counts too, so a withheld one is never hidden by a later captured stop of the same phase.
    * @param phases - The capture phases the run's stops declare.
-   * @returns `complete` only when every phase capture and every snapshot capture is `captured`; `incomplete` otherwise.
+   * A preparation pause before any page could be drawn owes no image (`absent`), so it never makes the outcome incomplete.
+   * @returns `complete` only when every phase capture and every snapshot capture is `captured` or `absent`; `incomplete` otherwise.
    * @example this.captureOutcomeOf(['before', 'paused-browser', 'after']) // => 'incomplete' after a withheld stop image
    */
   private captureOutcomeOf(phases: string[]): 'complete' | 'incomplete' {
+    const isOwedImageHeld = (status: string | undefined): boolean =>
+      status === 'captured' || status === 'absent'
     const allCaptured =
-      phases.every((phase) => this.captures[phase]?.status === 'captured') &&
-      Object.values(this.snapshotCaptures).every(
-        (capture) => capture.status === 'captured',
+      phases.every((phase) => isOwedImageHeld(this.captures[phase]?.status)) &&
+      Object.values(this.snapshotCaptures).every((capture) =>
+        isOwedImageHeld(capture.status),
       )
     return allCaptured ? 'complete' : 'incomplete'
   }
