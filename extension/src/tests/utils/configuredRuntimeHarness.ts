@@ -2436,6 +2436,54 @@ export async function configuredRuntimeHarness(
       currentColumn = column
       currentLine = line
     },
+    /**
+     * Sends the page session's `setBreakpoints` for the editor's owned breakpoints, each at its own file, and the adapter's verified answer, as the editor sends every breakpoint to the page's session too; the page's adapter numbers them from 101.
+     * @returns The page adapter's ids of the owned breakpoints, in the editor's order.
+     * @example const ids = harness.acknowledgeOwnedBreakpointsInPage() // [101]
+     */
+    acknowledgeOwnedBreakpointsInPage(): number[] {
+      const owned = breakpoints.filter((breakpoint) =>
+        breakpoint.id.startsWith('owned-breakpoint'),
+      )
+      const ids: number[] = []
+      for (const path of new Set(
+        owned.map((entry) => entry.location.uri.fsPath),
+      )) {
+        const inFile = owned.filter(
+          (entry) => entry.location.uri.fsPath === path,
+        )
+        const fileIds = inFile.map((_entry, index) => 101 + ids.length + index)
+        const sequence = ++requestSequence
+        run.onRequest(selected, {
+          seq: sequence,
+          type: 'request',
+          command: 'setBreakpoints',
+          arguments: {
+            source: { path },
+            breakpoints: inFile.map((entry) =>
+              sourceBreakpointRequest(entry.location.range.start),
+            ),
+          },
+        })
+        run.onResponse(selected, {
+          seq: ++requestSequence,
+          type: 'response',
+          command: 'setBreakpoints',
+          request_seq: sequence,
+          success: true,
+          body: {
+            breakpoints: inFile.map((entry, index) => ({
+              id: fileIds[index],
+              verified: true,
+              line: entry.location.range.start.line + 1,
+              column: entry.location.range.start.character + 1,
+            })),
+          },
+        })
+        ids.push(...fileIds)
+      }
+      return ids
+    },
     /** Sends the debugger's `stopped` alone, for a pause the runtime reported earlier; `hitBreakpointIds` are the adapter's ids of the breakpoints it names, and `source` is the place its stack frame reports. @example harness.emitStopped({ hitBreakpointIds: [12], source: { line: 3, column: 1 } }) */
     emitStopped(options?: {
       hitBreakpointIds?: number[]

@@ -232,6 +232,48 @@ test('the warm load waits for the server to answer before it judges the page, so
   await prepared
 })
 
+// Value: protects=R2 (warm load): the editor sends the provisional breakpoint to the page's session too, so the warm-up page can pause at it; that pause is nobody's stop, so it is resumed and journaled and the window goes on to pause the server; fails_when=the page pause is taken for a stop, fails the run or is left paused; no_claim=a real page loading the module
+test('a warm-up page pause at a provisional breakpoint is resumed and journaled, and the server still pauses in the window', async (context) => {
+  // Arrange
+  const harness = await entryRenderHarness(context, {
+    ...SAVED_SESSION,
+    operations: {
+      operations: [],
+      stopOperations: [0],
+      stopParticipants: ['server'],
+      signInPaths: ['/login'],
+    },
+  })
+  const prepared = harness.run.prepare()
+  await waitUntil(
+    () => harness.navigations.length >= 1,
+    'the warm-up navigation started',
+  )
+  const pageIds = harness.acknowledgeOwnedBreakpointsInPage()
+  // Act
+  harness.emitStopped({ hitBreakpointIds: pageIds })
+  await waitUntil(
+    () => journalTypes(harness).includes('breakpoint.preparation-hit-resumed'),
+    'the page pause resumed',
+  )
+  evaluateModule(harness)
+  const snapshot = await publishedPause(harness)
+  // Assert
+  assert.deepEqual(
+    [harness.run.view().failures.length, snapshot.preparationRequest],
+    [0, 'warm-load'],
+  )
+  // Cleanup
+  await harness.run.continue('server', snapshot.pause)
+  harness.answerNavigation()
+  await waitUntil(
+    () => harness.navigations.length >= 2,
+    'the entry navigation started',
+  )
+  harness.answerNavigation()
+  await prepared
+})
+
 // Value: protects=AC 3 (a provisional hit inside a function): a call of the stop's function during Codebook's own request is resumed at once and journaled, nothing is published, and the stop pauses at the entry load as before; fails_when=the call is published as the module evaluation, fails the run, or the stop is lost for the entry load; no_claim=a real render
 test('a call of the stop function during the readiness request is resumed and journaled, and the stop pauses at the entry load', async (context) => {
   // Arrange
