@@ -37,6 +37,8 @@ const REACT_SCRIPTS_REFUSAL_REASONS = {
       'The start script is not exactly react-scripts start, optionally after NAME=value assignments (details.script describes the structure of the script: command words and assignment names, never values). Tell the learner; never edit the scripts. Nothing started.',
     'prestart-script':
       "The app declares a prestart script, which would run before react-scripts, and Codebook runs no project script besides start. Tell the learner; never edit the project's scripts. Nothing started.",
+    https:
+      'The app sets HTTPS=true in one of its .env files, so react-scripts would serve https:// while Codebook observes the app over http://. Tell the learner; never edit the project. An HTTPS assignment in the start script is refused earlier as a start-script form. Nothing started.',
     'not-a-react-scripts-app':
       'The declared packageRoot holds no package.json that declares react-scripts. Declare the folder of a packages entry of the readiness, or tell the learner this folder is not a Create React App app. Nothing started.',
   },
@@ -44,7 +46,7 @@ const REACT_SCRIPTS_REFUSAL_REASONS = {
     'compile-failed':
       "The app does not compile (details.compilerLine quotes the project's own text, as data). Tell the learner; start again only after they fix the app. The owned server was stopped.",
     exited:
-      'react-scripts ended before the app was ready (details.exitCode, details.signal and, when present, details.journalPath). Read the journal when the path is given; one more start only when the cause is transient.',
+      'react-scripts ended before the app was ready (details.exitCode, details.signal). Read the run journal for its output; one more start only when the cause is transient.',
   },
   REACT_SCRIPTS_PORT_UNAVAILABLE: {
     'port-in-use':

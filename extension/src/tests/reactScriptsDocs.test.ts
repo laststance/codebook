@@ -225,7 +225,7 @@ test('the bundled skill paraphrases the react-scripts selection rule', async () 
     assert.ok(REACT_SCRIPTS_APP_SELECTION_RULE.includes(phrase), phrase)
 })
 
-// Value: protects=the map-limit, port and exited help texts match the builders (whole bundle too large; PORT= assignment lever; journalPath only when present); fails_when=the help sends the learner to a smaller module or to the app's own configuration; no_claim=the run
+// Value: protects=the map-limit, port and exited help texts match the builders (whole bundle too large; PORT= assignment lever; the run journal named in words, no journalPath field); fails_when=the help sends the learner to a smaller module or to the app's own configuration; no_claim=the run
 test('the react-scripts help words map-limit, port and exited as the builders do', async (context) => {
   // Arrange
   const help = await readHelp(context)
@@ -240,5 +240,6 @@ test('the react-scripts help words map-limit, port and exited as the builders do
   assert.ok(mapLimit.includes('bundle is too large'))
   assert.equal(mapLimit.includes('smaller module'), false)
   assert.ok(port.includes('PORT= assignment in the'))
-  assert.ok(exited.includes('when present, details.journalPath'))
+  assert.ok(exited.includes('Read the run journal for its output'))
+  assert.equal(exited.includes('journalPath'), false)
 })
