@@ -4346,10 +4346,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     pause: PauseIdentity,
     event: Protocol.Debugger.PausedEvent,
   ): Promise<ServerHitVerdict | undefined> {
-    if (this.isPagesServerStop(stop)) return this.classifyPagesHit(stop, event)
-    // A route-handler stop was matched to the page's request when it paused, before it was sealed.
+    // A route-handler stop was matched to the page's request when it paused, before it was sealed; it is judged first so a Pages entry's rules never rerun on it.
     if (stop.routeHandler)
       return { action: 'pause', attribution: 'after-operation' }
+    if (this.isPagesServerStop(stop)) return this.classifyPagesHit(stop, event)
     // A module evaluation of an entry-render stop runs outside any render: no route can be read, and the pause is the stop's own first evaluation ({@link isModuleEvaluationPause} leaves after-operation stops to today's route read).
     if (stop.preparationRequest || this.isModuleEvaluationPause(stop, event))
       return { action: 'pause', attribution: 'entry-load' }
@@ -5557,11 +5557,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * ```
    */
   private freezeSealedStops(): void {
-    // A run whose only stops are route handlers has none sealed yet: its manifest is frozen at the first route-handler pause.
+    // A route-handler-only manifest names the source alone and is never refrozen at a pause or a renewed seal.
+    if (this.sealedManifest?.sealedAtPause) return
     const first = this.firstDeclaredStop() ?? this.stops[0]
-    if (!first) return
     const { itemId, bookTitle, nodeTitle, anchors, citationContext } =
       this.definition.descriptor
+    if (!first) {
+      this.freezeRouteHandlerOnlyManifest()
+      return
+    }
     this.sealedManifest = {
       descriptor: { itemId, bookTitle, nodeTitle, anchors, citationContext },
       itemId,
@@ -5578,6 +5582,27 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         unmappedStop,
         `Declared stop ${this.declaredAt(unmappedStop)} has no mapped position on that line in the sealed module`,
       )
+  }
+
+  /**
+   * Freezes the manifest of a run whose stops are all route handlers, before `ready`: a route handler is compiled by the request, so it has no sealed JavaScript or map until its pause.
+   * Called by {@link freezeSealedStops} when no stop is sealed yet. The manifest names the configuration, the descriptor and the first declared route-handler stop's source hash, and says `sealedAtPause` instead of JavaScript and map hashes; each pause carries its own sealed hashes.
+   * @example
+   * this.freezeRouteHandlerOnlyManifest() // view().manifest.sealedAtPause === 'route-handler'
+   */
+  private freezeRouteHandlerOnlyManifest(): void {
+    const first = this.routeHandlerStops[0]
+    if (!first) return
+    const { itemId, bookTitle, nodeTitle, anchors, citationContext } =
+      this.definition.descriptor
+    this.sealedManifest = {
+      descriptor: { itemId, bookTitle, nodeTitle, anchors, citationContext },
+      itemId,
+      // The declared hash; the seal at the pause refuses a source that differs from it.
+      sourceHash: first.stop.source.hash,
+      sealedAtPause: 'route-handler',
+      ...(this.viteVersion ? { viteVersion: this.viteVersion } : {}),
+    }
   }
 
   /**

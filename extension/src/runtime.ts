@@ -568,8 +568,12 @@ export type ConfiguredRuntimeView = {
     >
     itemId: ConfiguredObservation['itemId']
     sourceHash: string
-    javascriptHash: string
-    mapHash: string
+    /** Absent only when `sealedAtPause` is `route-handler`: the module is compiled by the request. */
+    javascriptHash?: string
+    /** Absent only when `sealedAtPause` is `route-handler`. */
+    mapHash?: string
+    /** Set for a run whose stops are all route handlers: the manifest names the source hash only, and each pause carries its own sealed hashes. */
+    sealedAtPause?: 'route-handler'
     viteVersion?: string
   }
   participants: { browser: RuntimeParticipant; server?: RuntimeParticipant }

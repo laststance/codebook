@@ -134,6 +134,11 @@ test('the README documents route-handler stops under API 1.28 and no longer list
     ),
   )
   assert.ok(readme.includes('`route-handler-before-operation`'))
+  assert.ok(
+    readme.includes(
+      'a run whose only stops are route handlers has a manifest before input with the source hash and `sealedAtPause: "route-handler"` and no JavaScript or map hash',
+    ),
+  )
   assert.equal(readme.includes('route handlers (`route.ts`)'), false)
 })
 

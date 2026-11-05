@@ -94,3 +94,40 @@ test('a browser stop and a route-handler stop of one operation pause in the brow
     },
   )
 })
+
+// Value: protects=a run with a browser stop sealed before input keeps today's manifest: the browser stop's JavaScript and map hashes and no sealedAtPause; fails_when=a mixed run is frozen as a route-handler-only manifest; no_claim=the hash values (they follow the stand-in bundle)
+test('a run with a browser stop and a route-handler stop has the browser stop JavaScript and map hashes in its manifest', async (context) => {
+  // Arrange
+  const harness = await routeHandlerRunHarness(context, {
+    stopOperations: [2, 2],
+    stopParticipants: ['browser', 'server'],
+    operations: [
+      { kind: 'click', title: 'Focus', selector: 'button[type=submit]' },
+      { ...ADD, title: 'Add' },
+    ],
+    additionalStops: [
+      {
+        line: 1,
+        column: 7,
+        inspections: [{ path: 'nextTheme', mode: 'value', required: true }],
+      },
+    ],
+    extra: {
+      participant: 'browser',
+      sourcePath: 'components/TodoListCache.tsx',
+      additionalStopFile: ROUTE_FILE,
+    },
+  })
+  // Act
+  await harness.run.prepare()
+  const manifest = harness.run.view().manifest
+  // Assert
+  assert.deepEqual(
+    {
+      sealedAtPause: manifest?.sealedAtPause,
+      javascriptHashIsSet: typeof manifest?.javascriptHash === 'string',
+      mapHashIsSet: typeof manifest?.mapHash === 'string',
+    },
+    { sealedAtPause: undefined, javascriptHashIsSet: true, mapHashIsSet: true },
+  )
+})
