@@ -93,7 +93,7 @@ test('the bundled skill declares the stop in code that runs on every render, use
     skill.split('\n\n').find((part) => part.startsWith('**Server renders')) ??
     ''
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.75"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.76"\n'))
   for (const phrase of [
     'afterOperation: 0',
     'omitted',
@@ -153,4 +153,113 @@ test('the README describes server-render pauses, the client-component refusal, n
   ])
     assert.ok(section.includes(phrase), phrase)
   assert.doesNotMatch(section, /caused by operation/i)
+})
+
+// protects=the help tells the chat what a module-evaluation pause is (scope, preparation, not-yet-available image, absent bindings, not-reached candidates, placeholder example, API 1.27); fails_when=a moduleScope sentence leaves the help or the run-once limit returns; no_claim=the runtime behavior
+test('the packaged help explains module-evaluation pauses: scope module, preparation attribution, absent bindings and the not-reached candidates', async (context) => {
+  // Arrange
+  const help = await readHelpText(context)
+  // Act / Assert
+  for (const phrase of [
+    '"moduleScope"',
+    'API 1.27 or later',
+    'pauses at that evaluation',
+    'scope \\"module\\"',
+    'attribution \\"preparation\\"',
+    'preparationRequest readiness or warm-load',
+    'Preparation · Module evaluation · <path:line>',
+    'Page load · Module evaluation · <path:line>',
+    'Never call a preparation pause the page load',
+    'no browser is open yet and no input has been sent',
+    'the application image reads as not yet available',
+    'simply absent from the values',
+    'the entry route does not import the module',
+    'Next evaluated it before the stop could be armed',
+    'after a statement that did not run',
+    'Placeholder only, not a project file',
+    'lib/db.ts',
+    'Module evaluation is observed only in App Router runs without a Pages folder',
+    'format 12 (.study.v12.json)',
+    'Codebook 0.2.85 and older list it as saved by a newer Codebook',
+  ])
+    assert.ok(help.includes(phrase), phrase)
+  assert.equal(help.includes('The first execution of a run-once module'), false)
+  assert.equal(help.includes('never at module scope'), false)
+})
+
+// protects=the not-reached error text names the module-evaluation candidates as possibilities, adds no safety claim and says module evaluation is observed only in App Router runs; fails_when=the old module-scope-before-armed cause returns or the Pages sentence leaves; no_claim=the wording is helpful
+test('SERVER_STOP_NOT_REACHED lists the module-evaluation candidates as possibilities and limits module evaluation to App Router runs', () => {
+  // Arrange
+  const recovery = ERROR_RECOVERY.SERVER_STOP_NOT_REACHED
+  // Act / Assert
+  for (const phrase of [
+    'The page finished without reaching a declared server stop',
+    'the entry route does not import the module',
+    "Next evaluated the module before the stop could be armed (another route's module, a hot reload)",
+    'after a statement that did not run',
+    'Never present any cause as established',
+    'Check that the entry route imports the module and that the line runs when the module loads',
+    'then start one new run',
+    'module evaluation is observed only in App Router runs without a Pages folder',
+  ])
+    assert.ok(recovery.includes(phrase), phrase)
+  assert.equal(
+    recovery.includes('code at module scope, which Next evaluated'),
+    false,
+  )
+  assert.doesNotMatch(recovery, /safe to (retry|run)/i)
+})
+
+// protects=the bundled skill gates the module-scope stop by API 1.27 and tells the chat how to read a Preparation pause; fails_when=the old "never at module scope" rule returns or the preparation sentence leaves; no_claim=how a chat follows the rules
+test('the bundled skill allows a top-level App Router stop only on API 1.27 and explains a Preparation pause', async () => {
+  // Arrange
+  const skill = await readPackaged('skills', 'codebook', 'SKILL.md')
+  const paragraph =
+    skill.split('\n\n').find((part) => part.startsWith('**Server renders')) ??
+    ''
+  // Act / Assert
+  assert.ok(skill.includes('metadata:\n  version: "1.0.76"\n'))
+  for (const phrase of [
+    'a top-level line (module scope) is allowed only when `codebook_status` reports API 1.27 or later',
+    'in a workspace without a Pages folder',
+    'pauses at the module\'s first evaluation (`scope: "module"`)',
+    'on older APIs, in Pages runs and in workspaces with a Pages folder the stop stays inside a function',
+    'A pause with `attribution` `preparation`',
+    '`preparationRequest` `readiness` or `warm-load`',
+    'never by the page load',
+    'no browser is open yet and nothing was sent',
+    'a module-level binding not initialized yet is absent from the values',
+  ])
+    assert.ok(paragraph.includes(phrase), phrase)
+  assert.equal(paragraph.includes('never at module scope'), false)
+})
+
+// protects=the README documents module evaluation (Codebook 0.2.86, API 1.27), the rewritten stop placement, the not-reached candidates and format 12; fails_when=a sentence leaves the README; no_claim=the behavior itself
+test('the README describes module-evaluation pauses, preparation labels, the not-reached candidates and format 12', async () => {
+  // Arrange
+  const readme = await readPackaged('README.md')
+  const start = readme.indexOf('## Server renders in a Next.js app')
+  const section = readme.slice(start, readme.indexOf('\n## ', start + 1))
+  // Act / Assert
+  for (const phrase of [
+    '**Module evaluation (Codebook 0.2.86, MCP API 1.27).**',
+    '`scope: "module"`',
+    '`attribution: "preparation"`',
+    '`preparationRequest` set to `readiness` or `warm-load`',
+    '`Preparation · Module evaluation · <path:line>`',
+    '`Page load · Module evaluation · <path:line>`',
+    'no browser is open yet and no input has been sent',
+    'the application image reads as not yet available',
+    'is absent from the values',
+    '`lib/db.ts`',
+    'Module evaluation is observed only in App Router runs without a Pages folder',
+    'the entry route does not import the module',
+    'after a statement that did not run',
+    'format 12 (`.study.v12.json`)',
+    'Codebook 0.2.85 and older list it as saved by a newer Codebook',
+    'on an older API, in a Pages run and in a workspace with a Pages folder, keep the stop inside a function',
+  ])
+    assert.ok(section.includes(phrase), phrase)
+  assert.equal(section.includes('Module-scope code runs once'), false)
+  assert.equal(section.includes('never at module scope'), false)
 })

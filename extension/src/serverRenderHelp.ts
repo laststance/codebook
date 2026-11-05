@@ -6,6 +6,9 @@ const SERVER_RENDER_MINIMUM_API = '1.16'
 /** The Codebook version and API that first serve Pages Router data-function server stops (Cycle 0073): a Pages run is never checked against the App Router minimums above. */
 const SERVER_RENDER_PAGES_MINIMUM_EXTENSION = '0.2.74.0'
 const SERVER_RENDER_PAGES_MINIMUM_API = '1.17'
+/** The Codebook version and API that first pause an App Router server stop at a module evaluation (Cycle 0086). */
+const SERVER_RENDER_MODULE_MINIMUM_EXTENSION = '0.2.86.0'
+const SERVER_RENDER_MODULE_MINIMUM_API = '1.27'
 
 /**
  * A complete version 3 configuration for an App Router entry render: the stop sits in a server function that runs on every render of the entry route, `afterOperation` is 0 and `operations` is omitted (never `[]`).
@@ -195,8 +198,29 @@ export function serverRenderHelp() {
         pages:
           "The entry page's getServerSideProps and getStaticProps (under next dev, getStaticProps runs on each request) and the code they call: a function in the page, the function a wrapper such as withSession returns, a re-export, and a helper, an API client or a formatter in any tracked workspace module the page's server build holds. A page run observes only the entry page's data function.",
       },
-      whereToDeclareTheStop:
-        "App Router: declare the stop inside the component or function that runs on every render, never at module scope and never in a function whose result Next serves from a cache (use cache, unstable_cache): Next evaluates module-scope code once, during Codebook's own entry request, before the stop is armed. Pages Router: see pagesLineChoice.",
+      whereToDeclareTheStop: `App Router: declare the stop inside the component or function that runs on every render, and never in a function whose result Next serves from a cache (use cache, unstable_cache). A line at module scope pauses at the module's first evaluation only on API ${SERVER_RENDER_MODULE_MINIMUM_API} or later (moduleScope); on an older API keep the stop inside a function. Pages Router: see pagesLineChoice; module evaluation is not observed in a Pages run.`,
+      moduleScope: {
+        minimumExtension: SERVER_RENDER_MODULE_MINIMUM_EXTENSION,
+        minimumApi: SERVER_RENDER_MODULE_MINIMUM_API,
+        rule: `API ${SERVER_RENDER_MODULE_MINIMUM_API} or later, App Router run (next-dev-webpack, configuration version 3) in a workspace without a Pages folder: a participant "server" stop with afterOperation 0 on code that runs when Next first evaluates a server module of the entry route (module scope of the page, its layout or a module they import, or a function called while the module loads) pauses at that evaluation. It is declared like any server stop; the chat adds no field. A stop with afterOperation from 1, a Pages run and a workspace with a Pages folder keep today's behavior.`,
+        scope:
+          'The pause reads scope "module" on its observation in the run resource, and its message says module evaluation. scope is read from the paused stack, not from the text of the line. A pause without scope is a render pause.',
+        preparation:
+          'When the evaluation happens in a request Codebook made while preparing the run, the pause reads attribution "preparation" with preparationRequest readiness (the readiness request before the browser opens) or warm-load (the saved-session warm load). Its label reads "Preparation · Module evaluation · <path:line>"; when the entry load evaluated the module, it reads "Page load · Module evaluation · <path:line>". Never call a preparation pause the page load.',
+        readinessPause:
+          'In a readiness-request pause no browser is open yet and no input has been sent: the application image reads as not yet available, and the chat says nothing was sent. Continue with the current continueArguments as for any pause.',
+        absentBindings:
+          'A module-level binding that is not yet initialized at the pause is simply absent from the values; do not read the absence as a value or as an error.',
+        firstExecution:
+          'firstExecutionObserved stays false: render code that ran during preparation was not observed. Say only that the module evaluation was paused, never that the page rendered.',
+        notReached:
+          "When the stop is not reached (SERVER_STOP_NOT_REACHED), the candidates are possibilities: the entry route does not import the module, Next evaluated it before the stop could be armed (another route's module, a hot reload), or the line sits in a branch or after a statement that did not run. Check that the entry route imports the module and that the line runs when the module loads, then start once more.",
+        pagesRuns:
+          'Module evaluation is observed only in App Router runs without a Pages folder; a Pages run keeps pagesLineChoice.',
+        example:
+          "Placeholder only, not a project file: a line such as `export const client = createClient(url)` in lib/db.ts, imported by the entry page, with a server stop on that line and afterOperation 0, pauses at the first evaluation of lib/db.ts; replace the path and the line with the learner's module.",
+        savedStudy: `A study with such a pause is saved as format 12 (.study.v12.json); Codebook 0.2.85 and older list it as saved by a newer Codebook. Minimum: Codebook ${SERVER_RENDER_MODULE_MINIMUM_EXTENSION} or later, API ${SERVER_RENDER_MODULE_MINIMUM_API} or later.`,
+      },
       afterOperationRule:
         'afterOperation: 0 means the entry load (the page load itself) and is allowed only for a stop with participant "server"; a browser stop still declares afterOperation from 1. A stop with afterOperation k from 1 is armed for the render observed after operation k (Pages Router: for the data function run after operation k, see pagesAfterOperation).',
       omittedOperations:
@@ -236,7 +260,8 @@ export function serverRenderHelp() {
         'codebook_start (Pages Router: first apply pagesSideEffects, and ask the learner when the data function writes or sends): profile repository-browser, one of the configurations above with the copied values and a stable key; the answer is a receipt with a run id, not success.',
         'Read the run resource it names and branch on its state. preparing: wait and poll. paused: read inspectionUri and sourceUri, explain the values in the chat, then codebook_continue with the current continueArguments. ready: follow nextActions (an operation left means repository-operation). failed: read the code and follow its recovery. complete: read the result.',
         "Each pause reads execution server-render, with attribution entry-load (the page load) or after-operation with operationIndex k, meaning the render was observed after operation k. attribution unconfirmed means Codebook could not confirm the pause: for an App Router page it could not read which route rendered; for a Pages Router page the pause may come from the page's render rather than its data function (pagesUnconfirmed). Say so and claim neither an operation, nor the entry load, nor that the data function paused.",
-        "Say only what the pauses show. When the run did not pause in a render, never describe that render; the run resource reads firstExecutionObserved false for a server stop, because the first execution (module evaluation, the first cache fill during the warm-up, a Pages run's readiness request) was not observed.",
+        "Say only what the pauses show. When the run did not pause in a render, never describe that render; the run resource reads firstExecutionObserved false for a server stop, because the first execution (the first cache fill during the warm-up, a Pages run's readiness request, the render code that ran during preparation) was not observed.",
+        'A pause with scope "module" is a module evaluation (moduleScope). attribution preparation means Codebook\'s own request (preparationRequest readiness or warm-load) evaluated the module: never call it the page load, and say nothing was sent yet for readiness.',
       ],
       wording:
         'after-operation is "observed after operation k". An operation is never said to cause a render; the unreached causes below are possibilities ("may"), never the established cause.',
@@ -245,7 +270,7 @@ export function serverRenderHelp() {
         'App Router: a stop in a client component is refused with NEXT_STOP_NOT_SEALED (details.reason client-component); a render hit of another route is resumed and not counted.',
         PAGES_NOT_PAUSED,
         'There is no timeout override: each wait is bounded at 20 s, restarting at each continue, and the pause hold and run deadline stay as they are. There is no attribution override: Codebook reads the rendering route itself (a Pages run reads the data function from the paused stack).',
-        'The first execution of a run-once module, and a cache fill during the warm-up, are not observed.',
+        'A cache fill during the warm-up, and in a Pages run the first execution of a run-once module, are not observed; the render code that ran during preparation was not observed either (firstExecutionObserved false). App Router module evaluation is paused from API 1.27 (moduleScope).',
       ],
     },
     serverRenderMigration: {
@@ -289,6 +314,10 @@ export function serverRenderHelp() {
           change:
             'format 11 (.study.v11.json): the evidence rules of format 7 for adapter react-scripts-dev, whether packageRoot is absent, "." or a nested folder. An older Codebook lists a format 11 study as saved by a newer Codebook; update Codebook to open it (reactScriptsQuickStart)',
         },
+        {
+          item: 'saved study of an App Router module-evaluation pause (API 1.27)',
+          change: `format 12 (.study.v12.json), for a study whose observation carries scope module. Codebook 0.2.85 and older list it as saved by a newer Codebook; update Codebook (${SERVER_RENDER_MODULE_MINIMUM_EXTENSION} or later) to open it (moduleScope)`,
+        },
       ],
     },
     serverRenderErrors: {
@@ -297,9 +326,9 @@ export function serverRenderHelp() {
         SERVER_STOP_NOT_REACHED: {
           anchor: 'codebook://help/repository-browser#SERVER_STOP_NOT_REACHED',
           meaning:
-            "A declared server stop did not pause: the entry render before the page load finished, or the render observed after its operation within 20 s. details.phase is entry-render or after-operation; pausedStops and notReachedStops list the stops. The stop may be in code that runs once (module scope, which Next evaluated during Codebook's own entry request before the stop was armed) or in a function whose result Next serves from a cache (use cache, unstable_cache); these are possibilities, not the established cause. Declare the stop inside the component or function that runs on every render. In a Pages run (details.router pages) these causes do not apply: the line did not run inside the entry page's data function for the observed request. details.resumedHits lists the hits Codebook resumed and did not count, as [{ reason, route?, count }] with reason other-route (and its route), outside-data-function or unattributed-resumed (an empty list when none was resumed); details.attributionMode reads async-chain; details.nextVersion names the Next version when it was readable (a next/package.json version that is not a semantic version of at most 64 characters counts as unread and is quoted nowhere). The message adds that the line may have run outside the entry page's data function only when the run resumed other-route or outside-data-function hits of that line. details.sideEffects is unknown in both phases: the data function ran during Codebook's readiness request and possibly during the entry request.",
+            "A declared server stop did not pause: the entry render before the page load finished, or the render observed after its operation within 20 s. details.phase is entry-render or after-operation; pausedStops and notReachedStops list the stops. The stop may be in a function whose result Next serves from a cache (use cache, unstable_cache), or the render did not reach it; for an App Router run on API 1.27 or later with a module-scope line the candidates are the entry route not importing the module, Next evaluating it before the stop could be armed (another route's module, a hot reload) and the line sitting in a branch or after a statement that did not run (moduleScope.notReached); these are possibilities, not the established cause. Check that the entry route imports the module and that the line runs when the module loads, or declare the stop inside the component or function that runs on every render. In a Pages run (details.router pages) these causes do not apply: the line did not run inside the entry page's data function for the observed request, and module evaluation is observed only in App Router runs without a Pages folder. details.resumedHits lists the hits Codebook resumed and did not count, as [{ reason, route?, count }] with reason other-route (and its route), outside-data-function or unattributed-resumed (an empty list when none was resumed); details.attributionMode reads async-chain; details.nextVersion names the Next version when it was readable (a next/package.json version that is not a semantic version of at most 64 characters counts as unread and is quoted nowhere). The message adds that the line may have run outside the entry page's data function only when the run resumed other-route or outside-data-function hits of that line. details.sideEffects is unknown in both phases: the data function ran during Codebook's readiness request and possibly during the entry request.",
           recovery:
-            'Move the stop into code that runs on every render and start a new run. A failure after an operation may have changed data: read sent and sideEffects, and never repeat the operation unless the learner asks. In a Pages run: declare the stop on another line the data function runs for that request or in code it calls, or declare a browser stop for code the page component runs; details.sideEffects is unknown, so when the data function writes or sends, ask the learner before one new start and never start again unasked.',
+            'Check that the entry route imports the module and that the line runs when the module loads, or move the stop into code that runs on every render, then start one new run. A failure after an operation may have changed data: read sent and sideEffects, and never repeat the operation unless the learner asks. In a Pages run: declare the stop on another line the data function runs for that request or in code it calls, or declare a browser stop for code the page component runs; details.sideEffects is unknown, so when the data function writes or sends, ask the learner before one new start and never start again unasked.',
         },
         ENTRY_LOAD_TIMEOUT: {
           anchor: 'codebook://help/repository-browser#ENTRY_LOAD_TIMEOUT',

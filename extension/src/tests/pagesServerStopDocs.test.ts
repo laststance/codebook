@@ -509,7 +509,10 @@ test('the migration table separates the saved Pages run (format 8 unchanged) fro
     row.item.startsWith('saved study of a Pages Router server run'),
   )
   // Assert
-  assert.equal(table.length, 8)
+  assert.equal(table.length, 9)
+  assert.ok(
+    table.some((row) => row.change.startsWith('format 12 (.study.v12.json)')),
+  )
   assert.ok(
     table.some((row) =>
       row.item.startsWith(
@@ -571,7 +574,7 @@ test('the bundled skill 1.0.71 states the Pages data-function stops, the readine
   const skill = await readPackaged('skills', 'codebook', 'SKILL.md')
   const paragraph = await readServerRendersSkillParagraph()
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.75"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.76"\n'))
   assert.ok(
     paragraph.startsWith(
       '**Server renders (API 1.16; Pages Router data functions API 1.17).**',
@@ -655,7 +658,7 @@ test('the README names the Pages server-stop refusals, the API 1.17 note and ski
     'A server stop in a version 2 Pages run is refused with this code too, naming configuration version 3 and the Pages quick start (`details.requiredVersion` is `3`)',
     'Every refusal of a stop in a Pages run carries `details.router: "pages"`.',
     "(`details.reason` is `client-component`: the page component and `getInitialProps` lines also run in the page's server render and in the browser",
-    "so Cursor's managed skill updates to **1.0.75**",
+    "so Cursor's managed skill updates to **1.0.76**",
     '**What the chat asks first (1.0.66).**',
   ])
     assert.ok(readme.includes(phrase), phrase)
