@@ -122,6 +122,7 @@ const ANOTHER_PATH_LABEL = 'Another path…'
 const ADAPTER_LABELS: Record<DevelopmentServerAdapterName, string> = {
   'next-dev-webpack': 'Next.js (webpack dev server)',
   'vite-dev': 'Vite dev server',
+  'react-scripts-dev': 'react-scripts (Create React App) dev server',
 }
 
 /**

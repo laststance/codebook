@@ -313,6 +313,8 @@ export function launchDevelopmentServer(
       if (!child.connected) throw new Error('The launcher is not connected')
       child.send(message as never)
     },
+    /** How the process ended, for a refusal that words an exit: both `null` while it runs. @example app.exitStatus() // => { exitCode: 1, signal: null } */
+    exitStatus: () => ({ exitCode: child.exitCode, signal: child.signalCode }),
     /** The output tail a refusal may quote: redacted and masked. @example app.outputTail() */
     outputTail: publishedTail,
     /** Claims the port a launcher resolved, so no other run starts on it and the readiness check looks for it. @example app.declarePort(3010) */

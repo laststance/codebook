@@ -2823,6 +2823,18 @@ export const REACT_SCRIPTS_SUPPORTED_MAJOR = 5
 /** The longest a `react-scripts/package.json` version may be to be published in `codebook_status`: the studied repository chose that text, so a longer one reads as a version that could not be read. */
 export const REACT_SCRIPTS_VERSION_MAX_CHARS = 64
 
+/** The path react-scripts 5 serves its one development bundle at; its source map is the `sourceMappingURL` the bundle names. */
+export const REACT_SCRIPTS_BUNDLE_PATH = '/static/js/bundle.js'
+
+/** How long the first-compile wait of a `react-scripts-dev` run pauses between two reads of the entry page, the bundle and its map. */
+export const REACT_SCRIPTS_READINESS_POLL_MS = 250
+
+/** How long the start of a `react-scripts-dev` run pauses between two reads of the server's output while it compiles. */
+export const REACT_SCRIPTS_OUTPUT_POLL_MS = 100
+
+/** The most characters of a compiler error line a `REACT_SCRIPTS_LAUNCHER_FAILED` refusal quotes. */
+export const REACT_SCRIPTS_COMPILER_LINE_MAX_CHARS = 300
+
 /** Vite's own default dev-server port, used when neither the project's config nor its `dev` script names one. */
 export const VITE_DEFAULT_PORT = 5173
 
@@ -2911,13 +2923,15 @@ export const VITE_STOP_EXTENSIONS: readonly string[] = [
 export const VITE_PAGE_QUIET_MS = 500
 
 /**
- * The setup steps of a Vite run, named once for the setters in the configured browser run, the adapter's launcher and the setup-deadline sentence.
+ * The setup steps of a Vite or react-scripts run, named once for the setters in the configured browser run, the adapters' launchers and the setup-deadline sentences.
  * A deadline names the step the run had reached, so a renamed step cannot fall through to the wrong sentence.
  */
 export const VITE_SETUP_STEPS = {
   validatingProject: 'validating the project',
   resolvingConfig: 'resolving the Vite config',
   startingVite: 'starting Vite',
+  startingReactScripts: 'starting react-scripts',
+  waitingForFirstCompile: 'waiting for the first compile',
   waitingForServer: 'waiting for the server to answer the entry page',
   sealingStops: 'sealing the declared stops',
   openingBrowser: 'opening the browser',

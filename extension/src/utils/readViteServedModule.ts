@@ -24,7 +24,8 @@ import { viteModuleUrl, type ViteModuleAddress } from './viteModuleUrl'
 const INLINE_MAP =
   /^\/\/# sourceMappingURL=data:application\/json(?:;charset=utf-8)?;base64,([A-Za-z\d+/=]+)$/gm
 
-const servedMapSchema = z.object({
+/** The flat version 3 map a dev server serves, shared by the Vite and react-scripts seals. */
+export const servedMapSchema = z.object({
   version: z.literal(3),
   file: z.string().optional(),
   sources: z.array(z.string()).min(1),

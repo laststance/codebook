@@ -436,3 +436,19 @@ export function reactScriptsMapLimitRefusal(
     },
   )
 }
+
+/**
+ * Builds the `REACT_SCRIPTS_SEAL_FAILED` refusal of a served bundle or source map that Codebook cannot read: oversized, not JavaScript or JSON, not a flat version 3 map, or with no `sourceMappingURL`.
+ * @param problem - What is wrong with the served text, one sentence without a final period.
+ * @returns The refusal: `details.reason: "map-unreadable"`, `problem` and `sideEffects: "partial"`.
+ * @example
+ * reactScriptsMapUnreadableRefusal('the bundle names no source map').details?.reason // => 'map-unreadable'
+ */
+export function reactScriptsMapUnreadableRefusal(problem: string): StudyError {
+  return reactScriptsRefusal(
+    'REACT_SCRIPTS_SEAL_FAILED',
+    `The served bundle of the app cannot be sealed: ${problem}.`,
+    `Tell the learner the compiled app's bundle or source map is not in the form this version reads (details.problem names what is wrong); never edit the project. The owned server was stopped and no click was sent. ${recoveryEnd('REACT_SCRIPTS_SEAL_FAILED')}`,
+    { reason: 'map-unreadable', problem, sideEffects: 'partial' },
+  )
+}
