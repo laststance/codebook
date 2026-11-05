@@ -336,6 +336,20 @@ test('the server instructions and tool descriptions carry the API 1.8 sentences 
       tools.get('codebook_explain_node_history')!,
       /INVALID_REFERENCE/,
     )
+    assert.match(tools.get('codebook_start')!, /node-script \(API 1\.26\)/)
+    assert.match(tools.get('codebook_action')!, /node-script run has no action/)
+    assert.match(
+      tools.get('codebook_explain')!,
+      /stop of a node-script run is explained in chat from nodeScript\.pause/,
+    )
+    assert.match(
+      tools.get('codebook_explain_node_history')!,
+      /node-test, node-server, node-script or chrome-extension/,
+    )
+    assert.match(
+      tools.get('codebook_explain_node_history')!,
+      /node-script steps cite type stop .* output .* or end.*nodeScript\.learningCoverage is complete and nodeScript\.captureMissing is empty/,
+    )
     assert.doesNotMatch(
       tools.get('codebook_explain_node_history')!,
       /creates application video|claims synchronized replay/,

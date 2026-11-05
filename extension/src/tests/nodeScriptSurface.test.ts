@@ -470,7 +470,10 @@ test('the bundled skill 1.0.75 routes a Node script question to node-script with
     'labeled as observed output',
     'After two starts that fail with the same error `code`, stop starting',
     '**Saving a script run.**',
-    'Say a Script replay is saved only on complete coverage',
+    'Say a Script replay is saved only when the run resource reads `nodeScript.learningCoverage` `complete` and an empty `nodeScript.captureMissing`',
+    'Read `nodeScript.history` and `nodeScript.historyIssue` on the run resource',
+    'at `nodeScript.historyUri`',
+    'First check that `codebook_status` reports API 1.26 or later (compare the number after the dot as a whole number: 1.30 is later than 1.26)',
   ])
     assert.ok(skill.includes(phrase), phrase)
   assert.equal(/redux|toolkit/i.test(skill), false)
