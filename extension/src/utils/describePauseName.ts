@@ -2,7 +2,8 @@
 export type PauseExecution = 'browser' | 'server-action' | 'server-render'
 
 /** How a server-render pause is tied to the operations of its run (Design decision D13); `after-operation` means "observed after", never "caused by". */
-export type PauseAttribution = 'entry-load' | 'after-operation' | 'unconfirmed'
+export type PauseAttribution =
+  'entry-load' | 'after-operation' | 'unconfirmed' | 'preparation'
 
 /** What {@link describePauseName} reads from one recorded pause. */
 export type PauseNameInput = {
@@ -10,6 +11,8 @@ export type PauseNameInput = {
   participant?: 'browser' | 'server'
   execution?: PauseExecution
   attribution?: PauseAttribution
+  /** `module` for a pause inside a module's evaluation (format 12). */
+  scope?: 'module'
   /** 1-based operation the pause was observed after; absent or 0 for the entry load. */
   operationIndex?: number
   /** Repository path of the paused source file. */
@@ -20,10 +23,10 @@ export type PauseNameInput = {
 
 /** A pause name in the pieces the replay lays out by priority when space is short: state first, then the name, then the path (D034). */
 export type PauseNameParts = {
-  /** `Page load` or `After operation <k>`; absent for a server action that follows no operation. */
+  /** `Page load`, `Preparation` or `After operation <k>`; absent for a server action that follows no operation. */
   state?: string
   /** `Server render` or `Server action`. */
-  kind: 'Server render' | 'Server action'
+  kind: 'Server render' | 'Module evaluation' | 'Server action'
   path: string
   line: number
   /** `route not confirmed` for an `unconfirmed` attribution; never colour alone. */
@@ -56,6 +59,41 @@ export function joinPauseName(parts: Omit<PauseNameParts, 'text'>): string {
 }
 
 /**
+ * Picks the kind word of a server pause: a module-evaluation pause reads `Module evaluation` in place of `Server render`, because the code that ran is a module's top level, not the render.
+ * Called by {@link describePauseName}.
+ * @param execution - The pause's server execution.
+ * @param scope - `module` for a pause inside a module's evaluation.
+ * @returns The kind word.
+ * @example kindOfPause('server-render', 'module') // => 'Module evaluation'
+ */
+function kindOfPause(
+  execution: 'server-render' | 'server-action',
+  scope: PauseNameInput['scope'],
+): PauseNameParts['kind'] {
+  if (execution === 'server-action') return 'Server action'
+  return scope === 'module' ? 'Module evaluation' : 'Server render'
+}
+
+/**
+ * Picks the state word of a server pause: `After operation <k>`, `Preparation` for Codebook's own request (the learner's page load had not happened yet), `Page load` for a render, none for a server action that follows no operation.
+ * Called by {@link describePauseName}.
+ * @param execution - The pause's server execution.
+ * @param input - The recorded pause's fields.
+ * @returns The state word, or `undefined` when there is none.
+ * @example stateOfPause('server-render', { attribution: 'preparation', path: 'a.ts', line: 1 }) // => 'Preparation'
+ */
+function stateOfPause(
+  execution: 'server-render' | 'server-action',
+  input: PauseNameInput,
+): string | undefined {
+  // `Operation 0` never appears: an entry-load pause (no operation, or 0) reads Page load.
+  if (input.operationIndex !== undefined && input.operationIndex >= 1)
+    return `After operation ${input.operationIndex}`
+  if (execution !== 'server-render') return undefined
+  return input.attribution === 'preparation' ? 'Preparation' : 'Page load'
+}
+
+/**
  * Words one server pause for the replay's selected-stop label, its Observed moments and their accessible names (task 3a).
  * Called by {@link projectPauseNames} for every observation of a saved study; a browser pause keeps today's name and gets none here.
  * @param input - The recorded pause's fields.
@@ -65,6 +103,8 @@ export function joinPauseName(parts: Omit<PauseNameParts, 'text'>): string {
  * // => 'Page load · Server render · app/page.tsx:12'
  * describePauseName({ execution: 'server-render', attribution: 'unconfirmed', operationIndex: 2, path: 'a.ts', line: 3 })?.text
  * // => 'After operation 2 · Server render · a.ts:3 · route not confirmed'
+ * describePauseName({ execution: 'server-render', attribution: 'preparation', scope: 'module', path: 'db/index.ts', line: 12 })?.text
+ * // => 'Preparation · Module evaluation · db/index.ts:12'
  */
 export function describePauseName(
   input: PauseNameInput,
@@ -74,18 +114,8 @@ export function describePauseName(
     input.execution ??
     (input.participant === 'server' ? 'server-action' : 'browser')
   if (execution === 'browser') return undefined
-  const kind = execution === 'server-render' ? 'Server render' : 'Server action'
-  // `Operation 0` never appears: an entry-load pause (no operation, or 0) reads Page load.
-  const operation =
-    input.operationIndex !== undefined && input.operationIndex >= 1
-      ? input.operationIndex
-      : undefined
-  const state =
-    operation !== undefined
-      ? `After operation ${operation}`
-      : execution === 'server-render'
-        ? 'Page load'
-        : undefined
+  const kind = kindOfPause(execution, input.scope)
+  const state = stateOfPause(execution, input)
   const attribution =
     input.attribution === 'unconfirmed' ? ROUTE_NOT_CONFIRMED : undefined
   const parts = {

@@ -1,3 +1,5 @@
+import type { HoldAwareTimeout } from './createHoldAwareTimeout'
+
 /** How Codebook's readiness request for the entry ended when no HTTP status came back: it timed out, the run stopped it, or the connection broke. */
 export type ReadinessRequestOutcome = 'timeout' | 'aborted' | 'connection-lost'
 
@@ -11,6 +13,8 @@ export type ReadinessEntryRequest =
 export type ReadinessObserver = {
   /** Called right before the request is sent. */
   sent(): void
+  /** The request's own time bound in place of the fixed one, which stops counting while a preparation pause is held; absent for a request that keeps the fixed bound. */
+  requestTimeout?: HoldAwareTimeout
   /** Called once, when the request ended: with the HTTP status, or with the status-free outcome. */
   closed(
     ending: { status: number } | { outcome: ReadinessRequestOutcome },

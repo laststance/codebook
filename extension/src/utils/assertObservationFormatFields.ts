@@ -1,8 +1,12 @@
 import type { ConfiguredStudy } from '../configuredStudySchemas'
+import { MODULE_EVALUATION_STUDY_VERSION } from '../constants'
 
 import { afterOperationOf } from './afterOperationOf'
 import type { configuredStops } from './configuredStops'
-import { usesServerRenderEvidence } from './studyFormatOfConfiguration'
+import {
+  isModuleEvaluationObservation,
+  usesServerRenderEvidence,
+} from './studyFormatOfConfiguration'
 
 type Observation = ConfiguredStudy['observations'][number]
 
@@ -54,9 +58,11 @@ function assertAttributionFitsGroup(
   observation: Observation,
   group: number,
 ): void {
-  const { attribution, operationIndex, execution } = observation
+  const { attribution, operationIndex, execution, scope } = observation
   if (attribution !== undefined && execution !== 'server-render')
     throw new Error('Only a server render observation has an attribution.')
+  if (scope !== undefined && execution !== 'server-render')
+    throw new Error('Only a server render observation has a scope.')
   if (execution !== 'server-render') {
     if (group === 0)
       throw new Error('Configured entry-render observation is not a render.')
@@ -68,8 +74,10 @@ function assertAttributionFitsGroup(
   }
   if (attribution === undefined)
     throw new Error('A server render observation needs an attribution.')
+  // Codebook's own preparation request runs before any operation, so only an entry-render stop can pause in it.
   if (
-    (attribution === 'entry-load') !== (group === 0) &&
+    (attribution === 'entry-load' || attribution === 'preparation') !==
+      (group === 0) &&
     attribution !== 'unconfirmed'
   )
     throw new Error('Configured observation attribution differs from its stop.')
@@ -97,6 +105,7 @@ export function assertObservationFormatFields(
       study.firstExecutionObserved !== undefined ||
       study.observations.some(
         (observation) =>
+          observation.scope !== undefined ||
           observation.execution !== undefined ||
           observation.attribution !== undefined ||
           observation.operationIndex !== undefined ||
@@ -107,6 +116,19 @@ export function assertObservationFormatFields(
       throw new Error('Only a study of format 8 keeps execution fields.')
     return
   }
+  // The scope and the preparation attribution belong to format 12, and format 12 is written only for a study that holds one.
+  const holdsModuleEvaluation = study.observations.some(
+    isModuleEvaluationObservation,
+  )
+  if (
+    holdsModuleEvaluation !==
+    (study.version === MODULE_EVALUATION_STUDY_VERSION)
+  )
+    throw new Error(
+      holdsModuleEvaluation
+        ? 'Only a study of format 12 keeps a module scope or a preparation attribution.'
+        : 'A study of format 12 holds a module-evaluation or preparation observation.',
+    )
   const seenStops = new Set<number>()
   for (const [position, observation] of study.observations.entries())
     assertFormat8Observation(observation, position, stops, seenStops)

@@ -394,8 +394,12 @@ export type ConfiguredRuntimeSnapshot = Omit<
   declaredIndex?: number
   /** The order in which the run paused its stops (0-based). */
   executionIndex?: number
-  /** Server-render pauses only: why the pause is attributed to the entry route's render. */
-  attribution?: 'entry-load' | 'after-operation' | 'unconfirmed'
+  /** Server-render pauses only: why the pause is attributed to the entry route's render; `preparation` is a pause in a request Codebook itself made while preparing the run (its readiness request or a saved-session warm load), see {@link ConfiguredRuntimeSnapshot.preparationRequest}. */
+  attribution?: 'entry-load' | 'after-operation' | 'unconfirmed' | 'preparation'
+  /** Present (`module`) only on a server-render pause made while a module was being evaluated: the paused stack holds that module's own top-level frame. */
+  scope?: 'module'
+  /** With `preparation`: which of Codebook's own requests evaluated the module; a live field only, never saved in a study. */
+  preparationRequest?: 'readiness' | 'warm-load'
   /** With `after-operation`: the operation (k >= 1) after which the render was observed. */
   operationIndex?: number
 }
@@ -507,7 +511,9 @@ export type ConfiguredRuntimeView = {
   /** Codebook's own readiness request for the entry: open from its send, closed with the HTTP status or a status-free outcome. Present for a Next run once the request was sent. */
   readinessRequest?: ReadinessEntryRequest
   status: string
-  /** Present as `false` when the configuration declares a server stop: Codebook loads the page once before it arms a stop, so the first execution (module scope, first cache fill) is not observed. */
+  /** The milliseconds preparation was held at continued preparation pauses (Cycle 0086): the setup deadline moved by that much, so the run resource's `preparationDeadlineAt` moves with it. Absent until such a pause was continued. */
+  preparationHeldMs?: number
+  /** Present as `false` when the configuration declares a server stop: Codebook loads the page once before it arms a render stop, so the render code of that load (a first cache fill included) is not observed; a module evaluation that paused in the preparation window is observed and has its own pause. */
   firstExecutionObserved?: false
   /** The words for a server render in progress (an entry-render pause held, or the wait for the next stop of a set), for the run resource's `message`. */
   renderMessage?: string
@@ -521,9 +527,10 @@ export type ConfiguredRuntimeView = {
   captures: Record<
     string,
     {
-      status: 'pending' | 'captured' | 'failed' | 'withheld'
+      /** `absent` is a pause in Codebook's own preparation request: no page could be drawn yet, so no image is owed and the capture outcome stays complete. */
+      status: 'pending' | 'captured' | 'failed' | 'withheld' | 'absent'
       file?: string
-      /** The failure; for `withheld` the sentence naming why the image was withheld. */
+      /** The failure; for `withheld` the sentence naming why the image was withheld; for `absent` the sentence saying the application was not available yet. */
       error?: string
       /** Set only for `withheld`: why the secret frame gate withheld the image. */
       withheldReason?: SecretFrameWithholdReason

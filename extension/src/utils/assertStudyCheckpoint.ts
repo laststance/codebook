@@ -1,6 +1,7 @@
 import type { RetainedStudy } from '../retainedStudySchemas'
 
 import { assertOperationRecordsAdvance } from './assertOperationRecordsAdvance'
+import { isModuleEvaluationUpgrade } from './studyFormatOfConfiguration'
 
 /** Preserves accepted identity/evidence when {@link LearningLibrary} advances a checkpoint under its writer lock. @example assertStudyCheckpoint(previous, next) // throws if captured facts changed */
 export function assertStudyCheckpoint(
@@ -14,7 +15,9 @@ export function assertStudyCheckpoint(
   // Configured intent, copied sources and admitted operation become immutable once acquired.
   {
     if (
-      study.version !== prior.version ||
+      // A Next study moves from format 8 or 9 to 12 at its first module-evaluation or preparation observation, with the configuration unchanged.
+      (study.version !== prior.version &&
+        !isModuleEvaluationUpgrade(prior.version, study.version)) ||
       prior.configurationHash !== study.configurationHash ||
       JSON.stringify(prior.configuration) !==
         JSON.stringify(study.configuration)

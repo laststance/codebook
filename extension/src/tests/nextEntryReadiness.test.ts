@@ -30,11 +30,14 @@ async function launcherWithFetch(
 ): Promise<{
   server: ReturnType<typeof ServerModule.launchDevelopmentServer>
   requests: RecordedRequest[]
+  /** The signal each request was sent with, in request order. */
+  signals: (AbortSignal | undefined)[]
 }> {
   const filename = join(__dirname, '../utils/launchDevelopmentServer.js'),
     nativeRequire = createRequire(filename)
   const exports: Partial<typeof ServerModule> = {},
-    requests: RecordedRequest[] = []
+    requests: RecordedRequest[] = [],
+    signals: (AbortSignal | undefined)[] = []
   const child = Object.assign(new EventEmitter(), {
     pid: 42000,
     exitCode: null as number | null,
@@ -50,8 +53,12 @@ async function launcherWithFetch(
       Buffer,
       URL,
       process: { env: {} },
-      fetch: async (url: string, init: { redirect?: string }) => {
+      fetch: async (
+        url: string,
+        init: { redirect?: string; signal?: AbortSignal },
+      ) => {
         requests.push({ url, redirect: init.redirect })
+        signals.push(init.signal)
         const { status, location } = answer(url)
         return {
           ok: status >= 200 && status < 300,
@@ -93,7 +100,7 @@ async function launcherWithFetch(
     undefined,
     setup.outputMask,
   )
-  return { server, requests }
+  return { server, requests, signals }
 }
 
 /**
@@ -185,6 +192,38 @@ test('a Pages-capable entry check never fetches a redirect target on another ori
   assert.deepEqual(requests, [
     { url: 'http://127.0.0.1:43217/', redirect: 'manual' },
   ])
+})
+
+// Value: protects=R5 (hold): the follow-up request of a redirected root is bounded by the run's hold-aware bound, so a preparation pause held in it does not run out the fixed 90 s; fails_when=the follow-up request keeps its own fixed timeout and fails while the learner reads; no_claim=a real held pause
+test('the follow-up request of a redirected root is sent with the hold-aware bound of the run', async () => {
+  // Arrange: the run's bound has already ended, so a request bound by it is sent aborted
+  const { server, signals } = await launcherWithFetch((url) =>
+    url === 'http://127.0.0.1:43217/'
+      ? { status: 307, location: '/en' }
+      : { status: 200 },
+  )
+  const { entry } = await server.readyEntry(new AbortController().signal, '/')
+  const ended = new AbortController()
+  ended.abort()
+  const observer = {
+    sent: () => undefined,
+    closed: () => undefined,
+    requestTimeout: {
+      signal: ended.signal,
+      hold: () => undefined,
+      release: () => undefined,
+      dispose: () => undefined,
+    },
+  }
+  // Act
+  await server.confirmAppEntry(
+    new AbortController().signal,
+    '/',
+    entry,
+    observer,
+  )
+  // Assert
+  assert.equal(signals.at(-1)?.aborted, true)
 })
 
 // Value: protects=an App route found through the structured check keeps today's root verdict: a redirected root is asked again following redirects and must answer ok; fails_when=the redirected root is refused, or not asked again the way ready() asks; why_new=Cycle 0065 App replay of the structured path; seam=isolated launcher context with a stand-in fetch; no_claim=a real redirect chain

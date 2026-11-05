@@ -118,7 +118,7 @@ test('the MCP instructions name react-scripts-dev, its selection rule and the AP
       .split('\n')
       .find((line) => line.startsWith(' * 1.25 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.26')
+  assert.equal(API_VERSION, '1.27')
   assert.ok(protocol.includes('${REACT_SCRIPTS_APP_SELECTION_RULE}'))
   assert.ok(
     protocol.includes(
@@ -146,7 +146,7 @@ test('the bundled skill 1.0.74 routes a Create React App app to react-scripts-de
   // Arrange
   const skill = await readPackaged('skills/codebook/SKILL.md')
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.75"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.76"\n'))
   for (const phrase of [
     'goes to the `react-scripts-dev` adapter of the `repository-browser` profile',
     '`reactScriptsQuickStart`',
@@ -166,7 +166,7 @@ test('the README documents the react-scripts-dev adapter and its limits', async 
     'Codebook runs a Create React App app (react-scripts 5) at or below the repository root',
     "pauses at browser stops in the app's own source",
     'react-scripts 4 and a stop in `node_modules`',
-    'with **MCP API 1.26**',
+    'with **MCP API 1.27**',
     'study format 11 (`.study.v11.json`)',
   ])
     assert.ok(readme.includes(phrase), phrase)

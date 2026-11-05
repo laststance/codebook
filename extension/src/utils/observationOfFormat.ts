@@ -19,6 +19,7 @@ export function observationOfFormat(
 ): ConfiguredObservation {
   if (usesServerRenderEvidence(study)) return observation
   const {
+    scope: _scope,
     execution: _execution,
     attribution: _attribution,
     operationIndex: _operationIndex,

@@ -229,13 +229,13 @@ test('the 0.2.77.0 rule lists a .study.v10.json archive as saved by a newer Code
   )
 })
 
-// protects=format 10 stays a known format in the storage table and the schema, while this Codebook now reads up to format 11; fails_when=v10 is missing from the storage table or the schema, or format 12 is accepted; no_claim=archive contents
-test('storage names and schema keep format 10 and read nothing above format 11', () => {
+// protects=format 10 stays a known format in the storage table and the schema, while this Codebook now reads up to format 12; fails_when=v10 is missing from the storage table or the schema, or format 13 is accepted; no_claim=archive contents
+test('storage names and schema keep format 10 and read nothing above format 12', () => {
   // Arrange
   const row = STUDY_STORAGE_FORMATS.find((format) => format.version === 10)
   const schemaVersion = configuredStudySchema.shape.version
   // Act
-  const acceptsTwelve = schemaVersion.safeParse(12).success
+  const acceptsThirteen = schemaVersion.safeParse(13).success
   // Assert
   assert.deepEqual(row, {
     version: 10,
@@ -243,10 +243,10 @@ test('storage names and schema keep format 10 and read nothing above format 11',
     archiveSuffix: '.study.v10.json',
     metadataSuffix: '.study.meta.v10.json',
   })
-  assert.equal(READABLE_STUDY_VERSION, 11)
+  assert.equal(READABLE_STUDY_VERSION, 12)
   assert.equal(VITE_PACKAGE_ROOT_STUDY_VERSION, 10)
   assert.equal(schemaVersion.safeParse(10).success, true)
-  assert.equal(acceptsTwelve, false)
+  assert.equal(acceptsThirteen, false)
 })
 
 // protects=a format 10 study replays its recorded browser stop (source line and values) from the library, also after the app folder is removed; fails_when=the replay of format 10 needs the app folder or loses the recorded values; no_claim=the editor's native debugger (the replay debug adapter is driven directly); the study is resealed from the 0.2.72.0 golden

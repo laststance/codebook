@@ -509,7 +509,10 @@ test('the migration table separates the saved Pages run (format 8 unchanged) fro
     row.item.startsWith('saved study of a Pages Router server run'),
   )
   // Assert
-  assert.equal(table.length, 8)
+  assert.equal(table.length, 9)
+  assert.ok(
+    table.some((row) => row.change.startsWith('format 12 (.study.v12.json)')),
+  )
   assert.ok(
     table.some((row) =>
       row.item.startsWith(
@@ -547,7 +550,7 @@ test('API_VERSION is 1.25 and its 1.17 note names the Pages data-function fields
       .split('\n')
       .find((line) => line.startsWith(' * 1.17 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.26')
+  assert.equal(API_VERSION, '1.27')
   for (const phrase of [
     'Pages Router data-function server stops (configuration version 3)',
     '`nextVersion` and `attributionSummary`',
@@ -571,7 +574,7 @@ test('the bundled skill 1.0.71 states the Pages data-function stops, the readine
   const skill = await readPackaged('skills', 'codebook', 'SKILL.md')
   const paragraph = await readServerRendersSkillParagraph()
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.75"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.76"\n'))
   assert.ok(
     paragraph.startsWith(
       '**Server renders (API 1.16; Pages Router data functions API 1.17).**',
@@ -648,14 +651,14 @@ test('the README names the Pages server-stop refusals, the API 1.17 note and ski
   const readme = await readPackaged('README.md')
   // Act / Assert
   for (const phrase of [
-    'with **MCP API 1.26** (`codebook_status` reports the installed build). API 1.26 is additive:',
+    'with **MCP API 1.27** (`codebook_status` reports the installed build). API 1.27 is additive:',
     'API 1.17 is additive: it adds Pages Router data-function server stops in configuration version 3',
     'A saved Pages server run stays study format 8 with no new field.',
     'A server stop in a `pages/api` file or in `_document` is refused with this code before the development server starts (`details.sideEffects` is `none`).',
     'A server stop in a version 2 Pages run is refused with this code too, naming configuration version 3 and the Pages quick start (`details.requiredVersion` is `3`)',
     'Every refusal of a stop in a Pages run carries `details.router: "pages"`.',
     "(`details.reason` is `client-component`: the page component and `getInitialProps` lines also run in the page's server render and in the browser",
-    "so Cursor's managed skill updates to **1.0.75**",
+    "so Cursor's managed skill updates to **1.0.76**",
     '**What the chat asks first (1.0.66).**',
   ])
     assert.ok(readme.includes(phrase), phrase)
@@ -971,13 +974,13 @@ test('the served help keeps the readiness record out of the saved study and stat
   )
 })
 
-// Value: protects=the bundled skill keeps the "may run once or come from a cache" advice to an App Router page and gives a Pages run its own not-reached sentence (the module-scope and cache causes do not apply; the message names the entry page's data function; an unconfirmed pause is never proof and an all-unconfirmed run is stopped), pointing to the help without copying it; fails_when=the cache advice is stated for every router again, the Pages sentence or the unconfirmed rule leaves the skill, or the skill copies the help's contract (a configuration or the not-reached message); no_claim=how a chat follows the rules
-test('the bundled skill scopes the run-once and cache advice to App Router and gives a Pages run its own not-reached and unconfirmed sentences', async () => {
+// Value: protects=the bundled skill keeps the not-reached possibilities (a cache, a module not imported or evaluated before arming, a line that did not run) to an App Router page, never as the cause, and gives a Pages run its own not-reached sentence (the module-scope and cache causes do not apply; the message names the entry page's data function; an unconfirmed pause is never proof and an all-unconfirmed run is stopped), pointing to the help without copying it; fails_when=the cache advice is stated for every router again, the Pages sentence or the unconfirmed rule leaves the skill, or the skill copies the help's contract (a configuration or the not-reached message); no_claim=how a chat follows the rules
+test('the bundled skill scopes the not-reached possibilities to App Router and gives a Pages run its own not-reached and unconfirmed sentences', async () => {
   // Arrange
   const paragraph = await readServerRendersSkillParagraph()
   // Act
   const appRouterAdvice =
-    'say the stop was not reached and that the first execution was not observed (`firstExecutionObserved: false`); for an App Router page add that its code may run once or come from a cache.'
+    "say the stop was not reached and that the render was not observed (`firstExecutionObserved: false`); for an App Router page give the message's own possibilities (a cache, a module that the entry route does not import or that Next evaluated before the stop was armed, a line that did not run), never one of them as the cause."
   const pagesNotReached =
     "When `SERVER_STOP_NOT_REACHED` ends a Pages run, the module-scope and cache causes do not apply: say what its message says, that the line did not run inside the entry page's data function for the observed request, and read the help's `SERVER_STOP_NOT_REACHED` section for the recovery."
   const pagesUnconfirmed =

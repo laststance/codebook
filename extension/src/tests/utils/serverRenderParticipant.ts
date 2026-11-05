@@ -21,6 +21,10 @@ const FIRST_SERVER_ADAPTER_BREAKPOINT_ID = 40
 const LOCAL_SCOPE_REFERENCE = 601
 /** The first reference of an object member in a scripted scope. */
 const FIRST_SCRIPTED_VARIABLE_REFERENCE = 700
+/** The `variablesReference` of the module factory's closure at a module evaluation, which holds webpack's own arguments. */
+const MODULE_FACTORY_SCOPE_REFERENCE = 602
+/** The `variablesReference` of the global scope at a module evaluation. */
+const GLOBAL_SCOPE_REFERENCE = 603
 
 /** One variable of a DAP `variables` answer. */
 /** A caller frame the scripted DAP stack reports under the stopped frame. */
@@ -102,6 +106,11 @@ export interface ServerHit {
    * `url` defaults to the sealed address; `scriptText` replaces the sealed text (before the comment).
    */
   unannounced?: { url?: string; scriptText?: string; reactCopy?: number }
+  /**
+   * The pause stands in a function of the module (`call`) or in the module's own top-level code while Next evaluates it for the first time (`evaluation`): the recorded stack of E2 has the module script's anonymous top frame, the module factory named like the script's address, then `__webpack_require__`.
+   * Without it the pause has the one frame of the stop.
+   */
+  stack?: 'call' | 'evaluation'
   /** The reason both channels report for the pause (default `breakpoint` for the DAP `stopped`, `other` for the CDP pause), such as `exception`. */
   stopReason?: string
   /** The editor breakpoints (by their id in the harness) the DAP `stopped` names in `hitBreakpointIds`, as the adapter does for a breakpoint hit; none are named by default. */
@@ -132,7 +141,10 @@ export interface ServerParticipantParts {
   /** The editor's breakpoints, shared with the harness (the participant acknowledges the ones in its source). */
   breakpoints: {
     id: string
-    location: { range: { start: { line: number; character: number } } }
+    location: {
+      uri?: { fsPath: string }
+      range: { start: { line: number; character: number } }
+    }
   }[]
   /** Records a release, for the harness's list of released resources. */
   released(name: string): void
@@ -160,6 +172,8 @@ export function createServerParticipant(parts: ServerParticipantParts) {
   const failingScriptReads = new Map<string, string | undefined>()
   const routes = new Map<number, ServerRouteAnswer>()
   const frames = new Map<number, { line: number; column: number }>()
+  /** The hits that stand in the module's own top-level code (`stack: 'evaluation'`); their top frame answers the module-evaluation scope chain. */
+  const evaluationHits = new Set<number>()
   let currentHit = 0
   let currentStopReason = 'breakpoint'
   let currentHitBreakpointIds: number[] | undefined
@@ -170,6 +184,20 @@ export function createServerParticipant(parts: ServerParticipantParts) {
     const assigned = FIRST_SERVER_ADAPTER_BREAKPOINT_ID + adapterIds.size
     adapterIds.set(breakpoint.id, assigned)
     return assigned
+  }
+  /** The file an editor breakpoint was placed in: the run names the real path of the stop file when it places a provisional breakpoint, the sealed bundle's path otherwise. */
+  const pathOfBreakpoint = (breakpoint: {
+    location: { uri?: { fsPath: string } }
+  }): string => breakpoint.location.uri?.fsPath ?? parts.sourcePath
+  /** The file the debugger reports for the paused frame: the owned breakpoint's file. */
+  let lastOwnedPath = parts.sourcePath
+  const pausedFramePath = (): string => {
+    const owned = parts.breakpoints.find((breakpoint) =>
+      breakpoint.id.startsWith('owned-breakpoint'),
+    )
+    // A removal request names the file of the breakpoint that was just removed.
+    if (owned) lastOwnedPath = pathOfBreakpoint(owned)
+    return lastOwnedPath
   }
   /** Every DAP command the run sent the server session, in order. */
   const commands: string[] = []
@@ -237,7 +265,7 @@ export function createServerParticipant(parts: ServerParticipantParts) {
             {
               id: currentHit,
               name: frameName,
-              source: { path: parts.sourcePath },
+              source: { path: pausedFramePath() },
               line: frame.line,
               column: frame.column,
             },
@@ -251,15 +279,62 @@ export function createServerParticipant(parts: ServerParticipantParts) {
           ],
         }
       }
-      if (command === 'scopes')
+      if (command === 'scopes') {
+        const frameId = (arguments_ as { frameId?: number }).frameId
+        // A pause in the module's own top-level code answers js-debug's chain for Next's eval-wrapped module (E2): the module's Eval scope without a hint, the factory's closure, the expensive global scope.
+        if (frameId !== undefined && evaluationHits.has(frameId))
+          return {
+            scopes: [
+              {
+                name: 'Eval',
+                variablesReference: LOCAL_SCOPE_REFERENCE,
+                expensive: false,
+              },
+              {
+                name: `Closure (${parts.scriptUrl.replace('webpack-internal:///', '')})`,
+                presentationHint: 'arguments',
+                variablesReference: MODULE_FACTORY_SCOPE_REFERENCE,
+                expensive: false,
+              },
+              {
+                name: 'Global',
+                variablesReference: GLOBAL_SCOPE_REFERENCE,
+                expensive: true,
+              },
+            ],
+          }
         return {
           scopes: [
             { name: 'Local', variablesReference: LOCAL_SCOPE_REFERENCE },
           ],
         }
+      }
       if (command === 'variables') {
         const reference = (arguments_ as { variablesReference?: number })
           .variablesReference
+        // The enclosing scopes of a module evaluation hold what a capture must never copy: webpack's arguments and the process.
+        if (reference === MODULE_FACTORY_SCOPE_REFERENCE)
+          return {
+            variables: [
+              {
+                name: '__webpack_require__',
+                value: 'ƒ __webpack_require__(moduleId)',
+                type: 'function',
+                variablesReference: 0,
+              },
+            ],
+          }
+        if (reference === GLOBAL_SCOPE_REFERENCE)
+          return {
+            variables: [
+              {
+                name: 'process',
+                value: 'process {version: v24.22.1}',
+                type: 'object',
+                variablesReference: 0,
+              },
+            ],
+          }
         const scripted = scriptedVariables.get(reference ?? -1)
         if (scripted) return { variables: scripted }
         return {
@@ -297,7 +372,7 @@ export function createServerParticipant(parts: ServerParticipantParts) {
         verified: true,
         line: current.location.range.start.line + 1,
         column: current.location.range.start.character + 1,
-        source: { path: parts.sourcePath },
+        source: { path: pathOfBreakpoint(current) },
       }
     },
   }
@@ -428,8 +503,13 @@ export function createServerParticipant(parts: ServerParticipantParts) {
               value: parts.evaluateOnCallFrame(parameters?.expression),
             },
           }
-        } catch {
-          // A local the frame does not hold (an optional inspection) is an exception of the evaluation, as natively.
+        } catch (error) {
+          // A local the frame does not hold (an optional inspection) is an exception of the evaluation, as natively; a name not in scope is V8's ReferenceError.
+          const isReferenceError =
+            typeof error === 'object' &&
+            error !== null &&
+            'name' in error &&
+            error.name === 'ReferenceError'
           return {
             result: { type: 'undefined' },
             exceptionDetails: {
@@ -437,6 +517,16 @@ export function createServerParticipant(parts: ServerParticipantParts) {
               text: 'Unavailable test local',
               lineNumber: 0,
               columnNumber: 0,
+              ...(isReferenceError && 'message' in error
+                ? {
+                    exception: {
+                      type: 'object' as const,
+                      subtype: 'error' as const,
+                      className: 'ReferenceError',
+                      description: `ReferenceError: ${String(error.message)}`,
+                    },
+                  }
+                : {}),
             },
           }
         }
@@ -487,6 +577,7 @@ export function createServerParticipant(parts: ServerParticipantParts) {
       )
     } else if (!announced.has(scriptId)) announce(scriptId)
     currentHit = ++hitNumber
+    if (hit.stack === 'evaluation') evaluationHits.add(currentHit)
     currentStopReason = hit.stopReason ?? 'breakpoint'
     currentHitBreakpointIds = hit.hitBreakpoints?.map((id) => adapterId({ id }))
     routes.set(
@@ -501,7 +592,23 @@ export function createServerParticipant(parts: ServerParticipantParts) {
       columnNumber: hit.generated?.column ?? 0,
       hitBreakpoints: ['native'],
       ...(hit.stopReason === undefined ? {} : { reason: hit.stopReason }),
+      ...(hit.stack === undefined
+        ? {}
+        : { functionName: hit.stack === 'call' ? 'serverStep' : '' }),
     })
+    if (hit.stack === 'evaluation') {
+      const address = announced.get(scriptId) ?? parts.scriptUrl
+      const factoryName = address.replace(/^about:\/\/React\/Server\//, '')
+      const chunkFrame = (functionName: string, id: number) => ({
+        callFrameId: `server-chunk-${currentHit}-${id}`,
+        functionName,
+        location: { scriptId: 'server-chunk', lineNumber: 10, columnNumber: 0 },
+      })
+      own.callFrames.push(
+        chunkFrame(factoryName.replace('webpack-internal:///', ''), 1),
+        chunkFrame('__webpack_require__', 2),
+      )
+    }
     listeners.get('Debugger.paused')?.(
       hit.pages ? pagesEventOf(hit.pages, own, currentHit) : own,
     )
@@ -597,7 +704,7 @@ export function createServerParticipant(parts: ServerParticipantParts) {
       seq: requestSequence,
       command: 'setBreakpoints',
       arguments: {
-        source: { path: parts.sourcePath },
+        source: { path: pausedFramePath() },
         breakpoints: selected.map((breakpoint) => ({
           line: breakpoint.location.range.start.line + 1,
           column: breakpoint.location.range.start.character + 1,
@@ -690,6 +797,10 @@ export function createServerParticipant(parts: ServerParticipantParts) {
     /** Gives a script its own generated text, as a re-parsed instance with other code has. */
     setScriptText(scriptId: string, text: string): void {
       scriptTexts.set(scriptId, text)
+    },
+    /** Gives a script the sealed module's text again, as the same module read after another script text was set for it. */
+    resetScriptText(scriptId: string): void {
+      scriptTexts.delete(scriptId)
     },
     /** Makes the run's next read of a script's text fail, as a transient `Debugger.getScriptSource` error; the read after it answers. */
     failNextScriptRead(scriptId: string, message?: string): void {

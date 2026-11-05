@@ -29,6 +29,8 @@ export type ModuleDeclarationBinding = {
   hoisted: string
   /** The exports the declaration names by name (`default` for a default import), which its module must have. */
   exports: readonly string[]
+  /** The module request as the source writes it (`react-redux`, `./schema`), which webpack's development path comment repeats. */
+  specifier: string
 }
 
 /** What a stopped module's source says about its imports: each run-time declaration in source order, and each imported local name with the export it reads and its declaration's position. */
@@ -76,6 +78,7 @@ export function sourceImportBindings(sourceText: string): SourceImports {
         ? `__vite_ssr_import_${staticImports++}__`
         : `__vi_import_${viImports++}__`,
       exports: declaration.exports,
+      specifier: declaration.specifier,
     })
     for (const [local, exported] of declaration.locals)
       names.set(local, { exported, declaration: position })

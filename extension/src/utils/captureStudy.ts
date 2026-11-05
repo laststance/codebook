@@ -17,7 +17,7 @@ import { observationOfFormat } from './observationOfFormat'
 import { projectSavedOperations } from './projectSavedOperations'
 import { redactPreparedConfiguration } from './redactPreparedConfiguration'
 import {
-  studyFormatOfConfiguration,
+  studyFormatOfEvidence,
   usesServerRenderEvidence,
 } from './studyFormatOfConfiguration'
 
@@ -90,9 +90,11 @@ export async function captureStudy(
           'Configured snapshot differs from its committed source/receipt.',
         )
       // The format 8 pause fields are kept or dropped once, by observationOfFormat, when the study is assembled below.
+      // `preparationRequest` is a live field of the run resource; it is never saved, so the strict observation schema never sees it.
+      const { preparationRequest: _preparationRequest, ...saved } = snapshot
       observations.push(
         configuredObservationSchema.parse({
-          ...snapshot,
+          ...saved,
           snapshotUri,
           interpretations,
         }),
@@ -160,7 +162,7 @@ export async function captureStudy(
           hash: sha256(Buffer.from(image.blob, 'base64')),
         })
       } else
-        // A withheld image is saved as an absent image with its reason sentence, so the saved format and older readers stay unchanged.
+        // A withheld image, and a preparation pause before any page could be drawn, are saved as absent images with the runtime's reason sentence, so the saved format and older readers stay unchanged.
         captures.push({
           ...identity,
           status:
@@ -206,13 +208,16 @@ export async function captureStudy(
     redactedConfiguration,
     runtime?.nextPackageRoot,
   )
-  // Fixed by the sealed configuration; the runtime's format 8 pause fields are written only in format 8.
-  const studyVersion = studyFormatOfConfiguration(canonicalConfiguration)
+  // Fixed by the sealed configuration, except that a Next study takes format 12 from its first module-evaluation or preparation observation on; the runtime's format 8 pause fields are written only in format 8 rules.
+  const studyVersion = studyFormatOfEvidence(
+    canonicalConfiguration,
+    observations,
+  )
   const configured =
     record.profile === REPOSITORY_BROWSER_PROFILE
       ? {
           // A study of ordered operations has its own format, so an older Codebook lists it as saved by a newer one instead of failing on its schema.
-          // The format is a pure function of the sealed configuration, so it is the same at every checkpoint of the run.
+          // The format follows the sealed configuration, except that a Next study moves once from format 8 or 9 to 12 at its first module-evaluation or preparation observation (assertStudyCheckpoint allows only that move).
           version: studyVersion,
           configuration: canonicalConfiguration,
           configurationHash: sha256(JSON.stringify(canonicalConfiguration)),
