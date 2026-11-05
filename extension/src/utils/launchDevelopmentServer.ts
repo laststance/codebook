@@ -67,6 +67,22 @@ function isSuccessStatus(status: number): boolean {
 }
 
 /**
+ * Gives the time bound of a readiness request: the run's hold-aware one when the observer carries it, else the fixed setup bound.
+ * Called by `ready`, `readyEntry` and the root request for the signal they send.
+ * @param observer - The run's record of the request, if any.
+ * @returns The signal that aborts the request.
+ * @example requestTimeoutOf(undefined).aborted // => false
+ */
+function requestTimeoutOf(
+  observer: ReadinessObserver | undefined,
+): AbortSignal {
+  return (
+    observer?.requestTimeout?.signal ??
+    AbortSignal.timeout(REPOSITORY_SETUP_TIMEOUT_MS)
+  )
+}
+
+/**
  * Sends the readiness request of a Next run and tells the run's record about it: the send, then the HTTP status or the status-free way it ended.
  *
  * Why it exists: the request runs the entry page's server code once before any stop is armed (a data function, server components), so the run keeps a record of it that opens at the send, independent of which router the entry resolves to. Called by `ready` and `readyEntry` for the request they send.
@@ -260,12 +276,10 @@ export function launchDevelopmentServer(
   const rootAnswer = async (
     listening: string,
     signal: AbortSignal,
+    observer?: ReadinessObserver,
   ): Promise<Response> => {
     const response = await fetch(listening, {
-      signal: AbortSignal.any([
-        signal,
-        AbortSignal.timeout(REPOSITORY_SETUP_TIMEOUT_MS),
-      ]),
+      signal: AbortSignal.any([signal, requestTimeoutOf(observer)]),
     })
     await response.body?.cancel()
     return response
@@ -393,7 +407,7 @@ export function launchDevelopmentServer(
       // A selected non-root entry proves readiness itself; an application without a root page is still usable through it.
       if (entryPath === '/') {
         const response = await observedReadinessRequest(observer, signal, () =>
-          rootAnswer(listening, signal),
+          rootAnswer(listening, signal, observer),
         )
         if (!response.ok)
           throw new Error(
@@ -403,10 +417,7 @@ export function launchDevelopmentServer(
         const entry = await observedReadinessRequest(observer, signal, () =>
           fetch(`${listening}${entryPath}`, {
             redirect: 'manual',
-            signal: AbortSignal.any([
-              signal,
-              AbortSignal.timeout(REPOSITORY_SETUP_TIMEOUT_MS),
-            ]),
+            signal: AbortSignal.any([signal, requestTimeoutOf(observer)]),
           }),
         )
         await entry.body?.cancel()
@@ -443,10 +454,7 @@ export function launchDevelopmentServer(
       const response = await observedReadinessRequest(observer, signal, () =>
         fetch(requestUrl, {
           redirect: 'manual',
-          signal: AbortSignal.any([
-            signal,
-            AbortSignal.timeout(REPOSITORY_SETUP_TIMEOUT_MS),
-          ]),
+          signal: AbortSignal.any([signal, requestTimeoutOf(observer)]),
         }),
       )
       await response.body?.cancel()

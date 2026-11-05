@@ -102,6 +102,11 @@ export interface ServerHit {
    * `url` defaults to the sealed address; `scriptText` replaces the sealed text (before the comment).
    */
   unannounced?: { url?: string; scriptText?: string; reactCopy?: number }
+  /**
+   * The pause stands in a function of the module (`call`) or in the module's own top-level code while Next evaluates it for the first time (`evaluation`): the recorded stack of E2 has the module script's anonymous top frame, the module factory named like the script's address, then `__webpack_require__`.
+   * Without it the pause has the one frame of the stop.
+   */
+  stack?: 'call' | 'evaluation'
   /** The reason both channels report for the pause (default `breakpoint` for the DAP `stopped`, `other` for the CDP pause), such as `exception`. */
   stopReason?: string
   /** The editor breakpoints (by their id in the harness) the DAP `stopped` names in `hitBreakpointIds`, as the adapter does for a breakpoint hit; none are named by default. */
@@ -132,7 +137,10 @@ export interface ServerParticipantParts {
   /** The editor's breakpoints, shared with the harness (the participant acknowledges the ones in its source). */
   breakpoints: {
     id: string
-    location: { range: { start: { line: number; character: number } } }
+    location: {
+      uri?: { fsPath: string }
+      range: { start: { line: number; character: number } }
+    }
   }[]
   /** Records a release, for the harness's list of released resources. */
   released(name: string): void
@@ -170,6 +178,20 @@ export function createServerParticipant(parts: ServerParticipantParts) {
     const assigned = FIRST_SERVER_ADAPTER_BREAKPOINT_ID + adapterIds.size
     adapterIds.set(breakpoint.id, assigned)
     return assigned
+  }
+  /** The file an editor breakpoint was placed in: the run names the real path of the stop file when it places a provisional breakpoint, the sealed bundle's path otherwise. */
+  const pathOfBreakpoint = (breakpoint: {
+    location: { uri?: { fsPath: string } }
+  }): string => breakpoint.location.uri?.fsPath ?? parts.sourcePath
+  /** The file the debugger reports for the paused frame: the owned breakpoint's file. */
+  let lastOwnedPath = parts.sourcePath
+  const pausedFramePath = (): string => {
+    const owned = parts.breakpoints.find((breakpoint) =>
+      breakpoint.id.startsWith('owned-breakpoint'),
+    )
+    // A removal request names the file of the breakpoint that was just removed.
+    if (owned) lastOwnedPath = pathOfBreakpoint(owned)
+    return lastOwnedPath
   }
   /** Every DAP command the run sent the server session, in order. */
   const commands: string[] = []
@@ -237,7 +259,7 @@ export function createServerParticipant(parts: ServerParticipantParts) {
             {
               id: currentHit,
               name: frameName,
-              source: { path: parts.sourcePath },
+              source: { path: pausedFramePath() },
               line: frame.line,
               column: frame.column,
             },
@@ -297,7 +319,7 @@ export function createServerParticipant(parts: ServerParticipantParts) {
         verified: true,
         line: current.location.range.start.line + 1,
         column: current.location.range.start.character + 1,
-        source: { path: parts.sourcePath },
+        source: { path: pathOfBreakpoint(current) },
       }
     },
   }
@@ -501,7 +523,23 @@ export function createServerParticipant(parts: ServerParticipantParts) {
       columnNumber: hit.generated?.column ?? 0,
       hitBreakpoints: ['native'],
       ...(hit.stopReason === undefined ? {} : { reason: hit.stopReason }),
+      ...(hit.stack === undefined
+        ? {}
+        : { functionName: hit.stack === 'call' ? 'serverStep' : '' }),
     })
+    if (hit.stack === 'evaluation') {
+      const address = announced.get(scriptId) ?? parts.scriptUrl
+      const factoryName = address.replace(/^about:\/\/React\/Server\//, '')
+      const chunkFrame = (functionName: string, id: number) => ({
+        callFrameId: `server-chunk-${currentHit}-${id}`,
+        functionName,
+        location: { scriptId: 'server-chunk', lineNumber: 10, columnNumber: 0 },
+      })
+      own.callFrames.push(
+        chunkFrame(factoryName.replace('webpack-internal:///', ''), 1),
+        chunkFrame('__webpack_require__', 2),
+      )
+    }
     listeners.get('Debugger.paused')?.(
       hit.pages ? pagesEventOf(hit.pages, own, currentHit) : own,
     )
@@ -597,7 +635,7 @@ export function createServerParticipant(parts: ServerParticipantParts) {
       seq: requestSequence,
       command: 'setBreakpoints',
       arguments: {
-        source: { path: parts.sourcePath },
+        source: { path: pausedFramePath() },
         breakpoints: selected.map((breakpoint) => ({
           line: breakpoint.location.range.start.line + 1,
           column: breakpoint.location.range.start.character + 1,
@@ -690,6 +728,10 @@ export function createServerParticipant(parts: ServerParticipantParts) {
     /** Gives a script its own generated text, as a re-parsed instance with other code has. */
     setScriptText(scriptId: string, text: string): void {
       scriptTexts.set(scriptId, text)
+    },
+    /** Gives a script the sealed module's text again, as the same module read after another script text was set for it. */
+    resetScriptText(scriptId: string): void {
+      scriptTexts.delete(scriptId)
     },
     /** Makes the run's next read of a script's text fail, as a transient `Debugger.getScriptSource` error; the read after it answers. */
     failNextScriptRead(scriptId: string, message?: string): void {

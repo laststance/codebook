@@ -70,6 +70,7 @@ import { createConfiguredStudy } from './createConfiguredStudy'
 import { createManualClock } from './createManualClock'
 import { createSourceBoundWaitHold } from './createSourceBoundWaitHold'
 import { debuggerPausedEvent } from './debuggerPausedEvent'
+import { defer } from './defer'
 import { fakePageContext, type FakePageElement } from './fakePageContext'
 import type { libraryFixture } from './libraryBuildHarness'
 import {
@@ -321,6 +322,10 @@ export async function configuredRuntimeHarness(
     launchFailure?: string
     /** Makes the stand-in server's structured entry check (`readyEntry`) never answer until the run is cancelled, as a first compile that is still running does. */
     entryHangs?: boolean
+    /** Keeps the stand-in server's readiness request (`ready` and `readyEntry`) open after it was sent until a test calls `releaseReadiness`, as a request whose server code is paused at a module's first evaluation. */
+    holdReadiness?: boolean
+    /** Names the stop file by its real path (no symlink in it), as the preparation window and the seal of a real run do, so a macOS temporary folder under `/var` matches the `/private/var` path the run reads. */
+    realSourceRoot?: boolean
     /** The HTTP status the stand-in server answers to the App readiness check (`ready`), 200 by default; any other status closes the readiness record with it and rejects with the launcher's own sentence, as `ready` does for an answer that is not OK. */
     readyAnswer?: number
     /**
@@ -623,6 +628,7 @@ export async function configuredRuntimeHarness(
   // A Pages server stop is sealed from the build's real path (its maps name the canonical workspace), so the editor's breakpoints and the debugger's frames name that path too. A library stop with a server (`serverRuntime`) is covered by that; a browser-only library stop names it as well; no other caller passes `library`.
   const sourceRoot =
     (options.nextPages && options.serverRuntime) ||
+    options.realSourceRoot ||
     viteLibrary ||
     (library && options.participant === 'browser') ||
     // An App Router server library stop runs in the checked-out source, named by its real path.
@@ -1773,7 +1779,8 @@ export async function configuredRuntimeHarness(
           type: 'request',
           command: 'setBreakpoints',
           arguments: {
-            source: { path: sourcePath },
+            // A provisional breakpoint is placed in the real path of its file; the sealed bundle's path is the harness's.
+            source: { path: removed[0]?.location.uri?.fsPath ?? sourcePath },
             breakpoints: breakpoints.map((breakpoint) =>
               sourceBreakpointRequest(breakpoint.location.range.start),
             ),
@@ -1879,15 +1886,35 @@ export async function configuredRuntimeHarness(
       }),
     )
   }
+  const readinessGate = defer<void>()
+  let readinessRequestHeld = false
+  /** Sends the readiness request and keeps it open until {@link readinessGate} is released, when the options hold it. */
+  const holdReadinessRequest = async (
+    observer: ReadinessObserver | undefined,
+    signal: AbortSignal,
+  ): Promise<void> => {
+    if (!options.holdReadiness) return
+    observer?.sent()
+    readinessRequestHeld = true
+    // The run's stop ends the request, as it ends a real one.
+    await Promise.race([
+      readinessGate.promise,
+      new Promise<never>((_resolve, reject) =>
+        signal.addEventListener('abort', () => reject(signal.reason)),
+      ),
+    ])
+    readinessRequestHeld = false
+  }
   const fakeApplication = {
     ready: async (
-      _signal: AbortSignal,
+      signal: AbortSignal,
       entryPath?: string,
       observer?: ReadinessObserver,
     ) => {
       readyEntryPaths.push(entryPath)
       if (options.launchFailure) throw new Error(options.launchFailure)
       releases.push('application acquired')
+      await holdReadinessRequest(observer, signal)
       const status = options.readyAnswer ?? 200
       playReadinessRequest(observer, status)
       // An answer that is not OK rejects with the launcher's own sentence, after the record closed with its status.
@@ -1917,6 +1944,7 @@ export async function configuredRuntimeHarness(
         )
       if (options.launchFailure) throw new Error(options.launchFailure)
       releases.push('application acquired')
+      await holdReadinessRequest(observer, signal)
       const origin = serverOrigin,
         answer = options.entryAnswer ??
           options.nextPages?.entry ?? { status: 200 }
@@ -2472,6 +2500,12 @@ export async function configuredRuntimeHarness(
     },
     /** Every URL the run navigated the page to, in order. */
     navigations,
+    /** Whether the readiness request is open and held ({@link holdReadiness}). */
+    readinessRequestHeld: (): boolean => readinessRequestHeld,
+    /** Lets the held readiness request end with its scripted answer. @example harness.releaseReadiness() */
+    releaseReadiness(): void {
+      readinessGate.resolve()
+    },
     /** The entry path the run passed to each readiness check of the stand-in server (`app.ready`), in order. */
     readyEntryPaths,
     /** The entry path of each structured entry check (`app.readyEntry`) of a Pages-capable run, in order. */
