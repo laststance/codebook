@@ -17,9 +17,13 @@ import { observationOfFormat } from './observationOfFormat'
 import { projectSavedOperations } from './projectSavedOperations'
 import { redactPreparedConfiguration } from './redactPreparedConfiguration'
 import {
-  studyFormatOfConfiguration,
+  studyFormatOfEvidence,
   usesServerRenderEvidence,
 } from './studyFormatOfConfiguration'
+
+/** The reason saved for a pause in Codebook's own readiness request: the browser was not open, so there is no application image, and the replay shows none. */
+const PREPARATION_WITHOUT_APPLICATION_REASON =
+  'The application was not yet available when Codebook paused here, so there is no image.'
 
 /** Copies only committed canonical evidence for {@link StudyWorkspace}; a changed read is discarded. @example await captureStudy(service, record, workspaceKey) */
 export async function captureStudy(
@@ -90,9 +94,11 @@ export async function captureStudy(
           'Configured snapshot differs from its committed source/receipt.',
         )
       // The format 8 pause fields are kept or dropped once, by observationOfFormat, when the study is assembled below.
+      // `preparationRequest` is a live field of the run resource; it is never saved, so the strict observation schema never sees it.
+      const { preparationRequest: _preparationRequest, ...saved } = snapshot
       observations.push(
         configuredObservationSchema.parse({
-          ...snapshot,
+          ...saved,
           snapshotUri,
           interpretations,
         }),
@@ -173,7 +179,13 @@ export async function captureStudy(
             capture.error ??
               (capture.status === 'pending'
                 ? 'Capturing this observation…'
-                : 'No confirmed image for this phase.'),
+                : observations.some(
+                      (observation) =>
+                        observation.id === capture.snapshotId &&
+                        observation.attribution === 'preparation',
+                    )
+                  ? PREPARATION_WITHOUT_APPLICATION_REASON
+                  : 'No confirmed image for this phase.'),
           ),
         })
     }
@@ -206,8 +218,11 @@ export async function captureStudy(
     redactedConfiguration,
     runtime?.nextPackageRoot,
   )
-  // Fixed by the sealed configuration; the runtime's format 8 pause fields are written only in format 8.
-  const studyVersion = studyFormatOfConfiguration(canonicalConfiguration)
+  // Fixed by the sealed configuration, except that a Next study takes format 12 from its first module-evaluation or preparation observation on; the runtime's format 8 pause fields are written only in format 8 rules.
+  const studyVersion = studyFormatOfEvidence(
+    canonicalConfiguration,
+    observations,
+  )
   const configured =
     record.profile === REPOSITORY_BROWSER_PROFILE
       ? {

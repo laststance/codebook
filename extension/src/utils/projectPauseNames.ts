@@ -11,6 +11,7 @@ type PauseFields = {
   participant?: unknown
   execution?: unknown
   attribution?: unknown
+  scope?: unknown
   operationIndex?: unknown
   declaredIndex?: unknown
   executionIndex?: unknown
@@ -39,6 +40,7 @@ const ATTRIBUTIONS: readonly string[] = [
   'entry-load',
   'after-operation',
   'unconfirmed',
+  'preparation',
 ]
 
 /** Reads a number field of a loosely typed observation. @example numberOf(3) // => 3 */
@@ -90,6 +92,7 @@ function nameOf(
     participant,
     execution,
     attribution,
+    ...(fields.scope === 'module' && { scope: 'module' as const }),
     operationIndex: numberOf(fields.operationIndex),
     path: pathOfStop(stops, fields, position),
     line: lineOf(fields) ?? 1,
@@ -142,7 +145,12 @@ function withDeclaredPositions<T extends object>(
 ): NamedPause<T>[] {
   const sets = new Map<number, NamedPause<T>[]>()
   for (const pause of named) {
-    if (pause.name?.kind !== 'Server render') continue
+    // A module evaluation is a server render's set member too.
+    if (
+      pause.name?.kind !== 'Server render' &&
+      pause.name?.kind !== 'Module evaluation'
+    )
+      continue
     const group =
       numberOf((pause.observation as PauseFields).operationIndex) ?? 0
     sets.set(group, [...(sets.get(group) ?? []), pause])

@@ -5,6 +5,8 @@ type PauseLabel = Pick<
   ConfiguredRuntimeSnapshot,
   | 'execution'
   | 'attribution'
+  | 'scope'
+  | 'preparationRequest'
   | 'operationIndex'
   | 'declaredIndex'
   | 'executionIndex'
@@ -25,6 +27,10 @@ export function pauseLabelOf(snapshot: PauseLabel): PauseLabel {
   if (snapshot.execution !== undefined) label.execution = snapshot.execution
   if (snapshot.attribution !== undefined)
     label.attribution = snapshot.attribution
+  if (snapshot.scope !== undefined) label.scope = snapshot.scope
+  // Live only: the saved study keeps no preparation request.
+  if (snapshot.preparationRequest !== undefined)
+    label.preparationRequest = snapshot.preparationRequest
   if (snapshot.operationIndex !== undefined)
     label.operationIndex = snapshot.operationIndex
   if (snapshot.declaredIndex !== undefined)

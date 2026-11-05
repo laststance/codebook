@@ -2,12 +2,39 @@ import {
   configuredStudySchema,
   type ConfiguredStudy,
 } from '../configuredStudySchemas'
-import { CONFIGURED_CAPTURE_PHASES, IMAGE_LIMIT_BYTES } from '../constants'
+import {
+  CONFIGURED_CAPTURE_PHASES,
+  IMAGE_LIMIT_BYTES,
+  MODULE_EVALUATION_STUDY_VERSION,
+} from '../constants'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 
 import { assertReadableStudyFormat } from './assertReadableStudyFormat'
 import { isCrossRuntimeStudy } from './isCrossRuntimeStudy'
 import { validateConfiguredStudyEvidence } from './validateConfiguredStudyEvidence'
+
+/**
+ * Says whether an image entry is the deliberate gap of a pause in Codebook's own preparation request: the application was not yet available, so the pause is saved with an `absent` image and the replay shows none.
+ * Called by {@link decodeConfiguredStudy} so a demonstrated format 12 study may hold such a gap; any other missing image still voids the study.
+ * @param study - The study being decoded.
+ * @param capture - One image entry of the study.
+ * @returns `true` for an `absent` image that belongs to an observation with `attribution: "preparation"`.
+ * @example isPreparationWithoutApplication(study, { phase: 'paused-server', snapshotId: 'a:1', status: 'absent', reason: '…' }) // => true
+ */
+function isPreparationWithoutApplication(
+  study: ConfiguredStudy,
+  capture: ConfiguredStudy['captures'][number],
+): boolean {
+  return (
+    study.version === MODULE_EVALUATION_STUDY_VERSION &&
+    capture.status === 'absent' &&
+    study.observations.some(
+      (observation) =>
+        observation.id === capture.snapshotId &&
+        observation.attribution === 'preparation',
+    )
+  )
+}
 
 /** Validates configured history for storage/replay without consulting current files or granting live pause authority. @example decodeConfiguredStudy(archive, workspaceKey).profile // 'repository-browser' */
 export function decodeConfiguredStudy(
@@ -89,7 +116,11 @@ export function decodeConfiguredStudy(
       CONFIGURED_CAPTURE_PHASES.length - 1 + study.observations.length
     if (
       study.captures.length !== requiredImages ||
-      study.captures.some((capture) => capture.status !== 'captured') ||
+      study.captures.some(
+        (capture) =>
+          capture.status !== 'captured' &&
+          !isPreparationWithoutApplication(study, capture),
+      ) ||
       !requiredPhases.every((phase) =>
         study.captures.some((capture) => capture.phase === phase),
       ) ||
