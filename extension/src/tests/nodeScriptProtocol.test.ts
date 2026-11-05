@@ -39,7 +39,7 @@ async function pausedScriptRun(context: TestContext) {
   const receipt = service.start({
     instanceId: service.instanceId,
     profile: NODE_SCRIPT_PROFILE,
-    key: 'script-run',
+    key: 'first',
     configuration: {
       version: 1,
       adapter: 'node-script',
