@@ -67,7 +67,7 @@ const SERVER_RESOURCE_PROFILE: NodeRunResourceProfile<NodeServerHistoryTypes> =
   {
     mask: maskSavedServerEntries,
     lean: leanServerEvent,
-    rehydrate: rehydrateNodeServerEntries,
+    rehydrate: (entries) => rehydrateNodeServerEntries(entries),
     // The header is masked again too: a history saved before `code` was masked kept the callback code in its declared request path.
     maskHeader: maskSavedServerHeader,
   }
