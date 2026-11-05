@@ -1752,7 +1752,10 @@ export async function configuredRuntimeHarness(
       ): Promise<boolean> {
         if (!serverParticipant) throw new Error('No server participant')
         serverLaunches.push(config)
+        Object.assign(serverParticipant.rootSession.configuration, config)
         Object.assign(serverParticipant.session.configuration, config)
+        // js-debug announces its silent root first; the server's target session is its child.
+        run.addSession(serverParticipant.rootSession)
         run.addSession(serverParticipant.session)
         return true
       },
@@ -1799,7 +1802,10 @@ export async function configuredRuntimeHarness(
         releases.push('debugger')
         run.terminated(root)
         run.terminated(selected)
-        if (serverParticipant) run.terminated(serverParticipant.session)
+        if (serverParticipant) {
+          run.terminated(serverParticipant.session)
+          run.terminated(serverParticipant.rootSession)
+        }
       },
     },
     Uri: { file: (path: string) => ({ scheme: 'file', fsPath: path }) },

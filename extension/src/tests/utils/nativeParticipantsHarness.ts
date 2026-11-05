@@ -63,6 +63,8 @@ export async function nativeParticipantsHarness(
   stopParticipants: readonly Participant[] = ['server', 'browser', 'server'],
   options: {
     duplicateServerSession?: boolean
+    /** How long after js-debug's silent root the server's first target session starts; the root is announced first, as in the real tree. */
+    serverTargetStartDelayMs?: number
     distinctServerWorker?: boolean
     /** Models a background Node worker whose PID/cwd match the main server but whose JavaScript thread owns no declared route. */
     serverWorkerThread?: boolean
@@ -329,7 +331,7 @@ export async function nativeParticipantsHarness(
     ...root,
     id: `${name}-session`,
     type: name === 'server' ? 'pwa-node' : 'pwa-chrome',
-    parentSession: name === 'browser' ? root : undefined,
+    parentSession: name === 'browser' ? root : serverRoot,
     configuration: { ...root.configuration },
     customRequest: async (command, args) => {
       commands.push({ participant: name, method: command })
@@ -457,6 +459,19 @@ export async function nativeParticipantsHarness(
         : undefined
     },
   })
+  // js-debug's root of the server attach owns no target and never answers `requestCDPProxy`: its request stays open for good.
+  const serverRootRequests: string[] = []
+  const serverRoot: DebugSession = {
+    ...root,
+    id: 'server-root',
+    type: 'pwa-node',
+    parentSession: undefined,
+    configuration: { ...root.configuration },
+    customRequest: (command) => {
+      serverRootRequests.push(command)
+      return new Promise<never>(() => {})
+    },
+  }
   const serverParent = session('server')
   const serverChild: DebugSession | undefined = options.duplicateServerSession
     ? {
@@ -863,15 +878,27 @@ export async function nativeParticipantsHarness(
       ) {
         launches.push(config)
         launchOptions.push(startOptions)
+        Object.assign(serverRoot.configuration, config)
         Object.assign(serverParent.configuration, config)
-        run.addSession(serverParent)
-        if (serverChild) run.addSession(serverChild)
+        // js-debug announces its root first; the target sessions follow at once, or after the delay a test asks for.
+        run.addSession(serverRoot)
+        const startTargets = (): void => {
+          run.addSession(serverParent)
+          if (serverChild) run.addSession(serverChild)
+        }
+        if (options.serverTargetStartDelayMs)
+          setTimeout(startTargets, options.serverTargetStartDelayMs)
+        else startTargets()
         return true
       },
       async stopDebugging(selected: DebugSession): Promise<void> {
         released.push(selected.id)
         run.terminated(selected)
         if (selected === root) run.terminated(sessions.browser)
+        if (selected === serverRoot) {
+          run.terminated(serverParent)
+          if (serverChild) run.terminated(serverChild)
+        }
         if (selected === serverParent && serverChild)
           run.terminated(serverChild)
       },
@@ -1113,6 +1140,7 @@ export async function nativeParticipantsHarness(
     definition,
     commands,
     released,
+    serverRootRequests,
     identities,
     launches,
     launchOptions,

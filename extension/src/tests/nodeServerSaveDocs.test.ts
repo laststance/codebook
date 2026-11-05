@@ -96,3 +96,19 @@ test('the packaged README documents the Server replay, the stored source and eve
   for (const code of Object.values(NODE_SERVER_HISTORY_REASON_CODES))
     assert.ok(readme.includes(`| \`${code}\` |`), `README row for ${code}`)
 })
+
+// Value: protects=the packaged README tells the learner that the first pause of a Node test, server, script or Next server side follows the debugger's attach within seconds and that Codebook binds the session that holds the process; fails_when=the sentence leaves the README while the binding change stays in the CHANGELOG; why_new=Cycle 0085 changed which debug session a Node run binds; seam=the packaged README file; no_claim=native timing (checks C85-1 to C85-4)
+test('the packaged README says the first pause of a Node run follows the attach and names the session Codebook binds', async () => {
+  // Arrange
+  const readme = await readPackageFile('README.md')
+
+  // Act
+  const section = readme.split('## Explain a Node HTTP server')[1] ?? ''
+
+  // Assert
+  assert.ok(
+    section.includes(
+      "The first pause of a Node test, server or script, and of a Next app's server side, follows the debugger's attach within seconds: Codebook binds the debug session that holds the process, not the editor's empty top-level session.",
+    ),
+  )
+})

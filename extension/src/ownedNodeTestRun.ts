@@ -38,6 +38,7 @@ import {
   type NodeTestFact,
 } from './utils/inspectNodeTestVariables'
 import { isDebugSessionOfRun } from './utils/isDebugSessionOfRun'
+import { isDebugTargetSession } from './utils/isDebugTargetSession'
 import { launchNodeTest } from './utils/launchNodeTest'
 import {
   listVitestTestFiles,
@@ -313,6 +314,8 @@ export class OwnedNodeTestRun {
     this.bound = await waitUntil(
       async () => {
         for (const session of this.active.values()) {
+          // js-debug's attach root holds no target and never answers; only its child is asked.
+          if (!isDebugTargetSession(session)) continue
           try {
             // The worker runs in the Vitest root it was started in; the debugger's attach stays bound to the opened checkout.
             return await bindOwnedNodeTestDebugSession(

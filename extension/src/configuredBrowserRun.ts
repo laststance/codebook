@@ -239,6 +239,7 @@ import {
 import { isAnnouncedScriptOf } from './utils/isAnnouncedScriptOf'
 import { isBlankOrCommentLine } from './utils/isBlankOrCommentLine'
 import { isBrowserOnEntryRoute } from './utils/isBrowserOnEntryRoute'
+import { isDebugTargetSession } from './utils/isDebugTargetSession'
 import type { GeneratedPosition } from './utils/isGeneratedPositionBefore'
 import { isHotUpdateScriptUrl } from './utils/isHotUpdateScriptUrl'
 import { isModuleEntryPause } from './utils/isModuleEntryPause'
@@ -9354,7 +9355,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * ```
    */
   private isActiveServerSession(session: vscode.DebugSession): boolean {
-    return this.activeSessions.has(session.id) && this.serverSession(session)
+    // js-debug's server root holds no target and never answers; only its descendants are asked.
+    return (
+      isDebugTargetSession(session) &&
+      this.activeSessions.has(session.id) &&
+      this.serverSession(session)
+    )
   }
 
   /**
@@ -9465,6 +9471,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       throw new Error('Ambiguous owned server')
     this.alive()
     this.participants.server.selected = selected.session
+    this.evidence.record('server.selected', {
+      sessionId: selected.session.id,
+      parentId: selected.session.parentSession?.id,
+    })
     this.participants.server.cdp = selected.cdp
     return true
   }
@@ -9546,7 +9556,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * ```
    */
   private isActivePageSession(session: vscode.DebugSession): boolean {
-    if (!session.parentSession || !this.activeSessions.has(session.id))
+    if (!isDebugTargetSession(session) || !this.activeSessions.has(session.id))
       return false
     return !this.serverSession(session)
   }

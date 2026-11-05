@@ -234,7 +234,7 @@ test('one input retains server/browser/server sources and independent native gen
   assert.equal(view.finalOutcome, 'demonstrated')
   assert.equal(view.resourcesReleased, true)
   assert.equal(harness.breakpoints.length, 0)
-  assert.ok(harness.released.includes('server-session'))
+  assert.ok(harness.released.includes('server-root'))
   assert.ok(harness.released.includes('browser-root'))
 })
 
@@ -542,6 +542,50 @@ test('a competing browser resume request while the server is paused invalidates 
     harness.run.view().failures.join(' '),
     /Manual or competing resume/,
   )
+})
+
+// Value: protects=a Next server run selects the session that holds the worker, so its first server stop is not held for the 20 s answer bound by js-debug's silent server root; fails_when=the server discovery asks the root first (a candidate that waits its 20 s bound for a request that never answers), so the selected session is not the child, the root is asked, or the selection comes later than 1 s after the child started; why_new=Cycle 0085: the harness's server session had no parent, so the root's silence was never modelled; seam=the native participants harness (a server root whose requestCDPProxy never settles, and the target session started 100 ms later) and the run's own `server.selected` journal record; no_claim=a real Next worker and js-debug timing (native check C85-4)
+test('a Next server run selects its target session within a second of the session starting while the server root never answers', async (context) => {
+  // Arrange
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'browser', 'server'],
+    { serverTargetStartDelayMs: 100 },
+  )
+  let timer: NodeJS.Timeout | undefined
+  const timedOut = new Promise<'timed out'>((resolve) => {
+    timer = setTimeout(() => resolve('timed out'), 2_000)
+  })
+  try {
+    // Act
+    const prepared = harness.run.prepare()
+    prepared.catch(() => undefined)
+    const outcome = await Promise.race([prepared, timedOut])
+    const journal = harness.run.view().events
+    const selected = journal.find((event) => event.type === 'server.selected')
+    const targetStarted = journal.find(
+      (event) =>
+        event.type === 'session.started' &&
+        JSON.parse(JSON.stringify(event.detail)).sessionId === 'server-session',
+    )
+
+    // Assert
+    assert.deepEqual(JSON.parse(JSON.stringify(selected?.detail ?? null)), {
+      sessionId: 'server-session',
+      parentId: 'server-root',
+    })
+    assert.deepEqual(harness.serverRootRequests, [])
+    assert.notEqual(outcome, 'timed out')
+    assert.ok(
+      selected !== undefined &&
+        targetStarted !== undefined &&
+        selected.elapsedMs - targetStarted.elapsedMs < 1_000,
+      'the server was selected 1 s or more after its session started',
+    )
+  } finally {
+    clearTimeout(timer)
+    await harness.run.stop()
+  }
 })
 
 test('one owned Next worker with nested debugger sessions still reaches its first server stop', async (context) => {

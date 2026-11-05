@@ -205,8 +205,20 @@ export function createServerParticipant(parts: ServerParticipantParts) {
   /** The answers of `Debugger.getStackTrace`, by stack trace id. */
   const stackTraces = new Map<string, object | 'fail'>()
 
+  // js-debug's root of the server attach owns no target and never answers `requestCDPProxy`: its request stays open for good.
+  const rootSession: DebugSession = {
+    id: 'server-root',
+    type: 'pwa-node',
+    name: 'server root',
+    workspaceFolder: undefined,
+    parentSession: undefined,
+    configuration: { type: 'pwa-node', name: '', request: 'attach' },
+    customRequest: () => new Promise<never>(() => {}),
+    getDebugProtocolBreakpoint: async () => undefined,
+  }
   const session: DebugSession = {
     id: 'server-session',
+    parentSession: rootSession,
     type: 'pwa-node',
     name: 'server',
     workspaceFolder: undefined,
@@ -841,6 +853,7 @@ export function createServerParticipant(parts: ServerParticipantParts) {
 
   return {
     session,
+    rootSession,
     proxy,
     api,
     acknowledgeBreakpoints,
