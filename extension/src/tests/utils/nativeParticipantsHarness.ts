@@ -65,6 +65,8 @@ export async function nativeParticipantsHarness(
     duplicateServerSession?: boolean
     /** How long after js-debug's silent root the server's first target session starts; the root is announced first, as in the real tree. */
     serverTargetStartDelayMs?: number
+    /** Another run's server attach is also announced, before this run's own: its child answers `requestCDPProxy` as a real server would, under a root named for another run. */
+    foreignServerRun?: boolean
     distinctServerWorker?: boolean
     /** Models a background Node worker whose PID/cwd match the main server but whose JavaScript thread owns no declared route. */
     serverWorkerThread?: boolean
@@ -470,6 +472,23 @@ export async function nativeParticipantsHarness(
     customRequest: (command) => {
       serverRootRequests.push(command)
       return new Promise<never>(() => {})
+    },
+  }
+  // Another Codebook run's server tree: a root named for that run, and a child that would verify if it were asked.
+  const foreignRequests: string[] = []
+  const foreignServerRoot: DebugSession = {
+    ...serverRoot,
+    id: 'foreign-server-root',
+    configuration: { ...root.configuration, name: 'codebook server other-run' },
+  }
+  const foreignServerChild: DebugSession = {
+    ...session('server'),
+    id: 'foreign-server-child',
+    parentSession: foreignServerRoot,
+    configuration: { ...root.configuration, name: 'codebook server other-run' },
+    customRequest: async (command) => {
+      foreignRequests.push(command)
+      return { host: '127.0.0.1', port: 1235, path: '/server' }
     },
   }
   const serverParent = session('server')
@@ -882,6 +901,10 @@ export async function nativeParticipantsHarness(
         Object.assign(serverParent.configuration, config)
         // js-debug announces its root first; the target sessions follow at once, or after the delay a test asks for.
         run.addSession(serverRoot)
+        if (options.foreignServerRun) {
+          run.addSession(foreignServerRoot)
+          run.addSession(foreignServerChild)
+        }
         const startTargets = (): void => {
           run.addSession(serverParent)
           if (serverChild) run.addSession(serverChild)
@@ -895,6 +918,7 @@ export async function nativeParticipantsHarness(
         released.push(selected.id)
         run.terminated(selected)
         if (selected === root) run.terminated(sessions.browser)
+        if (selected === foreignServerRoot) run.terminated(foreignServerChild)
         if (selected === serverRoot) {
           run.terminated(serverParent)
           if (serverChild) run.terminated(serverChild)
@@ -936,6 +960,11 @@ export async function nativeParticipantsHarness(
       './runtimeSupport/hostBrowser': {
         HostBrowser: class {
           async launch(config: DebugSession['configuration']): Promise<void> {
+            // The other run's server tree has ended by the time this run's browser starts, so only the server discovery could have asked it.
+            if (options.foreignServerRun) {
+              run.terminated(foreignServerChild)
+              run.terminated(foreignServerRoot)
+            }
             Object.assign(root.configuration, config)
             run.addSession(root)
             run.addSession(sessions.browser)
@@ -1141,6 +1170,7 @@ export async function nativeParticipantsHarness(
     commands,
     released,
     serverRootRequests,
+    foreignRequests,
     identities,
     launches,
     launchOptions,

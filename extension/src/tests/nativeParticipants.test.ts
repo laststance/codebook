@@ -588,6 +588,32 @@ test('a Next server run selects its target session within a second of the sessio
   }
 })
 
+// Value: protects=a Next server run never asks or selects a session of another Codebook run's server attach, even when that session answers `requestCDPProxy` and would verify; fails_when=isActiveServerSession drops the run-name check, so the foreign child is asked, verifies, and the run refuses with "Ambiguous owned server" or selects the wrong worker; why_new=Cycle 0085 AC 4: no listed test covers the Next server selection's ownership refusal; seam=the native participants harness (a foreign server root named for another run with an answering child, announced before this run's own child); no_claim=a real second Codebook window or js-debug
+test("a Next server run never asks a session of another run's server attach and selects its own child", async (context) => {
+  // Arrange
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'browser', 'server'],
+    { foreignServerRun: true },
+  )
+  try {
+    // Act
+    await harness.run.prepare()
+    const selected = harness.run
+      .view()
+      .events.find((event) => event.type === 'server.selected')
+
+    // Assert
+    assert.deepEqual(JSON.parse(JSON.stringify(selected?.detail ?? null)), {
+      sessionId: 'server-session',
+      parentId: 'server-root',
+    })
+    assert.deepEqual(harness.foreignRequests, [])
+  } finally {
+    await harness.run.stop()
+  }
+})
+
 test('one owned Next worker with nested debugger sessions still reaches its first server stop', async (context) => {
   // Arrange
   const harness = await nativeParticipantsHarness(
