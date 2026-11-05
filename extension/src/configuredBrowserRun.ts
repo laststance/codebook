@@ -78,6 +78,7 @@ import {
   SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION,
   SECRET_FRAME_VALUE_COPY_MIN_CHARS,
   SIGN_IN_REPOSITORY_NAME_FALLBACK,
+  ROUTE_HANDLER_FILE_NAME,
   UI_CAUSE_MAX_CHARS,
 } from './constants'
 import type {
@@ -187,6 +188,7 @@ import {
 import { assertFrameAtBoundPosition } from './utils/assertFrameAtBoundPosition'
 import { assertSavedSessionOrigin } from './utils/assertSavedSessionOrigin'
 import { refuseViteMisroute } from './utils/assessViteWorkspace'
+import { blankCommentsAndTemplates } from './utils/blankCommentsAndTemplates'
 import { boundColumnOfInstance } from './utils/boundColumnOfInstance'
 import {
   breakLocationLinesOnTheWay,
@@ -367,7 +369,10 @@ import {
 } from './utils/routeHandlerHitVerdictOf'
 import { routeHandlerPathMatches } from './utils/routeHandlerPathMatches'
 import { RouteHandlerRequests } from './utils/routeHandlerRequests'
-import { routeHandlerRouteOf } from './utils/routeHandlerRouteOf'
+import {
+  isRouteFileInAppTree,
+  routeHandlerRouteOf,
+} from './utils/routeHandlerRouteOf'
 import { routeHandlerStackOf } from './utils/routeHandlerStackOf'
 import { ROUTE_HANDLER_NOT_REACHED_POSSIBILITIES } from './utils/routeHandlerWording'
 import { sameScriptUrl } from './utils/sameScriptUrl'
@@ -674,10 +679,9 @@ const PAGE_REQUEST_END_EVENTS = [
   'Network.loadingFailed',
   'Network.loadingFinished',
 ] as const
-/** The file name of an App Router route handler. */
-const ROUTE_FILE_NAME = /^route\.(?:ts|js|tsx|jsx)$/
-/** A route file that declares the Edge runtime, which Codebook's Node debugger cannot pause. */
-const EDGE_RUNTIME_DECLARATION = /export\s+const\s+runtime\s*=\s*(['"])edge\1/
+/** A route file that declares the Edge runtime, which Codebook's Node debugger cannot pause: a line starting with the declaration, with or without a type annotation. Read on code only ({@link blankCommentsAndTemplates}). */
+const EDGE_RUNTIME_DECLARATION =
+  /^[ \t]*export\s+const\s+runtime\s*(?::[^=\n]+)?=\s*(['"])edge\1/m
 /** Keys a stop's library freeze by its declared place. @example libraryFreezeKey({ path: 'a.ts', line: 3, column: 1 }) // 'a.ts:3:1' */
 function libraryFreezeKey(source: {
   path: string
@@ -6197,13 +6201,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     // Only a server stop in a file named like a route file can be a route handler.
     if (
       stop.participant !== 'server' ||
-      !ROUTE_FILE_NAME.test(stop.source.path.split('/').at(-1) ?? '')
+      !ROUTE_HANDLER_FILE_NAME.test(stop.source.path.split('/').at(-1) ?? '')
     )
       return undefined
     const place = `${stop.source.path}:${stop.source.line}`
+    // Only a route file under an App Router tree inside a library or node_modules package is refused; any other route.* file there keeps its library or ordinary server-stop path.
     if (
-      this.libraryFreezes.has(libraryFreezeKey(stop.source)) ||
-      stop.source.path.split('/').includes('node_modules')
+      (this.libraryFreezes.has(libraryFreezeKey(stop.source)) ||
+        stop.source.path.split('/').includes('node_modules')) &&
+      isRouteFileInAppTree(stop.source.path)
     )
       throw routeHandlerStopRefusal(
         'route-handler-not-app-source',
@@ -6230,7 +6236,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const sourceText = await this.readStopSourceText(root, sourcePath)
     // An unreadable or changed source is left to the verification and the seal at the pause, which refuse it as they always did.
     if (sourceText === undefined) return undefined
-    if (EDGE_RUNTIME_DECLARATION.test(sourceText))
+    if (EDGE_RUNTIME_DECLARATION.test(blankCommentsAndTemplates(sourceText)))
       throw routeHandlerStopRefusal('route-handler-edge-runtime', place, index)
     return {
       stop,

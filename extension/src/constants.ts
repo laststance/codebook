@@ -3162,6 +3162,8 @@ export const ROUTE_HANDLER_REQUEST_WAIT_MS = 1000
 export const ROUTE_HANDLER_REQUEST_POLL_MS = 50
 /** The most app-origin API requests the run keeps for route-handler correlation; the oldest is dropped past it. */
 export const ROUTE_HANDLER_REQUEST_LIMIT = 256
+/** The file name of an App Router route handler (`route.ts|js|tsx|jsx`); the one pattern the route lookup and the stop judgement read. */
+export const ROUTE_HANDLER_FILE_NAME = /^route\.(?:ts|js|tsx|jsx)$/
 /** The HTTP method names a route handler exports; the one list the classifier and the help read. */
 export const HTTP_METHOD_NAMES = [
   'GET',

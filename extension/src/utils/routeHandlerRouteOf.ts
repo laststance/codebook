@@ -1,7 +1,6 @@
 /** The folders under the package root that hold an App Router tree. */
 const APP_ROOTS = ['app/', 'src/app/'] as const
-/** The file names of a route handler file. */
-const ROUTE_FILE = /^route\.(?:ts|js|tsx|jsx)$/
+import { ROUTE_HANDLER_FILE_NAME } from '../constants'
 
 /**
  * Gives the route pattern of an App Router route handler file, or `undefined` when the file is none.
@@ -24,11 +23,33 @@ export function routeHandlerRouteOf(
   const segments = packageRelativePath.slice(root.length).split('/')
   const file = segments.pop() ?? ''
   // A node_modules folder inside the app tree is no app source.
-  if (!ROUTE_FILE.test(file) || segments.includes('node_modules'))
+  if (!ROUTE_HANDLER_FILE_NAME.test(file) || segments.includes('node_modules'))
     return undefined
   // A route group `(name)` is no part of the URL.
+  // A private folder `_name` is not routed by Next, so its route file is no route handler.
+  if (segments.some((segment) => segment.startsWith('_'))) return undefined
   const kept = segments.filter(
     (segment) => !(segment.startsWith('(') && segment.endsWith(')')),
   )
   return { route: `/${kept.join('/')}` }
+}
+
+/**
+ * Tells whether a path holds a route file under an App Router tree, wherever the tree sits in the path.
+ *
+ * Why it exists: a route file inside a workspace library or a node_modules package is refused as not the app's own source, but a helper named `route.ts` there (`packages/router/src/route.ts`) is no route handler and must keep its ordinary library stop path. Called by {@link ConfiguredBrowserRun} before it refuses such a stop.
+ * @param path - A workspace-relative path with `/` separators.
+ * @returns `true` when some suffix of the path starting at an `app/` folder is a route file by {@link routeHandlerRouteOf}'s rule.
+ * @example
+ * isRouteFileInAppTree('node_modules/pkg/app/api/x/route.ts') // => true
+ * isRouteFileInAppTree('packages/router/src/route.ts') // => false
+ */
+export function isRouteFileInAppTree(path: string): boolean {
+  const segments = path.split('/')
+  // A suffix starting at `app` covers `src/app` as well.
+  return segments.some(
+    (segment, index) =>
+      segment === 'app' &&
+      routeHandlerRouteOf(segments.slice(index).join('/')) !== undefined,
+  )
 }

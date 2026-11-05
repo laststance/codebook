@@ -2,7 +2,10 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { routeHandlerPathMatches } from '../utils/routeHandlerPathMatches'
-import { routeHandlerRouteOf } from '../utils/routeHandlerRouteOf'
+import {
+  isRouteFileInAppTree,
+  routeHandlerRouteOf,
+} from '../utils/routeHandlerRouteOf'
 
 // Value: protects=E-T1 which files are route handlers: route.ts, route.js, route.tsx and route.jsx under app count; fails_when=an extension is missed so a route handler stop takes the server-action path and ends RUNTIME_FAILED; no_claim=that the file exports an HTTP method
 test('route.ts, route.js, route.tsx and route.jsx under app are route handler files', () => {
@@ -128,4 +131,45 @@ test('a request pathname matches static, dynamic, catch-all and optional catch-a
     false,
     true,
   ])
+})
+
+// Value: protects=FX-B4 a private folder is not routed by Next, so its route.ts is an ordinary server stop; fails_when=app/_lib/route.ts is armed as /_lib; no_claim=private folders written as %5F
+test('a route.ts under a private folder is no route handler', () => {
+  // Arrange
+  const paths = ['app/_lib/route.ts', 'app/api/_helpers/x/route.ts']
+  // Act
+  const routes = paths.map((path) => routeHandlerRouteOf(path))
+  // Assert
+  assert.deepEqual(routes, [undefined, undefined])
+})
+
+// Value: protects=FX-B5 a percent-encoded request segment matches the folder name it decodes to; fails_when=/caf%C3%A9 does not match the café folder, or a malformed escape matches; no_claim=encoded slashes
+test('a percent-encoded request segment matches the decoded static folder', () => {
+  // Arrange
+  const cases = [
+    ['/api/café', '/api/caf%C3%A9'],
+    ['/api/café', '/api/caf%C3'],
+    ['/api/boards/[id]', '/api/boards/%E0%A4%A'],
+  ] as const
+  // Act
+  const matches = cases.map(([route, pathname]) =>
+    routeHandlerPathMatches(route, pathname),
+  )
+  // Assert
+  assert.deepEqual(matches, [true, false, true])
+})
+
+// Value: protects=R10/FX-B1 only a route file under an app tree inside a library counts as a route handler there; fails_when=packages/router/src/route.ts is refused, or a library app/api/x/route.ts is not; no_claim=whether the path is a library
+test('a library helper named route.ts is no app route file but a library app route file is', () => {
+  // Arrange
+  const paths = [
+    'packages/router/src/route.ts',
+    'node_modules/pkg/lib/route.ts',
+    'packages/ui/app/api/x/route.ts',
+    'node_modules/pkg/src/app/api/x/route.ts',
+  ]
+  // Act
+  const results = paths.map((path) => isRouteFileInAppTree(path))
+  // Assert
+  assert.deepEqual(results, [false, false, true, true])
 })

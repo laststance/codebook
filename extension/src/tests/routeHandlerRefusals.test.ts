@@ -135,3 +135,60 @@ test('a route.ts under a lib folder is not refused as a route handler', async (c
     false,
   )
 })
+
+// Value: protects=R10 a helper named route.ts inside a node_modules package (no App Router tree) keeps its ordinary server-stop path; fails_when=it is refused as route-handler-not-app-source; no_claim=a workspace library freeze (same check, covered by the library suites)
+test('a route.ts helper in a node_modules package is not refused as a route handler', async (context) => {
+  // Arrange
+  const harness = await routeHandlerRunHarness(context, {
+    extra: { sourcePath: 'node_modules/pkg/src/route.ts' },
+  })
+  // Act
+  const failure = await preparationFailure(harness)
+  // Assert
+  const reason =
+    failure instanceof StudyError ? String(failure.details?.reason) : undefined
+  assert.notEqual(reason, 'route-handler-not-app-source')
+})
+
+// Value: protects=FX-B2 a commented-out Edge declaration does not refuse a Node route handler; fails_when=the run is refused as route-handler-edge-runtime; no_claim=a runtime set by re-export
+test('a commented-out Edge runtime declaration does not refuse the route handler', async (context) => {
+  // Arrange
+  const harness = await routeHandlerRunHarness(context, {
+    extra: {
+      fixture: {
+        source:
+          "// export const runtime = 'edge'\n/* export const runtime = 'edge' */\nvar nextTheme = \"dark\";\n",
+        citationEndLine: 2,
+        declaredLine: 2,
+      },
+    },
+  })
+  // Act
+  const failure = await preparationFailure(harness)
+  // Assert
+  const reason =
+    failure instanceof StudyError ? String(failure.details?.reason) : undefined
+  assert.notEqual(reason, 'route-handler-edge-runtime')
+})
+
+// Value: protects=FX-B2 a type-annotated Edge declaration is still refused; fails_when=export const runtime: string = 'edge' passes as a Node handler; no_claim=other annotations beyond a simple type
+test('a type-annotated Edge runtime declaration is refused before next dev starts', async (context) => {
+  // Arrange
+  const harness = await routeHandlerRunHarness(context, {
+    extra: {
+      fixture: {
+        source:
+          'export const runtime: string = \'edge\'\nvar nextTheme = "dark";\nvar between = 1;\n',
+        citationEndLine: 2,
+        declaredLine: 2,
+      },
+    },
+  })
+  // Act
+  const failure = await preparationFailure(harness)
+  // Assert
+  assert.equal(
+    failure instanceof StudyError ? failure.details?.reason : undefined,
+    'route-handler-edge-runtime',
+  )
+})
