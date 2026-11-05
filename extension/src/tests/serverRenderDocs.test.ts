@@ -273,6 +273,12 @@ test('the README describes module-evaluation pauses, preparation labels, the not
     'A Pages run, and any run in a workspace with a Pages folder, does not observe module evaluation',
   ])
     assert.ok(section.includes(phrase), phrase)
+  // The compatibility paragraph above the Next sections names API 1.27 and what it adds.
+  assert.ok(
+    readme.includes(
+      'API 1.27 is additive: it adds module-evaluation server stops',
+    ),
+  )
   assert.equal(section.includes('Module-scope code runs once'), false)
   assert.equal(section.includes('never at module scope'), false)
 })
