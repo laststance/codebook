@@ -57,7 +57,10 @@ export function watchOwnedProcess(
       resolve(exitFact)
     })
     // A spawn failure emits `error` and no `exit`: settle with a fact that says the process never ran, so a waiter does not hang. `exitFact()` stays `undefined`.
-    child.once('error', () => resolve({ exitCode: null, signal: null }))
+    // `error` also fires on a live child (failed kill or signal, failed message, stdio error): the process may still run, so only a child with no pid (never spawned) settles here and the real `exit` settles the rest.
+    child.once('error', () => {
+      if (child.pid === undefined) resolve({ exitCode: null, signal: null })
+    })
   })
   child.once('error', (cause) => {
     spawnError = cause
