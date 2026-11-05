@@ -4,9 +4,7 @@ import type { NodeScriptHistoryTypes } from '../nodeScriptHistoryTypes'
 import type { NodeHistoryStore } from '../nodeTestHistoryStore'
 import type { ResourceContent } from '../resources'
 
-import { maskSavedFacts } from './maskSavedFacts'
 import { maskSavedOutputEntries } from './maskSavedOutputEntries'
-import { nodeServerSourceKey } from './nodeServerJournalRules'
 import {
   leanEvidenceEvent,
   nodeRunVerdicts,
@@ -14,7 +12,7 @@ import {
   type LeanRunEvent,
   type NodeRunResourceProfile,
 } from './readNodeRunHistoryResource'
-import { rehydrateServerStopSnapshot } from './rehydrateServerStopSnapshot'
+import { rehydrateMaskedEntries } from './rehydrateServerStopSnapshot'
 
 /**
  * Reduces one script journal entry to its lean, citable form, or to nothing for an entry no learning step may cite (`source` and `output-truncated`).
@@ -38,37 +36,13 @@ function leanScriptEvent(
   }
 }
 
-/**
- * Restores every stop of a script journal to its whole snapshot, with the output and the stops' facts masked again, as the server's read path does.
- * @param entries - The verified journal's entries in order.
- * @returns The same entries, each stop carrying its full, masked snapshot and facts.
- * @example rehydrateScriptEntries(history.entries).filter((entry) => entry.type === 'stop')
- */
-function rehydrateScriptEntries(
-  entries: readonly NodeScriptHistoryEntry[],
-): NodeScriptHistoryEntry[] {
-  const sources = new Map<
-    string,
-    Extract<NodeScriptHistoryEntry, { type: 'source' }>
-  >()
-  return maskSavedOutputEntries(entries).map((entry) => {
-    if (entry.type === 'source')
-      sources.set(nodeServerSourceKey(entry.path, entry.hash), entry)
-    if (entry.type !== 'stop') return entry
-    return {
-      ...entry,
-      facts: maskSavedFacts(entry.facts),
-      debuggerSnapshot: rehydrateServerStopSnapshot(entry, sources),
-    }
-  })
-}
-
 /** How a script history is masked, reduced and restored for its resource. */
 const SCRIPT_RESOURCE_PROFILE: NodeRunResourceProfile<NodeScriptHistoryTypes> =
   {
     mask: maskSavedOutputEntries,
     lean: leanScriptEvent,
-    rehydrate: rehydrateScriptEntries,
+    rehydrate: (entries) =>
+      rehydrateMaskedEntries(maskSavedOutputEntries(entries)),
     // A script header declares paths and a loader only, nothing a mask would change.
     maskHeader: (header) => header,
   }

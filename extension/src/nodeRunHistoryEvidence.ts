@@ -39,7 +39,7 @@ export type QueueEvidenceEntry = (
 ) => Promise<void>
 
 /** Estimates the bytes of an entry's journal line before it is numbered; close enough to keep the bounds honest. */
-export function estimateLineBytes(input: unknown): number {
+function estimateLineBytes(input: unknown): number {
   return Buffer.byteLength(JSON.stringify(input)) + 24
 }
 

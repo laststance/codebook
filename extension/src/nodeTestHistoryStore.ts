@@ -1297,6 +1297,8 @@ export class NodeHistoryStore<Types extends HistoryTypes> {
    * @returns Once every write that was running when this was called has settled; a write that starts later is not awaited.
    * @example await store.settleReaderPositionWrites()
    */
+  // Called for every store of the repository's one store list, which static analysis cannot trace to this class.
+  // fallow-ignore-next-line unused-class-member
   async settleReaderPositionWrites(): Promise<void> {
     await Promise.allSettled([...this.readerPositionWrites.values()])
   }

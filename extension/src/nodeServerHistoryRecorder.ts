@@ -1,7 +1,6 @@
 import {
   NodeRunHistoryRecorder,
   type NodeRunHistoryBeginInput,
-  type NodeRunHistoryStatus,
 } from './nodeRunHistoryRecorder'
 import {
   NodeServerHistorySinkImpl,
@@ -12,9 +11,6 @@ import type {
   NodeServerEndInput,
   NodeServerHistoryWriter,
 } from './nodeServerHistoryWriter'
-
-/** Where a server run's history stands: its writer takes entries, it was sealed, or it was abandoned because it could not be written or sealed. */
-export type NodeServerHistoryStatus = NodeRunHistoryStatus
 
 /** What {@link NodeServerHistoryRecorder.begin} needs from the service. */
 export type NodeServerHistoryBeginInput = NodeRunHistoryBeginInput<

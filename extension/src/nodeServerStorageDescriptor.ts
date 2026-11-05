@@ -7,8 +7,11 @@ import {
 import type { HistoryStorageDescriptor } from './historyStorageDescriptor'
 import {
   buildNodeRunLearningCodec,
+  citableRunEvidenceEvent,
   citedSequencesOf,
-} from './nodeRunLearningCodec'
+  summarizeRunEvidence,
+  verifyRunSeal,
+} from './nodeRunStorageParts'
 import {
   nodeServerHistoryEntrySchema,
   nodeServerHistoryHeaderSchema,
@@ -25,7 +28,6 @@ import {
   nodeServerLearningMaterialContentSchema,
   nodeServerLearningMaterialSchema,
 } from './nodeServerLearningSchemas'
-import { capMissingList } from './utils/capMissingList'
 import { evaluateNodeServerCapture } from './utils/evaluateNodeServerCapture'
 import { evaluateNodeServerLearning } from './utils/evaluateNodeServerLearning'
 import { maskSecretQueryValues } from './utils/maskSecretQueryValues'
@@ -46,15 +48,8 @@ function citableServerEvent(
 ): CitableEvent | undefined {
   switch (entry.type) {
     case 'stop':
-      return {
-        type: 'stop',
-        sourceHash: entry.source.hash,
-        path: entry.source.path,
-        line: entry.source.line,
-        declaredStopIndex: entry.declaredStopIndex,
-      }
     case 'output':
-      return { type: 'output', channel: entry.channel }
+      return citableRunEvidenceEvent(entry)
     case 'request':
     case 'response':
     case 'request-failed':
@@ -136,54 +131,40 @@ export const nodeServerStorageDescriptor: HistoryStorageDescriptor<NodeServerHis
     },
     createWriter: (directory, header, onClosed, describeCause) =>
       new NodeServerHistoryWriter(directory, header, onClosed, describeCause),
-    verifySeal: ({ seal, entries, progress, hasIncompleteLine }) => {
-      if (
-        hasIncompleteLine ||
-        seal.entryCount !== entries.length ||
-        // A complete seal needs the whole story: the request closed by its terminal entry and the run's end.
-        (seal.status === 'complete' &&
-          !(progress.hasEnd && progress.hasTerminal))
-      )
-        throw new Error(
-          'Sealed Node server history does not contain what its seal claims.',
-        )
-    },
+    verifySeal: ({ seal, entries, progress, hasIncompleteLine }) =>
+      // A complete seal needs the whole story: the request closed by its terminal entry and the run's end.
+      verifyRunSeal('Node server history', {
+        seal,
+        entries,
+        hasIncompleteLine,
+        storyIsWhole: progress.hasEnd && progress.hasTerminal,
+      }),
     emptySummary: emptyNodeServerSummary,
     summarize: ({ history, materialContent, materialRevision }) => {
       const { header, entries, seal } = history
-      const stops = entries.filter((entry) => entry.type === 'stop')
       const response = entries.find((entry) => entry.type === 'response')
       const failure = entries.find((entry) => entry.type === 'request-failed')
-      // A sealed history keeps its reasons as sealed (identical after a restart); any other is judged from its journal now.
-      const reasons =
-        seal?.reasons ??
-        evaluateNodeServerCapture(header, entries, {
-          interrupted: history.status === 'interrupted',
-        })
-      const capture = capMissingList(reasons)
-      const learning = evaluateNodeServerLearning(
-        entries,
-        materialContent ? citedSequencesOf(materialContent) : undefined,
-      )
-      const learningMissing = capMissingList(learning.missing)
       const summary: NodeServerHistorySummary = {
         ...emptyNodeServerSummary(header),
-        status: history.status,
-        ...(history.reason ? { reason: history.reason } : {}),
-        verification: 'verified',
+        ...summarizeRunEvidence({
+          status: history.status,
+          reason: history.reason,
+          entries,
+          // A sealed history keeps its reasons as sealed (identical after a restart); any other is judged from its journal now.
+          reasons:
+            seal?.reasons ??
+            evaluateNodeServerCapture(header, entries, {
+              interrupted: history.status === 'interrupted',
+            }),
+          learning: evaluateNodeServerLearning(
+            entries,
+            materialContent ? citedSequencesOf(materialContent) : undefined,
+          ),
+          materialContent,
+          materialRevision,
+        }),
         ...(response ? { responseStatus: response.status } : {}),
         ...(failure ? { requestFailureCode: failure.code } : {}),
-        stopCount: stops.length,
-        reachedStopCount: new Set(stops.map((stop) => stop.declaredStopIndex))
-          .size,
-        captureComplete: reasons.length === 0,
-        captureMissing: capture.items,
-        captureMissingCount: capture.count,
-        learningCoverage: learning.coverage,
-        learningMissing: learningMissing.items,
-        learningMissingCount: learningMissing.count,
-        ...(materialContent ? { title: materialContent.title } : {}),
-        materialRevision: materialRevision ?? 0,
       }
       return { summary }
     },

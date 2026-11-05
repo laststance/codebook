@@ -68,6 +68,11 @@ export class NodeServerHistorySinkImpl
   private sentMarked = false
   private terminal = false
 
+  /** The server writer, typed concretely so its request methods are traced to this sink. */
+  private get serverWriter(): NodeServerHistoryWriter {
+    return this.input.writer
+  }
+
   openRequest(
     elapsedMs: number,
     request: { method: string; path: string; bodyBytes: number },
@@ -78,7 +83,7 @@ export class NodeServerHistorySinkImpl
       this.attempts++
       this.openAttempt = this.attempts
       this.sentMarked = false
-      return this.input.writer.appendRequest({
+      return this.serverWriter.appendRequest({
         elapsedMs: at,
         attempt: this.attempts,
         method: request.method as 'GET',
@@ -99,7 +104,7 @@ export class NodeServerHistorySinkImpl
       const attempt = this.openAttempt
       if (attempt === undefined) return
       this.openAttempt = undefined
-      return this.input.writer.appendRequestWithdrawn({
+      return this.serverWriter.appendRequestWithdrawn({
         elapsedMs: at,
         attempt,
         code:
@@ -147,7 +152,7 @@ export class NodeServerHistorySinkImpl
       // The mark comes first when the bytes were handed over a moment before the report of it reached the sink.
       const mark = this.sendMark(at)
       this.terminal = true
-      const answer = this.input.writer.appendResponse({
+      const answer = this.serverWriter.appendResponse({
         elapsedMs: at,
         status: response.status,
         contentType:
@@ -182,7 +187,7 @@ export class NodeServerHistorySinkImpl
       // The failure closes the open attempt, as the journal's rules do.
       this.openAttempt = undefined
       this.sentMarked = false
-      return this.input.writer.appendRequestFailed({
+      return this.serverWriter.appendRequestFailed({
         elapsedMs: at,
         code:
           cutTextToLength(
@@ -202,6 +207,6 @@ export class NodeServerHistorySinkImpl
     const attempt = this.openAttempt
     if (attempt === undefined || this.sentMarked) return undefined
     this.sentMarked = true
-    return this.input.writer.appendRequestSent({ elapsedMs: at, attempt })
+    return this.serverWriter.appendRequestSent({ elapsedMs: at, attempt })
   }
 }

@@ -8,7 +8,7 @@ import { describeServerRowStatus } from './describeNodeServerReplay'
  * @returns `exit code 0`, `exit code unknown`, `ended by a signal`, `stopped`, `ended at a limit`, `no end recorded` for a finished history without an `end`, or an empty text while it records.
  * @example describeScriptEnd({ endKind: 'exited', exitCode: 3, … }) // => 'exit code 3'
  */
-export function describeScriptEnd(
+function describeScriptEnd(
   summary: Pick<
     NodeScriptHistorySummary,
     'endKind' | 'exitCode' | 'verification' | 'status'

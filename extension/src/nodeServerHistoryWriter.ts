@@ -2,12 +2,8 @@ import {
   NODE_SERVER_HISTORY_FORMAT_VERSION,
   NODE_SERVER_HISTORY_LOCATION_LIMIT_CHARS,
 } from './constants'
-import { HistoryJournalWriter } from './nodeHistoryJournalWriter'
-import {
-  appendStopEvidence,
-  NodeRunEntryAccounting,
-  type NodeRunWriterStop,
-} from './nodeRunHistoryEvidence'
+import type { NodeRunWriterStop } from './nodeRunHistoryEvidence'
+import { NodeRunHistoryWriter } from './nodeRunHistoryWriter'
 import {
   NodeRunWriterRules,
   type NodeRunRuleProfile,
@@ -17,6 +13,7 @@ import {
   nodeServerHistorySealSchema,
   type NodeServerHistoryEntry,
   type NodeServerHistoryEntryInput,
+  type NodeRunEvidenceEntryInput,
   type NodeServerHistoryHeader,
 } from './nodeServerHistorySchemas'
 import type { NodeServerHistoryTypes } from './nodeServerHistoryTypes'
@@ -57,28 +54,19 @@ export type NodeServerWriterStop = NodeRunWriterStop
  * Built by {@link nodeServerStorageDescriptor} when the store reserves a history; the run feeds it through {@link NodeServerHistorySink}.
  * @example const writer = await servers.start(header); await writer.appendRequest({ … }); await writer.seal({ reason: 'stopped', elapsedMs: 900 })
  */
-export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHistoryTypes> {
-  private readonly serverRules: NodeRunWriterRules<NodeServerHistoryTypes>
-  /** The `(path, hash)` keys of sources this writer already queued. */
-  private readonly queuedSources = new Set<string>()
-  private readonly accounting = new NodeRunEntryAccounting()
-  private sealOperation?: Promise<string | undefined>
-  /** The one write of `end`, kept so a retried seal never writes it twice. */
-  private endOperation?: Promise<void>
-
+export class NodeServerHistoryWriter extends NodeRunHistoryWriter<NodeServerHistoryTypes> {
   constructor(
     directory: string,
     header: NodeServerHistoryHeader,
     onClosed: () => void,
     describeCause: (error: unknown) => string,
   ) {
-    const rules = new NodeRunWriterRules(
+    super(
+      directory,
       header,
-      describeCause,
-      NODE_SERVER_RULE_PROFILE,
+      onClosed,
+      new NodeRunWriterRules(header, describeCause, NODE_SERVER_RULE_PROFILE),
     )
-    super(directory, header, onClosed, rules)
-    this.serverRules = rules
   }
 
   /**
@@ -88,36 +76,13 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
    * @example await writer.appendEntry({ type: 'request-sent', elapsedMs: 3, attempt: 1 })
    */
   appendEntry(input: NodeServerHistoryEntryInput): Promise<void> {
-    // Closed to new appends from the moment the seal began: the entry is not written and is no failure, so a run that ended cleanly still seals complete.
-    if (this.accounting.closedToAppends) return Promise.resolve()
-    const release = this.accounting.admit(input)
-    const operation = this.append(input)
-    operation.then(release, release)
-    return operation
+    return this.appendCounted(input, () => this.append(input))
   }
 
-  /**
-   * Queues one stdout or stderr chunk, redacted by the caller, unless a bound says it must be dropped: the output budget, the structural headroom or the writer queue. The first drop appends one `output-truncated` entry; later output is dropped silently.
-   * @param event - The chunk with its time since launch.
-   * @returns Settles when the chunk is durable, or at once when it was dropped.
-   * @example await writer.appendOutput({ elapsedMs: 12, channel: 'stdout', text: 'listening\n' })
-   */
-  appendOutput(event: {
-    elapsedMs: number
-    channel: 'stdout' | 'stderr'
-    text: string
-  }): Promise<void> {
-    return this.accounting.appendOutput(event, (input) =>
-      this.appendEntry(input),
-    )
-  }
-
-  /**
-   * Says whether output is dropped for good: its budget was cut, an append failed, or the writer is closed to appends; the sink stops sanitizing and queueing output from then on.
-   * @example if (writer.outputCut) return
-   */
-  get outputCut(): boolean {
-    return this.accounting.isOutputCut(this.appendFailure !== undefined)
+  protected override queueEvidence(
+    input: NodeRunEvidenceEntryInput,
+  ): Promise<void> {
+    return this.appendEntry(input)
   }
 
   /**
@@ -160,18 +125,6 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
     return this.appendEntry({ type: 'request-sent', ...input })
   }
 
-  /**
-   * Records one hit of a declared stop. The executed source text is written once per `(path, hash)` in a `source` entry just before the first stop that needs it (hash only with `sourceUnavailable` for a text above 512 KiB or one that does not hash to its name), and the stop keeps its top frame's source by hash.
-   * @param capture - The run's capture of the hit.
-   * @returns Settles when the stop (and its source entry, if new) is durable.
-   * @example await writer.appendStop({ elapsedMs: 60, declaredStopIndex: 0, hit: 1, generation: 1, source, frameName: 'handler', facts: {}, unavailable: [], snapshot })
-   */
-  appendStop(capture: NodeServerWriterStop): Promise<void> {
-    return appendStopEvidence(capture, this.queuedSources, (input) =>
-      this.appendEntry(input),
-    )
-  }
-
   /** Records the response the run shows: its status, content type, the shown body, its size, whether the read was cut, the redirect (with the values of secret query parameters and of `code` masked, {@link maskSecretQueryValues}) and the request's duration. @example await writer.appendResponse({ elapsedMs: 90, status: 200, contentType: 'application/json', body: '{}', bodyBytes: 2, readCut: false, location: null, requestDurationMs: 50 }) */
   appendResponse(
     input: EntryInputOf<'response'> extends infer Entry
@@ -202,14 +155,6 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
   }
 
   /**
-   * Notes that the run refused a hit beyond its capture budget, so the seal says later hits were not recorded.
-   * @example writer.markCaptureBudgetExhausted()
-   */
-  markCaptureBudgetExhausted(): void {
-    this.serverRules.captureBudgetExhausted = true
-  }
-
-  /**
    * Ends and seals the history: from this call the writer is closed to new appends (an entry offered later is not written and is no failure), the entries accepted before it are written, then `end`, then `sealed.json`; Stop, Save, dispose, self-exit and failure all call it and share one seal.
    * `end` is written once: a retry after a failed `sealed.json` write only retries the finish. An `end` that cannot be written (the history already failed) does not stop the seal: a history without `end` seals as a partial one.
    * @param end - How the run ended.
@@ -218,22 +163,15 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
    * @example await writer.seal({ elapsedMs: 900, reason: 'stopped' })
    */
   seal(end: NodeServerEndInput): Promise<string | undefined> {
-    if (this.sealOperation) return this.sealOperation
-    // Decided in this turn, before any later append is offered.
-    this.accounting.closedToAppends = true
-    // The end is queued in this turn, behind every entry accepted before it, through the base door that the closed flag does not shut.
-    // The end carries the largest accepted time, queued entries included, so a run that ended cleanly never seals partial for time moving backward.
-    this.endOperation ??= this.append({
-      type: 'end',
-      ...end,
-      elapsedMs: Math.max(end.elapsedMs, this.accounting.latestAcceptedMs),
-    }).catch(() => undefined)
-    this.sealOperation = this.endOperation.then(() => super.finish('partial'))
-    // A failed seal may be tried again.
-    this.sealOperation.catch(() => {
-      this.sealOperation = undefined
-    })
-    return this.sealOperation
+    return this.sealOnce(() =>
+      this.queueEnd(() =>
+        this.append({
+          type: 'end',
+          ...end,
+          elapsedMs: this.endTime(end.elapsedMs),
+        }),
+      ),
+    )
   }
 
   /**
@@ -248,10 +186,7 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
   ): Promise<string | undefined> {
     return this.seal({
       // The largest accepted time, queued entries included, as {@link NodeServerHistoryWriter.seal} takes it.
-      elapsedMs: Math.max(
-        this.serverRules.lastElapsedMs,
-        this.accounting.latestAcceptedMs,
-      ),
+      elapsedMs: this.endTime(this.runRules.lastElapsedMs),
       reason: 'stopped',
     })
   }

@@ -69,7 +69,7 @@ export const nodeScriptHistoryHeaderSchema = z
  * The one `end` entry of a script history: how the run ended and which declared stops it reached.
  * `stopsNeverReached` is always present; once the capture budget was spent, the stops not reached before that are `stopsNotObserved`, never never-reached, because their breakpoints were retired.
  */
-export const nodeScriptEndEntrySchema = z.strictObject({
+const nodeScriptEndEntrySchema = z.strictObject({
   type: z.literal('end'),
   ...nodeRunEntryBase,
   kind: z.enum(NODE_SCRIPT_END_KINDS),

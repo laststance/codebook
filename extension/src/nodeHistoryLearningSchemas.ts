@@ -5,7 +5,7 @@ import { HISTORY_SHARED_MAX_SEQUENCE } from './constants'
 import { nodeServerLearningReferenceSchema } from './nodeServerLearningSchemas'
 import { buildNodeLearningMaterialContentSchema } from './nodeTestHistorySchemas'
 
-/** Every entry a step of either history profile may cite: a node-server history has the request, stops, outputs, the response or the request failure (its own reference schema); a node-test history has stops, outputs and the result; a chrome-extension history has captured stops (with their context), pauses and the result. One schema for both, so a malformed step is refused at its own element, whichever profile its study id names. */
+/** Every entry a step of any history profile may cite (a node-script history cites stops, outputs and its end): a node-server history has the request, stops, outputs, the response or the request failure (its own reference schema); a node-test history has stops, outputs and the result; a chrome-extension history has captured stops (with their context), pauses and the result. One schema for both, so a malformed step is refused at its own element, whichever profile its study id names. */
 const [
   requestReference,
   serverStopReference,
@@ -36,6 +36,11 @@ const nodeHistoryReferenceSchema = z.discriminatedUnion('type', [
   chromeExtensionLearningReferenceSchema.options[1],
   z.strictObject({
     type: z.literal('result'),
+    sequence: sharedSequence,
+  }),
+  // The end of a node-script history (a Script replay); the service parses again with the script schema.
+  z.strictObject({
+    type: z.literal('end'),
     sequence: sharedSequence,
   }),
 ])

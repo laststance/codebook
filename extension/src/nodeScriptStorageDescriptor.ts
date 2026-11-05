@@ -7,8 +7,11 @@ import {
 import type { HistoryStorageDescriptor } from './historyStorageDescriptor'
 import {
   buildNodeRunLearningCodec,
+  citableRunEvidenceEvent,
   citedSequencesOf,
-} from './nodeRunLearningCodec'
+  summarizeRunEvidence,
+  verifyRunSeal,
+} from './nodeRunStorageParts'
 import {
   nodeScriptHistoryEntrySchema,
   nodeScriptHistoryHeaderSchema,
@@ -25,7 +28,6 @@ import {
   nodeScriptLearningMaterialContentSchema,
   nodeScriptLearningMaterialSchema,
 } from './nodeScriptLearningSchemas'
-import { capMissingList } from './utils/capMissingList'
 import { evaluateNodeScriptCapture } from './utils/evaluateNodeScriptCapture'
 import { evaluateNodeScriptLearning } from './utils/evaluateNodeScriptLearning'
 import {
@@ -45,15 +47,8 @@ function citableScriptEvent(
 ): CitableEvent | undefined {
   switch (entry.type) {
     case 'stop':
-      return {
-        type: 'stop',
-        sourceHash: entry.source.hash,
-        path: entry.source.path,
-        line: entry.source.line,
-        declaredStopIndex: entry.declaredStopIndex,
-      }
     case 'output':
-      return { type: 'output', channel: entry.channel }
+      return citableRunEvidenceEvent(entry)
     case 'end':
       return { type: 'end' }
     default:
@@ -132,56 +127,43 @@ export const nodeScriptStorageDescriptor: HistoryStorageDescriptor<NodeScriptHis
     },
     createWriter: (directory, header, onClosed, describeCause) =>
       new NodeScriptHistoryWriter(directory, header, onClosed, describeCause),
-    verifySeal: ({ seal, entries, progress, hasIncompleteLine }) => {
-      if (
-        hasIncompleteLine ||
-        seal.entryCount !== entries.length ||
-        // A complete seal needs the whole story: the run's end.
-        (seal.status === 'complete' && !progress.hasEnd)
-      )
-        throw new Error(
-          'Sealed Node script history does not contain what its seal claims.',
-        )
-    },
+    verifySeal: ({ seal, entries, progress, hasIncompleteLine }) =>
+      // A complete seal needs the whole story: the run's end.
+      verifyRunSeal('Node script history', {
+        seal,
+        entries,
+        hasIncompleteLine,
+        storyIsWhole: progress.hasEnd,
+      }),
     emptySummary: emptyNodeScriptSummary,
     summarize: ({ history, materialContent, materialRevision }) => {
       const { header, entries, seal } = history
-      const stops = entries.filter((entry) => entry.type === 'stop')
       const end = entries.find((entry) => entry.type === 'end')
-      // A sealed history keeps its reasons as sealed (identical after a restart); any other is judged from its journal now.
-      const reasons =
-        seal?.reasons ??
-        evaluateNodeScriptCapture(header, entries, {
-          interrupted: history.status === 'interrupted',
-        })
-      const capture = capMissingList(reasons)
-      const learning = evaluateNodeScriptLearning(
-        entries,
-        materialContent ? citedSequencesOf(materialContent) : undefined,
-      )
-      const learningMissing = capMissingList(learning.missing)
       const summary: NodeScriptHistorySummary = {
         ...emptyNodeScriptSummary(header),
-        status: history.status,
-        ...(history.reason ? { reason: history.reason } : {}),
-        verification: 'verified',
+        ...summarizeRunEvidence({
+          status: history.status,
+          reason: history.reason,
+          entries,
+          // A sealed history keeps its reasons as sealed (identical after a restart); any other is judged from its journal now.
+          reasons:
+            seal?.reasons ??
+            evaluateNodeScriptCapture(header, entries, {
+              interrupted: history.status === 'interrupted',
+            }),
+          learning: evaluateNodeScriptLearning(
+            entries,
+            materialContent ? citedSequencesOf(materialContent) : undefined,
+          ),
+          materialContent,
+          materialRevision,
+        }),
         ...(end
           ? {
               endKind: end.kind,
               ...(end.exitCode === undefined ? {} : { exitCode: end.exitCode }),
             }
           : {}),
-        stopCount: stops.length,
-        reachedStopCount: new Set(stops.map((stop) => stop.declaredStopIndex))
-          .size,
-        captureComplete: reasons.length === 0,
-        captureMissing: capture.items,
-        captureMissingCount: capture.count,
-        learningCoverage: learning.coverage,
-        learningMissing: learningMissing.items,
-        learningMissingCount: learningMissing.count,
-        ...(materialContent ? { title: materialContent.title } : {}),
-        materialRevision: materialRevision ?? 0,
       }
       return { summary }
     },

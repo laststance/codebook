@@ -2,12 +2,14 @@ import { z } from 'zod'
 
 import {
   NODE_SERVER_HISTORY_MAX_ENTRIES,
-  NODE_SERVER_HISTORY_MAX_STOPS,
   NODE_TEST_LEARNING_MATERIAL_VERSION,
 } from './constants'
 import { studyIdSchema } from './legacyStudySchemas'
+import {
+  nodeRunOutputReferenceSchema,
+  nodeRunStopReferenceSchema,
+} from './nodeServerLearningSchemas'
 import { buildNodeLearningMaterialContentSchema } from './nodeTestHistorySchemas'
-import { repositoryHashSchema } from './sourceSchemas'
 
 const sequence = z
   .number()
@@ -16,24 +18,9 @@ const sequence = z
   .max(NODE_SERVER_HISTORY_MAX_ENTRIES)
 
 /** The entries of a script history a learning step may cite: a stop (with its source hash), an output (with its channel) or the end. */
-export const nodeScriptLearningReferenceSchema = z.discriminatedUnion('type', [
-  z.strictObject({
-    type: z.literal('stop'),
-    sequence,
-    sourceHash: repositoryHashSchema,
-    // Optional and additive: when given, the cited stop must be a hit of this declared stop (0-based, as the events list shows it).
-    declaredStopIndex: z
-      .number()
-      .int()
-      .nonnegative()
-      .max(NODE_SERVER_HISTORY_MAX_STOPS)
-      .optional(),
-  }),
-  z.strictObject({
-    type: z.literal('output'),
-    sequence,
-    channel: z.enum(['stdout', 'stderr']),
-  }),
+const nodeScriptLearningReferenceSchema = z.discriminatedUnion('type', [
+  nodeRunStopReferenceSchema,
+  nodeRunOutputReferenceSchema,
   z.strictObject({ type: z.literal('end'), sequence }),
 ])
 

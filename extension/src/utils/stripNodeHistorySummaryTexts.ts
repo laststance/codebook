@@ -4,6 +4,46 @@ import type { NodeServerHistorySummary } from '../nodeServerHistoryTypes'
 
 import { stripTerminalControls } from './stripTerminalControls'
 
+/** Strips the controls from the capture reasons' texts of a node run summary. */
+function stripReasons<Reason extends { text: string }>(
+  reasons: readonly Reason[],
+): Reason[] {
+  return reasons.map((reason) => ({
+    ...reason,
+    text: stripTerminalControls(reason.text),
+  }))
+}
+
+/** The words every node run summary records beside its question: the saved title and the reason. */
+function stripRunSummaryTexts(
+  summary: NodeServerHistorySummary | NodeScriptHistorySummary,
+) {
+  return {
+    question: stripTerminalControls(summary.question),
+    ...(summary.title ? { title: stripTerminalControls(summary.title) } : {}),
+    ...(summary.reason
+      ? { reason: stripTerminalControls(summary.reason) }
+      : {}),
+    captureMissing: stripReasons(summary.captureMissing),
+  }
+}
+
+/** A server history's recorded words are its question, saved title, request line and capture reasons. */
+function stripServerSummaryTexts(
+  summary: NodeServerHistorySummary,
+): NodeServerHistorySummary {
+  return {
+    ...summary,
+    ...stripRunSummaryTexts(summary),
+    requestLine: stripTerminalControls(summary.requestLine),
+    ...(summary.requestFailureCode
+      ? {
+          requestFailureCode: stripTerminalControls(summary.requestFailureCode),
+        }
+      : {}),
+  }
+}
+
 /**
  * Removes terminal and bidirectional controls from the recorded test file and titles of a Saved studies catalog entry, so a U+202E in a test title cannot reorder the text the Study message or a notice prints about a saved test replay (F131); called by the Study workspace for each catalog entry it sends or names, and by {@link sanitizeNodeTestHistory} for an opened replay's configuration.
  * The entry's identity and every other field are untouched.
@@ -23,42 +63,14 @@ export function stripNodeHistorySummaryTexts(
 export function stripNodeHistorySummaryTexts(
   summary: NodeHistorySummary | { testFile: string; testTitles?: string[] },
 ): unknown {
-  // A server history's recorded words are its question, saved title, request line and capture reasons.
   if ('profile' in summary && summary.profile === 'node-server')
-    return {
-      ...summary,
-      question: stripTerminalControls(summary.question),
-      ...(summary.title ? { title: stripTerminalControls(summary.title) } : {}),
-      requestLine: stripTerminalControls(summary.requestLine),
-      ...(summary.requestFailureCode
-        ? {
-            requestFailureCode: stripTerminalControls(
-              summary.requestFailureCode,
-            ),
-          }
-        : {}),
-      ...(summary.reason
-        ? { reason: stripTerminalControls(summary.reason) }
-        : {}),
-      captureMissing: summary.captureMissing.map((reason) => ({
-        ...reason,
-        text: stripTerminalControls(reason.text),
-      })),
-    }
+    return stripServerSummaryTexts(summary)
   // A script history's recorded words are its question, saved title, entry file and capture reasons.
   if ('profile' in summary && summary.profile === 'node-script')
     return {
       ...summary,
-      question: stripTerminalControls(summary.question),
-      ...(summary.title ? { title: stripTerminalControls(summary.title) } : {}),
+      ...stripRunSummaryTexts(summary),
       entry: stripTerminalControls(summary.entry),
-      ...(summary.reason
-        ? { reason: stripTerminalControls(summary.reason) }
-        : {}),
-      captureMissing: summary.captureMissing.map((reason) => ({
-        ...reason,
-        text: stripTerminalControls(reason.text),
-      })),
     }
   if (!('testFile' in summary)) return summary
   return {
