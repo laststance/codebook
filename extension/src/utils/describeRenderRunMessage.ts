@@ -1,3 +1,5 @@
+import { describeRouteHandlerPauseMessage } from './describeRouteHandlerPauseMessage'
+
 /** What the run knows about a render in progress, for {@link describeRenderRunMessage}. */
 export type RenderRunMessageInput = {
   /** An entry-render pause is held now: a server-render pause with no operation, `entry-load` or `unconfirmed`. */
@@ -32,8 +34,8 @@ export function describeRenderRunMessage(
   input: RenderRunMessageInput,
 ): string | undefined {
   if (input.routeHandler) {
-    const { method, route, path, operationIndex } = input.routeHandler
-    return `Paused in the route handler ${method} ${route} (request ${path}), observed after operation ${operationIndex}. The page's request waits for the handler; continue to let it answer, or stop it with codebook_stop.`
+    const { operationIndex, ...routeHandler } = input.routeHandler
+    return `${describeRouteHandlerPauseMessage({ routeHandler, operationIndex })}. The page's request waits for the handler; continue to let it answer, or stop it with codebook_stop.`
   }
   if (input.unconfirmedReason !== undefined) {
     const note = `This pause is unconfirmed (${input.unconfirmedReason}): Codebook could not establish that it is inside the entry page's data function, so explain the values as unconfirmed and never as proof.`

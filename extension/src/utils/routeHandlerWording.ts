@@ -26,7 +26,7 @@ export const ROUTE_HANDLER_REFUSAL_RECOVERY: Record<
 > = {
   'route-handler-before-operation': `Set the stop's afterOperation to the operation after which the page sends the request (1 or more): a route handler runs only for a request, and none is sent before the first operation. Recovery: fix the configuration, then one new start. ${ROUTE_HANDLER_REFUSAL_CLOSING}`,
   'route-handler-edge-runtime': `The route file declares the edge runtime, which Codebook cannot pause in, and no configuration change fixes that: explain the handler from its source and say it cannot be paused. ${ROUTE_HANDLER_REFUSAL_CLOSING}`,
-  'route-handler-not-app-source': `Declare route-handler stops only in a route file of the app's own source: this file lies in node_modules or in a workspace library inside details.packageRoot. Choose a route file of the app, or explain this one from source. Recovery: fix the configuration, then one new start. ${ROUTE_HANDLER_REFUSAL_CLOSING}`,
+  'route-handler-not-app-source': `Declare route-handler stops only in a route file of the app's own source: this file (details.file) lies in node_modules or in a workspace library inside the app's packageRoot. Choose a route file of the app, or explain this one from source. Recovery: fix the configuration, then one new start. ${ROUTE_HANDLER_REFUSAL_CLOSING}`,
 }
 
 /**

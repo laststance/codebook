@@ -369,6 +369,7 @@ import { routeHandlerPathMatches } from './utils/routeHandlerPathMatches'
 import { RouteHandlerRequests } from './utils/routeHandlerRequests'
 import { routeHandlerRouteOf } from './utils/routeHandlerRouteOf'
 import { routeHandlerStackOf } from './utils/routeHandlerStackOf'
+import { ROUTE_HANDLER_NOT_REACHED_POSSIBILITIES } from './utils/routeHandlerWording'
 import { sameScriptUrl } from './utils/sameScriptUrl'
 import { sanitizeCause } from './utils/sanitizeCause'
 import {
@@ -11012,10 +11013,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         },
       },
     }
-    // parent: replace with ROUTE_HANDLER_NOT_REACHED_POSSIBILITIES
     return formatRefusalFailure(
       'SERVER_STOP_NOT_REACHED',
-      `Declared stop ${place} (route handler ${entry.route}) was not reached within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s after operation ${entry.operationIndex}. Possibilities, not the established cause: the page sent no request with that method to that route after the operation (client-side validation, a cached answer, a request to another path), it sent one before the operation, or the line sits in a branch that did not run. The inputs were sent and their side effects are unknown: explain what ran, offer the partial replay and do not start again unasked.`,
+      `Declared stop ${place} (route handler ${entry.route}) was not reached within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s after operation ${entry.operationIndex}. ${ROUTE_HANDLER_NOT_REACHED_POSSIBILITIES} The inputs were sent and their side effects are unknown: explain what ran, offer the partial replay and do not start again unasked.`,
     )
   }
 

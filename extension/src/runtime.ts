@@ -386,7 +386,7 @@ export type ChromeExtensionRunInput = {
 
 export type ConfiguredRuntimeSnapshot = Omit<
   ConfiguredObservation,
-  'snapshotUri' | 'interpretations' | 'execution'
+  'snapshotUri' | 'interpretations'
 > & {
   /** What ran at this pause: the page, a server action, a server render (the paused script's layer decides between those two) or an App Router route handler, which is observed after an operation. */
   execution?: 'browser' | 'server-action' | 'server-render' | 'route-handler'

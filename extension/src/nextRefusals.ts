@@ -4,6 +4,10 @@ import {
   type NextSetupStep,
 } from './constants'
 import { StudyError, type ErrorCode } from './errors'
+import {
+  ROUTE_HANDLER_REFUSAL_RECOVERY,
+  type RouteHandlerRefusalReason,
+} from './utils/routeHandlerWording'
 
 /**
  * The stable codes a Next Pages run refuses with, in the run's precedence order for the checks after the entry page answered (setting, redirect, not compiled, conflict, not found), then the seal refusals and the setup deadline.
@@ -95,29 +99,14 @@ export function outsidePackageRefusal(
   })
 }
 
-/** The reasons a route-handler stop is refused before any process starts. */
-export type RouteHandlerRefusalReason =
-  | 'route-handler-before-operation'
-  | 'route-handler-edge-runtime'
-  | 'route-handler-not-app-source'
-
-/** What each route-handler refusal says, as `[what was refused, what to change]`. */
-const ROUTE_HANDLER_REFUSAL_TEXT: Record<
-  RouteHandlerRefusalReason,
-  readonly [string, string]
-> = {
-  'route-handler-before-operation': [
+/** What each route-handler refusal says was refused; the recovery comes from {@link ROUTE_HANDLER_REFUSAL_RECOVERY}, which the help shares. */
+const ROUTE_HANDLER_REFUSAL_TEXT: Record<RouteHandlerRefusalReason, string> = {
+  'route-handler-before-operation':
     'is a route handler declared afterOperation 0; a route handler runs for a request the page sends after an operation',
-    'set afterOperation to the operation after which the page sends the request',
-  ],
-  'route-handler-edge-runtime': [
+  'route-handler-edge-runtime':
     'is a route handler that declares export const runtime = "edge", which Codebook cannot pause',
-    'explain the handler from its source and say it cannot be paused; no field change makes it observable',
-  ],
-  'route-handler-not-app-source': [
+  'route-handler-not-app-source':
     "is a route handler in node_modules or a workspace library, not in the app's own source",
-    "declare the stop in a route.ts under the app's own app folder",
-  ],
 }
 
 /**
@@ -135,15 +124,14 @@ export function routeHandlerStopRefusal(
   place: string,
   index: number,
 ): StudyError {
-  const [what, fix] = ROUTE_HANDLER_REFUSAL_TEXT[reason]
+  const what = ROUTE_HANDLER_REFUSAL_TEXT[reason]
   const file = place.slice(0, place.lastIndexOf(':'))
   return nextRefusal(
     'NEXT_STOP_NOT_SEALED',
     `Declared stop ${place} ${what}, so the run was refused before the server started.`,
     {
       details: { reason, stopIndex: index, file, sideEffects: 'none' },
-      // parent: replace with ROUTE_HANDLER_REFUSAL_RECOVERY[reason]
-      recovery: `Fix the stop: ${fix}, then one new start. Nothing was started: no server, no browser and no input (details.sideEffects is none). See codebook://help/repository-browser#NEXT_STOP_NOT_SEALED.`,
+      recovery: ROUTE_HANDLER_REFUSAL_RECOVERY[reason],
     },
   )
 }

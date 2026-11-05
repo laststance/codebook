@@ -2,7 +2,7 @@ import type { ConfiguredRuntimeSnapshot } from '../runtime'
 
 /**
  * Words the run resource's message for a held route-handler pause, so the chat reads which handler paused, for which request and after which operation, and never a server render or a page load.
- * Called by the run when it builds the message of a route-handler pause (Cycle 0087 lane 1 owns the call site).
+ * Called by {@link describeRenderRunMessage} when the run resource's message is built for a held route-handler pause.
  * @param pause - The pause's `routeHandler` object and the operation it was observed after.
  * @returns `Paused in the route handler <METHOD> <route> (request <path>), observed after operation <k>`.
  * @example
