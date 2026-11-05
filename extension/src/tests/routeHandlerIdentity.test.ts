@@ -160,6 +160,7 @@ test('a route-handler pause that arrives before the browser request waits for it
   await sendOperation(harness, 1)
   // Act
   routeHandlerHit(harness)
+  // gstack-timing-ok: the order is the contract; 150 ms only lets the pause reach the run before the request, a slower run sees the request first and still publishes, and the run's wait bound is 1000 ms
   await new Promise((resolve) => setTimeout(resolve, 150))
   sendRequest(harness, '9', 'POST', '/api/todos')
   const snapshot = await publishedPause(harness)
