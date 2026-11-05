@@ -139,6 +139,25 @@ test('repeated references that would grow a value past its bound refuse the star
   })
 })
 
+// Value: protects=escaped dollars rebuild a long value too, so their copying counts against the same bound and cannot block the extension host; fails_when=hundreds of \$ escapes after a long reference each copy the whole value and the start goes ahead; no_claim=the exact copied-characters bound
+test('many escaped dollars after a long reference refuse the start instead of copying without bound', async (context) => {
+  // Arrange
+  const files = {
+    '.env': `A=${'x'.repeat(30_000)}\nB=\${A}${'\\$Z'.repeat(600)}\n`,
+  }
+  // Act
+  const settling = settledEnvironmentOf(context, files)
+  // Assert
+  await assert.rejects(settling, {
+    code: 'REACT_SCRIPTS_UNSUPPORTED',
+    details: {
+      reason: 'env-file-unreadable',
+      file: '.env',
+      sideEffects: 'none',
+    },
+  })
+})
+
 // Value: protects=NODE_ENV and BABEL_ENV settle to development as react-scripts' start.js sets them before reading .env, so PUBLIC_URL and inlined values match the bundle; fails_when=${NODE_ENV} expands to an empty string; no_claim=other variables start.js sets
 test('a reference to NODE_ENV or BABEL_ENV settles to development as in react-scripts start', async (context) => {
   // Arrange

@@ -75,7 +75,10 @@ function substituteReference(
   const prefix = parts[1] ?? ''
   // An escaped dollar stays literal; dotenv-expand drops the backslash and keeps the rest.
   if (prefix === '\\')
-    return expanded.replace(parts[0], parts[0].replace('\\$', '$'))
+    return chargeRebuilt(
+      budget,
+      expanded.replace(parts[0], parts[0].replace('\\$', '$')),
+    )
   const replacement = interpolateDotenvValue(
     environment.get(parts[2] ?? '') ?? '',
     environment,
@@ -84,11 +87,20 @@ function substituteReference(
   )
   if (budget.exceeded) return expanded
   // Same string-replacement semantics as dotenv-expand, so the settled text is the text react-scripts inlines.
-  const rebuilt = expanded.replace(
-    parts[0].substring(prefix.length),
-    replacement,
+  return chargeRebuilt(
+    budget,
+    expanded.replace(parts[0].substring(prefix.length), replacement),
   )
-  // Each replacement rebuilds the whole value, so its length is charged; a value past its bound is never settled.
+}
+
+/**
+ * Charges a rebuilt value's length to the budget, since every replacement copies the whole value, and marks the bound when the value or the copied total grows past it. Called by {@link substituteReference} after each replacement, escapes included.
+ * @param budget - The shared substitution budget.
+ * @param rebuilt - The value after one replacement.
+ * @returns The rebuilt value; past a bound, `budget.exceeded` is set and the value is no longer settled.
+ * @example chargeRebuilt({ remainingSteps: 9, remainingCopiedChars: 100, exceeded: false }, 'a/x') // => 'a/x' (97 characters left)
+ */
+function chargeRebuilt(budget: DotenvExpansionBudget, rebuilt: string): string {
   budget.remainingCopiedChars -= rebuilt.length
   if (
     rebuilt.length > REACT_SCRIPTS_ENV_VALUE_MAX_CHARS ||
