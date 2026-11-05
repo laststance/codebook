@@ -15,6 +15,7 @@ import {
   CHROME_EXTENSION_PROFILE,
   NEXT_APP_SELECTION_RULE,
   REACT_SCRIPTS_APP_SELECTION_RULE,
+  NODE_SCRIPT_PROFILE,
   NODE_SERVER_PROFILE,
   NUMBERED_SOURCE_LINES_HELP,
   REFERENCE_LENGTH_LIMIT,
@@ -192,7 +193,7 @@ async function actionToolResult(
 }
 
 /**
- * Answers `codebook_continue`: the service's answer, or, for a node-server run whose wait ended in a failure of the request (`request-failed`) or of the run (`failure`), `isError` with that error and the run's state beside it, so an agent never reads a failed request as a successful continuation (D1). A learner pause and a stop during the wait are results, not errors.
+ * Answers `codebook_continue`: the service's answer, or, for a node-server run whose wait ended in a failure of the request (`request-failed`) or of the run (`failure`), or a node-script run whose wait ended in a failure of the run (`failure`), `isError` with that error and the run's state beside it, so an agent never reads a failed request as a successful continuation (D1). A learner pause, a stop and a script's own exit (`ended`, even nonzero) during the wait are results, not errors.
  * Every other profile's answer is unchanged.
  * @param service - The service that continues the run.
  * @param input - The continuation arguments the run resource gave.
@@ -215,6 +216,8 @@ async function continueToolResult(
     const failure =
       (state?.profile === NODE_SERVER_PROFILE &&
         (ended === 'request-failed' || ended === 'failure')) ||
+      // A node-script run whose wait ended in a failure (for example RUNTIME_FAILED after a capture failure) is an error too; the script's own exit, even nonzero, is `ended` and stays a result.
+      (state?.profile === NODE_SCRIPT_PROFILE && ended === 'failure') ||
       (state?.profile === CHROME_EXTENSION_PROFILE && ended === 'failure') ||
       // A failed repository-browser run (any configuration version) is a failure with its run state, not a success with an error inside (DX-2).
       (state?.profile === REPOSITORY_BROWSER_PROFILE && ended === 'failure')
