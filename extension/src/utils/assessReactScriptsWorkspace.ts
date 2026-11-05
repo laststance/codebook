@@ -45,13 +45,15 @@ async function refusalOfGaps(
     return reactScriptsNotInstalledRefusal(names)
   }
   if (has('react-scripts-5'))
-    return reactScriptsVersionRefusal(
-      readiness.version ?? 'of an unreadable version',
-    )
+    // An unreadable version is passed as `undefined`; the refusal builder words that case itself.
+    return reactScriptsVersionRefusal(readiness.version)
   if (has('start-script')) {
     const { startScript } = readiness
     return reactScriptsStartScriptRefusal(
-      startScript.form === 'refused' ? startScript.refused.join(' ') : '(none)',
+      // Structural descriptions only: a script's assignment values never reach the refusal.
+      startScript.form === 'refused'
+        ? startScript.refused.join('; ')
+        : '(none)',
     )
   }
   return reactScriptsPrestartRefusal()

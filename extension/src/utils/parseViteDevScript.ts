@@ -20,7 +20,7 @@ export type ViteDevScriptReading =
   | { accepted: false; refused: string[] }
 
 /** A package runner or shell word that is refused by name: it is a grammar word, never a value. */
-const KNOWN_RUNNER_WORDS = new Set([
+export const KNOWN_RUNNER_WORDS = new Set([
   'cross-env',
   'env',
   'npx',
@@ -61,7 +61,7 @@ type Reading = {
 }
 
 /** Names the shell syntax of a word without echoing the word. */
-function describeSyntax(word: string, role: string): string {
+export function describeSyntax(word: string, role: string): string {
   const characters = [
     ...new Set(
       [...word].filter(

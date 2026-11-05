@@ -173,14 +173,17 @@ test('discovery reports a refused start script form and keeps an assignment pref
         ['start-script'],
         {
           form: 'refused',
-          refused: ['cross-env PORT=4000 react-scripts start'],
+          refused: ['the command word cross-env'],
         },
       ],
       [
         'apps/extra-argument',
         false,
         ['start-script'],
-        { form: 'refused', refused: ['react-scripts start --open'] },
+        {
+          form: 'refused',
+          refused: ['extra words after react-scripts start'],
+        },
       ],
       ['apps/no-start', false, ['start-script'], { form: 'absent' }],
     ],
@@ -312,7 +315,7 @@ test('the shared judgement reports gaps and the start script assignments without
   const bare = await readReactScriptsPackageReadiness(root, 'apps/bare')
   // Assert
   assert.equal(ready.readiness.ready, true)
-  assert.deepEqual(ready.assignments, { PORT: '4100' })
+  assert.deepEqual({ ...ready.assignments }, { PORT: '4100' })
   assert.equal(
     ready.installationDirectory,
     join(root, 'apps/ready/node_modules/react-scripts'),

@@ -9,10 +9,10 @@ export type PackageInsideRepositoryLookup =
   | { found: false; reason: PackageNotFoundReason }
 
 /**
- * Why no usable package was found for an app: Yarn Plug-n-Play, nothing installed, the nearest entry resolving outside the repository (or a link that cannot be followed), or a package that is not the one asked for (D7).
+ * Why no package was found for an app: Yarn Plug-n-Play, nothing installed, or the nearest entry resolving outside the repository (or a link that cannot be followed) (D7).
  */
 export type PackageNotFoundReason =
-  'yarn-pnp' | 'not-installed' | 'outside-repository' | 'not-vite'
+  'yarn-pnp' | 'not-installed' | 'outside-repository'
 
 /**
  * Finds the nearest `node_modules/<packageName>` from an app folder up to the repository root, accepted only when its real path lies inside the repository (decision D7).
@@ -22,7 +22,7 @@ export type PackageNotFoundReason =
  *
  * @param appFolder - The app's real path, inside the repository.
  * @param repositoryRoot - The opened repository's root.
- * @param packageName - The unscoped package folder name under `node_modules`.
+ * @param packageName - The package folder name under `node_modules`, scoped (`@scope/name`) or not.
  * @returns The real `package.json` path of the nearest package, or `not-installed` / `yarn-pnp` / `outside-repository` (the nearest entry leaves the repository or its link is broken).
  * @example
  * await findPackageInsideRepository('/repo/examples/basic', '/repo', 'react-scripts') // => { found: true, packagePath: '/repo/node_modules/.pnpm/react-scripts@5.0.1/node_modules/react-scripts/package.json' }

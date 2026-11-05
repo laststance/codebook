@@ -346,6 +346,24 @@ async function listTrackedManifests(
   }
 }
 
+/**
+ * Picks the kinds whose full lists end the scan early.
+ *
+ * Why it exists: react-scripts apps are rare, so a pass that also asks for them must not read every manifest of a large monorepo just to look for them once Next and Vite are full. Called by {@link scanPackages}.
+ * @param visitors - The visitors the scan was asked for.
+ * @returns The asked kinds among Next and Vite; the react-scripts kind alone when neither is asked.
+ * @example gatingKindsOf({ next: nextVisit, reactScripts: rsVisit }) // => ['next']
+ */
+function gatingKindsOf(
+  visitors: ScanVisitors<unknown, unknown, unknown>,
+): ScanKind[] {
+  const framework = SCAN_KINDS.filter(
+    (kind) => kind !== 'reactScripts' && visitors[kind] !== undefined,
+  )
+  if (framework.length > 0) return framework
+  return visitors.reactScripts ? ['reactScripts'] : []
+}
+
 /** The `visit` of each kind of app one pass of {@link scanPackages} lists; a kind without a visitor is not classified. */
 export type ScanVisitors<NextItem, ViteItem, ReactScriptsItem = never> = {
   next?: ScanVisit<NextItem>
@@ -460,9 +478,13 @@ export async function scanPackages<
     if (items.length >= limits.apps) limitReached[kind] = true
     else items.push(entry.item)
   }
-  /** Says whether every asked kind has reached the app limit, so no later manifest can add an item. */
-  const isFinished = (): boolean =>
-    SCAN_KINDS.every((kind) => !visitors[kind] || limitReached[kind])
+  /** Set when the scan stopped before the last manifest because the gating kinds were full. */
+  let endedEarly = false
+  /** Says whether every gating kind has reached the app limit, so the scan stops reading manifests. */
+  const isFinished = (): boolean => {
+    const gating = gatingKindsOf(visitors)
+    return gating.length > 0 && gating.every((kind) => limitReached[kind])
+  }
 
   /** Takes a chunk's results in order; false when every asked kind has reached the app limit, which ends the scan. */
   const absorb = (
@@ -475,7 +497,10 @@ export async function scanPackages<
       take('next', nextItems, result.next)
       take('vite', viteItems, result.vite)
       take('reactScripts', reactScriptsItems, result.reactScripts)
-      if (isFinished()) return false
+      if (isFinished()) {
+        endedEarly = true
+        return false
+      }
     }
     return true
   }
@@ -543,6 +568,9 @@ export async function scanPackages<
     stop.abort()
     note('deadline')
   }
+  // A kind that was asked for but not full when the scan ended early may miss apps, which `limit` says truthfully.
+  const isCutShort = (kind: ScanKind): boolean =>
+    endedEarly && visitors[kind] !== undefined
   const truncationOf = (
     didReachLimit: boolean,
   ): { truncation?: NextPackageTruncationReason } => {
@@ -550,11 +578,17 @@ export async function scanPackages<
     return kindReason ? { truncation: kindReason } : {}
   }
   return {
-    next: { items: [...nextItems], ...truncationOf(limitReached.next) },
-    vite: { items: [...viteItems], ...truncationOf(limitReached.vite) },
+    next: {
+      items: [...nextItems],
+      ...truncationOf(limitReached.next || isCutShort('next')),
+    },
+    vite: {
+      items: [...viteItems],
+      ...truncationOf(limitReached.vite || isCutShort('vite')),
+    },
     reactScripts: {
       items: [...reactScriptsItems],
-      ...truncationOf(limitReached.reactScripts),
+      ...truncationOf(limitReached.reactScripts || isCutShort('reactScripts')),
     },
   }
 }

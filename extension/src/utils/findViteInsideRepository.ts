@@ -10,7 +10,7 @@ export type ViteInsideRepositoryLookup = PackageInsideRepositoryLookup
 /**
  * Why no usable Vite was found for an app: Yarn Plug-n-Play, nothing installed, the nearest entry resolving outside the repository (or a link that cannot be followed), or a package that is not Vite (D7).
  */
-export type ViteNotFoundReason = PackageNotFoundReason
+export type ViteNotFoundReason = PackageNotFoundReason | 'not-vite'
 
 /**
  * Finds the nearest `node_modules/vite` from an app folder up to the repository root, accepted only when its real path lies inside the repository (decision D7); see {@link findPackageInsideRepository} for the walk.
