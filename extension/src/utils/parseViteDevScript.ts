@@ -41,7 +41,7 @@ const SHELL_SYNTAX_CHARACTERS = /[$`'"*?[\]{}<>&;|()\\!#%]/
 const TILDE_EXPANSION = /(^|[=:])~/
 
 /** Whether a word or value holds shell syntax: a syntax character (`%` is Windows `cmd` expansion) or a tilde the shell would expand. */
-function hasShellSyntax(text: string): boolean {
+export function hasShellSyntax(text: string): boolean {
   return SHELL_SYNTAX_CHARACTERS.test(text) || TILDE_EXPANSION.test(text)
 }
 

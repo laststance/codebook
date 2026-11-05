@@ -1726,9 +1726,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
     this.alive()
     await this.verifySources()
-    const adapter = developmentServerAdapterOf(
-      this.definition.configuration.adapter,
-    )
+    const adapterName = this.definition.configuration.adapter
+    // The react-scripts-dev adapter record lands with the launcher lane (Cycle 0083); until then its start stops here, before any process.
+    if (adapterName === 'react-scripts-dev')
+      throw new StudyError(
+        'PREREQUISITE_MISSING',
+        'The react-scripts-dev adapter cannot start yet.',
+      )
+    const adapter = developmentServerAdapterOf(adapterName)
     this.adapter = adapter
     await adapter.assertWorkspace(
       this.packageRoot,

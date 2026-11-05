@@ -1362,6 +1362,16 @@ export const BOOK_FILE_LIMIT_BYTES = 8_388_608
 export const BOOK_PREPARE_TIMEOUT_MS = 20_000
 export const BOOK_SOURCE_CONCURRENCY = 4
 export const REPOSITORY_BROWSER_PROFILE = 'repository-browser'
+/** The `repository-browser` adapters a version 1 or 2 configuration may name; `adapter` stays the Next default for older readers. */
+export const REPOSITORY_BROWSER_ADAPTERS = [
+  'next-dev-webpack',
+  'vite-dev',
+] as const
+/** The adapters a version 3 configuration may name: those of versions 1 and 2 plus `react-scripts-dev` (Cycle 0083, decision D7: version 3 only). The one list that the version 1/2 and version 3 schemas and the profile contract derive from. */
+export const OPERATIONS_REPOSITORY_BROWSER_ADAPTERS = [
+  ...REPOSITORY_BROWSER_ADAPTERS,
+  'react-scripts-dev',
+] as const
 export const NODE_TEST_PROFILE = 'node-test'
 /** The profile of a run of the repository's own Node HTTP server: one declared request, stopped in its handler source. */
 export const NODE_SERVER_PROFILE = 'node-server'
@@ -1747,8 +1757,10 @@ export const SERVER_RENDER_STUDY_VERSION = 8
 export const PACKAGE_ROOT_STUDY_VERSION = 9
 /** The format of a study saved from a version 3 `vite-dev` configuration whose `packageRoot` is a folder other than `"."`: its evidence follows the same format 7 or format 8 rules as {@link PACKAGE_ROOT_STUDY_VERSION}, derived from the configuration by {@link evidenceFormatOfStudy}. Format 9 stays Next only because 0.2.77.0 validates a format 9 configuration with a schema that refuses `packageRoot` under `vite-dev`; the suffix `.study.v10.json` makes 0.2.77.0 and older list such a study as saved by a newer Codebook and keep it. */
 export const VITE_PACKAGE_ROOT_STUDY_VERSION = 10
+/** The format of a study saved from a version 3 `react-scripts-dev` configuration, whether its `packageRoot` is absent, `"."` or a nested folder: its evidence follows the same format 7 rules as the other browser-only formats, derived from the configuration by {@link evidenceFormatOfStudy}. A `react-scripts-dev` configuration is readable only as this format; the suffix `.study.v11.json` makes Codebook 0.2.82 and older list such a study as saved by a newer Codebook and keep it. */
+export const REACT_SCRIPTS_STUDY_VERSION = 11
 /** The highest study format this Codebook reads; a saved study above it is listed as saved by a newer Codebook. */
-export const READABLE_STUDY_VERSION = VITE_PACKAGE_ROOT_STUDY_VERSION
+export const READABLE_STUDY_VERSION = REACT_SCRIPTS_STUDY_VERSION
 /** The replay's operation marks closer than this many pixels stack vertically instead of overlapping. */
 export const OPERATION_MARK_STACK_PX = 24
 /** Below this webview width in pixels the operation marks show their numbers only. */
@@ -1760,6 +1772,12 @@ export const CONFIGURED_STUDY_METADATA_SUFFIX = '.study.meta.v3.json'
 // Highest existing version owns a logical study, including when its bytes are corrupt.
 // A change of the saved study format that an older Codebook cannot read takes the next format number and its own `.study.v<n>.json` suffix in this table; an older Codebook then lists such a study as saved by a newer one and keeps it, instead of failing on its schema.
 export const STUDY_STORAGE_FORMATS = [
+  {
+    version: REACT_SCRIPTS_STUDY_VERSION,
+    format: 'v11',
+    archiveSuffix: '.study.v11.json',
+    metadataSuffix: '.study.meta.v11.json',
+  },
   {
     version: VITE_PACKAGE_ROOT_STUDY_VERSION,
     format: 'v10',
@@ -2786,6 +2804,12 @@ export const CHROME_EXTENSION_FAILED_STATE_CODES: readonly string[] = [
 
 /** The one Vite major the `vite-dev` adapter supports, the major verified natively (Cycle 0063); widening needs a native run on that major. */
 export const VITE_SUPPORTED_MAJOR = 8
+
+/** The one react-scripts major the `react-scripts-dev` adapter supports (Cycle 0083, decision D3); react-scripts 4 is listed but refused. */
+export const REACT_SCRIPTS_SUPPORTED_MAJOR = 5
+
+/** The longest a `react-scripts/package.json` version may be to be published in `codebook_status`: the studied repository chose that text, so a longer one reads as a version that could not be read. */
+export const REACT_SCRIPTS_VERSION_MAX_CHARS = 64
 
 /** Vite's own default dev-server port, used when neither the project's config nor its `dev` script names one. */
 export const VITE_DEFAULT_PORT = 5173

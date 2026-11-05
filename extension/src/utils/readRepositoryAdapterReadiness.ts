@@ -19,6 +19,11 @@ import {
 } from './readNextRouterKind'
 import { readNodeVersion } from './readNodeVersion'
 import {
+  readReactScriptsPackageReadiness,
+  type ReactScriptsAppReadiness,
+  type ReactScriptsPackageReadiness,
+} from './readReactScriptsPackageReadiness'
+import {
   readViteWorkspaceGaps,
   type ViteDevScriptReadiness,
 } from './readViteWorkspaceGaps'
@@ -99,10 +104,23 @@ export type ViteAdapterReadiness = {
   packagesTruncatedReason?: NextPackageTruncationReason
 }
 
+/** The react-scripts prerequisite of one workspace: the root app's facts, and in the status answer the apps below the root. */
+export type ReactScriptsAdapterReadiness = ReactScriptsAppReadiness & {
+  /** Status only: whether the root is itself the react-scripts app (its `package.json` declares `react-scripts`). */
+  rootIsApp?: boolean
+  /** Status only: the react-scripts apps below the root from tracked `package.json` files, each with the readiness a start with its `packageRoot` decides. Empty below the Git root. */
+  packages?: ReactScriptsPackageReadiness[]
+  /** Status only: whether `packages` is incomplete. */
+  packagesTruncated?: boolean
+  /** Status only: why `packages` is incomplete. */
+  packagesTruncatedReason?: NextPackageTruncationReason
+}
+
 /** What `codebook_status` reports per repository-browser adapter for the current workspace. */
 export type RepositoryAdapterReadiness = {
   'next-dev-webpack': NextAdapterReadiness
   'vite-dev': ViteAdapterReadiness
+  'react-scripts-dev': ReactScriptsAdapterReadiness
 }
 
 const nextPackageSchema = z.object({ version: z.string() })
@@ -264,7 +282,7 @@ export async function readRepositoryAdapterReadiness(
   node: string | undefined,
   signal: AbortSignal,
 ): Promise<RepositoryAdapterReadiness> {
-  const [next, vite] = await Promise.all([
+  const [next, vite, reactScripts] = await Promise.all([
     readNextReadiness(workspace),
     readViteReadiness(workspace, node, signal).catch(
       (error: unknown): ViteAdapterReadiness => ({
@@ -277,6 +295,34 @@ export async function readRepositoryAdapterReadiness(
         ],
       }),
     ),
+    readReactScriptsReadiness(workspace),
   ])
-  return { 'next-dev-webpack': next, 'vite-dev': vite }
+  return {
+    'next-dev-webpack': next,
+    'vite-dev': vite,
+    'react-scripts-dev': reactScripts,
+  }
+}
+
+/**
+ * Reads the root workspace's `react-scripts-dev` readiness from the shared judgement ({@link readReactScriptsPackageReadiness}).
+ * Called by {@link readRepositoryAdapterReadiness}; a read that throws is a not-ready report, never a rejection.
+ * @param workspace - The workspace root, which is the package root.
+ * @returns The root app's facts; a root that does not declare react-scripts reports `not-a-react-scripts-app`.
+ * @example await readReactScriptsReadiness('/repo') // => { installed: false, ready: false, missing: ['not-a-react-scripts-app'], startScript: { form: 'absent' } }
+ */
+async function readReactScriptsReadiness(
+  workspace: string,
+): Promise<ReactScriptsAdapterReadiness> {
+  try {
+    return (await readReactScriptsPackageReadiness(workspace, undefined))
+      .readiness
+  } catch {
+    return {
+      installed: false,
+      ready: false,
+      missing: ['The workspace root could not be checked.'],
+      startScript: { form: 'absent' },
+    }
+  }
 }

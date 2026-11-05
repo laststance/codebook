@@ -3,6 +3,7 @@ import {
   CONFIGURED_OBSERVATION_LIMIT,
   CROSS_RUNTIME_CAPTURE_PHASES,
   CONFIGURED_MINIMUM_EXTENSION_VERSION,
+  OPERATIONS_REPOSITORY_BROWSER_ADAPTERS,
   REPOSITORY_BROWSER_ACTION,
   REPOSITORY_BROWSER_PROFILE,
   REPOSITORY_OPERATION_ACTION,
@@ -31,7 +32,7 @@ const contract = {
   helpUri: 'codebook://help/repository-browser',
   adapter: 'next-dev-webpack',
   // Every adapter a configuration may name; `adapter` stays the Next default for older readers.
-  adapters: ['next-dev-webpack', 'vite-dev'],
+  adapters: [...OPERATIONS_REPOSITORY_BROWSER_ADAPTERS],
   // The Next routers next-dev-webpack serves; an agent that remembers another list re-reads the help.
   nextRouters: ['app', 'pages'],
   actions: [

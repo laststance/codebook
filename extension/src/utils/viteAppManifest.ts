@@ -6,7 +6,7 @@ import { z } from 'zod'
 import { parseViteDevScript } from './parseViteDevScript'
 
 /** The `package.json` fields that say whether a package declares Vite, and the `dev` script a Vite app runs. */
-const viteManifestFieldsSchema = z.looseObject({
+export const viteManifestFieldsSchema = z.looseObject({
   dependencies: z.record(z.string(), z.unknown()).optional(),
   devDependencies: z.record(z.string(), z.unknown()).optional(),
   scripts: z.record(z.string(), z.unknown()).optional(),

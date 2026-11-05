@@ -632,6 +632,11 @@ test('codebook_status discovers packages and words their gaps without a private 
               supportedMajor: 8,
               yarnPnp: false,
             },
+            'react-scripts-dev': {
+              ...ready,
+              installed: false,
+              startScript: { form: 'absent' as const },
+            },
           },
         },
       },

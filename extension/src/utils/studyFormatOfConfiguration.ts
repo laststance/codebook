@@ -3,6 +3,7 @@ import {
   OPERATIONS_CONFIG_VERSION,
   OPERATIONS_STUDY_VERSION,
   PACKAGE_ROOT_STUDY_VERSION,
+  REACT_SCRIPTS_STUDY_VERSION,
   RECORDED_LOCATION_STUDY_VERSION,
   SERVER_RENDER_STUDY_VERSION,
   VITE_PACKAGE_ROOT_STUDY_VERSION,
@@ -61,6 +62,7 @@ function derivedEvidenceFormat(
  * Called by {@link captureStudy} when it writes a checkpoint and by {@link validateConfiguredStudyEvidence} when it reads one; {@link legacyStudyFormatOfConfiguration} keeps the mapping of archives saved before format 6.
  * @param configuration - The sealed configuration of the run.
  * @returns
+ * - {@link REACT_SCRIPTS_STUDY_VERSION} (11) for every version 3 `react-scripts-dev` configuration, whatever its `packageRoot` (absent, `"."` or nested)
  * - {@link VITE_PACKAGE_ROOT_STUDY_VERSION} (10) for a version 3 `vite-dev` configuration whose `packageRoot` is a folder other than `"."`
  * - {@link PACKAGE_ROOT_STUDY_VERSION} (9) for any other version 3 configuration whose `packageRoot` is a folder other than `"."`
  * - {@link SERVER_RENDER_STUDY_VERSION} (8) for a version 3 configuration with any server stop, a stop with `afterOperation: 0` or no `operations`
@@ -77,6 +79,9 @@ export function studyFormatOfConfiguration(
 ): ConfiguredStudy['version'] {
   if (configuration.version !== OPERATIONS_CONFIG_VERSION)
     return RECORDED_LOCATION_STUDY_VERSION
+  // Every react-scripts-dev run takes format 11, root or nested: an older Codebook refuses the adapter value, so it must list the study as saved by a newer Codebook.
+  if (configuration.adapter === 'react-scripts-dev')
+    return REACT_SCRIPTS_STUDY_VERSION
   // A package folder other than the repository root makes a study no earlier Codebook can run or read.
   const packageRoot = packageRootOf(configuration)
   if (packageRoot !== undefined && packageRoot !== '.')
@@ -100,7 +105,8 @@ export function studyFormatOfConfiguration(
 export function evidenceFormatOfStudy(study: StudyFormatSubject): number {
   if (
     (study.version !== PACKAGE_ROOT_STUDY_VERSION &&
-      study.version !== VITE_PACKAGE_ROOT_STUDY_VERSION) ||
+      study.version !== VITE_PACKAGE_ROOT_STUDY_VERSION &&
+      study.version !== REACT_SCRIPTS_STUDY_VERSION) ||
     study.configuration.version !== OPERATIONS_CONFIG_VERSION
   )
     return study.version
@@ -128,7 +134,7 @@ export function usesServerRenderEvidence(study: StudyFormatSubject): boolean {
 export function isOperationsStudyFormat(version: number): boolean {
   return (
     version >= OPERATIONS_STUDY_VERSION &&
-    version <= VITE_PACKAGE_ROOT_STUDY_VERSION
+    version <= REACT_SCRIPTS_STUDY_VERSION
   )
 }
 
@@ -147,6 +153,8 @@ export function isReadableStudyFormatOfConfiguration(
 ): boolean {
   if (version === studyFormatOfConfiguration(configuration)) return true
   if (configuration.version !== OPERATIONS_CONFIG_VERSION) return false
+  // A react-scripts-dev configuration is readable as format 11 only, also without a packageRoot, so the format 7 fallback below never accepts it (DX-10).
+  if (configuration.adapter === 'react-scripts-dev') return false
   // Formats 9 and 10 and a package folder belong together; format 7 below must not accept a configuration that declares one.
   if (packageRootOf(configuration) !== undefined) return false
   // Format 7 cannot hold an entry-render stop or a run without operations; its observation fields stay checked by {@link assertObservationFormatFields}.

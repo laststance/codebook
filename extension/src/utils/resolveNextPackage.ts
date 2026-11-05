@@ -37,9 +37,10 @@ export type PackageRootRefusalReason =
   | 'unreadable'
   | 'not-a-next-app'
   | 'not-a-vite-app'
+  | 'not-a-react-scripts-app'
 
 /** Which adapter's app a `packageRoot` must hold; decides the words of a refusal. */
-export type PackageAppKind = 'next' | 'vite'
+export type PackageAppKind = 'next' | 'vite' | 'reactScripts'
 
 /** How a module id Next printed relates to the package: inside it (with both relative paths) or outside it. */
 export type NextModuleIdClassification =
@@ -166,11 +167,17 @@ export async function invalidPackageRoot(
       'has no package.json that names next in dependencies, devDependencies or peerDependencies',
     'not-a-vite-app':
       'has no package.json that declares vite in dependencies or devDependencies together with an index.html or a dev script Codebook accepts',
+    'not-a-react-scripts-app':
+      'has no package.json that declares react-scripts in dependencies or devDependencies',
   }
   const suggestions = [...((await options.suggest?.()) ?? [])]
     .slice(0, 5)
     .map(sanitizeDeclaredPath)
-  const appName = appKind === 'vite' ? 'Vite' : 'Next'
+  const appName = {
+    next: 'Next',
+    vite: 'Vite',
+    reactScripts: 'react-scripts',
+  }[appKind]
   const message = `packageRoot "${shown}" ${words[reason]}. Declare packageRoot as the repository-relative folder of the ${appName} app (one of details.suggestions), or remove it for an app at the repository root; nothing was started.`
   return new StudyError(
     'INVALID_CONFIGURATION',

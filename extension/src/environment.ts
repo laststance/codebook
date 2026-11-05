@@ -52,6 +52,7 @@ import {
 import { causeRootsFor } from './utils/causeRootsFor'
 import { checkNodeTestFiles } from './utils/checkNodeTestFiles'
 import { chromeExtensionPrerequisiteGaps } from './utils/chromeExtensionPrerequisiteGaps'
+import { composeAdapterReadiness } from './utils/composeAdapterReadiness'
 import { createChromeExecutableLookup } from './utils/createChromeExecutableLookup'
 import { createLearnerSecretAsker } from './utils/createLearnerSecretAsker'
 import { createMemoryOrphanStore } from './utils/createMemoryOrphanStore'
@@ -509,19 +510,17 @@ export async function createEnvironment(
                   : {}),
               },
               // A vite-dev start needs the shared prerequisites, Vite's own gates and no other managed run; Next's workspace checks do not apply to it, so a Vite app without Next can start.
-              'vite-dev': {
-                ...adapters['vite-dev'],
-                ...check([...adapters['vite-dev'].missing, ...managedRunState]),
-                // Each listed Vite app is ready for a start only with the shared prerequisites and no managed run in the way, as a Next app is.
-                ...(adapters['vite-dev'].packages
-                  ? {
-                      packages: adapters['vite-dev'].packages.map((entry) => ({
-                        ...entry,
-                        ...check([...entry.missing, ...managedRunState]),
-                      })),
-                    }
-                  : {}),
-              },
+              'vite-dev': composeAdapterReadiness(
+                adapters['vite-dev'],
+                check,
+                managedRunState,
+              ),
+              // A react-scripts-dev start composes like vite-dev: the shared prerequisites, the app's own gaps (readReactScriptsPackageReadiness) and no other managed run, for the adapter and each listed app.
+              'react-scripts-dev': composeAdapterReadiness(
+                adapters['react-scripts-dev'],
+                check,
+                managedRunState,
+              ),
             },
           },
           'node-test': {

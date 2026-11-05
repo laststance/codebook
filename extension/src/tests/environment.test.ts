@@ -1356,6 +1356,7 @@ test('saved session setup refuses while a Codebook run is live and returns node,
   assert.deepEqual(Object.keys(afterRelease.adapters), [
     'next-dev-webpack',
     'vite-dev',
+    'react-scripts-dev',
   ])
 })
 

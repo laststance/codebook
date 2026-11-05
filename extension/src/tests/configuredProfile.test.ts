@@ -6,7 +6,7 @@ import { CONFIGURED_PROFILE } from '../configuredProfile'
 // Value: protects=an agent reading codebook_status learns from the public catalog that the repository-browser profile also runs a Vite app; fails_when=the catalog names only next-dev-webpack or a Next-only scope; why_new=no test read the catalog text; seam=none; no_claim=adapter readiness
 test('the public repository-browser catalog names the vite-dev adapter and its scope', () => {
   // Arrange
-  const expectedAdapters = ['next-dev-webpack', 'vite-dev']
+  const expectedAdapters = ['next-dev-webpack', 'vite-dev', 'react-scripts-dev']
   // Act
   const { adapters, scope } = CONFIGURED_PROFILE
   // Assert

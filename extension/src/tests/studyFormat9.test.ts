@@ -204,13 +204,13 @@ test('an old format 7 study with a server stop keeps the format 7 rules and deco
   assert.equal(usesServerRenderEvidence(decoded), false)
 })
 
-// protects=D3: the storage table, the readable version and the study schema know format 9; fails_when=v9 is missing from one of them or a format above 10 is accepted; no_claim=archive contents
+// protects=D3: the storage table, the readable version and the study schema know format 9; fails_when=v9 is missing from one of them or a format above 11 is accepted; no_claim=archive contents
 test('storage names, readable version and schema include format 9', () => {
   // Arrange
   const row = STUDY_STORAGE_FORMATS.find((format) => format.version === 9)
   const schemaVersion = configuredStudySchema.shape.version
   // Act
-  const acceptsEleven = schemaVersion.safeParse(11).success
+  const acceptsTwelve = schemaVersion.safeParse(12).success
   // Assert
   assert.deepEqual(row, {
     version: 9,
@@ -220,7 +220,7 @@ test('storage names, readable version and schema include format 9', () => {
   })
   assert.equal(PACKAGE_ROOT_STUDY_VERSION, 9)
   assert.equal(schemaVersion.safeParse(9).success, true)
-  assert.equal(acceptsEleven, false)
+  assert.equal(acceptsTwelve, false)
 })
 
 /**
