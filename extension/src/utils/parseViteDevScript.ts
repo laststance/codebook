@@ -20,7 +20,7 @@ export type ViteDevScriptReading =
   | { accepted: false; refused: string[] }
 
 /** A package runner or shell word that is refused by name: it is a grammar word, never a value. */
-const KNOWN_RUNNER_WORDS = new Set([
+export const KNOWN_RUNNER_WORDS = new Set([
   'cross-env',
   'env',
   'npx',
@@ -41,7 +41,7 @@ const SHELL_SYNTAX_CHARACTERS = /[$`'"*?[\]{}<>&;|()\\!#%]/
 const TILDE_EXPANSION = /(^|[=:])~/
 
 /** Whether a word or value holds shell syntax: a syntax character (`%` is Windows `cmd` expansion) or a tilde the shell would expand. */
-function hasShellSyntax(text: string): boolean {
+export function hasShellSyntax(text: string): boolean {
   return SHELL_SYNTAX_CHARACTERS.test(text) || TILDE_EXPANSION.test(text)
 }
 
@@ -61,7 +61,7 @@ type Reading = {
 }
 
 /** Names the shell syntax of a word without echoing the word. */
-function describeSyntax(word: string, role: string): string {
+export function describeSyntax(word: string, role: string): string {
   const characters = [
     ...new Set(
       [...word].filter(

@@ -424,6 +424,8 @@ test('every setup step has its own deadline sentence naming that step and its br
     'validating the project': 'the browser was not opened',
     'resolving the Vite config': 'the browser was not opened',
     'starting Vite': 'the browser was not opened',
+    'starting react-scripts': 'the browser was not opened',
+    'waiting for the first compile': 'the browser was not opened',
     'waiting for the server to answer the entry page':
       'the browser was not opened',
     'sealing the declared stops': 'the browser was not opened',

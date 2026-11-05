@@ -5,6 +5,8 @@ import {
   CONFIGURED_OBSERVATION_LIMIT,
   CROSS_RUNTIME_CONFIG_VERSION,
   OPERATIONS_CONFIG_VERSION,
+  OPERATIONS_REPOSITORY_BROWSER_ADAPTERS,
+  REPOSITORY_BROWSER_ADAPTERS,
   REPOSITORY_OPERATION_LIMIT,
   SIGN_IN_PATH_LIMIT,
   BOOK_MAX_ANCHORS,
@@ -242,7 +244,7 @@ export const repositoryInputsSchema = z
 
 const repositoryConfigurationShape = z.strictObject({
   version: z.literal(REPOSITORY_CONFIG_VERSION),
-  adapter: z.enum(['next-dev-webpack', 'vite-dev']),
+  adapter: z.enum(REPOSITORY_BROWSER_ADAPTERS),
   book: repositoryBookSelectionSchema,
   source: repositorySourceStopSchema,
   action: z.strictObject({
@@ -328,12 +330,12 @@ const afterOperationSchema = z
   .max(REPOSITORY_OPERATION_LIMIT)
 
 /**
- * The version 3 configuration: version 2's fields without `initialInputs` and `action`, the run-level `before` and `after`, 1 to 8 ordered `operations`, and an `afterOperation` on every stop.
+ * The version 3 configuration: version 2's fields without `initialInputs` and `action`, the run-level `before` and `after`, 1 to 8 ordered `operations`, and an `afterOperation` on every stop. Only version 3 may name the third adapter, `react-scripts-dev` (browser stops only).
  * Called through {@link operationsRepositoryConfigSchema}, which adds the cross-field rules.
  */
 const operationsConfigurationShape = z.strictObject({
   version: z.literal(OPERATIONS_CONFIG_VERSION),
-  adapter: z.enum(['next-dev-webpack', 'vite-dev']),
+  adapter: z.enum(OPERATIONS_REPOSITORY_BROWSER_ADAPTERS),
   book: repositoryBookSelectionSchema,
   source: repositorySourceStopSchema,
   participant: z.enum(['browser', 'server']),
@@ -375,7 +377,7 @@ const operationsConfigurationShape = z.strictObject({
     .union([z.literal('.'), repositoryPathSchema])
     .optional()
     .describe(
-      'next-dev-webpack and vite-dev: the app\'s folder, relative to the opened repository root (for example "examples/react/nextjs" or "examples/react/basic"). Omit it, or declare ".", for an app at the repository root. Stop files and book citations stay repository-relative and must lie inside this folder.',
+      'next-dev-webpack, vite-dev and react-scripts-dev: the app\'s folder, relative to the opened repository root (for example "examples/react/nextjs" or "examples/react/basic"). Omit it, or declare ".", for an app at the repository root. Stop files and book citations stay repository-relative and must lie inside this folder.',
     ),
 })
 
@@ -518,21 +520,30 @@ function validateStopAfterOperations(
   }
 }
 
+/** The adapters that seal and debug browser modules only, so a server participant is refused under them. */
+const BROWSER_ONLY_ADAPTERS: ReadonlySet<string> = new Set([
+  'vite-dev',
+  'react-scripts-dev',
+])
+
 /**
- * Refuses a server participant under `adapter: "vite-dev"`, which seals and debugs browser modules only.
+ * Refuses a server participant under `adapter: "vite-dev"` or `"react-scripts-dev"`, which seal and debug browser modules only.
  * Called by {@link validateInspections} for both configuration versions, so the public schema, not a later start, rejects it.
  * @param configuration - A parsed configuration of either version.
  * @param context - The refinement context that receives one issue per server participant.
- * @example refuseViteServerParticipants({ adapter: 'vite-dev', participant: 'server', … }, context) // adds an issue at ['participant']
+ * @example refuseBrowserOnlyServerParticipants({ adapter: 'vite-dev', participant: 'server', … }, context) // adds an issue at ['participant']
  */
-function refuseViteServerParticipants(
+function refuseBrowserOnlyServerParticipants(
   configuration:
     | z.infer<typeof repositoryConfigurationShape>
     | z.infer<typeof crossRuntimeConfigurationShape>
     | z.infer<typeof operationsConfigurationShape>,
   context: z.RefinementCtx,
 ): void {
-  if (configuration.adapter !== 'vite-dev' || !('participant' in configuration))
+  if (
+    !BROWSER_ONLY_ADAPTERS.has(configuration.adapter) ||
+    !('participant' in configuration)
+  )
     return
   const declared = [
     { path: ['participant'], participant: configuration.participant },
@@ -546,7 +557,7 @@ function refuseViteServerParticipants(
       context.addIssue({
         code: 'custom',
         path,
-        message: `adapter "vite-dev" supports browser stops only; participant "server" is declared at configuration.${path.join('.')}.`,
+        message: `adapter "${configuration.adapter}" supports browser stops only; participant "server" is declared at configuration.${path.join('.')}.`,
       })
 }
 
@@ -576,7 +587,7 @@ function validateInspections(
     | z.infer<typeof operationsConfigurationShape>,
   context: z.RefinementCtx,
 ): void {
-  refuseViteServerParticipants(configuration, context)
+  refuseBrowserOnlyServerParticipants(configuration, context)
   // Each ordered stop must independently declare useful, unambiguous facts.
   for (const [index, inspections] of [
     configuration.inspections,
@@ -633,7 +644,7 @@ export const operationsRepositoryConfigSchema =
     validateOperations(configuration, context)
   })
 /**
- * The configuration `codebook_start` accepts for the `repository-browser` profile: versions 1 to 3, where version 3 may declare `packageRoot` (`next-dev-webpack` and `vite-dev`; versions 1 and 2 have no such field and refuse it as an unknown key).
+ * The configuration `codebook_start` accepts for the `repository-browser` profile: versions 1 to 3, where version 3 may declare `packageRoot` (`next-dev-webpack`, `vite-dev` and `react-scripts-dev`; versions 1 and 2 have no such field and refuse it as an unknown key).
  * Why it exists: the start, its idempotency intent, the help's `configurationSchema` and the source preparation must admit a nested Next app, while a saved study of formats 3 to 8 must not ({@link retainedRepositoryConfigSchema}).
  * Read by the start schemas in `schemas.ts`, the help resource and {@link prepareRepositoryStudy}.
  * @example liveRepositoryConfigSchema.parse({ version: 3, adapter: 'next-dev-webpack', packageRoot: 'examples/app', ... }) // accepted
@@ -647,10 +658,16 @@ export const liveRepositoryConfigSchema = z.union([
  * The configuration of a study of formats 3 to 8: versions 1 to 3 as before, and none of them may carry a `packageRoot` (the field exists only in format 9, see {@link packageRootRepositoryConfigSchema}).
  * The explicit refusal keeps formats 3 to 8 closed although the live version 3 shape ({@link liveRepositoryConfigSchema}) has an optional `packageRoot`.
  */
-export const retainedRepositoryConfigSchema = liveRepositoryConfigSchema.refine(
-  (configuration) => !('packageRoot' in configuration),
-  'Only a study of format 9 keeps a packageRoot.',
-)
+export const retainedRepositoryConfigSchema = liveRepositoryConfigSchema
+  .refine(
+    (configuration) => !('packageRoot' in configuration),
+    'Only a study of format 9 keeps a packageRoot.',
+  )
+  // A `react-scripts-dev` run is saved as format 11 only (Cycle 0083, DX-10), with or without a packageRoot.
+  .refine(
+    (configuration) => configuration.adapter !== 'react-scripts-dev',
+    'Only a study of format 11 keeps a react-scripts-dev configuration.',
+  )
 /**
  * The configuration a format 9 study retains: the version 3 `next-dev-webpack` shape with a required `packageRoot` other than `"."`.
  * Read by {@link studyConfigurationSchema}; a run whose package root is `"."` saves the formats 7 or 8 it always did, without the field.
@@ -684,11 +701,23 @@ const vitePackageRootRepositoryConfigSchema = operationsConfigurationShape
     validateInspections(configuration, context)
     validateOperations(configuration, context)
   })
-/** Every configuration a saved study can hold: the retained union of formats 3 to 8, the format 9 package-root variant (Next) or the format 10 package-root variant (Vite). */
+/**
+ * The configuration a format 11 study retains: the version 3 `react-scripts-dev` shape, root (`packageRoot` absent or `"."`) or nested.
+ * Why it exists: an older Codebook refuses the adapter value, so every `react-scripts-dev` run takes its own format and is listed there as saved by a newer Codebook (D5). Validated like the format 9 and 10 variants (inspections, operations; {@link validateInspections} also refuses a server participant under `react-scripts-dev`).
+ * Read by {@link studyConfigurationSchema}; no earlier format accepts this adapter.
+ */
+const reactScriptsRepositoryConfigSchema = operationsConfigurationShape
+  .extend({ adapter: z.literal('react-scripts-dev') })
+  .superRefine((configuration, context) => {
+    validateInspections(configuration, context)
+    validateOperations(configuration, context)
+  })
+/** Every configuration a saved study can hold: the retained union of formats 3 to 8, the format 9 package-root variant (Next), the format 10 package-root variant (Vite) or the format 11 variant (react-scripts). */
 export const studyConfigurationSchema = z.union([
   retainedRepositoryConfigSchema,
   packageRootRepositoryConfigSchema,
   vitePackageRootRepositoryConfigSchema,
+  reactScriptsRepositoryConfigSchema,
 ])
 export type RepositoryConfiguration = z.infer<typeof repositoryConfigSchema>
 export type RetainedRepositoryConfiguration = z.infer<

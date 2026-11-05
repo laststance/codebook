@@ -320,7 +320,11 @@ test('an owned server that exits before it listens reports its exit code and its
     // Assert
     assert.deepEqual(exit, { exitCode: 3, signal: null })
     assert.deepEqual(server.exited(), { exitCode: 3, signal: null })
-    assert.match(server.output(), /fixture cannot start: exit-before-listen\n$/)
+    // Node appends its own 'Waiting for the debugger to disconnect...' line when the fixture exits while this test's inspector socket is still closing; that line is the runtime's, so the fixture's line stays the last one the fixture wrote.
+    assert.match(
+      server.output(),
+      /fixture cannot start: exit-before-listen\n(?:Waiting for the debugger to disconnect\.\.\.\n)?$/,
+    )
   } finally {
     inspector?.close()
     await server.close()

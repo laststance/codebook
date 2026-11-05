@@ -963,6 +963,12 @@ export class StudyService {
                   (sentence) => this.sanitizedCause(sentence),
                 ),
               },
+              'react-scripts-dev': {
+                ...prerequisite.adapters['react-scripts-dev'],
+                missing: prerequisite.adapters['react-scripts-dev'].missing.map(
+                  (sentence) => this.sanitizedCause(sentence),
+                ),
+              },
             },
           }
         : {}),

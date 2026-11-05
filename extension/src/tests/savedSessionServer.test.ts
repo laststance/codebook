@@ -58,6 +58,7 @@ function setupServerStandIns(scenario: StandInScenario = {}) {
     send: () => {
       throw unusedBySetup('send')
     },
+    exitStatus: () => ({ exitCode: null, signal: null }),
     outputTail: () => '',
     declarePort: () => {
       throw unusedBySetup('declarePort')

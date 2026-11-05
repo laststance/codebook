@@ -11,6 +11,10 @@ import { causeRootsFor } from './causeRootsFor'
 import { readNextRouterKind } from './readNextRouterKind'
 import { readNodeVersion } from './readNodeVersion'
 import {
+  readReactScriptsPackageReadiness,
+  type ReactScriptsPackageReadiness,
+} from './readReactScriptsPackageReadiness'
+import {
   readNextInstallation,
   type NextPackageReadiness,
   type VitePackageReadiness,
@@ -38,6 +42,14 @@ export type NextPackageDiscovery = {
 /** The discovery's answer for `vite-dev` readiness. */
 export type VitePackageDiscovery = {
   packages: VitePackageReadiness[]
+  /** Whether the list is incomplete (a cap, the deadline, a skipped path or a Git failure). */
+  packagesTruncated: boolean
+  packagesTruncatedReason?: NextPackageTruncationReason
+}
+
+/** The discovery's answer for `react-scripts-dev` readiness. */
+export type ReactScriptsPackageDiscovery = {
+  packages: ReactScriptsPackageReadiness[]
   /** Whether the list is incomplete (a cap, the deadline, a skipped path or a Git failure). */
   packagesTruncated: boolean
   packagesTruncatedReason?: NextPackageTruncationReason
@@ -260,6 +272,37 @@ async function readVitePackageReadiness(
   }
 }
 
+/**
+ * Reads what a start with this `packageRoot` checks, as a react-scripts status entry, through the shared judgement ({@link readReactScriptsPackageReadiness}).
+ *
+ * Why it exists: an entry's `ready` and `missing` must equal what a start decides (DX-9). A folder the resolver refuses becomes the entry's `missing` sentence, so one unreadable app is listed not ready and never drops out. Called by {@link discoverPackages} for each discovered react-scripts app.
+ *
+ * @param repositoryRoot - The opened repository's root.
+ * @param packageRoot - The discovered repository-relative folder.
+ * @returns The entry.
+ * @example await readReactScriptsEntry('/repo', 'examples/counter') // => { packageRoot: 'examples/counter', installed: true, ready: true, version: '5.0.1', missing: [], startScript: { form: 'accepted' } }
+ */
+async function readReactScriptsEntry(
+  repositoryRoot: string,
+  packageRoot: string,
+): Promise<ReactScriptsPackageReadiness> {
+  try {
+    const { readiness } = await readReactScriptsPackageReadiness(
+      repositoryRoot,
+      packageRoot,
+    )
+    return { packageRoot, ...readiness }
+  } catch (error) {
+    return {
+      packageRoot,
+      installed: false,
+      ready: false,
+      missing: [describeReadFailure(error)],
+      startScript: { form: 'absent' },
+    }
+  }
+}
+
 /** Options of {@link discoverPackages}: those of {@link discoverNextPackages} plus the Node the Vite apps' `engines.node` is judged against. */
 export type DiscoverPackagesOptions = DiscoverNextPackagesOptions & {
   /** The configured Node executable, when one resolved; without it an app whose Vite declares `engines.node` is not ready, as at a start. */
@@ -274,9 +317,9 @@ export type DiscoverPackagesOptions = DiscoverNextPackagesOptions & {
 }
 
 /**
- * Discovers the Next apps and the Vite apps below the repository root for `codebook_status` in one pass over the tracked `package.json` files ({@link scanPackages}), each with the readiness a start would decide.
+ * Discovers the Next apps, the Vite apps and the react-scripts apps below the repository root for `codebook_status` in one pass over the tracked `package.json` files ({@link scanPackages}), each with the readiness a start would decide.
  *
- * Why it exists: Cycle 0077 lists Vite apps beside Next apps without a second `git ls-files`, manifest read or deadline. Called by {@link readStatusAdapterReadiness}.
+ * Why it exists: Cycle 0077 lists Vite apps beside Next apps, and Cycle 0083 react-scripts apps beside both, without a second `git ls-files`, manifest read or deadline. Called by {@link readStatusAdapterReadiness}.
  *
  * @param repositoryRoot - The opened repository's root (the Git top level).
  * @param options - Clock, deadline, cancellation, limits, the Node executable and the entry readers.
@@ -286,7 +329,11 @@ export type DiscoverPackagesOptions = DiscoverNextPackagesOptions & {
 export async function discoverPackages(
   repositoryRoot: string,
   options: DiscoverPackagesOptions = {},
-): Promise<{ next: NextPackageDiscovery; vite: VitePackageDiscovery }> {
+): Promise<{
+  next: NextPackageDiscovery
+  vite: VitePackageDiscovery
+  reactScripts: ReactScriptsPackageDiscovery
+}> {
   const {
     readPackage = readNextPackageReadiness,
     readVitePackage = (root, folder, readNode) =>
@@ -312,8 +359,14 @@ export async function discoverPackages(
               : Promise.resolve(undefined)),
           signal,
         ),
+      reactScripts: (app) =>
+        readReactScriptsEntry(repositoryRoot, app.packageRoot),
     },
     scanOptions,
   )
-  return { next: discoveryOf(scan.next), vite: discoveryOf(scan.vite) }
+  return {
+    next: discoveryOf(scan.next),
+    vite: discoveryOf(scan.vite),
+    reactScripts: discoveryOf(scan.reactScripts),
+  }
 }

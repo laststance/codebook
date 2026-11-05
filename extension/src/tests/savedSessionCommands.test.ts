@@ -226,13 +226,25 @@ const VITE_NOT_INSTALLED = {
   missing: ['Install Vite in the workspace before using vite-dev.'],
 }
 
+const REACT_SCRIPTS_NOT_INSTALLED = {
+  ready: false,
+  missing: [
+    'Install react-scripts in the workspace before using react-scripts-dev.',
+  ],
+}
+const REACT_SCRIPTS_READY = { ready: true, missing: [] }
+
 /**
  * Loads the commands with a store, an agent environment and a setup browser the test drives, so a setup runs through the real {@link SavedSessionSetup}.
  * Every notice lands in `notices` and `answer` picks its button (a promise answers it later); the status item, the quick picks and the store's effects are recorded.
  */
 async function loadWithSetup(options: {
   answer?: (message: string) => string | undefined | Promise<string | undefined>
-  adapters?: { 'next-dev-webpack': unknown; 'vite-dev': unknown }
+  adapters?: {
+    'next-dev-webpack': unknown
+    'vite-dev': unknown
+    'react-scripts-dev': unknown
+  }
   ensureEnvironment?: () => Promise<never>
   startServer?: (signal: AbortSignal) => Promise<unknown>
   closeBrowser?: () => Promise<'graceful'>
@@ -278,6 +290,7 @@ async function loadWithSetup(options: {
       adapters: options.adapters ?? {
         'next-dev-webpack': NEXT_READY,
         'vite-dev': VITE_NOT_INSTALLED,
+        'react-scripts-dev': REACT_SCRIPTS_NOT_INSTALLED,
       },
     }),
     startSavedSessionServer: async (
@@ -557,6 +570,7 @@ test('Set Up with no ready development server says what each one misses and take
         ],
       },
       'vite-dev': VITE_NOT_INSTALLED,
+      'react-scripts-dev': REACT_SCRIPTS_NOT_INSTALLED,
     },
   })
 
@@ -569,6 +583,62 @@ test('Set Up with no ready development server says what each one misses and take
       severity: 'error',
       message:
         'Saved session setup cannot start: no development server is ready. Install the selected workspace dependencies, including Next, before using next-dev-webpack. Install Vite in the workspace before using vite-dev.',
+      actions: [],
+    },
+  ])
+  assert.deepEqual(picks, [])
+  assert.deepEqual(calls, [])
+})
+
+// Value: protects=Set Up never offers a Create React App server; fails_when=the pick lists react-scripts or starts it because it is ready; no_claim=which sign-in path is offered after the pick
+test('Set Up with react-scripts and Next both ready starts Next without offering react-scripts', async () => {
+  // Arrange
+  const { calls, picks, handlers } = await loadWithSetup({
+    adapters: {
+      'next-dev-webpack': NEXT_READY,
+      'vite-dev': VITE_NOT_INSTALLED,
+      'react-scripts-dev': REACT_SCRIPTS_READY,
+    },
+    // The start fails at once so the setup ends and the test needs no browser.
+    startServer: async () => {
+      throw new Error('stop here')
+    },
+  })
+
+  // Act
+  await handlers.get('codebook.setUpSavedSession')!()
+  await settle()
+
+  // Assert
+  assert.equal(
+    picks.some((labels) =>
+      labels.some((label) => label.includes('react-scripts')),
+    ),
+    false,
+  )
+  assert.deepEqual(calls, ['acquire', 'startServer', 'release'])
+})
+
+// Value: protects=a Create React App learner gets a plain answer instead of an internal error; fails_when=setup starts the react-scripts server or shows an internal error; no_claim=saved sessions for Create React App (not supported in this version)
+test('Set Up with only react-scripts ready says a saved session is not available for Create React App and starts nothing', async () => {
+  // Arrange
+  const { calls, notices, picks, handlers } = await loadWithSetup({
+    adapters: {
+      'next-dev-webpack': { ready: false, missing: ['Install Next.'] },
+      'vite-dev': VITE_NOT_INSTALLED,
+      'react-scripts-dev': REACT_SCRIPTS_READY,
+    },
+  })
+
+  // Act
+  await handlers.get('codebook.setUpSavedSession')!()
+
+  // Assert
+  assert.deepEqual(notices, [
+    {
+      severity: 'error',
+      message:
+        'Saved session setup cannot start: a saved sign-in session is not available for a Create React App (react-scripts) app in this version. It covers Next.js and Vite apps.',
       actions: [],
     },
   ])

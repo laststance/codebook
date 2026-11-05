@@ -5,6 +5,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 /**
  * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ * 1.25 is additive: the `react-scripts-dev` adapter of the `repository-browser` profile runs a Create React App app (react-scripts 5) at the repository root or below it, in a version 3 configuration only (the adapter enum of versions 1 and 2 is unchanged). Codebook starts the app's own `react-scripts` on a loopback port (it sets `CI=true`, `HOST`, `PORT` and `BROWSER` itself, overriding the start script's assignments of the same names, and reads only the script's `PORT=` assignment as the port), treats the app as ready after its first compile and pauses at browser stops in the app's own source, which the native debugger shows. The `react-scripts-dev` readiness under `profiles[].prerequisites.adapters` gains `ready`, `missing` (`react-scripts-installed`, `react-scripts-5`, `start-script`, `prestart-script` or `not-a-react-scripts-app`), `rootIsApp`, `packages` (entries `{ packageRoot, installed, ready, version?, missing, startScript }`), `packagesTruncated` and `packagesTruncatedReason`. The refusals gain five codes, each with `details.reason` and `details.sideEffects`: `REACT_SCRIPTS_UNSUPPORTED` (`not-installed`, `react-scripts-version`, `start-script-not-react-scripts`, `prestart-script`, `https`, `env-file-unreadable`, `not-a-react-scripts-app`), `REACT_SCRIPTS_LAUNCHER_FAILED` (`compile-failed`, `exited`; `exited` carries `exitCode` and `signal`), `REACT_SCRIPTS_PORT_UNAVAILABLE` (`port-in-use`), `REACT_SCRIPTS_SETUP_DEADLINE` (`setup-deadline`) and `REACT_SCRIPTS_SEAL_FAILED` (`outside-package`, `ambiguous-source`, `node-modules`, `unmapped-line`, `map-limit`, `map-unreadable`; `outside-package` and `node-modules` carry `sideEffects` `none` when found before the start and `partial` when found after the server started); `codebook://help/repository-browser` gains `reactScriptsQuickStart` with one anchor per code. A `react-scripts-dev` run is saved as study format 11 (`.study.v11.json`, retained configuration), which an older Codebook lists as saved by a newer Codebook. Live feature: a react-scripts run needs a Codebook that serves this API.
  * 1.24 is additive: a server stop under `next-dev-webpack` with a nested `packageRoot` (configuration version 3) of an App Router app may lie in the checked-out source of a workspace library that the app reaches through links inside the repository, under the rules of the App Router browser library stop of 1.23 (a current build whose maps carry `sourcesContent`, and a module in the entry route's server code, the `(rsc)` layer; the library `details.reason` values of 1.19 apply under `NEXT_STOP_NOT_SEALED` with `details.router: "app"`, and a saved study gains no field). The pause happens in the server render of the entry route and the native debugger shows the checked-out library file with the library's values. The server and the client-component render on the server may run the same library file: a pause in another copy of the module, or at a line only a browser stop declares, is resumed and not recorded. A library stop of an app with both routers, of a root app and of a version 2 configuration stay refused as before.
  * 1.23 is additive: a browser stop under `next-dev-webpack` with a nested `packageRoot` (configuration version 3) of an App Router app may lie in the checked-out source of a workspace library that the app reaches through links inside the repository, under the rules of the Pages browser library stop of 1.22 (a current build whose maps carry `sourcesContent`, and a module among the `.js` chunks of the route's client-reference manifest; a module loaded later is refused as `library-not-in-build`; the library `details.reason` values of 1.19 apply, a refusal of an App Router app carries `details.router: "app"`, `library-not-in-build` carries `details.mapSource` when the module's map does not name the checked-out file, and a saved study gains no field). The native debugger shows the checked-out library file with the library's values. A server stop in a workspace library of an App Router app stayed refused as `outside-package` until 1.24, and a library stop of an app with both routers still is.
  * 1.22 is additive: a browser stop under `next-dev-webpack` with a nested `packageRoot` (configuration version 3, a Pages app) may lie in the checked-out source of a workspace library that the app reaches through links inside the repository (directly or through other workspace libraries), as a server stop may since 1.19; An App Router app keeps refusing a library stop as `outside-package`; a root app (`packageRoot` absent or `"."`) has no files outside the app and a version 2 configuration cannot carry `packageRoot`, so the app readers refuse such a stop as not in the code the page loads at start. Codebook freezes the library's build before any process starts and seals the one module `(pages-dir-browser)/<runtimePath>` of the route's and `_app`'s entry chunks; the native debugger shows the library's built file while the chat, the recorded source and the replay use the library source. The refusals reuse the five `details.reason` values of 1.19 (`library-not-in-build` also covers a library module the page loads later or never loads, and differing copies; `library-build-changed` also covers, for a browser stop only, bytes that differ at arming, a rebuild or hot update announced under a new script id, and bytes that differ at the pause; the server-stop description of 1.19 is unchanged), and a saved study gains no field. A browser stop declares `afterOperation` from 1, so library code that runs only at the entry load is observed through a server library stop or after a client navigation.
@@ -26,7 +27,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.9 is additive: a node-server run is saved as a Server replay. `codebook_explain_node_history` accepts a server history's material (steps citing the request, a stop, output, the response or the request failure), the server run resource gains `nodeServer.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing` and `captureMissing`, `nextActions` offers `save-node-learning`, and `codebook://help/node-server` has a save section.
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
-export const API_VERSION = '1.24'
+export const API_VERSION = '1.25'
 
 /** The Codebook version that first serves a Next app below the repository root (API 1.18, skill 1.0.67). */
 export const NEXT_PACKAGE_ROOT_MINIMUM_EXTENSION = '0.2.75.0'
@@ -49,6 +50,17 @@ export const VITE_LIBRARY_STOP_MINIMUM_API = '1.21'
 export const VITE_APP_SELECTION_RULE =
   "Choose the Vite app the question is about: the repository root only when the vite-dev readiness reports rootIsApp true (the root package.json declares vite and the root holds an index.html or a dev script Codebook accepts), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.20 or later); a node_modules/vite at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
 
+/** The API that first accepts the `react-scripts-dev` adapter in a version 3 configuration (skill 1.0.74). */
+export const REACT_SCRIPTS_MINIMUM_API = '1.25'
+
+/**
+ * The selection rule for a react-scripts (Create React App) question, shared word for word by the repository-browser help (`startHere`, `reactScriptsQuickStart`) and the MCP initial instructions; the bundled skill paraphrases it (root only with `rootIsApp`, else the ready `packages` entry with its `packageRoot`, a hoisted install never the root, a truncated list declared from the repository's files) and a test pins those key phrases in the skill.
+ *
+ * Why it exists: a hoisted `node_modules/react-scripts` at the root makes the root look usable although the question is about an app below it, so the chat must choose the app the question is about, never "the one that is ready". The twin of {@link VITE_APP_SELECTION_RULE}.
+ */
+export const REACT_SCRIPTS_APP_SELECTION_RULE =
+  "Choose the react-scripts app the question is about: the repository root only when the react-scripts-dev readiness reports rootIsApp true (the root package.json declares react-scripts), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.25 or later); a node_modules/react-scripts at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
+
 /**
  * The one sentence that states what running a Next app below the repository root covers and what it does not.
  *
@@ -64,7 +76,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.82'
+export const EXTENSION_VERSION = '0.2.83'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -1362,6 +1374,16 @@ export const BOOK_FILE_LIMIT_BYTES = 8_388_608
 export const BOOK_PREPARE_TIMEOUT_MS = 20_000
 export const BOOK_SOURCE_CONCURRENCY = 4
 export const REPOSITORY_BROWSER_PROFILE = 'repository-browser'
+/** The `repository-browser` adapters a version 1 or 2 configuration may name; `adapter` stays the Next default for older readers. */
+export const REPOSITORY_BROWSER_ADAPTERS = [
+  'next-dev-webpack',
+  'vite-dev',
+] as const
+/** The adapters a version 3 configuration may name: those of versions 1 and 2 plus `react-scripts-dev` (Cycle 0083, decision D7: version 3 only). The one list that the version 1/2 and version 3 schemas and the profile contract derive from. */
+export const OPERATIONS_REPOSITORY_BROWSER_ADAPTERS = [
+  ...REPOSITORY_BROWSER_ADAPTERS,
+  'react-scripts-dev',
+] as const
 export const NODE_TEST_PROFILE = 'node-test'
 /** The profile of a run of the repository's own Node HTTP server: one declared request, stopped in its handler source. */
 export const NODE_SERVER_PROFILE = 'node-server'
@@ -1747,8 +1769,10 @@ export const SERVER_RENDER_STUDY_VERSION = 8
 export const PACKAGE_ROOT_STUDY_VERSION = 9
 /** The format of a study saved from a version 3 `vite-dev` configuration whose `packageRoot` is a folder other than `"."`: its evidence follows the same format 7 or format 8 rules as {@link PACKAGE_ROOT_STUDY_VERSION}, derived from the configuration by {@link evidenceFormatOfStudy}. Format 9 stays Next only because 0.2.77.0 validates a format 9 configuration with a schema that refuses `packageRoot` under `vite-dev`; the suffix `.study.v10.json` makes 0.2.77.0 and older list such a study as saved by a newer Codebook and keep it. */
 export const VITE_PACKAGE_ROOT_STUDY_VERSION = 10
+/** The format of a study saved from a version 3 `react-scripts-dev` configuration, whether its `packageRoot` is absent, `"."` or a nested folder: its evidence follows the same format 7 rules as the other browser-only formats, derived from the configuration by {@link evidenceFormatOfStudy}. A `react-scripts-dev` configuration is readable only as this format; the suffix `.study.v11.json` makes Codebook 0.2.82 and older list such a study as saved by a newer Codebook and keep it. */
+export const REACT_SCRIPTS_STUDY_VERSION = 11
 /** The highest study format this Codebook reads; a saved study above it is listed as saved by a newer Codebook. */
-export const READABLE_STUDY_VERSION = VITE_PACKAGE_ROOT_STUDY_VERSION
+export const READABLE_STUDY_VERSION = REACT_SCRIPTS_STUDY_VERSION
 /** The replay's operation marks closer than this many pixels stack vertically instead of overlapping. */
 export const OPERATION_MARK_STACK_PX = 24
 /** Below this webview width in pixels the operation marks show their numbers only. */
@@ -1760,6 +1784,12 @@ export const CONFIGURED_STUDY_METADATA_SUFFIX = '.study.meta.v3.json'
 // Highest existing version owns a logical study, including when its bytes are corrupt.
 // A change of the saved study format that an older Codebook cannot read takes the next format number and its own `.study.v<n>.json` suffix in this table; an older Codebook then lists such a study as saved by a newer one and keeps it, instead of failing on its schema.
 export const STUDY_STORAGE_FORMATS = [
+  {
+    version: REACT_SCRIPTS_STUDY_VERSION,
+    format: 'v11',
+    archiveSuffix: '.study.v11.json',
+    metadataSuffix: '.study.meta.v11.json',
+  },
   {
     version: VITE_PACKAGE_ROOT_STUDY_VERSION,
     format: 'v10',
@@ -2787,6 +2817,45 @@ export const CHROME_EXTENSION_FAILED_STATE_CODES: readonly string[] = [
 /** The one Vite major the `vite-dev` adapter supports, the major verified natively (Cycle 0063); widening needs a native run on that major. */
 export const VITE_SUPPORTED_MAJOR = 8
 
+/** The one react-scripts major the `react-scripts-dev` adapter supports (Cycle 0083, decision D3); react-scripts 4 is listed but refused. */
+export const REACT_SCRIPTS_SUPPORTED_MAJOR = 5
+
+/** The longest a `react-scripts/package.json` version may be to be published in `codebook_status`: the studied repository chose that text, so a longer one reads as a version that could not be read. */
+export const REACT_SCRIPTS_VERSION_MAX_CHARS = 64
+
+/** The path react-scripts 5 serves its one development bundle at; its source map is the `sourceMappingURL` the bundle names. */
+export const REACT_SCRIPTS_BUNDLE_PATH = '/static/js/bundle.js'
+
+/** How long the first-compile wait of a `react-scripts-dev` run pauses between two reads of the entry page, the bundle and its map. */
+export const REACT_SCRIPTS_READINESS_POLL_MS = 250
+
+/** How long the start of a `react-scripts-dev` run pauses between two reads of the server's output while it compiles. */
+export const REACT_SCRIPTS_OUTPUT_POLL_MS = 100
+
+/** The most characters of a compiler error line a `REACT_SCRIPTS_LAUNCHER_FAILED` refusal quotes. */
+export const REACT_SCRIPTS_COMPILER_LINE_MAX_CHARS = 300
+
+/** The most bytes of the entry page a `react-scripts-dev` run reads to find the bundle's address; a larger page is not the app's development page. */
+export const REACT_SCRIPTS_ENTRY_LIMIT_BYTES = 1_048_576
+
+/** The most bytes of one `.env` file of a react-scripts app Codebook reads; a larger file (react-scripts still reads it) is refused before anything starts. */
+export const REACT_SCRIPTS_ENV_FILE_LIMIT_BYTES = 65_536
+
+/** The deepest chain of `$NAME` references Codebook follows in one env value; past it (a cycle, which overflows react-scripts' own stack, or a deeper chain) the start is refused, because the value react-scripts inlines is unknown. */
+export const REACT_SCRIPTS_ENV_EXPANSION_MAX_DEPTH = 64
+
+/** The most `$NAME` substitutions Codebook makes while settling the `.env` files of one app; past it the start is refused (a chain of doubling references would otherwise take exponential time). */
+export const REACT_SCRIPTS_ENV_EXPANSION_MAX_STEPS = 10_000
+
+/** The longest an expanded env value may grow, in characters, before the start is refused. */
+export const REACT_SCRIPTS_ENV_VALUE_MAX_CHARS = 1_048_576
+
+/** The most characters the `$NAME` substitutions of one app's `.env` files may copy in total (each substitution rebuilds its value); past it the start is refused, so repeated references to a long value cannot block the extension host. */
+export const REACT_SCRIPTS_ENV_EXPANSION_MAX_COPIED_CHARS = 16_777_216
+
+/** How long the start of a `react-scripts-dev` run waits for the output of an ended process to arrive before it words the ending. */
+export const REACT_SCRIPTS_OUTPUT_DRAIN_MS = 500
+
 /** Vite's own default dev-server port, used when neither the project's config nor its `dev` script names one. */
 export const VITE_DEFAULT_PORT = 5173
 
@@ -2875,13 +2944,15 @@ export const VITE_STOP_EXTENSIONS: readonly string[] = [
 export const VITE_PAGE_QUIET_MS = 500
 
 /**
- * The setup steps of a Vite run, named once for the setters in the configured browser run, the adapter's launcher and the setup-deadline sentence.
+ * The setup steps of a Vite or react-scripts run, named once for the setters in the configured browser run, the adapters' launchers and the setup-deadline sentences.
  * A deadline names the step the run had reached, so a renamed step cannot fall through to the wrong sentence.
  */
 export const VITE_SETUP_STEPS = {
   validatingProject: 'validating the project',
   resolvingConfig: 'resolving the Vite config',
   startingVite: 'starting Vite',
+  startingReactScripts: 'starting react-scripts',
+  waitingForFirstCompile: 'waiting for the first compile',
   waitingForServer: 'waiting for the server to answer the entry page',
   sealingStops: 'sealing the declared stops',
   openingBrowser: 'opening the browser',

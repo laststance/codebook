@@ -6,7 +6,7 @@ import { CONFIGURED_PROFILE } from '../configuredProfile'
 // Value: protects=an agent reading codebook_status learns from the public catalog that the repository-browser profile also runs a Vite app; fails_when=the catalog names only next-dev-webpack or a Next-only scope; why_new=no test read the catalog text; seam=none; no_claim=adapter readiness
 test('the public repository-browser catalog names the vite-dev adapter and its scope', () => {
   // Arrange
-  const expectedAdapters = ['next-dev-webpack', 'vite-dev']
+  const expectedAdapters = ['next-dev-webpack', 'vite-dev', 'react-scripts-dev']
   // Act
   const { adapters, scope } = CONFIGURED_PROFILE
   // Assert
@@ -37,4 +37,14 @@ test('the public repository-browser catalog names the Next routers next-dev-webp
     scope,
     /a Pages Router page takes browser stops, and, in version 3 since API 1\.17, server stops in its getServerSideProps or getStaticProps and the code they call\./,
   )
+})
+
+// Value: protects=the public scope describes all three adapters, the react-scripts one with its API; fails_when=the scope says two runtimes or omits react-scripts-dev; no_claim=the adapter readiness
+test('the public repository-browser scope describes three adapters including react-scripts-dev', () => {
+  // Arrange
+  const { scope } = CONFIGURED_PROFILE
+  // Act / Assert
+  assert.match(scope, /^Three development runtimes/)
+  assert.match(scope, /react-scripts-dev \(react-scripts 5, since API 1\.25\)/)
+  assert.match(scope, /browser stops only \(no server participant\)/)
 })

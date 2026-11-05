@@ -5,6 +5,7 @@ import { assertDevelopmentWorkspace } from './assertDevelopmentWorkspace'
 import { describeReadFailure } from './discoverNextPackages'
 import { managedRunStateOf } from './managedRunStateMessages'
 import { resolveNextPackage } from './resolveNextPackage'
+import { resolveReactScriptsPackage } from './resolveReactScriptsPackage'
 import { resolveVitePackage } from './resolveVitePackage'
 import {
   suggestNextPackageRoots,
@@ -14,6 +15,10 @@ import {
 /** The sentence of a vite-dev start whose window reported no Vite readiness. */
 const VITE_READINESS_UNAVAILABLE =
   "Codebook could not read the Vite adapter's readiness for this window. Call codebook_status again, or reload the window, and retry."
+
+/** The sentence of a react-scripts-dev start whose window reported no react-scripts readiness. */
+const REACT_SCRIPTS_READINESS_UNAVAILABLE =
+  "Codebook could not read the react-scripts adapter's readiness for this window. Call codebook_status again, or reload the window, and retry."
 
 type EnvironmentPrerequisites = Awaited<
   ReturnType<StudyEnvironment['prerequisites']>
@@ -29,7 +34,7 @@ type EnvironmentPrerequisites = Awaited<
  * @param configuration - The run's configuration; only its `adapter` is read.
  * @returns
  * - The `vite-dev` readiness when a repository-browser run declares `adapter: "vite-dev"` and the environment reports adapters
- * - A not-ready result with one `missing` sentence when the run declares `adapter: "vite-dev"` and the environment reported the repository-browser profile's readiness without a Vite entry, so the Next readiness never judges a Vite app
+ * - A not-ready result with one `missing` sentence when the run declares `adapter: "vite-dev"` and the environment reported the repository-browser profile's readiness without an entry for the adapter (a `react-scripts-dev` run gets a sentence about the react-scripts adapter), so the Next readiness never judges a Vite or react-scripts app
  * - `undefined` for any other profile or adapter, or when the environment reported no profile readiness at all, so the caller keeps the profile's own or the window's overall prerequisites
  * @example
  * repositoryBrowserStartPrerequisites(prerequisites, 'repository-browser', { adapter: 'vite-dev' })
@@ -49,15 +54,20 @@ export function repositoryBrowserStartPrerequisites(
       ? configuration.adapter
       : undefined
   // The Next adapter is what the profile's own readiness already describes.
-  if (adapter !== 'vite-dev') return undefined
+  if (adapter !== 'vite-dev' && adapter !== 'react-scripts-dev')
+    return undefined
   const profileReadiness = prerequisites.profiles?.[REPOSITORY_BROWSER_PROFILE]
   // Without any profile readiness the caller keeps the window's overall prerequisites, which judge no adapter.
   if (!profileReadiness) return undefined
-  // A profile readiness without the Vite entry describes Next only, so it never judges a Vite app.
+  // A profile readiness without the adapter's entry describes Next only, so it never judges a Vite or react-scripts app.
   return (
-    profileReadiness.adapters?.['vite-dev'] ?? {
+    profileReadiness.adapters?.[adapter] ?? {
       ready: false,
-      missing: [VITE_READINESS_UNAVAILABLE],
+      missing: [
+        adapter === 'react-scripts-dev'
+          ? REACT_SCRIPTS_READINESS_UNAVAILABLE
+          : VITE_READINESS_UNAVAILABLE,
+      ],
     }
   )
 }
@@ -146,16 +156,21 @@ export async function selectedVitePackageStartPrerequisites(
     typeof configuration !== 'object' ||
     configuration === null ||
     !('adapter' in configuration) ||
-    configuration.adapter !== 'vite-dev' ||
+    (configuration.adapter !== 'vite-dev' &&
+      configuration.adapter !== 'react-scripts-dev') ||
     !('packageRoot' in configuration) ||
     typeof configuration.packageRoot !== 'string' ||
     configuration.packageRoot === '.'
   )
     return undefined
-  await resolveVitePackage(workspace, configuration.packageRoot, {
-    // A refusal names up to five discovered apps.
-    suggest: () => suggestVitePackageRoots(workspace),
-  })
+  // A react-scripts app is judged by the same app rule the run applies; a Vite app by Vite's.
+  if (configuration.adapter === 'react-scripts-dev')
+    await resolveReactScriptsPackage(workspace, configuration.packageRoot)
+  else
+    await resolveVitePackage(workspace, configuration.packageRoot, {
+      // A refusal names up to five discovered apps.
+      suggest: () => suggestVitePackageRoots(workspace),
+    })
   // A managed run that is preparing or releasing blocks a nested start as it blocks the root's.
   const missing = [
     ...prerequisites.missing,

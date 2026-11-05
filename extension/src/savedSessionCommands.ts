@@ -13,7 +13,6 @@ import {
   SIGN_IN_STOP_RUN_BOUND_MS,
   type SignInRequiredReason,
 } from './constants'
-import type { DevelopmentServerAdapterName } from './developmentServerAdapter'
 import { signInPathSchema } from './repositoryConfigSchemas'
 import type { StudyEnvironment } from './runtime'
 import type {
@@ -119,7 +118,10 @@ const CLOSE_SETUP_BUTTON = 'Close setup'
 /** The status item's first menu entry while a run waits for its operations to be confirmed; the notification's button is {@link REVIEW_AGAIN_LABEL}, a different label. */
 const REVIEW_OPERATIONS_AGAIN_LABEL = 'Review operations again'
 const ANOTHER_PATH_LABEL = 'Another path…'
-const ADAPTER_LABELS: Record<DevelopmentServerAdapterName, string> = {
+/** The development servers a saved session can start; react-scripts is not among them in this version, so setup never offers or starts it. */
+const SAVED_SESSION_ADAPTER_NAMES = ['next-dev-webpack', 'vite-dev'] as const
+type SavedSessionAdapterName = (typeof SAVED_SESSION_ADAPTER_NAMES)[number]
+const ADAPTER_LABELS: Record<SavedSessionAdapterName, string> = {
   'next-dev-webpack': 'Next.js (webpack dev server)',
   'vite-dev': 'Vite dev server',
 }
@@ -323,12 +325,18 @@ export function installSavedSessions(
       >,
       { ready: true }
     >['adapters'],
-  ): Promise<DevelopmentServerAdapterName | undefined> => {
-    const names = Object.keys(ADAPTER_LABELS).filter(
-      (name): name is DevelopmentServerAdapterName => name in adapters,
-    )
+  ): Promise<SavedSessionAdapterName | undefined> => {
+    const names = SAVED_SESSION_ADAPTER_NAMES.filter((name) => name in adapters)
     const ready = names.filter((name) => adapters[name].ready)
     if (ready.length === 0) {
+      // Only a Create React App app is ready: say plainly that a saved session does not cover it, and start nothing.
+      if (adapters['react-scripts-dev'].ready) {
+        void showNotice(
+          'error',
+          'Saved session setup cannot start: a saved sign-in session is not available for a Create React App (react-scripts) app in this version. It covers Next.js and Vite apps.',
+        )
+        return undefined
+      }
       const missing = new Set(names.flatMap((name) => adapters[name].missing))
       void showNotice(
         'error',

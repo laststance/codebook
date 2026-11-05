@@ -132,7 +132,7 @@ test('the Vite help section carries the selection rule, the saved-session rule a
 })
 
 // protects=API 1.21 is served with a note naming the Vite packageRoot fields, and the MCP instructions carry the Vite selection rule; fails_when=the version or a field of the note drifts or the instructions drop the rule; no_claim=the behavior of other lanes
-test('API_VERSION is 1.24 and its note and the MCP instructions name the Vite packageRoot', async () => {
+test('API_VERSION is 1.25 and its note and the MCP instructions name the Vite packageRoot', async () => {
   // Arrange
   const constants = await readPackaged('src/constants.ts')
   const protocol = await readPackaged('src/protocol.ts')
@@ -142,7 +142,7 @@ test('API_VERSION is 1.24 and its note and the MCP instructions name the Vite pa
       .split('\n')
       .find((line) => line.startsWith(' * 1.20 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.24')
+  assert.equal(API_VERSION, '1.25')
   for (const phrase of [
     '`packageRoot`',
     '`rootIsApp`',
@@ -156,12 +156,12 @@ test('API_VERSION is 1.24 and its note and the MCP instructions name the Vite pa
   assert.ok(protocol.includes('${VITE_APP_SELECTION_RULE}'))
 })
 
-// protects=skill 1.0.73 carries one rule that chooses an app below the root from the readiness packages of its adapter and declares it as packageRoot, without repository-specific content; fails_when=the rule or the version leaves the skill or a repository name enters it; no_claim=how a chat follows it
+// protects=skill 1.0.74 carries one rule that chooses an app below the root from the readiness packages of its adapter and declares it as packageRoot, without repository-specific content; fails_when=the rule or the version leaves the skill or a repository name enters it; no_claim=how a chat follows it
 test('the bundled skill 1.0.73 chooses an app below the root from the readiness packages and declares packageRoot', async () => {
   // Arrange
   const skill = await readPackaged('skills/codebook/SKILL.md')
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.73"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.74"\n'))
   for (const phrase of [
     'choose the app from the readiness `packages` of the adapter that lists it',
     'declare it as `packageRoot`',
@@ -277,7 +277,7 @@ test('every Vite library refusal has an anchor and a fix naming what the chat do
 })
 
 // protects=API 1.21 is served and its note names the browser library stops, the library reasons, the prebundled and lazy-import causes and the unchanged study format; fails_when=the version or a named part of the note drifts; no_claim=the behavior behind the reasons
-test('API_VERSION is 1.24 and its note names the Vite library stops, reasons and new causes', async () => {
+test('API_VERSION is 1.25 and its note names the Vite library stops, reasons and new causes', async () => {
   // Arrange
   const constants = await readPackaged('src/constants.ts')
   const protocol = await readPackaged('src/protocol.ts')
@@ -287,7 +287,7 @@ test('API_VERSION is 1.24 and its note names the Vite library stops, reasons and
       .split('\n')
       .find((line) => line.startsWith(' * 1.21 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.24')
+  assert.equal(API_VERSION, '1.25')
   for (const phrase of [
     '`vite-dev`',
     'nested `packageRoot`',
@@ -310,7 +310,7 @@ test('the bundled skill 1.0.71 allows a library browser stop under a nested Vite
   // Arrange
   const skill = await readPackaged('skills/codebook/SKILL.md')
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.73"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.74"\n'))
   for (const phrase of [
     'Under `vite-dev` with a nested `packageRoot` (API 1.21 or later), a browser stop may lie in a workspace library the app imports',
     'when the run is refused as `library-build-stale`, tell the learner to build the library themselves and never build it yourself',
@@ -341,8 +341,8 @@ test('the README documents Vite library stops, their refusals and replay with AP
     "also after the library's build is removed",
   ])
     assert.ok(section.includes(phrase), phrase)
-  assert.ok(readme.includes('with **MCP API 1.24**'))
+  assert.ok(readme.includes('with **MCP API 1.25**'))
   assert.ok(readme.includes('API 1.21 is additive: it adds browser stops'))
   assert.ok(readme.includes('(1.0.70).**'))
-  assert.ok(readme.includes('updates to **1.0.73**'))
+  assert.ok(readme.includes('updates to **1.0.74**'))
 })

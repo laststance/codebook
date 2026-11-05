@@ -111,6 +111,13 @@ import {
   verifiedLineSchema,
   type verifiedPlaceSchema,
 } from './ownedRepositoryBreakpoint'
+import { REACT_SCRIPTS_DEV_ADAPTER } from './reactScriptsDevAdapter'
+import {
+  reactScriptsNodeModulesRefusal,
+  reactScriptsOutsidePackageRefusal,
+  reactScriptsSetupDeadlineRefusal,
+  reactScriptsSetupDeadlineText,
+} from './reactScriptsRefusals'
 import type { BundleSource } from './repositoryBundle'
 import {
   configuredDomFailureSchema,
@@ -299,6 +306,7 @@ import { pausePlace } from './utils/pausePlace'
 import { placeAfterDeclaringLine } from './utils/placeAfterDeclaringLine'
 import { preparedInputsOf } from './utils/preparedInputsOf'
 import { prepareRepositoryInputs } from './utils/prepareRepositoryInputs'
+import { publishedStopFiles } from './utils/publishedStopFiles'
 import { readDeclaredDevelopmentPort } from './utils/readDeclaredDevelopmentPort'
 import {
   readDevelopmentBundle,
@@ -336,6 +344,7 @@ import {
   resolveNextPagesEntry,
   type NextPagesEntry,
 } from './utils/resolveNextPagesEntry'
+import { resolveReactScriptsPackage } from './utils/resolveReactScriptsPackage'
 import {
   resolveVitePackage,
   rootVitePackage,
@@ -562,6 +571,7 @@ const DEVELOPMENT_SERVER_ADAPTERS: Record<
 > = {
   'next-dev-webpack': NEXT_DEV_WEBPACK_ADAPTER,
   'vite-dev': VITE_DEV_ADAPTER,
+  'react-scripts-dev': REACT_SCRIPTS_DEV_ADAPTER,
 }
 
 interface ConfiguredBrowserOptions {
@@ -925,6 +935,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private nextPackage?: ResolvedNextPackage
   /** The Vite app this run uses, resolved once at the start of preparation (a `vite-dev` run only); a root run holds the root package, so the seal, the launch and the debugger keep today's paths. */
   private vitePackage?: ResolvedVitePackage
+  /** The react-scripts app this run uses, resolved once at the start of preparation (a `react-scripts-dev` run only). */
+  private reactScriptsPackage?: ResolvedPackage
   /** The frozen library builds of the run's library stops, by `path:line:column`, taken before any process starts. */
   private readonly libraryFreezes = new Map<string, LibraryFreeze>()
   /** The discovery cache of the run's App Router library seals. */
@@ -1327,7 +1339,41 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const adapter = this.definition.configuration.adapter
     if (adapter === 'next-dev-webpack') return this.nextPackage
     if (adapter === 'vite-dev') return this.vitePackage
+    if (adapter === 'react-scripts-dev') return this.reactScriptsPackage
     return undefined
+  }
+
+  /**
+   * Resolves the react-scripts app once, then refuses stop files outside it, both before any process starts.
+   * Called at the start of preparation for a `react-scripts-dev` run; the refusal order is the real path, the react-scripts app rule, then stops outside the package. The installation is judged next by the adapter's workspace check.
+   * @returns The resolved package; the root package for an absent or `"."` packageRoot.
+   * @throws `INVALID_CONFIGURATION` from {@link resolveReactScriptsPackage}; `REACT_SCRIPTS_UNSUPPORTED` (`not-a-react-scripts-app`); `REACT_SCRIPTS_SEAL_FAILED` (reason `outside-package`) for stops outside the package, and (reason `node-modules`) for stops in the app's node_modules.
+   * @example this.reactScriptsPackage = await this.resolveReactScriptsPackageOfRun()
+   */
+  private async resolveReactScriptsPackageOfRun(): Promise<ResolvedPackage> {
+    const configuration = this.definition.configuration
+    const declared =
+      'packageRoot' in configuration ? configuration.packageRoot : undefined
+    const reactScriptsPackage = await resolveReactScriptsPackage(
+      this.options.workspace,
+      declared,
+    )
+    // A library stop is out of scope for react-scripts (decision D4): every stop outside the app is refused.
+    const outside = await this.stopFilesOutside(reactScriptsPackage)
+    if (outside.length)
+      throw reactScriptsOutsidePackageRefusal(
+        reactScriptsPackage.packageRootRelative,
+        outside,
+      )
+    // A published package in the app's node_modules is not the checked-out library: refused here, before the server starts.
+    const published = publishedStopFiles(
+      configuredStops(this.definition.configuration).map(
+        (stop) => stop.source.path,
+      ),
+      (path) => reactScriptsPackage.toPackageRelative(path),
+    )
+    if (published.length) throw reactScriptsNodeModulesRefusal(published)
+    return reactScriptsPackage
   }
 
   /**
@@ -1716,6 +1762,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       // A Vite app below the root is resolved the same way, before any process starts; no other adapter inherits it.
       this.vitePackage = await this.resolveVitePackageOfRun()
       this.alive()
+    } else if (this.definition.configuration.adapter === 'react-scripts-dev') {
+      this.reactScriptsPackage = await this.resolveReactScriptsPackageOfRun()
+      this.alive()
     }
     // A version 3 run asks the store once, before any server starts, whether it runs with the saved session; versions 1 and 2 never touch it.
     await this.admitSession()
@@ -1726,9 +1775,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
     this.alive()
     await this.verifySources()
-    const adapter = developmentServerAdapterOf(
-      this.definition.configuration.adapter,
-    )
+    const adapterName = this.definition.configuration.adapter
+    const adapter = developmentServerAdapterOf(adapterName)
     this.adapter = adapter
     await adapter.assertWorkspace(
       this.packageRoot,
@@ -1736,6 +1784,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.abort.signal,
       this.nextPackage,
       this.vitePackage,
+      this.reactScriptsPackage,
     )
     this.alive()
     const needsServer = configuredStops(this.definition.configuration).some(
@@ -1754,6 +1803,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       workspace: this.packageRoot,
       ...(this.nextPackage ? { nextPackage: this.nextPackage } : {}),
       ...(this.vitePackage ? { vitePackage: this.vitePackage } : {}),
+      ...(this.reactScriptsPackage
+        ? { reactScriptsPackage: this.reactScriptsPackage }
+        : {}),
       node: this.options.node,
       record: (type, detail) => this.evidence.record(type, detail),
       inspectServer: needsServer,
@@ -1786,6 +1838,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       hasPagesFolder,
       started.port,
     )
+    // react-scripts prints its origin when the first compile ends; the bundle and its map are proven readable before any stop is sealed.
+    if (adapter.name === 'react-scripts-dev') {
+      this.setupStep = VITE_SETUP_STEPS.waitingForFirstCompile
+      await this.waitForServerSettledWithinBudget(adapter)
+      this.alive()
+    }
     this.origin = browserOriginOf(ownedOrigin)
     // `localhost` may resolve to ::1: Codebook owns that endpoint for the whole run, or the host has none (D66).
     this.ipv6Forwarder = await startIpv6LoopbackForwarder(declaredPort.port)
@@ -4337,6 +4395,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       workspace: this.options.workspace,
       ...(this.nextPackage ? { nextPackage: this.nextPackage } : {}),
       ...(this.vitePackage ? { vitePackage: this.vitePackage } : {}),
+      ...(this.reactScriptsPackage
+        ? { reactScriptsPackage: this.reactScriptsPackage }
+        : {}),
       ...this.viteLibraryRequest(stop, adapter, ownedOrigin, generation),
       ...(freeze && this.nextPackage
         ? { library: this.librarySealInput(freeze, this.nextPackage) }
@@ -4634,7 +4695,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     for (;;) {
       const generation = this.pageGeneration
       // The optimizer's own run decides when its reload comes, so the quiet window starts only after it is idle.
-      await this.waitForOptimizerWithinBudget(adapter)
+      await this.waitForServerSettledWithinBudget(adapter)
       this.alive()
       await sleep(VITE_PAGE_QUIET_MS, undefined, { signal: this.abort.signal })
       this.alive()
@@ -4661,25 +4722,27 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Waits for the server's dependency optimizer to be idle, bounded by what is left of the setup budget.
+   * Waits for the server to settle (Vite's dependency optimizer; react-scripts' first compile), bounded by what is left of the setup budget.
    *
    * Why it exists: the setup-deadline timer and the launcher's own wait both end at the deadline; bounding the wait by the remaining budget and turning its timeout into the coded refusal keeps the deadline from surfacing as the uncoded wait timeout. Called by {@link waitForStablePage} before each quiet window.
    * @param adapter - The run's development-server adapter.
    * @throws `VITE_SETUP_DEADLINE` naming the current step when the budget is spent or the wait times out; any other failure of the wait unchanged.
    * @example
    * ```ts
-   * await this.waitForOptimizerWithinBudget(adapter)
+   * await this.waitForServerSettledWithinBudget(adapter)
    * ```
    */
-  private async waitForOptimizerWithinBudget(
+  private async waitForServerSettledWithinBudget(
     adapter: DevelopmentServerAdapter,
   ): Promise<void> {
     const remainingMs = this.preparationDeadlineAt - Date.now()
     const deadlineRefusal = (): StudyError =>
-      viteRefusal(
-        'VITE_SETUP_DEADLINE',
-        viteSetupDeadlineSentence(this.setupStep, this.preparationBudgetMs),
-      )
+      adapter.name === 'react-scripts-dev'
+        ? reactScriptsSetupDeadlineRefusal(this.setupStep, 'partial')
+        : viteRefusal(
+            'VITE_SETUP_DEADLINE',
+            viteSetupDeadlineSentence(this.setupStep, this.preparationBudgetMs),
+          )
     // No floor: a spent budget is a deadline, not a one-second grace wait.
     if (remainingMs <= 0) throw deadlineRefusal()
     try {
@@ -4718,6 +4781,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private setupDeadlineText(budgetMs: number): string {
     if (this.definition.configuration.adapter === 'vite-dev')
       return viteSetupDeadlineText(this.setupStep, budgetMs)
+    if (this.definition.configuration.adapter === 'react-scripts-dev')
+      return reactScriptsSetupDeadlineText(this.setupStep, budgetMs)
     // A run on the Pages path, or one in a Pages-capable workspace whose entry is not yet resolved as App, names a code; an App run's text stays as it was.
     const mayTakePagesPath =
       this.pagesRun !== undefined ||

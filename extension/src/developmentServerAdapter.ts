@@ -1,4 +1,7 @@
-import type { ViteSetupStep } from './constants'
+import type {
+  OPERATIONS_REPOSITORY_BROWSER_ADAPTERS,
+  ViteSetupStep,
+} from './constants'
 import type { BundleSource } from './repositoryBundle'
 import type { RepositoryConfiguration } from './repositoryConfigSchemas'
 import type { PortCheckOptions } from './utils/assertDevelopmentPortFree'
@@ -11,13 +14,17 @@ import type {
 } from './utils/libraryBuildStop'
 import type { DeclaredDevelopmentPort } from './utils/readDeclaredDevelopmentPort'
 import type { DevelopmentServerLayer } from './utils/readDevelopmentBundle'
-import type { ResolvedNextPackage } from './utils/resolveNextPackage'
+import type {
+  ResolvedNextPackage,
+  ResolvedPackage,
+} from './utils/resolveNextPackage'
 import type { ResolvedVitePackage } from './utils/resolveVitePackage'
 import type { ViteLibraryModuleSource } from './utils/selectViteLibraryCandidate'
 import type { ViteLibraryModules } from './utils/viteLibraryModules'
 
 /** The name a repository-browser configuration gives its development server (`adapter`), the one key of {@link DevelopmentServerAdapter}. */
-export type DevelopmentServerAdapterName = RepositoryConfiguration['adapter']
+export type DevelopmentServerAdapterName =
+  (typeof OPERATIONS_REPOSITORY_BROWSER_ADAPTERS)[number]
 
 /** The owned development server a run started: the handle {@link ConfiguredBrowserRun} waits on, inspects and closes. */
 export type DevelopmentApp = ReturnType<typeof launchDevelopmentServer>
@@ -30,6 +37,8 @@ export type DevelopmentServerStart = {
   nextPackage?: ResolvedNextPackage
   /** The Vite app a nested Vite run resolved ({@link resolveVitePackage}): the launcher runs with `workspace` (the app folder) as its root and working folder. Absent for a root Vite run and for a Next run. */
   vitePackage?: ResolvedVitePackage
+  /** The react-scripts app a `react-scripts-dev` run resolved ({@link resolveReactScriptsPackage}): the server runs with `workspace` (the app folder) as its working folder. Absent for every other run. */
+  reactScriptsPackage?: ResolvedPackage
   /** The Node executable of the run (`Codebook: Node Executable`). */
   node: string
   /** Appends to the run's evidence journal. */
@@ -63,6 +72,8 @@ export type DevelopmentBundleRequest = {
   nextPackage?: ResolvedNextPackage
   /** The nested Vite app the run resolved: the seal reads the stop in the app folder under the stop's package-relative path. Absent for a root Vite run and for a Next run. */
   vitePackage?: ResolvedVitePackage
+  /** The react-scripts app a `react-scripts-dev` run resolved: the seal reads the stop in the app folder under the stop's package-relative path. Absent for every other run. */
+  reactScriptsPackage?: ResolvedPackage
   source: RepositoryConfiguration['source']
   /** The last line of the stop's citation, up to which a stop declared on a line with no mapped position is requested at the first mapped position after it ({@link resolveArmedPlace}); a Pages server stop's seal checks that line's client mapping too ({@link sealPagesServerStop}). */
   citationEndLine: number
@@ -152,6 +163,7 @@ export interface DevelopmentServerAdapter {
     signal: AbortSignal,
     nextPackage?: ResolvedNextPackage,
     vitePackage?: ResolvedVitePackage,
+    reactScriptsPackage?: ResolvedPackage,
   ): Promise<void>
   /** Starts the owned server on the project's own port and returns it with that port. */
   start(request: DevelopmentServerStart): Promise<{

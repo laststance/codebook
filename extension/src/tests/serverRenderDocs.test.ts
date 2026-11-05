@@ -93,7 +93,7 @@ test('the bundled skill declares the stop in code that runs on every render, use
     skill.split('\n\n').find((part) => part.startsWith('**Server renders')) ??
     ''
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.73"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.74"\n'))
   for (const phrase of [
     'afterOperation: 0',
     'omitted',
