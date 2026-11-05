@@ -497,7 +497,7 @@ test('a covered stop the page never reaches fails with the module-evaluation can
   const failure = harness.run.view().failures[0]!
   assert.match(
     failure,
-    /^SERVER_STOP_NOT_REACHED: The page finished without reaching declared stop [^ ]+\. It may have run only in a function whose result Next serves from a cache, the entry route may not import its module, Next may have evaluated the module before the stop could be armed \(another route, a hot reload\), or this render did not reach it\./,
+    /^SERVER_STOP_NOT_REACHED: The page finished without reaching declared stop [^ ]+\. It may have run only while Codebook prepared the page \(a module Next evaluated before the stop could be armed, or a cached result\), the entry route may not import its module, or this render did not reach it\. Check that the entry route imports the module/,
   )
   assert.equal(failure.includes('code at module scope'), false)
 })
