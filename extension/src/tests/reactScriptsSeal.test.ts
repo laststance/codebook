@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict'
 import { symlink } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { REPOSITORY_MAP_LIMIT_BYTES } from '../constants'
 import { StudyError } from '../errors'
 import { ReactScriptsBundleCache } from '../utils/readReactScriptsServedBundle'
-import { sealReactScriptsStop } from '../utils/sealReactScriptsStop'
+import {
+  mapSourceNamesStop,
+  sealReactScriptsStop,
+} from '../utils/sealReactScriptsStop'
 
 import {
   createReactScriptsRepository,
@@ -227,4 +230,75 @@ test('two stops read the map once and a recompile reads it again', async (contex
   // Assert
   assert.equal(mapReadsBeforeRecompile, 1)
   assert.equal(served.counts.map, 2)
+})
+
+/** Reads the thrown refusal of a seal whole, for its details. */
+async function thrownOf(sealing: () => Promise<unknown>): Promise<StudyError> {
+  const error = await sealing().then(
+    () => undefined,
+    (thrown: unknown) => thrown,
+  )
+  assert.ok(error instanceof StudyError, String(error))
+  return error
+}
+
+// Value: protects=a map that does not name the stop file after the server started says the owned server was stopped (partial), not "nothing started"; fails_when=the seal reuses the configuration-time refusal; no_claim=the configuration-time check
+test('a seal-time outside-package refusal records partial side effects', async (context) => {
+  // Arrange
+  const repository = await createReactScriptsRepository(context)
+  const { sealing } = await seal(context, repository, () => ({
+    sources: ['/somewhere/else/src/App.js'],
+    sourcesContent: [repository.sourceText],
+  }))
+  // Act
+  const error = await thrownOf(sealing)
+  // Assert
+  assert.equal(error.details?.reason, 'outside-package')
+  assert.equal(error.details?.sideEffects, 'partial')
+  assert.equal(error.message.includes('nothing was started'), false)
+})
+
+// Value: protects=a stop path that climbs out of the app folder is refused at seal time with partial side effects; fails_when=the .. path keeps the nothing-started wording; no_claim=a path outside the repository
+test('a stop path with .. is refused at seal time with partial side effects', async (context) => {
+  // Arrange
+  const repository = await createReactScriptsRepository(context)
+  const { sealing } = await seal(context, repository, () => ({}), {
+    packageRelativePath: '../outside/App.js',
+    path: 'examples/outside/App.js',
+  })
+  // Act
+  const error = await thrownOf(sealing)
+  // Assert
+  assert.equal(error.details?.reason, 'outside-package')
+  assert.equal(error.details?.sideEffects, 'partial')
+})
+
+// Value: protects=a map that lists the stop file twice is refused as ambiguous-source with the file, not as outside-package; fails_when=duplicates are reported as another folder; no_claim=maps that list a file twice under different spellings
+test('a map that lists the stop file twice is refused with ambiguous-source', async (context) => {
+  // Arrange
+  const repository = await createReactScriptsRepository(context)
+  const stopPath = join(repository.appRoot, 'src/App.js')
+  const { sealing } = await seal(context, repository, () => ({
+    sources: [stopPath, stopPath],
+    sourcesContent: [repository.sourceText, repository.sourceText],
+  }))
+  // Act
+  const error = await thrownOf(sealing)
+  // Assert
+  assert.equal(error.details?.reason, 'ambiguous-source')
+  assert.equal(error.details?.file, `${APP_FOLDER}/src/App.js`)
+  assert.equal(error.details?.sideEffects, 'partial')
+})
+
+// Value: protects=on Windows the map's drive-letter and folder case does not hide the stop file, while other platforms stay case-sensitive; fails_when=win32 compares case-sensitively or posix ignores case; no_claim=a real Windows run
+test('a Windows map source matches the stop file without case, other platforms with case', () => {
+  // Arrange
+  const entry = 'c:/Repo/App/src/app.js'
+  const stopPath = resolve('C:/repo/app/src/App.js').replaceAll('\\', '/')
+  // Act
+  const onWindows = mapSourceNamesStop(entry, stopPath, 'win32')
+  const onLinux = mapSourceNamesStop(entry, stopPath, 'linux')
+  // Assert
+  assert.equal(onWindows, true)
+  assert.equal(onLinux, false)
 })

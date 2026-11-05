@@ -16,6 +16,10 @@ import {
 const VITE_READINESS_UNAVAILABLE =
   "Codebook could not read the Vite adapter's readiness for this window. Call codebook_status again, or reload the window, and retry."
 
+/** The sentence of a react-scripts-dev start whose window reported no react-scripts readiness. */
+const REACT_SCRIPTS_READINESS_UNAVAILABLE =
+  "Codebook could not read the react-scripts adapter's readiness for this window. Call codebook_status again, or reload the window, and retry."
+
 type EnvironmentPrerequisites = Awaited<
   ReturnType<StudyEnvironment['prerequisites']>
 >
@@ -30,7 +34,7 @@ type EnvironmentPrerequisites = Awaited<
  * @param configuration - The run's configuration; only its `adapter` is read.
  * @returns
  * - The `vite-dev` readiness when a repository-browser run declares `adapter: "vite-dev"` and the environment reports adapters
- * - A not-ready result with one `missing` sentence when the run declares `adapter: "vite-dev"` and the environment reported the repository-browser profile's readiness without a Vite entry, so the Next readiness never judges a Vite app
+ * - A not-ready result with one `missing` sentence when the run declares `adapter: "vite-dev"` and the environment reported the repository-browser profile's readiness without an entry for the adapter (a `react-scripts-dev` run gets a sentence about the react-scripts adapter), so the Next readiness never judges a Vite or react-scripts app
  * - `undefined` for any other profile or adapter, or when the environment reported no profile readiness at all, so the caller keeps the profile's own or the window's overall prerequisites
  * @example
  * repositoryBrowserStartPrerequisites(prerequisites, 'repository-browser', { adapter: 'vite-dev' })
@@ -59,7 +63,11 @@ export function repositoryBrowserStartPrerequisites(
   return (
     profileReadiness.adapters?.[adapter] ?? {
       ready: false,
-      missing: [VITE_READINESS_UNAVAILABLE],
+      missing: [
+        adapter === 'react-scripts-dev'
+          ? REACT_SCRIPTS_READINESS_UNAVAILABLE
+          : VITE_READINESS_UNAVAILABLE,
+      ],
     }
   )
 }

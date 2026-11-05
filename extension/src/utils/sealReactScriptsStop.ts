@@ -10,9 +10,10 @@ import {
 } from '../constants'
 import { StudyError } from '../errors'
 import {
+  reactScriptsAmbiguousSourceRefusal,
   reactScriptsMapLimitRefusal,
   reactScriptsNodeModulesRefusal,
-  reactScriptsOutsidePackageRefusal,
+  reactScriptsSealedOutsidePackageRefusal,
   reactScriptsUnmappedLineRefusal,
   type ReactScriptsMapLimit,
 } from '../reactScriptsRefusals'
@@ -55,6 +56,28 @@ const ABSOLUTE_PATH = /^(?:\/|[A-Za-z]:[\\/])/
  */
 function canonicalForwardSlashPath(path: string): string {
   return resolve(path).replaceAll('\\', '/')
+}
+
+/**
+ * Tells whether one local `sources` entry of the served map names the stop file.
+ *
+ * Why it exists: Windows paths differ in drive-letter and folder case between the real path of the app and the path webpack wrote (`c:/` against `C:/`), so a win32 comparison ignores case; elsewhere paths are case-sensitive. Called by {@link sealReactScriptsStop} over every absolute entry.
+ * @param entry - A local absolute `sources` entry.
+ * @param stopPath - The stop file's canonical forward-slash path.
+ * @param platform - The platform whose path rules apply; defaults to this process's.
+ * @returns Whether both name the same file.
+ * @example mapSourceNamesStop('c:/repo/App.js', 'C:/repo/App.js', 'win32') // => true
+ */
+export function mapSourceNamesStop(
+  entry: string,
+  stopPath: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  const canonical = canonicalForwardSlashPath(entry)
+  // Windows file names compare without case.
+  return platform === 'win32'
+    ? canonical.toLowerCase() === stopPath.toLowerCase()
+    : canonical === stopPath
 }
 
 /**
@@ -127,7 +150,7 @@ function sourceChangedRefusal(path: string): StudyError {
  * Only this stop's retained text is kept in the sealed map; the other sources keep their names so the map still locates the stop.
  * @param request - The app, the stop, the owned origin and the run's cache.
  * @returns The sealed bundle (served bytes unchanged) with the discovery measurements.
- * @throws `REACT_SCRIPTS_SEAL_FAILED` (`node-modules`, `outside-package`, `unmapped-line`, `map-limit`, `map-unreadable`); `SOURCE_CHANGED` when the file differs from the accepted article or from the compiled text.
+ * @throws `REACT_SCRIPTS_SEAL_FAILED` (`node-modules`, `outside-package` with `sideEffects: "partial"`, `ambiguous-source`, `unmapped-line`, `map-limit`, `map-unreadable`); `SOURCE_CHANGED` when the file differs from the accepted article or from the compiled text.
  * @example
  * const { bundle } = await sealReactScriptsStop({ appRoot, packageRootRelative: '.', packageRelativePath: 'src/App.js', source, citationEndLine: 12, ownedOrigin, signal, cache })
  */
@@ -138,8 +161,9 @@ export async function sealReactScriptsStop(request: ReactScriptsSealRequest) {
   // A published package is not the checked-out library, wherever the app keeps it.
   if (segments.includes('node_modules'))
     throw reactScriptsNodeModulesRefusal([source.path])
+  // The seal runs after the owned server started, so its refusals say the server was stopped.
   if (segments.includes('..'))
-    throw reactScriptsOutsidePackageRefusal(request.packageRootRelative, [
+    throw reactScriptsSealedOutsidePackageRefusal(request.packageRootRelative, [
       source.path,
     ])
   const realRoot = await realpath(request.appRoot)
@@ -159,15 +183,16 @@ export async function sealReactScriptsStop(request: ReactScriptsSealRequest) {
   const stopPath = canonicalForwardSlashPath(join(realRoot, ...segments))
   const sources = served.map.sources.map(normalizeMapSource)
   const matches = sources.flatMap((entry, index) =>
-    ABSOLUTE_PATH.test(entry) && canonicalForwardSlashPath(entry) === stopPath
+    ABSOLUTE_PATH.test(entry) && mapSourceNamesStop(entry, stopPath)
       ? [index]
       : [],
   )
-  // The map must name the file exactly once; any other answer is a map of another folder.
-  if (matches.length !== 1)
-    throw reactScriptsOutsidePackageRefusal(request.packageRootRelative, [
+  // A map that does not name the file names another folder; one that names it twice leaves the executed copy unknown.
+  if (matches.length === 0)
+    throw reactScriptsSealedOutsidePackageRefusal(request.packageRootRelative, [
       source.path,
     ])
+  if (matches.length > 1) throw reactScriptsAmbiguousSourceRefusal(source.path)
   const stopIndex = matches[0]!
   const retained = served.map.sourcesContent?.[stopIndex]
   if (retained !== sourceText) throw sourceChangedRefusal(source.path)

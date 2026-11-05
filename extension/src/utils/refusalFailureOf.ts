@@ -12,7 +12,11 @@ import {
   nextSetupDeadlineRecovery,
   PAGES_STOP_REFUSAL_DETAILS,
 } from '../nextRefusals'
-import { REACT_SCRIPTS_REFUSAL_CODES } from '../reactScriptsRefusals'
+import {
+  REACT_SCRIPTS_REFUSAL_CODES,
+  reactScriptsSetupDeadlineDetailsOf,
+  type ReactScriptsSetupDeadlineFailureDetails,
+} from '../reactScriptsRefusals'
 import {
   VITE_LIBRARY_BUILD_CHANGED_VARIANT,
   VITE_LIBRARY_LAZY_IMPORT_VARIANT,
@@ -66,6 +70,8 @@ export type RefusalFailure = {
   libraryDetails?:
     | NonNullable<ReturnType<typeof libraryDetailsOfFailure>>
     | ViteLibraryFailureDetails
+    // The service forwards this slot as the error's `details`, so the react-scripts setup deadline's fields ride here too.
+    | ReactScriptsSetupDeadlineFailureDetails
 }
 
 /** The fields a Vite library failure text restores: the reason (and cause) with `sideEffects: "unknown"`, and the package root, library and file its variant carries. */
@@ -105,6 +111,7 @@ function codedFailureCodeOf(
  * - `{ code, message }` for a text led by a Vite code, a Next code or `SOURCE_CHANGED`
  * - `{ code, message, recoveryOverride }` for a `NEXT_SETUP_DEADLINE` led by a known variant
  * - `{ code, message, pagesDetails }` for a `NEXT_ENTRY_REDIRECTED` led by the `pages` variant
+ * - `{ code, message, libraryDetails }` for a `REACT_SCRIPTS_SETUP_DEADLINE` whose message names its step: `libraryDetails` holds `{ reason: 'setup-deadline', step, sideEffects: 'partial' }`, which the service forwards as `details`
  * - `undefined` for any other text
  * @example
  * refusalFailureOf('VITE_PAGE_RELOADED: The page reloaded') // => { code: 'VITE_PAGE_RELOADED', message: 'The page reloaded' }
@@ -205,7 +212,8 @@ function restoredViteFailure(text: string): RefusalFailure | undefined {
         sideEffects: 'unknown',
       },
     }
-  return viteFailureOf(text)
+  // The react-scripts deadline is read here too, so it is restored before the general Next and run codes.
+  return viteFailureOf(text) ?? restoredReactScriptsDeadline(text)
 }
 
 /**
@@ -228,4 +236,26 @@ function viteLibraryFailureLead(
   if (lead?.[1] !== code) return undefined
   const identity = decodeViteLibraryVariant(lead[2], variant)
   return identity && { message: text.slice(lead[0].length), identity }
+}
+
+/**
+ * Restores a react-scripts setup-deadline failure raised by a timer: the code and message plus the reason, step and side effects its text carries.
+ *
+ * Why it exists: the timer has no thrown error, so the details the API note promises must come from the text. Called by {@link restoredViteFailure} as its last step, on the way from {@link refusalFailureOf}.
+ * @param text - A run's failure reason.
+ * @returns The refusal with `libraryDetails` set when the message names its step; the code and message alone when it does not; `undefined` for any other text.
+ * @example
+ * restoredReactScriptsDeadline('REACT_SCRIPTS_SETUP_DEADLINE: Setup took too long.') // => { code: 'REACT_SCRIPTS_SETUP_DEADLINE', message: 'Setup took too long.' }
+ */
+function restoredReactScriptsDeadline(
+  text: string,
+): RefusalFailure | undefined {
+  const lead = CODED_FAILURE_LEAD.exec(text)
+  if (lead?.[1] !== 'REACT_SCRIPTS_SETUP_DEADLINE') return undefined
+  const code = 'REACT_SCRIPTS_SETUP_DEADLINE'
+  const message = text.slice(lead[0].length)
+  const details = reactScriptsSetupDeadlineDetailsOf(message)
+  return details
+    ? { code, message, libraryDetails: details }
+    : { code, message }
 }

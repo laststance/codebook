@@ -143,7 +143,7 @@ test('API_VERSION is 1.25 and its note names the five library-stop reasons', asy
 })
 
 // protects=skill 1.0.74 carries the library-stop sentence (declare a library server stop, tell the learner which build to run on library-build-stale, never run it) and names no sample app or function; fails_when=the sentence changes or a sample name enters the skill; no_claim=how a chat follows it
-test('the bundled skill 1.0.73 tells the chat to name the build and never run it', async () => {
+test('the bundled skill 1.0.74 tells the chat to name the build and never run it', async () => {
   // Arrange
   const skill = await readPackaged('skills/codebook/SKILL.md')
   // Act / Assert

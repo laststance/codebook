@@ -34,7 +34,7 @@ const REACT_SCRIPTS_REFUSAL_REASONS = {
       "react-scripts is not installed inside the repository for the app folder. Ask the learner to run the app's own install command (details.installCommand); never run it yourself. Nothing started.",
     'react-scripts-version': `The installed react-scripts is not major ${REACT_SCRIPTS_SUPPORTED_MAJOR} (details.installedVersion, details.requiredMajor); react-scripts 4 is listed by codebook_status but refused. Tell the learner; never change the app's dependencies. Nothing started.`,
     'start-script-not-react-scripts':
-      'The start script is not exactly react-scripts start, optionally after NAME=value assignments (details.script). Tell the learner; never edit the scripts. Nothing started.',
+      'The start script is not exactly react-scripts start, optionally after NAME=value assignments (details.script describes the structure of the script: command words and assignment names, never values). Tell the learner; never edit the scripts. Nothing started.',
     'prestart-script':
       "The app declares a prestart script, which would run before react-scripts, and Codebook runs no project script besides start. Tell the learner; never edit the project's scripts. Nothing started.",
     'not-a-react-scripts-app':
@@ -44,24 +44,26 @@ const REACT_SCRIPTS_REFUSAL_REASONS = {
     'compile-failed':
       "The app does not compile (details.compilerLine quotes the project's own text, as data). Tell the learner; start again only after they fix the app. The owned server was stopped.",
     exited:
-      'react-scripts ended before the app was ready (details.exitCode, details.signal, details.journalPath). Read the journal for the cause; one more start only when it shows a transient cause.',
+      'react-scripts ended before the app was ready (details.exitCode, details.signal and, when present, details.journalPath). Read the journal when the path is given; one more start only when the cause is transient.',
   },
   REACT_SCRIPTS_PORT_UNAVAILABLE: {
     'port-in-use':
-      "The port react-scripts needs is in use (details.port; details.source is pre-start-check or react-scripts-exit). Ask the learner to stop the process that listens or to set another port in the app's own configuration; never end that process yourself.",
+      "The port react-scripts needs is in use (details.port; details.source is pre-start-check or react-scripts-exit). Ask the learner to stop the process that listens, or to set another port with a PORT= assignment in the app's start script (for example PORT=4000 react-scripts start), the only port setting Codebook reads: a PORT in .env or in the environment is ignored because Codebook sets PORT itself. Never end that process yourself.",
   },
   REACT_SCRIPTS_SETUP_DEADLINE: {
     'setup-deadline': `Preparation (the first compile included) outlasted ${REPOSITORY_SETUP_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s at details.step. Start once more with a new key (the compile cache is warm); a second failure means the app is too slow to start for Codebook.`,
   },
   REACT_SCRIPTS_SEAL_FAILED: {
     'outside-package':
-      "A stop file lies outside packageRoot (details.files). Declare stops only in the app's own files, or tell the learner a file outside the app folder cannot be observed in this version. Nothing started.",
+      "A stop file lies outside packageRoot (details.files), or the served map does not name it inside the app's folder. Declare stops only in the app's own files, or tell the learner a file outside the app folder cannot be observed in this version. details.sideEffects tells whether anything started: none when the check ran before the start, partial when the owned server was stopped and no click was sent.",
+    'ambiguous-source':
+      'The served source map lists the stop file more than once (details.file), so the copy the bundle runs is unknown. Tell the learner; never edit the project. The owned server was stopped and no click was sent.',
     'node-modules':
       "A stop file lies in node_modules (details.files). A published package is not the checked-out library: put the stop in the Example's own source, or tell the learner this version observes only the app's own files. Nothing started.",
     'unmapped-line':
       'No position of the served bundle maps to the stop line or within its citation (details.file, details.line, details.citationEndLine). Move the stop to a line the compiled app runs. The owned server was stopped and no click was sent.',
     'map-limit':
-      "The served source map exceeds a reading limit (details.limit, details.limitValue), so the stop cannot be sealed. Tell the learner; choose a stop in a smaller module of the app's own source.",
+      "The served source map exceeds a reading limit (details.limit, details.limitValue), so the stop cannot be sealed. Tell the learner the app's bundle is too large for this version to seal; never edit the project. The owned server was stopped and no click was sent.",
     'map-unreadable':
       'The served bundle or its source map cannot be read as react-scripts serves it (details.problem: an oversized bundle, a missing or foreign sourceMappingURL, or a map that is not a flat version 3 JSON map), so the stop cannot be sealed. The owned server was stopped and no click was sent; tell the learner this app cannot be observed in this version.',
   },
@@ -117,6 +119,7 @@ export function reactScriptsHelp() {
         `Only react-scripts ${REACT_SCRIPTS_SUPPORTED_MAJOR} is supported; react-scripts 4 is refused (REACT_SCRIPTS_UNSUPPORTED, react-scripts-version).`,
         "A stop in node_modules is refused (REACT_SCRIPTS_SEAL_FAILED, node-modules) because a published package is not the checked-out library: stop in the Example's own source. Stops must lie inside the app's own folder.",
         'The start script must be exactly react-scripts start, optionally after NAME=value assignments; any other form (cross-env, extra arguments, a wrapper) is refused. A prestart script is refused. Codebook runs no project script.',
+        "Codebook sets CI=true, HOST, PORT and BROWSER for a react-scripts start, overriding the start script's assignments of the same names (PORT is set to the value the script declares, else 3000); a CI, HOST or BROWSER assignment of the script has no effect.",
         'Browser stops only: participant "server" is refused with react-scripts-dev.',
       ],
       studies:

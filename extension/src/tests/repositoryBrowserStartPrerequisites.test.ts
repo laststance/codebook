@@ -86,3 +86,19 @@ test('a vite-dev run reads the Vite adapter entry and a report without profiles 
   assert.deepEqual(vite, { ready: false, missing: ['vite is not installed.'] })
   assert.equal(none, undefined)
 })
+
+// Value: protects=a react-scripts-dev run on a window without a react-scripts readiness entry is told about the react-scripts adapter, not the Vite one; fails_when=the fallback sentence names Vite; no_claim=the readiness of the adapter itself
+test('a react-scripts-dev run without a react-scripts readiness entry gets a react-scripts sentence', () => {
+  // Arrange
+  const configuration = { adapter: 'react-scripts-dev' }
+  // Act
+  const result = repositoryBrowserStartPrerequisites(
+    NEXT_ONLY_REPORT,
+    'repository-browser',
+    configuration,
+  )
+  // Assert
+  assert.equal(result?.ready, false)
+  assert.match(result?.missing[0] ?? '', /react-scripts adapter's readiness/)
+  assert.equal((result?.missing[0] ?? '').includes('Vite'), false)
+})

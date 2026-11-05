@@ -96,6 +96,7 @@ test('the react-scripts help states its limits and has an anchor for each refusa
     )
   assert.deepEqual(sealReasons, [
     'outside-package',
+    'ambiguous-source',
     'node-modules',
     'unmapped-line',
     'map-limit',
@@ -169,4 +170,74 @@ test('the README documents the react-scripts-dev adapter and its limits', async 
     'study format 11 (`.study.v11.json`)',
   ])
     assert.ok(readme.includes(phrase), phrase)
+})
+
+// Value: protects=the help, the README and the API note tell the chat that Codebook sets CI=true, HOST, PORT and BROWSER over the start script; fails_when=the sentence leaves one of the three places; no_claim=that the launcher applies it (launcher tests pin that)
+test('the help, README and API note state the environment Codebook sets for a react-scripts start', async (context) => {
+  // Arrange
+  const help = await readHelp(context)
+  const readme = await readPackaged('README.md')
+  const constants = await readPackaged('src/constants.ts')
+  // Act
+  const limitText = help.reactScriptsQuickStart.limits.join('\n')
+  const note =
+    constants
+      .split('\n')
+      .find((line) => line.startsWith(' * 1.25 is additive')) ?? ''
+  // Assert
+  assert.ok(limitText.includes('Codebook sets CI=true, HOST, PORT and BROWSER'))
+  assert.ok(
+    readme.includes(
+      'Codebook sets `CI=true`, `HOST`, `PORT` and `BROWSER` itself',
+    ),
+  )
+  assert.ok(
+    note.includes('it sets `CI=true`, `HOST`, `PORT` and `BROWSER` itself'),
+  )
+  assert.ok(
+    readme.includes(
+      'listed by its structure (command words and assignment names, never values)',
+    ),
+  )
+  assert.ok(readme.includes('`Host=` or `port=`'))
+})
+
+// Value: protects=the bundled skill paraphrases the selection rule (root only with rootIsApp, ready packages entry with its packageRoot, hoisted install never the root, truncated list declared from the repository files); fails_when=a key phrase leaves the skill; no_claim=how a chat follows it
+test('the bundled skill paraphrases the react-scripts selection rule', async () => {
+  // Arrange
+  const skill = await readPackaged('skills/codebook/SKILL.md')
+  const paragraph =
+    skill
+      .split('\n')
+      .find((line) => line.startsWith('**A Create React App app')) ?? ''
+  // Act / Assert
+  for (const phrase of [
+    '`rootIsApp` true',
+    'the `packages` entry the question is about',
+    'its exact `packageRoot`',
+    '`node_modules/react-scripts` at the root alone (a hoisted install) never makes the root the choice',
+    '`packagesTruncated` is true',
+    "declare its repository-relative folder as `packageRoot` from the repository's files",
+  ])
+    assert.ok(paragraph.includes(phrase), phrase)
+  for (const phrase of ['rootIsApp', 'hoisted install', 'packagesTruncated'])
+    assert.ok(REACT_SCRIPTS_APP_SELECTION_RULE.includes(phrase), phrase)
+})
+
+// Value: protects=the map-limit, port and exited help texts match the builders (whole bundle too large; PORT= assignment lever; journalPath only when present); fails_when=the help sends the learner to a smaller module or to the app's own configuration; no_claim=the run
+test('the react-scripts help words map-limit, port and exited as the builders do', async (context) => {
+  // Arrange
+  const help = await readHelp(context)
+  const refusals = help.reactScriptsQuickStart.refusals
+  // Act
+  const mapLimit =
+    refusals.REACT_SCRIPTS_SEAL_FAILED?.reasons['map-limit'] ?? ''
+  const port =
+    refusals.REACT_SCRIPTS_PORT_UNAVAILABLE?.reasons['port-in-use'] ?? ''
+  const exited = refusals.REACT_SCRIPTS_LAUNCHER_FAILED?.reasons.exited ?? ''
+  // Assert
+  assert.ok(mapLimit.includes('bundle is too large'))
+  assert.equal(mapLimit.includes('smaller module'), false)
+  assert.ok(port.includes('PORT= assignment in the'))
+  assert.ok(exited.includes('when present, details.journalPath'))
 })

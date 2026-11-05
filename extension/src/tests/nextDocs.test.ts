@@ -160,7 +160,6 @@ test('every repository-browser anchor the help names resolves to a refusal secti
     ...Object.keys(help.nextRefusals ?? {}),
     ...Object.keys(help.viteRefusals ?? {}),
     ...Object.keys(help.reactScriptsQuickStart?.refusals ?? {}),
-    ...Object.keys(help.reactScriptsQuickStart?.refusals ?? {}),
     ...Object.keys(help.operationsErrorCodes?.codes ?? {}),
     ...Object.keys(help.serverRenderErrors?.codes ?? {}),
   ])

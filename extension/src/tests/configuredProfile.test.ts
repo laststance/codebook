@@ -38,3 +38,13 @@ test('the public repository-browser catalog names the Next routers next-dev-webp
     /a Pages Router page takes browser stops, and, in version 3 since API 1\.17, server stops in its getServerSideProps or getStaticProps and the code they call\./,
   )
 })
+
+// Value: protects=the public scope describes all three adapters, the react-scripts one with its API; fails_when=the scope says two runtimes or omits react-scripts-dev; no_claim=the adapter readiness
+test('the public repository-browser scope describes three adapters including react-scripts-dev', () => {
+  // Arrange
+  const { scope } = CONFIGURED_PROFILE
+  // Act / Assert
+  assert.match(scope, /^Three development runtimes/)
+  assert.match(scope, /react-scripts-dev \(react-scripts 5, since API 1\.25\)/)
+  assert.match(scope, /browser stops only \(no server participant\)/)
+})

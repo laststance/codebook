@@ -6,6 +6,7 @@ import {
   REACT_SCRIPTS_REFUSAL_CODES,
   reactScriptsCompileFailedRefusal,
   reactScriptsExitedRefusal,
+  reactScriptsAmbiguousSourceRefusal,
   reactScriptsMapLimitRefusal,
   reactScriptsNodeModulesRefusal,
   reactScriptsNotAppRefusal,
@@ -14,6 +15,7 @@ import {
   reactScriptsPortConflictOf,
   reactScriptsPortRefusal,
   reactScriptsPrestartRefusal,
+  reactScriptsSealedOutsidePackageRefusal,
   reactScriptsSetupDeadlineRefusal,
   reactScriptsSetupDeadlineText,
   reactScriptsStartScriptRefusal,
@@ -248,4 +250,110 @@ test('every react-scripts refusal code restores from a run failure text', () => 
   // Assert
   assert.deepEqual([...REACT_SCRIPTS_REFUSAL_CODES], expected)
   assert.deepEqual(restored, expected)
+})
+
+// Value: protects=a setup deadline raised by a timer reaches the service with details.reason, details.step and details.sideEffects that the API note, the help and the recovery promise; fails_when=the restored refusal carries only code and message, or the step is cut at the wrong place; no_claim=that the service forwards the fields (it forwards the slot as the error details)
+test('a timer-raised react-scripts setup deadline restores its reason, step and side effects from the failure text', () => {
+  // Arrange
+  const text = reactScriptsSetupDeadlineText('sealing the declared stops')
+  // Act
+  const restored = refusalFailureOf(text)
+  // Assert
+  assert.deepEqual(restored?.libraryDetails, {
+    reason: 'setup-deadline',
+    step: 'sealing the declared stops',
+    sideEffects: 'partial',
+  })
+  assert.equal(restored?.code, 'REACT_SCRIPTS_SETUP_DEADLINE')
+})
+
+// Value: protects=a deadline text that names no step restores the code alone, never invented details; fails_when=the restore guesses a step; no_claim=the wording of other codes
+test('a react-scripts deadline text without a step restores the code with no details', () => {
+  // Arrange
+  const text = 'REACT_SCRIPTS_SETUP_DEADLINE: Setup took too long.'
+  // Act
+  const restored = refusalFailureOf(text)
+  // Assert
+  assert.deepEqual(restored, {
+    code: 'REACT_SCRIPTS_SETUP_DEADLINE',
+    message: 'Setup took too long.',
+  })
+})
+
+// Value: protects=the busy-port recovery names the one port lever Codebook reads, the start script's PORT= assignment, and says .env is ignored; fails_when=it sends the learner to the app's own configuration, which Codebook overrides; no_claim=that the launcher reads the assignment (launcher tests pin that)
+test('the busy-port recovery names the start script PORT= assignment as the only port setting', () => {
+  // Arrange
+  const error = reactScriptsPortRefusal(3000, 'pre-start-check')
+  // Act
+  const recovery = recoveryOf(error)
+  // Assert
+  assert.match(recovery, /PORT= assignment in the app's start script/)
+  assert.match(recovery, /\.env/)
+  assert.equal(recovery.includes("app's own configuration"), false)
+})
+
+// Value: protects=a seal refusal found after the server started says so (outside-package with partial side effects), unlike the configuration-time one; fails_when=the seal-time refusal claims nothing started; no_claim=the seal's decision to raise it
+test('the seal-time outside-package refusal records that the owned server was stopped', () => {
+  // Arrange
+  const error = reactScriptsSealedOutsidePackageRefusal('app', [
+    'lib/SECRET.js',
+  ])
+  // Act
+  const recovery = recoveryOf(error)
+  // Assert
+  assert.deepEqual(error.details, {
+    reason: 'outside-package',
+    files: ['lib/SECRET.js'],
+    packageRoot: 'app',
+    sideEffects: 'partial',
+  })
+  assert.equal(error.message.includes('nothing was started'), false)
+  assert.match(recovery, /owned server was stopped and no click was sent/)
+  assert.equal(recovery.includes('SECRET'), false)
+})
+
+// Value: protects=a map that lists the stop file twice gets its own reason with the file and partial side effects; fails_when=it is reported as outside-package; no_claim=the seal's detection
+test('an ambiguous-source refusal names the file the served map lists twice', () => {
+  // Arrange
+  const error = reactScriptsAmbiguousSourceRefusal('src/App.js')
+  // Act
+  const recovery = recoveryOf(error)
+  // Assert
+  assert.deepEqual(error.details, {
+    reason: 'ambiguous-source',
+    file: 'src/App.js',
+    sideEffects: 'partial',
+  })
+  assert.match(recovery, /details\.file/)
+  assert.match(recovery, /#REACT_SCRIPTS_SEAL_FAILED\.$/)
+})
+
+// Value: protects=an unreadable installed version gets its own sentence and no installedVersion field; fails_when=the message reads "react-scripts undefined is installed"; no_claim=how the manifest is read
+test('a react-scripts version refusal without a readable version says so and omits the field', () => {
+  // Arrange
+  const error = reactScriptsVersionRefusal(undefined)
+  // Act
+  const message = error.message
+  // Assert
+  assert.match(message, /no readable version/)
+  assert.equal(message.includes('undefined'), false)
+  assert.equal('installedVersion' in (error.details ?? {}), false)
+  assert.equal(error.details?.requiredMajor, 5)
+})
+
+// Value: protects=the exited refusal holds whether or not the run has a journal path, and names the path only when present; fails_when=a missing path is printed as undefined or the field is kept as undefined; no_claim=that the launcher passes a path
+test('an exited refusal names journalPath only when the run has one', () => {
+  // Arrange
+  const without = reactScriptsExitedRefusal({ exitCode: 1, signal: null })
+  const withPath = reactScriptsExitedRefusal({
+    exitCode: 1,
+    signal: null,
+    journalPath: '/j.log',
+  })
+  // Act
+  const detailKeys = Object.keys(without.details ?? {})
+  // Assert
+  assert.equal(detailKeys.includes('journalPath'), false)
+  assert.equal(withPath.details?.journalPath, '/j.log')
+  assert.match(recoveryOf(without), /when details\.journalPath is present/)
 })

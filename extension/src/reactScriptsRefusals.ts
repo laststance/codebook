@@ -4,6 +4,7 @@ import {
   REPOSITORY_MAPPED_POSITION_MAX_GENERATED_LINES,
   REPOSITORY_MAPPED_POSITION_MAX_SCANNED_CHARS,
   REPOSITORY_MAPPED_POSITION_SEGMENT_LIMIT,
+  REACT_SCRIPTS_SUPPORTED_MAJOR,
   REPOSITORY_SETUP_TIMEOUT_MS,
 } from './constants'
 import { StudyError, type ErrorCode } from './errors'
@@ -23,9 +24,6 @@ export const REACT_SCRIPTS_REFUSAL_CODES = [
 
 /** One code of {@link REACT_SCRIPTS_REFUSAL_CODES}. */
 type ReactScriptsRefusalCode = (typeof REACT_SCRIPTS_REFUSAL_CODES)[number]
-
-/** The react-scripts major Codebook supports; any other installed major is refused with `react-scripts-version`. */
-const REACT_SCRIPTS_SUPPORTED_MAJOR = 5
 
 /**
  * The help anchor of a refusal code: `codebook://help/repository-browser#<CODE>`.
@@ -120,21 +118,24 @@ export function reactScriptsNotInstalledRefusal(
 
 /**
  * Builds the `REACT_SCRIPTS_UNSUPPORTED` refusal of an installed react-scripts of another major.
- * @param installedVersion - The `version` of the installed react-scripts manifest.
- * @returns The refusal: `details.reason: "react-scripts-version"`, `installedVersion`, `requiredMajor` and `sideEffects: "none"`.
+ * @param installedVersion - The `version` of the installed react-scripts manifest, or `undefined` when the manifest holds no readable version.
+ * @returns The refusal: `details.reason: "react-scripts-version"`, `installedVersion` (absent when unreadable), `requiredMajor` and `sideEffects: "none"`.
  * @example
  * reactScriptsVersionRefusal('4.0.3').details?.requiredMajor // => 5
+ * reactScriptsVersionRefusal(undefined).details?.installedVersion // => undefined
  */
 export function reactScriptsVersionRefusal(
-  installedVersion: string,
+  installedVersion?: string,
 ): StudyError {
   return reactScriptsRefusal(
     'REACT_SCRIPTS_UNSUPPORTED',
-    `react-scripts ${installedVersion} is installed; Codebook supports react-scripts ${REACT_SCRIPTS_SUPPORTED_MAJOR}. Nothing was started.`,
-    `Tell the learner that details.installedVersion is not the react-scripts major named in details.requiredMajor, so this version cannot observe the app; never edit the project or its dependencies. Start again only if the learner changes the app. ${recoveryEnd('REACT_SCRIPTS_UNSUPPORTED')}`,
+    installedVersion === undefined
+      ? `The installed react-scripts has no readable version; Codebook supports react-scripts ${REACT_SCRIPTS_SUPPORTED_MAJOR}. Nothing was started.`
+      : `react-scripts ${installedVersion} is installed; Codebook supports react-scripts ${REACT_SCRIPTS_SUPPORTED_MAJOR}. Nothing was started.`,
+    `Tell the learner that the installed react-scripts (details.installedVersion, absent when its version is unreadable) is not the major named in details.requiredMajor, so this version cannot observe the app; never edit the project or its dependencies. Start again only if the learner changes the app. ${recoveryEnd('REACT_SCRIPTS_UNSUPPORTED')}`,
     {
       reason: 'react-scripts-version',
-      installedVersion,
+      ...(installedVersion === undefined ? {} : { installedVersion }),
       requiredMajor: REACT_SCRIPTS_SUPPORTED_MAJOR,
       sideEffects: 'none',
     },
@@ -143,16 +144,16 @@ export function reactScriptsVersionRefusal(
 
 /**
  * Builds the `REACT_SCRIPTS_UNSUPPORTED` refusal of a `start` script that is not a plain `react-scripts start`.
- * @param script - The `start` script, already masked by the caller.
- * @returns The refusal: `details.reason: "start-script-not-react-scripts"`, `script` and `sideEffects: "none"`.
+ * @param script - A structural description of the `start` script, parts joined with '; ' (command words and assignment names, never values), built by the caller; the raw script text is never passed.
+ * @returns The refusal: `details.reason: "start-script-not-react-scripts"`, `script` (the description) and `sideEffects: "none"`.
  * @example
- * reactScriptsStartScriptRefusal('craco start').details?.script // => 'craco start'
+ * reactScriptsStartScriptRefusal('the command word cross-env; extra words after react-scripts start').details?.script // => 'the command word cross-env; extra words after react-scripts start'
  */
 export function reactScriptsStartScriptRefusal(script: string): StudyError {
   return reactScriptsRefusal(
     'REACT_SCRIPTS_UNSUPPORTED',
-    `The start script is "${script}", not a plain react-scripts start; Codebook runs the app only through react-scripts. Nothing was started.`,
-    `Tell the learner that the start script in details.script is not a plain react-scripts start, so this version cannot observe the app; never edit the project or its scripts. Start again only if the learner changes the app.${REACT_SCRIPTS_QUOTE_NOTE} ${recoveryEnd('REACT_SCRIPTS_UNSUPPORTED')}`,
+    `The start script is not a plain react-scripts start (${script}); Codebook runs the app only through react-scripts. Nothing was started.`,
+    `Tell the learner that the start script is not a plain react-scripts start (details.script describes its structure, never its values), so this version cannot observe the app; never edit the project or its scripts. Start again only if the learner changes the app.${REACT_SCRIPTS_QUOTE_NOTE} ${recoveryEnd('REACT_SCRIPTS_UNSUPPORTED')}`,
     { reason: 'start-script-not-react-scripts', script, sideEffects: 'none' },
   )
 }
@@ -210,14 +211,14 @@ export function reactScriptsCompileFailedRefusal(
 export type ReactScriptsExit = {
   exitCode: number | null
   signal: string | null
-  /** The path of the run journal that holds the process output. */
-  journalPath: string
+  /** The path of the run journal that holds the process output; absent when the caller has none to name. */
+  journalPath?: string
 }
 
 /**
  * Builds the `REACT_SCRIPTS_LAUNCHER_FAILED` refusal of a react-scripts process that ended before the page was ready.
- * @param exit - The exit code, signal and run journal path.
- * @returns The refusal: `details.reason: "exited"`, `exitCode`, `signal`, `journalPath` and `sideEffects: "partial"`.
+ * @param exit - The exit code, signal and, when known, the run journal path.
+ * @returns The refusal: `details.reason: "exited"`, `exitCode`, `signal`, `journalPath` (only when given) and `sideEffects: "partial"`.
  * @example
  * reactScriptsExitedRefusal({ exitCode: 1, signal: null, journalPath: '/j.log' }).details?.exitCode // => 1
  */
@@ -229,12 +230,14 @@ export function reactScriptsExitedRefusal(exit: ReactScriptsExit): StudyError {
   return reactScriptsRefusal(
     'REACT_SCRIPTS_LAUNCHER_FAILED',
     `react-scripts ended ${ended} before the app was ready.`,
-    `Read details.exitCode, details.signal and the run journal at details.journalPath for the cause, then tell the learner; start once more with a new key only when the journal shows a transient cause.${REACT_SCRIPTS_QUOTE_NOTE} The process had ended and nothing was left running. ${recoveryEnd('REACT_SCRIPTS_LAUNCHER_FAILED')}`,
+    `Read details.exitCode and details.signal (and, when details.journalPath is present, the run journal there) for the cause, then tell the learner; start once more with a new key only when the journal shows a transient cause.${REACT_SCRIPTS_QUOTE_NOTE} The process had ended and nothing was left running. ${recoveryEnd('REACT_SCRIPTS_LAUNCHER_FAILED')}`,
     {
       reason: 'exited',
       exitCode: exit.exitCode,
       signal: exit.signal,
-      journalPath: exit.journalPath,
+      ...(exit.journalPath === undefined
+        ? {}
+        : { journalPath: exit.journalPath }),
       sideEffects: 'partial',
     },
   )
@@ -260,7 +263,7 @@ export function reactScriptsPortRefusal(
   return reactScriptsRefusal(
     'REACT_SCRIPTS_PORT_UNAVAILABLE',
     `Port ${port} is in use on this machine, and Codebook never starts the app on another port.`,
-    `Ask the learner to stop the process that listens on details.port, or to set another port in the app's own configuration; never end that process yourself. ${recoveryEnd('REACT_SCRIPTS_PORT_UNAVAILABLE')}`,
+    `Ask the learner to stop the process that listens on details.port, or to set another port with a PORT= assignment in the app's start script (for example PORT=4000 react-scripts start), the only port setting Codebook reads; a PORT in .env or in the environment is ignored because Codebook sets PORT itself. Never end that process yourself. ${recoveryEnd('REACT_SCRIPTS_PORT_UNAVAILABLE')}`,
     { reason: 'port-in-use', port, source, sideEffects },
   )
 }
@@ -312,6 +315,35 @@ export function reactScriptsSetupDeadlineText(
   return `REACT_SCRIPTS_SETUP_DEADLINE: ${reactScriptsSetupDeadlineSentence(step, limitMs)}`
 }
 
+/** Reads the step fragment out of the sentence {@link reactScriptsSetupDeadlineSentence} writes; the fragment holds no full stop followed by the fixed tail. */
+const SETUP_DEADLINE_STEP =
+  /exceeded while (.+?)\. The first compile of a react-scripts app/
+
+/** The fields a react-scripts setup-deadline failure text restores: the reason, the step it reached and `partial` side effects (the owned server was stopped, as the text says). */
+export type ReactScriptsSetupDeadlineFailureDetails = {
+  reason: 'setup-deadline'
+  step: string
+  sideEffects: 'partial'
+}
+
+/**
+ * Restores `details` of a react-scripts setup deadline that a timer raised, from the message {@link reactScriptsSetupDeadlineText} wrote.
+ *
+ * Why it exists: a timer-raised deadline reaches the service as text only, yet the API note, the help and the recovery promise `details.reason`, `details.step` and `details.sideEffects`. Called by {@link refusalFailureOf} for `REACT_SCRIPTS_SETUP_DEADLINE`.
+ * @param message - The failure message after the code lead.
+ * @returns The restored fields, or `undefined` when the message does not hold the deadline sentence.
+ * @example
+ * reactScriptsSetupDeadlineDetailsOf('Repository setup deadline (90 s) exceeded while starting react-scripts. The first compile of a react-scripts app can take long; …') // => { reason: 'setup-deadline', step: 'starting react-scripts', sideEffects: 'partial' }
+ */
+export function reactScriptsSetupDeadlineDetailsOf(
+  message: string,
+): ReactScriptsSetupDeadlineFailureDetails | undefined {
+  const step = SETUP_DEADLINE_STEP.exec(message)?.[1]
+  return step === undefined
+    ? undefined
+    : { reason: 'setup-deadline', step, sideEffects: 'partial' }
+}
+
 /**
  * Builds the `REACT_SCRIPTS_SETUP_DEADLINE` refusal of a preparation that outlasted the run's setup budget.
  * @param step - The sentence fragment of the step reached.
@@ -333,7 +365,7 @@ export function reactScriptsSetupDeadlineRefusal(
 }
 
 /**
- * Builds the `REACT_SCRIPTS_SEAL_FAILED` refusal of stop files that lie outside the app's `packageRoot`.
+ * Builds the `REACT_SCRIPTS_SEAL_FAILED` refusal of stop files that lie outside the app's `packageRoot`, found at configuration time, before anything started; after the server started use {@link reactScriptsSealedOutsidePackageRefusal}.
  * @param packageRoot - The package root's canonical repository-relative path.
  * @param files - Every offending repository-relative stop file, in declared order.
  * @returns The refusal: `details.reason: "outside-package"`, `files`, `packageRoot` and `sideEffects: "none"`.
@@ -354,6 +386,49 @@ export function reactScriptsOutsidePackageRefusal(
       packageRoot,
       sideEffects: 'none',
     },
+  )
+}
+
+/**
+ * Builds the `REACT_SCRIPTS_SEAL_FAILED` refusal of a stop file that the served source map does not name inside the app, found at seal time, after the server started.
+ *
+ * Why it exists: {@link reactScriptsOutsidePackageRefusal} says nothing started, which is false once the owned server ran. Called by the seal when the stop path leaves the app folder or the served map does not name the file inside it; a map that names the file twice uses {@link reactScriptsAmbiguousSourceRefusal}.
+ * @param packageRoot - The package root's canonical repository-relative path.
+ * @param files - The offending repository-relative stop files.
+ * @returns The refusal: `details.reason: "outside-package"`, `files`, `packageRoot` and `sideEffects: "partial"`.
+ * @example
+ * reactScriptsSealedOutsidePackageRefusal('app', ['lib/a.js']).details?.sideEffects // => 'partial'
+ */
+export function reactScriptsSealedOutsidePackageRefusal(
+  packageRoot: string,
+  files: readonly string[],
+): StudyError {
+  return reactScriptsRefusal(
+    'REACT_SCRIPTS_SEAL_FAILED',
+    `Stop file${files.length === 1 ? '' : 's'} ${files.join(', ')} lie${files.length === 1 ? 's' : ''} outside packageRoot ${packageRoot} (the served source map does not name ${files.length === 1 ? 'it' : 'them'} inside the app's folder), so the stops cannot be sealed; the owned server was stopped and no click was sent.`,
+    `Declare stops only in files inside details.packageRoot (every file in details.files lies outside it or is not named by the app's served map), or tell the learner a file outside the app folder cannot be observed in this version. The owned server was stopped and no click was sent (details.sideEffects is partial). ${recoveryEnd('REACT_SCRIPTS_SEAL_FAILED')}`,
+    {
+      reason: 'outside-package',
+      files: [...files],
+      packageRoot,
+      sideEffects: 'partial',
+    },
+  )
+}
+
+/**
+ * Builds the `REACT_SCRIPTS_SEAL_FAILED` refusal of a stop file that the served source map lists more than once.
+ * @param file - The repository-relative stop file.
+ * @returns The refusal: `details.reason: "ambiguous-source"`, `file` and `sideEffects: "partial"`.
+ * @example
+ * reactScriptsAmbiguousSourceRefusal('src/App.js').details?.reason // => 'ambiguous-source'
+ */
+export function reactScriptsAmbiguousSourceRefusal(file: string): StudyError {
+  return reactScriptsRefusal(
+    'REACT_SCRIPTS_SEAL_FAILED',
+    `The served source map lists ${file} more than once, so Codebook cannot tell which copy the bundle runs and the stop cannot be sealed. The owned server was stopped and no click was sent.`,
+    `Tell the learner the app's bundle names the stop file more than once (details.file), so this version cannot seal a stop in it; never edit the project. The owned server was stopped and no click was sent. ${recoveryEnd('REACT_SCRIPTS_SEAL_FAILED')}`,
+    { reason: 'ambiguous-source', file, sideEffects: 'partial' },
   )
 }
 
