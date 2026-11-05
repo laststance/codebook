@@ -18,7 +18,13 @@ test('codebook_status lists the node-server profile with its action, limits and 
   // Assert
   assert.deepEqual(
     status.profiles.map((profile) => profile.id),
-    ['repository-browser', 'node-test', 'node-server', 'chrome-extension'],
+    [
+      'repository-browser',
+      'node-test',
+      'node-server',
+      'chrome-extension',
+      'node-script',
+    ],
   )
   const profile = status.profiles[2]!
   assert.equal(profile.helpUri, 'codebook://help/node-server')

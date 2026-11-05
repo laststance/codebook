@@ -128,7 +128,7 @@ test('codebook_start for an unknown profile lists chrome-extension among the ava
       error instanceof StudyError &&
       error.code === 'UNSUPPORTED_PROFILE' &&
       error.message ===
-        'Available profiles: repository-browser, node-test, node-server, chrome-extension',
+        'Available profiles: repository-browser, node-test, node-server, node-script, chrome-extension',
   )
 })
 
