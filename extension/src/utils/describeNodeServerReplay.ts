@@ -4,6 +4,10 @@ import type {
   ServerReplayEvent,
   ServerReplayModel,
 } from './buildServerReplayModel'
+import {
+  describeScriptEndHeadline,
+  describeScriptEndRegion,
+} from './describeNodeScriptEnd'
 import { formatEventSeconds } from './formatEventSeconds'
 import { stripTerminalControls } from './stripTerminalControls'
 
@@ -251,6 +255,8 @@ export function describeServerPosition(
       return `${NODE_SERVER_REPLAY_TEXT.eventResult} ${event.status} · ${time}`
     case 'request-failed':
       return `Request failed: ${event.code} · ${time}`
+    case 'end':
+      return `${describeScriptEndHeadline(event)} · ${time}`
   }
 }
 
@@ -278,6 +284,8 @@ export function describeServerStepAction(
       return `Show response · ${time}`
     case 'request-failed':
       return `Show request failure · ${time}`
+    case 'end':
+      return `Show end · ${time}`
   }
 }
 
@@ -292,9 +300,11 @@ export function describeServerStudyStatus(input: {
   answer: string
   stopCount: number
   explainedStopCount: number
+  /** The replay's heading, `Server replay` unless a script replay words it. */
+  heading?: string
 }): string {
   return input.status === 'recording'
-    ? `${NODE_SERVER_REPLAY_TEXT.heading} · recording`
+    ? `${input.heading ?? NODE_SERVER_REPLAY_TEXT.heading} · recording`
     : `${input.answer} · capture ${input.status} · ${input.explainedStopCount} of ${input.stopCount} stops explained`
 }
 
@@ -309,6 +319,8 @@ export function describeServerAnswer(
 ): string {
   if (terminal?.type === 'response')
     return `${NODE_SERVER_REPLAY_TEXT.eventResult} ${terminal.status}`
+  // A script replay answers with how its run ended.
+  if (terminal?.type === 'end') return describeScriptEndHeadline(terminal)
   return terminal ? `Request failed: ${terminal.code}` : 'No response recorded'
 }
 
@@ -362,6 +374,11 @@ export function describeServerEventRow(
       return {
         heading: `Request failed: ${event.code} · ${time}`,
         body: event.message,
+      }
+    case 'end':
+      return {
+        heading: `${describeScriptEndHeadline(event)} · ${time}`,
+        body: describeScriptEndRegion(event).note ?? '',
       }
   }
 }

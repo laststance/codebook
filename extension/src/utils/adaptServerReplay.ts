@@ -84,15 +84,30 @@ function sanitizeServerReplayModel(
           code: stripTerminalControls(event.code),
           message: stripTerminalControls(event.message),
         }
+      case 'end':
+        return {
+          ...event,
+          ...(event.signal
+            ? { signal: stripTerminalControls(event.signal) }
+            : {}),
+          ...(event.exitUnknown
+            ? { exitUnknown: stripTerminalControls(event.exitUnknown) }
+            : {}),
+        }
     }
   })
   const terminal = events.find(
-    (event) => event.type === 'response' || event.type === 'request-failed',
+    (event) =>
+      event.type === 'response' ||
+      event.type === 'request-failed' ||
+      event.type === 'end',
   )
   return {
     ...model,
     events,
-    ...(terminal?.type === 'response' || terminal?.type === 'request-failed'
+    ...(terminal?.type === 'response' ||
+    terminal?.type === 'request-failed' ||
+    terminal?.type === 'end'
       ? { terminal }
       : {}),
   }
@@ -189,7 +204,8 @@ function toTestShapedHistory(model: ServerReplayModel): NodeTestHistoryIndex {
       createdAt: header.createdAt,
       configuration: {
         testFile: stripTerminalControls(
-          header.declaredStops[0]?.path ?? 'server',
+          header.declaredStops[0]?.path ??
+            (header.profile === 'node-script' ? 'script' : 'server'),
         ),
       },
     },

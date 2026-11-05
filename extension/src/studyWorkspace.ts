@@ -44,6 +44,7 @@ import {
   MAX_DEFERRED_OPEN_REPLIES,
   MAX_SOURCE_DOCUMENTS,
   CHROME_EXTENSION_PROFILE,
+  NODE_SCRIPT_PROFILE,
   NODE_SERVER_PROFILE,
   NODE_TEST_PROFILE,
   MILLISECONDS_PER_SECOND,
@@ -96,6 +97,7 @@ import {
   STUDY_REMOVAL_REFUSALS_WITHOUT_TRASH,
   STUDY_REMOVAL_EXTENSION_HISTORY_REFUSALS,
   STUDY_REMOVAL_EXTENSION_HISTORY_TRASH_REFUSED,
+  STUDY_REMOVAL_SCRIPT_HISTORY_REFUSAL,
   STUDY_REMOVAL_SERVER_HISTORY_REFUSAL,
   STUDY_REMOVAL_WITHOUT_TRASH_MESSAGE,
   STUDY_SOURCE_SCHEME,
@@ -306,7 +308,11 @@ import {
   describeNodeRecordedSource,
   NODE_RECORDED_SOURCE_TEXT,
 } from './utils/describeNodeRecordedSource'
-import { describeScriptReplayRow } from './utils/describeNodeScriptReplay'
+import {
+  describeScriptReplayRow,
+  describeScriptSummaryFailure,
+  NODE_SCRIPT_REPLAY_TEXT,
+} from './utils/describeNodeScriptReplay'
 import {
   describeServerEventRow,
   describeServerReplayRow,
@@ -378,6 +384,7 @@ import { maximizedEditorAreaWidthPx } from './utils/maximizedEditorAreaWidthPx'
 import { nextNodeHistoryStepId } from './utils/nextNodeHistoryStepId'
 import { NodeHistoryPlaybackController } from './utils/nodeHistoryPlaybackController'
 import { nodeHistoryStepTarget } from './utils/nodeHistoryStepTarget'
+import { nodeRunProfileOf } from './utils/nodeRunReplayWords'
 import { nodeSourceSlotName } from './utils/nodeSourceSlotName'
 import { nodeSourceSlotPath } from './utils/nodeSourceSlotPath'
 import { nodeStopSourceMatches } from './utils/nodeStopSourceMatches'
@@ -393,7 +400,10 @@ import {
   type RefusalTabView,
 } from './utils/placementRefusalReport'
 import { plannedStopLine } from './utils/plannedStopLine'
-import { presentServerHistory } from './utils/presentServerHistory'
+import {
+  presentScriptHistory,
+  presentServerHistory,
+} from './utils/presentServerHistory'
 import { projectExtensionHistoryTimeline } from './utils/projectExtensionHistoryTimeline'
 import {
   extensionStepTarget,
@@ -13701,6 +13711,9 @@ export class StudyWorkspace {
       this.nodeServerHistoryCatalog.some(
         (history) => history.studyId === studyId,
       ) ||
+      this.nodeScriptHistoryCatalog.some(
+        (history) => history.studyId === studyId,
+      ) ||
       this.nodeExtensionHistoryCatalog.some(
         (history) => history.studyId === studyId,
       ) ||
@@ -14034,9 +14047,14 @@ export class StudyWorkspace {
    * @example this.replayOpenDiagnosticIdentity(studyId) // => { surface: 'open:server-replay', profile: 'node-server' }
    */
   private replayOpenDiagnosticIdentity(studyId: string): {
-    surface: 'open:server-replay' | 'open:extension-replay' | 'open:test-replay'
+    surface:
+      | 'open:server-replay'
+      | 'open:script-replay'
+      | 'open:extension-replay'
+      | 'open:test-replay'
     profile:
       | typeof NODE_SERVER_PROFILE
+      | typeof NODE_SCRIPT_PROFILE
       | typeof CHROME_EXTENSION_PROFILE
       | typeof NODE_TEST_PROFILE
   } {
@@ -14051,6 +14069,14 @@ export class StudyWorkspace {
         this.recordOfStudy(studyId)?.profile === NODE_SERVER_PROFILE)
     if (isServer)
       return { surface: 'open:server-replay', profile: NODE_SERVER_PROFILE }
+    // A script replay is logged as its own surface, never as a server or test replay.
+    if (
+      !isListedTest &&
+      this.nodeScriptHistoryCatalog.some(
+        (history) => history.studyId === studyId,
+      )
+    )
+      return { surface: 'open:script-replay', profile: NODE_SCRIPT_PROFILE }
     // An Extension replay is logged as its own surface, never as a test replay.
     if (!isListedTest && this.isExtensionReplay(studyId))
       return {
@@ -14067,6 +14093,25 @@ export class StudyWorkspace {
         (history) => history.studyId === studyId,
       ) || this.recordOfStudy(studyId)?.profile === CHROME_EXTENSION_PROFILE
     )
+  }
+
+  /**
+   * Names a replay that did not open for the failure notification, as Saved studies names it: a test by its file and titles, any other replay by its saved title or question; the study id when no catalog lists it.
+   * @param studyId - The replay's study id.
+   * @returns The name the notification quotes.
+   * @example this.replayOpenFailureTitle(studyId) // => 'Creating an item'
+   */
+  private replayOpenFailureTitle(studyId: string): string {
+    const test = this.nodeHistoryCatalog.find(
+      (history) => history.studyId === studyId,
+    )
+    if (test) return [test.testFile, ...(test.testTitles ?? [])].join(' › ')
+    const titled = [
+      ...this.nodeServerHistoryCatalog,
+      ...this.nodeScriptHistoryCatalog,
+      ...this.nodeExtensionHistoryCatalog,
+    ].find((history) => history.studyId === studyId)
+    return titled ? (titled.title ?? titled.question) : studyId
   }
 
   /**
@@ -14090,30 +14135,16 @@ export class StudyWorkspace {
       cause,
       ...(stack ? { stack } : {}),
     })
-    const summary = this.nodeHistoryCatalog.find(
-      (history) => history.studyId === studyId,
-    )
-    const serverSummary = this.nodeServerHistoryCatalog.find(
-      (history) => history.studyId === studyId,
-    )
-    const extensionSummary = this.nodeExtensionHistoryCatalog.find(
-      (history) => history.studyId === studyId,
-    )
     const failure = describeNodeLearningSave({
       kind: 'open-failed',
-      // A server replay that cannot open is worded as one, never as a test replay, also before Saved studies lists it.
-      ...(identity.profile === NODE_SERVER_PROFILE
-        ? { profile: NODE_SERVER_PROFILE }
+      // A server or script replay that cannot open is worded as one, never as a test replay, also before Saved studies lists it.
+      ...(identity.profile === NODE_SERVER_PROFILE ||
+      identity.profile === NODE_SCRIPT_PROFILE
+        ? { profile: identity.profile }
         : this.isExtensionReplay(studyId)
           ? { profile: CHROME_EXTENSION_PROFILE }
           : {}),
-      title: summary
-        ? [summary.testFile, ...(summary.testTitles ?? [])].join(' › ')
-        : serverSummary
-          ? (serverSummary.title ?? serverSummary.question)
-          : extensionSummary
-            ? (extensionSummary.title ?? extensionSummary.question)
-            : studyId,
+      title: this.replayOpenFailureTitle(studyId),
       cause,
     })
     // The answer is handled whenever it arrives, outside every entry's turn.
@@ -14327,6 +14358,24 @@ export class StudyWorkspace {
         studyId,
         request,
         revision,
+        {
+          stillRecording: NODE_SERVER_REPLAY_TEXT.stillRecording,
+          summaryFailure: describeServerSummaryFailure,
+          present: presentServerHistory,
+        },
+      )
+    // A script replay opens through the same path, dressed with the script's words.
+    if (resolved?.profile === 'node-script')
+      return this.readServerHistoryOpening(
+        resolved.store,
+        studyId,
+        request,
+        revision,
+        {
+          stillRecording: NODE_SCRIPT_REPLAY_TEXT.stillRecording,
+          summaryFailure: describeScriptSummaryFailure,
+          present: presentScriptHistory,
+        },
       )
     if (resolved?.profile === 'chrome-extension')
       return this.readExtensionHistoryOpening(
@@ -14358,18 +14407,28 @@ export class StudyWorkspace {
    * @throws When the journal cannot be read or verified, or the history is still being recorded.
    * @example await this.readServerHistoryOpening(store, studyId, request, this.revision) // => { history, serverReplay, savedSequence }
    */
-  private async readServerHistoryOpening(
-    store: NodeHistoryStore<NodeServerHistoryTypes>,
+  private async readServerHistoryOpening<
+    Types extends NodeServerHistoryTypes | NodeScriptHistoryTypes,
+  >(
+    store: NodeHistoryStore<Types>,
     studyId: string,
     request: number,
     revision: number,
+    flavor: {
+      stillRecording: string
+      summaryFailure: (cause: string) => string
+      present: (
+        journal: HistoryIndexOf<Types>,
+        summary: Types['Summary'] | undefined,
+      ) => ServerReplayPresentation
+    },
   ): Promise<NodeHistoryOpening | undefined> {
     const journal = await this.readOpenableJournal(
       store,
       studyId,
       request,
       revision,
-      NODE_SERVER_REPLAY_TEXT.stillRecording,
+      flavor.stillRecording,
     )
     if (!journal) return undefined
     const sidecars = await this.readOpeningSidecars(
@@ -14386,12 +14445,12 @@ export class StudyWorkspace {
       this.reportTestReplayFailure(
         'history-learning',
         error,
-        describeServerSummaryFailure,
+        flavor.summaryFailure,
       )
       return undefined
     })
     if (this.historyOpenSuperseded(request, revision)) return undefined
-    const serverReplay = presentServerHistory(journal, summary)
+    const serverReplay = flavor.present(journal, summary)
     const restored =
       sidecars.savedSequence === undefined
         ? undefined
@@ -14488,11 +14547,10 @@ export class StudyWorkspace {
    * @returns What was read, or `undefined` once the open is superseded.
    * @example await this.readOpeningSidecars(store, studyId, request, this.revision) // => { learningDecision, learningMaterial, savedSequence, positionError }
    */
-  private async readOpeningSidecars(
-    store:
-      | NodeHistoryStore<NodeTestHistoryTypes>
-      | NodeHistoryStore<NodeServerHistoryTypes>
-      | NodeHistoryStore<ExtensionHistoryTypes>,
+  private async readOpeningSidecars<
+    Types extends HistoryTypes & { Material: NodeLearningMaterialOfHistory },
+  >(
+    store: NodeHistoryStore<Types>,
     studyId: string,
     request: number,
     revision: number,
@@ -14532,11 +14590,8 @@ export class StudyWorkspace {
    * @returns The decision and the position, or `undefined` once the open is superseded.
    * @example await this.readOpeningProgress(store, studyId, request, this.revision) // => { learningDecision, savedSequence, positionError }
    */
-  private async readOpeningProgress(
-    store:
-      | NodeHistoryStore<NodeTestHistoryTypes>
-      | NodeHistoryStore<NodeServerHistoryTypes>
-      | NodeHistoryStore<ExtensionHistoryTypes>,
+  private async readOpeningProgress<Types extends HistoryTypes>(
+    store: NodeHistoryStore<Types>,
     studyId: string,
     request: number,
     revision: number,
@@ -15589,12 +15644,16 @@ export class StudyWorkspace {
 
   /**
    * Tells which replay is shown, so refusals name it in its own words.
-   * @returns `server` while a server replay is selected, `test` otherwise.
+   * @returns `server` while a server replay is selected, `script` for a script replay, `test` otherwise.
    * @example this.replayKind() // => 'server'
    */
   private replayKind(): ReplayKind {
     if (this.selectedExtensionReplay) return 'extension'
-    return this.selectedServerReplay ? 'server' : 'test'
+    if (this.selectedServerReplay)
+      return nodeRunProfileOf(this.selectedServerReplay.model) === 'node-script'
+        ? 'script'
+        : 'server'
+    return 'test'
   }
 
   /**
@@ -15615,9 +15674,11 @@ export class StudyWorkspace {
   private recordedSourcePlaceholder(): string {
     if (this.selectedExtensionReplay)
       return NODE_RECORDED_SOURCE_TEXT.extensionPlaceholder
-    return this.selectedServerReplay
-      ? NODE_RECORDED_SOURCE_TEXT.serverPlaceholder
-      : NODE_RECORDED_SOURCE_TEXT.placeholder
+    if (this.selectedServerReplay)
+      return nodeRunProfileOf(this.selectedServerReplay.model) === 'node-script'
+        ? NODE_RECORDED_SOURCE_TEXT.scriptPlaceholder
+        : NODE_RECORDED_SOURCE_TEXT.serverPlaceholder
+    return NODE_RECORDED_SOURCE_TEXT.placeholder
   }
 
   /**
@@ -15628,18 +15689,22 @@ export class StudyWorkspace {
    */
   private serverStopThread(
     stop: NodeTestHistoryStop,
-  ): { server: { hit: number; repeated: boolean } } | undefined {
+  ):
+    | { server: { hit: number; repeated: boolean } }
+    | { script: { hit: number; repeated: boolean } }
+    | undefined {
     const model = this.selectedServerReplay?.model
     const position = model?.indexBySequence.get(stop.sequence)
     const event = position === undefined ? undefined : model?.events[position]
-    return model && event?.type === 'stop'
-      ? {
-          server: {
-            hit: event.hit,
-            repeated: model.repeatedStops.has(event.declaredStopIndex),
-          },
-        }
-      : undefined
+    if (!model || event?.type !== 'stop') return undefined
+    const hits = {
+      hit: event.hit,
+      repeated: model.repeatedStops.has(event.declaredStopIndex),
+    }
+    // A script stop names itself as one in the debugger's Call Stack.
+    return nodeRunProfileOf(model) === 'node-script'
+      ? { script: hits }
+      : { server: hits }
   }
 
   /**
@@ -15695,7 +15760,7 @@ export class StudyWorkspace {
     if (!replay || this.selectedNodeHistory !== replay.history) return {}
     const first = this.selectedNodeHistoryPage * NODE_HISTORY_READER_PAGE_SIZE
     return {
-      nodeReplayProfile: 'node-server',
+      nodeReplayProfile: nodeRunProfileOf(replay.model),
       nodeServerEvents: replay.shownModel.events
         .slice(first, first + NODE_HISTORY_READER_PAGE_SIZE)
         .map((event) => ({
@@ -16088,6 +16153,7 @@ export class StudyWorkspace {
       // The recorded test names come without terminal and bidirectional controls, stripped when the catalog was listed (F131, F326).
       nodeHistoryCatalog: this.nodeHistoryCatalog,
       nodeServerHistoryCatalog: this.nodeServerHistoryCatalog,
+      nodeScriptHistoryCatalog: this.nodeScriptHistoryCatalog,
       nodeExtensionHistoryCatalog: this.nodeExtensionHistoryCatalog,
       nodeHistory: selectedNodeHistory && {
         ...this.shownNodeHistory(selectedNodeHistory),
@@ -27353,6 +27419,14 @@ export class StudyWorkspace {
         this.studyRemovalAvailability() === 'no-trash'
           ? STUDY_REMOVAL_SERVER_HISTORY_REFUSAL.withoutTrash
           : STUDY_REMOVAL_SERVER_HISTORY_REFUSAL.withTrash,
+      ],
+      [
+        this.nodeScriptHistoryCatalog.some(
+          (history) => history.studyId === studyId,
+        ),
+        this.studyRemovalAvailability() === 'no-trash'
+          ? STUDY_REMOVAL_SCRIPT_HISTORY_REFUSAL.withoutTrash
+          : STUDY_REMOVAL_SCRIPT_HISTORY_REFUSAL.withTrash,
       ],
       [
         !this.catalog.some((entry) => entry.id === studyId),

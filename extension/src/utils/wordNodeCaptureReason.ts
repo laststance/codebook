@@ -10,7 +10,7 @@ import { stripTerminalControls } from './stripTerminalControls'
  * Words why a test replay's capture is interrupted or partial for the Study section, so the learner reads the reason in the String catalog's words (DS14) on one line; called by {@link projectNodeTestSection} for each Study message of such a replay.
  * The stored reason comes from the store or from an error, so it may hold line breaks, control characters and the word "Node"; this keeps one short line without them.
  * @param reason - The history's stored reason, absent for a complete capture.
- * @param profile - Whose replay words it: a node-test replay (the default) or a node-server replay, which reads "Node server history" as "server replay".
+ * @param profile - Whose replay words it: a node-test replay (the default), a node-server replay, which reads "Node server history" as "server replay", or a node-script replay, which reads "Node script history" as "script replay".
  * @returns The reason on one line (terminal, C1 and bidirectional controls removed, line breaks and runs of blanks collapsed, cut at {@link NODE_CAPTURE_REASON_LIMIT_CHARS} characters with an ellipsis), with "Node test history" and "Node history" read as "test replay" (their plurals as "test replays") and the first letter capitalized; `undefined` for no reason or an empty one.
  * @example
  * wordNodeCaptureReason('Interrupted Node history after its verified prefix: Error: EIO') // => 'Interrupted test replay after its verified prefix: Error: EIO'
@@ -18,17 +18,21 @@ import { stripTerminalControls } from './stripTerminalControls'
  */
 export function wordNodeCaptureReason(
   reason: string | undefined,
-  profile: 'node-test' | 'node-server' = 'node-test',
+  profile: 'node-test' | 'node-server' | 'node-script' = 'node-test',
 ): string | undefined {
+  // The kind of history a stored reason calls "Node <kind> history", and the replay word it is read as.
+  const kind = {
+    'node-test': 'test',
+    'node-server': 'server',
+    'node-script': 'script',
+  }[profile]
   const words = stripTerminalControls(reason ?? '')
     // ANSI sequences, C1 and bidirectional controls are gone (F288); the line breaks and tabs left become a blank.
     .replace(/[\u0000-\u001f\u007f]+/g, ' ')
     .replace(
-      profile === 'node-server'
-        ? /\bNode (?:server )?histor(y|ies)\b/gi
-        : /\bNode (?:test )?histor(y|ies)\b/gi,
+      new RegExp(`\\bNode (?:${kind} )?histor(y|ies)\\b`, 'gi'),
       (_match, ending: string) => {
-        const noun = profile === 'node-server' ? 'server replay' : 'test replay'
+        const noun = `${kind} replay`
         return ending === 'y' ? noun : `${noun}s`
       },
     )

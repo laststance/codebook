@@ -8,6 +8,7 @@ import {
   NODE_SERVER_REPLAY_TEXT,
 } from './describeNodeServerReplay'
 import { labelLearningStepActions } from './labelLearningStepActions'
+import { nodeRunReplayWords } from './nodeRunReplayWords'
 import type { NodeHistoryTimeline } from './projectNodeHistoryTimeline'
 import type { NodeLearningSummaryProjection } from './projectNodeLearningSummary'
 import {
@@ -43,6 +44,7 @@ export function projectServerSection(
 ): NodeTestSectionView {
   const { replay, selected, learning } = input
   const model = replay.shownModel
+  const words = nodeRunReplayWords(model)
   const moment = input.pending
     ? { sameMomentStepIds: [] as string[] }
     : momentSteps(selected, learning, input.chosenStepId)
@@ -60,8 +62,8 @@ export function projectServerSection(
       : {}),
     ...momentLines(input, moment),
     pointer: input.applicationClosed
-      ? NODE_SERVER_REPLAY_TEXT.applicationClosed
-      : NODE_SERVER_REPLAY_TEXT.outputPointer,
+      ? words.applicationClosed
+      : words.outputPointer,
     applicationClosed: input.applicationClosed,
     ...('selectedStepId' in moment && moment.selectedStepId
       ? { selectedStepId: moment.selectedStepId }
@@ -93,6 +95,7 @@ function statusLine(
   )
   return describeServerStudyStatus({
     status: input.replay.shownModel.status,
+    heading: nodeRunReplayWords(input.replay.shownModel).heading,
     answer,
     stopCount: stops.length,
     explainedStopCount: stops.filter((stop) => referenced.has(stop.sequence))
@@ -113,7 +116,11 @@ function momentLines(
 ): Pick<NodeTestSectionView, 'explanation' | 'notRecorded' | 'unverified'> {
   const { selected } = input
   if (input.pending || !selected) return {}
-  const explanation = momentExplanation(selected, moment)
+  const explanation = momentExplanation(
+    selected,
+    moment,
+    nodeRunReplayWords(input.replay.shownModel).noStepForResult,
+  )
   const unverifiedStop = selected.type === 'stop' && !input.selectedStopVerified
   return {
     ...(explanation === undefined ? {} : { explanation }),
@@ -167,11 +174,15 @@ function unverifiedSourceLine(
 function momentExplanation(
   selected: ServerReplayEvent | undefined,
   moment: ReturnType<typeof momentSteps>,
+  noStepForResult: string,
 ): string | undefined {
   if (moment.selectedStep) return moment.selectedStep.explanation
   if (selected?.type === 'stop') return NODE_SERVER_REPLAY_TEXT.noStepForStop
-  return selected?.type === 'response' || selected?.type === 'request-failed'
-    ? NODE_SERVER_REPLAY_TEXT.noStepForResult
+  // A script's end is its result moment, as a server's response or failure is.
+  return selected?.type === 'response' ||
+    selected?.type === 'request-failed' ||
+    selected?.type === 'end'
+    ? noStepForResult
     : undefined
 }
 

@@ -1,6 +1,10 @@
 import { NODE_SERVER_HISTORY_REASON_CODES } from '../constants'
 import type { HistoryIndexOf } from '../historyStorageDescriptor'
 import type {
+  NodeScriptHistorySummary,
+  NodeScriptHistoryTypes,
+} from '../nodeScriptHistoryTypes'
+import type {
   NodeServerHistorySummary,
   NodeServerHistoryTypes,
 } from '../nodeServerHistoryTypes'
@@ -12,9 +16,18 @@ import {
 import { buildServerReplayModel } from './buildServerReplayModel'
 import { wordNodeCaptureReason } from './wordNodeCaptureReason'
 
-/** Words a stored capture reason for a server replay's surfaces, by the one rule a test replay's reasons follow (controls and line breaks gone, one bounded line). */
-function wordServerCaptureReason(reason: string): string {
-  return wordNodeCaptureReason(reason, 'node-server') ?? ''
+/** Words a stored capture reason for a node run replay's surfaces, by the one rule a test replay's reasons follow (controls and line breaks gone, one bounded line). */
+function wordServerCaptureReason(
+  reason: string,
+  profile: 'node-server' | 'node-script' = 'node-server',
+): string {
+  return wordNodeCaptureReason(reason, profile) ?? ''
+}
+
+/** What the capture-reason wording reads of a verified server or script history. */
+type CaptureReasonHistory = {
+  seal?: { reasons: readonly { text: string }[] }
+  reason?: string
 }
 
 /**
@@ -24,18 +37,21 @@ function wordServerCaptureReason(reason: string): string {
  * @example serverCaptureReasons(history) // => ['No response was recorded: the history ended before the server answered.']
  */
 function serverCaptureReasons(
-  history: Pick<HistoryIndexOf<NodeServerHistoryTypes>, 'seal' | 'reason'>,
-  summary: NodeServerHistorySummary | undefined,
+  history: CaptureReasonHistory,
+  summary: Pick<NodeServerHistorySummary, 'captureMissing'> | undefined,
+  profile: 'node-server' | 'node-script' = 'node-server',
 ): string[] {
   if (history.seal)
     return history.seal.reasons.map((reason) =>
-      wordServerCaptureReason(reason.text),
+      wordServerCaptureReason(reason.text, profile),
     )
   // An unsealed history carries the reason the store gave it and what the shared evaluator found in its verified prefix, such as a declared stop never reached.
   return [
-    ...(history.reason ? [wordServerCaptureReason(history.reason)] : []),
+    ...(history.reason
+      ? [wordServerCaptureReason(history.reason, profile)]
+      : []),
     ...(summary?.captureMissing ?? []).map((reason) =>
-      wordServerCaptureReason(reason.text),
+      wordServerCaptureReason(reason.text, profile),
     ),
   ]
 }
@@ -84,5 +100,28 @@ export function presentServerHistory(
     model,
     serverCaptureReasons(history, summary),
     noResponseReasonOf(history),
+  )
+}
+
+/**
+ * Reads a verified script history once into what the Study workspace presents, through the same replay path a server history takes: the replay model with its three verdicts, its test-shaped view for the shared selection path, and its capture reasons in script words. A script has no response, so it has no no-response reason; its `end` entry is the moment that closes the replay.
+ * Called by the Study workspace when it opens a script replay.
+ * @param history - The history the script store read, its source entries intact.
+ * @param summary - The history's summary, for its learning verdict; absent when it could not be read.
+ * @returns The presentation.
+ * @example const replay = presentScriptHistory(await store.read(studyId), await store.summarize(studyId))
+ */
+export function presentScriptHistory(
+  history: HistoryIndexOf<NodeScriptHistoryTypes>,
+  summary: NodeScriptHistorySummary | undefined,
+): ServerReplayPresentation {
+  const model = buildServerReplayModel(history, {
+    saved: history.seal !== undefined,
+    captureComplete: history.seal?.capture === 'complete',
+    learningCoverage: summary?.learningCoverage ?? 'none',
+  })
+  return adaptServerReplay(
+    model,
+    serverCaptureReasons(history, summary, 'node-script'),
   )
 }

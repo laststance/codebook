@@ -292,7 +292,8 @@ export function installNodeTestOutput(
     element('test-output-main').setAttribute('aria-label', view.name)
     element('test-output-time').textContent = view.time
     // A server replay has no cited test; its request and response regions take that place.
-    if (view.profile === 'node-server') applyServerRegions(view)
+    if (view.profile === 'node-server' || view.profile === 'node-script')
+      applyServerRegions(view)
     else if (view.profile === 'chrome-extension') {
       applyFrameRegion(view.frame)
       const test = element('test-output-test')

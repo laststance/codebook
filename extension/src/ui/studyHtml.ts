@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 
 import type { ExtensionHistorySummary } from '../chromeExtensionHistoryTypes'
 import { STUDY_RESTORE_CONTROL_LABEL } from '../constants'
+import type { NodeScriptHistorySummary } from '../nodeScriptHistoryTypes'
 import type { NodeServerHistorySummary } from '../nodeServerHistoryTypes'
 import type {
   NodeTestHistoryIndex,
@@ -122,12 +123,14 @@ export interface StudyViewMessage {
   nodeHistoryCatalog?: NodeTestHistorySummary[]
   /** The saved server replays, beside {@link nodeHistoryCatalog}. */
   nodeServerHistoryCatalog?: NodeServerHistorySummary[]
+  /** The saved script replays, beside {@link nodeHistoryCatalog}. */
+  nodeScriptHistoryCatalog?: NodeScriptHistorySummary[]
   /** The saved Extension replays, beside {@link nodeHistoryCatalog}. */
   nodeExtensionHistoryCatalog?: ExtensionHistorySummary[]
   nodeHistory?: NodeTestHistoryIndex
-  /** `node-server` or `chrome-extension` while a server or an Extension replay is shown, which switches the pane's fixed words to that catalog; absent for a test replay. */
-  nodeReplayProfile?: 'node-server' | 'chrome-extension'
-  /** The words of each event of the page `nodeHistory` holds, for a server replay: its heading and body, by journal sequence. */
+  /** `node-server`, `node-script` or `chrome-extension` while a server, a script or an Extension replay is shown, which switches the pane's fixed words to that catalog; absent for a test replay. */
+  nodeReplayProfile?: 'node-server' | 'node-script' | 'chrome-extension'
+  /** The words of each event of the page `nodeHistory` holds, for a server or a script replay: its heading and body, by journal sequence. */
   nodeServerEvents?: { sequence: number; heading: string; body: string }[]
   /** The same for an Extension replay. */
   nodeExtensionEvents?: { sequence: number; heading: string; body: string }[]
@@ -1963,6 +1966,7 @@ function studyClient(
       [
         chosen.format === 'node-test-history' &&
           chosen.profile !== 'node-server' &&
+          chosen.profile !== 'node-script' &&
           chosen.profile !== 'chrome-extension',
         sentences.nodeHistory,
       ],
@@ -1972,6 +1976,13 @@ function studyClient(
         message.removalWithoutTrash
           ? options.serverHistoryRefusal.withoutTrash
           : options.serverHistoryRefusal.withTrash,
+      ],
+      [
+        chosen.format === 'node-test-history' &&
+          chosen.profile === 'node-script',
+        message.removalWithoutTrash
+          ? options.scriptHistoryRefusal.withoutTrash
+          : options.scriptHistoryRefusal.withTrash,
       ],
       // The host moves nothing of a study a newer Codebook saved: which files that format keeps is not known here.
       [chosen.format === 'newer', sentences.newerFormat],
@@ -3108,6 +3119,7 @@ function studyClient(
     if (message.nodeReplayProfile) return message.nodeReplayProfile
     if (message.nodeHistoryCatalog?.length) return undefined
     if (message.nodeServerHistoryCatalog?.length) return 'node-server'
+    if (message.nodeScriptHistoryCatalog?.length) return 'node-script'
     return message.nodeExtensionHistoryCatalog?.length
       ? 'chrome-extension'
       : undefined
@@ -3122,6 +3134,7 @@ function studyClient(
     profile: StudyViewMessage['nodeReplayProfile'],
   ): Readonly<Record<keyof typeof options.testReplay, string>> => {
     if (profile === 'chrome-extension') return options.extensionReplay
+    if (profile === 'node-script') return options.scriptReplay
     return profile === 'node-server' ? options.serverReplay : options.testReplay
   }
   /**
@@ -3182,6 +3195,10 @@ function studyClient(
       (entry) => entry.studyId === studyId,
     )
     if (serverSummary) return serverSummary.title ?? serverSummary.question
+    const scriptSummary = message.nodeScriptHistoryCatalog?.find(
+      (entry) => entry.studyId === studyId,
+    )
+    if (scriptSummary) return scriptSummary.title ?? scriptSummary.question
     // An Extension replay's header names its question, extension, surface and capture state.
     const extensionSummary = message.nodeExtensionHistoryCatalog?.find(
       (entry) => entry.studyId === studyId,
@@ -3237,6 +3254,7 @@ function studyClient(
   const idleReplayLine = (message: StudyViewMessage): string =>
     message.nodeHistoryCatalog?.length ||
     message.nodeServerHistoryCatalog?.length ||
+    message.nodeScriptHistoryCatalog?.length ||
     message.nodeExtensionHistoryCatalog?.length
       ? replayWords.chooseReplay
       : replayWords.noReplay
@@ -3552,6 +3570,8 @@ function studyClient(
     else delete playheadInput.dataset.replayProfile
     if (profile === 'node-server')
       playheadInput.title = options.serverReplayTimelineTitle
+    else if (profile === 'node-script')
+      playheadInput.title = options.scriptReplayTimelineTitle
     else if (profile === 'chrome-extension')
       playheadInput.title = options.extensionReplayTimelineTitle
     else playheadInput.title = options.testReplayTimelineTitle

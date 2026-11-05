@@ -6,6 +6,7 @@ import { installWebviewFocus } from '../runtimeSupport/utils/installWebviewFocus
 import { EXTENSION_FRAME_STYLES, STUDY_STYLES } from '../ui/constants'
 
 import { NODE_EXTENSION_REPLAY_TEXT } from './describeExtensionReplay'
+import { NODE_SCRIPT_REPLAY_TEXT } from './describeNodeScriptReplay'
 import { NODE_SERVER_REPLAY_TEXT } from './describeNodeServerReplay'
 import { NODE_TEST_REPLAY_TEXT } from './describeNodeTestReplay'
 import { escapeHtml } from './escapeHtml'
@@ -15,6 +16,25 @@ import {
   type NodeTestOutputReading,
 } from './installNodeTestOutput'
 import type { NodeTestApplicationView } from './projectNodeTestApplication'
+
+/**
+ * Picks the fixed words an Application document uses for its footer and Jump to latest, by the replay it shows.
+ * @param profile - The view's profile; absent for a test replay.
+ * @returns The replay family's catalog.
+ * @example applicationWordsOf('node-script').heading // => 'Script replay'
+ */
+function applicationWordsOf(profile: NodeTestApplicationView['profile']) {
+  switch (profile) {
+    case 'node-script':
+      return NODE_SCRIPT_REPLAY_TEXT
+    case 'node-server':
+      return NODE_SERVER_REPLAY_TEXT
+    case 'chrome-extension':
+      return NODE_EXTENSION_REPLAY_TEXT
+    case undefined:
+      return NODE_TEST_REPLAY_TEXT
+  }
+}
 
 /**
  * Writes the Application pane's document for a test replay (Design 3): the two-line header pinned above the output region, the muted lines for what was left out, the verdict or the ended-early line and the footer. The output lines are drawn by {@link installNodeTestOutput} from the first view in its options, so one piece of code draws every line (F136), and it applies each later event in place. Every text from the history is printed escaped, so test output and test titles that hold markup render as text.
@@ -34,12 +54,10 @@ export function testOutputHtml(
 ): string {
   // The script's options are JSON inside a script element: `<` is written as an escape, so no value can end the element.
   // A server replay words its footer and Jump to latest with the server catalog, and draws its two fixed regions between the header and the output.
-  const words =
-    view.profile === 'node-server'
-      ? NODE_SERVER_REPLAY_TEXT
-      : view.profile === 'chrome-extension'
-        ? NODE_EXTENSION_REPLAY_TEXT
-        : NODE_TEST_REPLAY_TEXT
+  // A script replay is drawn the same way, with its own catalog.
+  const isNodeRun =
+    view.profile === 'node-server' || view.profile === 'node-script'
+  const words = applicationWordsOf(view.profile)
   const scriptOptions = JSON.stringify({
     stderrMark: words.stderrMark,
     history,
@@ -50,7 +68,7 @@ export function testOutputHtml(
   }).replaceAll('<', '\\u003c')
   const muted = (id: string, value: string | undefined): string =>
     `<p id="${id}" class="muted"${value === undefined ? ' hidden' : ''}>${escapeHtml(value ?? '')}</p>`
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none';${view.profile === 'chrome-extension' ? ' img-src data:;' : ''} style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'"><style nonce="${nonce}">${STUDY_STYLES}${view.profile === 'chrome-extension' ? EXTENSION_FRAME_STYLES : ''}</style><title>${escapeHtml(view.name)}</title></head><body class="test-output"><main id="test-output-main" aria-label="${escapeHtml(view.name)}"><header class="test-output-header"><p id="test-output-time" class="status">${escapeHtml(view.time)}</p>${view.profile === 'node-server' ? '' : `<p id="test-output-test" class="muted" title="${escapeHtml(view.test)}">${escapeHtml(view.test)}</p>`}</header>${view.profile === 'node-server' ? serverRegions(view) : ''}${view.profile === 'chrome-extension' ? extensionFrameRegion(view) : ''}${muted('test-output-inspector', view.inspector)}${muted('test-output-cut', view.cut)}<pre id="test-output" tabindex="0" role="region" aria-label="${escapeHtml(view.region ?? view.name)}"${view.profile === 'chrome-extension' ? ' hidden' : ''}></pre>${muted('test-output-placeholder', view.placeholder)}<p id="test-output-end" class="status"${view.end === undefined ? ' hidden' : ''}>${escapeHtml(view.end ?? '')}</p><button id="test-output-jump" type="button" hidden>${escapeHtml(words.jumpToLatest)}</button><p class="muted test-output-footer">${escapeHtml(words.applicationFooter)}</p></main><script nonce="${nonce}">const api = acquireVsCodeApi();(${installWebviewFocus.toString()})(api);(${installClampedTitleStop.toString()})('${view.profile === 'node-server' ? 'test-output-request-line' : 'test-output-test'}');(${installNodeTestOutput.toString()})(api, ${scriptOptions})</script></body></html>`
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none';${view.profile === 'chrome-extension' ? ' img-src data:;' : ''} style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'"><style nonce="${nonce}">${STUDY_STYLES}${view.profile === 'chrome-extension' ? EXTENSION_FRAME_STYLES : ''}</style><title>${escapeHtml(view.name)}</title></head><body class="test-output"><main id="test-output-main" aria-label="${escapeHtml(view.name)}"><header class="test-output-header"><p id="test-output-time" class="status">${escapeHtml(view.time)}</p>${isNodeRun ? '' : `<p id="test-output-test" class="muted" title="${escapeHtml(view.test)}">${escapeHtml(view.test)}</p>`}</header>${isNodeRun ? serverRegions(view) : ''}${view.profile === 'chrome-extension' ? extensionFrameRegion(view) : ''}${muted('test-output-inspector', view.inspector)}${muted('test-output-cut', view.cut)}<pre id="test-output" tabindex="0" role="region" aria-label="${escapeHtml(view.region ?? view.name)}"${view.profile === 'chrome-extension' ? ' hidden' : ''}></pre>${muted('test-output-placeholder', view.placeholder)}<p id="test-output-end" class="status"${view.end === undefined ? ' hidden' : ''}>${escapeHtml(view.end ?? '')}</p><button id="test-output-jump" type="button" hidden>${escapeHtml(words.jumpToLatest)}</button><p class="muted test-output-footer">${escapeHtml(words.applicationFooter)}</p></main><script nonce="${nonce}">const api = acquireVsCodeApi();(${installWebviewFocus.toString()})(api);(${installClampedTitleStop.toString()})('${isNodeRun ? 'test-output-request-line' : 'test-output-test'}');(${installNodeTestOutput.toString()})(api, ${scriptOptions})</script></body></html>`
 }
 
 /**

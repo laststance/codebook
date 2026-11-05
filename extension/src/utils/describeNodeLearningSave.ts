@@ -40,7 +40,7 @@ export type NodeLearningSaveMessage =
       title: string
       cause: string
       /** Which replay failed to open; a server replay is worded with server words, an extension replay with extension words. Defaults to a test replay. */
-      profile?: 'node-test' | 'node-server' | 'chrome-extension'
+      profile?: 'node-test' | 'node-server' | 'node-script' | 'chrome-extension'
     }
 
 /** The words of one message: the status item's text with its tooltip, or a question's or notification's text with its actions. */
@@ -206,9 +206,15 @@ export function describeNodeLearningSave(
  * openFailedReplayWord('chrome-extension') // => 'Extension'
  */
 function openFailedReplayWord(
-  profile: 'node-test' | 'node-server' | 'chrome-extension' | undefined,
-): 'server' | 'Extension' | 'test' {
+  profile:
+    | 'node-test'
+    | 'node-server'
+    | 'node-script'
+    | 'chrome-extension'
+    | undefined,
+): 'server' | 'script' | 'Extension' | 'test' {
   if (profile === 'node-server') return 'server'
+  if (profile === 'node-script') return 'script'
   if (profile === 'chrome-extension') return 'Extension'
   return 'test'
 }

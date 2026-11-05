@@ -328,6 +328,12 @@ export const STUDY_REMOVAL_SERVER_HISTORY_REFUSAL = {
   withoutTrash:
     'Codebook cannot list the files of a server replay for removal by hand yet.',
 } as const
+/** What Saved studies answers a removal request for a script replay with, in the same two window kinds, as a server replay's refusal does. */
+export const STUDY_REMOVAL_SCRIPT_HISTORY_REFUSAL = {
+  withTrash: 'Script replays cannot be deleted here yet.',
+  withoutTrash:
+    'Codebook cannot list the files of a script replay for removal by hand yet.',
+} as const
 /** What Saved studies answers a request for a study's files with in a window without a Trash; the "Remove by hand" disclosure shows it above the files the answer lists, and the reader deletes nothing itself. */
 export const STUDY_REMOVAL_WITHOUT_TRASH_MESSAGE =
   'This window has no Trash, so Codebook cannot delete a saved study here. Remove these files by hand, then press Retry storage / refresh.'
