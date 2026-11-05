@@ -12,6 +12,7 @@ import {
   nextSetupDeadlineRecovery,
   PAGES_STOP_REFUSAL_DETAILS,
 } from '../nextRefusals'
+import { REACT_SCRIPTS_REFUSAL_CODES } from '../reactScriptsRefusals'
 import {
   VITE_LIBRARY_BUILD_CHANGED_VARIANT,
   VITE_LIBRARY_LAZY_IMPORT_VARIANT,
@@ -24,6 +25,8 @@ import { decodeViteLibraryVariant } from './viteLibraryFailureIdentity'
 /** The codes a run's failure text can lead with besides the Vite ones: every Next Pages refusal, a source change found during a run (a Fast Refresh of a sealed module) and a secret control that stopped being a safe password control. */
 const CODED_FAILURE_CODES = [
   ...NEXT_REFUSAL_CODES,
+  // The react-scripts-dev refusals a timer raises (a setup deadline) reach the service as text too.
+  ...REACT_SCRIPTS_REFUSAL_CODES,
   'SOURCE_CHANGED',
   // The failures of one operation of a version 3 run, raised by timers and events after the action's receipt.
   'OPTION_NOT_AVAILABLE',
