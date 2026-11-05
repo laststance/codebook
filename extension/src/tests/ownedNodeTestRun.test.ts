@@ -101,8 +101,11 @@ async function nodeRunHarness({
   unavailableFacts = [],
   duringInspection,
   vitestRoot,
+  childStartDelayMs = 0,
 }: {
   declaredStops?: number
+  /** How long after js-debug's root session the target child session starts; the root is announced first, as in the real tree. */
+  childStartDelayMs?: number
   observedLine?: number
   /** The required facts, as `<mode>:<path>`, that the inspector reports it could not read at each stop. */
   unavailableFacts?: string[]
@@ -213,7 +216,17 @@ async function nodeRunHarness({
     debugStartOptions: (vscode.DebugSessionOptions | undefined)[] = [],
     // The working directory of each debug session the run attached, and the folder each binding checked the worker's identity against.
     attachDirectories: unknown[] = [],
-    boundDirectories: string[] = []
+    boundDirectories: string[] = [],
+    // The id of each session the binding stand-in was offered, in order, and each request js-debug's silent root received.
+    boundSessionIds: string[] = [],
+    rootRequests: string[] = []
+  // When each journal event was recorded, in wall-clock milliseconds.
+  const eventTimes: Array<{ type: string; at: number }> = []
+  // When the target child session was announced to the run's tracker factory.
+  let childStartedAt: number | undefined
+  // The timer of a delayed target start, and whether the run was stopped: a target never starts on a stopped run.
+  let childStartTimer: NodeJS.Timeout | undefined
+  let runStopped = false
   // How often the run began to check and seal its test, the step that asks Vitest for its files: nothing of the test is listed, launched or attached before it.
   let launchPreparations = 0
   /** The failed releases the launch's own listing callback heard of, beside the run's journal. */
@@ -284,8 +297,23 @@ async function nodeRunHarness({
       command,
       arguments: { threadId: 1 },
     })
+  // js-debug's root of an attach owns no target and never answers `requestCDPProxy`: its request stays open for good.
+  const rootSession = {
+    id: 'owned-node-root-session',
+    type: 'pwa-node',
+    name: '',
+    workspaceFolder: undefined,
+    parentSession: undefined,
+    configuration: { type: 'pwa-node', name: '', request: 'attach' },
+    customRequest(command: string): Promise<unknown> {
+      rootRequests.push(command)
+      return new Promise<never>(() => {})
+    },
+    getDebugProtocolBreakpoint: async () => undefined,
+  }
   const session = {
     id: 'owned-node-session',
+    parentSession: rootSession,
     type: 'pwa-node',
     name: '',
     workspaceFolder: undefined,
@@ -321,6 +349,8 @@ async function nodeRunHarness({
       }
     },
     async customRequest(command: string): Promise<unknown> {
+      // The target answers the binding's `requestCDPProxy` probe; it is no part of the DAP traffic the tests count.
+      if (command === 'requestCDPProxy') return {}
       // The editor passes Codebook's own requests through the same tracker as the learner's.
       clientRequest(command)
       // A hung adapter leaves this one request unanswered for as long as the caller waits.
@@ -623,22 +653,45 @@ async function nodeRunHarness({
           ...session.configuration,
           name: configuration.name,
         }
-        listedSessions.add(session.id)
-        const created = await trackerFactory?.createDebugAdapterTracker(session)
-        tracker = created ?? undefined
-        // The starting adapter receives the breakpoints the editor already holds.
-        if (editorBreakpoints.length) replaceSourceBreakpoints()
-        queueMicrotask(() =>
-          entryPauseAbsent
-            ? stopped('breakpoint', [OWNED_BREAKPOINT_ID])
-            : stopped('entry'),
-        )
+        rootSession.name = configuration.name
+        rootSession.configuration = {
+          ...rootSession.configuration,
+          name: configuration.name,
+        }
+        // js-debug announces its root first; the root has no target and its adapter is never read.
+        listedSessions.add(rootSession.id)
+        await trackerFactory?.createDebugAdapterTracker(rootSession)
+        const startTarget = async (): Promise<void> => {
+          // A stop that came first leaves nothing to start.
+          if (runStopped) return
+          childStartedAt = Date.now()
+          listedSessions.add(session.id)
+          const created =
+            await trackerFactory?.createDebugAdapterTracker(session)
+          tracker = created ?? undefined
+          // The starting adapter receives the breakpoints the editor already holds.
+          if (editorBreakpoints.length) replaceSourceBreakpoints()
+          queueMicrotask(() =>
+            entryPauseAbsent
+              ? stopped('breakpoint', [OWNED_BREAKPOINT_ID])
+              : stopped('entry'),
+          )
+        }
+        // The target child follows its root at once, or after the delay a test asks for.
+        if (childStartDelayMs > 0)
+          childStartTimer = setTimeout(startTarget, childStartDelayMs)
+        else await startTarget()
         return true
       },
       async stopDebugging(stopped?: vscode.DebugSession): Promise<void> {
+        stoppedSessionIds.push(stopped?.id ?? 'no session named')
+        // A stopped run starts no target later.
+        runStopped = true
+        clearTimeout(childStartTimer)
+        // The release stops js-debug's root as well as the target; only requests for the target and its children are counted and failed, as before the root was modelled.
+        if (stopped === rootSession) return
         calls.push('stop-debugging')
         stopRequests += 1
-        stoppedSessionIds.push(stopped?.id ?? 'no session named')
         // As VS Code 1.120 to 1.142 answer for a session their debug model no longer lists; an ended session it still lists is stopped again without a refusal.
         if (stopped && !listedSessions.has(stopped.id))
           throw new Error('debug session not found')
@@ -769,8 +822,20 @@ async function nodeRunHarness({
           value: vscode.DebugSession,
           _runId: string,
           workingDirectory: string,
+          _processGroup: number,
+          signal: AbortSignal,
         ) => {
+          // As the real binding does, ask the session before adopting it: a root that never answers holds this call open until the run is stopped.
+          await Promise.race([
+            value.customRequest('requestCDPProxy'),
+            new Promise<never>((_resolve, reject) =>
+              signal.addEventListener('abort', () =>
+                reject(new Error('the run was stopped')),
+              ),
+            ),
+          ])
           boundDirectories.push(workingDirectory)
+          boundSessionIds.push(value.id)
           return {
             session: value,
             identity: {
@@ -814,6 +879,7 @@ async function nodeRunHarness({
     process.execPath,
     (type, detail) => {
       events.push({ type, detail })
+      eventTimes.push({ type, at: Date.now() })
     },
     [{ path: 'theme.ts', hash: source.hash, text: sourceText, lineCount: 2 }],
     ROOT_MODE_EXECUTION_PLAN,
@@ -833,6 +899,12 @@ async function nodeRunHarness({
     debugStartOptions,
     attachDirectories,
     boundDirectories,
+    boundSessionIds,
+    rootRequests,
+    rootSessionId: rootSession.id,
+    eventTimes: (): Array<{ type: string; at: number }> => eventTimes,
+    /** When the target child session started, in wall-clock milliseconds; absent before it did. */
+    childStartedAt: (): number | undefined => childStartedAt,
     launchPreparations: (): number => launchPreparations,
     releaseFailuresHeardByLaunch: (): VitestListingReleaseFailure[] =>
       releaseFailuresHeardByLaunch,
@@ -864,6 +936,8 @@ async function nodeRunHarness({
     bindingReadStarted,
     unansweredRequestStarted,
     cleanup: async (): Promise<void> => {
+      runStopped = true
+      clearTimeout(childStartTimer)
       await rm(directory, { recursive: true, force: true })
       await rm(reportDirectory, { recursive: true, force: true })
     },
@@ -918,6 +992,40 @@ test('a test that runs in its package binds its worker in that package while the
     ])
     assert.deepEqual(harness.attachDirectories, [harness.launch.workspace])
   } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=a Vitest run binds the child session that holds its worker, so its first stop is not held for the 20 s answer bound by js-debug's silent attach root; fails_when=the binding loop offers the root first, so the stand-in asks the root `requestCDPProxy` as the real binding does and waits on a request that never answers (the real binding waits its 20 s bound), and the preparation does not finish within 2 s, the root received a request, the verified worker is not the child, or the verification comes later than 1 s after the child started; why_new=Cycle 0085: the editor fake had one session that always answered, so the root's silence was never modelled; seam=the editor's session tree (a root whose requestCDPProxy never settles, and the target child started 100 ms later) and a binding stand-in that records the sessions it is offered; no_claim=real Vitest and js-debug timing (native check C85-3)
+test('a Vitest run verifies its worker in the target child within a second of the child starting while the attach root never answers', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({ childStartDelayMs: 100 })
+  let timer: NodeJS.Timeout | undefined
+  const timedOut = new Promise<'timed out'>((resolve) => {
+    timer = setTimeout(() => resolve('timed out'), 2_000)
+  })
+  try {
+    // Act
+    const prepared = harness.run.prepare()
+    prepared.catch(() => undefined)
+    const outcome = await Promise.race([prepared, timedOut])
+    const verifiedAt = harness
+      .eventTimes()
+      .find((event) => event.type === 'node-test.worker-verified')?.at
+
+    // Assert
+    assert.deepEqual(harness.boundSessionIds, ['owned-node-session'])
+    assert.deepEqual(harness.rootRequests, [])
+    assert.notEqual(outcome, 'timed out')
+    // gstack-timing-ok: the defect this guards waits the 20 s answer bound; the binding takes about 0.1-0.25 s here, so the 1 s bound only tells the two apart and the adopted-session and root-request assertions above carry the outcome
+    assert.ok(
+      verifiedAt !== undefined &&
+        verifiedAt - harness.childStartedAt()! < 1_000,
+      'the worker was verified 1 s or more after the child started',
+    )
+  } finally {
+    clearTimeout(timer)
     await harness.run.stop()
     await harness.cleanup()
   }
@@ -2381,7 +2489,9 @@ test('a Node test run whose release failed at its test process stops a child deb
         secondStop: 'released',
         stopRequests: 3,
         stoppedSessionIds: [
+          'owned-node-root-session',
           'owned-node-session',
+          'owned-node-root-session',
           'owned-node-session',
           'owned-node-child-session',
         ],

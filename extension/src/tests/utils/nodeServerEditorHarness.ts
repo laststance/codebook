@@ -45,6 +45,8 @@ export async function editorHarness(
       uri: { scheme: string; fsPath: string }
       getText: () => string
     }>
+    /** How long after js-debug's root session the target child session starts; the root is announced first, as in the real tree. */
+    childStartDelayMs?: number
   } = {},
 ) {
   const calls: string[] = []
@@ -57,6 +59,16 @@ export async function editorHarness(
     name: string | undefined
     workingDirectory: string
   }> = []
+  // The id of each session the binding stand-in was offered, in order, and each request js-debug's silent root received.
+  const boundSessionIds: string[] = []
+  const rootRequests: string[] = []
+  // The id of the session each `stopDebugging` request names, in order.
+  const stoppedSessionIds: string[] = []
+  // When the target child session was announced to the debugger's tracker factory.
+  let childStartedAt: number | undefined
+  // The timer of a delayed target start, and whether the run was stopped: a target never starts on a stopped run.
+  let childStartTimer: NodeJS.Timeout | undefined
+  let runStopped = false
   let tracker: vscode.DebugAdapterTracker | undefined
   let trackerFactory: vscode.DebugAdapterTrackerFactory | undefined
   let terminate: ((session: vscode.DebugSession) => void) | undefined
@@ -117,8 +129,23 @@ export async function editorHarness(
       },
     })
   }
+  // js-debug's root of an attach owns no target and never answers `requestCDPProxy`: its request stays open for good.
+  const rootSession = {
+    id: 'node-server-root-session',
+    type: 'pwa-node',
+    name: '',
+    workspaceFolder: undefined,
+    parentSession: undefined,
+    configuration: { type: 'pwa-node', name: '', request: 'attach' },
+    customRequest(command: string): Promise<unknown> {
+      rootRequests.push(command)
+      return new Promise<never>(() => {})
+    },
+    getDebugProtocolBreakpoint: async () => undefined,
+  }
   const session = {
     id: 'node-server-session',
+    parentSession: rootSession,
     type: 'pwa-node',
     name: '',
     workspaceFolder: undefined,
@@ -130,6 +157,8 @@ export async function editorHarness(
       command: string,
       arguments_?: unknown,
     ): Promise<unknown> {
+      // The target answers the binding's `requestCDPProxy` probe; it is no part of the DAP traffic the tests count.
+      if (command === 'requestCDPProxy') return {}
       // The editor passes Codebook's own requests through the same tracker as the learner's.
       const sequence = ++requestSequence
       tracker?.onWillReceiveMessage?.({
@@ -240,21 +269,43 @@ export async function editorHarness(
           ...session.configuration,
           name: configuration.name,
         }
-        tracker =
-          (await trackerFactory?.createDebugAdapterTracker(session)) ??
-          undefined
-        queueMicrotask(() =>
-          options.firstStop
-            ? adapter.stop(
-                options.firstStop.reason,
-                options.firstStop.ids,
-                options.firstStop.frame,
-              )
-            : adapter.stop('entry'),
-        )
+        rootSession.name = configuration.name
+        rootSession.configuration = {
+          ...rootSession.configuration,
+          name: configuration.name,
+        }
+        // js-debug announces its root first; the root has no target and its adapter is never read.
+        await trackerFactory?.createDebugAdapterTracker(rootSession)
+        const startTarget = async (): Promise<void> => {
+          // A stop that came first leaves nothing to start.
+          if (runStopped) return
+          childStartedAt = Date.now()
+          tracker =
+            (await trackerFactory?.createDebugAdapterTracker(session)) ??
+            undefined
+          queueMicrotask(() =>
+            options.firstStop
+              ? adapter.stop(
+                  options.firstStop.reason,
+                  options.firstStop.ids,
+                  options.firstStop.frame,
+                )
+              : adapter.stop('entry'),
+          )
+        }
+        // The target child follows its root at once, or after the delay a test asks for.
+        if (options.childStartDelayMs)
+          childStartTimer = setTimeout(startTarget, options.childStartDelayMs)
+        else await startTarget()
         return true
       },
-      async stopDebugging(): Promise<void> {
+      async stopDebugging(stopped?: vscode.DebugSession): Promise<void> {
+        stoppedSessionIds.push(stopped?.id ?? 'no session named')
+        // A stopped run starts no target later.
+        runStopped = true
+        clearTimeout(childStartTimer)
+        // The release stops js-debug's root as well as the target; only requests for the target and its children are counted and failed, as before the root was modelled.
+        if (stopped === rootSession) return
         calls.push('stopDebugging')
         await options.stopGate
         stopRequests += 1
@@ -284,7 +335,10 @@ export async function editorHarness(
           _assertActive: unknown,
           name?: string,
         ) => {
+          // As the real binding does, ask the session before adopting it: a root that never answers holds this call open.
+          await bound.customRequest('requestCDPProxy')
           bindings.push({ name, workingDirectory })
+          boundSessionIds.push(bound.id)
           return {
             session: bound,
             identity: {
@@ -392,6 +446,12 @@ export async function editorHarness(
     requests,
     started,
     bindings,
+    boundSessionIds,
+    rootRequests,
+    stoppedSessionIds,
+    rootSession,
+    /** When the target child session started, in wall-clock milliseconds; absent before it did. */
+    childStartedAt: (): number | undefined => childStartedAt,
     editorBreakpoints,
     session,
     /** Creates the debugger under test. */

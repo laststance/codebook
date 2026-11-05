@@ -90,6 +90,37 @@ test('attaching starts a pwa-node attach named after the run and binds the sessi
   await debug.release()
 })
 
+// Value: protects=a node-server or node-script run binds the child session that holds the process, so its first pause is not held for the 20 s answer bound by js-debug's silent attach root; fails_when=the binding loop offers the root first, so the stand-in asks the root `requestCDPProxy` as the real binding does and waits on a request that never answers (the real binding waits its 20 s bound), and the binding does not finish within 2 s, the root received a request, the adopted session is not the child, or the binding comes later than 1 s after the child started; why_new=Cycle 0085: every harness session answered, so the root's silence was never modelled; seam=the editor's session tree (a root whose requestCDPProxy never settles, and the target child started 100 ms later) and a binding stand-in that records the sessions it is offered; no_claim=js-debug's real timing (native checks C85-1 and C85-2)
+test('a node-server run binds its target child within a second of the child starting while the attach root never answers', async () => {
+  // Arrange
+  const editor = await editorHarness({ childStartDelayMs: 100 })
+  const { debug } = editor.createDebugger(TWO_STOPS)
+  let timer: NodeJS.Timeout | undefined
+  const timedOut = new Promise<'timed out'>((resolve) => {
+    timer = setTimeout(() => resolve('timed out'), 2_000)
+  })
+  try {
+    // Act
+    const boundAt = debug
+      .attach({ ...ATTACH, signal: AbortSignal.timeout(5_000) })
+      .then(() => Date.now())
+    const outcome = await Promise.race([boundAt, timedOut])
+
+    // Assert
+    assert.deepEqual(editor.boundSessionIds, ['node-server-session'])
+    assert.deepEqual(editor.rootRequests, [])
+    assert.equal(typeof outcome, 'number')
+    // gstack-timing-ok: the defect this guards waits the 20 s answer bound; the binding takes about 0.1-0.25 s here, so the 1 s bound only tells the two apart and the adopted-session and root-request assertions above carry the outcome
+    assert.ok(
+      (outcome as number) - editor.childStartedAt()! < 1_000,
+      'the binding came 1 s or more after the child started',
+    )
+  } finally {
+    clearTimeout(timer)
+    await debug.release()
+  }
+})
+
 // protects=several owned breakpoints in one file are armed at once and each is acknowledged under its own id; fails_when=the second stop of a file is dropped, mixed up or armed one at a time; no_claim=VS Code's own batching
 test('two declared stops in one file are armed together and acknowledged under their own ids', async () => {
   // Arrange

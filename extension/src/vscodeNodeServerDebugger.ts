@@ -36,6 +36,7 @@ import { boundElsewhereRefusalText } from './utils/boundElsewhereRefusalText'
 import { captureReplayDebugSnapshot } from './utils/captureReplayDebugSnapshot'
 import { inspectNodeTestVariables } from './utils/inspectNodeTestVariables'
 import { isDebugSessionOfRun } from './utils/isDebugSessionOfRun'
+import { isDebugTargetSession } from './utils/isDebugTargetSession'
 import { PendingResumeRequests } from './utils/pendingResumeRequests'
 import { SharedAttempt } from './utils/sharedAttempt'
 import { sourceImportBindings } from './utils/sourceImportBindings'
@@ -349,6 +350,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     runId: string,
   ) {
     for (const session of this.active.values()) {
+      // A session without a parent is taken as js-debug's target-less attach root and never asked (its requestCDPProxy never answers).
+      if (!isDebugTargetSession(session)) continue
       try {
         return await bindOwnedNodeTestDebugSession(
           session,

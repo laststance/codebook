@@ -239,6 +239,7 @@ import {
 import { isAnnouncedScriptOf } from './utils/isAnnouncedScriptOf'
 import { isBlankOrCommentLine } from './utils/isBlankOrCommentLine'
 import { isBrowserOnEntryRoute } from './utils/isBrowserOnEntryRoute'
+import { isDebugTargetSession } from './utils/isDebugTargetSession'
 import type { GeneratedPosition } from './utils/isGeneratedPositionBefore'
 import { isHotUpdateScriptUrl } from './utils/isHotUpdateScriptUrl'
 import { isModuleEntryPause } from './utils/isModuleEntryPause'
@@ -9354,7 +9355,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * ```
    */
   private isActiveServerSession(session: vscode.DebugSession): boolean {
-    return this.activeSessions.has(session.id) && this.serverSession(session)
+    // A session without a parent is taken as js-debug's target-less server root and never asked (its requestCDPProxy never answers).
+    return (
+      isDebugTargetSession(session) &&
+      this.activeSessions.has(session.id) &&
+      this.serverSession(session)
+    )
   }
 
   /**
@@ -9466,6 +9472,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.alive()
     this.participants.server.selected = selected.session
     this.participants.server.cdp = selected.cdp
+    // Journaled once both are set, so the record never names a half-selected server.
+    this.evidence.record('server.selected', {
+      sessionId: selected.session.id,
+      parentId: selected.session.parentSession?.id,
+    })
     return true
   }
 
@@ -9546,7 +9557,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * ```
    */
   private isActivePageSession(session: vscode.DebugSession): boolean {
-    if (!session.parentSession || !this.activeSessions.has(session.id))
+    if (!isDebugTargetSession(session) || !this.activeSessions.has(session.id))
       return false
     return !this.serverSession(session)
   }
