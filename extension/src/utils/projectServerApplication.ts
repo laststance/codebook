@@ -5,7 +5,7 @@ import type {
   ServerReplayEvent,
   ServerReplayModel,
 } from './buildServerReplayModel'
-import { describeScriptEndRegion } from './describeNodeScriptEnd'
+import { describeScriptEndRegion } from './describeNodeScriptEndRegion'
 import { NODE_SCRIPT_REPLAY_TEXT } from './describeNodeScriptReplay'
 import {
   describeServerRequestClaim,

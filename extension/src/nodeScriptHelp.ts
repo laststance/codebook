@@ -5,7 +5,7 @@ import {
   CONFIGURED_OBSERVATION_LIMIT,
   MILLISECONDS_PER_SECOND,
   NODE_SCRIPT_MINIMUM_API,
-  NODE_SCRIPT_MINIMUM_EXTENSION,
+  NODE_SCRIPT_MINIMUM_EXTENSION_VERSION,
   NODE_SCRIPT_PROFILE,
   NODE_SCRIPT_RUN_TIMEOUT_MS,
   NODE_SERVER_EXIT_SETTLE_MS,
@@ -137,7 +137,7 @@ export function nodeScriptHelp() {
   return {
     profile: NODE_SCRIPT_PROFILE,
     minimumApi: NODE_SCRIPT_MINIMUM_API,
-    minimumExtension: NODE_SCRIPT_MINIMUM_EXTENSION,
+    minimumExtension: NODE_SCRIPT_MINIMUM_EXTENSION_VERSION,
     entry:
       "Use codebook_start with profile node-script and one stable key to run the repository's own Node script once and stop in its own source. Select the exact retained book revision/node that cites every stop and the script's entry file. Codebook starts only `node [--import <the repository's tsx>] <entry>` in packageRoot: no port, request, command, environment, node option or script argument can be declared. The script performs its real effects (files, databases, network); the learner confirms each run in the editor before anything is spawned.",
     configurationSchema: z.toJSONSchema(nodeScriptConfigSchema, {

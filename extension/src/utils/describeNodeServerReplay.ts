@@ -7,7 +7,7 @@ import type {
 import {
   describeScriptEndHeadline,
   describeScriptEndRegion,
-} from './describeNodeScriptEnd'
+} from './describeNodeScriptEndRegion'
 import { formatEventSeconds } from './formatEventSeconds'
 import { stripTerminalControls } from './stripTerminalControls'
 

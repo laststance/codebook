@@ -110,6 +110,8 @@ export type NodeProcessRunHooks = {
   onReleaseBegin?(): void
   /** The release finished: the owner gives its resources back for good. */
   onReleased?(): void
+  /** The debug session ended while the process had not exited by the time its exit was awaited; returning `true` keeps the run alive (the owner bounds the wait itself), `false` or absent fails the run. */
+  onDebuggerSessionEnded?(reason: string): boolean
   /** The stop completed; the owner may report what it finds apart (never delays or fails the stop). */
   onStopped?(): Promise<void>
 }
@@ -702,6 +704,8 @@ export class NodeProcessRun {
       this.onServerExit(exit)
       return
     }
+    // The owner may keep a session that ended while its process lives as its own matter (a script run bounds it by a deadline).
+    if (this.hooks.onDebuggerSessionEnded?.(reason)) return
     this.failRun(
       stepFailedError(
         'watching the debug session',

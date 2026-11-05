@@ -5,6 +5,7 @@ import { configuredFactPathSchema } from './configuredStudySchemas'
 import {
   CHROME_EXTENSION_PROFILE,
   EXTENSION_CLICK_ACTION,
+  NODE_SCRIPT_PROFILE,
   NODE_SERVER_ACTION,
   NODE_SERVER_PROFILE,
   NODE_TEST_PROFILE,
@@ -19,6 +20,7 @@ import {
 import { learningSummarySchema } from './learningSummarySchemas'
 import { studyIdSchema } from './legacyStudySchemas'
 import { nodeHistoryLearningMaterialContentSchema } from './nodeHistoryLearningSchemas'
+import { nodeScriptConfigSchema } from './nodeScriptConfigSchemas'
 import { nodeServerConfigSchema } from './nodeServerConfigSchemas'
 import { nodeTestConfigSchema } from './nodeTestConfigSchemas'
 import {
@@ -38,7 +40,7 @@ const checkedStartConfigurationSchema = z.union([
 const nodeServerStartConfigurationSchema = z
   .record(z.string(), z.unknown())
   .describe(
-    'For profile node-server: the declaration described by codebook://help/node-server; for profile chrome-extension: the declaration described by codebook://help/chrome-extension, with acknowledgedPermissions inside it when the manifest declares permissions that reach outside the test profile. A wrong one is answered with INVALID_CONFIGURATION listing every violation.',
+    'For profile node-server: the declaration described by codebook://help/node-server; for profile node-script: the declaration described by codebook://help/node-script; for profile chrome-extension: the declaration described by codebook://help/chrome-extension, with acknowledgedPermissions inside it when the manifest declares permissions that reach outside the test profile. A wrong one is answered with INVALID_CONFIGURATION listing every violation.',
   )
 // MCP requires an object root; the service resolves its closed domain variant before reserving any effects.
 export const startSchema = z
@@ -58,6 +60,7 @@ export const startSchema = z
     // The permissive node-server member must not loosen the other profiles: their configurations are checked exactly as before.
     if (
       input.profile === NODE_SERVER_PROFILE ||
+      input.profile === NODE_SCRIPT_PROFILE ||
       input.profile === CHROME_EXTENSION_PROFILE ||
       input.configuration === undefined
     )
@@ -90,6 +93,12 @@ export const startIntentSchema = z.discriminatedUnion('profile', [
     profile: z.literal(NODE_SERVER_PROFILE),
     key,
     configuration: nodeServerConfigSchema,
+  }),
+  z.strictObject({
+    ...instanceShape,
+    profile: z.literal(NODE_SCRIPT_PROFILE),
+    key,
+    configuration: nodeScriptConfigSchema,
   }),
   z.strictObject({
     ...instanceShape,

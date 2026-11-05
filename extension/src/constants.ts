@@ -53,8 +53,8 @@ export const VITE_APP_SELECTION_RULE =
 
 /** The API that first serves the `node-script` profile (skill 1.0.75). */
 export const NODE_SCRIPT_MINIMUM_API = '1.26'
-/** The Codebook version that first serves the `node-script` profile (API 1.26, skill 1.0.75). */
-export const NODE_SCRIPT_MINIMUM_EXTENSION = '0.2.84.0'
+/** The first extension version that offers the node-script profile, for the profile entry of `codebook_status` (API 1.26, skill 1.0.75). */
+export const NODE_SCRIPT_MINIMUM_EXTENSION_VERSION = '0.2.84'
 
 /** The API that first accepts the `react-scripts-dev` adapter in a version 3 configuration (skill 1.0.74). */
 export const REACT_SCRIPTS_MINIMUM_API = '1.25'
@@ -1421,6 +1421,8 @@ export const NODE_SCRIPT_END_LIMITS = [
   'pause-hold',
   'exit-deadline',
 ] as const
+/** How a script's entry is loaded, as the configuration's `loader` and the history header name it. */
+export const NODE_SCRIPT_LOADERS = ['tsx', 'node'] as const
 /** The most characters of the reason a script's exit code could not be read. */
 export const NODE_SCRIPT_EXIT_UNKNOWN_LIMIT_CHARS = 256
 /** The one action a node-server run offers: send its declared request. */

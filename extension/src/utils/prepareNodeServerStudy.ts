@@ -1,10 +1,9 @@
 import { StudyError } from '../errors'
-import type { NodeServerConfiguration } from '../nodeServerConfigSchemas'
 import type { RepositoryBookStore } from '../repositoryBook'
 import type { RepositorySourceService } from '../repositorySource'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 
-import { pinCitedBookNode } from './pinCitedBookNode'
+import { pinCitedBookNode, type CitedStopDeclaration } from './pinCitedBookNode'
 
 /**
  * Pins a node-server run's declared stops to the exact retained article revision before the server can be launched (D12), so a stop whose citation or file changed is refused while nothing runs.
@@ -13,24 +12,28 @@ import { pinCitedBookNode } from './pinCitedBookNode'
  * @param books - The workspace's retained articles.
  * @param control - Shared cancellation and preparation deadline.
  * @param now - The clock the deadline is compared with.
+ * @param subject - How the refusals name the run; a node-script preparation ({@link prepareNodeScriptStudy}) passes `Node script`.
  * @returns The declaration, its SHA-256 as the manifest names it, and the article node's descriptor with the cited sources at their retained revision.
  * @throws `RUNTIME_FAILED` when the preparation expired or was cancelled; what {@link pinCitedBookNode} throws otherwise.
  * @example
  * const { descriptor } = await prepareNodeServerStudy(configuration, books, { signal, deadlineAt })
  */
-export async function prepareNodeServerStudy(
-  configuration: NodeServerConfiguration,
+export async function prepareNodeServerStudy<
+  Configuration extends CitedStopDeclaration,
+>(
+  configuration: Configuration,
   books: RepositoryBookStore,
   control: Required<
     NonNullable<Parameters<RepositorySourceService['prepare']>[1]>
   >,
   now = Date.now,
+  subject: 'Node server' | 'Node script' = 'Node server',
 ) {
   const assertActive = (): void => {
     if (control.signal.aborted || now() >= control.deadlineAt)
       throw new StudyError(
         'RUNTIME_FAILED',
-        'Node server preparation expired or was cancelled before the server started.',
+        `${subject} preparation expired or was cancelled before the ${subject === 'Node server' ? 'server' : 'script'} started.`,
       )
   }
   assertActive()
@@ -38,7 +41,7 @@ export async function prepareNodeServerStudy(
     configuration,
     books,
     control,
-    'Node server',
+    subject,
     assertActive,
   )
   return {

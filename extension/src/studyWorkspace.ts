@@ -154,6 +154,7 @@ import type {
   NodeScriptHistorySummary,
   NodeScriptHistoryTypes,
 } from './nodeScriptHistoryTypes'
+import { NodeScriptLearningSave } from './nodeScriptLearningSave'
 import type {
   NodeServerHistorySummary,
   NodeServerHistoryTypes,
@@ -313,6 +314,7 @@ import {
   describeScriptSummaryFailure,
   NODE_SCRIPT_REPLAY_TEXT,
 } from './utils/describeNodeScriptReplay'
+import { describeNodeScriptViewStatus } from './utils/describeNodeScriptViewStatus'
 import {
   describeServerEventRow,
   describeServerReplayRow,
@@ -934,6 +936,13 @@ export class StudyWorkspace {
       this.nodeServerHistoryCatalog.find(
         (history) => history.studyId === studyId,
       )?.materialRevision,
+  })
+
+  /** Saves a script run's learning replay from the status item; this workspace only wires the item and its command to it. */
+  private readonly nodeScriptLearningSave = new NodeScriptLearningSave({
+    service: () => this.service,
+    store: () => this.nodeHistoryRepository?.scriptHistories,
+    ...this.saveHostEditorParts(),
   })
 
   /** Saves a chrome-extension run's learning replay from the status item; this workspace only wires the item and its command to it. */
@@ -12680,6 +12689,7 @@ export class StudyWorkspace {
     // A test, server or extension run keeps its status item current while no Study is shown.
     return profile === NODE_TEST_PROFILE ||
       profile === NODE_SERVER_PROFILE ||
+      profile === NODE_SCRIPT_PROFILE ||
       profile === CHROME_EXTENSION_PROFILE
       ? 'save-item'
       : 'none'
@@ -13144,7 +13154,9 @@ export class StudyWorkspace {
           ? this.nodeLearningSave
           : record?.profile === CHROME_EXTENSION_PROFILE
             ? this.chromeExtensionLearningSave
-            : undefined
+            : record?.profile === NODE_SCRIPT_PROFILE
+              ? this.nodeScriptLearningSave
+              : undefined
     if (!service || !record || !owner) return undefined
     if (
       expectedStudyId !== undefined &&
@@ -13293,6 +13305,19 @@ export class StudyWorkspace {
   }
 
   /**
+   * Gives the status item of a node-script run: its state text from the run's view beside its learning replay state.
+   * @param record - The current node-script run.
+   * @returns The item, or `undefined` while the run is not yet created.
+   * @example const item = this.scriptSaveItem(record)
+   */
+  private scriptSaveItem(record: StudyRecord) {
+    const view = record.nodeScript?.run?.view()
+    if (!view) return undefined
+    const text = describeNodeScriptViewStatus(view)
+    return this.nodeScriptLearningSave.item(record, text)
+  }
+
+  /**
    * Draws the status item of a run whose profile owns its Save (server, test, extension); called by {@link publishLearningSave} before the browser run's own item.
    * @param record - The current run, if any.
    * @param studyId - The run's study id, when a service is attached.
@@ -13310,6 +13335,8 @@ export class StudyWorkspace {
     else if (record?.profile === NODE_TEST_PROFILE)
       view = this.nodeLearningSave.item(record)
     // An extension run's item shows its phase text (C4) beside what ChromeExtensionLearningSave says of its learning replay.
+    else if (record?.profile === NODE_SCRIPT_PROFILE)
+      view = this.scriptSaveItem(record)
     else if (record && hasChromeExtensionProfile(record))
       view = this.extensionSaveItem(record)
     else return false
@@ -13718,9 +13745,12 @@ export class StudyWorkspace {
         (history) => history.studyId === studyId,
       ) ||
       // A node-server or extension run just saved is a replay before the catalog lists it, never an ordinary recording.
-      [NODE_TEST_PROFILE, NODE_SERVER_PROFILE, CHROME_EXTENSION_PROFILE].some(
-        (profile) => this.recordOfStudy(studyId)?.profile === profile,
-      )
+      [
+        NODE_TEST_PROFILE,
+        NODE_SERVER_PROFILE,
+        NODE_SCRIPT_PROFILE,
+        CHROME_EXTENSION_PROFILE,
+      ].some((profile) => this.recordOfStudy(studyId)?.profile === profile)
     )
   }
 
@@ -16022,6 +16052,7 @@ export class StudyWorkspace {
       record &&
       record.profile !== NODE_TEST_PROFILE &&
       record.profile !== NODE_SERVER_PROFILE &&
+      record.profile !== NODE_SCRIPT_PROFILE &&
       record.profile !== CHROME_EXTENSION_PROFILE
         ? describeStudy(
             record.profile === REPOSITORY_BROWSER_PROFILE
@@ -16282,6 +16313,7 @@ export class StudyWorkspace {
       liveProfile:
         live?.profile === NODE_TEST_PROFILE ||
         live?.profile === NODE_SERVER_PROFILE ||
+        live?.profile === NODE_SCRIPT_PROFILE ||
         live?.profile === CHROME_EXTENSION_PROFILE
           ? undefined
           : live?.profile,

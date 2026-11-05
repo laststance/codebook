@@ -12,7 +12,7 @@ export type NodeScriptHistoryHeaderInput = {
   question?: string
   packageRoot: string
   entry: string
-  loader: string
+  loader: NodeScriptHistoryHeader['loader']
   declaredStops: NodeScriptHistoryHeader['declaredStops']
   sourceHashes: NodeScriptHistoryHeader['sourceHashes']
   repositoryRevision: NodeScriptHistoryHeader['repositoryRevision']

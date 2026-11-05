@@ -6,6 +6,7 @@ import {
   NODE_SCRIPT_END_LIMITS,
   NODE_SCRIPT_EXIT_UNKNOWN_LIMIT_CHARS,
   NODE_SCRIPT_HISTORY_FORMAT_VERSION,
+  NODE_SCRIPT_LOADERS,
   NODE_SCRIPT_PROFILE,
   NODE_SERVER_HISTORY_MAX_ENTRIES,
   NODE_SERVER_HISTORY_MAX_STOPS,
@@ -54,8 +55,8 @@ export const nodeScriptHistoryHeaderSchema = z
     packageRoot: z.string().min(1).max(REPOSITORY_PATH_LIMIT_CHARS),
     /** The script's entry file, repository-relative. */
     entry: repositoryPath,
-    /** How the entry is loaded (`node`, or `tsx` for TypeScript). */
-    loader: z.string().min(1).max(32),
+    /** How the entry is loaded: `node`, or `tsx` for TypeScript, as the configuration's loader. */
+    loader: z.enum(NODE_SCRIPT_LOADERS),
     declaredStops: nodeRunDeclaredStopsSchema,
     repositoryRevision: nodeRunRepositoryRevisionSchema,
     sourceHashes: nodeRunSourceHashesSchema,

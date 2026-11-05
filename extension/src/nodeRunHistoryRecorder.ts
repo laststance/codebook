@@ -118,6 +118,7 @@ export class NodeRunHistoryRecorder<
   }
 
   /** Why the history stopped taking evidence while the run lives (a refused or failed append, a fault of the sink), without private paths; `undefined` while it writes. */
+  // fallow-ignore-next-line unused-class-member
   get appendFailure(): string | undefined {
     const failure = this.writer.appendFailure
     return failure ? this.input.describeCause(failure) : undefined

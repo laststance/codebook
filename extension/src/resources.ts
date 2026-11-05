@@ -23,6 +23,7 @@ import {
   SOURCE_LIMIT_BYTES,
   NODE_TEST_MINIMUM_VITEST_MAJOR,
   CHROME_EXTENSION_PROFILE,
+  NODE_SCRIPT_PROFILE,
   NODE_SERVER_PROFILE,
   NODE_TEST_PROFILE,
   ACTIVE_TIMEOUT_MS,
@@ -444,6 +445,7 @@ export async function readResource(
   if (!suffix) {
     // A server run's verdicts are read from the stored history now, not only as they were at the seal and at this window's saves.
     await service.refreshNodeServerVerdicts(record)
+    await service.refreshNodeScriptVerdicts(record)
     await service.refreshExtensionVerdicts(record)
     return json(service.state(record))
   }
@@ -480,6 +482,20 @@ export async function readResource(
           configurationHash: record.nodeServer.prepared.configurationHash,
           configuration: record.nodeServer.prepared.configuration,
           descriptor: record.nodeServer.prepared.descriptor,
+        },
+        manifestPage
+          ? `pages/${manifestPage[1]}/${manifestPage[2]}`
+          : undefined,
+      )
+    if (record.profile === NODE_SCRIPT_PROFILE && record.nodeScript?.prepared)
+      return readMaskedJsonPage(
+        service,
+        service.uri(record.id, 'manifest'),
+        {
+          profile: NODE_SCRIPT_PROFILE,
+          configurationHash: record.nodeScript.prepared.configurationHash,
+          configuration: record.nodeScript.prepared.configuration,
+          descriptor: record.nodeScript.prepared.descriptor,
         },
         manifestPage
           ? `pages/${manifestPage[1]}/${manifestPage[2]}`
@@ -523,6 +539,7 @@ export async function readResource(
       events =
         record.profile === NODE_TEST_PROFILE ||
         record.profile === NODE_SERVER_PROFILE ||
+        record.profile === NODE_SCRIPT_PROFILE ||
         record.profile === CHROME_EXTENSION_PROFILE
           ? (record.nodeEvents ?? [])
           : (record.runtime?.view().events ?? [])
@@ -634,6 +651,11 @@ export async function readResource(
       throw new StudyError(
         'EVIDENCE_UNAVAILABLE',
         'Server runs have no application images: read the run resource for the stop, the response and the failure.',
+      )
+    if (record.profile === NODE_SCRIPT_PROFILE)
+      throw new StudyError(
+        'EVIDENCE_UNAVAILABLE',
+        'Script runs have no application images: read the run resource for the stops, the end and the output.',
       )
     if (record.profile === NODE_TEST_PROFILE)
       throw new StudyError(

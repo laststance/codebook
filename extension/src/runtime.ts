@@ -36,6 +36,9 @@ import type {
 } from './constants'
 import type { DevelopmentServerAdapterName } from './developmentServerAdapter'
 import type { ErrorCode, StudyError } from './errors'
+import type { NodeScriptConfiguration } from './nodeScriptConfigSchemas'
+import type { NodeScriptHistorySink } from './nodeScriptHistorySink'
+import type { NodeScriptRuntime } from './nodeScriptRuntimeTypes'
 import type { NodeServerConfiguration } from './nodeServerConfigSchemas'
 import type { NodeServerHistorySink } from './nodeServerHistorySink'
 import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
@@ -675,6 +678,11 @@ export interface StudyEnvironment {
     ready: boolean
     missing: string[]
   }>
+  /** The prerequisites a node-script start waits on: the editor's own, Node, a supported system and `ps`, never a listener tool. Environments without it make the start wait on {@link StudyEnvironment.prerequisites}. */
+  nodeScriptStartPrerequisites?(): Promise<{
+    ready: boolean
+    missing: string[]
+  }>
   /**
    * The prerequisites a chrome-extension start waits on: the editor's own, the platform and the Chrome lookup, never the other profiles' checks (Vitest search, node-server gaps, Node lookup). Environments without it make the start wait on {@link StudyEnvironment.prerequisites}.
    */
@@ -724,6 +732,25 @@ export interface StudyEnvironment {
     history?: NodeServerHistorySink,
     privateRoots?: CauseRoots,
   ): Promise<NodeServerRuntime>
+  /**
+   * Creates the node-script run of a parsed configuration ({@link NodeScriptRuntime}); its {@link NodeScriptRuntime.prepare} checks the source, asks the learner to confirm, then spawns and attaches. Environments without it read node-script as not ready.
+   * @param configuration - The strictly parsed node-script configuration.
+   * @param record - Journals the run's whitelisted events.
+   * @param citedSources - The article's text of every source the selected node cites; an open editor document with other text refuses the start.
+   * @param runId - The service's run id, named in the dialog and the debug session.
+   * @param history - Where the run reports what it records for a saved script replay; absent when no history started.
+   * @param privateRoots - The service's private roots, hidden in the script's output.
+   * @param traceUri - Where an unexpected failure points the chat to reconcile what the script did.
+   */
+  createNodeScriptRun?(
+    configuration: NodeScriptConfiguration,
+    record: (type: string, detail?: unknown) => unknown,
+    citedSources: ConfiguredDescriptor['sources'],
+    runId: string,
+    history?: NodeScriptHistorySink,
+    privateRoots?: CauseRoots,
+    traceUri?: string,
+  ): Promise<NodeScriptRuntime>
   /**
    * Creates the chrome-extension run of a parsed declaration ({@link ChromeExtensionRuntime}); its {@link ChromeExtensionRuntime.prepare} resolves the extension, launches the owned Chrome and attaches. Environments without it read chrome-extension as not ready.
    */

@@ -31,6 +31,7 @@ import {
   stepFailedError,
 } from './utils/describeNodeServerRunFailure'
 import type { PortOccupant } from './utils/findPortOccupant'
+import { createNodeRunHistoryHooks } from './utils/nodeRunHistoryHooks'
 import {
   beginReleaseOfOwnedDevelopmentPort,
   claimOwnedDevelopmentPort,
@@ -39,6 +40,7 @@ import {
 } from './utils/ownedDevelopmentPorts'
 import type { resolveNodeServerLaunch } from './utils/resolveNodeServerLaunch'
 import type { resolveNodeServerStops } from './utils/resolveNodeServerStops'
+import { RunChangeListeners } from './utils/RunChangeListeners'
 import { RunningTimeLimit, type RunClock } from './utils/runningTimeLimit'
 import { hidePrivateRoots } from './utils/sanitizeCause'
 import type { CauseRoots } from './utils/sanitizeCause'
@@ -116,7 +118,7 @@ export type NodeServerRunInput = {
  */
 class OwnedNodeServerRun implements NodeServerRuntime {
   readonly id: string
-  private readonly listeners = new Set<() => void>()
+  private readonly listeners = new RunChangeListeners()
   private readonly clock: RunClock
   private readonly readiness: RunningTimeLimit
   private readonly requestLimit: RunningTimeLimit
@@ -166,10 +168,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
         },
         onStopAdmitted: () => this.cancelRequestAndTimers(),
         onProcessOutput: (event) => this.onServerOutput(event),
-        onStopCaptured: (elapsedMs, pause, generation, read) =>
-          this.input.history?.stop(elapsedMs, pause, generation, read),
-        onCaptureBudgetExhausted: () =>
-          this.input.history?.markCaptureBudgetExhausted(),
+        ...createNodeRunHistoryHooks(input.history),
         onReleaseBegin: () => {
           if (this.portClaim) beginReleaseOfOwnedDevelopmentPort(this.portClaim)
         },
@@ -191,18 +190,11 @@ class OwnedNodeServerRun implements NodeServerRuntime {
   }
 
   onDidChange(listener: () => void): { dispose(): void } {
-    this.listeners.add(listener)
-    return { dispose: () => this.listeners.delete(listener) }
+    return this.listeners.add(listener)
   }
 
-  /** Tells every listener the view changed; a listener that throws never breaks the run. */
   private notify(): void {
-    for (const listener of this.listeners)
-      try {
-        listener()
-      } catch {
-        // The service's listener failing is its own matter.
-      }
+    this.listeners.notify()
   }
 
   /**

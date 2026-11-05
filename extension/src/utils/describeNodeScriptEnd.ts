@@ -1,83 +1,91 @@
-import type { NodeScriptEndEntry } from '../nodeScriptHistorySchemas'
+import {
+  NODE_SERVER_RESPONSE_SHOWN_BYTES,
+  type NODE_SCRIPT_END_LIMITS,
+} from '../constants'
+import type { NodeScriptEndView } from '../nodeScriptRuntimeTypes'
 
-import { stripTerminalControls } from './stripTerminalControls'
+import type { NodeServerExit } from './launchNodeServer'
+import { hidePrivateRoots, type CauseRoots } from './sanitizeCause'
 
-/** The words of each limit that can end a script run, as the run's `end` entry names it. */
-const SCRIPT_LIMIT_WORDS: Record<
-  NonNullable<NodeScriptEndEntry['limit']>,
-  string
-> = {
-  'running-time': 'the running-time limit',
-  'run-deadline': 'the run deadline',
-  'pause-hold': 'the pause hold',
-  'exit-deadline': 'the exit deadline',
+/** What ended a script run when Codebook itself started the ending: `codebook_stop`, or a limit it enforced. */
+export type NodeScriptEndCause =
+  | { kind: 'stopped' }
+  | { kind: 'limit'; limit: (typeof NODE_SCRIPT_END_LIMITS)[number] }
+
+/** What {@link describeNodeScriptEnd} reads of a finished run. */
+export type NodeScriptEndInput = {
+  /** A cause Codebook started; it outranks the signal that ending sent. */
+  cause?: NodeScriptEndCause
+  /** The process's own exit event; absent when it could not be read. */
+  exit?: NodeServerExit
+  /** Every declared stop index. */
+  declaredStopIndices: number[]
+  /** Declared stops captured, in hit order (repeats allowed). */
+  stopsReached: number[]
+  captureBudgetExhausted: boolean
+  /** The combined output as the launcher kept it. */
+  output: string
+  roots: CauseRoots
 }
 
 /**
- * Words how a recorded script run ended, in one short line for the replay's locator, its event list, its status line and the Application pane's end region.
- * Called by the script replay's words ({@link describeServerPosition}, {@link describeServerAnswer}, {@link describeServerEventRow}) and by {@link describeScriptEndRegion}.
- * @param end - The run's `end` entry.
- * @returns `Exited with code <n>`, `Exited (exit code unknown)`, `Ended by signal <name>`, `Stopped by Codebook` or `Ended at <the limit>`.
- * @example describeScriptEndHeadline({ kind: 'exited', exitCode: 0 }) // => 'Exited with code 0'
+ * Cuts the output to the last {@link NODE_SERVER_RESPONSE_SHOWN_BYTES} bytes at a character boundary and hides private roots.
+ * @param output - The kept output.
+ * @param roots - The private roots to hide.
+ * @returns The shown tail and whether bytes were cut.
+ * @example outputTail('hello', roots) // => { tail: 'hello', truncated: false }
  */
-export function describeScriptEndHeadline(
-  end: Pick<NodeScriptEndEntry, 'kind' | 'exitCode' | 'signal' | 'limit'>,
-): string {
-  switch (end.kind) {
-    case 'exited':
-      return end.exitCode === undefined || end.exitCode === null
-        ? 'Exited (exit code unknown)'
-        : `Exited with code ${end.exitCode}`
-    case 'signal':
-      return `Ended by signal ${stripTerminalControls(end.signal ?? 'unknown')}`
-    case 'stopped':
-      return 'Stopped by Codebook'
-    case 'limit':
-      return `Ended at ${end.limit ? SCRIPT_LIMIT_WORDS[end.limit] : 'a limit'}`
+function outputTail(
+  output: string,
+  roots: CauseRoots,
+): { tail: string; truncated: boolean } {
+  const bytes = Buffer.from(hidePrivateRoots(output, roots))
+  if (bytes.byteLength <= NODE_SERVER_RESPONSE_SHOWN_BYTES)
+    return { tail: bytes.toString(), truncated: false }
+  const cut = bytes.subarray(
+    bytes.byteLength - NODE_SERVER_RESPONSE_SHOWN_BYTES,
+  )
+  // A cut inside a multi-byte character leaves replacement characters at the start; they are dropped.
+  return { tail: cut.toString().replace(/^�+/, ''), truncated: true }
+}
+
+/**
+ * Builds the end of a script run: its kind by the precedence a cause Codebook started over the process's own exit code or signal, the stops reached and not reached (not observed once the capture budget was spent), and the output tail.
+ * Called by the script run once its process group is released, and by tests of the precedence.
+ * @param input - The cause, exit, stops and output.
+ * @returns The end the run resource shows and the history records (the tail excluded).
+ * @example
+ * describeNodeScriptEnd({ exit: { exitCode: 3, signal: null }, declaredStopIndices: [0, 1], stopsReached: [0], captureBudgetExhausted: false, output: 'x', roots }).stopsNeverReached // => [1]
+ */
+export function describeNodeScriptEnd(
+  input: NodeScriptEndInput,
+): NodeScriptEndView {
+  const reached = [...new Set(input.stopsReached)].sort((a, b) => a - b)
+  const unreached = input.declaredStopIndices.filter(
+    (index) => !reached.includes(index),
+  )
+  const stops = {
+    stopsReached: reached,
+    // Once the budget was spent the breakpoints were retired, so a stop not reached is not observed rather than never reached.
+    stopsNeverReached: input.captureBudgetExhausted ? [] : unreached,
+    ...(input.captureBudgetExhausted
+      ? {
+          captureBudgetExhausted: true as const,
+          stopsNotObserved: unreached,
+        }
+      : {}),
+    output: outputTail(input.output, input.roots),
   }
-}
-
-/** Words a list of declared stop indexes as their numbers, counted from 1. */
-function stopNumbers(indexes: readonly number[]): string {
-  return indexes.map((index) => index + 1).join(', ')
-}
-
-/**
- * Words what the Application pane's end region says at the moment the run's end is reached: the headline and the notes that keep a partial run honest, so a stop that was never reached and a stop that was not observed are never worded alike.
- * @param end - The run's `end` entry.
- * @returns The state line and the note under it, absent when the end has nothing to add.
- * @example describeScriptEndRegion({ kind: 'exited', exitCode: 0, stopsNeverReached: [1], stopsReached: [] }) // => { state: 'Exited with code 0', note: 'Stops never reached: 2.' }
- */
-export function describeScriptEndRegion(
-  end: Pick<
-    NodeScriptEndEntry,
-    | 'kind'
-    | 'exitCode'
-    | 'signal'
-    | 'limit'
-    | 'exitUnknown'
-    | 'stopsNeverReached'
-    | 'stopsNotObserved'
-    | 'captureBudgetExhausted'
-  >,
-): { state: string; note?: string } {
-  const notes = [
-    end.exitUnknown
-      ? `Exit code unreadable: ${stripTerminalControls(end.exitUnknown)}.`
-      : '',
-    end.stopsNeverReached.length
-      ? `Stops never reached: ${stopNumbers(end.stopsNeverReached)}.`
-      : '',
-    // Once the capture budget was spent the later stops' breakpoints were retired, so they are not-observed, never never-reached.
-    end.stopsNotObserved?.length
-      ? `Stops not observed after the capture budget was spent: ${stopNumbers(end.stopsNotObserved)}.`
-      : '',
-    end.captureBudgetExhausted && !end.stopsNotObserved?.length
-      ? 'The capture budget was spent; later pauses were not recorded.'
-      : '',
-  ].filter(Boolean)
+  if (input.cause?.kind === 'limit')
+    return { kind: 'limit', limit: input.cause.limit, ...stops }
+  if (input.cause?.kind === 'stopped') return { kind: 'stopped', ...stops }
+  if (input.exit?.signal)
+    return { kind: 'signal', signal: input.exit.signal, ...stops }
+  if (typeof input.exit?.exitCode === 'number')
+    return { kind: 'exited', exitCode: input.exit.exitCode, ...stops }
   return {
-    state: describeScriptEndHeadline(end),
-    ...(notes.length ? { note: notes.join(' ') } : {}),
+    kind: 'exited',
+    exitUnknown: 'The process exit code could not be read.',
+    ...stops,
   }
 }
