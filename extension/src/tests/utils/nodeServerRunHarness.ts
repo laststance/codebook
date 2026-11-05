@@ -43,6 +43,10 @@ export type HarnessOptions = {
   sourcesChanged?: StudyError
   attachFails?: Error
   armFails?: Error
+  /** Runs inside the debugger's arming, before the release, to end the session or the process while the run prepares. */
+  duringArm?: (debug: FakeNodeServerDebugger) => void
+  /** Arming waits until the run aborts it, then throws the abort's reason, so a test can act while the run is still before its release. */
+  armHangsUntilAborted?: boolean
   /** Runs inside the debugger's entry release, to emit pauses before readiness. */
   duringRelease?: (debug: FakeNodeServerDebugger) => void
   resolveLaunchFails?: StudyError
@@ -119,8 +123,16 @@ export class FakeNodeServerDebugger implements NodeServerDebugger {
   }
   async armStops(
     stops: NodeServerStopTarget[],
+    signal?: AbortSignal,
   ): Promise<NodeServerArmedStop[]> {
     this.order.push('armStops')
+    this.options.duringArm?.(this)
+    if (this.options.armHangsUntilAborted && signal) {
+      await new Promise<void>((resolve) =>
+        signal.addEventListener('abort', () => resolve(), { once: true }),
+      )
+      signal.throwIfAborted()
+    }
     if (this.options.armFails) throw this.options.armFails
     return stops.map((stop) => ({
       declaredStopIndex: stop.declaredStopIndex,

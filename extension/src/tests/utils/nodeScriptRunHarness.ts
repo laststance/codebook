@@ -22,6 +22,8 @@ import {
 export type ScriptHarnessOptions = Omit<HarnessOptions, 'history'> & {
   /** How the learner answers: at once yes (default), at once no, or by hand through `harness.answer`. */
   confirm?: 'yes' | 'no' | 'manual'
+  /** The asker never reacts to the abort signal, so only the run itself can end the wait. */
+  askerIgnoresAbort?: boolean
   /** Declared stops; three by default so "2 of 3" is expressible. */
   stopCount?: 1 | 2 | 3
   /** Replaces the real-path resolution of the launch. */
@@ -148,9 +150,10 @@ export function createScriptHarness(options: ScriptHarnessOptions = {}) {
       if ((options.confirm ?? 'yes') === 'yes') answer.resolve(true)
       if (options.confirm === 'no') answer.resolve(false)
       // As the real asker: an abort answers no.
-      signal.addEventListener('abort', () => answer.resolve(false), {
-        once: true,
-      })
+      if (!options.askerIgnoresAbort)
+        signal.addEventListener('abort', () => answer.resolve(false), {
+          once: true,
+        })
       return answer.promise
     },
     launch: async (_launch, _record, onOutput) => {

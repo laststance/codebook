@@ -543,3 +543,102 @@ test('a script run that fails while attaching the debugger says script and never
   )
   assert.doesNotMatch(failure.message, /server/)
 })
+
+// protects=a debug session that ends before the entry release fails the run at once, killing first and keeping the session's reason; fails_when=the session end is bounded by the 10 s exit-deadline while the debugger is detached, or the reason is lost; no_claim=js-debug's own session end
+test('a debug session ending before the release fails the run at once, kills first and keeps its reason', async () => {
+  // Arrange
+  const harness = createScriptHarness({
+    armHangsUntilAborted: true,
+    duringArm: (debug) => debug.handlers?.onEnd('adapter crashed'),
+  })
+
+  // Act
+  const failure = await harness.run.prepare().catch((error: unknown) => error)
+
+  // Assert
+  assert.ok(failure instanceof StudyError)
+  assert.equal(failure.code, 'RUNTIME_FAILED')
+  assert.match(
+    String(failure.causeDetail ?? failure.message),
+    /adapter crashed/,
+  )
+  assert.equal(failure.details?.sideEffects, 'unknown')
+  assert.equal(harness.order.includes('releaseEntry'), false)
+  assert.ok(harness.order.includes('signal:SIGKILL'))
+  assert.equal(harness.order.includes('detach'), false)
+})
+
+// protects=a script that exits before the release is a failure that stays in the journal and view with no end; fails_when=SERVER_EXITED is dropped from the journal or hidden before the release, or an end is built for a run that never started; no_claim=the real exit event
+test('a process that exits before the release is a journaled failure with no end', async () => {
+  // Arrange
+  const harness = createScriptHarness({
+    armFails: new Error('arming failed'),
+    duringArm: () => harness.exits({ exitCode: 3, signal: null }),
+  })
+
+  // Act
+  const failure = await harness.run.prepare().catch((error: unknown) => error)
+  await settle()
+
+  // Assert
+  assert.ok(failure instanceof StudyError)
+  assert.equal(failure.code, 'SERVER_EXITED')
+  assert.equal(harness.run.view().runFailure?.code, 'SERVER_EXITED')
+  assert.equal(harness.run.view().end, undefined)
+  assert.ok(
+    harness.events.some(
+      (event) =>
+        event.type === 'node-server.failure' &&
+        (event.detail as { code?: string }).code === 'SERVER_EXITED',
+    ),
+  )
+})
+
+// protects=a crash before the release followed by a stop never resolves prepare as a finished script; fails_when=the benign-exit guard swallows the error without the release having been sent; no_claim=js-debug's attach timing
+test('a stop after a pre-release crash rejects prepare instead of resolving it', async () => {
+  // Arrange
+  const harness = createScriptHarness({
+    armHangsUntilAborted: true,
+    duringArm: () => harness.exits({ exitCode: 1, signal: null }),
+  })
+  const preparing = harness.run.prepare().then(
+    () => 'resolved',
+    () => 'rejected',
+  )
+  await settle()
+
+  // Act
+  await harness.run.stop()
+  const outcome = await preparing
+
+  // Assert
+  assert.equal(outcome, 'rejected')
+})
+
+// protects=a stop while the learner is asked settles prepare at once even when the dialog's asker ignores the abort, with nothing spawned and a late answer starting nothing; fails_when=prepare waits for the 300 s hold; no_claim=the real modal
+test('a stop while the learner is asked settles prepare at once whatever the asker does', async () => {
+  // Arrange
+  const harness = createScriptHarness({
+    confirm: 'manual',
+    askerIgnoresAbort: true,
+  })
+  const preparing = harness.run.prepare().then(
+    () => 'resolved',
+    (error: unknown) => error,
+  )
+  await settle()
+
+  // Act
+  await harness.run.stop()
+  const outcome = await Promise.race([
+    preparing,
+    settle(5).then(() => 'still waiting'),
+  ])
+  harness.answer(true)
+  await settle()
+
+  // Assert
+  assert.ok(outcome instanceof StudyError)
+  assert.equal(outcome.code, 'RUNTIME_FAILED')
+  assert.equal(harness.order.includes('launch'), false)
+})

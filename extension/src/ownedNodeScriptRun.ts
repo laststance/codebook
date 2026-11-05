@@ -33,6 +33,7 @@ import {
   assertNodeScriptStopsInPackage,
   describeNodeScriptRefusal,
 } from './utils/describeNodeScriptRefusal'
+import { serverExitedError } from './utils/describeNodeServerRunFailure'
 import type { NodeServerExit } from './utils/launchNodeServer'
 import { createNodeRunHistoryHooks } from './utils/nodeRunHistoryHooks'
 import type { resolveNodeServerLaunch } from './utils/resolveNodeServerLaunch'
@@ -155,9 +156,15 @@ class OwnedNodeScriptRun implements NodeScriptRuntime {
     this.listeners.notify()
   }
 
-  /** Journals the core's events, except the failure that is only the script's own exit, which is an end and not a failure. */
+  /** Whether the entry release was sent: only from then on is the script's own exit an end and not a failure. */
+  private get released(): boolean {
+    return this.core.snapshot().prepared
+  }
+
+  /** Journals the core's events, except (once released) the failure that is only the script's own exit, which is an end and not a failure. */
   private recordFromCore(type: string, detail?: unknown): void {
     if (
+      this.released &&
       type === 'node-server.failure' &&
       typeof detail === 'object' &&
       detail !== null &&
@@ -200,8 +207,9 @@ class OwnedNodeScriptRun implements NodeScriptRuntime {
   private visibleFailure(): StudyError | undefined {
     const failure = this.core.runFailure
     if (!failure) return undefined
+    // A process that exited before the release never started the run: that is a failure, not an end.
     if (
-      failure.code === CORE_EXIT_CODE ||
+      (failure.code === CORE_EXIT_CODE && this.released) ||
       failure.code === CORE_PAUSE_HOLD_CODE
     )
       return undefined
@@ -268,8 +276,9 @@ class OwnedNodeScriptRun implements NodeScriptRuntime {
         afterRelease: async () => undefined,
       })
     } catch (error) {
-      // A script that finished while it was being released ended by itself; that is its end, not a failed start.
-      if (this.exit !== undefined && !this.core.runFailure) return
+      // A script that finished while it was being released ended by itself; that is its end, not a failed start. A crash before the release stays a failure.
+      if (this.released && this.exit !== undefined && !this.visibleFailure())
+        return
       this.cancelTimers()
       throw this.core.launched ? this.afterSpawn(error) : error
     }
@@ -350,12 +359,21 @@ class OwnedNodeScriptRun implements NodeScriptRuntime {
         REPOSITORY_PAUSE_HOLD_TIMEOUT_MS,
       )
     })
-    const confirmed = await Promise.race([answered, timedOut])
+    // A stop or limit answers no at once, whether or not the asker honours the signal.
+    const aborted = new Promise<false>((resolve) => {
+      const { signal } = this.confirmAbort
+      if (signal.aborted) resolve(false)
+      else
+        signal.addEventListener('abort', () => resolve(false), { once: true })
+    })
+    const confirmed = await Promise.race([answered, timedOut, aborted])
     cancelWait()
     // The dialog cannot be closed; its asker ignores a late answer once this signal aborted.
     this.confirmAbort.abort()
     this.confirmation = confirmed ? 'confirmed' : 'declined'
     this.notify()
+    // A stop or limit that cut the wait short is reported in its own words, not as the learner's refusal.
+    if (!confirmed) this.assertStillLive()
     if (!confirmed)
       throw new StudyError(
         'SCRIPT_NOT_CONFIRMED',
@@ -375,6 +393,11 @@ class OwnedNodeScriptRun implements NodeScriptRuntime {
       this.exit = fact
       this.cancelExitDeadline?.()
       this.cancelTimers()
+      // An exit before the release never started the run: the preparation fails with the exit, and no end is reported.
+      if (!this.released)
+        this.core.failRun(
+          serverExitedError(fact, process.output(), this.input.workspace),
+        )
       const closed = process.whenExited()
       let resolveSettle = (): void => undefined
       const settled = new Promise<void>((resolve) => {
@@ -386,14 +409,19 @@ class OwnedNodeScriptRun implements NodeScriptRuntime {
       })
       void Promise.race([closed, settled]).then(() => {
         resolveSettle()
-        void this.core.stop().catch(() => undefined)
+        // Before the release the failing preparation closes the run itself; a stop here would hide the exit behind a generic message.
+        if (this.released) void this.core.stop().catch(() => undefined)
       })
       this.notify()
     })
   }
 
-  /** The debug session ended while the process lives: it gets the stop deadline to exit before the run ends with the `exit-deadline` limit. */
+  /**
+   * The debug session ended while the process lives: once released it gets the stop deadline to exit before the run ends with the `exit-deadline` limit.
+   * @returns `false` before the release, so the core fails the run (kill first, with the session's reason); `true` once the deadline is set.
+   */
   private boundExitAfterSession(): boolean {
+    if (!this.released) return false
     if (this.exit !== undefined || this.cancelExitDeadline) return true
     this.cancelExitDeadline = this.dependencies.clock.set(
       () => this.endWithLimit('exit-deadline'),
@@ -425,6 +453,8 @@ class OwnedNodeScriptRun implements NodeScriptRuntime {
   ): void {
     if (this.cause || this.exit !== undefined) return
     this.cause = { kind: 'limit', limit }
+    // A limit reached while the learner is asked ends the wait too.
+    this.confirmAbort.abort()
     void this.core.stop().catch(() => undefined)
   }
 
