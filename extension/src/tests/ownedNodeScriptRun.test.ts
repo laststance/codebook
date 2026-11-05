@@ -527,6 +527,29 @@ test('a stop hit while the script is released is captured and pauses', async () 
   assert.equal(harness.run.view().pause?.declaredStopIndex, 0)
 })
 
+// protects=a chat-driven declared stop of a script keeps the chat's focus because the debugger sees the ownership window open before the release and closed at the end; fails_when=the script run never opens (or never closes) the request window, so the stop ledger records the stop as the learner's; no_claim=the real stop ledger or editor focus (the vscode debugger and workspace tests own those)
+test('a script run opens the debugger request window before the release and closes it at the end', async () => {
+  // Arrange
+  const harness = createScriptHarness()
+
+  // Act
+  await harness.run.prepare()
+  const afterPrepare = harness.order.filter((entry) =>
+    entry.startsWith('window:'),
+  )
+  const openedBeforeRelease =
+    harness.order.indexOf('window:true') < harness.order.indexOf('releaseEntry')
+  await harness.run.stop()
+
+  // Assert
+  assert.deepEqual(afterPrepare, ['window:true'])
+  assert.equal(openedBeforeRelease, true)
+  assert.deepEqual(
+    harness.order.filter((entry) => entry.startsWith('window:')),
+    ['window:true', 'window:false'],
+  )
+})
+
 // protects=a script run's failure sentence names the script and the node-script profile, never the server; fails_when=the shared core words a script run's failure as the server's; no_claim=the server's sentences (nodeServer tests keep them byte for byte)
 test('a script run that fails while attaching the debugger says script and never server', async () => {
   // Arrange

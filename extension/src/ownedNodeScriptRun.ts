@@ -105,6 +105,8 @@ class OwnedNodeScriptRun implements NodeScriptRuntime {
   /** The process's own exit event, once it fired. */
   private exit?: NodeServerExit
   private end?: NodeScriptEndView
+  /** Whether the debugger's ownership window was already closed at the run's end. */
+  private didCloseWindow = false
   private cancelRunDeadline?: () => void
   private cancelSettle?: () => void
   private cancelExitDeadline?: () => void
@@ -272,6 +274,8 @@ class OwnedNodeScriptRun implements NodeScriptRuntime {
         beforeRelease: () => {
           this.core.markPrepared()
           this.runningTime.start()
+          // Everything the script does from here on is chat-driven: a declared stop is Codebook's, so the chat keeps its focus.
+          this.core.requireDebugger().setRequestWindow(true)
         },
         afterRelease: async () => undefined,
       })
@@ -471,6 +475,11 @@ class OwnedNodeScriptRun implements NodeScriptRuntime {
    * Called whenever the core changes.
    */
   private finalizeIfStopped(): void {
+    // The run is over: the debugger's ownership window closes so a later pause of the learner stays theirs.
+    if (this.core.lifecycle === 'stopped' && !this.didCloseWindow) {
+      this.didCloseWindow = true
+      this.core.debuggerSession?.setRequestWindow(false)
+    }
     if (this.end || this.core.lifecycle !== 'stopped' || !this.core.launched)
       return
     if (this.visibleFailure()) return
