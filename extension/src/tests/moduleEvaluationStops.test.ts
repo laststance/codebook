@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test, type TestContext } from 'node:test'
 
 import { STOP_IMAGE_APPLICATION_NOT_YET_AVAILABLE_TEXT } from '../constants'
+import { codebookStopLedger } from '../runtimeSupport/codebookStopLedger'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { armedEntry, entryRenderHarness } from './utils/entryRenderHarness'
@@ -126,6 +127,19 @@ test('a module-scope server stop pauses in the readiness request, labelled as a 
   )
   harness.setDocumentReadyState('complete')
   await prepared
+})
+
+// Value: protects=the chat's keyboard at a preparation pause; fails_when=no causal window opens before Codebook's own readiness request, so its module-evaluation pause is recorded as the learner's and the reader hands the keyboard to the paused source; no_claim=the editor's focus call
+test("a preparation pause in the readiness request is recorded as Codebook's own, so the chat keeps the keyboard", async (context) => {
+  // Arrange
+  codebookStopLedger.reset()
+  const { harness } = await heldReadiness(context)
+  // Act
+  evaluateModule(harness)
+  await publishedPause(harness)
+  // Assert
+  // The stand-in server's debug session is named `server-session`.
+  assert.equal(codebookStopLedger.isCodebookCausedStop('server-session'), true)
 })
 
 // Value: protects=R11 (capture without a browser): a pause in the readiness request has no page to draw, so it publishes "application not yet available" (status absent: no image is owed) and never an image; fails_when=the capture is attempted without a page and fails the pause, an image of a later frame is borrowed, or the missing image is reported as a failed capture; no_claim=the replay of the saved pause

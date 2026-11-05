@@ -2674,6 +2674,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     for (const entry of window.provisional)
       await entry.breakpoint.registered(session, this.abort.signal)
     this.alive()
+    // The pause Codebook's own request causes is the run's, as the entry load's is: its causal window opens before the request is sent.
+    this.openCausalWindow('server')
     this.evidence.record('preparation.window-opened', {
       stops: window.provisional.map((entry) => ({
         declaredIndex: entry.index,
@@ -2694,6 +2696,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     window.timeout.dispose()
     this.readiness.observer.requestTimeout = undefined
     const session = this.participants.server.selected!
+    // Codebook's own requests are over: a later server pause is not caused by them.
+    codebookStopLedger.closeWindow([session.id])
     for (const entry of window.provisional)
       if (!entry.prepared)
         await entry.breakpoint.retire(session, this.abort.signal)
@@ -2897,6 +2901,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     window.heldAtMs = undefined
     window.timeout.release()
+    // The request goes on and may evaluate the next provisional module: that pause is Codebook's too.
+    this.openCausalWindow('server')
     this.progressDeadline(
       Math.max(1, this.preparationDeadlineAt - Date.now()),
       () => this.expireSetupBudget(this.preparationBudgetMs),
