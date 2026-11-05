@@ -34,7 +34,7 @@ const REACT_SCRIPTS_SUPPORTED_MAJOR = 5
  * @example
  * reactScriptsHelpAnchor('REACT_SCRIPTS_SEAL_FAILED') // => 'codebook://help/repository-browser#REACT_SCRIPTS_SEAL_FAILED'
  */
-function reactScriptsHelpAnchor(code: ReactScriptsRefusalCode): string {
+export function reactScriptsHelpAnchor(code: ReactScriptsRefusalCode): string {
   return `codebook://help/repository-browser#${code}`
 }
 

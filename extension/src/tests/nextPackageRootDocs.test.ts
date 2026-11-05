@@ -177,7 +177,7 @@ test('the help has one fix anchor per packageRoot reason and a cross-adapter tab
 })
 
 // protects=API 1.24 is served and the 1.18 note names the packageRoot fields; fails_when=the version or a field of the note drifts; no_claim=the behavior of other lanes
-test('API_VERSION is 1.24 and its 1.18 note names the packageRoot fields', async () => {
+test('API_VERSION is 1.25 and its 1.18 note names the packageRoot fields', async () => {
   // Arrange
   const constants = await readPackaged('src/constants.ts')
   // Act
@@ -186,7 +186,7 @@ test('API_VERSION is 1.24 and its 1.18 note names the packageRoot fields', async
       .split('\n')
       .find((line) => line.startsWith(' * 1.18 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.24')
+  assert.equal(API_VERSION, '1.25')
   for (const phrase of [
     '`packageRoot`',
     '`rootIsApp`',
@@ -203,7 +203,7 @@ test('the bundled skill 1.0.71 gates packageRoot on API 1.18 and never opens a n
   // Arrange
   const skill = await readPackaged('skills/codebook/SKILL.md')
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.73"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.74"\n'))
   for (const phrase of [
     'only when `codebook_status` reports API 1.18 or later',
     'refuses `packageRoot` as an unknown key',
@@ -224,7 +224,7 @@ test('the README replaces the nested-app limitation with the root-open entry', a
   // Act / Assert
   assert.equal(readme.includes('cannot run yet'), false)
   assert.ok(readme.includes('## Run a Next app below the repository root'))
-  assert.ok(readme.includes('**MCP API 1.24**'))
+  assert.ok(readme.includes('**MCP API 1.25**'))
   assert.ok(readme.includes('format 9 (`.study.v9.json`)'))
   assert.ok(
     readme.includes(

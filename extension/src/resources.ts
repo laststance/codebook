@@ -41,6 +41,7 @@ import type { NodeHistorySummary } from './nodeHistorySummary'
 import { nodeServerHelp } from './nodeServerHelp'
 import { nodeTestConfigSchema } from './nodeTestConfigSchemas'
 import { operationsHelp } from './operationsHelp'
+import { reactScriptsHelp } from './reactScriptsHelp'
 import { liveRepositoryConfigSchema } from './repositoryConfigSchemas'
 import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 import { sha256 } from './runtimeSupport/utils/sha256'
@@ -273,6 +274,8 @@ export async function readResource(
       startHere: REPOSITORY_BROWSER_START_HERE,
       // The Vite quick start, support table and refusal anchors (API 1.11), then the Next quick start, Pages support table and refusal anchors.
       ...viteHelp(),
+      // The react-scripts (Create React App) quick start, selection rule, refusal anchors and limits (API 1.25).
+      ...reactScriptsHelp(),
       ...nextHelp(),
       // The version 3 quick start, the operations and secrets sections and the error table (API 1.14).
       ...operationsHelp(),

@@ -284,6 +284,11 @@ export function serverRenderHelp() {
           change:
             'format 10 (.study.v10.json): the evidence rules of format 7 or 8 (whichever the configuration takes without packageRoot) plus the packageRoot field, for adapter vite-dev. Codebook 0.2.77.0 lists a format 10 study as saved by a newer Codebook; update Codebook to open it. A Next run below the root keeps format 9 (vitePackageRoot)',
         },
+        {
+          item: 'saved study of a react-scripts run (react-scripts-dev, API 1.25)',
+          change:
+            'format 11 (.study.v11.json): the evidence rules of format 7 for adapter react-scripts-dev, whether packageRoot is absent, "." or a nested folder. An older Codebook lists a format 11 study as saved by a newer Codebook; update Codebook to open it (reactScriptsQuickStart)',
+        },
       ],
     },
     serverRenderErrors: {
