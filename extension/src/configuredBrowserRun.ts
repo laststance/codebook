@@ -2642,7 +2642,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (!this.opensPreparationWindow(adapter, hasPagesFolder)) return
     const sources = await this.readWindowSources()
     if (sources.length === 0) return
-    await this.selectServer()
+    await this.selectServer({ pauseForSourceMap: true })
     this.serverSelectedEarly = true
     const session = this.participants.server.selected!
     const timeout = createHoldAwareTimeout(REPOSITORY_SETUP_TIMEOUT_MS)
@@ -10001,8 +10001,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
   }
 
-  /** Attaches only the launched worker, then verifies its OS ownership through the native proxy before granting control. @example await this.selectServer() */
-  private async selectServer(): Promise<void> {
+  /**
+   * Attaches only the launched worker, then verifies its OS ownership through the native proxy before granting control.
+   * @param options - `pauseForSourceMap` for a run with a preparation window: js-debug then pauses before each script with a source map runs, so a provisional breakpoint on a module's top-level line is bound before that module is evaluated (without it js-debug binds the pending breakpoint after the script was parsed, a race a module whose dependencies are already loaded loses: native C86-1).
+   * @example await this.selectServer()
+   * @example await this.selectServer({ pauseForSourceMap: true }) // the preparation window
+   */
+  private async selectServer(
+    options: { pauseForSourceMap?: boolean } = {},
+  ): Promise<void> {
     const endpoint = await this.app!.inspectorEndpoint(this.abort.signal)
     this.alive()
     const launched = await this.acquire(
@@ -10020,6 +10027,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           autoAttachChildProcesses: false,
           continueOnAttach: false,
           sourceMaps: true,
+          // Only a run with a preparation window pays for the pause before each mapped script: its module-scope stops must be bound before their module runs.
+          ...(options.pauseForSourceMap ? { pauseForSourceMap: true } : {}),
           sourceMapPathOverrides: {
             'webpack://_N_E/./*': `${this.packageRoot}/*`,
             // Exact keys only: one per server library stop file of an App Router app.

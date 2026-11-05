@@ -546,6 +546,34 @@ test('a covered stop the page never reaches fails with the module-evaluation can
   assert.equal(failure.includes('code at module scope'), false)
 })
 
+// Value: protects=native C86-1 (module-scope stop bound before its module runs): a run with a preparation window attaches the server debugger with pauseForSourceMap, so js-debug binds the provisional breakpoint before the module is evaluated; fails_when=the attach leaves js-debug to bind after the script parsed, which a module whose dependencies are loaded already loses (run d1b48df0 never paused); no_claim=js-debug's own pause timing
+test('a run with a preparation window attaches the server debugger with pauseForSourceMap', async (context) => {
+  // Arrange
+  const { harness, prepared } = await heldReadiness(context)
+  prepared.catch(() => undefined)
+  // Act
+  const launches = harness.serverLaunches.map(
+    (config) => config.pauseForSourceMap,
+  )
+  // Assert
+  assert.deepEqual(launches, [true])
+})
+
+// Value: protects=the cost of pauseForSourceMap stays with preparation-window runs: a workspace with a Pages folder (no window) attaches its server debugger without it; fails_when=every run with a server stop pauses before each mapped script; no_claim=the run's timing
+test('a run without a preparation window attaches the server debugger without pauseForSourceMap', async (context) => {
+  // Arrange
+  const harness = await pagesServerRun(context)
+  const prepared = harness.run.prepare().catch(() => undefined)
+  await armedEntry(harness)
+  // Act
+  const launches = harness.serverLaunches.map(
+    (config) => config.pauseForSourceMap,
+  )
+  // Assert
+  assert.deepEqual(launches, [undefined])
+  void prepared
+})
+
 // Value: protects=O5 (Pages workspaces): a workspace with a Pages folder opens no preparation window, because its router is known only after readiness; fails_when=the window opens and consumes a Pages data function during Codebook's own request; no_claim=App Router entries of such mixed workspaces
 test('a workspace with a Pages folder opens no preparation window', async (context) => {
   // Arrange
