@@ -54,6 +54,37 @@ test('a route-handler stop declared after operation 1 pauses in the POST the pag
   assert.equal(journalTypes(harness).includes('route-handler.armed'), true)
 })
 
+// Value: protects=AC 1 for the stop the help recommends, on a line after the handler awaited the body: the run pauses there, though Next's caller is no longer on the synchronous stack; fails_when=the hit is resumed as unclassified because the classifier reads only the synchronous frames, so the run ends SERVER_STOP_NOT_REACHED; no_claim=real Next timing (the harness answers the raw CDP stack E2 recorded after the await)
+test('a route-handler stop on a line after the handler awaited the request body pauses in the POST', async (context) => {
+  // Arrange
+  const harness = await routeHandlerRunHarness(context)
+  await harness.run.prepare()
+  await sendOperation(harness, 1)
+  sendRequest(harness, '9', 'POST', '/api/todos')
+  // Act
+  routeHandlerHit(harness, { stack: 'route-handler-after-await' })
+  const snapshot = await publishedPause(harness)
+  // Assert
+  assert.deepEqual(
+    {
+      execution: snapshot.execution,
+      routeHandler: { ...snapshot.routeHandler },
+      continues: harness.server!.continues.length,
+      failures: [...harness.run.view().failures],
+    },
+    {
+      execution: 'route-handler',
+      routeHandler: {
+        method: 'POST',
+        route: '/api/todos',
+        path: '/api/todos',
+      },
+      continues: 0,
+      failures: [],
+    },
+  )
+})
+
 // Value: protects=AC 2 at a route-handler pause the chat-facing inspection reads the handler's locals (text, body.text) as primitives, and the request object (a NextRequest Proxy) is kept as an object marker, never a member; fails_when=the route-handler pause publishes no values, reads a declared path as undefined, or records a member of the request; no_claim=a real NextRequest Proxy (a plain object stands in; the marker rule is typeof) and the saved replay's native debugger scope (covered by the shared capture tests)
 // why_new=routeHandler*.test.ts never declare an inspection, so the shared inspection tests never ran on a route-handler snapshot; seam=none
 test('a route-handler pause records the typed text and body text as values and the request as an object marker', async (context) => {

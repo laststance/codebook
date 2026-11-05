@@ -2981,7 +2981,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       REPOSITORY_RUN_TIMEOUT_MS,
       this.abort.signal,
     )
-    const handler = routeHandlerStackOf(held.event.callFrames, scriptId)
+    // After an await Next's caller is only on the async stack (E2), so the classifier reads both.
+    const handler = routeHandlerStackOf(
+      held.event.callFrames,
+      scriptId,
+      held.event.asyncStackTrace?.callFrames,
+      (frameScriptId) => participant.scriptUrls.get(frameScriptId),
+    )
     const hitRoute = handler
       ? await this.routeOfHeldPause(event.body?.threadId)
       : undefined

@@ -237,3 +237,49 @@ test('the request tracker keeps a redirect hop to another declared route under i
     ],
   )
 })
+
+// Value: protects=R3 with the stacks CDP really gives (E2): `run` and `do` by their raw names on the synchronous stack, and after an await the handler above processTicksAndRejections with `run` and `do` at the head of the async stack; fails_when=the classifier only knows a debugger's display names or only the synchronous frames, so every real hit, or every hit after an await, is unclassified; no_claim=Next versions other than E2's 16.2
+test('the route-handler stack is recognised by the raw CDP frame names, also after the handler awaited', () => {
+  // Arrange
+  const handler = { functionName: 'POST', location: { scriptId: '12' } }
+  const run = { functionName: 'run', location: { scriptId: '238' } }
+  const routeModule = { functionName: 'do', location: { scriptId: '3464' } }
+  const resumed = {
+    functionName: 'processTicksAndRejections',
+    location: { scriptId: '32' },
+  }
+  const urls: Record<string, string> = {
+    '3464':
+      'file:///repo/node_modules/next/dist/compiled/next-server/app-route.runtime.dev.js',
+  }
+  const asyncCallers = [
+    {
+      functionName: 'run',
+      url: 'node:internal/async_local_storage/async_context_frame',
+    },
+    {
+      functionName: 'do',
+      url: 'file:///repo/node_modules/next/dist/compiled/next-server/app-route.runtime.dev.js',
+    },
+  ]
+  const urlOf = (scriptId: string): string | undefined => urls[scriptId]
+  // Act
+  const results = [
+    routeHandlerStackOf([handler, run, routeModule], '12', undefined, urlOf),
+    routeHandlerStackOf([handler, resumed], '12', asyncCallers, urlOf),
+    routeHandlerStackOf([handler, resumed], '12', undefined, urlOf),
+    routeHandlerStackOf(
+      [handler, resumed],
+      '12',
+      [{ functionName: 'do', url: 'file:///repo/lib/queue.js' }],
+      urlOf,
+    ),
+  ]
+  // Assert
+  assert.deepEqual(results, [
+    { handlerName: 'POST' },
+    { handlerName: 'POST' },
+    undefined,
+    undefined,
+  ])
+})

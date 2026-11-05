@@ -110,9 +110,9 @@ export interface ServerHit {
    * The pause stands in a function of the module (`call`) or in the module's own top-level code while Next evaluates it for the first time (`evaluation`): the recorded stack of E2 has the module script's anonymous top frame, the module factory named like the script's address, then `__webpack_require__`.
    * Without it the pause has the one frame of the stop.
    */
-  stack?: 'call' | 'evaluation' | 'route-handler'
+  stack?: 'call' | 'evaluation' | 'route-handler' | 'route-handler-after-await'
   /**
-   * With `stack: 'route-handler'`: the handler frame's function name (default `POST`). The recorded stack of E1 (Cycle 0087, Next 16, `next dev --webpack`) is the handler frame in the route file, then `AsyncLocalStorage.run`, then Next's `AppRouteRouteModule.do`; an alias (`export { handle as POST }`) runs a function named `handle`.
+   * With `stack: 'route-handler'` or `'route-handler-after-await'`: the handler frame's function name (default `POST`). The raw CDP stacks E2 recorded (Cycle 0087, Next 16.2, `next dev --webpack`): before the handler's first `await`, the handler frame in the route file, then `run` (the async context) and `do` (Next's route module); after it, the handler frame and `processTicksAndRejections`, with `run` and `do` at the head of the `asyncStackTrace`. A debugger's display names them `AsyncLocalStorage.run` and `AppRouteRouteModule.do`, as E1 recorded through DAP; an alias (`export { handle as POST }`) runs a function named `handle`.
    */
   handlerName?: string
   /** The reason both channels report for the pause (default `breakpoint` for the DAP `stopped`, `other` for the CDP pause), such as `exception`. */
@@ -625,7 +625,10 @@ export function createServerParticipant(parts: ServerParticipantParts) {
     } else if (!announced.has(scriptId)) announce(scriptId)
     currentHit = ++hitNumber
     if (hit.stack === 'evaluation') evaluationHits.add(currentHit)
-    if (hit.stack === 'route-handler')
+    if (
+      hit.stack === 'route-handler' ||
+      hit.stack === 'route-handler-after-await'
+    )
       routeHandlerHits.set(currentHit, hit.handlerName ?? 'POST')
     currentStopReason = hit.stopReason ?? 'breakpoint'
     currentHitBreakpointIds = hit.hitBreakpoints?.map((id) => adapterId({ id }))
@@ -647,7 +650,8 @@ export function createServerParticipant(parts: ServerParticipantParts) {
             functionName:
               hit.stack === 'call'
                 ? 'serverStep'
-                : hit.stack === 'route-handler'
+                : hit.stack === 'route-handler' ||
+                    hit.stack === 'route-handler-after-await'
                   ? (hit.handlerName ?? 'POST')
                   : '',
           }),
@@ -658,11 +662,37 @@ export function createServerParticipant(parts: ServerParticipantParts) {
         functionName,
         location: { scriptId: 'server-chunk', lineNumber: 10, columnNumber: 0 },
       })
-      // The handler, then the async context and Next's route module that called it (E1).
-      own.callFrames.push(
-        nextFrame('AsyncLocalStorage.run', 1),
-        nextFrame('AppRouteRouteModule.do', 2),
-      )
+      // The handler, then the async context and Next's route module that called it, by their raw CDP names (E2).
+      own.callFrames.push(nextFrame('run', 1), nextFrame('do', 2))
+    }
+    if (hit.stack === 'route-handler-after-await') {
+      // Resumed after an await: Node's continuation frame below the handler, Next's caller at the head of the async stack (E2).
+      own.callFrames.push({
+        callFrameId: `server-next-${currentHit}-1`,
+        functionName: 'processTicksAndRejections',
+        location: { scriptId: 'server-node', lineNumber: 103, columnNumber: 0 },
+      })
+      Object.assign(own, {
+        asyncStackTrace: {
+          description: 'await',
+          callFrames: [
+            {
+              functionName: 'run',
+              scriptId: 'server-node-context',
+              url: 'node:internal/async_local_storage/async_context_frame',
+              lineNumber: 60,
+              columnNumber: 0,
+            },
+            {
+              functionName: 'do',
+              scriptId: 'server-app-route',
+              url: 'file:///repo/node_modules/next/dist/compiled/next-server/app-route.runtime.dev.js',
+              lineNumber: 4,
+              columnNumber: 0,
+            },
+          ],
+        },
+      })
     }
     if (hit.stack === 'evaluation') {
       const address = announced.get(scriptId) ?? parts.scriptUrl
