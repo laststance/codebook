@@ -272,6 +272,23 @@
       ],
       "pattern": "theme=dark; sid=SECRET",
       "reason": "the dummy cookie value a Next output-masking test seeds to prove it never reaches a message; never a credential"
+    },
+    {
+      "finding": "internal.url_private",
+      "paths": [
+        "extension/src/utils/findReactScriptsBundleUrl.ts",
+        "extension/src/utils/readReactScriptsServedBundle.ts"
+      ],
+      "pattern": "http://127\\.0\\.0\\.1:3000/",
+      "reason": "the loopback development-server address in a react-scripts helper's JSDoc example; no private host"
+    },
+    {
+      "finding": "internal.hostname",
+      "paths": [
+        "extension/src/utils/readReactScriptsAppSettings.ts"
+      ],
+      "pattern": "\\.env\\.development\\.local",
+      "reason": "react-scripts' development env file name, read in its precedence; a file name, not a hostname"
     }
   ]
 }

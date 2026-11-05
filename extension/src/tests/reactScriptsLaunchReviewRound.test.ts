@@ -121,6 +121,7 @@ test('an app whose first compile has warnings is ready, settled and sealed well 
   // Assert
   assert.equal(launch.app.isRunning(), true)
   assert.equal(sealed.bundle.source.includes('const count = 1'), true)
+  // gstack-timing-ok: the bound is the contract; a warnings compile is ready in about a second, and readiness that waited for the origin line would end only at the 90 s setup deadline, so 20 s leaves a wide margin under load
   assert.ok(performance.now() - startedAtMs < 20_000)
 })
 
@@ -310,6 +311,7 @@ test('the first-compile wait ends near its budget when the entry request hangs',
   )
   // Assert
   await assert.rejects(waiting, WaitTimeoutError)
+  // gstack-timing-ok: the bound is the contract; the wait has a 600 ms budget and must end near it instead of waiting on the hung entry request, so 5 s leaves a wide margin under load
   assert.ok(performance.now() - startedAtMs < 5_000)
 })
 
