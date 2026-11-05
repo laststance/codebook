@@ -5597,6 +5597,8 @@ export class StudyService {
       await cancelling
       await cancellingNode
       await cancellingServer
+      // A script run stopped before it was prepared releases its process group before this stop reports stopped; a failed stop fails this stop, like the server run's.
+      await cancellingScript
       await cancellingExtension
       await Promise.allSettled(
         [...record.explanationKeys.values()].map((value) => value.result),
@@ -7655,7 +7657,10 @@ export class StudyService {
     state.run = run
     state.subscription = run.onDidChange(() => this.adoptNodeScriptEnd(record))
     if (this.stopping || record.stopping) return
-    await run.prepare()
+    // The run shares the service's absolute deadline: it never outlives the bound the record carries.
+    await run.prepare({
+      runTimeoutMs: Math.max(0, record.deadlineAt - this.now()),
+    })
     record.prepared = true
   }
 

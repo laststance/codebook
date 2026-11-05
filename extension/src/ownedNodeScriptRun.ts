@@ -17,6 +17,7 @@ import type { NodeScriptHistorySink } from './nodeScriptHistorySink'
 import type {
   NodeScriptConfirmation,
   NodeScriptEndView,
+  NodeScriptPrepareLimits,
   NodeScriptRuntime,
   NodeScriptState,
   NodeScriptView,
@@ -243,10 +244,11 @@ class OwnedNodeScriptRun implements NodeScriptRuntime {
 
   // ---------------------------------------------------------------- preparation
 
-  async prepare(): Promise<void> {
+  async prepare(limits: NodeScriptPrepareLimits = {}): Promise<void> {
+    // The service's absolute deadline can only shorten the run's own limit.
     this.cancelRunDeadline = this.dependencies.clock.set(
       () => this.endWithLimit('run-deadline'),
-      REPOSITORY_RUN_TIMEOUT_MS,
+      Math.min(REPOSITORY_RUN_TIMEOUT_MS, limits.runTimeoutMs ?? Infinity),
     )
     try {
       await this.checkSource()

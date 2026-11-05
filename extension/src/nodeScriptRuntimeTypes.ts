@@ -57,10 +57,16 @@ export type NodeScriptView = {
  * The node-script run the service drives: it asks the learner to confirm one run, launches the repository's script under the debugger, arms the declared stops, captures their hits and ends with the script's own exit, a limit or a stop.
  * Created by {@link StudyEnvironment.createNodeScriptRun}; the service reads {@link NodeScriptRuntime.view} for state and answers.
  */
+/** What the service bounds a script run's preparation by. */
+export type NodeScriptPrepareLimits = {
+  /** Milliseconds left of the service's absolute whole-run deadline; the run's own limit never exceeds it, so a script start cannot outlive the service's bound. */
+  readonly runTimeoutMs?: number
+}
+
 export interface NodeScriptRuntime {
   readonly id: string
   /** Checks, asks the learner, launches, attaches, arms every declared stop and releases; resolves when the script runs, rejects with the run's typed {@link StudyError} (`NODE_SCRIPT_SOURCE_REFUSED`, `SCRIPT_NOT_CONFIRMED`, `SOURCE_CHANGED`, `RUNTIME_FAILED`, …). */
-  prepare(): Promise<void>
+  prepare(limits?: NodeScriptPrepareLimits): Promise<void>
   view(): NodeScriptView
   /** Milliseconds since the script launched, the clock every history entry carries; `0` before a launch. */
   elapsedSinceLaunchMs(): number

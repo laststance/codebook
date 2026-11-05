@@ -273,3 +273,79 @@ test('performing an action on a script run is refused', async (context) => {
   assert.ok(refusal instanceof StudyError)
   assert.equal(refusal.code, 'INVALID_CONFIGURATION')
 })
+
+// protects=a stop during the learner's confirmation reports stopped only after the script run released its process group; fails_when=the service does not await the run's stop that it started for an unprepared script; no_claim=the real process group release
+test('a stop during the confirmation dialog resolves only after the script run finished stopping', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { service, record, run } = await startFakeScriptRun(harness, {
+    holdConfirmation: true,
+  })
+  while (!run.calls.includes('prepare'))
+    await new Promise((resolve) => setImmediate(resolve))
+  run.holdsStop = true
+  let didStopResolve = false
+
+  // Act
+  const stopping = service
+    .stop({ instanceId: service.instanceId, runId: record.id })
+    .then(() => {
+      didStopResolve = true
+    })
+  for (let turn = 0; turn < 20; turn += 1)
+    await new Promise((resolve) => setImmediate(resolve))
+  const didResolveBeforeRelease = didStopResolve
+  const stoppedBeforeRelease = record.stopped
+  run.stopGate.resolve()
+  await stopping
+
+  // Assert
+  assert.equal(didResolveBeforeRelease, false)
+  assert.equal(stoppedBeforeRelease, false)
+  assert.equal(didStopResolve, true)
+  assert.equal(record.stopped, true)
+})
+
+// protects=a script run whose stop fails during preparation fails the stop and leaves the run not stopped, so the next stop retries; fails_when=the failed stop is swallowed and the record reads stopped; no_claim=the wording of the failure
+test('a failed script stop during the confirmation dialog fails the stop and leaves the run unstopped', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { service, record, run } = await startFakeScriptRun(harness, {
+    holdConfirmation: true,
+  })
+  while (!run.calls.includes('prepare'))
+    await new Promise((resolve) => setImmediate(resolve))
+  run.stopFailure = new Error('process group not released')
+
+  // Act
+  const failure = await service
+    .stop({ instanceId: service.instanceId, runId: record.id })
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+  // Assert
+  assert.ok(failure instanceof Error)
+  assert.equal(record.stopped, false)
+
+  // Cleanup: the retry releases the group, as the next stop would.
+  run.stopFailure = undefined
+  await service.stop({ instanceId: service.instanceId, runId: record.id })
+})
+
+// protects=the script run is given the time left of the service's absolute deadline, so a late start cannot outlive the service's bound; fails_when=prepare gets no limit and the run arms its full own limit from its late start; no_claim=the run's own timer (ownedNodeScriptRun tests)
+test('a script run is prepared with the time left of the service deadline', async (context) => {
+  // Arrange
+  const nowMs = 1_000_000
+  const harness = await createHarness({ now: () => nowMs })
+  context.after(() => harness.close())
+
+  // Act
+  const { run } = await startFakeScriptRun(harness)
+
+  // Assert
+  assert.equal(run.prepareLimits?.runTimeoutMs, 600_000)
+})

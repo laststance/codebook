@@ -1,6 +1,7 @@
 import { StudyError } from '../../errors'
 import type {
   NodeScriptEndView,
+  NodeScriptPrepareLimits,
   NodeScriptRuntime,
   NodeScriptView,
 } from '../../nodeScriptRuntimeTypes'
@@ -26,6 +27,13 @@ export class FakeNodeScriptRuntime implements NodeScriptRuntime {
   /** Holds `prepare()` in the learner's confirmation until the test settles it. */
   readonly confirmGate = defer<void>()
   holdsConfirmation = false
+  /** The limits the service passed to `prepare()`. */
+  prepareLimits?: NodeScriptPrepareLimits
+  /** Holds `stop()` until the test settles it, as a process group release that takes time. */
+  readonly stopGate = defer<void>()
+  holdsStop = false
+  /** Makes `stop()` reject once its gate (if held) settled. */
+  stopFailure?: Error
   private current: NodeScriptView = {
     state: 'preparing',
     stops: [
@@ -40,7 +48,8 @@ export class FakeNodeScriptRuntime implements NodeScriptRuntime {
   }
   private readonly listeners = new Set<() => void>()
 
-  async prepare(): Promise<void> {
+  async prepare(limits?: NodeScriptPrepareLimits): Promise<void> {
+    this.prepareLimits = limits
     this.calls.push('prepare')
     if (this.holdsConfirmation) {
       this.change({ state: 'confirming', confirmation: 'awaiting-learner' })
@@ -74,6 +83,8 @@ export class FakeNodeScriptRuntime implements NodeScriptRuntime {
     this.calls.push('stop')
     this.change({ state: 'stopped', pause: undefined })
     this.confirmGate.resolve()
+    if (this.holdsStop) await this.stopGate.promise
+    if (this.stopFailure) throw this.stopFailure
   }
 
   /** Merges a change into the view and tells the listeners. */
