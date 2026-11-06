@@ -320,3 +320,29 @@ test('the frames help tells a chat that a browser stop image the paused page cou
     ),
   )
 })
+
+// protects=the help and the packaged README tell a chat and a learner that a recorded snapshot skips a function's members and prototype chains and what such an entry reads, so neither presents them as observed; fails_when=the sentence leaves the Secrets and masking help or the README's Codebook · Recorded learning paragraph, or names a different label than the capture saves; no_claim=the capture itself (captureReplayDebugSnapshotInternals.test.ts)
+test('the help and the README say a recorded snapshot does not keep engine internals and what their entries read', async (context) => {
+  // Arrange
+  const help = await readHelp(context)
+  const readme = await readPackaged('README.md')
+
+  // Act
+  const internals = String(help.operationsSecrets.internals)
+
+  // Assert
+  assert.ok(
+    internals.includes(
+      "but not a function's members or a prototype chain ([[Prototype]], __proto__, [[Scopes]], [[FunctionLocation]])",
+    ),
+  )
+  assert.ok(internals.includes('reads "Engine internals are not recorded."'))
+  assert.ok(
+    internals.includes('Never present those members as observed values.'),
+  )
+  assert.ok(
+    readme.includes(
+      "debug session: the editor's own debugger shows the recorded source, scopes and call stack of the selected moment. A function's members and a prototype chain (`[[Prototype]]`, `__proto__`, `[[Scopes]]`, `[[FunctionLocation]]`) are not recorded in any run kind: such an entry keeps its preview, and its **Not recorded** row reads `Engine internals are not recorded.`",
+    ),
+  )
+})

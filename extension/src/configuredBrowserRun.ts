@@ -7590,8 +7590,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     let binding = await this.verifiedBrowserBinding(stop)
     this.alive()
+    // A binding on a later line of the statement the requested line begins is that statement's own break location: no second request, no slide.
+    const insideStatement = this.acceptBindingInsideRequestedStatement(
+      stop,
+      binding,
+    )
     // A line after the requested one is the stop's place only when the debugger could not pause on the requested line at all; when it can, the stop is requested once more at that line's break location before the requested column.
     if (
+      !insideStatement &&
       binding.line > armed.line &&
       (await this.rearmOnRequestedLine(stop, binding))
     ) {
@@ -7603,7 +7609,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         throw this.slideRefusal(stop, binding, firstRequest)
     }
     // No second request could be made (the requested line cannot pause, or the debugger cannot say): a later line the stop's rule refuses is refused now.
-    await this.assertBindingAccepted(stop, binding)
+    if (!insideStatement) await this.assertBindingAccepted(stop, binding)
     this.bindBoundPlace(stop, binding)
     this.evidence.record('breakpoint.bound', {
       ...binding,
@@ -8055,6 +8061,47 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Accepts a browser stop's verified binding that lies on a later line of the statement the requested line begins, for {@link armStop} before any second request.
+   * The debugger binds a breakpoint requested on the first line of a statement that spans several lines at the statement's own break location, which can sit on a later line (`return f({` on line 32 binds inside the object on line 34). That place is the requested statement, so the stop's rule takes the lines of the statement as its own and the stop is journaled as `breakpoint.bound-inside-requested-statement`.
+   * @param stop - The stop being armed; a library stop is not judged (its lines are built lines).
+   * @param binding - Where the debugger bound the first request.
+   * @returns `true` when the binding lies after the requested line and no later than the last line of the statement that begins on the requested line ({@link declarationStatementEndLine}); `false` when the text cannot tell where the statement ends, or the binding lies past it.
+   * @example
+   * ```ts
+   * this.acceptBindingInsideRequestedStatement(stop, { line: 34, column: 44 }) // true for a stop requested on line 32 of a statement that ends on line 35
+   * ```
+   */
+  private acceptBindingInsideRequestedStatement(
+    stop: PreparedStop,
+    binding: { line: number; column: number },
+  ): boolean {
+    if (stop.library || binding.line <= stop.armed.line) return false
+    const statementEnd = declarationStatementEndLine(
+      stop.bundle.source.split(/\r\n|\r|\n/),
+      stop.armed.line,
+      this.definition.descriptor.anchors[stop.anchorIndex]!.endLine,
+    )
+    // A statement whose end the text cannot tell, and a binding past that end, stay with the slide rules.
+    if (statementEnd === undefined || binding.line > statementEnd) return false
+    const { acceptsBoundLine, bindingRefusal } = stop,
+      requestedLine = stop.armed.line
+    stop.acceptsBoundLine = (line) =>
+      acceptsBoundLine(line) || (line > requestedLine && line <= statementEnd)
+    stop.bindingRefusal = (line) =>
+      line > requestedLine && line <= statementEnd
+        ? undefined
+        : bindingRefusal(line)
+    this.evidence.record('breakpoint.bound-inside-requested-statement', {
+      participant: stop.participant,
+      declared: { line: stop.source.line, column: stop.source.column },
+      armed: stop.armed,
+      bound: { line: binding.line, column: binding.column },
+      statementEndLine: statementEnd,
+    })
+    return true
+  }
+
+  /**
    * Says whether the debugger named at least one break location on a line, for {@link rearmOnRequestedLine} and {@link journalSlidePastPausableLine} right after they asked {@link pausableColumns}.
    * @param columns - What the debugger answered for the line; `undefined` when the adapter cannot list break locations.
    * @returns `true` for a line that can pause; `false` for a line that cannot, and when the adapter cannot say.
@@ -8091,8 +8138,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const column = pausableColumns.findLast(
       (pausableColumn) => pausableColumn < requestedColumn,
     )
-    if (column === undefined) throw this.slideRefusal(stop, binding)
-    return column
+    if (column !== undefined) return column
+    // A column before the line's first break location is told from one after its statement: the text names the break location the debugger bound on a later line.
+    const firstBreak = pausableColumns[0]!
+    throw this.slideRefusal(
+      stop,
+      binding,
+      undefined,
+      firstBreak > requestedColumn ? firstBreak : undefined,
+    )
   }
 
   /**
@@ -8465,6 +8519,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @param stop - The stop being armed.
    * @param binding - Where the debugger bound the breakpoint, on a later line than requested.
    * @param firstRequest - Where the stop was requested first, when it was then requested again at {@link PreparedStop.armed}; absent when no second request was made.
+   * @param firstBreakColumn - The line's first break location when the requested column lay before it; the text then says so instead of "after its statement".
    * @returns The error to throw, with the mapping hints: it names the declared stop, the bound place, the line that can pause, the second request when there was one, and what to declare.
    * @example
    * ```ts
@@ -8475,6 +8530,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     stop: PreparedStop,
     binding: { line: number; column: number },
     firstRequest?: { line: number; column: number },
+    firstBreakColumn?: number,
   ): Error {
     const { armed, source } = stop,
       requestedColumn = (firstRequest ?? armed).column
@@ -8486,25 +8542,35 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       secondRequest = firstRequest
         ? `, and a second request at ${sourceLineOf(stop, armed.line)}:${armed.column} was bound on line ${sourceLineOf(stop, binding.line)} again`
         : ''
-    const advice = this.slideAdvice(stop)
+    const advice = this.slideAdvice(stop, firstBreakColumn)
+    const reason =
+      firstBreakColumn === undefined
+        ? `so requested column ${requestedColumn} lies after its statement${secondRequest}`
+        : `but requested column ${requestedColumn} lies before the line's first break location at column ${firstBreakColumn}, and the debugger bound that break location on a later line`
     return this.bindingFailure(
       stop,
-      `Declared stop ${this.declaredAt(stop)} bound at ${sourceLineOf(stop, binding.line)}:${binding.column}, refused: the debugger can pause on ${pausableLine}, so requested column ${requestedColumn} lies after its statement${secondRequest}; ${advice}`,
+      `Declared stop ${this.declaredAt(stop)} bound at ${sourceLineOf(stop, binding.line)}:${binding.column}, refused: the debugger can pause on ${pausableLine}, ${reason}; ${advice}`,
     )
   }
 
   /**
    * Words what to declare instead, as the last part of the refusal {@link slideRefusal} builds.
    * @param stop - The stop being armed.
+   * @param firstBreakColumn - The line's first break location when the requested column lay before it.
    * @returns For a stop requested on its declared line, the column to declare; for a stop requested after it, the line and column to declare. Both name the configuration field.
    * @example
    * ```ts
    * this.slideAdvice(stop) // 'declare the column where the statement begins (configuration.source.column)'
    * ```
    */
-  private slideAdvice(stop: PreparedStop): string {
+  private slideAdvice(stop: PreparedStop, firstBreakColumn?: number): string {
     const { armed, source } = stop,
       field = this.declaredField(stop)
+    // A requested column before the line's first break location is told to move onto it.
+    if (firstBreakColumn !== undefined)
+      return armed.line === source.line
+        ? `declare column ${firstBreakColumn}, the line's first break location (${field}.column)`
+        : `declare the stop on line ${armed.line} at column ${firstBreakColumn}, the line's first break location (${field})`
     // Codebook chose the column of a stop requested after its declared line, so the agent is told which line to declare.
     return armed.line === source.line
       ? `declare the column where the statement begins (${field}.column)`

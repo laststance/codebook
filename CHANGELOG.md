@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.2.90.0] - 2026-11-06 (development candidate)
+
+Cycle 0090 ([Issue #233](https://github.com/laststance/codebook/issues/233)), a bug-fix cycle. **A browser pause now reaches the chat in under 2 seconds on the checked app, instead of about 6, and a stop declared on the first line of a statement that spans several lines now pauses instead of being refused.**
+
+**Faster pauses.**
+- **The slowdown:** at every browser pause Codebook saves a copy of the debugger's values for the replay. It used to read every member of every function and prototype chain, one request at a time. That used the whole 5-second capture limit, so each pause reached the chat about 6 seconds late and the saved values were cut off at the limit.
+- **What is skipped now:** the copy no longer reads JavaScript engine internals, meaning a function's or class's members and the `[[Prototype]]`, `__proto__`, `[[Scopes]]` and `[[FunctionLocation]]` members. Such an entry keeps its preview, and in the replay its **Not recorded** row reads `Engine internals are not recorded.`
+- **What is still recorded:** the stop's own values (objects, arrays, Map entries, Proxy targets, boxed values and getter results), and secrets are still masked. The live native debugger still shows everything.
+- **Where it applies:** browser, Node server, Node test and Chrome extension stops. Saved studies keep format 15.
+
+**Stops on multi-line statements.**
+- A stop declared on the first line of a statement that spans several lines, for example `return client.post({`, now pauses where the debugger binds it on a later line of that same statement. A binding after the statement's last line is still refused.
+- A refusal for a column that lies before the line's first break location now names that break location, instead of saying the column lies after its statement.
+
+**Release details:** checked in both editors on a development target (no nine-project credit):
+
+| Check | Host | Target | Pause-to-publish and observed outcome |
+| --- | --- | --- | --- |
+| C90-1 | VS Code, Copilot Chat (GPT-6.1 Terra) | P08 `apps/app` sign-up screen | 1773, 725 and 802 ms (Cycle 0089 measured 5.7–6.0 s). It paused in the sign-up request's statement, declared on its first line, then after the response, and the screen switched to sign-in. The replay shows `[[Prototype]]` with "Engine internals are not recorded." |
+| C90-2 | Cursor, Agent (Grok 4.6 High) | P08 `apps/app` reset-password screen with a broken link | 1385, 787 and 689 ms. The API answered `INVALID_TOKEN` and the screen showed the expired-link alert. The replay reopened with native Variables and the same row |
+
 ## [0.2.89.0] - 2026-11-06 (development candidate)
 
 Cycle 0089 ([Issue #230](https://github.com/laststance/codebook/issues/230)), a feature cycle. **An Expo web app served by Metro now runs and pauses in its own code.** A learner can ask how a screen of an Expo app works (P08's sign-in and forgot-password screens in the checks below). Codebook starts the app's own Expo CLI, and the native debugger stops inside the app's handler with its values. Before, no adapter started Metro, so the chat could explain an Expo app from its source only.

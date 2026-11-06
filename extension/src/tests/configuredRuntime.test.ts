@@ -2295,6 +2295,102 @@ test('a browser stop the debugger binds on the next line of its citation is arme
   assert.equal(mouse.length, 2)
 })
 
+/** A statement that begins on its first line and spans four: the debugger binds a breakpoint requested on line 1 at the object on line 3, as js-debug does for `return f({ ... })`. */
+const MULTI_LINE_STATEMENT = {
+  mappings: 'AAAA;AACA;AACA;AACA;AACA',
+  fixture: {
+    source: 'return f({\n  ...values,\n  url: g(),\n})\nrender();\n',
+    citationEndLine: 5,
+  },
+}
+
+// Value: protects=a stop declared on the first line of a statement that spans several lines being armed and paused where the debugger binds it inside that statement (Cycle 0090 C90-N1: line 32 of a `return authClient.signUp.email({` statement could never hold a stop); fails_when=a binding on a later line of the requested statement is slid-refused at every column, or the pause there is not taken for the stop; no_claim=the native js-debug break locations of a real Expo page
+test('a browser stop on the first line of a multi-line statement that the debugger binds inside that statement is armed and pauses there', async (context) => {
+  // Arrange: the stop is declared at 1:1 of a statement ending on line 4; the debugger can pause on line 1 and binds the request at 3:1, inside the statement.
+  const { run, bindFirstStopAt, listPossibleBreakLines, mouse } =
+    await configuredRuntimeHarness(context, undefined, [], MULTI_LINE_STATEMENT)
+  bindFirstStopAt(3, 1)
+  listPossibleBreakLines([0])
+  // Act
+  await run.prepare()
+  run.action('inside-statement', 'repository-click')
+  const stop = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.participants.browser.snapshot
+  }, 'stop committed inside the statement')
+  await run.continue('browser', stop.pause)
+  await waitUntil(() => run.view().status === 'completed', 'final result')
+  await run.stop()
+  // Assert
+  const inside = run
+    .view()
+    .events.find(
+      (event) => event.type === 'breakpoint.bound-inside-requested-statement',
+    )
+  assert.equal(
+    JSON.stringify(inside?.detail),
+    '{"participant":"browser","declared":{"line":1,"column":1},"armed":{"line":1,"column":1},"bound":{"line":3,"column":1},"statementEndLine":4}',
+  )
+  assert.equal(stop.source.line, 3)
+  assert.equal(run.view().failures.length, 0)
+  assert.equal(run.view().finalOutcome, 'demonstrated')
+  assert.equal(mouse.length, 2)
+})
+
+// Value: protects=a real slide past the end of the requested statement still being refused; fails_when=a binding after the statement's last line is accepted as inside it; no_claim=the statement scan of every syntax
+test('a browser stop the debugger binds after the last line of its multi-line statement is still refused as a slide', async (context) => {
+  // Arrange: the statement on line 1 ends on line 4; the debugger binds the request at 5:1, the next statement.
+  const { run, bindFirstStopAt, listPossibleBreakLines, mouse } =
+    await configuredRuntimeHarness(context, undefined, [], MULTI_LINE_STATEMENT)
+  bindFirstStopAt(5, 1)
+  listPossibleBreakLines([0])
+  // Act
+  const failure = await run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  const insideCount = run
+    .view()
+    .events.filter(
+      (event) => event.type === 'breakpoint.bound-inside-requested-statement',
+    ).length
+  await run.stop()
+  // Assert
+  assert.equal(
+    String(failure),
+    `Error: Declared stop src/theme.ts:1 bound at 5:1, refused: the debugger can pause on the declared line 1, so requested column 1 lies after its statement; declare the column where the statement begins (configuration.source.column). Frozen source map positions in the selected citation: 1:1, 2:1, 3:1, 4:1, 5:1. ${MAPPED_POSITION_HINTS}`,
+  )
+  assert.equal(insideCount, 0)
+  assert.equal(mouse.length, 0)
+})
+
+// Value: protects=the refusal text of a requested column that lies before the line's first break location not claiming "after its statement" nor advising the refused column; fails_when=the refusal says the column lies after its statement or names no break location
+test('a browser stop requested before its line’s first break location is refused naming that break location', async (context) => {
+  // Arrange: the debugger can pause on line 1 only at column 7, the stop is declared at 1:1 and the request is bound at 3:1 on a later line.
+  const { run, bindFirstStopAt, listPossibleBreakLocations } =
+    await configuredRuntimeHarness(context, undefined, [], {
+      mappings: 'AAAA,MAAM;AACA;AACA',
+      fixture: {
+        source: 'go(); more();\nstep();\nrender();\n',
+        citationEndLine: 3,
+      },
+    })
+  bindFirstStopAt(3, 1)
+  listPossibleBreakLocations([{ lineNumber: 0, columnNumber: 6 }])
+  // Act
+  const failure = await run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  await run.stop()
+  // Assert
+  assert.equal(
+    String(failure),
+    `Error: Declared stop src/theme.ts:1 bound at 3:1, refused: the debugger can pause on the declared line 1, but requested column 1 lies before the line's first break location at column 7, and the debugger bound that break location on a later line; declare column 7, the line's first break location (configuration.source.column). Frozen source map positions in the selected citation: 1:1, 2:7, 3:7. ${MAPPED_POSITION_HINTS}`,
+  )
+})
+
 // Value: protects=a pause at the accepted bound place being the stop's own pause at once; fails_when=the position test compares the pause with the declared line only, so the pause is held as nobody's and reaches its stop only when the 3 s wait for the stop's own pause ends; why_new=the position test knew the declared line only (Cycle 0043, criterion 3); seam=the run's wait for the accepted stop's own pause, held open by the harness so that only a pause admitted at once can be captured
 test('a pause at the line the debugger moved a browser stop to is captured as that stop’s own pause, without waiting for a pause on the declared line', async (context) => {
   // Arrange: the wait for a pause on the stop's line never ends by itself.
@@ -4129,7 +4225,7 @@ test('a stop requested after its unmapped declared line that the debugger slides
   } = await configuredRuntimeHarness(context, undefined, [], {
     mappings: ';AACA;AACA',
     fixture: {
-      source: '// toggles the theme\nconst nextTheme =\n  "dark";\n',
+      source: '// toggles the theme\nconst nextTheme = "dark";\nrender();\n',
       citationEndLine: 3,
     },
   })
