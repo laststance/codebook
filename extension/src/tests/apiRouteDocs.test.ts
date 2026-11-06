@@ -169,6 +169,7 @@ test('the README documents API-route stops under API 1.29 and no longer lists Pa
   )
   assert.ok(readme.includes('- **API routes (MCP API 1.29).**'))
   assert.ok(
+    // pregate-literal: API_VERSION=1.28 the Route handlers bullet names the API that introduced route handlers
     readme.indexOf('- **Route handlers (MCP API 1.28).**') <
       readme.indexOf('- **API routes (MCP API 1.29).**'),
   )
