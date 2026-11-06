@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { expoWebBundlerLineOf } from '../utils/expoWebBundlerLineOf'
 import { buildExpoWebEnvironment } from '../utils/expoWebChildEnvironment'
 import { isExpoWebScriptOfModule } from '../utils/isExpoWebScriptOfModule'
 import { classifyExpoWebOutput } from '../utils/launchExpoWebDevelopmentServer'
@@ -70,4 +71,45 @@ test('a Metro bundle URL differing in v is a different script, while localhost s
   // Assert
   assert.equal(sameBundle, true)
   assert.equal(otherBundle, false)
+})
+
+// Value: protects=the Metro line a bundle-failed refusal quotes is the JSON message, else the first non-empty body line, else the status, never a page of text; fails_when=a non-JSON body quotes every line, an empty body quotes an empty string, or a non-string message is quoted; why_new=expoWebAdapter.test.ts covers only the JSON message form; seam=none; no_claim=Metro's real error shapes beyond these bodies
+test('the quoted Metro line falls back to the first non-empty body line and then to the status', () => {
+  // Arrange
+  const identity = (text: string) => text
+  // Act
+  const plain = expoWebBundlerLineOf(
+    { status: 500, body: '\n  \nUnable to resolve ./x\nat module y\n' },
+    identity,
+  )
+  const nonStringMessage = expoWebBundlerLineOf(
+    { status: 500, body: '{"message":42}' },
+    identity,
+  )
+  const empty = expoWebBundlerLineOf({ status: 502, body: '' }, identity)
+  const unreadable = expoWebBundlerLineOf(
+    { status: 503, body: undefined },
+    identity,
+  )
+  // Assert
+  assert.equal(plain, 'Unable to resolve ./x')
+  assert.equal(nonStringMessage, '{"message":42}')
+  assert.equal(empty, 'Metro answered status 502')
+  assert.equal(unreadable, 'Metro answered status 503')
+})
+
+// Value: protects=a quoted Metro message is masked before it is collapsed to one line and cut at 300 characters; fails_when=the secret survives, the message keeps its line breaks, or the cap is dropped; why_new=cap and whitespace collapse are untested; seam=none; no_claim=mask quality (a stand-in mask replaces one literal)
+test('the quoted Metro line is masked, kept to one line and cut at 300 characters', () => {
+  // Arrange
+  const mask = (text: string) => text.replaceAll('pk-live-abc123', '***')
+  const message = `Failed with pk-live-abc123\t   in   file ${'x'.repeat(400)}`
+  // Act
+  const line = expoWebBundlerLineOf(
+    { status: 500, body: JSON.stringify({ message }) },
+    mask,
+  )
+  // Assert
+  assert.equal(line.length, 300)
+  assert.equal(line.startsWith('Failed with *** in file xxxx'), true)
+  assert.equal(line.includes('pk-live-abc123'), false)
 })
