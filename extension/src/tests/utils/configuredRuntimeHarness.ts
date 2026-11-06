@@ -265,6 +265,10 @@ export async function configuredRuntimeHarness(
     moduleJavascript?: string
     /** Ends the executed server module's text with the `//# sourceURL=` comment webpack gives an evaluated module, so a script the run never saw parsed can be recognised by it at its first pause. */
     serverModuleSourceUrl?: boolean
+    /** Seals the stop the way a real adapter does instead of returning the harness's own bundle: the stand-in `readBundle` returns what this returns, announces the sealed bundle's address and serves its JavaScript to the debugger. A sealed bundle's `limits` reach the run's verifier and source resources as they do for a real adapter. */
+    sealBundle?: (
+      request: Parameters<typeof viteDevAdapter.VITE_DEV_ADAPTER.readBundle>[0],
+    ) => ReturnType<typeof viteDevAdapter.VITE_DEV_ADAPTER.readBundle>
     /** Makes the Vite stand-in report these values as the ones it masks in kept module text, as the launcher's env-file values are. */
     maskedValues?: string[]
     /** Names the executed module's source map lists (its `names`), such as an env value an inlined constant carries. */
@@ -2119,8 +2123,11 @@ export async function configuredRuntimeHarness(
       './utils/createBundleVerifier': {
         isChangedOriginalError,
         // The real verifier, with every scan of its sealed map recorded.
-        createBundleVerifier: (sealed: BundleSource) => {
-          const verifier = createBundleVerifier(sealed)
+        createBundleVerifier: (
+          sealed: BundleSource,
+          limits?: Parameters<typeof createBundleVerifier>[1],
+        ) => {
+          const verifier = createBundleVerifier(sealed, limits)
           return {
             ...verifier,
             mappedPositions: (startLine: number, endLine: number) => {
@@ -2325,6 +2332,13 @@ export async function configuredRuntimeHarness(
               const sealed =
                 await viteDevAdapter.VITE_DEV_ADAPTER.readBundle(request)
               bundle.scriptUrl = sealed.bundle.scriptUrl
+              return sealed
+            }
+            if (options.sealBundle) {
+              const sealed = await options.sealBundle(request)
+              // The page announces the sealed address and the debugger serves the sealed bytes.
+              bundle.scriptUrl = sealed.bundle.scriptUrl
+              servedJavascript = sealed.bundle.javascript
               return sealed
             }
             if (options.sealFailure) throw new Error(options.sealFailure)
