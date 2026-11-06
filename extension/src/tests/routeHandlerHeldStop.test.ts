@@ -314,3 +314,107 @@ test('a browser stop that pauses while a route-handler hit is being sealed is sh
     },
   )
 })
+
+// Value: protects=a browser stop whose CDP pause came during the route handler's seal and whose DAP `stopped` came after the publish still waits for the route-handler stop's continue; fails_when=the late `stopped` is judged against the published server stop and the run fails with "Unexpected or additional browser stop"; why_new=Cycle 0088 fix-check (the two notifications straddle the seal's end); seam=emitPause without announcement, then emitStopped after the publish; no_claim=a real adapter's notification order
+test('a browser stop that pauses while a route-handler hit is being sealed is shown after that hit is continued when its DAP stop arrives after the publish', async (context) => {
+  // Arrange
+  const routeFile = 'app/api/todos/route.ts'
+  const harness = await routeHandlerRunHarness(context, {
+    stopOperations: [2, 2, 2],
+    stopParticipants: ['browser', 'server', 'browser'],
+    operations: [
+      { kind: 'click', title: 'Focus', selector: 'button[type=submit]' },
+      { ...ADD, title: 'Add' },
+    ],
+    additionalStops: [
+      {
+        line: 1,
+        column: 7,
+        inspections: [{ path: 'nextTheme', mode: 'value', required: true }],
+      },
+      {
+        line: 1,
+        column: 1,
+        inspections: [{ path: 'nextTheme', mode: 'value', required: true }],
+      },
+    ],
+    extra: {
+      participant: 'browser',
+      sourcePath: 'components/TodoListCache.tsx',
+      additionalStopFile: routeFile,
+      additionalStopFileStops: [0],
+    },
+  })
+  await harness.run.prepare()
+  await sendOperation(harness, 1)
+  await waitUntil(
+    () => harness.run.view().status === 'ready',
+    'operation 1 done',
+  )
+  await sendOperation(harness, 2)
+  const firstBrowserPause = await waitUntil(
+    () => harness.run.view().participants.browser?.snapshot,
+    'the first browser stop paused',
+  )
+  await harness.run.continue('browser', firstBrowserPause.pause)
+  const releaseRead = harness.server!.holdScriptRead('route-script')
+  context.after(releaseRead)
+  // Act: the route handler's hit is judged and its seal waits on the script read while the second browser stop pauses
+  sendRequest(harness, '9', 'POST', '/api/todos')
+  await hitRouteFile(harness, routeFile)
+  await waitUntil(
+    () => harness.server!.scriptReads.includes('route-script'),
+    'the seal reads the route script',
+  )
+  harness.emitPause(1, 1, false)
+  await setTimeout(200)
+  releaseRead()
+  const serverPause = await publishedPause(harness)
+  harness.emitStopped()
+  await setTimeout(200)
+  const whileServerHeld = {
+    status: harness.run.view().status,
+    failures: [...harness.run.view().failures],
+    order: [...harness.run.view().snapshots].map((snapshot) => [
+      snapshot.participant,
+      snapshot.execution,
+    ]),
+  }
+  await harness.run.continue('server', serverPause.pause)
+  const secondBrowserPause = await waitUntil(
+    () =>
+      harness.run.view().snapshots.length === 3
+        ? harness.run.view().participants.browser?.snapshot
+        : undefined,
+    'the second browser stop paused after the route handler was continued',
+  )
+  // Assert
+  assert.deepEqual(
+    {
+      whileServerHeld,
+      failures: [...harness.run.view().failures],
+      secondBrowserIsNext: secondBrowserPause !== firstBrowserPause,
+      order: [...harness.run.view().snapshots].map((snapshot) => [
+        snapshot.participant,
+        snapshot.execution,
+      ]),
+    },
+    {
+      whileServerHeld: {
+        status: 'paused-server',
+        failures: [],
+        order: [
+          ['browser', 'browser'],
+          ['server', 'route-handler'],
+        ],
+      },
+      failures: [],
+      secondBrowserIsNext: true,
+      order: [
+        ['browser', 'browser'],
+        ['server', 'route-handler'],
+        ['browser', 'browser'],
+      ],
+    },
+  )
+})

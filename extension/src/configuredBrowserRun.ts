@@ -3156,18 +3156,33 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Tells whether a participant's CDP pause was queued behind the published route-handler or API-route stop, so its matching DAP `stopped` that arrives after the judging window ended waits too.
+   * Called by {@link queueStopBehindRouteHandler}; with no continuation in flight a queued CDP pause can only have been queued behind such a hit, and the continuation path owns every later one.
+   * @param name - The participant whose `stopped` arrived.
+   * @returns `true` while that participant's CDP pause waits in the queue and no continuation runs.
+   * @example if (this.isCdpPauseQueuedBehindHit('browser')) queue()
+   */
+  private isCdpPauseQueuedBehindHit(name: Participant): boolean {
+    return !this.continuation && this.pendingCdpStop?.participant === name
+  }
+
+  /**
    * Queues a debug-adapter `stopped` of another participant that arrives while a route-handler or API-route hit is judged and sealed, so the stop observed first is published first.
    * Called by the DAP event handler before it accepts a stop.
    * @param name - The participant whose `stopped` arrived.
    * @param event - The `stopped` event.
-   * @returns `true` when the event was queued (or the run failed for a second queued stop); `false` when no hit is being judged or the event is the server's own.
+   * @returns `true` when the event was queued (or the run failed for a second queued stop); `false` when no hit is being judged, the event is the server's own, or no CDP pause of that participant waits behind the hit.
    * @example if (this.queueStopBehindRouteHandler('browser', event)) return
    */
   private queueStopBehindRouteHandler(
     name: Participant,
     event: DebugProtocol.Event,
   ): boolean {
-    if (!this.isQueuedBehindRouteHandler(name)) return false
+    if (
+      !this.isQueuedBehindRouteHandler(name) &&
+      !this.isCdpPauseQueuedBehindHit(name)
+    )
+      return false
     if (this.pendingDapStop || !Number.isInteger(event.body?.threadId)) {
       this.fail(
         `Unexpected or additional ${name} stop invalidated the declared operation`,
