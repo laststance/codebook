@@ -20,6 +20,8 @@ export type StateChangingRequestQuestion = {
   path: string
   contentType?: string
   body?: string
+  /** The run's sign-in route, when it declares `signIn`: the modal then names the sign-in `POST <path>` first (never its body or size: the size would tell the password's length), and the path is part of the question's identity. */
+  signInPath?: string
 }
 
 /**
@@ -64,13 +66,18 @@ export function createStateChangingRequestAsker(show: ShowModalQuestion) {
       request.path,
       request.contentType ?? null,
       request.body ?? null,
+      request.signInPath ?? null,
     ])
     let choice = open.get(key)
     if (!choice) {
       const shown = Promise.resolve(
         show(
-          `Send ${request.method} ${request.path} to the repository's server?`,
-          `Codebook will send this ${request.method} request once, to the server it started for run ${request.runId.slice(0, NODE_SERVER_MODAL_RUN_ID_CHARS)}, and nothing else. ${describeRequestBody(request)} The server uses the repository's own configured database, so the request may change its data. Use a local or test database. If this question stays after Codebook gave up waiting, Cancel it: a new request asks again.`,
+          request.signInPath === undefined
+            ? `Send ${request.method} ${request.path} to the repository's server?`
+            : `Sign in with POST ${request.signInPath}, then send ${request.method} ${request.path} to the repository's server?`,
+          request.signInPath === undefined
+            ? `Codebook will send this ${request.method} request once, to the server it started for run ${request.runId.slice(0, NODE_SERVER_MODAL_RUN_ID_CHARS)}, and nothing else. ${describeRequestBody(request)} The server uses the repository's own configured database, so the request may change its data. Use a local or test database. If this question stays after Codebook gave up waiting, Cancel it: a new request asks again.`
+            : `Codebook will send POST ${request.signInPath} once to sign in, with the password you type next, then this ${request.method} request once with the session it gets, to the server it started for run ${request.runId.slice(0, NODE_SERVER_MODAL_RUN_ID_CHARS)}, and nothing else. ${describeRequestBody(request)} The server uses the repository's own configured database, so signing in and the request may change its data. Use a local or test database. If this question stays after Codebook gave up waiting, Cancel it: a new request asks again.`,
           SEND_LABEL,
         ),
       )

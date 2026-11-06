@@ -869,10 +869,14 @@ export class StudyService {
   private learnerSecretsOfRuns(): ReadonlySet<string> {
     // Secrets of runs this service forgot stay masked, in memory only, for the service's lifetime.
     const secrets = new Set<string>(this.forgottenLearnerSecrets)
-    for (const record of this.records.values())
+    for (const record of this.records.values()) {
       for (const secret of record.runtime?.learnerSecrets ?? [])
         // A runtime without ask-learner operations lists none.
         if (typeof secret === 'string') secrets.add(secret)
+      // A node-server run with signIn holds the typed password and its session cookie forms.
+      for (const secret of record.nodeServer?.run?.learnerSecrets ?? [])
+        secrets.add(secret)
+    }
     return secrets
   }
 
@@ -2092,6 +2096,8 @@ export class StudyService {
     // Later texts about this run (Output lines, answers) must still hide its typed secrets.
     for (const secret of record.runtime?.learnerSecrets ?? [])
       if (typeof secret === 'string') this.forgottenLearnerSecrets.add(secret)
+    for (const secret of record.nodeServer?.run?.learnerSecrets ?? [])
+      this.forgottenLearnerSecrets.add(secret)
     this.records.delete(record.id)
     for (const [key, keyedRecord] of this.startKeys)
       if (keyedRecord === record) this.startKeys.delete(key)
@@ -4559,7 +4565,14 @@ export class StudyService {
         record.error?.describe() ??
         (failure
           ? this.sanitizedError(
-              new StudyError(failure.code, failure.message),
+              new StudyError(
+                failure.code,
+                failure.message,
+                undefined,
+                undefined,
+                undefined,
+                failure.details,
+              ),
             ).describe()
           : undefined),
     }
@@ -6002,25 +6015,15 @@ export class StudyService {
         undefined,
         { sent: 'not-sent', runUri: this.uri(record.id) },
       )
-    const signal = AbortSignal.any([
-      AbortSignal.timeout(this.confirmationTimeoutMs),
-      record.cancellation.signal,
-    ])
-    const secret = await ask
-      .call(
-        this.environment,
-        {
-          runId: record.id,
-          repository: basename(this.environment.workspace),
-          title: next.title,
-        },
-        signal,
-      )
-      .catch((error: unknown) => {
+    const secret = await this.promptLearnerSecret(
+      record,
+      ask,
+      next.title,
+      (error) => {
         // An abort or timeout is an unanswered ask; any other throw is a fault of the editor's input box.
-        if (signal.aborted) return undefined
         throw this.editorQuestionFault(record, next, 'input box', error)
-      })
+      },
+    )
     // An empty answer types nothing into the control, so it counts as no answer.
     if (secret === undefined || secret === '')
       throw new StudyError(
@@ -6627,17 +6630,34 @@ export class StudyService {
   ) {
     const run = record.nodeServer.run
     const declaration = record.nodeServer.prepared?.configuration.request
+    const signIn = record.nodeServer.prepared?.configuration.signIn
     if (!run || !declaration)
       throw new StudyError(
         'RUN_NOT_READY',
         'The server run does not exist yet.',
       )
-    if (NODE_SERVER_STATE_CHANGING_METHODS.includes(declaration.method)) {
-      await this.confirmNodeServerRequest(record, declaration)
-      // The run can have stopped, failed or been paused while the learner read the modal.
-      this.assertNodeServerRequestable(record, input.action)
-    }
-    await run.sendRequest(input.key)
+    // With signIn the sign-in POST creates a session, so the modal asks also for a GET.
+    if (
+      signIn ||
+      NODE_SERVER_STATE_CHANGING_METHODS.includes(declaration.method)
+    ) {
+      let secret: string | undefined
+      // The view reads awaiting-learner while the editor asks.
+      if (signIn) run.setSignInAwaiting?.(true)
+      try {
+        await this.confirmNodeServerRequest(record, declaration, signIn?.path)
+        // The run can have stopped, failed or been paused while the learner read the modal.
+        this.assertNodeServerRequestable(record, input.action)
+        if (signIn) {
+          secret = await this.askNodeServerSignInSecret(record, signIn.path)
+          this.assertNodeServerRequestable(record, input.action)
+        }
+      } finally {
+        if (signIn) run.setSignInAwaiting?.(false)
+      }
+      if (signIn) await run.sendRequest(input.key, { secret })
+      else await run.sendRequest(input.key)
+    } else await run.sendRequest(input.key)
     record.nodeServer.sentKey = input.key
     const receipt = {
       operationId: randomUUID(),
@@ -6659,6 +6679,7 @@ export class StudyService {
   private async confirmNodeServerRequest(
     record: StudyRecord,
     declaration: NodeServerConfiguration['request'],
+    signInPath?: string,
   ): Promise<void> {
     const confirm = this.environment.confirmStateChangingRequest
     if (!confirm)
@@ -6671,13 +6692,100 @@ export class StudyService {
       record.cancellation.signal,
     ])
     const sent = await confirm
-      .call(this.environment, { runId: record.id, ...declaration }, signal)
+      .call(
+        this.environment,
+        {
+          runId: record.id,
+          ...declaration,
+          ...(signInPath === undefined ? {} : { signInPath }),
+        },
+        signal,
+      )
       .catch(() => false)
     if (!sent)
       throw new StudyError(
         'REQUEST_NOT_CONFIRMED',
-        `The learner did not confirm the ${declaration.method} ${declaration.path} request, so nothing was sent. The run stays ready.`,
+        signInPath === undefined
+          ? `The learner did not confirm the ${declaration.method} ${declaration.path} request, so nothing was sent. The run stays ready.`
+          : `The learner did not confirm the sign-in with POST ${signInPath} and the ${declaration.method} ${declaration.path} request, so nothing was sent. The run stays ready.`,
+        undefined,
+        undefined,
+        undefined,
+        signInPath === undefined ? undefined : { question: 'request' },
       )
+  }
+
+  /**
+   * Opens the editor's masked input box for a secret and waits for the answer within the confirmation bound; the work both {@link StudyService.askLearnerSecretFor} and {@link StudyService.askNodeServerSignInSecret} share.
+   * @param record - The run, whose cancellation closes the box.
+   * @param ask - The environment's input box hook.
+   * @param title - What the box is titled after the repository's name.
+   * @param onFault - Decides what a throw of the box means when the wait was not aborted: it throws, or returns the answer to use.
+   * @returns The typed secret, or `undefined` when the box was dismissed, the wait ended, or `onFault` gave none.
+   * @example await this.promptLearnerSecret(record, ask, 'Password', () => undefined) // => 'typed secret'
+   */
+  private async promptLearnerSecret(
+    record: StudyRecord,
+    ask: NonNullable<StudyEnvironment['askLearnerSecret']>,
+    title: string,
+    onFault: (error: unknown) => undefined,
+  ): Promise<string | undefined> {
+    const signal = AbortSignal.any([
+      AbortSignal.timeout(this.confirmationTimeoutMs),
+      record.cancellation.signal,
+    ])
+    return ask
+      .call(
+        this.environment,
+        {
+          runId: record.id,
+          repository: basename(this.environment.workspace),
+          title,
+        },
+        signal,
+      )
+      .catch((error: unknown) => {
+        if (signal.aborted) return undefined
+        return onFault(error)
+      })
+  }
+
+  /**
+   * Asks the learner for the sign-in password of a node-server run in the editor's masked input box; the chat never sees it.
+   * @param record - The node-server run, whose cancellation closes the box.
+   * @param signInPath - The sign-in route the box names.
+   * @returns The typed password.
+   * @throws `PREREQUISITE_MISSING` when the editor has no input box; `REQUEST_NOT_CONFIRMED` with `details.question: "secret"` when the box was dismissed, left empty, failed or not answered within {@link StudyService.confirmationTimeoutMs} (the run stays `ready`).
+   * @example await this.askNodeServerSignInSecret(record, '/api/auth/sign-in/email') // => 'the typed password'
+   */
+  private async askNodeServerSignInSecret(
+    record: StudyRecord,
+    signInPath: string,
+  ): Promise<string> {
+    const ask = this.environment.askLearnerSecret
+    if (!ask)
+      throw new StudyError(
+        'PREREQUISITE_MISSING',
+        'This editor cannot ask the learner for the sign-in password, so Codebook signs in nowhere here.',
+      )
+    // A fault of the box reads as no answer: nothing is sent either way.
+    const secret = await this.promptLearnerSecret(
+      record,
+      ask,
+      `Sign in to ${signInPath}`,
+      () => undefined,
+    )
+    // An empty answer is no answer.
+    if (secret === undefined || secret === '')
+      throw new StudyError(
+        'REQUEST_NOT_CONFIRMED',
+        `The learner did not provide the password for the sign-in to ${signInPath}, so nothing was sent. The run stays ready.`,
+        undefined,
+        undefined,
+        undefined,
+        { question: 'secret' },
+      )
+    return secret
   }
 
   /**

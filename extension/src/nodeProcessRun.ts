@@ -22,7 +22,10 @@ import type {
   NodeServerStop,
 } from './runtime'
 import type { PauseIdentity } from './runtimeSupport/pauseGate'
-import type { ProcessOutputEvent } from './utils/captureProcessOutput'
+import type {
+  KnownValueMask,
+  ProcessOutputEvent,
+} from './utils/captureProcessOutput'
 import { causeRootsFor } from './utils/causeRootsFor'
 import {
   confirmLaunchedGroup,
@@ -91,6 +94,8 @@ export type NodeProcessLifecycle = 'live' | 'stopping' | 'stopped'
 export type NodeProcessRunHooks = {
   /** Whether a native pause now is inside the window the owner treats as its capture window (the server's request window; a script run answers `true` once released). */
   inWindow(): boolean
+  /** Whether the owner's sign-in request is out: a declared stop hit now is resumed without a capture (the session's cookie values are not known yet). A run without sign-in omits it. */
+  inSignIn?(): boolean
   /** The owner's running-time limits stop counting while a native pause is held. */
   holdLimits(): void
   /** The owner's running-time limits count again after the last native hold ended. */
@@ -145,6 +150,10 @@ export type NodeProcessRunInput = {
   notify: () => void
   hooks: NodeProcessRunHooks
   options?: NodeProcessRunOptions
+  /** The owner's known secret values, handed to the launcher to mask the process's output; absent when the owner holds none. */
+  knownValues?: KnownValueMask
+  /** Masks the owner's known secret values in the text of a stop's capture (the debugger's snapshot and the facts); read at call time. Absent when the owner holds none. */
+  maskKnownText?: (text: string) => string
   /** The nouns the run's error and refusal sentences use; the server's when absent. */
   words?: NodeRunWords
 }
@@ -172,6 +181,7 @@ export type NodeProcessSnapshot = {
   pid?: number
   stops: NodeServerStop[]
   stopsHitAtStart: number[]
+  stopsHitDuringSignIn: number[]
   stopsReached: number[]
   pauseGeneration: number
   pause?: PauseIdentity & {
@@ -294,6 +304,7 @@ export class NodeProcessRun {
   private readonly ownResumes = new Set<number>()
   private readonly ownedHits = new Map<number, number>()
   private readonly stopsHitAtStart: number[] = []
+  private readonly stopsHitDuringSignIn: number[] = []
   private readonly stopsReached: number[] = []
   private readonly captures: NodeServerCapture[] = []
   private captureBudgetExhausted = false
@@ -398,6 +409,7 @@ export class NodeProcessRun {
       pid: this.server?.pid,
       stops: this.stopViews.map((stop) => ({ ...stop })),
       stopsHitAtStart: [...this.stopsHitAtStart],
+      stopsHitDuringSignIn: [...this.stopsHitDuringSignIn],
       stopsReached: [...this.stopsReached],
       pauseGeneration: this.generation,
       pause: pause && {
@@ -557,6 +569,9 @@ export class NodeProcessRun {
       citedSources: this.input.citedSources,
       stops,
       record: (type, detail) => this.record(type, detail),
+      ...(this.input.maskKnownText
+        ? { maskKnownText: this.input.maskKnownText }
+        : {}),
     })
     // An editor document that differs from the article's cited source refuses the start before anything is spawned.
     this.debug.assertSourcesUnchanged()
@@ -585,6 +600,10 @@ export class NodeProcessRun {
         node: this.dependencies.node,
         // The workspace and the home directory are hidden in the server's output even where a chunk boundary cuts one.
         privateRoots: this.privateRoots(),
+        // The owner's secret values (a run with sign-in) are masked statefully in the output as well.
+        ...(this.input.knownValues
+          ? { knownValues: this.input.knownValues }
+          : {}),
       },
       (type, detail) => this.record(type, detail),
       (event) => this.hooks.onProcessOutput(event),
@@ -799,14 +818,16 @@ export class NodeProcessRun {
    * @returns
    * - `learner` for a pause that is no hit of a declared stop
    * - `start-hit` for a declared stop hit before the run was prepared
+   * - `sign-in-hit` for one hit while the owner's sign-in request is out
    * - `request-hit` for one hit inside the owner's window
    * - `unattributed` for one hit outside it
    */
   private classify(
     pause: NodeServerDebuggerPause,
-  ): 'learner' | 'start-hit' | 'request-hit' | 'unattributed' {
+  ): 'learner' | 'start-hit' | 'sign-in-hit' | 'request-hit' | 'unattributed' {
     if (pause.declaredStopIndex === undefined) return 'learner'
     if (!this.prepared) return 'start-hit'
+    if (this.hooks.inSignIn?.()) return 'sign-in-hit'
     return this.hooks.inWindow() ? 'request-hit' : 'unattributed'
   }
 
@@ -825,6 +846,10 @@ export class NodeProcessRun {
       this.continueStartHit(pause)
       return
     }
+    if (kind === 'sign-in-hit') {
+      this.continueSignInHit(pause)
+      return
+    }
     this.beginHold(pause.token)
     if (pause.declaredStopIndex !== undefined)
       this.ownedHits.set(pause.token, pause.declaredStopIndex)
@@ -837,14 +862,33 @@ export class NodeProcessRun {
     const index = pause.declaredStopIndex!
     if (!this.stopsHitAtStart.includes(index)) this.stopsHitAtStart.push(index)
     this.record('node-server.stop-hit-at-start', { declaredStopIndex: index })
+    this.resumeWithoutCapture(pause, 'continuing a stop hit before readiness')
+  }
+
+  /** A declared stop hit by the sign-in request is recorded and continued without a capture: the session's cookie values are unknown there, and the same stop still pauses during the declared request. */
+  private continueSignInHit(pause: NodeServerDebuggerPause): void {
+    const index = pause.declaredStopIndex!
+    if (!this.stopsHitDuringSignIn.includes(index))
+      this.stopsHitDuringSignIn.push(index)
+    this.record('node-server.stop-hit-during-sign-in', {
+      declaredStopIndex: index,
+    })
+    this.resumeWithoutCapture(pause, 'continuing a stop hit during the sign-in')
+  }
+
+  /**
+   * Lets an owned hit run on as Codebook's own resume, capturing nothing.
+   * @param pause - The hit.
+   * @param step - The step named when the resume fails the run.
+   */
+  private resumeWithoutCapture(
+    pause: NodeServerDebuggerPause,
+    step: string,
+  ): void {
     this.ownResumes.add(pause.token)
     this.requireDebugger()
       .resume(pause, this.abort.signal)
-      .catch((error: unknown) =>
-        this.failRun(
-          this.stepFailed('continuing a stop hit before readiness', error),
-        ),
-      )
+      .catch((error: unknown) => this.failRun(this.stepFailed(step, error)))
     this.notify()
   }
 
@@ -910,9 +954,11 @@ export class NodeProcessRun {
   private acceptCapture(
     pause: NodeServerDebuggerPause,
     generation: number,
-    read: NodeServerStopCapture,
+    unmaskedRead: NodeServerStopCapture,
   ): void {
     const index = pause.declaredStopIndex!
+    // The facts carry the run's values as the debugger read them; the owner's known secret values are masked before the capture is kept or handed to the history.
+    const read = this.maskedCapture(unmaskedRead)
     this.captures.push(
       toCapture(read, { index, generation }, this.server?.elapsedMs() ?? 0),
     )
@@ -941,6 +987,26 @@ export class NodeProcessRun {
       pauseGeneration: generation,
     })
     this.notify()
+  }
+
+  /**
+   * Masks the owner's known secret values in the facts and the frame name of a stop's capture (the snapshot is masked by the debugger itself).
+   * @param read - The capture as the debugger read it.
+   * @returns The capture itself when the owner holds no secret; else a copy with masked texts.
+   */
+  private maskedCapture(read: NodeServerStopCapture): NodeServerStopCapture {
+    const mask = this.input.maskKnownText
+    if (!mask) return read
+    return {
+      ...read,
+      facts: read.facts.map((fact) => ({
+        ...fact,
+        display: mask(fact.display),
+      })),
+      ...(read.frameName === undefined
+        ? {}
+        : { frameName: mask(read.frameName) }),
+    }
   }
 
   /** The hit beyond the capture limit: every owned breakpoint is retired and the server continues uncaptured. */

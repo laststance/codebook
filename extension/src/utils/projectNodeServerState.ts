@@ -84,6 +84,12 @@ export function projectNodeServerState(input: NodeServerProjectionInput) {
       address: view.address,
       stops: view.stops,
       stopsHitAtStart: view.stopsHitAtStart,
+      ...(view.signIn
+        ? {
+            signIn: view.signIn,
+            stopsHitDuringSignIn: view.stopsHitDuringSignIn ?? [],
+          }
+        : {}),
       stopsReached: view.stopsReached,
       pauseGeneration: view.pauseGeneration,
       pause: projectNodePause(pause, capture),

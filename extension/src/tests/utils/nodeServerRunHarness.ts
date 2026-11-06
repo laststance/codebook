@@ -16,6 +16,7 @@ import {
   type NodeServerRunDependencies,
 } from '../../ownedNodeServerRun'
 import type { NodeServerResponse, NodeServerRuntime } from '../../runtime'
+import type { KnownValueMask } from '../../utils/captureProcessOutput'
 import type {
   NodeServerCloseOptions,
   NodeServerExit,
@@ -86,6 +87,10 @@ export type HarnessOptions = {
   runId?: string
   /** Where the run reports what a saved server replay records. */
   history?: NodeServerHistorySink
+  /** The run's optional sign-in declaration; the declared request is then sent after it. */
+  signIn?: NodeServerConfiguration['signIn']
+  /** The declared request; a GET of `/api/users/7` by default. */
+  request?: NodeServerConfiguration['request']
   /** Reads a stop in place of the fake's empty snapshot, so a history test gets presentable captures. */
   capture?: (pause: NodeServerDebuggerPause) => NodeServerStopCapture
 }
@@ -230,6 +235,16 @@ export function fakeServer(
     pid: 4242,
     processGroup: 4242,
     closeCalls: 0,
+    /** How many times the run asked the launcher to publish the output it held for known values. */
+    releasedHeld: 0,
+    /** How many times the run asked the launcher to drop the output it held for known values. */
+    droppedHeld: 0,
+    releaseHeldOutput(): void {
+      this.releasedHeld += 1
+    },
+    dropHeldOutput(): void {
+      this.droppedHeld += 1
+    },
     closeWithDetach: [] as boolean[],
     /** The options each close was given, so a test reads the stop's clock and identity check the run passed. */
     closeOptions: [] as NodeServerCloseOptions[],
@@ -280,8 +295,21 @@ export function fakeRequestSender(order: string[]) {
     written: defer<void>(),
     response: defer<NodeServerResponse>(),
   }
+  /** Every request the run sent, in order, with what it carried and its own answers. */
+  const exchanges: Array<{
+    request: NodeServerConfiguration['request']
+    cookie?: string
+    /** The names of the fields the run gave the sender, so a test sees no unexpected input. */
+    inputKeys: string[]
+    sanitize?: (text: string) => string
+    onSetCookie?: (values: readonly string[]) => void
+    verified: Promise<void>
+    written: ReturnType<typeof defer<void>>
+    response: ReturnType<typeof defer<NodeServerResponse>>
+  }> = []
   return {
     calls,
+    exchanges,
     /** The answers of the latest request; each send makes new ones, so a retry is testable. */
     get written() {
       return current.written
@@ -315,7 +343,18 @@ export function fakeRequestSender(order: string[]) {
       if (input.signal.aborted) abort()
       else input.signal.addEventListener('abort', abort, { once: true })
       // The sender verifies the connected socket before it writes a byte; a failure leaves zero bytes sent.
-      void input.verifyPeer(this.connection).then(
+      const verified = input.verifyPeer(this.connection)
+      exchanges.push({
+        request: input.request,
+        cookie: input.cookie,
+        inputKeys: Object.keys(input),
+        sanitize: input.sanitize,
+        onSetCookie: input.onSetCookie,
+        verified: verified.catch(() => undefined),
+        written: answers.written,
+        response: answers.response,
+      })
+      void verified.then(
         () => {
           if (input.signal.aborted) return
           this.bytesWritten += 1
@@ -347,6 +386,7 @@ export const RESPONSE_200: NodeServerResponse = {
 export function declaration(
   port: number,
   stops: 1 | 2,
+  extras: Pick<HarnessOptions, 'signIn' | 'request'> = {},
 ): NodeServerConfiguration {
   const hash = 'a'.repeat(64)
   return {
@@ -362,7 +402,8 @@ export function declaration(
     entry: 'server.js',
     loader: 'node',
     port,
-    request: { method: 'GET', path: '/api/users/7' },
+    request: extras.request ?? { method: 'GET', path: '/api/users/7' },
+    ...(extras.signIn ? { signIn: extras.signIn } : {}),
     source: { path: 'src/routes/users.ts', hash, line: 14, column: 3 },
     inspections: [{ path: 'user.id', mode: 'value', required: true }],
     additionalStops:
@@ -410,6 +451,8 @@ export function createHarness(options: HarnessOptions = {}) {
     groupGone: undefined as boolean | undefined,
     /** A signal that fails once, as the system refuses one for a member the user may not signal (EPERM); a test sets it before the call. */
     failSignal: undefined as NodeJS.Signals | undefined,
+    /** The known-value mask the run gave the launcher; absent for a run without signIn. */
+    knownValues: undefined as KnownValueMask | undefined,
     readiness: [] as Array<
       Parameters<NodeServerRunDependencies['waitForReadiness']>[0]
     >,
@@ -463,9 +506,10 @@ export function createHarness(options: HarnessOptions = {}) {
       order.push('assertPortFree')
       if (options.portTaken) throw options.portTaken
     },
-    launch: async (_launch, _record, onOutput) => {
+    launch: async (launched, _record, onOutput) => {
       order.push('launch')
       calls.launch += 1
+      calls.knownValues = launched.knownValues
       emitServerOutput = async (text, channel = 'stdout') =>
         void (await onOutput?.({
           sequence: 1,
@@ -533,7 +577,7 @@ export function createHarness(options: HarnessOptions = {}) {
   const citedSources: ConfiguredDescriptor['sources'] = []
   const runtime: NodeServerRuntime = createOwnedNodeServerRun({
     workspace: WORKSPACE,
-    configuration: declaration(port, options.stops ?? 1),
+    configuration: declaration(port, options.stops ?? 1, options),
     record: (type, detail) => {
       events.push({ type, detail })
       options.record?.(type, detail)
