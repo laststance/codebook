@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFile, realpath } from 'node:fs/promises'
-import { test, type TestContext } from 'node:test'
+import { mock, test, type TestContext } from 'node:test'
 
 import type { DevelopmentBundleRequest } from '../developmentServerAdapter'
 import { StudyError } from '../errors'
@@ -8,6 +8,7 @@ import { EXPO_WEB_DEV_ADAPTER } from '../expoWebDevAdapter'
 import { WaitTimeoutError } from '../runtimeSupport/utils/waitTimeoutError'
 import { EXPO_WEB_SOURCE_MAP_LIMITS } from '../sourceMapLimits'
 import { isProcessGone } from '../utils/isProcessGone'
+import * as expoWebLauncher from '../utils/launchExpoWebDevelopmentServer'
 
 import {
   createExpoWebRepository,
@@ -315,6 +316,55 @@ test('a stop in the app seals from the served bundle and map under the Expo limi
     `http://127.0.0.1:${port}${FAKE_BUNDLE_PATH}`,
   )
   assert.equal(sealed.limits, EXPO_WEB_SOURCE_MAP_LIMITS)
+})
+
+// Value: protects=a stale cleanup of an earlier run on the same port must not drop the newer run's bundle cache; fails_when=the cleanup deletes the origin's entry without checking it is its own, so each stop reads the map again through a throwaway cache; why_new=Cycle 0089 ship review F6; seam=real launcher, fake Metro, the first run's cleanup fired late by hand; no_claim=the launcher's own ordering of port release and cleanup
+test('a late cleanup of an earlier run on the same port keeps the newer run reading no map again across stops', async (context) => {
+  // Arrange
+  const cleanups: ((port: number) => Promise<void>)[] = []
+  const realLaunch = expoWebLauncher.launchExpoWebDevelopmentServer
+  mock.method(
+    expoWebLauncher,
+    'launchExpoWebDevelopmentServer',
+    (
+      request: Parameters<typeof realLaunch>[0],
+      workspace: Parameters<typeof realLaunch>[1],
+      afterClose: Parameters<typeof realLaunch>[2],
+    ) => {
+      cleanups.push(afterClose)
+      return realLaunch(request, workspace, afterClose)
+    },
+  )
+  context.after(() => mock.restoreAll())
+  const first = await startAdapter(context)
+  const firstRun = await first.started()
+  await firstRun.app.close()
+  const sharedPort = first.repository.port
+  const second = await startAdapter(context, {
+    webScript: () => `expo start --web --port ${sharedPort}`,
+  })
+  const secondRun = await second.started()
+  await EXPO_WEB_DEV_ADAPTER.waitForServerSettled(
+    secondRun.app,
+    10_000,
+    second.controller.signal,
+  )
+  // Act
+  await cleanups[0]?.(sharedPort)
+  const realFetch = globalThis.fetch
+  let mapRequests = 0
+  mock.method(globalThis, 'fetch', (input: unknown, init?: RequestInit) => {
+    if (String(input).includes('.map')) mapRequests += 1
+    return realFetch(input as string, init)
+  })
+  const request = {
+    ...bundleRequest(second.repository, second.request),
+    ownedOrigin: `http://127.0.0.1:${sharedPort}`,
+  }
+  await EXPO_WEB_DEV_ADAPTER.readBundle(request)
+  await EXPO_WEB_DEV_ADAPTER.readBundle(request)
+  // Assert
+  assert.equal(mapRequests, 0)
 })
 
 // Value: protects=E-6: a stop in a file the entry bundle's map does not name is refused as not-in-entry-bundle naming the file; fails_when=another reason, or the stop seals from a map that lacks the file; why_new=lazy route files; seam=real launcher, fake Metro; no_claim=Expo Router async routes themselves

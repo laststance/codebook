@@ -69,15 +69,18 @@ export const EXPO_WEB_DEV_ADAPTER: DevelopmentServerAdapter = {
       throw new Error('An Expo web run resolves its package first')
     const workspace = await assessExpoWebWorkspace(request.expoWebPackage)
     const origin = `http://127.0.0.1:${workspace.port}`
+    // Created before the launch so the server's cleanup can tell this run's entry from a later run's on the same port.
+    const cache = new SingleBundleCache(request.entryPath ?? '/')
     const launch = await launchExpoWebDevelopmentServer(
       request,
       workspace,
-      // The run's cache is dropped with its server.
+      // The run's cache is dropped with its server; a stale cleanup that fires after a newer run took the port must leave that run's entry.
       async (port) => {
-        aliveCachesByOrigin.delete(`http://127.0.0.1:${port}`)
+        const closedOrigin = `http://127.0.0.1:${port}`
+        if (aliveCachesByOrigin.get(closedOrigin) === cache)
+          aliveCachesByOrigin.delete(closedOrigin)
       },
     )
-    const cache = new SingleBundleCache(request.entryPath ?? '/')
     aliveCachesByOrigin.set(origin, cache)
     runsByApp.set(launch.app, {
       origin,
