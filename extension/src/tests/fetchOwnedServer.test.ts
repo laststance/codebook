@@ -103,3 +103,31 @@ test('streams the body and status through a standard Response', async (context) 
   assert.equal(response.headers.get('x-kind'), 'metro')
   assert.equal(Buffer.concat(chunks).toString(), 'hello world')
 })
+
+// Value: protects=an answer whose status a Response cannot hold (600-999) rejects the read at once; fails_when=the RangeError is thrown inside the response listener and the promise never settles; why_new=Cycle 0089 ship review (adversarial, red team); seam=real loopback server answering 999; no_claim=statuses below 200
+test('rejects at once when the server answers a status a Response cannot hold', async (context) => {
+  // Arrange
+  const { origin } = await serve(context, (_request, response) => {
+    response.statusCode = 999
+    response.end('odd')
+  })
+  let timer: NodeJS.Timeout | undefined
+  const unsettled = new Promise<string>((resolve) => {
+    timer = setTimeout(() => resolve('unsettled'), 2_000)
+  })
+  // Act
+  const outcome = await Promise.race([
+    fetchOwnedServer(
+      `${origin}/x`,
+      'localhost:4101',
+      new AbortController().signal,
+    ).then(
+      () => 'resolved',
+      (error: unknown) => (error instanceof RangeError ? 'rejected' : 'other'),
+    ),
+    unsettled,
+  ])
+  clearTimeout(timer)
+  // Assert
+  assert.equal(outcome, 'rejected')
+})

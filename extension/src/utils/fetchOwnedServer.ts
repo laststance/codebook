@@ -35,7 +35,7 @@ function toResponse(message: IncomingMessage): Response {
  * @param host - The `Host` header to send (`localhost:4101`), or `undefined` for a plain `fetch`.
  * @param signal - Ends the request and its body.
  * @returns The answer as it came; a 3xx is returned, not followed.
- * @throws When the request fails or is aborted before the answer.
+ * @throws When the request fails, is aborted before the answer, or answers a status a `Response` cannot hold (outside 200-599).
  * @example await fetchOwnedServer(new URL('http://127.0.0.1:4101/'), 'localhost:4101', signal) // => Response 200
  */
 export function fetchOwnedServer(
@@ -50,7 +50,15 @@ export function fetchOwnedServer(
     const request = httpRequest(
       target,
       { method: 'GET', headers: { host }, agent: false, signal },
-      (message) => resolve(toResponse(message)),
+      (message) => {
+        // `Response` refuses a status outside 200-599 (a server may send up to 999); reject instead of throwing in the listener.
+        try {
+          resolve(toResponse(message))
+        } catch (error) {
+          message.destroy()
+          reject(error)
+        }
+      },
     )
     request.on('error', reject)
     request.end()
