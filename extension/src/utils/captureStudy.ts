@@ -227,6 +227,11 @@ export async function captureStudy(
           runtime.viteVersion
             ? { viteVersion: runtime.viteVersion }
             : {}),
+          // An Expo study names the Expo SDK it ran on (format 15); no other study carries the field.
+          ...(runtime?.profile === REPOSITORY_BROWSER_PROFILE &&
+          runtime.expoVersion
+            ? { expoVersion: runtime.expoVersion }
+            : {}),
           // A format 8 study says the first execution of the page was not observed.
           ...(usesServerRenderEvidence({
             version: studyVersion,

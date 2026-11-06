@@ -1,6 +1,9 @@
 import type { z } from 'zod'
 
-import { VITE_MODULE_FETCH_TIMEOUT_MS } from '../constants'
+import {
+  SINGLE_BUNDLE_ERROR_BODY_LIMIT_BYTES,
+  VITE_MODULE_FETCH_TIMEOUT_MS,
+} from '../constants'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import type { SingleBundleProfile } from '../singleBundleProfile'
 
@@ -39,8 +42,26 @@ export class SingleBundleCache {
   constructor(readonly entryPath: string = '/') {}
 }
 
-/** Thrown while the server answers no usable bundle yet (still compiling, connection refused): a caller polling for readiness tries again. */
-export class SingleBundleNotReadyError extends Error {}
+/** What a server answered instead of the bundle or map: its status and the start of its body, which an adapter may read as the server's own error (Metro answers a failed build with an error response). */
+export type SingleBundleErrorResponse = {
+  status: number
+  /** The first bytes of the body as text; `undefined` when it could not be read. */
+  body: string | undefined
+}
+
+/** Thrown while the server answers no usable bundle yet (still compiling, connection refused): a caller polling for readiness tries again. `response` is set when the server answered with a non-success status. */
+export class SingleBundleNotReadyError extends Error {
+  /** @param message - What was not ready. @param response - The server's non-success answer, when there was one. */
+  constructor(
+    message: string,
+    readonly response?: SingleBundleErrorResponse,
+  ) {
+    super(message)
+  }
+}
+
+/** The steps of reading one bundle that a caller may report: the entry page named the bundle, the bundle text was read, the map was read. */
+export type SingleBundleProgress = 'html' | 'bundle' | 'map'
 
 /** Tells a fatal TextDecoder failure from a transport failure. @example isInvalidUtf8Error(new TypeError('x')) // => false */
 function isInvalidUtf8Error(error: unknown): boolean {
@@ -98,9 +119,15 @@ async function readServedText(
     )
   })
   if (!response.ok) {
-    await response.body?.cancel()
+    // The start of the body is kept so an adapter can quote the server's own error; a body that cannot be read is no reason to hide the status.
+    const body = await readCappedBody(
+      response,
+      SINGLE_BUNDLE_ERROR_BODY_LIMIT_BYTES,
+    ).catch(() => undefined)
+    await response.body?.cancel().catch(() => undefined)
     throw new SingleBundleNotReadyError(
       `${url} answered status ${response.status}`,
+      { status: response.status, body },
     )
   }
   return readCappedBody(response, limitBytes).catch((error: unknown) => {
@@ -157,6 +184,7 @@ function parseServedMap(
  * @param cache - The run's cache; a hit for the served bundle's hash returns its entry and fetches no map. Its `entryPath` says where the entry page is served.
  * @param profile - The adapter's profile: bundle selection, map address, limits and refusal wording.
  * @param deadlineAtMs - The `performance.now()` the caller's budget ends at; each request is bounded by what is left of it.
+ * @param onProgress - Told when the entry page named the bundle, when the bundle was read and when the map was read, so a caller can journal the steps and their times.
  * @returns The served bundle and its parsed map.
  * @throws {@link SingleBundleNotReadyError} while the server does not serve the bundle or map; the profile's `mapLimit` (map over the profile's byte limit) and `mapUnreadable` (an oversized bundle, a missing or foreign `sourceMappingURL`, a map that is not a flat version 3 map) refusals.
  * @example const served = await readSingleServedBundle('http://127.0.0.1:3000', signal, cache, REACT_SCRIPTS_SINGLE_BUNDLE_PROFILE)
@@ -167,6 +195,7 @@ export async function readSingleServedBundle(
   cache: SingleBundleCache,
   profile: SingleBundleProfile,
   deadlineAtMs?: number,
+  onProgress?: (step: SingleBundleProgress) => void,
 ): Promise<SingleServedBundle> {
   const { limits, refusals } = profile
   // The bundle's address is the one the entry page names, which a homepage, PUBLIC_URL or Metro's query decides.
@@ -184,6 +213,7 @@ export async function readSingleServedBundle(
       `the entry page at ${cache.entryPath} names no development bundle yet`,
     )
   cache.bundleUrl = bundleUrl
+  onProgress?.('html')
   const javascript = await readServedText(
     bundleUrl,
     limits.bundleBytes,
@@ -195,6 +225,7 @@ export async function readSingleServedBundle(
     throw refusals.mapUnreadable(
       `the bundle exceeds ${limits.bundleBytes} bytes`,
     )
+  onProgress?.('bundle')
   const bundleHash = sha256(javascript)
   // The same bytes are the same compile: its map is already read.
   if (cache.entry?.bundleHash === bundleHash) return cache.entry
@@ -220,6 +251,7 @@ export async function readSingleServedBundle(
   if (mapText === undefined)
     throw refusals.mapLimit('map-bytes', limits.mapBytes)
   const map = parseServedMap(mapText, profile)
+  onProgress?.('map')
   cache.entry = { javascript, bundleHash, bundleUrl, map }
   return cache.entry
 }

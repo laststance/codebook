@@ -8,6 +8,10 @@ import {
   type DevelopmentLockIdentity,
 } from './assertDevelopmentWorkspace'
 import { causeRootsFor } from './causeRootsFor'
+import {
+  readExpoWebPackageReadiness,
+  type ExpoWebPackageReadiness,
+} from './readExpoWebPackageReadiness'
 import { readNextRouterKind } from './readNextRouterKind'
 import { readNodeVersion } from './readNodeVersion'
 import {
@@ -50,6 +54,14 @@ export type VitePackageDiscovery = {
 /** The discovery's answer for `react-scripts-dev` readiness. */
 export type ReactScriptsPackageDiscovery = {
   packages: ReactScriptsPackageReadiness[]
+  /** Whether the list is incomplete (a cap, the deadline, a skipped path or a Git failure). */
+  packagesTruncated: boolean
+  packagesTruncatedReason?: NextPackageTruncationReason
+}
+
+/** The discovery's answer for `expo-web-dev` readiness. */
+export type ExpoWebPackageDiscovery = {
+  packages: ExpoWebPackageReadiness[]
   /** Whether the list is incomplete (a cap, the deadline, a skipped path or a Git failure). */
   packagesTruncated: boolean
   packagesTruncatedReason?: NextPackageTruncationReason
@@ -303,6 +315,36 @@ async function readReactScriptsEntry(
   }
 }
 
+/**
+ * Reads what a start with this `packageRoot` checks, as an Expo status entry, through the shared judgement ({@link readExpoWebPackageReadiness}).
+ *
+ * Why it exists: an entry's `ready` and `missing` must equal what a start decides (DX-2). A folder the resolver refuses becomes the entry's `missing` sentence, so one unreadable app is listed not ready and never drops out. Called by {@link discoverPackages} for each discovered Expo app.
+ *
+ * @param repositoryRoot - The opened repository's root.
+ * @param packageRoot - The discovered repository-relative folder.
+ * @returns The entry.
+ * @example await readExpoWebEntry('/repo', 'apps/app') // => { packageRoot: 'apps/app', installed: true, ready: true, version: '57.0.25', missing: [], webScript: 'expo start --web --port 4101', port: 4101 }
+ */
+async function readExpoWebEntry(
+  repositoryRoot: string,
+  packageRoot: string,
+): Promise<ExpoWebPackageReadiness> {
+  try {
+    const { readiness } = await readExpoWebPackageReadiness(
+      repositoryRoot,
+      packageRoot,
+    )
+    return { packageRoot, ...readiness }
+  } catch (error) {
+    return {
+      packageRoot,
+      installed: false,
+      ready: false,
+      missing: [describeReadFailure(error)],
+    }
+  }
+}
+
 /** Options of {@link discoverPackages}: those of {@link discoverNextPackages} plus the Node the Vite apps' `engines.node` is judged against. */
 export type DiscoverPackagesOptions = DiscoverNextPackagesOptions & {
   /** The configured Node executable, when one resolved; without it an app whose Vite declares `engines.node` is not ready, as at a start. */
@@ -317,7 +359,7 @@ export type DiscoverPackagesOptions = DiscoverNextPackagesOptions & {
 }
 
 /**
- * Discovers the Next apps, the Vite apps and the react-scripts apps below the repository root for `codebook_status` in one pass over the tracked `package.json` files ({@link scanPackages}), each with the readiness a start would decide.
+ * Discovers the Next apps, the Vite apps, the react-scripts apps and the Expo web apps below the repository root for `codebook_status` in one pass over the tracked `package.json` files ({@link scanPackages}), each with the readiness a start would decide.
  *
  * Why it exists: Cycle 0077 lists Vite apps beside Next apps, and Cycle 0083 react-scripts apps beside both, without a second `git ls-files`, manifest read or deadline. Called by {@link readStatusAdapterReadiness}.
  *
@@ -333,6 +375,7 @@ export async function discoverPackages(
   next: NextPackageDiscovery
   vite: VitePackageDiscovery
   reactScripts: ReactScriptsPackageDiscovery
+  expoWeb: ExpoWebPackageDiscovery
 }> {
   const {
     readPackage = readNextPackageReadiness,
@@ -361,6 +404,7 @@ export async function discoverPackages(
         ),
       reactScripts: (app) =>
         readReactScriptsEntry(repositoryRoot, app.packageRoot),
+      expoWeb: (app) => readExpoWebEntry(repositoryRoot, app.packageRoot),
     },
     scanOptions,
   )
@@ -368,5 +412,6 @@ export async function discoverPackages(
     next: discoveryOf(scan.next),
     vite: discoveryOf(scan.vite),
     reactScripts: discoveryOf(scan.reactScripts),
+    expoWeb: discoveryOf(scan.expoWeb),
   }
 }

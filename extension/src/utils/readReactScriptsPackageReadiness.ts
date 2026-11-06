@@ -1,4 +1,3 @@
-import { realpath } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 import { z } from 'zod'
@@ -18,7 +17,8 @@ import {
   manifestDeclaresReactScripts,
   reactScriptsManifestFieldsSchema,
 } from './reactScriptsManifest'
-import { readJsonInside, resolveDeclaredFolder } from './resolveNextPackage'
+import { readJsonInside } from './resolveNextPackage'
+import { resolveReadinessFolders } from './resolveReadinessFolders'
 
 export type { ReactScriptsStartScriptReadiness }
 
@@ -101,25 +101,18 @@ async function findInstalledReactScripts(
  * @param repositoryRoot - The opened repository's root.
  * @param packageRoot - The declared `packageRoot`; `undefined` or `"."` for the root app.
  * @returns The judgement; `missing` lists `not-a-react-scripts-app` for a folder whose manifest does not declare react-scripts or is unreadable, else `react-scripts-installed`, `react-scripts-5`, `start-script` and `prestart-script` as they apply.
- * @throws `INVALID_CONFIGURATION` when `packageRoot` is no folder inside the repository ({@link resolveDeclaredFolder}).
+ * @throws `INVALID_CONFIGURATION` when `packageRoot` is no folder inside the repository ({@link resolveReadinessFolders}).
  * @example await readReactScriptsPackageReadiness('/repo', 'examples/counter') // => { readiness: { installed: true, ready: true, version: '5.0.1', missing: [], startScript: { form: 'accepted' } }, installationDirectory: '/repo/node_modules/react-scripts', assignments: {} }
  */
 export async function readReactScriptsPackageReadiness(
   repositoryRoot: string,
   packageRoot: string | undefined,
 ): Promise<ReactScriptsPackageJudgement> {
-  const declared = packageRoot ?? '.'
-  // The root app is its repository's real path; a nested app goes through the shared folder rules.
-  const realRoot = await realpath(repositoryRoot).catch(() => repositoryRoot)
-  const folders =
-    declared === '.'
-      ? { repositoryRoot: realRoot, packageRoot: realRoot }
-      : await resolveDeclaredFolder(
-          repositoryRoot,
-          declared,
-          {},
-          'reactScripts',
-        )
+  const folders = await resolveReadinessFolders(
+    repositoryRoot,
+    packageRoot,
+    'reactScripts',
+  )
   const manifest = await readJsonInside(
     folders.packageRoot,
     'package.json',

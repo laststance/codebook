@@ -542,6 +542,12 @@ export async function createEnvironment(
                 check,
                 managedRunState,
               ),
+              // An expo-web-dev start composes the same way: the shared prerequisites, the app's own gaps (readExpoWebPackageReadiness) and no other managed run.
+              'expo-web-dev': composeAdapterReadiness(
+                adapters['expo-web-dev'],
+                check,
+                managedRunState,
+              ),
             },
           },
           'node-test': {

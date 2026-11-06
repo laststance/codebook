@@ -4,6 +4,7 @@ import type { StudyEnvironment } from '../runtime'
 import { assertDevelopmentWorkspace } from './assertDevelopmentWorkspace'
 import { describeReadFailure } from './discoverNextPackages'
 import { managedRunStateOf } from './managedRunStateMessages'
+import { resolveExpoWebPackage } from './resolveExpoWebPackage'
 import { resolveNextPackage } from './resolveNextPackage'
 import { resolveReactScriptsPackage } from './resolveReactScriptsPackage'
 import { resolveVitePackage } from './resolveVitePackage'
@@ -19,6 +20,10 @@ const VITE_READINESS_UNAVAILABLE =
 /** The sentence of a react-scripts-dev start whose window reported no react-scripts readiness. */
 const REACT_SCRIPTS_READINESS_UNAVAILABLE =
   "Codebook could not read the react-scripts adapter's readiness for this window. Call codebook_status again, or reload the window, and retry."
+
+/** The sentence of an expo-web-dev start whose window reported no Expo readiness. */
+const EXPO_WEB_READINESS_UNAVAILABLE =
+  "Codebook could not read the Expo adapter's readiness for this window. Call codebook_status again, or reload the window, and retry."
 
 type EnvironmentPrerequisites = Awaited<
   ReturnType<StudyEnvironment['prerequisites']>
@@ -54,7 +59,11 @@ export function repositoryBrowserStartPrerequisites(
       ? configuration.adapter
       : undefined
   // The Next adapter is what the profile's own readiness already describes.
-  if (adapter !== 'vite-dev' && adapter !== 'react-scripts-dev')
+  if (
+    adapter !== 'vite-dev' &&
+    adapter !== 'react-scripts-dev' &&
+    adapter !== 'expo-web-dev'
+  )
     return undefined
   const profileReadiness = prerequisites.profiles?.[REPOSITORY_BROWSER_PROFILE]
   // Without any profile readiness the caller keeps the window's overall prerequisites, which judge no adapter.
@@ -64,9 +73,11 @@ export function repositoryBrowserStartPrerequisites(
     profileReadiness.adapters?.[adapter] ?? {
       ready: false,
       missing: [
-        adapter === 'react-scripts-dev'
-          ? REACT_SCRIPTS_READINESS_UNAVAILABLE
-          : VITE_READINESS_UNAVAILABLE,
+        {
+          'vite-dev': VITE_READINESS_UNAVAILABLE,
+          'react-scripts-dev': REACT_SCRIPTS_READINESS_UNAVAILABLE,
+          'expo-web-dev': EXPO_WEB_READINESS_UNAVAILABLE,
+        }[adapter],
       ],
     }
   )
@@ -157,15 +168,18 @@ export async function selectedVitePackageStartPrerequisites(
     configuration === null ||
     !('adapter' in configuration) ||
     (configuration.adapter !== 'vite-dev' &&
-      configuration.adapter !== 'react-scripts-dev') ||
+      configuration.adapter !== 'react-scripts-dev' &&
+      configuration.adapter !== 'expo-web-dev') ||
     !('packageRoot' in configuration) ||
     typeof configuration.packageRoot !== 'string' ||
     configuration.packageRoot === '.'
   )
     return undefined
-  // A react-scripts app is judged by the same app rule the run applies; a Vite app by Vite's.
+  // A react-scripts or Expo app is judged by the same app rule the run applies; a Vite app by Vite's.
   if (configuration.adapter === 'react-scripts-dev')
     await resolveReactScriptsPackage(workspace, configuration.packageRoot)
+  else if (configuration.adapter === 'expo-web-dev')
+    await resolveExpoWebPackage(workspace, configuration.packageRoot)
   else
     await resolveVitePackage(workspace, configuration.packageRoot, {
       // A refusal names up to five discovered apps.

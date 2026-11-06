@@ -22,7 +22,7 @@ import { WaitTimeoutError } from '../runtimeSupport/utils/waitTimeoutError'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import type { ReactScriptsWorkspace } from './assessReactScriptsWorkspace'
-import { isSecretName } from './isSecretName'
+import { inlinedEnvironmentValues } from './inlinedEnvironmentValues'
 import {
   drainDevelopmentServerOutput,
   launchDevelopmentServer,
@@ -177,11 +177,10 @@ export async function launchReactScriptsDevelopmentServer(
   request.alive()
   request.onStep(VITE_SETUP_STEPS.startingReactScripts)
   // Secret-named values (script assignments, the child environment and .env files, settled as react-scripts settles them) and every REACT_APP_* value are masked: react-scripts inlines the latter into the bundle the run archives, as the Vite path masks the values it inlines. The shared redaction covers secret shapes.
-  const maskedValues = Object.entries(workspace.environment)
-    .filter(
-      ([name]) => isSecretName(name) || REACT_SCRIPTS_INLINED_NAME.test(name),
-    )
-    .map(([, value]) => value)
+  const maskedValues = inlinedEnvironmentValues(
+    workspace.environment,
+    REACT_SCRIPTS_INLINED_NAME,
+  )
   const maskText = (text: string): string => maskKnownValues(text, maskedValues)
   const app = launchDevelopmentServer(
     request.workspace,

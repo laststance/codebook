@@ -1,4 +1,7 @@
-import { viteManifestFieldsSchema } from './viteAppManifest'
+import {
+  manifestDeclaresPackage,
+  viteManifestFieldsSchema,
+} from './manifestDeclaresPackage'
 
 /** The `package.json` fields that say whether a package declares react-scripts, and the scripts a react-scripts app runs: the same `dependencies`, `devDependencies` and `scripts` sections {@link isViteAppManifest} reads. */
 export const reactScriptsManifestFieldsSchema = viteManifestFieldsSchema
@@ -15,10 +18,5 @@ export const reactScriptsManifestFieldsSchema = viteManifestFieldsSchema
  * manifestDeclaresReactScripts({ dependencies: { react: '^18.0.0' } }) // => false
  */
 export function manifestDeclaresReactScripts(manifest: unknown): boolean {
-  const parsed = reactScriptsManifestFieldsSchema.safeParse(manifest)
-  if (!parsed.success) return false
-  const { dependencies, devDependencies } = parsed.data
-  return [dependencies, devDependencies].some(
-    (section) => section !== undefined && 'react-scripts' in section,
-  )
+  return manifestDeclaresPackage(manifest, 'react-scripts')
 }

@@ -18,14 +18,14 @@ import {
   discoverPackages,
   type DiscoverPackagesOptions,
   type NextPackageDiscovery,
-  type ReactScriptsPackageDiscovery,
-  type VitePackageDiscovery,
 } from './discoverNextPackages'
+import { manifestDeclaresExpo } from './manifestDeclaresPackage'
 import { manifestNamesNext } from './nextManifest'
 import { manifestDeclaresReactScripts } from './reactScriptsManifest'
 import { readNextRouterKind } from './readNextRouterKind'
 import {
   readRepositoryAdapterReadiness,
+  type ExpoWebAdapterReadiness,
   type NextAdapterReadiness,
   type ReactScriptsAdapterReadiness,
   type RepositoryAdapterReadiness,
@@ -33,6 +33,7 @@ import {
 } from './readRepositoryAdapterReadiness'
 import { readRepositoryBuildText } from './readRepositoryBuildText'
 import { readGitTopLevel } from './runOpenedFolderGit'
+import type { NextPackageTruncationReason } from './scanNextPackages'
 import { isViteAppManifest } from './viteAppManifest'
 
 /**
@@ -106,6 +107,58 @@ async function readRootIsReactScriptsApp(workspace: string): Promise<boolean> {
   }
 }
 
+/**
+ * Says whether the opened root is itself the Expo app: its `package.json` declares `expo`.
+ *
+ * A hoisted root `node_modules/expo` alone never makes the root the choice. Called by {@link readStatusAdapterReadiness}.
+ *
+ * @param workspace - The opened repository's root.
+ * @returns `true` for a root Expo app; `false` for an unreadable manifest or no `expo` declaration.
+ * @example await readRootIsExpoWebApp('/repo') // => false for a monorepo root that only hoists expo
+ */
+async function readRootIsExpoWebApp(workspace: string): Promise<boolean> {
+  const text = await readRepositoryBuildText(
+    workspace,
+    'package.json',
+    NEXT_PACKAGE_DISCOVERY_MANIFEST_BYTES,
+  ).catch(() => undefined)
+  if (text === undefined) return false
+  try {
+    return manifestDeclaresExpo(JSON.parse(text))
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Says for each adapter whether the opened root is itself its app, unless the folder is below the Git root, where no adapter has an app.
+ * Called by {@link readStatusAdapterReadiness}.
+ * @param workspace - The opened repository's root.
+ * @param isNested - Whether the opened folder lies below the Git root.
+ * @returns One flag per adapter.
+ * @example await readRootApps('/repo', false) // => { next: false, vite: false, reactScripts: false, expoWeb: true }
+ */
+async function readRootApps(
+  workspace: string,
+  isNested: boolean,
+): Promise<{
+  next: boolean
+  vite: boolean
+  reactScripts: boolean
+  expoWeb: boolean
+}> {
+  if (isNested)
+    return { next: false, vite: false, reactScripts: false, expoWeb: false }
+  // The root manifest is read even when Git failed: rootIsApp does not depend on Git.
+  const [next, vite, reactScripts, expoWeb] = await Promise.all([
+    readRootIsApp(workspace),
+    readRootIsViteApp(workspace),
+    readRootIsReactScriptsApp(workspace),
+    readRootIsExpoWebApp(workspace),
+  ])
+  return { next, vite, reactScripts, expoWeb }
+}
+
 /** What the opened folder is to Git: the repository root, a folder below it (with the names), or in no repository. */
 type Placement =
   | { kind: 'root' }
@@ -142,7 +195,7 @@ export type StatusReadinessOptions = {
 }
 
 /**
- * Reads the repository-browser readiness `codebook_status` reports: {@link readRepositoryAdapterReadiness} plus `rootIsApp` and the Next, Vite and react-scripts apps below the root (one discovery pass, {@link discoverPackages}).
+ * Reads the repository-browser readiness `codebook_status` reports: {@link readRepositoryAdapterReadiness} plus `rootIsApp` and the Next, Vite, react-scripts and Expo web apps below the root (one discovery pass, {@link discoverPackages}).
  *
  * Why it exists: AC 4, 5 and 13. The chat chooses the app from `packages` (each entry's `ready` and `missing` are what a start with that `packageRoot` checks), and a workspace opened below the Git root reports every adapter not ready with the adapter-aware recovery, because source authoring refuses every run there. The discovery starts beside the other adapters' reads and the answer waits for it until its one deadline (5 s). Called by the environment's `prerequisites` for `codebook_status`.
  *
@@ -168,25 +221,19 @@ export async function readStatusAdapterReadiness(
   const deadlineAt =
     now() + (options.discovery?.timeoutMs ?? REPOSITORY_GIT_TIMEOUT_MS)
   const placement = await readPlacement(workspace, signal, deadlineAt - now())
-  const [base, rootIsApp, rootIsViteApp, rootIsReactScriptsApp, discovery] =
-    await Promise.all([
-      readRepositoryAdapterReadiness(workspace, node, signal),
-      // The root manifest is read even when Git failed: rootIsApp does not depend on Git.
-      placement.kind === 'nested' ? false : readRootIsApp(workspace),
-      placement.kind === 'nested' ? false : readRootIsViteApp(workspace),
-      placement.kind === 'nested'
-        ? false
-        : readRootIsReactScriptsApp(workspace),
-      // One pass classifies each tracked package.json for both Next and Vite.
-      placement.kind === 'root'
-        ? discoverPackages(workspace, {
-            node,
-            ...options.discovery,
-            timeoutMs: Math.max(0, deadlineAt - now()),
-            signal,
-          })
-        : undefined,
-    ])
+  const [base, rootApps, discovery] = await Promise.all([
+    readRepositoryAdapterReadiness(workspace, node, signal),
+    readRootApps(workspace, placement.kind === 'nested'),
+    // One pass classifies each tracked package.json for both Next and Vite.
+    placement.kind === 'root'
+      ? discoverPackages(workspace, {
+          node,
+          ...options.discovery,
+          timeoutMs: Math.max(0, deadlineAt - now()),
+          signal,
+        })
+      : undefined,
+  ])
   if (placement.kind === 'nested') {
     const recovery = describeNestedWorkspaceRecovery(
       describeNestedWorkspace(placement.gitRoot, placement.workspace),
@@ -216,33 +263,63 @@ export async function readStatusAdapterReadiness(
         packages: [],
         packagesTruncated: false,
       },
+      'expo-web-dev': {
+        ...base['expo-web-dev'],
+        ready: false,
+        missing: [recovery],
+        rootIsApp: false,
+        packages: [],
+        packagesTruncated: false,
+      },
     }
   }
   const next: NextAdapterReadiness = {
     ...base['next-dev-webpack'],
-    rootIsApp,
-    packages: discovery?.next.packages ?? [],
-    packagesTruncated: discovery?.next.packagesTruncated ?? true,
-    ...truncationReasonOf(discovery?.next),
+    rootIsApp: rootApps.next,
+    ...listedPackagesOf(discovery?.next),
   }
   const vite: ViteAdapterReadiness = {
     ...base['vite-dev'],
-    rootIsApp: rootIsViteApp,
-    packages: discovery?.vite.packages ?? [],
-    packagesTruncated: discovery?.vite.packagesTruncated ?? true,
-    ...truncationReasonOf(discovery?.vite),
+    rootIsApp: rootApps.vite,
+    ...listedPackagesOf(discovery?.vite),
   }
   const reactScripts: ReactScriptsAdapterReadiness = {
     ...base['react-scripts-dev'],
-    rootIsApp: rootIsReactScriptsApp,
-    packages: discovery?.reactScripts.packages ?? [],
-    packagesTruncated: discovery?.reactScripts.packagesTruncated ?? true,
-    ...truncationReasonOf(discovery?.reactScripts),
+    rootIsApp: rootApps.reactScripts,
+    ...listedPackagesOf(discovery?.reactScripts),
+  }
+  const expoWeb: ExpoWebAdapterReadiness = {
+    ...base['expo-web-dev'],
+    rootIsApp: rootApps.expoWeb,
+    ...listedPackagesOf(discovery?.expoWeb),
   }
   return {
     'next-dev-webpack': { ...next, missing: rootMissing(next) },
     'vite-dev': vite,
     'react-scripts-dev': reactScripts,
+    'expo-web-dev': expoWeb,
+  }
+}
+
+/**
+ * Gives the discovery fields every adapter's status report carries: the listed apps, whether the list is incomplete and why.
+ * @param discovery - One kind's discovery; `undefined` when Git could not place the folder, which lists nothing and says `git-failed`.
+ * @returns `packages`, `packagesTruncated` and, when truncated, `packagesTruncatedReason`.
+ * @example listedPackagesOf(undefined) // => { packages: [], packagesTruncated: true, packagesTruncatedReason: 'git-failed' }
+ */
+function listedPackagesOf<Entry>(
+  discovery:
+    | {
+        packages: Entry[]
+        packagesTruncated: boolean
+        packagesTruncatedReason?: NextPackageTruncationReason
+      }
+    | undefined,
+) {
+  return {
+    packages: discovery?.packages ?? [],
+    packagesTruncated: discovery?.packagesTruncated ?? true,
+    ...truncationReasonOf(discovery),
   }
 }
 
@@ -253,11 +330,7 @@ export async function readStatusAdapterReadiness(
  * @example truncationReasonOf(undefined) // => { packagesTruncatedReason: 'git-failed' }
  */
 function truncationReasonOf(
-  discovery:
-    | NextPackageDiscovery
-    | VitePackageDiscovery
-    | ReactScriptsPackageDiscovery
-    | undefined,
+  discovery: Pick<NextPackageDiscovery, 'packagesTruncatedReason'> | undefined,
 ): Pick<NextAdapterReadiness, 'packagesTruncatedReason'> {
   if (!discovery) return { packagesTruncatedReason: 'git-failed' }
   if (discovery.packagesTruncatedReason)

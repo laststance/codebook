@@ -523,6 +523,8 @@ export type ConfiguredRuntimeView = {
   applicationPortSource?: string
   /** The Vite version a `vite-dev` run started, read from the resolved `vite/package.json`. */
   viteVersion?: string
+  /** The Expo SDK version an `expo-web-dev` run started, read from the resolved `expo/package.json`. */
+  expoVersion?: string
   /** The route a Next run in a workspace with a Pages folder resolved its entry path to, once known: the router that serves it, the manifest key, and for a Pages route its workspace-relative source. Absent for a Vite run and a Next run in a workspace without a Pages folder. */
   nextRoute?: { router: 'app' | 'pages'; route: string; source?: string }
   /** The `next` package version of a Pages run that declares server stops, once read. */
@@ -590,6 +592,7 @@ export type ConfiguredRuntimeView = {
     /** Set for a run whose stops are all route handlers: the manifest names the source hash only, and each pause carries its own sealed hashes. */
     sealedAtPause?: 'route-handler'
     viteVersion?: string
+    expoVersion?: string
   }
   participants: { browser: RuntimeParticipant; server?: RuntimeParticipant }
   snapshots: ConfiguredRuntimeSnapshot[]

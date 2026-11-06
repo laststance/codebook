@@ -15,6 +15,7 @@ import {
 } from '../constants'
 import { repositoryPathSchema } from '../sourceSchemas'
 
+import { manifestDeclaresExpo } from './manifestDeclaresPackage'
 import { manifestNamesNext } from './nextManifest'
 import { manifestDeclaresReactScripts } from './reactScriptsManifest'
 import { readRepositoryBuildText } from './readRepositoryBuildText'
@@ -48,7 +49,12 @@ export type NextPackageScan<Item> = {
 type ScanKind = PackageAppKind
 
 /** Every kind {@link scanPackages} can classify. */
-const SCAN_KINDS: readonly ScanKind[] = ['next', 'vite', 'reactScripts']
+const SCAN_KINDS: readonly ScanKind[] = [
+  'next',
+  'vite',
+  'reactScripts',
+  'expoWeb',
+]
 
 /** The bounds {@link scanNextPackages} applies; each defaults to the constant of the same meaning. */
 export type NextPackageScanLimits = {
@@ -200,16 +206,20 @@ async function readManifestKinds(
   // A react-scripts app is any manifest that declares `react-scripts`; its start script and install are judged by the visitor, so a refused script is still listed.
   if (kinds.includes('reactScripts') && manifestDeclaresReactScripts(manifest))
     found.push('reactScripts')
+  // An Expo app is any manifest that declares `expo`; its SDK, config and web script are judged by the visitor, so a refused app is still listed.
+  if (kinds.includes('expoWeb') && manifestDeclaresExpo(manifest))
+    found.push('expoWeb')
   return found.length > 0 ? { kind: 'apps', kinds: found } : { kind: 'none' }
 }
 
 /** What one folder of a chunk became: the item of each kind it is an app of, a folder that is none, or one that could not be read safely. `failed` marks a `visit` that threw (that app is skipped, the others stay). */
-type ChunkResult<NextItem, ViteItem, ReactScriptsItem> =
+type ChunkResult<NextItem, ViteItem, ReactScriptsItem, ExpoWebItem> =
   | {
       kind: 'apps'
       next?: { item: NextItem }
       vite?: { item: ViteItem }
       reactScripts?: { item: ReactScriptsItem }
+      expoWeb?: { item: ExpoWebItem }
       failed: boolean
     }
   | { kind: 'none' }
@@ -249,22 +259,24 @@ async function visitKind<Item>(
  * @returns One result per folder, in order.
  * @example await visitChunk('/repo', ['apps/web'], { next: async (app) => app.packageRoot }, signal) // => [{ kind: 'apps', next: { item: 'apps/web' }, failed: false }]
  */
-async function visitChunk<NextItem, ViteItem, ReactScriptsItem>(
+async function visitChunk<NextItem, ViteItem, ReactScriptsItem, ExpoWebItem>(
   root: string,
   chunk: readonly string[],
-  visitors: ScanVisitors<NextItem, ViteItem, ReactScriptsItem>,
+  visitors: ScanVisitors<NextItem, ViteItem, ReactScriptsItem, ExpoWebItem>,
   signal: AbortSignal,
-): Promise<ChunkResult<NextItem, ViteItem, ReactScriptsItem>[]> {
+): Promise<ChunkResult<NextItem, ViteItem, ReactScriptsItem, ExpoWebItem>[]> {
   const asked = SCAN_KINDS.filter((kind) => visitors[kind] !== undefined)
   return Promise.all(
     chunk.map(
       async (
         folder,
-      ): Promise<ChunkResult<NextItem, ViteItem, ReactScriptsItem>> => {
+      ): Promise<
+        ChunkResult<NextItem, ViteItem, ReactScriptsItem, ExpoWebItem>
+      > => {
         const read = await readManifestKinds(root, folder, asked, signal)
         if (read.kind !== 'apps') return read
         const app = { packageRoot: folder }
-        const [next, vite, reactScripts] = await Promise.all([
+        const [next, vite, reactScripts, expoWeb] = await Promise.all([
           visitKind(visitors.next, read.kinds.includes('next'), app, signal),
           visitKind(visitors.vite, read.kinds.includes('vite'), app, signal),
           visitKind(
@@ -273,15 +285,22 @@ async function visitChunk<NextItem, ViteItem, ReactScriptsItem>(
             app,
             signal,
           ),
+          visitKind(
+            visitors.expoWeb,
+            read.kinds.includes('expoWeb'),
+            app,
+            signal,
+          ),
         ])
         return {
           kind: 'apps',
-          failed: [next, vite, reactScripts].some(
+          failed: [next, vite, reactScripts, expoWeb].some(
             (visited) => visited !== undefined && 'failed' in visited,
           ),
           ...(next && 'item' in next ? { next } : {}),
           ...(vite && 'item' in vite ? { vite } : {}),
           ...(reactScripts && 'item' in reactScripts ? { reactScripts } : {}),
+          ...(expoWeb && 'item' in expoWeb ? { expoWeb } : {}),
         }
       },
     ),
@@ -298,16 +317,17 @@ async function visitChunk<NextItem, ViteItem, ReactScriptsItem>(
  * @returns The visitors of the kinds that can still take an app.
  * @example visitorsOfOpenKinds({ next: nextVisit, vite: viteVisit }, { next: false, vite: true, reactScripts: false }) // => { next: nextVisit }
  */
-function visitorsOfOpenKinds<NextItem, ViteItem, ReactScriptsItem>(
-  visitors: ScanVisitors<NextItem, ViteItem, ReactScriptsItem>,
+function visitorsOfOpenKinds<NextItem, ViteItem, ReactScriptsItem, ExpoWebItem>(
+  visitors: ScanVisitors<NextItem, ViteItem, ReactScriptsItem, ExpoWebItem>,
   limitReached: Record<ScanKind, boolean>,
-): ScanVisitors<NextItem, ViteItem, ReactScriptsItem> {
+): ScanVisitors<NextItem, ViteItem, ReactScriptsItem, ExpoWebItem> {
   return {
     ...(limitReached.next ? {} : { next: visitors.next }),
     ...(limitReached.vite ? {} : { vite: visitors.vite }),
     ...(limitReached.reactScripts
       ? {}
       : { reactScripts: visitors.reactScripts }),
+    ...(limitReached.expoWeb ? {} : { expoWeb: visitors.expoWeb }),
   }
 }
 
@@ -355,20 +375,34 @@ async function listTrackedManifests(
  * @example gatingKindsOf({ next: nextVisit, reactScripts: rsVisit }) // => ['next']
  */
 function gatingKindsOf(
-  visitors: ScanVisitors<unknown, unknown, unknown>,
+  visitors: ScanVisitors<unknown, unknown, unknown, unknown>,
 ): ScanKind[] {
   const framework = SCAN_KINDS.filter(
-    (kind) => kind !== 'reactScripts' && visitors[kind] !== undefined,
+    (kind) =>
+      kind !== 'reactScripts' &&
+      kind !== 'expoWeb' &&
+      visitors[kind] !== undefined,
   )
   if (framework.length > 0) return framework
-  return visitors.reactScripts ? ['reactScripts'] : []
+  // Without Next or Vite the rarer kinds gate the scan together.
+  return SCAN_KINDS.filter(
+    (kind) =>
+      (kind === 'reactScripts' || kind === 'expoWeb') &&
+      visitors[kind] !== undefined,
+  )
 }
 
 /** The `visit` of each kind of app one pass of {@link scanPackages} lists; a kind without a visitor is not classified. */
-export type ScanVisitors<NextItem, ViteItem, ReactScriptsItem = never> = {
+export type ScanVisitors<
+  NextItem,
+  ViteItem,
+  ReactScriptsItem = never,
+  ExpoWebItem = never,
+> = {
   next?: ScanVisit<NextItem>
   vite?: ScanVisit<ViteItem>
   reactScripts?: ScanVisit<ReactScriptsItem>
+  expoWeb?: ScanVisit<ExpoWebItem>
 }
 
 /**
@@ -425,14 +459,16 @@ export async function scanPackages<
   NextItem,
   ViteItem,
   ReactScriptsItem = never,
+  ExpoWebItem = never,
 >(
   repositoryRoot: string,
-  visitors: ScanVisitors<NextItem, ViteItem, ReactScriptsItem>,
+  visitors: ScanVisitors<NextItem, ViteItem, ReactScriptsItem, ExpoWebItem>,
   options: ScanNextPackagesOptions = {},
 ): Promise<{
   next: NextPackageScan<NextItem>
   vite: NextPackageScan<ViteItem>
   reactScripts: NextPackageScan<ReactScriptsItem>
+  expoWeb: NextPackageScan<ExpoWebItem>
 }> {
   const now = options.now ?? Date.now
   const timeoutMs = options.timeoutMs ?? REPOSITORY_GIT_TIMEOUT_MS
@@ -452,16 +488,19 @@ export async function scanPackages<
       next: { items: [] },
       vite: { items: [] },
       reactScripts: { items: [] },
+      expoWeb: { items: [] },
     }
   options.signal?.addEventListener('abort', onCallerAbort, { once: true })
   const nextItems: NextItem[] = []
   const viteItems: ViteItem[] = []
   const reactScriptsItems: ReactScriptsItem[] = []
+  const expoWebItems: ExpoWebItem[] = []
   // `limit` is per kind; every other reason holds for every list.
   const limitReached: Record<ScanKind, boolean> = {
     next: false,
     vite: false,
     reactScripts: false,
+    expoWeb: false,
   }
   let reason: NextPackageTruncationReason | undefined
   const note = (next: NextPackageTruncationReason): void => {
@@ -488,7 +527,12 @@ export async function scanPackages<
 
   /** Takes a chunk's results in order; false when every asked kind has reached the app limit, which ends the scan. */
   const absorb = (
-    results: readonly ChunkResult<NextItem, ViteItem, ReactScriptsItem>[],
+    results: readonly ChunkResult<
+      NextItem,
+      ViteItem,
+      ReactScriptsItem,
+      ExpoWebItem
+    >[],
   ): boolean => {
     for (const result of results) {
       if (result.kind === 'skipped') note('skipped-path')
@@ -497,6 +541,7 @@ export async function scanPackages<
       take('next', nextItems, result.next)
       take('vite', viteItems, result.vite)
       take('reactScripts', reactScriptsItems, result.reactScripts)
+      take('expoWeb', expoWebItems, result.expoWeb)
       if (isFinished()) {
         endedEarly = true
         return false
@@ -589,6 +634,10 @@ export async function scanPackages<
     reactScripts: {
       items: [...reactScriptsItems],
       ...truncationOf(limitReached.reactScripts || isCutShort('reactScripts')),
+    },
+    expoWeb: {
+      items: [...expoWebItems],
+      ...truncationOf(limitReached.expoWeb || isCutShort('expoWeb')),
     },
   }
 }

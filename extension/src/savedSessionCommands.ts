@@ -337,6 +337,14 @@ export function installSavedSessions(
         )
         return undefined
       }
+      // Likewise an Expo web app: its adapter has no saved-session support in this version.
+      if (adapters['expo-web-dev'].ready) {
+        void showNotice(
+          'error',
+          'Saved session setup cannot start: a saved sign-in session is not available for an Expo web app in this version. It covers Next.js and Vite apps.',
+        )
+        return undefined
+      }
       const missing = new Set(names.flatMap((name) => adapters[name].missing))
       void showNotice(
         'error',

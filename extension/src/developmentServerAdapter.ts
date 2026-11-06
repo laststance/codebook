@@ -40,6 +40,10 @@ export type DevelopmentServerStart = {
   vitePackage?: ResolvedVitePackage
   /** The react-scripts app a `react-scripts-dev` run resolved ({@link resolveReactScriptsPackage}): the server runs with `workspace` (the app folder) as its working folder. Absent for every other run. */
   reactScriptsPackage?: ResolvedPackage
+  /** The Expo app an `expo-web-dev` run resolved ({@link resolveExpoWebPackage}): the CLI runs with `workspace` (the app folder) as its working folder. Absent for every other run. */
+  expoWebPackage?: ResolvedPackage
+  /** The configured entry path of the run (`/` when none): an `expo-web-dev` run asks Metro's entry page there to find the bundle. */
+  entryPath?: string
   /** The Node executable of the run (`Codebook: Node Executable`). */
   node: string
   /** Appends to the run's evidence journal. */
@@ -75,6 +79,8 @@ export type DevelopmentBundleRequest = {
   vitePackage?: ResolvedVitePackage
   /** The react-scripts app a `react-scripts-dev` run resolved: the seal reads the stop in the app folder under the stop's package-relative path. Absent for every other run. */
   reactScriptsPackage?: ResolvedPackage
+  /** The Expo app an `expo-web-dev` run resolved: the seal reads the stop in the app folder under the stop's package-relative path. Absent for every other run. */
+  expoWebPackage?: ResolvedPackage
   source: RepositoryConfiguration['source']
   /** The last line of the stop's citation, up to which a stop declared on a line with no mapped position is requested at the first mapped position after it ({@link resolveArmedPlace}); a Pages server stop's seal checks that line's client mapping too ({@link sealPagesServerStop}). */
   citationEndLine: number
@@ -167,6 +173,7 @@ export interface DevelopmentServerAdapter {
     nextPackage?: ResolvedNextPackage,
     vitePackage?: ResolvedVitePackage,
     reactScriptsPackage?: ResolvedPackage,
+    expoWebPackage?: ResolvedPackage,
   ): Promise<void>
   /** Starts the owned server on the project's own port and returns it with that port. */
   start(request: DevelopmentServerStart): Promise<{
@@ -174,6 +181,8 @@ export interface DevelopmentServerAdapter {
     port: number
     /** The Vite version the launcher reported from the resolved `vite/package.json` (Vite only). */
     viteVersion?: string
+    /** The Expo SDK version the CLI reported from the resolved `expo/package.json` (Expo only). */
+    expoVersion?: string
     /** Masks the values the start learned (dev-script assignments and env-file values) in text the run keeps, such as a sealed module; the mask reads its values at call time. Vite only. */
     maskText?: (text: string) => string
     /** Masks only the env-file and script values, with no secret-shape redaction, in the sealed module text and map a run keeps: project code can hold credential-shaped literals that are not env values. Vite only. */

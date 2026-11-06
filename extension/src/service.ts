@@ -1048,6 +1048,12 @@ export class StudyService {
                   (sentence) => this.sanitizedCause(sentence),
                 ),
               },
+              'expo-web-dev': {
+                ...prerequisite.adapters['expo-web-dev'],
+                missing: prerequisite.adapters['expo-web-dev'].missing.map(
+                  (sentence) => this.sanitizedCause(sentence),
+                ),
+              },
             },
           }
         : {}),
@@ -4233,6 +4239,7 @@ export class StudyService {
       applicationOrigin: runtime?.applicationOrigin,
       applicationPortSource: runtime?.applicationPortSource,
       viteVersion: runtime?.viteVersion,
+      expoVersion: runtime?.expoVersion,
       nextRoute: runtime?.nextRoute,
       // A Pages run that declares a server stop names its Next version and what became of its hits, and every run that sent Codebook's readiness request records it.
       ...(runtime?.nextVersion ? { nextVersion: runtime.nextVersion } : {}),

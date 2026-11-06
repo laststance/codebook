@@ -1,17 +1,11 @@
-import { z } from 'zod'
-
 import { reactScriptsNotAppRefusal } from '../reactScriptsRefusals'
 
 import { manifestDeclaresReactScripts } from './reactScriptsManifest'
-import { repositoryPosixPath } from './repositoryPosixPath'
+import { resolveDeclaredAppPackage } from './resolveDeclaredAppPackage'
 import {
-  buildPackageMappers,
-  readJsonInside,
-  resolveDeclaredFolder,
   type ResolvedPackage,
   type ResolveNextPackageOptions,
 } from './resolveNextPackage'
-import { rootVitePackage } from './resolveVitePackage'
 
 /** The react-scripts app a run uses: the neutral folder record and path mappers every package-aware reader shares. */
 export type ResolvedReactScriptsPackage = ResolvedPackage
@@ -29,35 +23,17 @@ export type ResolvedReactScriptsPackage = ResolvedPackage
  * const app = await resolveReactScriptsPackage('/repo', 'examples/counter')
  * app.toPackageRelative('examples/counter/src/App.js') // => 'src/App.js'
  */
-export async function resolveReactScriptsPackage(
+export function resolveReactScriptsPackage(
   repositoryRoot: string,
   packageRoot: string | undefined,
   options: ResolveNextPackageOptions = {},
 ): Promise<ResolvedReactScriptsPackage> {
-  const declared = packageRoot ?? '.'
-  if (declared === '.') return rootVitePackage(repositoryRoot)
-  const folders = await resolveDeclaredFolder(
+  return resolveDeclaredAppPackage(
     repositoryRoot,
-    declared,
+    packageRoot,
     options,
     'reactScripts',
+    manifestDeclaresReactScripts,
+    reactScriptsNotAppRefusal,
   )
-  const manifest = await readJsonInside(
-    folders.packageRoot,
-    'package.json',
-    z.unknown(),
-  )
-  const packageRootRelative = repositoryPosixPath(
-    folders.repositoryRoot,
-    folders.packageRoot,
-  )
-  if (!manifestDeclaresReactScripts(manifest))
-    throw reactScriptsNotAppRefusal(packageRootRelative)
-  return buildPackageMappers({
-    repositoryRoot: folders.repositoryRoot,
-    packageRoot: folders.packageRoot,
-    packageRootRelative,
-    declaredPackageRoot: declared,
-    isRoot: folders.packageRoot === folders.repositoryRoot,
-  })
 }

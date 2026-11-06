@@ -1412,10 +1412,11 @@ export const REPOSITORY_BROWSER_ADAPTERS = [
   'next-dev-webpack',
   'vite-dev',
 ] as const
-/** The adapters a version 3 configuration may name: those of versions 1 and 2 plus `react-scripts-dev` (Cycle 0083, decision D7: version 3 only). The one list that the version 1/2 and version 3 schemas and the profile contract derive from. */
+/** The adapters a version 3 configuration may name: those of versions 1 and 2 plus `react-scripts-dev` (Cycle 0083, decision D7: version 3 only) and `expo-web-dev` (Cycle 0089, DX-1: version 3 only). The one list that the version 1/2 and version 3 schemas and the profile contract derive from. */
 export const OPERATIONS_REPOSITORY_BROWSER_ADAPTERS = [
   ...REPOSITORY_BROWSER_ADAPTERS,
   'react-scripts-dev',
+  'expo-web-dev',
 ] as const
 export const NODE_TEST_PROFILE = 'node-test'
 /** The profile of a run of the repository's own Node HTTP server: one declared request, stopped in its handler source. */
@@ -2980,6 +2981,24 @@ export const REACT_SCRIPTS_ENV_EXPANSION_MAX_COPIED_CHARS = 16_777_216
 /** How long the start of a `react-scripts-dev` run waits for the output of an ended process to arrive before it words the ending. */
 export const REACT_SCRIPTS_OUTPUT_DRAIN_MS = 500
 
+/** Expo's own default Metro port, used when the app's web script declares no `--port` (`expo start` listens on 8081). */
+export const EXPO_WEB_DEFAULT_PORT = 8081
+
+/** How long the readiness wait of an `expo-web-dev` run pauses between two reads of the entry page, the bundle and its map while Metro bundles (E-2). */
+export const EXPO_WEB_READINESS_POLL_MS = 250
+
+/** How long the start of an `expo-web-dev` run pauses between two reads of the Expo CLI's output before Metro listens. */
+export const EXPO_WEB_OUTPUT_POLL_MS = 100
+
+/** How long the start of an `expo-web-dev` run waits for the output of an ended Expo CLI to arrive before it words the ending. */
+export const EXPO_WEB_OUTPUT_DRAIN_MS = 500
+
+/** The most characters of Metro's error message an `EXPO_WEB_LAUNCHER_FAILED` (`bundle-failed`) refusal quotes (E-2). */
+export const EXPO_WEB_BUNDLER_LINE_MAX_CHARS = 300
+
+/** The most bytes of a dev server's non-success answer for its bundle or map that the single-bundle read keeps, so an adapter can quote the server's own error (Metro's); a longer body is cut. */
+export const SINGLE_BUNDLE_ERROR_BODY_LIMIT_BYTES = 65_536
+
 /** Vite's own default dev-server port, used when neither the project's config nor its `dev` script names one. */
 export const VITE_DEFAULT_PORT = 5173
 
@@ -3076,6 +3095,8 @@ export const VITE_SETUP_STEPS = {
   resolvingConfig: 'resolving the Vite config',
   startingVite: 'starting Vite',
   startingReactScripts: 'starting react-scripts',
+  startingExpo: 'starting the Expo CLI',
+  bundlingExpo: 'bundling the app',
   waitingForFirstCompile: 'waiting for the first compile',
   waitingForServer: 'waiting for the server to answer the entry page',
   sealingStops: 'sealing the declared stops',

@@ -125,6 +125,8 @@ const VITE_SETUP_BROWSER_STATE_BY_STEP: Record<ViteSetupStep, string> = {
   [VITE_SETUP_STEPS.resolvingConfig]: 'the browser was not opened',
   [VITE_SETUP_STEPS.startingVite]: 'the browser was not opened',
   [VITE_SETUP_STEPS.startingReactScripts]: 'the browser was not opened',
+  [VITE_SETUP_STEPS.startingExpo]: 'the browser was not opened',
+  [VITE_SETUP_STEPS.bundlingExpo]: 'the browser was not opened',
   [VITE_SETUP_STEPS.waitingForFirstCompile]: 'the browser was not opened',
   [VITE_SETUP_STEPS.waitingForServer]: 'the browser was not opened',
   [VITE_SETUP_STEPS.sealingStops]: 'the browser was not opened',
