@@ -1,4 +1,4 @@
-import { access, rm } from 'node:fs/promises'
+import { access, realpath, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { assertWxtBuildSupported } from './assertWxtBuildSupported'
@@ -108,8 +108,12 @@ export async function buildWxtExtension(
   )
   // Cancelled before any process: nothing could have changed.
   if (input.signal.aborted) return { kind: 'cancelled' }
-  const outDir = join(input.privateFolder, 'wxt-build')
-  const resultFile = join(input.privateFolder, 'wxt-build-result.json')
+  // Vite writes each map's `sources` relative to the output folder string it is given, and the map reader works on real paths: a folder reached through a link (/tmp on macOS) would make every relative source resolve elsewhere.
+  const privateFolder = await realpath(input.privateFolder).catch(
+    () => input.privateFolder,
+  )
+  const outDir = join(privateFolder, 'wxt-build')
+  const resultFile = join(privateFolder, 'wxt-build-result.json')
   await rm(resultFile, { force: true })
   const startedAtMs = clock.nowMs()
   const end = await runWxtBuildProcess(

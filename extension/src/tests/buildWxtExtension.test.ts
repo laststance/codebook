@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -588,4 +589,37 @@ test('returns the Chrome development build as the load root after a successful b
   )
   assert.equal(result.kind === 'built' && result.wxtVersion, '0.21.4')
   assert.equal(result.kind === 'built' && result.durationMs, 2_500)
+})
+
+// protects=a private folder reached through a link (/tmp on macOS) is built into and loaded from its real path, so the map sources Vite writes relative to the output folder resolve; fails_when=the output or load root keeps the link's spelling; no_claim=that real Vite writes such sources (the native check on the Space did)
+test('builds into the real path of a private folder reached through a link', async () => {
+  // Arrange
+  const project = createProject()
+  const linkedFolder = `${project.privateFolder}-link`
+  symlinkSync(project.privateFolder, linkedFolder)
+  temporaryFolders.push(linkedFolder)
+  const fake = createFakeSpawner({
+    onSpawn(control) {
+      writeSuccessfulBuild(project.privateFolder)
+      control.exit({ code: 0, signal: null })
+    },
+  })
+  // Act
+  const result = await buildWxtExtension({
+    ...project,
+    privateFolder: linkedFolder,
+    node: NODE_24,
+    signal: new AbortController().signal,
+    spawner: fake.spawner,
+    clock: createFakeClock(),
+  })
+  // Assert
+  assert.deepEqual(fake.spawned[0]?.arguments.slice(4), [
+    join(project.privateFolder, 'wxt-build'),
+    join(project.privateFolder, 'wxt-build-result.json'),
+  ])
+  assert.equal(
+    result.kind === 'built' && result.loadRoot,
+    join(project.privateFolder, 'wxt-build', 'chrome-mv3-dev'),
+  )
 })
