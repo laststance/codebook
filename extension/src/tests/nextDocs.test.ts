@@ -45,6 +45,7 @@ type RepositoryBrowserHelp = Record<string, unknown> & {
   serverRenderErrors?: { codes: Record<string, unknown> }
   viteRefusals?: Record<string, unknown>
   reactScriptsQuickStart?: { refusals: Record<string, unknown> }
+  expoWebQuickStart?: { refusals: Record<string, unknown> }
 }
 
 /**
@@ -160,6 +161,7 @@ test('every repository-browser anchor the help names resolves to a refusal secti
     ...Object.keys(help.nextRefusals ?? {}),
     ...Object.keys(help.viteRefusals ?? {}),
     ...Object.keys(help.reactScriptsQuickStart?.refusals ?? {}),
+    ...Object.keys(help.expoWebQuickStart?.refusals ?? {}),
     ...Object.keys(help.operationsErrorCodes?.codes ?? {}),
     ...Object.keys(help.serverRenderErrors?.codes ?? {}),
   ])
@@ -190,6 +192,7 @@ test('the repository-browser help keeps its existing top keys and leads with sta
     'viteRefusals',
     'vitePackageRoot',
     'reactScriptsQuickStart',
+    'expoWebQuickStart',
     'nextQuickStart',
     'nextSupport',
     'nextRefusals',
