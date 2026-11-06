@@ -162,6 +162,18 @@ const SIGN_IN_STOP_VARIABLES: Record<number, ScriptedVariable[]> = {
       variablesReference: 27,
     },
     {
+      name: 'retries',
+      value: 'ƒ* retries(limit)',
+      type: 'GeneratorFunction',
+      variablesReference: 28,
+    },
+    {
+      name: 'events',
+      value: 'async ƒ* events()',
+      type: 'AsyncGeneratorFunction',
+      variablesReference: 29,
+    },
+    {
       name: '[[Prototype]]',
       value: 'Subscribable',
       type: 'Object',
@@ -171,6 +183,8 @@ const SIGN_IN_STOP_VARIABLES: Record<number, ScriptedVariable[]> = {
   21: FUNCTION_MEMBERS,
   22: FUNCTION_MEMBERS,
   23: FUNCTION_MEMBERS,
+  28: FUNCTION_MEMBERS,
+  29: FUNCTION_MEMBERS,
   24: [
     {
       name: 'constructor',
@@ -455,7 +469,7 @@ function savedVariableAt(
   return found!
 }
 
-// protects=a browser pause publishes within its gate because the snapshot sends no request into a function's members or a prototype chain, and labels those entries; fails_when=the capture reads mutationFn's members, [[Scopes]] or any [[Prototype]] (the C89-D1 path that used the whole 5 s deadline), saves them without the reason, or misses js-debug's own spelling of a function's type (Function, AsyncFunction); no_claim=the scripted debugger stands in for js-debug: the native time to publish is measured by C90-1 and C90-2
+// protects=a browser pause publishes within its gate because the snapshot sends no request into a function's members or a prototype chain, and labels those entries; fails_when=the capture reads mutationFn's members, [[Scopes]] or any [[Prototype]] (the C89-D1 path that used the whole 5 s deadline), saves them without the reason, or misses js-debug's own spelling of a function's type (Function, AsyncFunction, GeneratorFunction, AsyncGeneratorFunction); no_claim=the scripted debugger stands in for js-debug: the native time to publish is measured by C90-1 and C90-2
 test("a browser stop's snapshot reads no function members or prototype chains, and says they are not recorded", async () => {
   // Arrange
   const variablesByReference = SIGN_IN_STOP_VARIABLES
@@ -470,6 +484,8 @@ test("a browser stop's snapshot reads no function members or prototype chains, a
     ['mutationFn', 'AsyncFunction'],
     ['onError', 'Function'],
     ['onSuccess', 'Function'],
+    ['retries', 'GeneratorFunction'],
+    ['events', 'AsyncGeneratorFunction'],
   ]) {
     const saved = savedVariableAt(snapshot, ['this', callback!])
     assert.equal(saved.type, type)
