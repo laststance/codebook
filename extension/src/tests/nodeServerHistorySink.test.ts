@@ -548,6 +548,17 @@ test('reports after a request failure are dropped and leave the writer unfailed'
   )
 })
 
+// protects=a request failure reported while no request was ever opened is dropped, so the writer is not faulted and the seal keeps the run's real cause; fails_when=the stray request-failed reaches the writer and the history seals as an append failure; no_claim=which run path reports it
+test('a request failure with no opened request is dropped and leaves the writer unfailed', async (context) => {
+  // Arrange
+  const { sink, writer } = await startSink(context)
+  // Act
+  sink.failRequest(5, 'REQUEST_TIMEOUT', 'never opened')
+  await writer.seal({ elapsedMs: 10, reason: 'stopped' })
+  // Assert
+  assert.equal(writer.appendFailure, undefined)
+})
+
 // protects=a withdrawal reported after the bytes were sent is dropped, the answer is still recorded and the history seals complete; fails_when=the late withdrawal reaches the writer and marks it failed; no_claim=the run's own retry rule
 test('a withdrawal reported after the send mark is dropped and the response still seals complete', async (context) => {
   // Arrange

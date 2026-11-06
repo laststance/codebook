@@ -101,6 +101,7 @@ test('the sign-in body holds the typed password and the declared request follows
     'signal',
     'sanitize',
     'cookie',
+    'onSetCookie',
   ])
 })
 
@@ -290,6 +291,93 @@ test('a reset before the sign-in headers drops the held output and journals outp
       .map((event) => event.detail),
     [{ bytes: 12 }],
   )
+})
+
+// protects=a stop admitted during the sign-in hold ends the exchange without headers: the held output is dropped (never released) so the journal can record its bytes; fails_when=the hold is left open after a stop and the held bytes vanish unrecorded; no_claim=the launcher's byte count (captureProcessOutput tests); the fake server only counts drop and release calls
+test('a stop during the sign-in hold drops the held output', async () => {
+  // Arrange
+  const harness = await signingIn()
+  // Act
+  await harness.run.stop()
+  // Assert
+  assert.equal(harness.server.droppedHeld, 1)
+  assert.equal(harness.server.releasedHeld, 0)
+})
+
+// protects=the server's exit during the sign-in hold drops the held output like a stop does; fails_when=the exit leaves the hold open and the held bytes are lost without a record; no_claim=the launcher's byte count; the exit is the fake server's
+test('the server exiting during the sign-in hold drops the held output', async () => {
+  // Arrange
+  const harness = await signingIn()
+  // Act
+  harness.server.exitNow({ exitCode: 1, signal: null })
+  await waitUntil(
+    () => harness.server.droppedHeld === 1,
+    'the held output was dropped',
+  )
+  // Assert
+  assert.equal(harness.server.droppedHeld, 1)
+  assert.equal(harness.server.releasedHeld, 0)
+})
+
+// protects=during the sign-in and after a failed one the view publishes no declared request (only signIn and the error describe what happened); fails_when=request is published for a request that was never sent; no_claim=the service resource (projection tests)
+test('the view shows no declared request during the sign-in nor after a failed sign-in', async () => {
+  // Arrange
+  const harness = await signingIn()
+  // Act
+  const during = harness.run.view()
+  answerSignIn(harness, { status: 401 }, [])
+  const failed = await until(
+    harness,
+    (current) => current.state === 'request-failed',
+  )
+  // Assert
+  assert.equal(during.state, 'request-in-flight')
+  assert.equal(during.request, undefined)
+  assert.equal(failed.request, undefined)
+  assert.deepEqual(failed.signIn, { state: 'failed', status: 401 })
+})
+
+// protects=once a signed-in sign-in opened the declared request's window the view publishes that request; fails_when=the declared request never appears after the sign-in; no_claim=the bytes sent (sender tests)
+test('the view publishes the declared request once the sign-in succeeded', async () => {
+  // Arrange
+  const harness = await signingIn()
+  // Act
+  answerSignIn(harness)
+  await declaredRequestSent(harness)
+  // Assert
+  assert.equal(harness.run.view().request?.path, '/api/users/7')
+})
+
+// protects=cookies the declared request's response sets (a rotated session) join the mask set so a later echo is masked, and the cookies sent stay the sign-in's; fails_when=the rotated value is not masked or the declared request carries another cookie; no_claim=real Set-Cookie parsing (cookie utility tests); the sender is a fake that invokes the observer by hand
+test('a session cookie rotated by the declared response joins the mask set', async () => {
+  // Arrange
+  const harness = await signingIn()
+  answerSignIn(harness)
+  await declaredRequestSent(harness)
+  const declaredExchange = harness.sender.exchanges[1]
+  // Act
+  declaredExchange?.onSetCookie?.(['sid=rotatedSessionValue9; Path=/'])
+  // Assert
+  assert.equal(declaredExchange?.cookie, `sid=${COOKIE_VALUE}`)
+  assert.ok(harness.run.learnerSecrets?.has('rotatedSessionValue9'))
+  assert.equal(
+    declaredExchange?.sanitize?.('echo rotatedSessionValue9'),
+    'echo [masked]',
+  )
+})
+
+// protects=the real run reads signIn awaiting-learner while the editor's box is open and none again once it closed; fails_when=setSignInAwaiting does not move the real run's signIn state; no_claim=the editor box itself
+test('the run reads awaiting-learner while the password box is open and none after', async () => {
+  // Arrange
+  const harness = await readyHarness(SIGN_IN_OPTIONS)
+  // Act
+  harness.run.setSignInAwaiting?.(true)
+  const awaiting = harness.run.view().signIn
+  harness.run.setSignInAwaiting?.(false)
+  const closed = harness.run.view().signIn
+  // Assert
+  assert.deepEqual(awaiting, { state: 'awaiting-learner' })
+  assert.deepEqual(closed, { state: 'none' })
 })
 
 // protects=the response headers end the hold: the held output is released and holdback becomes the longest masking form; fails_when=output stays held after the headers or the holdback is wrong; no_claim=the launcher's mask stage

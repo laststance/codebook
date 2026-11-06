@@ -230,6 +230,8 @@ export class NodeServerHistorySinkImpl
     this.guard(() => {
       // A second failure, or one after the answer, is a late report: dropped, never a fault.
       if (this.terminal) return
+      // A failure with no request ever opened (the run ended before the declared request opened) has nothing to close: dropped, so the seal keeps the real cause instead of an append failure.
+      if (this.openAttempt === undefined && this.attempts === 0) return
       const at = this.structural(elapsedMs)
       this.terminal = true
       // The failure closes the open attempt, as the journal's rules do.

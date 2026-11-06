@@ -213,6 +213,8 @@ class OwnedNodeServerRun implements NodeServerRuntime {
   private requestPhase: 'sign-in' | 'request' = 'request'
   private cookies?: SessionCookies
   private signInStartedMs = 0
+  /** True once a signed-in sign-in opened the declared request's window; until then the sign-in alone describes what was sent. */
+  private declaredRequestOpened = false
 
   constructor(private readonly input: NodeServerRunInput) {
     this.id = input.runId
@@ -401,7 +403,12 @@ class OwnedNodeServerRun implements NodeServerRuntime {
       pauseGeneration: snapshot.pauseGeneration,
       pause: snapshot.pause,
       heldPause: snapshot.heldPause,
-      request: this.request && { ...this.request },
+      // With sign-in the declared request is described only once its window opened after the sign-in.
+      request:
+        this.request &&
+        (!this.input.configuration.signIn || this.declaredRequestOpened)
+          ? { ...this.request }
+          : undefined,
       response: this.response,
       requestFailure: this.requestFailure && { ...this.requestFailure },
       captures: snapshot.captures,
@@ -443,6 +450,8 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     this.readiness.stop()
     this.requestLimit.stop()
     this.cancelWall?.()
+    // A stop (or the server's exit, which stops the run) during the sign-in hold ends the exchange without headers: the held output is dropped and journaled.
+    this.endOutputHold('drop')
   }
 
   /**
@@ -721,6 +730,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     this.awaitingSignInHeaders = true
     this.requestPhase = 'sign-in'
     this.cookies = undefined
+    this.declaredRequestOpened = false
     this.signInStartedMs = this.clock.now()
     this.addSecrets([secret])
     this.signInView = { state: 'signing-in' }
@@ -798,20 +808,38 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     await this.sendDeclaredAfterSignIn(token, cookies)
   }
 
+  /** The declared request's response headers set cookies (a rotated session): their forms join the mask set before the body is cut. */
+  private onDeclaredSetCookie(values: readonly string[], token: number): void {
+    if (token !== this.requestToken) return
+    this.cookies = applySetCookies(values, Date.now(), this.cookies)
+    this.addSecrets(cookieMaskValues(this.cookies.seenValues))
+  }
+
   /** Sends the declared request with the session cookie; every failure from here on ends the request (D14), and nothing is awaited by the receipt. */
   private async sendDeclaredAfterSignIn(
     token: number,
     cookies: SessionCookies,
   ): Promise<void> {
     const server = this.core.launched
-    if (!this.address || !server || token !== this.requestToken) return
+    if (token !== this.requestToken) return
+    if (!this.address || !server) {
+      // The server or its address is gone before the declared request could open: the request ends here with no history request (none was opened), so the seal keeps the run's real cause.
+      this.finishFailure(
+        'REQUEST_FAILED',
+        'The server was gone before the declared request could be sent.',
+        { phase: 'request' },
+      )
+      return
+    }
     const { host, port } = this.address
     const declared = this.input.configuration.request
+    this.declaredRequestOpened = true
     this.input.history?.openRequest(this.elapsedSinceLaunchMs(), {
       method: declared.method,
       path: declared.path,
       bodyBytes: Buffer.byteLength(declared.body ?? ''),
     })
+    this.notify()
     const cookie = cookieHeaderOf(cookies)
     let handle: ReturnType<NodeServerRunDependencies['sendRequest']>
     try {
@@ -824,6 +852,8 @@ class OwnedNodeServerRun implements NodeServerRuntime {
             sanitize: (text) =>
               this.maskText(hidePrivateRoots(text, this.core.privateRoots())),
             ...(cookie === undefined ? {} : { cookie }),
+            // A rotated or sliding session's cookies join the mask set; the cookies sent stay as they were.
+            onSetCookie: (values) => this.onDeclaredSetCookie(values, token),
           },
         ),
       )
@@ -910,6 +940,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     }
     this.requestToken += 1
     this.request = undefined
+    this.declaredRequestOpened = false
     this.requestLimit.stop()
     this.cancelWall?.()
     this.core.requireDebugger().setRequestWindow(false)
