@@ -2068,6 +2068,16 @@ export const REPOSITORY_MAP_LIMIT_BYTES = 16_777_216
 export const REPOSITORY_MAPPED_POSITION_SEGMENT_LIMIT = 200_000
 export const REPOSITORY_MAPPED_POSITION_MAX_GENERATED_LINES = 100_000
 export const REPOSITORY_MAPPED_POSITION_MAX_SCANNED_CHARS = 4_194_304
+/** The most bytes an Expo web development bundle (Metro's single entry bundle) may have: 4 times the 7.5 MB P08 measured in E1. */
+export const EXPO_WEB_BUNDLE_LIMIT_BYTES = 33_554_432
+/** The most bytes an Expo web bundle's source map may have: 4.8 times the 13.4 MB P08 measured in E1. */
+export const EXPO_WEB_MAP_LIMIT_BYTES = 67_108_864
+/** The most segments a scan of an Expo web bundle's map reads: 20 times today's shared limit. */
+export const EXPO_WEB_MAPPED_POSITION_SEGMENT_LIMIT = 4_000_000
+/** The most generated lines a scan of an Expo web bundle's map begins: 5.3 times the 190,118 lines of P08's stop in E1. */
+export const EXPO_WEB_MAPPED_POSITION_MAX_GENERATED_LINES = 1_000_000
+/** The most characters of an Expo web bundle's `mappings` a scan reads. */
+export const EXPO_WEB_MAPPED_POSITION_MAX_SCANNED_CHARS = 33_554_432
 export const REPOSITORY_BINDING_HINT_EDGE_LINES = 20
 export const REPOSITORY_BINDING_HINT_NEAR_LINES = 40
 /** Begins the hint of a click target that matched no element; the page's control counts follow when it reported them. */

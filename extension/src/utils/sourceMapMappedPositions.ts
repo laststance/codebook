@@ -1,4 +1,9 @@
 import {
+  DEFAULT_SOURCE_MAP_LIMITS,
+  type SourceMapLimits,
+} from '../sourceMapLimits'
+
+import {
   walkSourceMapSegments,
   type SourceMapSegment,
 } from './walkSourceMapSegments'
@@ -18,6 +23,7 @@ export interface MappedPositionsScan {
  * @param startLine - First one-based original line to report.
  * @param endLine - Last one-based original line to report.
  * @param isCodeAt - Tells whether the generated text at a zero-based generated line and column can run; a mapping it refuses (a kept comment) is not a position. Without it every mapping counts.
+ * @param limits - The size limits the scan stops at; today's shared limits unless the adapter passes its own profile.
  * @returns The ordered positions, and whether the scan read the whole map before its size limits.
  * @example
  * sourceMapMappedPositions('AAAA;AACA', 0, 1, 2).positions // [{ line: 1, column: 1 }, { line: 2, column: 1 }]
@@ -30,6 +36,7 @@ export function sourceMapMappedPositions(
   endLine: number,
   isCodeAt: (generatedLine: number, generatedColumn: number) => boolean = () =>
     true,
+  limits: SourceMapLimits = DEFAULT_SOURCE_MAP_LIMITS,
 ): { positions: MappedPosition[]; complete: boolean } {
   const columns = new Map<number, number>()
   const complete = walkSourceMapSegments(
@@ -44,6 +51,7 @@ export function sourceMapMappedPositions(
       )
         columns.set(position.line, position.column)
     },
+    limits,
   )
   return { positions: orderedPositions(columns), complete }
 }

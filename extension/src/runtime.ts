@@ -63,6 +63,7 @@ import type {
   SignInRequiredReason,
 } from './runtimeSupport/savedSessionTypes'
 import type { SecretFrameWithholdReason } from './runtimeSupport/secretFrameGate'
+import type { SourceMapLimits } from './sourceMapLimits'
 import type { StateChangingRequestQuestion } from './utils/askToSendStateChangingRequest'
 import type {
   RetryVitestListingRelease,
@@ -502,6 +503,8 @@ export type RuntimeSource = {
   redacted?: boolean
   /** With `redacted`: the SHA-256 of the unmasked JavaScript and map bytes the run still holds, so a resource read can check them against the seal although the served text is masked. */
   executedHashes?: { javascript: string; sourceMap: string }
+  /** The size limits the run's adapter sealed under; the source resource bounds the JavaScript and map it returns by them. Absent means today's shared limits. */
+  limits?: SourceMapLimits
 }
 export type Participant = 'server' | 'browser'
 export type RuntimeParticipant = {

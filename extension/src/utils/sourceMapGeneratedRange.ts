@@ -1,4 +1,9 @@
 import {
+  DEFAULT_SOURCE_MAP_LIMITS,
+  type SourceMapLimits,
+} from '../sourceMapLimits'
+
+import {
   isGeneratedPositionBefore,
   type GeneratedPosition,
 } from './isGeneratedPositionBefore'
@@ -13,6 +18,7 @@ import {
  * @param mappings - The map's VLQ `mappings` string.
  * @param selectedSourceIndex - Index of the cited original in the map's `sources`.
  * @param line - One-based original line.
+ * @param limits - The size limits the scan stops at; today's shared limits unless the adapter passes its own profile.
  * @returns
  * - `range`: `start` is the first generated position mapped to the line; `end` is exclusive, as the protocol's `end` is, and lies where the span of the line's last mapping ends. Absent when the scan found no mapping of the line.
  * - `complete`: `false` when the scan stopped at its size limit, so a range, or its absence, may miss later mappings of the line
@@ -26,6 +32,7 @@ export function sourceMapGeneratedRange(
   mappings: string,
   selectedSourceIndex: number,
   line: number,
+  limits: SourceMapLimits = DEFAULT_SOURCE_MAP_LIMITS,
 ): {
   range?: { start: GeneratedPosition; end: GeneratedPosition }
   complete: boolean
@@ -57,6 +64,7 @@ export function sourceMapGeneratedRange(
       if (!isMappingOfLine(original, selectedSourceIndex, line)) return
       openSpan(position)
     },
+    limits,
   )
   // The line's mapping was the last segment read: it governs to the end of its generated line.
   if (openSpanLine !== undefined)

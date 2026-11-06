@@ -4,6 +4,7 @@ import type {
 } from './constants'
 import type { BundleSource } from './repositoryBundle'
 import type { RepositoryConfiguration } from './repositoryConfigSchemas'
+import type { SourceMapLimits } from './sourceMapLimits'
 import type { PortCheckOptions } from './utils/assertDevelopmentPortFree'
 import type { DevelopmentLockIdentity } from './utils/assertDevelopmentWorkspace'
 import type { NextPagesDiscoveryCache } from './utils/createNextPagesDiscoveryCache'
@@ -136,6 +137,8 @@ export type DevelopmentBundle = {
   evidence?: 'client-mapping-unverified'
   /** Set for a library stop: the repository-relative built file whose module the bundle holds (the bundle is in built terms). */
   libraryBuiltPath?: string
+  /** The size limits the adapter sealed the bundle under, which the run's verifier, instance checks and source resources apply too. Absent means today's shared limits ({@link DEFAULT_SOURCE_MAP_LIMITS}); the `expo-web-dev` adapter sets {@link EXPO_WEB_SOURCE_MAP_LIMITS}. */
+  limits?: SourceMapLimits
 }
 
 /** The js-debug launch fields that depend on how the development server serves its modules. */

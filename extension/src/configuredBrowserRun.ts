@@ -180,6 +180,10 @@ import { sha256 } from './runtimeSupport/utils/sha256'
 import { WaitTimeoutError } from './runtimeSupport/utils/waitTimeoutError'
 import { waitTimeoutText } from './runtimeSupport/utils/waitTimeoutText'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
+import {
+  DEFAULT_SOURCE_MAP_LIMITS,
+  type SourceMapLimits,
+} from './sourceMapLimits'
 import { afterOperationOf } from './utils/afterOperationOf'
 import { appResolvedPathsOf } from './utils/appResolvedPathsOf'
 import { assertConfiguredDescriptor } from './utils/assertConfiguredDescriptor'
@@ -1198,6 +1202,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private readonly snapshots: ConfiguredRuntimeSnapshot[] = []
   /** The bundle each committed snapshot ran in, by snapshot id: the sealed module's, or another layer's instance whose generated code and map differ ({@link source}, F565). */
   private readonly snapshotBundles = new Map<string, BundleSource>()
+  /** The size limits the run's adapter sealed under (one adapter serves a run), set when the first stop is placed; today's shared limits until then and for every adapter that sets none. */
+  private sourceLimits: SourceMapLimits = DEFAULT_SOURCE_MAP_LIMITS
   private pendingDapStop?: {
     participant: Participant
     event: DebugProtocol.Event
@@ -6985,7 +6991,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     freeze: LibraryFreeze | undefined,
     isFirstSeal: boolean,
   ) {
-    const verifier = createBundleVerifier(acquired.bundle)
+    // The adapter's limits govern every later read of this run's sealed modules.
+    this.sourceLimits = acquired.limits ?? DEFAULT_SOURCE_MAP_LIMITS
+    // A run that reads larger maps also saves them whole as evidence: its queued-write bound must hold the largest map beside the journal's own bound.
+    if (this.sourceLimits !== DEFAULT_SOURCE_MAP_LIMITS)
+      this.evidence.allowQueuedBytes(
+        this.sourceLimits.mapBytes + MAX_QUEUED_EVIDENCE_BYTES,
+      )
+    const verifier = createBundleVerifier(acquired.bundle, this.sourceLimits)
     const library =
       freeze && acquired.libraryBuiltPath
         ? this.libraryStateOf(stop, freeze, acquired.libraryBuiltPath)
@@ -9745,7 +9758,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       if (!bundle) throw new Error('The script text names another address')
       instance = {
         bundle,
-        verifier: createBundleVerifier(bundle),
+        verifier: createBundleVerifier(bundle, this.sourceLimits),
         script: event,
       }
     } catch (error) {
@@ -15005,6 +15018,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         : this.snapshotBundles.get(snapshotId)
     if (!bundle) return undefined
     const archivedModule = this.archivedModuleText(bundle)
+    // Only an adapter with its own limits names them; every other run returns what it always did.
+    const limits =
+      this.sourceLimits === DEFAULT_SOURCE_MAP_LIMITS
+        ? {}
+        : { limits: this.sourceLimits }
     return archivedModule.redacted
       ? {
           ...bundle,
@@ -15015,8 +15033,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
             javascript: sha256(bundle.javascript),
             sourceMap: sha256(bundle.sourceMap),
           },
+          ...limits,
         }
-      : bundle
+      : { ...bundle, ...limits }
   }
   /**
    * Masks the env-file and script values in the module text a Vite run keeps, and says whether anything was masked.
