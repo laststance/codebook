@@ -51,6 +51,9 @@ export const CHROME_EXTENSION_ADAPTERS = [
 /** The longest a `wxt-build` run lets the WXT build take before its process tree is ended; the 90 s preparation bound starts only after the build. */
 export const EXTENSION_BUILD_TIMEOUT_MS = 120_000
 
+/** The name prefix of the private folder a `wxt-build` run builds into, made beside the test Chrome profiles and removed with the run. */
+export const EXTENSION_BUILD_FOLDER_PREFIX = 'codebook-extension-build-'
+
 /** The largest source map, in bytes, a `wxt-build` run reads; a larger map leaves its chunk's sources unlisted. */
 export const EXTENSION_SOURCE_MAP_LIMIT_BYTES = 32 * 1024 * 1024
 

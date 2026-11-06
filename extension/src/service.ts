@@ -740,6 +740,8 @@ export type ContinueAnswer =
 export type StartAnswer = ReturnType<StudyService['start']> & {
   phase?: ChromeExtensionView['phase']
   extension?: ChromeExtensionView['extension']
+  /** What a `wxt-build` run built, once the build ended. */
+  build?: ChromeExtensionView['build']
   failure?: ReturnType<StudyError['describe']>
   state?: ReturnType<StudyService['state']>
 }
@@ -1784,14 +1786,24 @@ export class StudyService {
       ? record.chromeExtension.run?.view()
       : undefined
     // Still preparing at the bound: the phase reached, and the run resource follows the rest.
-    if (!prepared) return { ...receipt, phase: view?.phase ?? 'starting' }
+    if (!prepared)
+      return {
+        ...receipt,
+        phase: view?.phase ?? 'starting',
+        ...(view?.build === undefined ? {} : { build: view.build }),
+      }
     if (record.error)
       return {
         ...receipt,
         failure: record.error.describe(),
         state: this.state(record),
       }
-    return { ...receipt, phase: view?.phase, extension: view?.extension }
+    return {
+      ...receipt,
+      phase: view?.phase,
+      extension: view?.extension,
+      ...(view?.build === undefined ? {} : { build: view.build }),
+    }
   }
 
   /**

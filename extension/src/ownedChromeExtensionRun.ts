@@ -7,6 +7,7 @@ import type { ChromeExtensionConfiguration } from './chromeExtensionConfigSchema
 import type {
   ChromeExtensionViewport,
   ChromeExtensionViewportFactory,
+  ExtensionBuildFacts,
   ExtensionPreparationPhase,
   OwnedExtensionBrowser,
   ResolvedExtensionClick,
@@ -36,6 +37,7 @@ import {
   REPOSITORY_SETUP_TIMEOUT_MS,
 } from './constants'
 import { StudyError } from './errors'
+import type { ExtensionSource } from './extensionSource'
 import type { resolveChromeExtensionRun } from './resolveChromeExtensionRun'
 import type {
   ChromeExtensionClickAnswer,
@@ -82,6 +84,18 @@ export type ChromeExtensionRunTimings = {
 export type ChromeExtensionRunDependencies = {
   clock: RunClock
   resolveRun: typeof resolveChromeExtensionRun
+  /**
+   * Prepares the source of a `wxt-build` run, which builds the project into a private folder (the run's `building` phase). Absent for a product without the adapter; an unpacked run never calls it.
+   * Rejects with the build's own typed error after removing what it made; the folder of a prepared source is removed by `dispose`.
+   */
+  prepareSource?(input: {
+    repositoryRoot: string
+    configuration: ChromeExtensionConfiguration
+    /** Ends the build; the build then settles with the stop error, or with the tracked-file refusal when it changed a file. */
+    signal: AbortSignal
+    /** Tells the WXT version resolved from the project just before the build starts. */
+    onBuilding(wxtVersion: string | undefined): void
+  }): Promise<{ source: ExtensionSource; dispose(): Promise<void> }>
   launchBrowser(
     options: OwnedBrowserLaunchOptions,
   ): Promise<OwnedExtensionBrowser>
@@ -208,6 +222,19 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
   private stepsPromise: Promise<void> | undefined
   private cancelRunTimer: (() => void) | undefined
   private cancelSetupTimer: (() => void) | undefined
+  /** Ends the `wxt-build` build only; a stop during `building` uses it before the run commits its ending (D16). */
+  private readonly buildAbort = new AbortController()
+  /** Settles, never rejecting, with the build's typed failure or `undefined` once the build step ended; set while the run builds. */
+  private buildSettled: Promise<StudyError | undefined> | undefined
+  /** The WXT version the build step reported just before it started. */
+  private buildingVersion: string | undefined
+  /** What the build made, once built. */
+  private buildFacts: ExtensionBuildFacts | undefined
+  /** Removes the build folder; set once the source is prepared. */
+  private disposeSource: (() => Promise<void>) | undefined
+  /** The stop bound a stop admitted during `building` already armed; the cleanup continues under it instead of arming a second one. */
+  private admittedStopBound:
+    { passed: Promise<false>; cancel: () => void } | undefined
   /** The cancels of the pause pins' capture timers still running; the cleanup ends them. */
   private readonly pinTimerCancels = new Set<() => void>()
   private lastViewportText: string | undefined
@@ -231,6 +258,10 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
       this.resolved?.stops.length ?? this.input.configuration.stops.length
     return {
       phase: this.derivedPhase(pauses.length > 0),
+      ...(this.stage === 'building' && this.buildingVersion !== undefined
+        ? { buildingVersion: this.buildingVersion }
+        : {}),
+      ...(this.buildFacts === undefined ? {} : { build: this.buildFacts }),
       ...this.extensionView(),
       procedure: this.procedureView(),
       ...(this.lastReceipt && { lastClick: this.answerOf(this.lastReceipt) }),
@@ -463,7 +494,6 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
   private armDeadlines(): void {
     const { clock } = this.input.dependencies
     const runMs = this.timings.runMs ?? REPOSITORY_RUN_TIMEOUT_MS
-    const setupMs = this.timings.setupMs ?? REPOSITORY_SETUP_TIMEOUT_MS
     this.cancelRunTimer = clock.set(
       () =>
         this.fail(
@@ -474,7 +504,15 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
         ),
       runMs,
     )
-    this.cancelSetupTimer = clock.set(
+    // A `wxt-build` run arms the preparation bound after its build, so a slow build never ends as a preparation failure (D11).
+    if (this.input.configuration.adapter !== 'wxt-build')
+      this.armSetupDeadline()
+  }
+
+  /** Arms the limit from here up to `ready`. */
+  private armSetupDeadline(): void {
+    const setupMs = this.timings.setupMs ?? REPOSITORY_SETUP_TIMEOUT_MS
+    this.cancelSetupTimer = this.input.dependencies.clock.set(
       () =>
         this.fail(
           new StudyError(
@@ -496,14 +534,53 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
     )
   }
 
+  /**
+   * Builds the project of a `wxt-build` run in the `building` phase, before the preparation bound is armed; an unpacked run builds nothing.
+   * @returns The prepared source, or `undefined` for an unpacked run, whose resolver prepares its own.
+   * @throws The build's typed refusal, or `RUNTIME_FAILED` when the product has no build step.
+   */
+  private async buildSource(): Promise<ExtensionSource | undefined> {
+    const { dependencies, workspace, configuration } = this.input
+    if (configuration.adapter !== 'wxt-build') return undefined
+    if (dependencies.prepareSource === undefined)
+      throw new StudyError(
+        'RUNTIME_FAILED',
+        'This product cannot build a wxt-build extension.',
+      )
+    this.enterPhase('building')
+    const building = dependencies.prepareSource({
+      repositoryRoot: workspace,
+      configuration,
+      signal: AbortSignal.any([this.abort.signal, this.buildAbort.signal]),
+      onBuilding: (wxtVersion) => {
+        this.buildingVersion = wxtVersion
+        this.changed()
+      },
+    })
+    this.buildSettled = building.then(
+      () => undefined,
+      (error: unknown) => asStudyError(error),
+    )
+    const prepared = await building
+    this.disposeSource = prepared.dispose
+    // An ending accepted while the build ran: the folder it made is removed now, the cleanup having run before it existed.
+    if (this.ending !== undefined) await this.safelyAsync(prepared.dispose)
+    this.assertAccepting()
+    this.buildFacts = prepared.source.build
+    this.armSetupDeadline()
+    return prepared.source
+  }
+
   /** `starting` through `ready`. */
   private async prepareSteps(): Promise<void> {
     const { dependencies, workspace, configuration } = this.input
     this.enterPhase('starting', 0)
     this.viewport = await this.openViewport()
     this.assertAccepting()
+    const source = await this.buildSource()
     const resolved = await dependencies.resolveRun({
       repositoryRoot: workspace,
+      ...(source === undefined ? {} : { source }),
       // The learner's acknowledgement comes with the start, not with the declaration.
       configuration: {
         ...configuration,
@@ -584,6 +661,14 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
           context: stop.context,
         })),
         chromeVersion: this.input.chromeVersion ?? 'unknown',
+        ...(resolved.build === undefined
+          ? {}
+          : {
+              build: {
+                tool: resolved.build.tool,
+                version: resolved.build.version,
+              },
+            }),
       })
       if (this.history) this.historyPauses = pauses
     } catch {
@@ -1233,6 +1318,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
       this.stage !== 'ready' &&
       this.stage !== 'observing' &&
       this.stage !== 'paused'
+    if (this.stage === 'building') return this.stopDuringBuild()
     if (beforeReady)
       return this.endRun({
         kind: 'failed',
@@ -1242,6 +1328,30 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
         ),
       })
     return this.endRun({ kind: 'stopped' })
+  }
+
+  /**
+   * Stops a run that is still building (D16): ends the build's tree, waits for its tracked-file comparison within the stop bound, then commits the build failure when the comparison flagged a changed or unverified file, and today's stop error otherwise.
+   * Called by {@link OwnedChromeExtensionRun.stop} in the `building` phase.
+   */
+  private async stopDuringBuild(): Promise<void> {
+    this.buildAbort.abort()
+    // One bound covers the wait for the build and the cleanup that follows, as every other stop's does.
+    const bound = this.armStopBound()
+    this.admittedStopBound = bound
+    const build = this.buildSettled ?? Promise.resolve(undefined)
+    const failure = await Promise.race([build, bound.passed])
+    return this.endRun({
+      kind: 'failed',
+      error:
+        failure instanceof StudyError &&
+        failure.code === 'EXTENSION_BUILD_FAILED'
+          ? failure
+          : new StudyError(
+              'RUNTIME_FAILED',
+              'The extension run was stopped before it was ready.',
+            ),
+    })
   }
 
   /** Accepts an ending once: no further step starts, and the one cleanup runs (CR14). */
@@ -1280,11 +1390,13 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
       this.safely(cancelPinTimer)
     this.pinTimerCancels.clear()
     // One stop bound from the stop's admission covers every wait below, so no step or debugger that stops answering holds the stop past it.
-    const stopBound = this.armStopBound()
+    const stopBound = this.admittedStopBound ?? this.armStopBound()
     try {
       await this.cleanupWithin(ending, stopBound.passed)
     } finally {
       stopBound.cancel()
+      // The build folder goes after the browser that loaded it was closed.
+      await this.safelyAsync(() => this.disposeSource?.())
     }
   }
 

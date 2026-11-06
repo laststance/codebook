@@ -14,6 +14,8 @@ export type ChromeExtensionFailureKind =
 /** What the status texts are computed from; the run fills it from its view. */
 export type ChromeExtensionStatusInput = {
   phase: ChromeExtensionPhase
+  /** The WXT version the run is building with, while `phase` is `building`. */
+  buildVersion?: string
   surfaceKind: ExtensionSurfaceKind
   clicksDeclared: number
   clicksPerformed: number
@@ -79,6 +81,8 @@ function contextName(context: ExtensionStopContext): string {
 /** The text of the preparation phases and `ready`, shared by both outputs. */
 function describeLivePhase(input: ChromeExtensionStatusInput): string {
   switch (input.phase) {
+    case 'building':
+      return `Building the extension (WXT${input.buildVersion === undefined ? '' : ` ${input.buildVersion}`})…`
     case 'starting':
     case 'launching':
     case 'installing':
@@ -164,6 +168,9 @@ export function describeChromeExtensionViewStatus(
   const failure = view.phase === 'failed' ? view.runFailure : undefined
   return describeChromeExtensionStatus({
     phase: view.phase,
+    ...(view.buildingVersion === undefined
+      ? {}
+      : { buildVersion: view.buildingVersion }),
     surfaceKind: view.extension?.surface.kind ?? 'popup',
     clicksDeclared: procedure.clicksDeclared,
     clicksPerformed: procedure.clickInFlight ?? procedure.clicksPerformed,

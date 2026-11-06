@@ -40,5 +40,6 @@ export function buildExtensionHistoryHeader(
     declaredStops: identity.declaredStops.map((stop) => ({ ...stop })),
     repositoryRevision: input.repositoryRevision,
     chrome: { version: identity.chromeVersion },
+    ...(identity.build === undefined ? {} : { build: identity.build }),
   }
 }

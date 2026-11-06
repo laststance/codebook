@@ -63,4 +63,6 @@ export type ExtensionHistoryIdentity = {
   }[]
   /** The Chrome that runs the extension, as `--version` reports it. */
   chromeVersion: string
+  /** What a `wxt-build` run built; the header is then written in format 2. Absent for an unpacked run. */
+  build?: { tool: 'wxt'; version: string }
 }

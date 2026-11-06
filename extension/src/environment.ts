@@ -853,6 +853,13 @@ export async function createEnvironment(
         dependencies: createProductChromeExtensionRunDependencies({
           workspace,
           chromeExecutable: chrome.binary,
+          // The build's Node is the one node-test and node-server runs use; none found reads as a refusal by name (`node-version`), never a crash.
+          resolveBuildNode: () =>
+            resolveExternalNode(
+              vscode.workspace
+                .getConfiguration('codebook')
+                .get<string>('nodeExecutable', 'node'),
+            ).catch(() => undefined),
           profileRoot: managedProfileRoot(process.platform, {
             environment: process.env,
             homeDirectory: homedir,

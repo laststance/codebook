@@ -137,6 +137,10 @@ export type HarnessBehaviour = {
   timings?: ChromeExtensionRunTimings
   /** Answers of the surface connection beyond the text read. */
   surfaceAnswers?: SurfaceAnswers
+  /** Replaces the harness configuration, for a run that declares the `wxt-build` adapter. */
+  configuration?: ChromeExtensionRunInput['configuration']
+  /** The build step of a `wxt-build` run; absent → the dependency is not offered. */
+  prepareSource?: ChromeExtensionRunDependencies['prepareSource']
   /** Starts with no viewport factory. */
   withoutViewport?: boolean
   /** The viewport factory throws this, as the editor's layout guard does when the pane cannot be placed. */
@@ -345,6 +349,9 @@ export function createRunHarness(behaviour: HarnessBehaviour = {}) {
       if (behaviour.resolveFailure) throw behaviour.resolveFailure
       return resolved
     },
+    ...(behaviour.prepareSource
+      ? { prepareSource: behaviour.prepareSource }
+      : {}),
     launchBrowser: async (options) => {
       log.push('launch')
       options.onPhase?.('launching', 1)
@@ -380,7 +387,7 @@ export function createRunHarness(behaviour: HarnessBehaviour = {}) {
   }
   const run: ChromeExtensionRuntime = createOwnedChromeExtensionRun({
     runId: 'run-1',
-    configuration: HARNESS_CONFIGURATION,
+    configuration: behaviour.configuration ?? HARNESS_CONFIGURATION,
     acknowledgedPermissions: ['storage'],
     record: (type, detail) => journal.push({ type, detail }),
     workspace: '/repo',
