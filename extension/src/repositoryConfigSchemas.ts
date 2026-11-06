@@ -527,8 +527,8 @@ const BROWSER_ONLY_ADAPTERS: ReadonlySet<string> = new Set([
   'expo-web-dev',
 ])
 
-/** The file names of an Expo Router API route (`+api.ts` and its siblings): server code, which `expo-web-dev` never observes. */
-const EXPO_API_ROUTE_FILE = /\+api\.(?:ts|tsx|js)$/
+/** The file names of an Expo Router API route (`+api` with any extension Expo Router resolves: ts, tsx, js, jsx, mjs, cjs, mts, cts): server code, which `expo-web-dev` never observes. */
+const EXPO_API_ROUTE_FILE = /\+api\.(?:[cm]?[jt]s|[jt]sx)$/
 
 /**
  * Refuses a server participant under `adapter: "vite-dev"`, `"react-scripts-dev"` or `"expo-web-dev"`, which seal and debug browser modules only, and a stop in an Expo Router API route (`+api.ts`) under `"expo-web-dev"`, which is server code.

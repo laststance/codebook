@@ -122,10 +122,19 @@ test('a server participant is refused under expo-web-dev', () => {
     )
 })
 
-// Value: protects=DX-4: a stop in an Expo Router API route file (+api.ts, +api.tsx, +api.js) is refused for the run and for an additional stop, naming the file, before any process starts, while an ordinary route file is accepted; fails_when=an API route stop is accepted, or a plain file is refused; why_new=API routes are server code; seam=the live schema; no_claim=a route handler without the +api suffix
+// Value: protects=DX-4: a stop in an Expo Router API route file (+api with ts, tsx, js, jsx, mjs, cjs, mts, cts) is refused for the run and for an additional stop, naming the file, before any process starts, while an ordinary route file is accepted; fails_when=an API route stop is accepted, or a plain file is refused; why_new=API routes are server code; seam=the live schema; no_claim=a route handler without the +api suffix
 test('a stop in an Expo Router API route is refused and an ordinary route file is accepted', () => {
   // Arrange
-  const apiFiles = ['hello+api.ts', 'hello+api.tsx', 'hello+api.js']
+  const apiFiles = [
+    'hello+api.ts',
+    'hello+api.tsx',
+    'hello+api.js',
+    'hello+api.jsx',
+    'hello+api.mjs',
+    'hello+api.cjs',
+    'hello+api.mts',
+    'hello+api.cts',
+  ]
   const apiStops = apiFiles.map((file) =>
     configuration({
       source: {
@@ -154,18 +163,20 @@ test('a stop in an Expo Router API route is refused and an ordinary route file i
   })
   // Act
   const refused = [...apiStops, additionalApiStop].map(messageOf)
-  const ordinary = messageOf(
-    configuration({
-      source: {
-        path: 'apps/app/src/app/api.tsx',
-        hash: 'a'.repeat(64),
-        line: 3,
-        column: 1,
-      },
-    }),
+  const ordinary = ['api.tsx', 'my+apiary.ts', '+api/handler.ts'].map((file) =>
+    messageOf(
+      configuration({
+        source: {
+          path: `apps/app/src/app/${file}`,
+          hash: 'a'.repeat(64),
+          line: 3,
+          column: 1,
+        },
+      }),
+    ),
   )
   // Assert
   for (const message of refused)
     assert.match(message, /Expo Router API route \(\+api\)/)
-  assert.equal(ordinary, 'accepted')
+  assert.deepEqual(ordinary, ['accepted', 'accepted', 'accepted'])
 })
