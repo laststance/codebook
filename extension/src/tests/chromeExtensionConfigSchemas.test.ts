@@ -373,3 +373,54 @@ test('acknowledgedPermissions allows 100 entries of 256 characters and refuses 1
   // Assert
   assert.deepEqual(results, [true, false, true, false])
 })
+
+// protects=a WXT project declaration (wxt-build, a source stop under extensionRoot) reaches the resolver as parsed; fails_when=the adapter enum drops wxt-build or the stop path rule refuses a project source; no_claim=the project exists, WXT is installed or the stop is loaded (checked at start)
+test('a wxt-build configuration with a source-file stop and a page surface parses', () => {
+  // Arrange
+  const raw = baselineConfiguration({
+    adapter: 'wxt-build',
+    extensionRoot: 'browser-extension',
+    surface: { kind: 'page', path: 'options.html' },
+    stops: [
+      { path: 'src/entrypoints/options/App.tsx', line: 64, context: 'page' },
+    ],
+  })
+  // Act
+  const configuration = parseChromeExtensionConfiguration(raw)
+  // Assert
+  assert.equal(configuration.adapter, 'wxt-build')
+  assert.equal(configuration.stops[0]?.path, 'src/entrypoints/options/App.tsx')
+})
+
+// protects=an unpacked configuration keeps its adapter value, its defaults and its stop paths exactly as before; fails_when=the union changes the unpacked adapter, drops a default or applies the node_modules rule (wxt-build only) to unpacked paths; no_claim=the files exist
+test('an unpacked configuration parses as before, even with node_modules in a stop path', () => {
+  // Arrange
+  const raw = baselineConfiguration({
+    stops: [{ path: 'node_modules/lib/index.js', line: 3, context: 'page' }],
+  })
+  // Act
+  const configuration = parseChromeExtensionConfiguration(raw)
+  // Assert
+  assert.equal(configuration.adapter, 'chrome-mv3-unpacked')
+  assert.deepEqual(configuration.seed, {})
+  assert.equal(configuration.stops[0]?.path, 'node_modules/lib/index.js')
+})
+
+// protects=a wxt-build stop inside node_modules (any segment, either separator) is refused at parse time with EXTENSION_BUILD_UNSUPPORTED, reason stop-outside-project and the stop's field path; fails_when=a dependency file is accepted as a project stop, the code is INVALID_CONFIGURATION or the field path is missing; no_claim=a stop path outside extensionRoot (checked against the file system at start)
+test('a wxt-build stop in node_modules is refused with its field path', () => {
+  // Arrange
+  const raw = baselineConfiguration({
+    adapter: 'wxt-build',
+    extensionRoot: 'browser-extension',
+    stops: [
+      { path: 'src/background.ts', line: 1, context: 'service-worker' },
+      { path: 'src\\node_modules\\lib\\index.js', line: 2, context: 'page' },
+    ],
+  })
+  // Act
+  const refusal = refusalOf(raw)
+  // Assert
+  assert.equal(refusal.code, 'EXTENSION_BUILD_UNSUPPORTED')
+  assert.deepEqual(refusal.details, { reason: 'stop-outside-project' })
+  assert.equal(refusal.message.includes('configuration.stops[1].path'), true)
+})

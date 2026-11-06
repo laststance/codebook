@@ -20,7 +20,7 @@ import {
 } from './chromeExtensionLearningSchemas'
 import {
   CHROME_EXTENSION_HISTORY_DIRECTORY,
-  CHROME_EXTENSION_HISTORY_FORMAT_VERSION,
+  CHROME_EXTENSION_HISTORY_HEADER_FORMATS,
   CHROME_EXTENSION_PROFILE,
   EXTENSION_HISTORY_JOURNAL_LIMIT_BYTES,
   EXTENSION_HISTORY_REASON_CODES as CODES,
@@ -156,9 +156,13 @@ export function createExtensionStorageDescriptor(options?: {
           withNearest: true,
         }),
     },
+    // A header that carries the build fact is a `wxt-build` run's (format 2); every other run keeps format 1, which older versions read.
     stampHeader: (input) => ({
       ...input,
-      formatVersion: CHROME_EXTENSION_HISTORY_FORMAT_VERSION,
+      formatVersion:
+        input.build === undefined
+          ? CHROME_EXTENSION_HISTORY_HEADER_FORMATS.unpacked
+          : CHROME_EXTENSION_HISTORY_HEADER_FORMATS.wxtBuild,
     }),
     parseHeader: parseExtensionHistoryHeader,
     parseSeal: (value) => extensionHistorySealSchema.parse(value),

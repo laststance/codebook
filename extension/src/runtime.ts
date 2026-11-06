@@ -5,6 +5,7 @@ import type {
 import type { ChromeExtensionConfiguration } from './chromeExtensionConfigSchemas'
 import type {
   CapturedExtensionStop,
+  ExtensionBuildFacts,
   ExtensionObservation,
   ExtensionPreparationPhase,
   ExtensionStopContext,
@@ -65,6 +66,7 @@ import type {
 import type { SecretFrameWithholdReason } from './runtimeSupport/secretFrameGate'
 import type { SourceMapLimits } from './sourceMapLimits'
 import type { StateChangingRequestQuestion } from './utils/askToSendStateChangingRequest'
+import type { WxtProjectReport } from './utils/discoverWxtProjects'
 import type {
   RetryVitestListingRelease,
   VitestListingReleaseFailure,
@@ -268,6 +270,7 @@ export interface NodeServerRuntime {
 /** The phase of a chrome-extension run (SR17): `starting`, the preparation phases the launch and the debugger report, then `ready`, `paused`, `observing` and the two endings. Nothing before `ready` counts as a learning stop. */
 export type ChromeExtensionPhase =
   | 'starting'
+  | 'building'
   | ExtensionPreparationPhase
   | 'ready'
   | 'paused'
@@ -317,6 +320,10 @@ export type ChromeExtensionOutputLine = {
 /** What a chrome-extension run shows the service: the run resource's `chromeExtension` block and `claimable` come from it (SR17, CR5, CR9, CR10, ER16, DXR7). */
 export type ChromeExtensionView = {
   phase: ChromeExtensionPhase
+  /** The WXT version a `wxt-build` run is building with, while its phase is `building` and the version is known. */
+  buildingVersion?: string
+  /** What a `wxt-build` run built (the tool, its version and the build's duration); absent before the build ended and for an unpacked run. */
+  build?: ExtensionBuildFacts
   /** How far each click's prepared input texts were resolved (`secret` or `plain` once typed), by click then input; the texts are never in the view. */
   inputStates?: PreparedTextState[][]
   /** Set once `starting` resolved the configuration; absent while the run is still resolving it or when it refused before. */
@@ -727,6 +734,10 @@ export interface StudyEnvironment {
           vitestSearch?: NodeTestVitestSearch
           /** repository-browser only: each adapter's readiness for this workspace ({@link readRepositoryAdapterReadiness}). */
           adapters?: RepositoryAdapterReadiness
+          /** chrome-extension only: the WXT projects the `wxt-build` adapter can build ({@link discoverWxtProjects}). */
+          wxtProjects?: WxtProjectReport[]
+          /** chrome-extension only, and only with a listed WXT project: the external Node the build needs (24 or later); `nodeVersion` is null when none is usable. */
+          wxtNode?: { nodeVersion: string | null; nodeReady: boolean }
         }
       >
     >

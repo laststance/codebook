@@ -197,7 +197,7 @@ test('the MCP instructions and the API note name expo-web-dev, its selection rul
       .split('\n')
       .find((line) => line.startsWith(' * 1.30 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.31')
+  assert.equal(API_VERSION, '1.32')
   assert.ok(protocol.includes('${EXPO_WEB_APP_SELECTION_RULE}'))
   assert.ok(
     protocol.includes(
@@ -270,18 +270,18 @@ test('the README documents the Expo web adapter, its limits, format 15 and the A
       'A study of an Expo run (`expo-web-dev`) is saved as format 15 (`.study.v15.json`) with its `expoVersion`; Codebook 0.2.88 and older list it as saved by a newer Codebook, so update Codebook to open it.',
     ),
   )
-  assert.ok(readme.includes("so Cursor's managed skill updates to **1.0.80**"))
+  assert.ok(readme.includes("so Cursor's managed skill updates to **1.0.81**"))
 })
 
-// Value: protects=skill 1.0.80 routes an Expo app to expo-web-dev behind the API 1.30 gate, paraphrases the selection rule, forbids starting Metro or expo start and repeats the handler-body line rule; fails_when=the routing, the gate, the never-start rule or the line rule is dropped; why_new=the skill's Expo paragraph is new; seam=none; no_claim=how a chat follows the skill
-test('the bundled skill 1.0.80 routes an Expo web app to expo-web-dev behind the API 1.30 gate', async () => {
+// Value: protects=skill 1.0.81 routes an Expo app to expo-web-dev behind the API 1.30 gate, paraphrases the selection rule, forbids starting Metro or expo start and repeats the handler-body line rule; fails_when=the routing, the gate, the never-start rule or the line rule is dropped; why_new=the skill's Expo paragraph is new; seam=none; no_claim=how a chat follows the skill
+test('the bundled skill 1.0.81 routes an Expo web app to expo-web-dev behind the API 1.30 gate', async () => {
   // Arrange
   const skill = await readPackaged('skills/codebook/SKILL.md')
   // Act
   const start = skill.indexOf('**An Expo web app (API 1.30).**')
   const paragraph = skill.slice(start, skill.indexOf('\n\n', start))
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.80"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.81"\n'))
   assert.ok(start > 0)
   for (const phrase of [
     'goes to the `expo-web-dev` adapter of the `repository-browser` profile',

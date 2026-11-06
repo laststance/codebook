@@ -156,6 +156,7 @@ export function projectChromeExtensionState(
       surface: view.extension?.surface,
       extensionId: view.extension?.id,
       phase: view.phase,
+      build: view.build,
       result: view.result,
       stopsNotReached: view.stopsNotReached,
       observed: view.observed,

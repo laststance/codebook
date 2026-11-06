@@ -12,11 +12,12 @@ import {
   REPOSITORY_RUN_TIMEOUT_MS,
   REPOSITORY_SETUP_TIMEOUT_MS,
 } from './constants'
+import type { WxtProjectReport } from './utils/discoverWxtProjects'
 
 /**
  * Describes the chrome-extension profile for `codebook_status`: identity, its one action, limits and machine prerequisites, so an agent knows before a start whether an unpacked extension can run here and what is missing.
  * Called by {@link StudyService.status} with the environment's report.
- * @param prerequisites - Whether the profile can start here and each missing item (Chrome 149 or later, a supported system, the owned adapter), named.
+ * @param prerequisites - Whether the profile can start here and each missing item (Chrome 149 or later, a supported system, the owned adapter), named; the WXT projects of the repository (`wxtProjects`) and, only when one is listed, the external Node the build needs (`wxtNode`).
  * @returns The profile entry; the fix line for an old Chrome is the environment's `missing` sentence.
  * @example
  * describeChromeExtensionProfile({ ready: false, missing: ['Chrome 149 or later is needed to load an unpacked extension; found 148.'] }).prerequisites.ready // => false
@@ -24,12 +25,14 @@ import {
 export function describeChromeExtensionProfile(prerequisites: {
   ready: boolean
   missing: string[]
+  wxtProjects?: WxtProjectReport[]
+  wxtNode?: { nodeVersion: string | null; nodeReady: boolean }
 }) {
   return {
     id: CHROME_EXTENSION_PROFILE,
     title: 'Repository Chrome extension (Manifest V3)',
     description:
-      "Load the repository's own unpacked Manifest V3 extension into a fresh test Chrome with seeded data, perform up to three declared clicks in its popup or page, and stop in the extension's page or service-worker source with native debugger stops.",
+      "Load the repository's own Manifest V3 extension (chrome-mv3-unpacked as it is, or wxt-build for a WXT project built with source maps) into a fresh test Chrome with seeded data, perform up to three declared clicks in its popup or page, and stop in the extension's page or service-worker source with native debugger stops.",
     requiresConfiguration: true,
     configurationVersions: [1],
     minimumExtensionVersion: CHROME_EXTENSION_MINIMUM_EXTENSION_VERSION,

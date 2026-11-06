@@ -41,8 +41,12 @@ export class FakeChromeExtensionRuntime implements ChromeExtensionRuntime {
   nextClickEffect: ChromeExtensionClickAnswer['clickEffect'] = 'confirmed'
   /** When set, `prepare()` rejects with it and the run reads `failed`. */
   prepareFailure?: StudyError
-  /** When set, `prepare()` reads `installing` and waits for it before it ends (a slow preparation). */
+  /** When set, `prepare()` reads {@link FakeChromeExtensionRuntime.prepareGatePhase} and waits for it before it ends (a slow preparation). */
   prepareGate?: ReturnType<typeof defer<void>>
+  /** The phase the run reads while it waits on {@link FakeChromeExtensionRuntime.prepareGate}; `installing` unless a test names another (for example `building`). */
+  prepareGatePhase: ChromeExtensionView['phase'] = 'installing'
+  /** When set, the run reads these build facts once it is ready, as a `wxt-build` run does. */
+  builtFacts?: ChromeExtensionView['build']
   /** When set, the next `click()` rejects with it; a failed-state code also ends the run `failed`. */
   clickFailure?: StudyError
   /** When set, `click()` waits for it before it answers (a click in flight). */
@@ -66,7 +70,7 @@ export class FakeChromeExtensionRuntime implements ChromeExtensionRuntime {
   async prepare(): Promise<void> {
     this.calls.push('prepare')
     if (this.prepareGate) {
-      this.change({ phase: 'installing' })
+      this.change({ phase: this.prepareGatePhase })
       await this.prepareGate.promise
     }
     if (this.prepareFailure) {
@@ -75,6 +79,7 @@ export class FakeChromeExtensionRuntime implements ChromeExtensionRuntime {
     }
     this.change({
       phase: 'ready',
+      ...(this.builtFacts === undefined ? {} : { build: this.builtFacts }),
       extension: {
         id: 'abcdefghijklmnopabcdefghijklmnop',
         surface: {

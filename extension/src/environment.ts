@@ -77,6 +77,7 @@ import {
 } from './utils/planNodeTestExecution'
 import { readRepositoryAdapterReadiness } from './utils/readRepositoryAdapterReadiness'
 import { readStatusAdapterReadiness } from './utils/readStatusAdapterReadiness'
+import { readWxtProjectStatus } from './utils/readWxtProjectStatus'
 import {
   resolveExternalNode,
   resolveExternalNodeExecutable,
@@ -469,6 +470,18 @@ export async function createEnvironment(
         // The machine's part of node-script: the same system and ps, but no listener tool.
         nodeServerMachineGaps({ profile: 'node-script' }),
       ])
+      // WXT projects the chrome-extension profile can build (read without running any config); the external Node is reported only when one is listed.
+      const wxtStatus = await readWxtProjectStatus(
+        workspace,
+        async () =>
+          (
+            await resolveExternalNode(
+              vscode.workspace
+                .getConfiguration('codebook')
+                .get<string>('nodeExecutable', 'node'),
+            )
+          ).version,
+      )
       // A managed run that is preparing or releasing blocks a new start under either adapter.
       const managedRunState = releasingConfiguredRun
         ? [MANAGED_RUN_RELEASING_MESSAGE]
@@ -576,7 +589,11 @@ export async function createEnvironment(
               chromeMissing,
               chrome,
             )
-            return { ready: gaps.length === 0, missing: gaps }
+            return {
+              ready: gaps.length === 0,
+              missing: gaps,
+              ...wxtStatus,
+            }
           })(),
         },
       }
@@ -836,6 +853,13 @@ export async function createEnvironment(
         dependencies: createProductChromeExtensionRunDependencies({
           workspace,
           chromeExecutable: chrome.binary,
+          // The build's Node is the one node-test and node-server runs use; none found reads as a refusal by name (`node-version`), never a crash.
+          resolveBuildNode: () =>
+            resolveExternalNode(
+              vscode.workspace
+                .getConfiguration('codebook')
+                .get<string>('nodeExecutable', 'node'),
+            ).catch(() => undefined),
           profileRoot: managedProfileRoot(process.platform, {
             environment: process.env,
             homeDirectory: homedir,

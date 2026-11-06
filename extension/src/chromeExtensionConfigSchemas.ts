@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 import type { ExtensionSeedBookmark } from './chromeExtensionContracts'
 import {
+  CHROME_EXTENSION_ADAPTERS,
   EXTENSION_ACKNOWLEDGED_PERMISSION_LIMIT,
   EXTENSION_ACKNOWLEDGED_PERMISSION_LIMIT_CHARS,
   EXTENSION_CLICK_LIMIT,
@@ -18,6 +19,7 @@ import {
   selectorSchema,
 } from './repositoryConfigSchemas'
 import { addExtensionSeedIssues } from './utils/addExtensionSeedIssues'
+import { addWxtStopPathIssues } from './utils/addWxtStopPathIssues'
 
 /** A repository-relative or extension-relative path; confinement is checked against the real file system by {@link resolveChromeExtensionRun}, so `..` and absolute paths get its worded refusal rather than a pattern error. */
 const extensionPathSchema = z
@@ -76,27 +78,31 @@ const observeSchema = z.discriminatedUnion('kind', [
 ])
 
 /**
- * Bounds one chrome-extension run before anything launches: the shared book object, the extension folder, the surface (popup or one extension page), 1 to 3 declared clicks, an optional seed, 1 to 4 stops in the page or the service worker, and what to observe.
+ * Bounds one chrome-extension run before anything launches: the shared book object, the adapter (`chrome-mv3-unpacked`, or `wxt-build` where `extensionRoot` is a WXT project folder and each stop path a source file under it, never in `node_modules`), the extension folder, the surface (popup or one extension page), 1 to 3 declared clicks, an optional seed, 1 to 4 stops in the page or the service worker, and what to observe.
  * Unknown keys are refused, so an `inspections` key fails (SR11). Path confinement and file checks are made later by {@link resolveChromeExtensionRun}.
  * Parsed by {@link parseChromeExtensionConfiguration}; its issues are worded by {@link describeChromeExtensionConfigurationIssues}.
  * @example
  * chromeExtensionConfigSchema.parse({ version: 1, adapter: 'chrome-mv3-unpacked', book, extensionRoot: 'ext', surface: { kind: 'popup' }, clicks: [{ title: 'Add', selector: '#add' }], stops: [{ path: 'popup.js', line: 3, context: 'page' }], observe: { kind: 'popup' } })
  */
-export const chromeExtensionConfigSchema = z.strictObject({
-  version: z.literal(1),
-  adapter: z.literal('chrome-mv3-unpacked'),
-  book: repositoryBookSelectionSchema,
-  extensionRoot: extensionPathSchema,
-  surface: surfaceSchema,
-  clicks: z.array(clickSchema).min(1).max(EXTENSION_CLICK_LIMIT),
-  seed: seedSchema.default({}),
-  stops: z.array(stopSchema).min(1).max(EXTENSION_STOP_LIMIT),
-  observe: observeSchema,
-  acknowledgedPermissions: z
-    .array(z.string().min(1).max(EXTENSION_ACKNOWLEDGED_PERMISSION_LIMIT_CHARS))
-    .max(EXTENSION_ACKNOWLEDGED_PERMISSION_LIMIT)
-    .optional(),
-})
+export const chromeExtensionConfigSchema = z
+  .strictObject({
+    version: z.literal(1),
+    adapter: z.enum(CHROME_EXTENSION_ADAPTERS),
+    book: repositoryBookSelectionSchema,
+    extensionRoot: extensionPathSchema,
+    surface: surfaceSchema,
+    clicks: z.array(clickSchema).min(1).max(EXTENSION_CLICK_LIMIT),
+    seed: seedSchema.default({}),
+    stops: z.array(stopSchema).min(1).max(EXTENSION_STOP_LIMIT),
+    observe: observeSchema,
+    acknowledgedPermissions: z
+      .array(
+        z.string().min(1).max(EXTENSION_ACKNOWLEDGED_PERMISSION_LIMIT_CHARS),
+      )
+      .max(EXTENSION_ACKNOWLEDGED_PERMISSION_LIMIT)
+      .optional(),
+  })
+  .superRefine(addWxtStopPathIssues)
 
 export type ChromeExtensionConfiguration = z.infer<
   typeof chromeExtensionConfigSchema

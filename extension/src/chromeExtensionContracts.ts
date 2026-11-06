@@ -14,15 +14,24 @@ export type ExtensionSurfaceKind = 'popup' | 'page'
 export interface ResolvedExtensionStop {
   /** 1-based position among the declared stops (SR25). */
   index: number
-  /** Path relative to the extension root, forward slashes. */
+  /** Path relative to the extension root, forward slashes; for a `wxt-build` run the source's path relative to the repository, which is what the history names. */
   path: string
-  /** Canonical absolute path inside the repository. */
+  /** Canonical absolute path inside the repository (for `wxt-build`, the project source the map lists). */
   absolutePath: string
   /** 1-based line. */
   line: number
   context: ExtensionStopContext
   /** SHA-256 of the file's bytes when the run started. */
   sha256: string
+  /** Only a `wxt-build` stop: the text the build's source map embedded, which equals the file on disk. */
+  executedText?: string
+}
+
+/** What a `wxt-build` run built: the tool, the version it resolved from the project and how long the build took. */
+export interface ExtensionBuildFacts {
+  tool: 'wxt'
+  version: string
+  durationMs: number
 }
 
 /** One declared click after validation (DR2, CR8, TZ11). */
@@ -56,8 +65,10 @@ export type ExtensionObservation =
  * Built by the configuration resolver from a parsed configuration and the repository; nothing here is read again from the configuration later.
  */
 export interface ResolvedExtensionRun {
-  /** Canonical absolute extension root (realpath), the exact string passed to `Extensions.loadUnpacked` (SR28). */
+  /** Canonical absolute extension root (realpath), the exact string passed to `Extensions.loadUnpacked` (SR28); for `wxt-build` the build's load root. */
   root: string
+  /** The adapter's build facts; absent for an unpacked extension. */
+  build?: ExtensionBuildFacts
   /** The id Chrome must answer for the root (path rule or manifest key). */
   extensionId: string
   manifestName: string

@@ -7,9 +7,12 @@ import {
   CHROME_EXTENSION_MIN_VERSION,
   CHROME_EXTENSION_PROFILE,
   EXTENSION_ACKNOWLEDGED_API_PERMISSIONS,
+  EXTENSION_BUILD_OUTPUT_LINES,
+  EXTENSION_BUILD_TIMEOUT_MS,
   EXTENSION_BUNDLED_LINE_LIMIT_CHARS,
   EXTENSION_CLICK_ACTION,
   EXTENSION_CLICK_LIMIT,
+  EXTENSION_CONTEXT_SOURCES_LIMIT,
   EXTENSION_OBSERVE_BOUND_MS,
   EXTENSION_OBSERVE_READ_LIMIT_BYTES,
   EXTENSION_OBSERVE_SETTLE_MS,
@@ -18,13 +21,18 @@ import {
   EXTENSION_SEED_DEPTH_LIMIT,
   EXTENSION_SEED_STORAGE_KEY_LIMIT,
   EXTENSION_SEED_STORAGE_LIMIT_BYTES,
+  EXTENSION_SOURCE_MAP_LIMIT_BYTES,
   EXTENSION_STATIC_LOAD_DEPTH_LIMIT,
   EXTENSION_STOP_LIMIT,
   EXTENSION_WAKE_BOUND_MS,
   EXTENSION_WORKER_PAUSE_HOLD_MS,
   MILLISECONDS_PER_SECOND,
+  MIN_NODE_MAJOR_VERSION,
   REPOSITORY_PAUSE_HOLD_TIMEOUT_MS,
   REPOSITORY_RUN_TIMEOUT_MS,
+  WXT_BUILD_MINIMUM_API,
+  WXT_PROJECT_LIMIT,
+  WXT_SUPPORTED_MAJOR_MINOR,
 } from './constants'
 import { ERROR_RECOVERY } from './errors'
 import {
@@ -124,6 +132,15 @@ const CODE_FACTS: Record<string, { when: string; sentence: string }> = {
     when: 'start: a stop file with a sourceMappingURL comment, or a stop line over the bundled-line limit',
     sentence:
       'Stop <n> is in a bundled file; this version explains unbundled extension sources only.',
+  },
+  EXTENSION_BUILD_UNSUPPORTED: {
+    when: `start (wxt-build): no WXT config, WXT not installed, a WXT other than ${WXT_SUPPORTED_MAJOR_MINOR}, a tracked .wxt folder, no external Node ${MIN_NODE_MAJOR_VERSION} or later, or a stop outside the project or in node_modules; details.reason names which; nothing started`,
+    sentence: `extensionRoot holds no wxt.config.ts, .mts, .js or .mjs. / This version builds WXT ${WXT_SUPPORTED_MAJOR_MINOR} only; the project has <version>.`,
+  },
+  EXTENSION_BUILD_FAILED: {
+    when: 'start (wxt-build): the WXT build ended with an error, took over 120 seconds, changed a tracked file, left no Chrome build, or its tracked-file check could not be confirmed; details.reason names which; Chrome did not start',
+    sentence:
+      'The WXT build failed: <last masked lines>. / The WXT build changed the tracked file <path>.',
   },
   PERMISSIONS_NEED_ACKNOWLEDGEMENT: {
     when: 'start: the manifest declares permissions that reach outside the test profile and acknowledgedPermissions does not list exactly those entries',
@@ -374,6 +391,64 @@ const WORKED_EXAMPLE_CONFIGURATION = sampleStart({
   observe: { kind: 'text', selector: '#status' },
 })
 
+/** The declaration of the `wxt-build` sample (a WXT project below the repository root): the Options page takes a pasted value, Connect checks and stores it, and one stop sits in a source file under `src/`. Values are placeholders: the typed text is a made-up test value, never a real token. */
+const WXT_BUILD_SAMPLE = sampleStart({
+  adapter: 'wxt-build',
+  extensionRoot: 'browser-extension',
+  surface: { kind: 'page', path: 'options.html' },
+  clicks: [
+    {
+      title: 'Connect',
+      selector: 'button[type=submit]',
+      inputs: [
+        {
+          selector: 'input',
+          text: '<a made-up test value of the shape the page accepts>',
+        },
+      ],
+    },
+  ],
+  stops: [
+    {
+      path: 'src/lib/<a source file the page imports>.ts',
+      line: 12,
+      context: 'page',
+    },
+  ],
+  observe: { kind: 'storage', key: '<a key the page writes>' },
+})
+
+/** The `wxt-build` section of the help (API 1.32): when to use the adapter, its shape, the build step and what it writes, the visible `building` phase, the stop rules on the build, `contextSources`, what is not included and the API gate. The refusal codes it names are in the code table. */
+const WXT_BUILD_HELP = {
+  when: 'The extension is a WXT project: the folder holds wxt.config.ts (or .mts, .js, .mjs) and no manifest.json in its source. codebook_status lists such folders as wxtProjects with the installed WXT version; use chrome-mv3-unpacked for a folder that holds a manifest.json.',
+  shape: [
+    'configuration.adapter is "wxt-build"; the rest of the declaration is the same as for chrome-mv3-unpacked (version 1, book, surface, clicks, seed, observe).',
+    'extensionRoot is the WXT project folder (the one with the WXT config), relative to the repository root.',
+    'surface names a page of the built extension as its manifest lists it: popup, or a page path such as options.html.',
+    "Each stop path is a source file relative to extensionRoot (for example src/lib/storage.ts or src/entrypoints/options/App.tsx, or entrypoints/options/App.tsx in a project without srcDir), never a file inside node_modules; the stop pauses in that source through the build's source maps, with the values in the native Variables.",
+    'context is page or service-worker; there is no content-script context in this version.',
+  ],
+  build: [
+    `Codebook builds the project with the project's own WXT (release ${WXT_SUPPORTED_MAJOR_MINOR}.x only; a prerelease or another line is refused) through its build API, in development mode with source maps and no minification. It never runs the project's own build script and never edits wxt.config.*. The build does run the project's own code: WXT loads wxt.config.* and the modules and Vite plugins it imports, in the external Node, before Chrome starts.`,
+    "The build is written to the run's private folder beside the test Chrome profile, which is removed when the run ends, so no .output folder appears in the repository.",
+    'WXT regenerates its own ignored .wxt folder inside the project, as any WXT build does. A tracked file under extensionRoot that the build changed is reported, never restored (EXTENSION_BUILD_FAILED with reason tracked-file-changed; do not retry, tell the learner). A tracked .wxt folder is refused before the build.',
+    `The build needs an external Node ${MIN_NODE_MAJOR_VERSION} or later (the setting codebook.nodeExecutable); codebook_status reports it beside wxtProjects (at most ${WXT_PROJECT_LIMIT} folders, up to two levels below the repository root; node_modules, .git and every dot-folder are skipped and linked folders are not followed; a project outside that search can still be named as extensionRoot). Codebook never installs packages: a project without installed dependencies is refused with wxt-not-installed.`,
+    `The build is limited to ${EXTENSION_BUILD_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s, and when it fails the last ${EXTENSION_BUILD_OUTPUT_LINES} output lines (masked) are quoted. The 90 s preparation bound of the run starts after the build.`,
+  ],
+  phase:
+    'While WXT builds, the run resource reads chromeExtension.phase building and the status bar reads Building the extension (WXT <version>)…; a start still building after 40 s answers that phase, so read the run resource until it is ready. Once built, the start answer and the run resource carry build { tool: "wxt", version, durationMs }.',
+  stopRules: [
+    "The stop rules of this help apply unchanged to the build folder: a page stop must be in a file the surface page loads with a static <script src> (or that file loads with a static import), and a service-worker stop in the manifest's background.service_worker file or a file it loads statically. A source reached only through a dynamic import() is refused with STOP_FILE_NOT_LOADED naming that form.",
+    `A stop matches when a loaded chunk's source map (a flat version 3 map of at most ${EXTENSION_SOURCE_MAP_LIMIT_BYTES / (1024 * 1024)} MiB) lists the source and its sourcesContent equals the file on disk; otherwise the stop is refused with STOP_FILE_NOT_LOADED and no Chrome starts.`,
+    'The stop rules about startup code apply too: a stop on top-level code that runs before the run is ready is reported in stopsNotReached.',
+  ],
+  contextSources: `A STOP_FILE_NOT_LOADED refusal of a wxt-build run carries details.contextSources: up to ${EXTENSION_CONTEXT_SOURCES_LIMIT} project sources (relative to extensionRoot, the form a stop path takes; sorted) that the stop's context does load. Choose a stop path from it, or a file that context reaches statically; the sentence says how many sources there are.`,
+  notIncluded:
+    "Content scripts are not in this version (there is no content-script stop context). WXT's dev server, Firefox builds and other bundlers are not used.",
+  apiGate: `The adapter needs MCP API ${WXT_BUILD_MINIMUM_API} or later (codebook_status apiVersion); an older Codebook refuses the adapter value as INVALID_CONFIGURATION. A run saves as an Extension replay of history format 2, which a Codebook older than API ${WXT_BUILD_MINIMUM_API} does not list and keeps on disk.`,
+  sample: WXT_BUILD_SAMPLE,
+} as const
+
 /** The three failure examples (DXR14): each with what the chat sent, the answer it got and the declaration that works. */
 const FAILURE_EXAMPLES = [
   {
@@ -502,7 +577,11 @@ export function chromeExtensionHelp() {
         meaning:
           'page (the popup or extension page) and service-worker (the extension background)',
       },
-      { term: 'adapter', meaning: 'chrome-mv3-unpacked' },
+      {
+        term: 'adapter',
+        meaning:
+          'chrome-mv3-unpacked, or wxt-build for a WXT project built with source maps',
+      },
       {
         term: 'surface',
         meaning:
@@ -576,9 +655,10 @@ export function chromeExtensionHelp() {
       'No worker startup code: a worker stop on a top-level line never pauses after ready and is reported in stopsNotReached. Codebook stops and starts the worker before the clicks, so startup code runs before the run is ready.',
       'No page startup code: a page stop on a top-level or DOMContentLoaded line runs before the debugger attaches and is reported in stopsNotReached.',
       'A worker stop works only while an extension page is open, so the worker is reachable: the popup or page surface of the run keeps it open.',
-      `A bundled file is refused with BUNDLED_EXTENSION_UNSUPPORTED: a stop file with a sourceMappingURL comment, or whose stop line is over ${EXTENSION_BUNDLED_LINE_LIMIT_CHARS} characters. A long line elsewhere in the file does not refuse it.`,
+      `For adapter chrome-mv3-unpacked, a bundled file is refused with BUNDLED_EXTENSION_UNSUPPORTED: a stop file with a sourceMappingURL comment, or whose stop line is over ${EXTENSION_BUNDLED_LINE_LIMIT_CHARS} characters. A long line elsewhere in the file does not refuse it.`,
       'No content script, no stop in a page of another origin, and no stop in code another extension runs.',
     ],
+    wxtBuild: WXT_BUILD_HELP,
     seedRules: [
       `seed.bookmarks: up to ${EXTENSION_SEED_BOOKMARK_LIMIT} nodes in total and depth ${EXTENSION_SEED_DEPTH_LIMIT}; a node is { title, url? , children? }; a node with neither url nor children is an empty folder; a node with both is SEED_INVALID; a url must be http or https.`,
       `seed.storage: up to ${EXTENSION_SEED_STORAGE_KEY_LIMIT} keys and ${EXTENSION_SEED_STORAGE_LIMIT_BYTES} bytes as JSON, written to the extension's local storage before the surface opens and read back (SEED_NOT_APPLIED when the extension overwrote it).`,
