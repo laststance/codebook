@@ -65,6 +65,7 @@ import {
   EXTENSION_HISTORY_START_BOUND_MS,
   NODE_SERVER_HISTORY_START_BOUND_MS,
   NODE_SERVER_SIGN_IN_SECRET_MIN_CHARS,
+  NODE_SCRIPT_LIBRARY_PACKAGE_LIMIT_CHARS,
 } from './constants'
 import {
   BUSY_AWAITING_CONFIRMATION_RECOVERY,
@@ -163,6 +164,7 @@ import { createChromeExtensionJournal } from './utils/createChromeExtensionJourn
 import { createNodeServerJournal } from './utils/createNodeServerJournal'
 import { cutCauseForDisplay } from './utils/cutCauseForDisplay'
 import { cutTextToFit } from './utils/cutTextToFit'
+import { cutTextToLength } from './utils/cutTextToLength'
 import { declaredOperationsOf } from './utils/declaredOperationsOf'
 import { declaredStopOfSnapshot } from './utils/declaredStopOfSnapshot'
 import { describeBoundPlace, type BoundPlace } from './utils/describeBoundPlace'
@@ -7881,7 +7883,13 @@ export class StudyService {
         ...(declaredLibrary
           ? {
               library: {
-                package: libraryName ?? declaredLibrary.packageRoot,
+                // A folder standing in for an unreadable name is cut to the header's package bound, so the strict header still parses.
+                package:
+                  libraryName ??
+                  cutTextToLength(
+                    declaredLibrary.packageRoot,
+                    NODE_SCRIPT_LIBRARY_PACKAGE_LIMIT_CHARS,
+                  ),
                 packageRoot: declaredLibrary.packageRoot,
               },
             }

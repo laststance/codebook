@@ -461,6 +461,53 @@ test('a library run starts a format 2 history header with the declared identity'
   })
 })
 
+// protects=a library run whose package name cannot be read still starts its format 2 history when the declared folder is longer than the header's 214-character package bound; fails_when=the folder is written uncut into library.package and the strict header refuses it, so the history never starts; no_claim=a readable package name (that path never needs the cut)
+test('a library run with an unreadable name and a long folder still starts its format 2 history', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { repository, learningDirectory } = await openServerRepository(context)
+  harness.service.nodeHistoryRepository = repository
+  const longFolder = `packages/${'a'.repeat(150)}/${'b'.repeat(150)}`
+  const scripts = createScriptHarness({
+    ...baseOptions,
+    library: { packageRoot: longFolder },
+    prepareLibrary: () => new Promise<LibraryPackage>(() => undefined),
+  })
+  wireRealRun(harness, scripts)
+
+  // Act
+  const { record } = startRun(harness, { packageRoot: longFolder })
+  await waitUntil(
+    () => scripts.order.includes('prepareLibrary'),
+    'the library preparation',
+  )
+  const folder = join(
+    learningDirectory,
+    NODE_SCRIPT_HISTORY_DIRECTORY,
+    `${harness.service.instanceId}_${record.id}`,
+  )
+  const headerText = await readFile(join(folder, 'header.json'), 'utf8').catch(
+    (error: unknown) => `unreadable: ${String(error)}`,
+  )
+  const stopping = harness.service.stop({
+    instanceId: harness.service.instanceId,
+    runId: record.id,
+  })
+  await settle()
+  scripts.clock.advance(10_000)
+  await stopping
+
+  // Assert
+  assert.doesNotMatch(headerText, /^unreadable/)
+  const header = JSON.parse(headerText)
+  assert.equal(header.formatVersion, 2)
+  assert.deepEqual(header.library, {
+    package: `packages/${'a'.repeat(150)}/${'b'.repeat(54)}`,
+    packageRoot: longFolder,
+  })
+})
+
 // protects=a run without library lists the installed copies in the run resource's nodeScript block; fails_when=the copies never reach the resource or a library block appears; no_claim=origin matching
 test('a run without library carries repositoryPackageCopies in the resource', async (context) => {
   // Arrange
