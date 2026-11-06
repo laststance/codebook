@@ -126,7 +126,7 @@ test('names a tracked file the build deleted and ignores one it left alone', asy
   // Assert
   assert.equal(unchanged, undefined)
   assert.equal(snapshot.get('a.ts')?.length, 64)
-  assert.equal(changed, 'b.ts')
+  assert.deepEqual(changed, { kind: 'changed', path: 'b.ts' })
 })
 
 // protects=a build that edits one of more files than a single hash batch is still caught; fails_when=files after the first batch of 32 are left out of the snapshot or the comparison; no_claim=the batch size itself
@@ -142,5 +142,5 @@ test('hashes every tracked file beyond one batch and catches a change in the las
   await rm(root, { recursive: true, force: true })
   // Assert
   assert.equal(snapshot.size, 70)
-  assert.equal(changed, 'f69.ts')
+  assert.deepEqual(changed, { kind: 'changed', path: 'f69.ts' })
 })

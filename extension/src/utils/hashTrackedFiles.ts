@@ -6,12 +6,15 @@ import { EXTENSION_BUILD_HASH_CONCURRENCY } from '../constants'
 
 import { systemErrorCode } from './systemErrorCode'
 
+/** Prefix of the value a path hashes to when its read failed for a reason that is not a state of the path. */
+export const UNREADABLE_HASH_PREFIX = 'unreadable:'
+
 /**
  * Hashes (SHA-256) tracked files as they are on disk, so a WXT build's effect on them can be compared afterwards.
  * Called by {@link buildWxtExtension} before the build and again after the build's process tree ended.
  * @param repositoryRoot - The folder the paths are relative to.
  * @param paths - Repository-relative tracked paths.
- * @returns Path to hash; a file that is missing hashes as `absent`, one that cannot be read as `unreadable:<code>`.
+ * @returns Path to hash. Comparable states: a missing file (`ENOENT`) or one whose parent is now a file (`ENOTDIR`) hashes as `absent`, and a directory (`EISDIR`, a tracked gitlink or submodule entry) as `directory`. Any other read error hashes as `unreadable:<code>`, which {@link findChangedTrackedFile} never counts as a match.
  * @example
  * await hashTrackedFiles('/repo', ['a.ts']) // => Map { 'a.ts' => 'e3b0c442…' }
  */
@@ -34,9 +37,10 @@ export async function hashTrackedFiles(
           return createHash('sha256').update(content).digest('hex')
         } catch (error) {
           const code = systemErrorCode(error)
-          return code === 'ENOENT'
-            ? 'absent'
-            : `unreadable:${code ?? 'unknown'}`
+          // Absent and directory are states of the path, so they stay comparable; every other code is a read that failed.
+          if (code === 'ENOENT' || code === 'ENOTDIR') return 'absent'
+          if (code === 'EISDIR') return 'directory'
+          return `${UNREADABLE_HASH_PREFIX}${code === '' ? 'unknown' : code}`
         }
       }),
     )

@@ -51,6 +51,9 @@ export const CHROME_EXTENSION_ADAPTERS = [
 /** The longest a `wxt-build` run lets the WXT build take before its process tree is ended; the 90 s preparation bound starts only after the build. */
 export const EXTENSION_BUILD_TIMEOUT_MS = 120_000
 
+/** The longest a run's ending waits for the removal of its private build folder; a slower removal keeps running in the background so a stalled disk cannot hold the stop past its guarantee. */
+export const EXTENSION_BUILD_DISPOSE_BOUND_MS = 5_000
+
 /** The only shape of a WXT version a `wxt-build` run quotes from the build's result file (a file the project's code could write); anything else reads as `unknown`. */
 export const WXT_VERSION_PATTERN = /^[0-9A-Za-z.+-]{1,32}$/
 

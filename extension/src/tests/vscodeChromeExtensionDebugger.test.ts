@@ -83,7 +83,7 @@ async function flush(): Promise<void> {
     await new Promise((resolve) => setImmediate(resolve))
 }
 
-// protects=the attach carries the owned browser's port, the surface filter and the id-to-folder mapping, and the surface child is found by target type whatever its name; fails_when=a wrong request kind, a missing urlFilter or pathMapping, a save of the learner's files or attribution by name; no_claim=real js-debug
+// protects=the attach carries the owned browser's port on the IPv4 loopback address (Cursor 3.29's js-debug 1.93 races localhost over ::1 and 127.0.0.1 and never connected, Cycle 0092 C92-2), the surface filter and the id-to-folder mapping, and the surface child is found by target type whatever its name; fails_when=a wrong request kind, a missing address, urlFilter or pathMapping, a save of the learner's files or attribution by name; no_claim=real js-debug
 test('attaching starts a pwa-chrome attach for the surface and finds the page child by target type, not by name', async () => {
   // Arrange
   const editor = await extensionEditorHarness()
@@ -103,6 +103,7 @@ test('attaching starts a pwa-chrome attach for the surface and finds the page ch
     request: 'attach',
     name: 'codebook chrome extension run-3',
     port: 9333,
+    address: '127.0.0.1',
     webRoot: editor.folder,
     urlFilter: SURFACE_URL,
     pathMapping: {

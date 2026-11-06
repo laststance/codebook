@@ -138,15 +138,22 @@ export async function buildWxtExtension(
     input.signal,
   )
   // The comparison runs on every ending, whatever the tree's state: a change is reported first.
-  const changedPath = await findChangedTrackedFile(
+  const comparison = await findChangedTrackedFile(
     input.repositoryRoot,
     snapshot,
   )
-  if (changedPath !== undefined)
+  if (comparison?.kind === 'changed')
     throw buildFailed(
       'tracked-file-changed',
-      `The WXT build changed the tracked file ${changedPath}; Codebook did not restore it.`,
-      { path: changedPath, wxtVersion },
+      `The WXT build changed the tracked file ${comparison.path}; Codebook did not restore it.`,
+      { path: comparison.path, wxtVersion },
+    )
+  // A file that could not be read before or after the build was never compared.
+  if (comparison?.kind === 'unverified')
+    throw buildFailed(
+      'tracked-files-unverified',
+      `The tracked file ${comparison.path} could not be read before or after the build, so the build's effect on it could not be checked.`,
+      { path: comparison.path, wxtVersion },
     )
   if (!end.treeEnded)
     throw buildFailed(

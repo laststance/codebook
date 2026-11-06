@@ -34,6 +34,7 @@ import {
   EXTENSION_OPEN_BOUND_MS,
   EXTENSION_WAKE_BOUND_MS,
   EXTENSION_WORKER_PAUSE_HOLD_MS,
+  LOOPBACK_ADDRESS,
   MILLISECONDS_PER_SECOND,
   NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
   NODE_REPLAY_DEBUG_MAX_DEPTH,
@@ -806,6 +807,8 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
           request: 'attach',
           name: this.name,
           port: this.input.port,
+          // The owned Chrome listens on 127.0.0.1 only; js-debug 1.93 (Cursor 3.29) races `localhost` over ::1 and 127.0.0.1 and never connected, so the address is named.
+          address: LOOPBACK_ADDRESS,
           webRoot: run.root,
           urlFilter: run.surfaceUrl,
           pathMapping: {

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import {
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   realpathSync,
@@ -23,6 +24,8 @@ import type {
   WxtBuildProcess,
   WxtBuildSpawner,
 } from '../utils/buildWxtExtension'
+import { findChangedTrackedFile } from '../utils/findChangedTrackedFile'
+import { hashTrackedFiles } from '../utils/hashTrackedFiles'
 import { runWxtBuildProcess } from '../utils/runWxtBuildProcess'
 import type { WxtBuildExit, WxtBuildSpawnRequest } from '../utils/wxtBuildTypes'
 
@@ -573,6 +576,101 @@ test('reports tracked-files-unverified when the build tree cannot be confirmed e
   // Assert
   assert.equal(refusal.details?.reason, 'tracked-files-unverified')
   assert.deepEqual(fake.signals, ['SIGTERM', 'SIGKILL'])
+})
+
+// protects=a tracked file that cannot be read is reported as tracked-files-unverified with its path, not matched as unchanged; fails_when=an unreadable file before and after the build compares equal and the build is accepted; no_claim=Windows or root runs (skipped), and the real WXT build, which a fake spawner replaces
+test(
+  'reports tracked-files-unverified naming a tracked file that cannot be read',
+  {
+    skip:
+      process.platform === 'win32' || process.getuid?.() === 0
+        ? 'file permissions do not block this user'
+        : false,
+  },
+  async () => {
+    // Arrange
+    const project = createProject()
+    const unreadable = join(project.projectRoot, 'src', 'a.ts')
+    chmodSync(unreadable, 0o000)
+    const fake = createFakeSpawner({
+      onSpawn(control) {
+        writeSuccessfulBuild(project.privateFolder)
+        control.exit({ code: 0, signal: null })
+      },
+    })
+    // Act
+    let refusal: StudyError
+    try {
+      refusal = await refusalOf(
+        buildWxtExtension({
+          ...project,
+          node: NODE_24,
+          signal: new AbortController().signal,
+          spawner: fake.spawner,
+          clock: createFakeClock(),
+        }),
+      )
+    } finally {
+      chmodSync(unreadable, 0o644)
+    }
+    // Assert
+    assert.equal(refusal.details?.reason, 'tracked-files-unverified')
+    assert.equal(refusal.details?.path, 'ext/src/a.ts')
+    assert.match(refusal.message, /ext\/src\/a\.ts could not be read/)
+  },
+)
+
+// protects=a tracked file that is deleted before the build and stays deleted counts as unchanged; fails_when=an absent file is reported as changed or unverified; no_claim=a file deleted by the build, which the changed-file tests cover
+test('finds nothing when a deleted tracked file stays deleted', async () => {
+  // Arrange
+  const project = createProject()
+  const snapshot = await hashTrackedFiles(project.repositoryRoot, [
+    'ext/missing.ts',
+  ])
+  // Act
+  const comparison = await findChangedTrackedFile(
+    project.repositoryRoot,
+    snapshot,
+  )
+  // Assert
+  assert.equal(snapshot.get('ext/missing.ts'), 'absent')
+  assert.equal(comparison, undefined)
+})
+
+// protects=a tracked directory entry (gitlink or submodule) hashes as a comparable marker and counts as unchanged; fails_when=the directory is reported unverified or changed; no_claim=a real submodule checkout, which a plain folder stands in for
+test('treats a tracked directory entry as comparable and unchanged', async () => {
+  // Arrange
+  const project = createProject()
+  mkdirSync(join(project.repositoryRoot, 'ext', 'vendor-lib'))
+  const snapshot = await hashTrackedFiles(project.repositoryRoot, [
+    'ext/vendor-lib',
+  ])
+  // Act
+  const comparison = await findChangedTrackedFile(
+    project.repositoryRoot,
+    snapshot,
+  )
+  // Assert
+  assert.equal(snapshot.get('ext/vendor-lib'), 'directory')
+  assert.equal(comparison, undefined)
+})
+
+// protects=a change is reported before an unreadable file even when the unreadable path sorts first; fails_when=the unverified path wins over a changed one; no_claim=the build step's wording, which the buildWxtExtension tests cover
+test('reports a changed file before an unreadable one', async () => {
+  // Arrange
+  const project = createProject()
+  writeFileSync(join(project.repositoryRoot, 'ext', 'b.ts'), 'new\n')
+  const snapshot = new Map([
+    ['ext/a.ts', 'unreadable:EACCES'],
+    ['ext/b.ts', 'old-hash'],
+  ])
+  // Act
+  const comparison = await findChangedTrackedFile(
+    project.repositoryRoot,
+    snapshot,
+  )
+  // Assert
+  assert.deepEqual(comparison, { kind: 'changed', path: 'ext/b.ts' })
 })
 
 // protects=a cancellation after the build changed a tracked file still reports tracked-file-changed; fails_when=a stop hides the change as a plain cancellation; no_claim=how the caller words its stop error

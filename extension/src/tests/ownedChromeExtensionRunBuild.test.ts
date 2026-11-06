@@ -296,8 +296,8 @@ test('a stop during the build with unchanged files keeps the stop-before-ready e
   assert.equal(harness.log.includes('launch'), false)
 })
 
-// protects=a build that never settles cannot hold the stop past its bound: the stop commits the generic stop error at the 10 s bound; fails_when=the stop waits for the build forever; no_claim=the real 10 s (a manual clock fires the bound)
-test('a stop during a build that does not settle ends at the stop bound', async () => {
+// protects=a build that never settles before the 10 s stop bound ends the stop with tracked-files-unverified, so the learner is told the tracked files were not checked; fails_when=the stop waits for the build forever or commits the generic stop error; no_claim=the real 10 s (a manual clock fires the bound)
+test('a stop during a build that does not settle ends at the stop bound with tracked-files-unverified', async () => {
   // Arrange
   const timers = manualClock()
   const build = controlledBuild()
@@ -315,8 +315,41 @@ test('a stop during a build that does not settle ends at the stop bound', async 
   timers.fire(10_000)
   await stopping
   // Assert
-  assert.equal(harness.run.view().runFailure?.code, 'RUNTIME_FAILED')
+  assert.equal(harness.run.view().runFailure?.code, 'EXTENSION_BUILD_FAILED')
+  assert.equal(
+    Reflect.get(harness.run.view().runFailure?.details ?? {}, 'reason'),
+    'tracked-files-unverified',
+  )
   assert.equal(harness.run.view().phase, 'failed')
+})
+
+// protects=a build-folder removal that never answers cannot hold the run's stop past the 5 s dispose bound; fails_when=the ending awaits the removal forever; no_claim=the real 5 s (a manual clock fires the bound) or the folder's real deletion
+test('a build-folder removal that never settles does not hold the stop past the dispose bound', async () => {
+  // Arrange
+  const timers = manualClock()
+  const build = controlledBuild()
+  const harness = createRunHarness({
+    configuration: WXT_CONFIGURATION,
+    clock: timers.clock,
+    prepareSource: async (request) => {
+      const prepared = await build.prepareSource(request)
+      return {
+        ...prepared,
+        dispose: (): Promise<void> => new Promise<void>(() => undefined),
+      }
+    },
+    resolved: resolvedHarnessRun({ build: BUILD_FACTS }),
+    timings: { runMs: 600_000, setupMs: 90_000 },
+  })
+  build.gate.resolve(BUILT_SOURCE)
+  await harness.run.prepare()
+  // Act
+  const stopping = harness.run.stop()
+  await settle()
+  timers.fire(5_000)
+  await stopping
+  // Assert
+  assert.equal(harness.run.view().phase, 'completed')
 })
 
 // protects=a second stop during the build returns the first stop's pending ending and arms no second bound, so the deadline does not restart; fails_when=the second stop arms another 10 s bound (two pending 10 s timers) or settles apart from the first; no_claim=the real 10 s (a manual clock fires the bound)
@@ -344,7 +377,7 @@ test('a second stop during the build shares the first stop and arms no second bo
   await Promise.all([firstStop, secondStop])
   // Assert
   assert.equal(stopBoundsArmed, 1)
-  assert.equal(harness.run.view().runFailure?.code, 'RUNTIME_FAILED')
+  assert.equal(harness.run.view().runFailure?.code, 'EXTENSION_BUILD_FAILED')
   assert.equal(harness.run.view().phase, 'failed')
 })
 

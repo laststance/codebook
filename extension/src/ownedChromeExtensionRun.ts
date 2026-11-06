@@ -30,6 +30,7 @@ import {
 } from './chromeExtensionObservation'
 import {
   CHROME_EXTENSION_STOP_DEADLINE_MS,
+  EXTENSION_BUILD_DISPOSE_BOUND_MS,
   EXTENSION_OUTPUT_EVENT_LIMIT,
   EXTENSION_PIN_CAPTURE_TIMEOUT_MS,
   MILLISECONDS_PER_SECOND,
@@ -56,6 +57,7 @@ import {
 } from './runtimeSupport/utils/cdpFieldReaders'
 import { causeRootsFor } from './utils/causeRootsFor'
 import { classifyChromeExtensionFailure } from './utils/classifyChromeExtensionFailure'
+import { createExtensionBuildError } from './utils/createExtensionBuildError'
 import {
   chromeExtensionFailureNextStep,
   describeChromeExtensionFailure,
@@ -1347,6 +1349,16 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
     this.admittedStopBound = bound
     const build = this.buildSettled ?? Promise.resolve(undefined)
     const failure = await Promise.race([build, bound.passed])
+    // The bound passed first: the build's tree end and tracked-file comparison are unconfirmed, so the stop must not read as a clean one.
+    if (failure === false)
+      return this.endRun({
+        kind: 'failed',
+        error: createExtensionBuildError(
+          'EXTENSION_BUILD_FAILED',
+          'tracked-files-unverified',
+          "The build's processes could not be confirmed ended within the stop's bound, so the tracked files could not be checked.",
+        ),
+      })
     return this.endRun({
       kind: 'failed',
       error:
@@ -1402,8 +1414,27 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
     } finally {
       stopBound.cancel()
       // The build folder goes after the browser that loaded it was closed.
-      await this.safelyAsync(() => this.disposeSource?.())
+      await this.disposeSourceWithinBound()
     }
+  }
+
+  /**
+   * Removes the build folder, but waits for the removal only up to {@link EXTENSION_BUILD_DISPOSE_BOUND_MS} so a stalled removal cannot hold the ending past the stop's guarantee.
+   * Called by {@link OwnedChromeExtensionRun.cleanup} after the browser closed. A removal still running at the bound continues in the background and its late failure is swallowed by {@link OwnedChromeExtensionRun.safelyAsync}.
+   * @example await this.disposeSourceWithinBound()
+   */
+  private async disposeSourceWithinBound(): Promise<void> {
+    const disposing = this.safelyAsync(() => this.disposeSource?.())
+    let cancel = (): void => undefined
+    const bound = new Promise<void>((resolve) => {
+      cancel = this.input.dependencies.clock.set(
+        resolve,
+        EXTENSION_BUILD_DISPOSE_BOUND_MS,
+      )
+    })
+    // Either the removal finished or the bound passed; the removal itself is never abandoned.
+    await Promise.race([disposing, bound])
+    cancel()
   }
 
   /**
