@@ -116,6 +116,11 @@ test('a vite-dev start in a Vite app without Next waits on Vite readiness, not o
             missing: ['not-a-react-scripts-app'],
             startScript: { form: 'absent' },
           },
+          'expo-web-dev': {
+            ready: false,
+            installed: false,
+            missing: ['not-an-expo-app'],
+          },
         },
       },
     },
@@ -160,6 +165,11 @@ test('a vite-dev start is refused with the Vite gate sentence when Vite itself i
             installed: false,
             missing: ['not-a-react-scripts-app'],
             startScript: { form: 'absent' },
+          },
+          'expo-web-dev': {
+            ready: false,
+            installed: false,
+            missing: ['not-an-expo-app'],
           },
         },
       },

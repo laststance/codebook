@@ -233,6 +233,10 @@ const REACT_SCRIPTS_NOT_INSTALLED = {
   ],
 }
 const REACT_SCRIPTS_READY = { ready: true, missing: [] }
+const EXPO_WEB_NOT_INSTALLED = {
+  ready: false,
+  missing: ['expo-installed'],
+}
 
 /**
  * Loads the commands with a store, an agent environment and a setup browser the test drives, so a setup runs through the real {@link SavedSessionSetup}.
@@ -287,10 +291,14 @@ async function loadWithSetup(options: {
       ready: true,
       node: '/node',
       chrome: { binary: '/chrome', version: 'Chrome/154.0.1.2' },
-      adapters: options.adapters ?? {
-        'next-dev-webpack': NEXT_READY,
-        'vite-dev': VITE_NOT_INSTALLED,
-        'react-scripts-dev': REACT_SCRIPTS_NOT_INSTALLED,
+      adapters: {
+        // The Expo adapter is never ready in these setups, so each test keeps naming only the adapters it is about.
+        'expo-web-dev': EXPO_WEB_NOT_INSTALLED,
+        ...(options.adapters ?? {
+          'next-dev-webpack': NEXT_READY,
+          'vite-dev': VITE_NOT_INSTALLED,
+          'react-scripts-dev': REACT_SCRIPTS_NOT_INSTALLED,
+        }),
       },
     }),
     startSavedSessionServer: async (
