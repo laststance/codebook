@@ -4,6 +4,7 @@ import type { ConfiguredRuntimeSnapshot } from '../runtime'
 type PauseLabel = Pick<
   ConfiguredRuntimeSnapshot,
   | 'execution'
+  | 'routeHandler'
   | 'attribution'
   | 'scope'
   | 'preparationRequest'
@@ -25,6 +26,8 @@ export function pauseLabelOf(snapshot: PauseLabel): PauseLabel {
   const label: PauseLabel = {}
   // Copy key by key: a plain read would add `undefined` keys, a spread of the snapshot would leak every other field.
   if (snapshot.execution !== undefined) label.execution = snapshot.execution
+  if (snapshot.routeHandler !== undefined)
+    label.routeHandler = snapshot.routeHandler
   if (snapshot.attribution !== undefined)
     label.attribution = snapshot.attribution
   if (snapshot.scope !== undefined) label.scope = snapshot.scope

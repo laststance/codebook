@@ -5,6 +5,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 /**
  * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ * 1.28 is additive: a Next App Router server stop with `afterOperation` of 1 or more in a route handler file (`route.ts`, `route.js`, `route.tsx` or `route.jsx` under `app/` or `src/app/`) pauses in the handler that answers the browser's own request after that operation: the pause reports `execution: "route-handler"`, `attribution: "after-operation"`, `operationIndex` and `routeHandler { method, route, path }`; the refusals are `NEXT_STOP_NOT_SEALED` with `details.reason` `route-handler-before-operation`, `route-handler-edge-runtime` or `route-handler-not-app-source`, `SERVER_STOP_NOT_REACHED` gains `details.routeHandler` and route-handler `resumedHits` reasons, `codebook://help/repository-browser` gains `routeHandlerQuickStart` and `routeHandlerStops`, and a study with such a pause is saved as format 13.
  * 1.27 is additive: a Next App Router server stop with `afterOperation: 0` on code that runs when Next first evaluates a server module of the entry route (module scope of the page, its layout, or a module they import) pauses at that evaluation: the pause reports `scope: "module"`, and when the evaluation happens in a request Codebook made while preparing the run, `attribution: "preparation"` with the live `preparationRequest` (`readiness` or `warm-load`); such a study is saved as format 12 ({@link MODULE_EVALUATION_STUDY_VERSION}). A preparation pause before any page could be drawn reads capture status `absent` with {@link STOP_IMAGE_APPLICATION_NOT_YET_AVAILABLE_TEXT}: no image is owed, so the run can still complete.
  * 1.26 is additive: the `node-script` profile runs one repository-owned Node script once under the debugger, in a version 1 configuration `{ version, adapter: "node-script", book, packageRoot?, entry, loader?, source, inspections, additionalStops? }` with no port, request, environment, node option or argument. `codebook_status` gains `profiles['node-script']` with `ready` and `missing` (Node, `ps` and a supported system, not native Windows; no listener tool). The learner confirms one run in the editor before anything is spawned; the script runs, pauses at declared stops in the package's own source (never `node_modules`) and ends with `nodeScript.end` (`kind` exited, signal, stopped or limit; `exitCode`, `signal`, `exitUnknown`, `limit` running-time, run-deadline, pause-hold or exit-deadline; `stopsReached`, `stopsNeverReached`, `captureBudgetExhausted`, `stopsNotObserved`; `output` with `tail` and `truncated`). The refusals gain two codes, each with `details.reason` and `details.sideEffects`: `NODE_SCRIPT_SOURCE_REFUSED` (`package-root`, `entry`, `stop-file`, `tsx-missing`, `outside-package`, `node-modules`, `source-refused`) and `SCRIPT_NOT_CONFIRMED`; `codebook://help/node-script` holds the walkthrough, three samples, the script selection rule, the end fields and one anchor per code. A script run is saved as a Script replay in its own history store, which an older Codebook never reads. Live feature: a script run needs a Codebook that serves this API.
  * 1.25 is additive: the `react-scripts-dev` adapter of the `repository-browser` profile runs a Create React App app (react-scripts 5) at the repository root or below it, in a version 3 configuration only (the adapter enum of versions 1 and 2 is unchanged). Codebook starts the app's own `react-scripts` on a loopback port (it sets `CI=true`, `HOST`, `PORT` and `BROWSER` itself, overriding the start script's assignments of the same names, and reads only the script's `PORT=` assignment as the port), treats the app as ready after its first compile and pauses at browser stops in the app's own source, which the native debugger shows. The `react-scripts-dev` readiness under `profiles[].prerequisites.adapters` gains `ready`, `missing` (`react-scripts-installed`, `react-scripts-5`, `start-script`, `prestart-script` or `not-a-react-scripts-app`), `rootIsApp`, `packages` (entries `{ packageRoot, installed, ready, version?, missing, startScript }`), `packagesTruncated` and `packagesTruncatedReason`. The refusals gain five codes, each with `details.reason` and `details.sideEffects`: `REACT_SCRIPTS_UNSUPPORTED` (`not-installed`, `react-scripts-version`, `start-script-not-react-scripts`, `prestart-script`, `https`, `env-file-unreadable`, `not-a-react-scripts-app`), `REACT_SCRIPTS_LAUNCHER_FAILED` (`compile-failed`, `exited`; `exited` carries `exitCode` and `signal`), `REACT_SCRIPTS_PORT_UNAVAILABLE` (`port-in-use`), `REACT_SCRIPTS_SETUP_DEADLINE` (`setup-deadline`) and `REACT_SCRIPTS_SEAL_FAILED` (`outside-package`, `ambiguous-source`, `node-modules`, `unmapped-line`, `map-limit`, `map-unreadable`; `outside-package` and `node-modules` carry `sideEffects` `none` when found before the start and `partial` when found after the server started); `codebook://help/repository-browser` gains `reactScriptsQuickStart` with one anchor per code. A `react-scripts-dev` run is saved as study format 11 (`.study.v11.json`, retained configuration), which an older Codebook lists as saved by a newer Codebook. Live feature: a react-scripts run needs a Codebook that serves this API.
@@ -29,7 +30,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.9 is additive: a node-server run is saved as a Server replay. `codebook_explain_node_history` accepts a server history's material (steps citing the request, a stop, output, the response or the request failure), the server run resource gains `nodeServer.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing` and `captureMissing`, `nextActions` offers `save-node-learning`, and `codebook://help/node-server` has a save section.
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
-export const API_VERSION = '1.27'
+export const API_VERSION = '1.28'
 
 /** The Codebook version that first serves a Next app below the repository root (API 1.18, skill 1.0.67). */
 export const NEXT_PACKAGE_ROOT_MINIMUM_EXTENSION = '0.2.75.0'
@@ -83,7 +84,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.86'
+export const EXTENSION_VERSION = '0.2.87'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -1812,8 +1813,10 @@ export const VITE_PACKAGE_ROOT_STUDY_VERSION = 10
 export const REACT_SCRIPTS_STUDY_VERSION = 11
 /** The format of a Next study (at the repository root or with a `packageRoot`) that holds a module-evaluation observation (`scope: "module"`) or a pause in Codebook's own preparation request (`attribution: "preparation"`): the format 8 rules plus those two fields. Every other Next study keeps {@link SERVER_RENDER_STUDY_VERSION} or {@link PACKAGE_ROOT_STUDY_VERSION}; the suffix `.study.v12.json` makes Codebook 0.2.85 and older list such a study as saved by a newer Codebook and keep it. */
 export const MODULE_EVALUATION_STUDY_VERSION = 12
+/** The format of a Next study (at the repository root or with a `packageRoot`) that holds a route-handler observation (`execution: "route-handler"` with its `routeHandler` object): the format 8 rules plus those fields, and any module-evaluation field format 12 keeps. Every other Next study keeps {@link SERVER_RENDER_STUDY_VERSION}, {@link PACKAGE_ROOT_STUDY_VERSION} or {@link MODULE_EVALUATION_STUDY_VERSION}; the suffix `.study.v13.json` makes Codebook 0.2.86 and older list such a study as saved by a newer Codebook, never as a server render. */
+export const ROUTE_HANDLER_STUDY_VERSION = 13
 /** The highest study format this Codebook reads; a saved study above it is listed as saved by a newer Codebook. */
-export const READABLE_STUDY_VERSION = MODULE_EVALUATION_STUDY_VERSION
+export const READABLE_STUDY_VERSION = ROUTE_HANDLER_STUDY_VERSION
 /** The replay's operation marks closer than this many pixels stack vertically instead of overlapping. */
 export const OPERATION_MARK_STACK_PX = 24
 /** Below this webview width in pixels the operation marks show their numbers only. */
@@ -1825,6 +1828,12 @@ export const CONFIGURED_STUDY_METADATA_SUFFIX = '.study.meta.v3.json'
 // Highest existing version owns a logical study, including when its bytes are corrupt.
 // A change of the saved study format that an older Codebook cannot read takes the next format number and its own `.study.v<n>.json` suffix in this table; an older Codebook then lists such a study as saved by a newer one and keeps it, instead of failing on its schema.
 export const STUDY_STORAGE_FORMATS = [
+  {
+    version: ROUTE_HANDLER_STUDY_VERSION,
+    format: 'v13',
+    archiveSuffix: '.study.v13.json',
+    metadataSuffix: '.study.meta.v13.json',
+  },
   {
     version: MODULE_EVALUATION_STUDY_VERSION,
     format: 'v12',
@@ -3147,3 +3156,21 @@ export const NODE_SERVER_RUN_WORDS = { noun: 'server', profile: 'node-server' }
 
 /** The words the shared process core uses in its sentences for a script run. */
 export const NODE_SCRIPT_RUN_WORDS = { noun: 'script', profile: 'node-script' }
+/** The most the pause waits for the browser's request of a route-handler hit to be seen: the server's pause and the page's `Network` event reach the run on different connections, so a hit may come first. */
+export const ROUTE_HANDLER_REQUEST_WAIT_MS = 1000
+/** How often that wait reads the tracked requests again. */
+export const ROUTE_HANDLER_REQUEST_POLL_MS = 50
+/** The most app-origin API requests the run keeps for route-handler correlation; the oldest is dropped past it. */
+export const ROUTE_HANDLER_REQUEST_LIMIT = 256
+/** The file name of an App Router route handler (`route.ts|js|tsx|jsx`); the one pattern the route lookup and the stop judgement read. */
+export const ROUTE_HANDLER_FILE_NAME = /^route\.(?:ts|js|tsx|jsx)$/
+/** The HTTP method names a route handler exports; the one list the classifier and the help read. */
+export const HTTP_METHOD_NAMES = [
+  'GET',
+  'HEAD',
+  'POST',
+  'PUT',
+  'PATCH',
+  'DELETE',
+  'OPTIONS',
+] as const

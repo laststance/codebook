@@ -4,6 +4,10 @@ import {
   type NextSetupStep,
 } from './constants'
 import { StudyError, type ErrorCode } from './errors'
+import {
+  ROUTE_HANDLER_REFUSAL_RECOVERY,
+  type RouteHandlerRefusalReason,
+} from './utils/routeHandlerWording'
 
 /**
  * The stable codes a Next Pages run refuses with, in the run's precedence order for the checks after the entry page answered (setting, redirect, not compiled, conflict, not found), then the seal refusals and the setup deadline.
@@ -93,6 +97,43 @@ export function outsidePackageRefusal(
     },
     recovery: OUTSIDE_PACKAGE_RECOVERY,
   })
+}
+
+/** What each route-handler refusal says was refused; the recovery comes from {@link ROUTE_HANDLER_REFUSAL_RECOVERY}, which the help shares. */
+const ROUTE_HANDLER_REFUSAL_TEXT: Record<RouteHandlerRefusalReason, string> = {
+  'route-handler-before-operation':
+    'is a route handler declared afterOperation 0; a route handler runs for a request the page sends after an operation',
+  'route-handler-edge-runtime':
+    'is a route handler that declares export const runtime = "edge", which Codebook cannot pause',
+  'route-handler-not-app-source':
+    "is a route handler in node_modules or a workspace library, not in the app's own source",
+}
+
+/**
+ * Builds the refusal of a route-handler stop that Codebook can judge unsupported from the configuration and the source text alone, raised before any process starts.
+ * Called by {@link ConfiguredBrowserRun} from its lexical route-handler pass.
+ * @param reason - Which condition refused the stop.
+ * @param place - The stop's `<path>:<line>`.
+ * @param index - The stop's zero-based declared index.
+ * @returns The `NEXT_STOP_NOT_SEALED` error with `details.reason`, `stopIndex`, `file` and `sideEffects: "none"`.
+ * @example
+ * throw routeHandlerStopRefusal('route-handler-before-operation', 'app/api/todos/route.ts:25', 0)
+ */
+export function routeHandlerStopRefusal(
+  reason: RouteHandlerRefusalReason,
+  place: string,
+  index: number,
+): StudyError {
+  const what = ROUTE_HANDLER_REFUSAL_TEXT[reason]
+  const file = place.slice(0, place.lastIndexOf(':'))
+  return nextRefusal(
+    'NEXT_STOP_NOT_SEALED',
+    `Declared stop ${place} ${what}, so the run was refused before the server started.`,
+    {
+      details: { reason, stopIndex: index, file, sideEffects: 'none' },
+      recovery: ROUTE_HANDLER_REFUSAL_RECOVERY[reason],
+    },
+  )
 }
 
 /** The help anchor of one library refusal reason: the per-reason section, not the code's general one. */

@@ -6,6 +6,7 @@ import {
   PACKAGE_ROOT_STUDY_VERSION,
   REACT_SCRIPTS_STUDY_VERSION,
   RECORDED_LOCATION_STUDY_VERSION,
+  ROUTE_HANDLER_STUDY_VERSION,
   SERVER_RENDER_STUDY_VERSION,
   VITE_PACKAGE_ROOT_STUDY_VERSION,
 } from '../constants'
@@ -110,43 +111,70 @@ export function isModuleEvaluationObservation(observation: {
 }
 
 /**
- * Gives the format a save takes once its observations are known: the configuration's format ({@link studyFormatOfConfiguration}), except that a Next study (format 8 or 9) holding a module-evaluation or preparation observation takes {@link MODULE_EVALUATION_STUDY_VERSION}.
- * Called by {@link captureStudy} at every checkpoint. A study moves from 8 or 9 to 12 at the first such observation and never back, because observations are never removed; every other study keeps the format of its configuration byte for byte.
+ * Says whether an observation is one only format 13 can keep: a pause in an App Router route handler (`execution: "route-handler"`).
+ * Called by {@link studyFormatOfEvidence} when a study is written and by {@link assertObservationFormatFields} when one is read.
+ * @param observation - The observation, or anything with its `execution`.
+ * @returns `true` when the observation's execution is `route-handler`.
+ * @example isRouteHandlerObservation({ execution: 'route-handler' }) // => true
+ */
+export function isRouteHandlerObservation(observation: {
+  execution?: string
+}): boolean {
+  return observation.execution === 'route-handler'
+}
+
+/**
+ * Gives the format a save takes once its observations are known: the configuration's format ({@link studyFormatOfConfiguration}), except that a Next study (format 8 or 9) holding a route-handler observation takes {@link ROUTE_HANDLER_STUDY_VERSION} and one holding a module-evaluation or preparation observation takes {@link MODULE_EVALUATION_STUDY_VERSION}.
+ * Called by {@link captureStudy} at every checkpoint. A study moves from 8 or 9 to 12, or to 13, at the first such observation and from 12 to 13 at the first route-handler one, and never back, because observations are never removed; every other study keeps the format of its configuration byte for byte.
  * @param configuration - The sealed configuration of the run.
  * @param observations - The observations saved so far.
  * @returns The study format to write.
- * @example studyFormatOfEvidence(rootServerStopConfiguration, [{ scope: 'module' }]) // => 12
+ * @example
+ * studyFormatOfEvidence(rootServerStopConfiguration, [{ scope: 'module' }]) // => 12
+ * studyFormatOfEvidence(rootServerStopConfiguration, [{ scope: 'module' }, { execution: 'route-handler' }]) // => 13
  */
 export function studyFormatOfEvidence(
   configuration: ConfiguredStudy['configuration'],
-  observations: readonly { scope?: string; attribution?: string }[],
+  observations: readonly {
+    scope?: string
+    attribution?: string
+    execution?: string
+  }[],
 ): ConfiguredStudy['version'] {
   const format = studyFormatOfConfiguration(configuration)
   const isNextServerFormat =
     format === SERVER_RENDER_STUDY_VERSION ||
     format === PACKAGE_ROOT_STUDY_VERSION
-  return isNextServerFormat && observations.some(isModuleEvaluationObservation)
+  if (!isNextServerFormat) return format
+  // Format 13 wins: it keeps every field format 12 keeps.
+  if (observations.some(isRouteHandlerObservation))
+    return ROUTE_HANDLER_STUDY_VERSION
+  return observations.some(isModuleEvaluationObservation)
     ? MODULE_EVALUATION_STUDY_VERSION
     : format
 }
 
 /**
- * Says whether a later checkpoint may carry a different format than the one before it: only the move of a Next study from format 8 or 9 to format 12, which {@link studyFormatOfEvidence} makes at its first module-evaluation or preparation observation.
+ * Says whether a later checkpoint may carry a different format than the one before it: the move of a Next study from format 8 or 9 to format 12 ({@link studyFormatOfEvidence} makes it at the first module-evaluation or preparation observation), and, with the first route-handler observation, the move from 8, 9 or 12 to format 13.
  * Called by {@link assertStudyCheckpoint}; every other format change of a saved study is refused.
  * @param prior - The format of the kept checkpoint.
  * @param next - The format of the checkpoint being saved.
- * @returns `true` for 8 or 9 followed by 12.
- * @example isModuleEvaluationUpgrade(9, 12) // => true
+ * @returns `true` for 8 or 9 followed by 12, and for 8, 9 or 12 followed by 13.
+ * @example
+ * isModuleEvaluationUpgrade(9, 12) // => true
+ * isModuleEvaluationUpgrade(12, 13) // => true
+ * isModuleEvaluationUpgrade(13, 12) // => false
  */
 export function isModuleEvaluationUpgrade(
   prior: number,
   next: number,
 ): boolean {
-  return (
-    next === MODULE_EVALUATION_STUDY_VERSION &&
-    (prior === SERVER_RENDER_STUDY_VERSION ||
-      prior === PACKAGE_ROOT_STUDY_VERSION)
-  )
+  const isFromNextFormat =
+    prior === SERVER_RENDER_STUDY_VERSION ||
+    prior === PACKAGE_ROOT_STUDY_VERSION
+  if (next === ROUTE_HANDLER_STUDY_VERSION)
+    return isFromNextFormat || prior === MODULE_EVALUATION_STUDY_VERSION
+  return next === MODULE_EVALUATION_STUDY_VERSION && isFromNextFormat
 }
 
 /**
@@ -164,7 +192,8 @@ export function evidenceFormatOfStudy(study: StudyFormatSubject): number {
     (study.version !== PACKAGE_ROOT_STUDY_VERSION &&
       study.version !== VITE_PACKAGE_ROOT_STUDY_VERSION &&
       study.version !== REACT_SCRIPTS_STUDY_VERSION &&
-      study.version !== MODULE_EVALUATION_STUDY_VERSION) ||
+      study.version !== MODULE_EVALUATION_STUDY_VERSION &&
+      study.version !== ROUTE_HANDLER_STUDY_VERSION) ||
     study.configuration.version !== OPERATIONS_CONFIG_VERSION
   )
     return study.version
@@ -183,7 +212,7 @@ export function usesServerRenderEvidence(study: StudyFormatSubject): boolean {
 }
 
 /**
- * Says whether a saved format number is written only from a version 3 configuration (formats 7 to 12), which no study of version 1 or 2 may carry.
+ * Says whether a saved format number is written only from a version 3 configuration (formats 7 to 13), which no study of version 1 or 2 may carry.
  * Called by {@link validateConfiguredStudyEvidence} for the version 1 and 2 configurations.
  * @param version - The study's saved format.
  * @returns `true` for the formats written only from a version 3 configuration.
@@ -192,7 +221,7 @@ export function usesServerRenderEvidence(study: StudyFormatSubject): boolean {
 export function isOperationsStudyFormat(version: number): boolean {
   return (
     version >= OPERATIONS_STUDY_VERSION &&
-    version <= MODULE_EVALUATION_STUDY_VERSION
+    version <= ROUTE_HANDLER_STUDY_VERSION
   )
 }
 
@@ -213,8 +242,11 @@ export function isReadableStudyFormatOfConfiguration(
   if (configuration.version !== OPERATIONS_CONFIG_VERSION) return false
   // A react-scripts-dev configuration is readable as format 11 only, also without a packageRoot, so the format 7 fallback below never accepts it (DX-10).
   if (configuration.adapter === 'react-scripts-dev') return false
-  // Format 12 holds a Next study with a server stop, at the repository root or in a package folder; it is what {@link studyFormatOfEvidence} gives once an observation needs it.
-  if (version === MODULE_EVALUATION_STUDY_VERSION)
+  // Formats 12 and 13 hold a Next study with a server stop, at the repository root or in a package folder; they are what {@link studyFormatOfEvidence} gives once an observation needs them.
+  if (
+    version === MODULE_EVALUATION_STUDY_VERSION ||
+    version === ROUTE_HANDLER_STUDY_VERSION
+  )
     return (
       configuration.adapter !== 'vite-dev' &&
       derivedEvidenceFormat(configuration) === SERVER_RENDER_STUDY_VERSION

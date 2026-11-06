@@ -20,6 +20,7 @@ export function observationOfFormat(
   if (usesServerRenderEvidence(study)) return observation
   const {
     scope: _scope,
+    routeHandler: _routeHandler,
     execution: _execution,
     attribution: _attribution,
     operationIndex: _operationIndex,

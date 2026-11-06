@@ -423,7 +423,7 @@ test('API 1.26 is served with a note for the additive node-script profile', asyn
       .split('\n')
       .find((line) => line.startsWith(' * 1.26 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.27')
+  assert.equal(API_VERSION, '1.28')
   assert.equal(NODE_SCRIPT_HISTORY_DIRECTORY, 'node-scripts.v1')
   for (const phrase of [
     '`node-script` profile',
@@ -452,12 +452,12 @@ test('the MCP instructions name node-script, its confirmation and the API 1.26 g
     assert.ok(protocol.includes(phrase), phrase)
 })
 
-// protects=skill 1.0.76 routes a question about a repository's own Node script to node-script behind the API 1.26 gate, tells the learner about the confirmation and side effects first, treats a nonzero exit as the script failing, stops after two same-code failures and saves a Script replay only on complete coverage; fails_when=one of these sentences or the version leaves the skill, or a repository name enters it; no_claim=how a chat follows it
-test('the bundled skill 1.0.76 routes a Node script question to node-script with its confirmation and save rules', async () => {
+// protects=skill 1.0.77 routes a question about a repository's own Node script to node-script behind the API 1.26 gate, tells the learner about the confirmation and side effects first, treats a nonzero exit as the script failing, stops after two same-code failures and saves a Script replay only on complete coverage; fails_when=one of these sentences or the version leaves the skill, or a repository name enters it; no_claim=how a chat follows it
+test('the bundled skill 1.0.77 routes a Node script question to node-script with its confirmation and save rules', async () => {
   // Arrange
   const skill = await readPackaged('skills/codebook/SKILL.md')
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.76"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.77"\n'))
   for (const phrase of [
     '**Script runs (API 1.26).**',
     'uses the `node-script` profile, only when `codebook_status` lists it and reports API 1.26 or later',
@@ -491,9 +491,9 @@ test('the README documents the Node script run, its confirmation, its end and it
     "At stops the chat declares in the package's own source",
     'A nonzero exit is the script failing, not a Codebook error',
     'saved through `codebook_explain_node_history` as a Script replay',
-    'with **MCP API 1.27**',
+    'with **MCP API 1.28**',
     '`SCRIPT_NOT_CONFIRMED`',
-    "so Cursor's managed skill updates to **1.0.76**",
+    "so Cursor's managed skill updates to **1.0.77**",
   ])
     assert.ok(readme.includes(phrase), phrase)
 })

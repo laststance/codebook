@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.2.87.0] - 2026-11-06 (development candidate)
+
+Cycle 0087 ([Issue #226](https://github.com/laststance/codebook/issues/226)), a feature cycle. **A server stop in a Next App Router route handler now pauses in the request the page sends after an operation.** A learner can ask what the server does when a click calls the app's own API (a `route.ts` under `app/`), and the native debugger stops in the handler with the request's values and the handler's locals. Before, such a stop failed after the server had started, so the chat could explain only the browser half from execution.
+
+**Route handlers (MCP API 1.28).**
+- **Where it applies:** an App Router run (`next-dev-webpack`, configuration version 3) with a `participant: "server"` stop whose `afterOperation` is 1 or more, in a `route.ts` (or `route.js`, `route.tsx`, `route.jsx`) under `app/` or `src/app/`.
+- **What the chat sees:** the pause reads `execution: "route-handler"`, and `routeHandler` names the request's method, the route pattern and the request's path. The saved moment is labelled `After operation <k> · Route handler <method> <route> · <path:line>`. The chat says the handler ran after operation k, never that the operation caused it.
+- **Which request pauses:** only the browser's own request after the operation, the first one for the stop's route and method to reach the line. Any other hit, such as the entry load, polling or another method, is resumed and listed in `details.resumedHits` with its reason. Codebook matches by route, method and operation, not by the request itself, so a request the server sends to its own route, or a late one the page sent before the operation, can be the one that pauses.
+- **Lines after an `await`:** a stop on a line after the handler awaited the body, a timer or another promise pauses like any other line.
+- **With a browser stop:** a matching request that reaches the handler while a browser stop of the same operation is paused keeps the server paused, and the route handler's pause follows once the browser stop is continued.
+- **Values:** declare the stop on a line after the handler parsed the body and inspect that variable. `request.method`, `request.url` and the headers are getters that Codebook's side-effect-free inspection refuses, so never declare them; the pause's `routeHandler` names the method and path, and the native debugger shows the request.
+- **Refused before anything starts** with `NEXT_STOP_NOT_SEALED`: a stop with `afterOperation: 0` (`route-handler-before-operation`), a route file that declares the edge runtime (`route-handler-edge-runtime`), and a route file in `node_modules` or a workspace library (`route-handler-not-app-source`).
+- **When no request reaches the line:** `SERVER_STOP_NOT_REACHED` lists the possibilities, never one as the cause: no such request after the operation, a request sent before it, or a branch that did not run. The inputs were already sent, so their side effects are unknown.
+- **A run whose only stops are route handlers** has its manifest before the first input, with the route file's source hash and `sealedAtPause: "route-handler"`.
+- **What stays the same:** Pages API routes (`NEXT_SERVER_ONLY_STOP`), middleware and `proxy` stay unsupported, and every other server stop keeps its behavior.
+
+**Saved studies and updating.** A study with a route-handler pause is saved as format 13 (`.study.v13.json`); Codebook 0.2.86 and older list it as saved by a newer Codebook. After installing, run **Codebook: Set Up AI Chat** so Cursor's managed skill updates to **1.0.77**.
+
+**Release details:** checked in both editors on development targets (no nine-project credit):
+
+| Check | Host | Target | Pause and observed outcome |
+| --- | --- | --- | --- |
+| C87-1 | VS Code, Copilot Chat (GPT-6.1 Terra) | P02 `nextjs-app-optimistic-updates`, `app/api/todos/route.ts` | `POST` after the body was parsed; success path, the todo stays listed |
+| C87-2 | Cursor, Agent (Grok 4.6 High) | the same Example | `POST` after the handler's timer `await`; failure path, the error text and the rolled-back list |
+
 ## [0.2.86.0] - 2026-11-06 (development candidate)
 
 Cycle 0086 ([Issue #224](https://github.com/laststance/codebook/issues/224)), a feature cycle. **A Next server stop on a module's top-level code now pauses when Next first evaluates that module.** A learner can now ask when a database client, a store or a library import is created, and the native debugger stops on that line with its values. Before, such a stop never paused, because Next had already run the module while Codebook prepared the run. For example, a Server Component that imports react-redux pauses where the import has just bound react-redux's server stub.

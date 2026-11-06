@@ -1,10 +1,14 @@
 import type { ConfiguredStudy } from '../configuredStudySchemas'
-import { MODULE_EVALUATION_STUDY_VERSION } from '../constants'
+import {
+  MODULE_EVALUATION_STUDY_VERSION,
+  ROUTE_HANDLER_STUDY_VERSION,
+} from '../constants'
 
 import { afterOperationOf } from './afterOperationOf'
 import type { configuredStops } from './configuredStops'
 import {
   isModuleEvaluationObservation,
+  isRouteHandlerObservation,
   usesServerRenderEvidence,
 } from './studyFormatOfConfiguration'
 
@@ -35,6 +39,8 @@ function assertFormat8Observation(
       'Configured observation of format 8 lacks execution, declaredIndex or executionIndex.',
     )
   const stop = stops[declaredIndex]
+  if (observation.routeHandler !== undefined && execution !== 'route-handler')
+    throw new Error('Only a route-handler observation has a routeHandler.')
   if (!stop || seenStops.has(declaredIndex))
     throw new Error(
       'Configured observation names a stop that is not declared or already observed.',
@@ -44,7 +50,36 @@ function assertFormat8Observation(
     throw new Error('Configured observation executionIndex is out of order.')
   if ((execution === 'browser') !== (stop.participant === 'browser'))
     throw new Error('Configured observation execution differs from its stop.')
-  assertAttributionFitsGroup(observation, afterOperationOf(stop) ?? 1)
+  const group = afterOperationOf(stop) ?? 1
+  if (execution === 'route-handler')
+    assertRouteHandlerObservation(observation, group)
+  else assertAttributionFitsGroup(observation, group)
+}
+
+/**
+ * Checks a route-handler observation (format 13) against the group of its stop: it is observed after operation k >= 1 (a route handler runs for a request an operation sent, never for the page load), names its request in `routeHandler`, and has no module scope.
+ * @param observation - The observation, whose `execution` is `route-handler`.
+ * @param group - The stop's `afterOperation`.
+ * @throws When the attribution, the operation index, `routeHandler` or `scope` contradicts that.
+ * @example assertRouteHandlerObservation({ execution: 'route-handler', attribution: 'after-operation', operationIndex: 2, routeHandler }, 2)
+ */
+function assertRouteHandlerObservation(
+  observation: Observation,
+  group: number,
+): void {
+  const { attribution, operationIndex, routeHandler, scope } = observation
+  if (attribution !== 'after-operation' || group === 0)
+    throw new Error(
+      'A route-handler observation is attributed after an operation.',
+    )
+  if (operationIndex !== group)
+    throw new Error(
+      'Configured observation operationIndex differs from its stop.',
+    )
+  if (routeHandler === undefined || scope !== undefined)
+    throw new Error(
+      'A route-handler observation needs a routeHandler and has no scope.',
+    )
 }
 
 /**
@@ -106,6 +141,7 @@ export function assertObservationFormatFields(
       study.observations.some(
         (observation) =>
           observation.scope !== undefined ||
+          observation.routeHandler !== undefined ||
           observation.execution !== undefined ||
           observation.attribution !== undefined ||
           observation.operationIndex !== undefined ||
@@ -116,20 +152,47 @@ export function assertObservationFormatFields(
       throw new Error('Only a study of format 8 keeps execution fields.')
     return
   }
-  // The scope and the preparation attribution belong to format 12, and format 12 is written only for a study that holds one.
-  const holdsModuleEvaluation = study.observations.some(
-    isModuleEvaluationObservation,
-  )
-  if (
-    holdsModuleEvaluation !==
-    (study.version === MODULE_EVALUATION_STUDY_VERSION)
-  )
-    throw new Error(
-      holdsModuleEvaluation
-        ? 'Only a study of format 12 keeps a module scope or a preparation attribution.'
-        : 'A study of format 12 holds a module-evaluation or preparation observation.',
-    )
+  assertFormatHoldsItsFields(study)
   const seenStops = new Set<number>()
   for (const [position, observation] of study.observations.entries())
     assertFormat8Observation(observation, position, stops, seenStops)
+}
+
+/**
+ * Pairs a format 12 or 13 study with the fields only it keeps: format 12 is written only for a study that holds a module-evaluation or preparation observation, format 13 only for one that holds a route-handler observation (and keeps format 12's fields too).
+ * Called by {@link assertObservationFormatFields}.
+ * @param study - The saved study, without its images; it follows the format 8 rules.
+ * @throws When a field sits in a format that does not keep it, or a format holds none of its fields.
+ * @example assertFormatHoldsItsFields(study)
+ */
+function assertFormatHoldsItsFields(
+  study: Omit<ConfiguredStudy, 'captures'>,
+): void {
+  const holdsModuleEvaluation = study.observations.some(
+    isModuleEvaluationObservation,
+  )
+  const holdsRouteHandler = study.observations.some(isRouteHandlerObservation)
+  // The scope and the preparation attribution belong to formats 12 and 13.
+  if (
+    holdsModuleEvaluation &&
+    study.version !== MODULE_EVALUATION_STUDY_VERSION &&
+    study.version !== ROUTE_HANDLER_STUDY_VERSION
+  )
+    throw new Error(
+      'Only a study of format 12 keeps a module scope or a preparation attribution.',
+    )
+  if (
+    study.version === MODULE_EVALUATION_STUDY_VERSION &&
+    !holdsModuleEvaluation
+  )
+    throw new Error(
+      'A study of format 12 holds a module-evaluation or preparation observation.',
+    )
+  // A route-handler observation makes the study format 13, and format 13 is written only for one that holds it.
+  if (holdsRouteHandler !== (study.version === ROUTE_HANDLER_STUDY_VERSION))
+    throw new Error(
+      holdsRouteHandler
+        ? 'Only a study of format 13 keeps a route-handler observation.'
+        : 'A study of format 13 holds a route-handler observation.',
+    )
 }

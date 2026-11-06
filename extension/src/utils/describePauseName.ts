@@ -1,5 +1,6 @@
-/** The kinds of code a recorded pause can be in; `server-render` and `server-action` are server participants, `browser` keeps its own names. */
-export type PauseExecution = 'browser' | 'server-action' | 'server-render'
+/** The kinds of code a recorded pause can be in; `server-render`, `server-action` and `route-handler` are server participants, `browser` keeps its own names. */
+export type PauseExecution =
+  'browser' | 'server-action' | 'server-render' | 'route-handler'
 
 /** How a server-render pause is tied to the operations of its run (Design decision D13); `after-operation` means "observed after", never "caused by". */
 export type PauseAttribution =
@@ -13,6 +14,8 @@ export type PauseNameInput = {
   attribution?: PauseAttribution
   /** `module` for a pause inside a module's evaluation (format 12). */
   scope?: 'module'
+  /** The request a route-handler pause was observed for (format 13): its HTTP method and the route pattern from the file path. */
+  routeHandler?: { method: string; route: string }
   /** 1-based operation the pause was observed after; absent or 0 for the entry load. */
   operationIndex?: number
   /** Repository path of the paused source file. */
@@ -26,7 +29,11 @@ export type PauseNameParts = {
   /** `Page load`, `Preparation` or `After operation <k>`; absent for a server action that follows no operation. */
   state?: string
   /** `Server render` or `Server action`. */
-  kind: 'Server render' | 'Module evaluation' | 'Server action'
+  kind:
+    | 'Server render'
+    | 'Module evaluation'
+    | 'Server action'
+    | `Route handler ${string}`
   path: string
   line: number
   /** `route not confirmed` for an `unconfirmed` attribution; never colour alone. */
@@ -62,16 +69,21 @@ export function joinPauseName(parts: Omit<PauseNameParts, 'text'>): string {
  * Picks the kind word of a server pause: a module-evaluation pause reads `Module evaluation` in place of `Server render`, because the code that ran is a module's top level, not the render.
  * Called by {@link describePauseName}.
  * @param execution - The pause's server execution.
- * @param scope - `module` for a pause inside a module's evaluation.
+ * @param input - The recorded pause's fields: `scope` `module` reads Module evaluation, `routeHandler` names a route handler's request.
  * @returns The kind word.
- * @example kindOfPause('server-render', 'module') // => 'Module evaluation'
+ * @example
+ * kindOfPause('server-render', { scope: 'module', path: 'a.ts', line: 1 }) // => 'Module evaluation'
+ * kindOfPause('route-handler', { routeHandler: { method: 'POST', route: '/api/todos' }, path: 'a.ts', line: 1 }) // => 'Route handler POST /api/todos'
  */
 function kindOfPause(
-  execution: 'server-render' | 'server-action',
-  scope: PauseNameInput['scope'],
+  execution: 'server-render' | 'server-action' | 'route-handler',
+  input: PauseNameInput,
 ): PauseNameParts['kind'] {
   if (execution === 'server-action') return 'Server action'
-  return scope === 'module' ? 'Module evaluation' : 'Server render'
+  // A route handler is named by its request, never as a render: `Route handler POST /api/todos`.
+  if (execution === 'route-handler')
+    return `Route handler ${[input.routeHandler?.method, input.routeHandler?.route].filter(Boolean).join(' ')}`
+  return input.scope === 'module' ? 'Module evaluation' : 'Server render'
 }
 
 /**
@@ -83,7 +95,7 @@ function kindOfPause(
  * @example stateOfPause('server-render', { attribution: 'preparation', path: 'a.ts', line: 1 }) // => 'Preparation'
  */
 function stateOfPause(
-  execution: 'server-render' | 'server-action',
+  execution: 'server-render' | 'server-action' | 'route-handler',
   input: PauseNameInput,
 ): string | undefined {
   // `Operation 0` never appears: an entry-load pause (no operation, or 0) reads Page load.
@@ -105,6 +117,8 @@ function stateOfPause(
  * // => 'After operation 2 · Server render · a.ts:3 · route not confirmed'
  * describePauseName({ execution: 'server-render', attribution: 'preparation', scope: 'module', path: 'db/index.ts', line: 12 })?.text
  * // => 'Preparation · Module evaluation · db/index.ts:12'
+ * describePauseName({ execution: 'route-handler', attribution: 'after-operation', operationIndex: 2, routeHandler: { method: 'POST', route: '/api/todos' }, path: 'app/api/todos/route.ts', line: 25 })?.text
+ * // => 'After operation 2 · Route handler POST /api/todos · app/api/todos/route.ts:25'
  */
 export function describePauseName(
   input: PauseNameInput,
@@ -114,7 +128,7 @@ export function describePauseName(
     input.execution ??
     (input.participant === 'server' ? 'server-action' : 'browser')
   if (execution === 'browser') return undefined
-  const kind = kindOfPause(execution, input.scope)
+  const kind = kindOfPause(execution, input)
   const state = stateOfPause(execution, input)
   const attribution =
     input.attribution === 'unconfirmed' ? ROUTE_NOT_CONFIRMED : undefined

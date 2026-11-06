@@ -1046,7 +1046,11 @@ export async function configuredRuntimeHarness(
         const nextBelongsToLatestInput =
           !operationsOption ||
           operationsOption.stopOperations[stopCount] === inputsSeen
-        if (next && nextBelongsToLatestInput) {
+        // A server stop never pauses the page's handler: the page's answer goes on after the last browser stop was continued.
+        const nextPausesPage =
+          (operationsOption?.stopParticipants?.[stopCount] ?? 'browser') ===
+          'browser'
+        if (next && nextBelongsToLatestInput && nextPausesPage) {
           // A debugger that verifies only some lines pauses a later stop where its breakpoint was requested.
           const requestedLater = verifiableLines
             ? breakpoints.find((candidate) =>
@@ -2603,11 +2607,12 @@ export async function configuredRuntimeHarness(
         url: string,
         type = 'Document',
         frameId = 'main',
+        method = 'GET',
       ): void {
         listeners.get('Network.requestWillBeSent')?.({
           requestId,
           frameId,
-          request: { url },
+          request: { url, method },
           type,
         })
       },

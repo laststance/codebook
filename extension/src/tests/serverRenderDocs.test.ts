@@ -52,7 +52,7 @@ test('the packaged help states afterOperation 0, omitted operations, not-needed 
     'client-component',
     'server-side code of other routes than the entry route',
     'A Pages server stop does not pause, in this version',
-    'route handlers',
+    'routeHandlerStops',
     'Turbopack',
     'observed after',
     '#SERVER_STOP_NOT_REACHED',
@@ -93,7 +93,7 @@ test('the bundled skill declares the stop in code that runs on every render, use
     skill.split('\n\n').find((part) => part.startsWith('**Server renders')) ??
     ''
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.76"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.77"\n'))
   for (const phrase of [
     'afterOperation: 0',
     'omitted',
@@ -203,7 +203,7 @@ test('SERVER_STOP_NOT_REACHED lists the module-evaluation candidates as possibil
     "Next evaluated the module before the stop could be armed (another route's module, a hot reload)",
     'after a statement that did not run',
     'Never present any cause as established',
-    'Check that the entry route imports the module and that the line runs when the module loads',
+    'For a stop at module scope, check that the entry route imports the module and that the line runs when the module loads',
     'then start one new run',
     'module evaluation is observed only in App Router runs without a Pages folder',
   ])
@@ -223,7 +223,7 @@ test('the bundled skill allows a top-level App Router stop only on API 1.27 and 
     skill.split('\n\n').find((part) => part.startsWith('**Server renders')) ??
     ''
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.76"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.77"\n'))
   for (const phrase of [
     'a top-level line (module scope) is allowed only when `codebook_status` reports API 1.27 or later',
     'in a workspace without a Pages folder',
