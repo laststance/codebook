@@ -142,7 +142,7 @@ test('API_VERSION is 1.25 and its note and the MCP instructions name the Vite pa
       .split('\n')
       .find((line) => line.startsWith(' * 1.20 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.31')
+  assert.equal(API_VERSION, '1.32')
   for (const phrase of [
     '`packageRoot`',
     '`rootIsApp`',
@@ -287,7 +287,7 @@ test('API_VERSION is 1.25 and its note names the Vite library stops, reasons and
       .split('\n')
       .find((line) => line.startsWith(' * 1.21 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.31')
+  assert.equal(API_VERSION, '1.32')
   for (const phrase of [
     '`vite-dev`',
     'nested `packageRoot`',

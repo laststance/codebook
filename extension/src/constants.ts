@@ -5,6 +5,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 /**
  * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ * 1.32 is additive: the `chrome-extension` profile accepts a second adapter, `wxt-build`, for a WXT 0.21 project. `extensionRoot` names the project folder and each stop's `path` is a source file under it. Codebook builds the project with the repository's own WXT and source maps into the run's private folder, loads that build as an unpacked extension and resolves each stop through the build's source maps. The refusals are `EXTENSION_BUILD_UNSUPPORTED` and `EXTENSION_BUILD_FAILED`; an Extension replay of such a run is recorded with history header format 2.
  * 1.31 is additive: a `node-server` configuration may declare an optional `signIn` object `{ path, fields, secretField, secret: "ask-learner" }`; Codebook asks the learner for the password in its own masked box, signs in with one POST, keeps the session cookie in memory only and sends the declared request with it. An older Codebook refuses the field as INVALID_CONFIGURATION.
  * 1.30 is additive: the `expo-web-dev` adapter of the `repository-browser` profile runs an Expo SDK 57 web app (Metro) at the repository root or below it, in a version 3 configuration only. Codebook starts the app's own `expo start --web` on the port its web script declares (it sets `CI=1`, `BROWSER=none` and `EXPO_NO_TELEMETRY=1`), treats the app as ready when Metro serves the entry bundle and its source map, and pauses at browser stops in the app's own source that the entry bundle includes. The refusals are `EXPO_WEB_UNSUPPORTED`, `EXPO_WEB_LAUNCHER_FAILED`, `EXPO_WEB_PORT_UNAVAILABLE`, `EXPO_WEB_SETUP_DEADLINE` and `EXPO_WEB_SEAL_FAILED`, `codebook_status` gains `profiles[].prerequisites.adapters["expo-web-dev"]`, `codebook://help/repository-browser` gains `expoWebQuickStart`, and a study of an Expo run is saved as format 15 (`.study.v15.json`) with its `expoVersion`.
  * 1.29 is additive: a Next Pages Router server stop with `afterOperation` of 1 or more in a file under the Pages folder's `api/` (`pages/api` or `src/pages/api`) pauses in the API-route handler that answers the browser's own request after that operation: the pause reports `execution: "api-route"`, `attribution: "after-operation"`, `operationIndex` and `apiRoute { method, route, path }`, read from the paused request object; a study with such a pause is saved as format 14 (`.study.v14.json`). A stop with `afterOperation: 0`, in a version 2 configuration or in a route whose exported config declares the edge runtime is refused with `NEXT_STOP_NOT_SEALED` (`details.reason` `api-route-before-operation` or `api-route-edge-runtime`); `_document` keeps `NEXT_SERVER_ONLY_STOP`.
@@ -33,10 +34,34 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.9 is additive: a node-server run is saved as a Server replay. `codebook_explain_node_history` accepts a server history's material (steps citing the request, a stop, output, the response or the request failure), the server run resource gains `nodeServer.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing` and `captureMissing`, `nextActions` offers `save-node-learning`, and `codebook://help/node-server` has a save section.
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
-export const API_VERSION = '1.31'
+export const API_VERSION = '1.32'
 
 /** The API that first accepts the `expo-web-dev` adapter in a version 3 configuration (skill 1.0.79). */
 export const EXPO_WEB_MINIMUM_API = '1.30'
+
+/** The API that first accepts the `wxt-build` adapter in a `chrome-extension` configuration (skill 1.0.81). */
+export const WXT_BUILD_MINIMUM_API = '1.32'
+
+/** The adapters of a `chrome-extension` configuration; `wxt-build` builds a WXT project with source maps before loading it (API 1.32). Read by the configuration schema. */
+export const CHROME_EXTENSION_ADAPTERS = [
+  'chrome-mv3-unpacked',
+  'wxt-build',
+] as const
+
+/** The longest a `wxt-build` run lets the WXT build take before its process tree is ended; the 90 s preparation bound starts only after the build. */
+export const EXTENSION_BUILD_TIMEOUT_MS = 120_000
+
+/** The largest source map, in bytes, a `wxt-build` run reads; a larger map leaves its chunk's sources unlisted. */
+export const EXTENSION_SOURCE_MAP_LIMIT_BYTES = 32 * 1024 * 1024
+
+/** The last lines of WXT's output an `EXTENSION_BUILD_FAILED` refusal quotes, after masking. */
+export const EXTENSION_BUILD_OUTPUT_LINES = 20
+
+/** The most project sources a `STOP_FILE_NOT_LOADED` refusal of a `wxt-build` run lists in `details.contextSources`. */
+export const EXTENSION_CONTEXT_SOURCES_LIMIT = 20
+
+/** The one WXT `major.minor` the `wxt-build` adapter builds (release versions only); widening needs a native run on that version. */
+export const WXT_SUPPORTED_MAJOR_MINOR = '0.21'
 
 /** The one Expo SDK major the `expo-web-dev` adapter supports, judged from the installed `expo` package (Cycle 0089, E-17); widening needs a native run on that major. */
 export const EXPO_WEB_SUPPORTED_MAJOR = 57
@@ -2887,6 +2912,13 @@ export const CHROME_EXTENSION_MINIMUM_EXTENSION_VERSION = '0.2.59'
 export const CHROME_EXTENSION_HISTORY_DIRECTORY = 'chrome-extensions.v1'
 /** The `formatVersion` of a chrome-extension history's header and the `version` of its seal. */
 export const CHROME_EXTENSION_HISTORY_FORMAT_VERSION = 1
+/** The `formatVersion` of a chrome-extension history header by build kind: `unpacked` runs keep 1 (older versions read it), `wxtBuild` runs write 2 (it adds the `build` fact). */
+export const CHROME_EXTENSION_HISTORY_HEADER_FORMATS = {
+  unpacked: 1,
+  wxtBuild: 2,
+} as const
+/** The `version` of a chrome-extension history's seal, separate from the header format so a header change never rejects existing seals. */
+export const CHROME_EXTENSION_HISTORY_SEAL_VERSION = 1
 /** The most entries one chrome-extension history holds: every frame the budget admits ({@link MAX_RECORDING_FRAMES}) plus 1,000 for pauses, captures, closes and the result. */
 export const EXTENSION_HISTORY_MAX_ENTRIES = 13_100
 /** The largest sequence any history profile can hold, for the schemas that profiles share (learning citations across profiles, the saved reader position): the service and the store still check the sequence against the one history, so the node-test and node-server limits keep their own bounds where one profile is parsed alone. */
