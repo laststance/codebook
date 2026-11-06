@@ -57,6 +57,24 @@ export const EXTENSION_SOURCE_MAP_LIMIT_BYTES = 32 * 1024 * 1024
 /** The last lines of WXT's output an `EXTENSION_BUILD_FAILED` refusal quotes, after masking. */
 export const EXTENSION_BUILD_OUTPUT_LINES = 20
 
+/** How long a `wxt-build` run waits for the build's process tree to end after SIGTERM, and again after SIGKILL. */
+export const EXTENSION_BUILD_KILL_GRACE_MS = 5_000
+
+/** How often the production spawner of a `wxt-build` run asks whether the build's process group is gone. */
+export const EXTENSION_BUILD_TREE_POLL_MS = 50
+
+/** The longest one `git ls-files` call of a `wxt-build` run may take (the tracked-file snapshot and the `.wxt` check). */
+export const EXTENSION_BUILD_GIT_TIMEOUT_MS = 30_000
+
+/** The most bytes a tracked-file listing of a `wxt-build` run may print. */
+export const EXTENSION_BUILD_GIT_MAX_BUFFER_BYTES = 64 * 1024 * 1024
+
+/** The most characters of masked build output a `wxt-build` run keeps before it cuts to the last {@link EXTENSION_BUILD_OUTPUT_LINES} lines. */
+export const EXTENSION_BUILD_OUTPUT_TAIL_CHARS = 65_536
+
+/** How many tracked files a `wxt-build` run hashes at the same time. */
+export const EXTENSION_BUILD_HASH_CONCURRENCY = 32
+
 /** The most project sources a `STOP_FILE_NOT_LOADED` refusal of a `wxt-build` run lists in `details.contextSources`. */
 export const EXTENSION_CONTEXT_SOURCES_LIMIT = 20
 
