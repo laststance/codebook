@@ -271,6 +271,7 @@ import { isAnnouncedScriptOf } from './utils/isAnnouncedScriptOf'
 import { isBlankOrCommentLine } from './utils/isBlankOrCommentLine'
 import { isBrowserOnEntryRoute } from './utils/isBrowserOnEntryRoute'
 import { isDebugTargetSession } from './utils/isDebugTargetSession'
+import { isEntryAnswerFailure } from './utils/isEntryAnswerFailure'
 import type { GeneratedPosition } from './utils/isGeneratedPositionBefore'
 import { isHotUpdateScriptUrl } from './utils/isHotUpdateScriptUrl'
 import { isModuleEntryPause } from './utils/isModuleEntryPause'
@@ -2548,6 +2549,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
             : undefined,
         )
     } catch (error) {
+      await this.classifyExpoEntryAnswer(adapter, error)
       throw this.afterReadinessFailure(error)
     }
     // The saved session opens only on the loopback origin of the server Codebook started, and nothing is launched before this is judged.
@@ -2563,6 +2565,28 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         throw error
       }
     return ownedOrigin
+  }
+
+  /**
+   * Hands Metro's non-success answer for the entry page to the Expo bundle check, so the run ends with its own refusal instead of the generic readiness text.
+   *
+   * Why it exists: the shared readiness check throws on a 500 entry page before the bundle check ({@link waitForServerSettledWithinBudget}) is reached; that check reads the same page and words it as `EXPO_WEB_LAUNCHER_FAILED` (`bundle-failed`) with Metro's masked message. Called by {@link proveServerReady} when the readiness check threw; every other adapter and every other failure returns at once.
+   * @param adapter - The run's development-server adapter.
+   * @param error - What the readiness check threw.
+   * @throws The bundle check's refusal when it reads the entry page's error answer; nothing otherwise, so the caller throws the original failure.
+   * @example await this.classifyExpoEntryAnswer(adapter, new Error('Application root failed: 500: …'))
+   */
+  private async classifyExpoEntryAnswer(
+    adapter: DevelopmentServerAdapter,
+    error: unknown,
+  ): Promise<void> {
+    if (
+      adapter.name !== 'expo-web-dev' ||
+      this.abort.signal.aborted ||
+      !isEntryAnswerFailure(error)
+    )
+      return
+    await this.waitForServerSettledWithinBudget(adapter)
   }
 
   /**
