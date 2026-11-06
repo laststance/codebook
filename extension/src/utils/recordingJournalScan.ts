@@ -41,6 +41,8 @@ export type CitableEvent =
   | { type: 'output'; channel: 'stdout' | 'stderr' }
   | { type: 'result' }
   | { type: 'request' }
+  /** The recorded sign-in of a node-server run that declared `signIn`; citable so a history without a request can still be explained. */
+  | { type: 'sign-in' }
   | { type: 'response' }
   | { type: 'request-failed' }
   /** The end of a node-script run, citable by a Script replay's learning step. */

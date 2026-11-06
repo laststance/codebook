@@ -36,8 +36,9 @@ export const nodeRunOutputReferenceSchema = z.strictObject({
   channel: z.enum(['stdout', 'stderr']),
 })
 
-/** The entries of a server history a learning step may cite: the request, a stop (with its source hash), an output (with its channel), the response or the request failure. */
+/** The entries of a server history a learning step may cite: the sign-in, the request, a stop (with its source hash), an output (with its channel), the response or the request failure. */
 export const nodeServerLearningReferenceSchema = z.discriminatedUnion('type', [
+  z.strictObject({ type: z.literal('sign-in'), sequence }),
   z.strictObject({ type: z.literal('request'), sequence }),
   nodeRunStopReferenceSchema,
   nodeRunOutputReferenceSchema,

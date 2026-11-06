@@ -10,6 +10,7 @@ import type {
 } from '../nodeServerHistorySchemas'
 import type { NodeServerHistorySummary } from '../nodeServerHistoryTypes'
 
+import { findServerReplayTerminal } from './findServerReplayTerminal'
 import { maskSavedOutputEntries } from './maskSavedOutputEntries'
 import { maskSavedServerHeader } from './maskSavedServerHeader'
 import {
@@ -127,13 +128,7 @@ export function buildServerReplayModel(
       : rehydrateNodeServerEntries(history.entries)
   const events = entries.filter((entry) => isReplayEvent(entry, isScript))
   // A failed sign-in is the request's terminal entry; a signed-in one is only the first step before the request.
-  const terminal = events.find(
-    (event) =>
-      event.type === 'response' ||
-      event.type === 'request-failed' ||
-      (event.type === 'sign-in' && event.outcome === 'failed') ||
-      event.type === 'end',
-  )
+  const terminal = findServerReplayTerminal(events)
   const end = entries.find((entry) => entry.type === 'end')
   return {
     studyId: history.header.studyId,
@@ -145,12 +140,7 @@ export function buildServerReplayModel(
       events.map((event, position) => [event.sequence, position]),
     ),
     attempts: isScript ? [] : collectAttempts(entries),
-    ...(terminal?.type === 'response' ||
-    terminal?.type === 'request-failed' ||
-    terminal?.type === 'sign-in' ||
-    terminal?.type === 'end'
-      ? { terminal }
-      : {}),
+    ...(terminal ? { terminal } : {}),
     // The timeline ends at `end`; a journal with no `end` ends at its last event.
     endedAtMs: Math.max(end?.elapsedMs ?? 0, events.at(-1)?.elapsedMs ?? 0),
     endedBeforeAnswer: terminal === undefined,

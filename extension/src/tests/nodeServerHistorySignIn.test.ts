@@ -11,6 +11,12 @@ import {
   type NodeServerHistoryEntryInput,
   type NodeServerHistoryHeader,
 } from '../nodeServerHistorySchemas'
+import { nodeServerLearningReferenceSchema } from '../nodeServerLearningSchemas'
+import { nodeServerStorageDescriptor } from '../nodeServerStorageDescriptor'
+import { adaptServerReplay } from '../utils/adaptServerReplay'
+import { buildServerReplayModel } from '../utils/buildServerReplayModel'
+import { describeServerReplayRow } from '../utils/describeNodeServerReplay'
+import { evaluateNodeServerLearning } from '../utils/evaluateNodeServerLearning'
 import {
   acceptNodeServerEntry,
   newNodeServerJournalProgress,
@@ -311,8 +317,8 @@ test('a sign-in followed by the request, a stop and the response seals complete 
   assert.equal(opened.header.formatVersion, 3)
 })
 
-// protects=a failed sign-in plus the end is a whole story with the failure code as its terminal and no request; fails_when=the seal reads it interrupted, drops the folder as empty or loses the code; no_claim=that the replay shows the stops, which were never reached
-test('a failed sign-in followed by the end seals as a whole story with its code', async (context) => {
+// protects=a failed sign-in plus the end seals partial (no response was recorded) and keeps the failure code in the reason and in the sign-in entry; fails_when=the seal reads it interrupted or complete, drops the folder as empty or loses the code; no_claim=that the replay shows the stops, which were never reached
+test('a failed sign-in followed by the end seals partial and keeps its failure code', async (context) => {
   // Arrange / Act
   const opened = await sealedSignInHistory(context, 'failed')
   const signIn = opened.entries.find((entry) => entry.type === 'sign-in')
@@ -401,4 +407,132 @@ test('format 2 and format 1 headers without signIn still parse', () => {
 
   // Assert
   assert.deepEqual(parsed, [2, 1])
+})
+
+// protects=a history with a failed sign-in and no request owes one explanation citing the sign-in, and citing it settles it; fails_when=the history reads complete with nothing owed, or the sign-in cannot be cited; no_claim=the saved material's text
+test('a failed sign-in with no request owes an explanation that cites the sign-in', async (context) => {
+  // Arrange
+  const opened = await sealedSignInHistory(context, 'failed')
+  const signIn = opened.entries.find((entry) => entry.type === 'sign-in')
+  const sequence = signIn?.sequence ?? -1
+
+  // Act
+  const uncited = evaluateNodeServerLearning(opened.entries, undefined)
+  const cited = evaluateNodeServerLearning(opened.entries, new Set([sequence]))
+
+  // Assert
+  assert.deepEqual(uncited, {
+    coverage: 'none',
+    missing: [{ type: 'sign-in', sequence }],
+  })
+  assert.deepEqual(cited, { coverage: 'complete', missing: [] })
+})
+
+// protects=a signed-in run that ended before any request also owes the sign-in citation; fails_when=it reads complete with nothing owed; no_claim=why the run ended
+test('a signed-in run with no request owes an explanation that cites the sign-in', async (context) => {
+  // Arrange
+  const opened = await sealedSignInHistory(context, 'signed-in-only')
+
+  // Act
+  const verdict = evaluateNodeServerLearning(opened.entries, undefined)
+
+  // Assert
+  assert.equal(verdict.coverage, 'none')
+  assert.equal(verdict.missing[0]?.type, 'sign-in')
+})
+
+// protects=a history with a request keeps its needs exactly: the sign-in is never added beside the request; fails_when=a sign-in need appears for a run that made a request; no_claim=the stop and response needs, covered elsewhere
+test('a signed-in run with a request owes no sign-in citation', async (context) => {
+  // Arrange
+  const opened = await sealedSignInHistory(context, 'whole')
+
+  // Act
+  const verdict = evaluateNodeServerLearning(opened.entries, undefined)
+
+  // Assert
+  assert.deepEqual(
+    verdict.missing.map((part) => part.type),
+    ['request', 'stop', 'response'],
+  )
+})
+
+// protects=the sign-in entry is a citable event and a valid learning reference while a storage-only entry is not; fails_when=a step cannot cite the sign-in, or the end becomes citable; no_claim=resource listing
+test('a step may cite the sign-in entry but not the end', async (context) => {
+  // Arrange
+  const opened = await sealedSignInHistory(context, 'failed')
+  const signIn = opened.entries.find((entry) => entry.type === 'sign-in')
+  const endEntry = opened.entries.find((entry) => entry.type === 'end')
+
+  // Act
+  const citableSignIn = signIn
+    ? nodeServerStorageDescriptor.scanRules.citableOf(
+        signIn,
+        newNodeServerJournalProgress(),
+      )
+    : undefined
+  const citableEnd = endEntry
+    ? nodeServerStorageDescriptor.scanRules.citableOf(
+        endEntry,
+        newNodeServerJournalProgress(),
+      )
+    : undefined
+  const reference = nodeServerLearningReferenceSchema.safeParse({
+    type: 'sign-in',
+    sequence: signIn?.sequence,
+  })
+
+  // Assert
+  assert.deepEqual(citableSignIn, { type: 'sign-in' })
+  assert.equal(citableEnd, undefined)
+  assert.equal(reference.success, true)
+})
+
+// protects=a saved-studies row of a failed sign-in names the sign-in failure code instead of no response; fails_when=the row reads no response or drops the code; no_claim=the row's status words
+test('the saved row of a failed sign-in names the sign-in and its code', async (context) => {
+  // Arrange
+  const opened = await sealedSignInHistory(context, 'failed')
+  const summary = {
+    ...nodeServerStorageDescriptor.emptySummary(opened.header),
+    status: 'partial' as const,
+    verification: 'verified' as const,
+    signInLine: 'Sign-in failed at /api/auth/sign-in/email (SIGN_IN_REJECTED)',
+  }
+
+  // Act
+  const row = describeServerReplayRow(summary)
+
+  // Assert
+  assert.equal(
+    row.includes(
+      '→ Sign-in failed at /api/auth/sign-in/email (SIGN_IN_REJECTED)',
+    ),
+    true,
+  )
+  assert.equal(row.includes('no response'), false)
+})
+
+// protects=the displayed replay model's terminal for a failed sign-in is the sanitized event, so its code prints without terminal controls; fails_when=the shown terminal keeps the raw recorded code; no_claim=the pane layout
+test('a sanitized replay of a failed sign-in shows its terminal code without terminal controls', async (context) => {
+  // Arrange
+  const opened = await sealedSignInHistory(context, 'failed')
+  const built = buildServerReplayModel(opened, {
+    saved: false,
+    captureComplete: false,
+    learningCoverage: 'none',
+  })
+  type ReplayEvent = (typeof built.events)[number]
+  const dirty = (event: ReplayEvent): ReplayEvent =>
+    event.type === 'sign-in' ? { ...event, code: 'SIGN_IN\u202ERE' } : event
+  const model: typeof built = {
+    ...built,
+    events: built.events.map(dirty),
+    terminal: built.events.map(dirty).find((event) => event.type === 'sign-in'),
+  }
+
+  // Act
+  const shown = adaptServerReplay(model, [])
+
+  // Assert
+  const terminal = shown.shownModel.terminal
+  assert.equal(terminal?.type === 'sign-in' && terminal.code, 'SIGN_INRE')
 })

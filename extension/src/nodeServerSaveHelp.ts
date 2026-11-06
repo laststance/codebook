@@ -102,6 +102,11 @@ export function nodeServerSaveHelp() {
       'Read the run resource again: claim a saved replay only when nodeServer.learningCoverage is complete and nodeServer.captureMissing is an empty list.',
     ],
     references: [
+      {
+        type: 'sign-in',
+        shape:
+          '{ type: "sign-in", sequence } (only a run that declared signIn records one; a history whose sign-in failed has no request, so cite the sign-in)',
+      },
       { type: 'request', shape: '{ type: "request", sequence }' },
       {
         type: 'stop',

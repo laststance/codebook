@@ -8,6 +8,7 @@ import type {
   ServerReplayEvent,
   ServerReplayModel,
 } from './buildServerReplayModel'
+import { findServerReplayTerminal } from './findServerReplayTerminal'
 import {
   indexNodeTestOutput,
   stripOutputEntries,
@@ -51,20 +52,11 @@ function sanitizeServerReplayModel(
   const events = model.events.map((event) =>
     sanitizeServerReplayEvent(event, shownOutput),
   )
-  const terminal = events.find(
-    (event) =>
-      event.type === 'response' ||
-      event.type === 'request-failed' ||
-      event.type === 'end',
-  )
+  const terminal = findServerReplayTerminal(events)
   return {
     ...model,
     events,
-    ...(terminal?.type === 'response' ||
-    terminal?.type === 'request-failed' ||
-    terminal?.type === 'end'
-      ? { terminal }
-      : {}),
+    ...(terminal ? { terminal } : {}),
   }
 }
 

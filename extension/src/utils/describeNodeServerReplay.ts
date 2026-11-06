@@ -189,7 +189,7 @@ export function describeServerRowStatus(
 }
 
 /**
- * Words one Saved studies row of a server history: it leads with the saved learning title (else the question), then `Server replay · <METHOD> <path> → <status>` (or `→ <code>`), then its status, so two replays of one route are told apart by what they explain.
+ * Words one Saved studies row of a server history: it leads with the saved learning title (else the question), then `Server replay · <METHOD> <path> → <status>` (or `→ <code>`, or `→ Sign-in failed at <path> (<code>)` when no request followed a sign-in), then its status, so two replays of one route are told apart by what they explain.
  * Called by the Study workspace for each server history of the library and by the removal and open notices that name one.
  * @param summary - The history's summary as the library reads it.
  * @returns The row's outcome text.
@@ -203,10 +203,18 @@ export function describeServerReplayRow(
       ? ` → ${summary.responseStatus}`
       : summary.requestFailureCode
         ? ` → ${summary.requestFailureCode}`
-        : summary.verification === 'verified' && summary.status !== 'recording'
-          ? ' → no response'
-          : ''
-  return `${summary.title ?? summary.question} · Server replay · ${summary.requestLine}${answer} · ${describeServerRowStatus(summary)}`
+        : summary.signInLine
+          ? ` → ${summary.signInLine}`
+          : summary.verification === 'verified' &&
+              summary.status !== 'recording'
+            ? ' → no response'
+            : ''
+  // A run that answered after signing in keeps its sign-in line beside the answer.
+  const signedIn =
+    summary.signInLine && answer && !answer.includes(summary.signInLine)
+      ? ` · ${summary.signInLine}`
+      : ''
+  return `${summary.title ?? summary.question} · Server replay · ${summary.requestLine}${answer}${signedIn} · ${describeServerRowStatus(summary)}`
 }
 
 /** The words of one event in the Study pane's event list: its heading and its body. */

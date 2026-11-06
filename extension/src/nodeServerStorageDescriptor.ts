@@ -39,7 +39,7 @@ import {
 import type { CitableEvent } from './utils/recordingJournalScan'
 
 /**
- * Reduces a server entry to what a learning step may cite: the request, a stop (by its source hash), an output (by its channel), the response or the request failure; the storage-only entries (`source`, `end`, the send marks) are never citable.
+ * Reduces a server entry to what a learning step may cite: the sign-in, the request, a stop (by its source hash), an output (by its channel), the response or the request failure; the storage-only entries (`source`, `end`, the send marks) are never citable.
  * @param entry - A journal entry.
  * @returns The citable form, or `undefined` for an entry no step may cite.
  * @example citableServerEvent(outputEntry) // => { type: 'output', channel: 'stdout' }
@@ -51,6 +51,7 @@ function citableServerEvent(
     case 'stop':
     case 'output':
       return citableRunEvidenceEvent(entry)
+    case 'sign-in':
     case 'request':
     case 'response':
     case 'request-failed':

@@ -1582,7 +1582,7 @@ export const NODE_TEST_HISTORY_MAX_ENTRIES = 10_000
 export const NODE_SERVER_HISTORY_DIRECTORY = 'node-servers.v1'
 /** The `version` of a node-server history's seal and every record other than its header (the header has {@link NODE_SERVER_HISTORY_HEADER_FORMAT_VERSION}); a later cycle relates several histories of one explanation without a format break. */
 export const NODE_SERVER_HISTORY_FORMAT_VERSION = 1
-/** The `formatVersion` a node-server history header is written with since replay frames keep their recorded location; Codebook reads headers 1 and 2, and an earlier Codebook does not list a history with header 2 and keeps its files. */
+/** The `formatVersion` a node-server history header is written with since replay frames keep their recorded location; Codebook reads headers 1, 2 and 3 (3 is {@link NODE_SERVER_HISTORY_SIGN_IN_HEADER_FORMAT_VERSION}), and an earlier Codebook does not list a history with header 2 and keeps its files. */
 export const NODE_SERVER_HISTORY_HEADER_FORMAT_VERSION = 2
 /** The `formatVersion` a node-server history header is written with when its run declared `signIn`; a Codebook without it neither lists such a header nor deletes its files, and the header carries the `sign-in` entry's rules (format 3 if and only if the configuration has `signIn`). */
 export const NODE_SERVER_HISTORY_SIGN_IN_HEADER_FORMAT_VERSION = 3
