@@ -323,14 +323,16 @@ test('a stop during a build that does not settle ends at the stop bound with tra
   assert.equal(harness.run.view().phase, 'failed')
 })
 
-// protects=a build-folder removal that never answers cannot hold the run's stop past the 5 s dispose bound; fails_when=the ending awaits the removal forever; no_claim=the real 5 s (a manual clock fires the bound) or the folder's real deletion
-test('a build-folder removal that never settles does not hold the stop past the dispose bound', async () => {
+// protects=the build-folder removal waits only for what is left of the one 10 s stop bound, so a stop whose debugger release and removal both stop answering still ends at 10 s (Cycle 0092 ship pass 2, outside voice); fails_when=the removal gets its own bound after the stop bound passed and the ending comes at about 15 s, or the ending awaits the removal forever; no_claim=the real 10 s (a manual clock fires the bound) or the folder's real deletion
+test('a stop whose release and build-folder removal never answer still ends at the 10 s stop bound', async () => {
   // Arrange
   const timers = manualClock()
   const build = controlledBuild()
+  const releaseGate = new Promise<void>(() => undefined)
   const harness = createRunHarness({
     configuration: WXT_CONFIGURATION,
     clock: timers.clock,
+    releaseGate,
     prepareSource: async (request) => {
       const prepared = await build.prepareSource(request)
       return {
@@ -343,12 +345,18 @@ test('a build-folder removal that never settles does not hold the stop past the 
   })
   build.gate.resolve(BUILT_SOURCE)
   await harness.run.prepare()
+  let ended = false
   // Act
-  const stopping = harness.run.stop()
+  const stopping = harness.run.stop().then(() => {
+    ended = true
+  })
   await settle()
-  timers.fire(5_000)
-  await stopping
+  timers.fire(10_000)
+  await settle()
+  await settle()
   // Assert
+  assert.equal(ended, true)
+  await stopping
   assert.equal(harness.run.view().phase, 'completed')
 })
 
