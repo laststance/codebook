@@ -47,15 +47,15 @@ export const nodeServerLearningReferenceSchema = z.discriminatedUnion('type', [
 ])
 
 /**
- * The learning material the chat saves for a server history: the same question, title, summary and evidence-classified sequence a test history has, citing the request, a stop, an output, the response or the request failure by journal sequence.
+ * The learning material the chat saves for a server history: the same question, title, summary and evidence-classified sequence a test history has, citing the request, a stop, an output, the response, the request failure or the sign-in by journal sequence.
  * Read by {@link nodeServerStorageDescriptor}'s material codec; the save route that offers it to an agent is published by the producer part of Cycle 0059.
  * @example nodeServerLearningMaterialContentSchema.parse({ question, title, summary, participants, steps })
  */
 export const nodeServerLearningMaterialContentSchema =
   buildNodeLearningMaterialContentSchema(
     nodeServerLearningReferenceSchema,
-    'Required for an observed or source-derived step: the request, a stop, an output, the response or the request failure of this history by its sequence number (a stop with its sourceHash, an output with its channel); omit it only for an unknown step.',
-    'Give it the reference of the request, a stop, an output, the response or the request failure of this history ({type, sequence}, with sourceHash for a stop and channel for an output), or label it unknown.',
+    'Required for an observed or source-derived step: the request, a stop, an output, the response, the request failure or the sign-in of this history by its sequence number (a stop with its sourceHash, an output with its channel); omit it only for an unknown step.',
+    'Give it the reference of the request, a stop, an output, the response, the request failure or the sign-in of this history ({type, sequence}, with sourceHash for a stop and channel for an output), or label it unknown.',
   )
 
 /** A saved server learning material: the content at a revision. */
