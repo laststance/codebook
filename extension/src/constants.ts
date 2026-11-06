@@ -1480,6 +1480,12 @@ export const NODE_SERVER_PORT_MAX = TCP_PORT_MAX
 export const NODE_SERVER_REQUEST_PATH_LIMIT_CHARS = 2_048
 /** The largest request body, in UTF-8 bytes, a node-server declaration may send. */
 export const NODE_SERVER_REQUEST_BODY_LIMIT_BYTES = 16_384
+/** The most non-secret fields a node-server `signIn` declaration may send beside its one secret field. */
+export const NODE_SERVER_SIGN_IN_FIELDS_MAX = 8
+/** The longest key, and the longest value, of one non-secret `signIn` field. */
+export const NODE_SERVER_SIGN_IN_FIELD_LIMIT_CHARS = 256
+/** The longest `signIn.secretField` name: the body key the learner's typed secret is sent under. */
+export const NODE_SERVER_SIGN_IN_SECRET_FIELD_LIMIT_CHARS = 64
 /** The most server output delivered but not yet settled; a server printing faster than its events settle fails its capture instead of buffering without bound. */
 export const NODE_SERVER_OUTPUT_PENDING_LIMIT_BYTES = 1_048_576
 /** How long a stopping server's debugger may take to detach before SIGTERM is sent anyway: a server handling SIGTERM waits for an attached debugger before it exits (Part A, Issue #139). */

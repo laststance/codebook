@@ -143,6 +143,10 @@ const NODE_SERVER_CODES: readonly { code: ErrorCode; when: string }[] = [
     when: `codebook_action: the learner cancelled, or did not answer within ${PAUSE_HOLD_SECONDS} s, the confirmation of a state-changing request`,
   },
   {
+    code: 'NODE_SERVER_SIGN_IN_FAILED',
+    when: 'request: the declared signIn answered a status other than 2xx, or a 2xx without a session cookie; the declared request was not sent',
+  },
+  {
     code: 'NO_PAUSE',
     when: 'codebook_continue: the server is not paused at a declared stop',
   },
