@@ -7,7 +7,7 @@ import {
   NODE_SCRIPT_HISTORY_DIRECTORY,
   NODE_SCRIPT_PROFILE,
 } from '../constants'
-import type { LibraryPackage } from '../libraryPackage'
+import { LibraryPackageCancelled, type LibraryPackage } from '../libraryPackage'
 import { createOwnedNodeScriptRun } from '../ownedNodeScriptRun'
 import { readResource } from '../resources'
 import { createLibraryBuildError } from '../utils/createLibraryBuildError'
@@ -230,7 +230,7 @@ test('a stop while building keeps tracked-file-changed as the run error', async 
 })
 
 // protects=a stop that finds the sources unchanged leaves no error of its own; fails_when=a verified cancellation reads as a failure; no_claim=none beyond protects
-test('a stop while building with verified sources leaves no run error', async (context) => {
+test('a stop while the build ends with a build-error and no tracked-file change leaves no run error', async (context) => {
   // Arrange
   const harness = await createHarness()
   context.after(() => harness.close())
@@ -259,6 +259,36 @@ test('a stop while building with verified sources leaves no run error', async (c
   // Assert
   assert.equal(record.stopped, true)
   assert.equal(record.error, undefined)
+})
+
+// protects=a stop whose build ends as LibraryPackageCancelled (sources verified unchanged) is a plain stop through the service: no library error as record.error, ended within the stop bound, no saved history; fails_when=the cancellation is kept as a run error, waits for the stop bound, or leaves a history; no_claim=the real source verification
+test('a stop while building that ends as a verified cancellation is a plain stop with no history', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { repository } = await openServerRepository(context)
+  harness.service.nodeHistoryRepository = repository
+  const scripts = createScriptHarness({
+    ...baseOptions,
+    library: { packageRoot: 'packages/widgets' },
+    prepareLibrary: buildEndingOnAbort(new LibraryPackageCancelled('removed')),
+  })
+  wireRealRun(harness, scripts)
+  const { record } = startRun(harness)
+  await waitUntil(() => scripts.order.includes('prepareLibrary'))
+
+  // Act
+  // The fake clock is never advanced, so only the build's own ending can settle the stop within the bound.
+  await harness.service.stop({
+    instanceId: harness.service.instanceId,
+    runId: record.id,
+  })
+  const { scripts: saved } = await repository.listByProfile()
+
+  // Assert
+  assert.equal(record.stopped, true)
+  assert.equal(record.error, undefined)
+  assert.deepEqual(saved, [])
 })
 
 // protects=a stop whose build does not settle ends within the stop bound with tracked-files-unverified as the run's error (D21); fails_when=the stop waits for the build forever or reads clean; no_claim=the real tree end
