@@ -84,6 +84,14 @@ function sanitizeServerReplayEvent(
       return { ...event, text: shownOutput.get(event.sequence)! }
     case 'request':
       return { ...event, path: stripTerminalControls(event.path) }
+    case 'sign-in':
+      return {
+        ...event,
+        path: stripTerminalControls(event.path),
+        ...(event.code === undefined
+          ? {}
+          : { code: stripTerminalControls(event.code) }),
+      }
     case 'request-withdrawn':
       return { ...event, code: stripTerminalControls(event.code) }
     case 'stop':

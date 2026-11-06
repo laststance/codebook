@@ -87,6 +87,7 @@ test('a real fixture server run writes a sealed complete history under 2 MiB', a
   })
   // The test debugger reads no frames; the capture is given the snapshot a native session reads, so the history is presentable.
   const history: NodeServerHistorySink = {
+    signIn: (...input) => sink.signIn(...input),
     openRequest: (...input) => sink.openRequest(...input),
     withdrawRequest: (...input) => sink.withdrawRequest(...input),
     markRequestSent: (...input) => sink.markRequestSent(...input),

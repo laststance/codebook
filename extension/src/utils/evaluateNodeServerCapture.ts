@@ -80,6 +80,16 @@ function noResponseReason(
       params: { code: failed.code },
       text: `No response was recorded: the request failed with ${failed.code}.`,
     }
+  // A failed sign-in is the request's terminal entry: the declared request was never sent.
+  const signInFailed = entries.find(
+    (entry) => entry.type === 'sign-in' && entry.outcome === 'failed',
+  )
+  if (signInFailed?.type === 'sign-in')
+    return {
+      code: CODES.noResponseRequestFailed,
+      params: { code: signInFailed.code ?? 'SIGN_IN_FAILED' },
+      text: `No response was recorded: the sign-in failed with ${signInFailed.code ?? 'SIGN_IN_FAILED'}, so the request was not sent.`,
+    }
   const end = entries.find((entry) => entry.type === 'end')
   if (!end)
     // An interrupted history ended with no answer and no `end`; a history whose append failed says why in the append reason instead.

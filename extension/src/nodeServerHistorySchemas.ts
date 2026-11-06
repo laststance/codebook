@@ -12,6 +12,7 @@ import {
   NODE_SERVER_HISTORY_HEADER_FORMAT_VERSION,
   NODE_SERVER_HISTORY_MAX_ENTRIES,
   NODE_SERVER_HISTORY_MAX_STOPS,
+  NODE_SERVER_HISTORY_SIGN_IN_HEADER_FORMAT_VERSION,
   NODE_SERVER_OUTPUT_TEXT_LIMIT_CHARS,
   NODE_SERVER_PROFILE,
   NODE_SERVER_RESPONSE_BODY_LIMIT_CHARS,
@@ -65,10 +66,11 @@ export const nodeRunSourceHashesSchema = z
  */
 export const nodeServerHistoryHeaderSchema = z
   .strictObject({
-    // Header 1 is a history saved before recorded caller locations; both are read, new ones write 2.
+    // Header 1 is a history saved before recorded caller locations; all are read, new ones write 2, or 3 when the run declared `signIn`.
     formatVersion: z.union([
       z.literal(NODE_SERVER_HISTORY_FORMAT_VERSION),
       z.literal(NODE_SERVER_HISTORY_HEADER_FORMAT_VERSION),
+      z.literal(NODE_SERVER_HISTORY_SIGN_IN_HEADER_FORMAT_VERSION),
     ]),
     profile: z.literal(NODE_SERVER_PROFILE),
     workspaceKey: repositoryHashSchema,
@@ -90,6 +92,13 @@ export const nodeServerHistoryHeaderSchema = z
   .refine(
     (value) => value.studyId === `${value.instanceId}_${value.runId}`,
     'Node server history identity differs from its run.',
+  )
+  .refine(
+    (value) =>
+      (value.formatVersion ===
+        NODE_SERVER_HISTORY_SIGN_IN_HEADER_FORMAT_VERSION) ===
+      (value.configuration.signIn !== undefined),
+    'Node server history format 3 belongs to a configuration with signIn, and only to it.',
   )
 
 const stopSource = z.strictObject({
@@ -161,6 +170,29 @@ export const nodeRunOutputTruncatedEntrySchema = z.strictObject({
   limit: z.enum(['entries', 'bytes', 'queue']),
 })
 
+/**
+ * The entry that records the sign-in exchange of a run that declared `signIn`: the path, the HTTP status (or null when none arrived), whether it signed in, the failure code and the duration. It carries no body, no header and no value, so no cookie or secret can reach the file.
+ * @example nodeServerSignInEntrySchema.parse({ type: 'sign-in', sequence: 1, elapsedMs: 5, path: '/api/auth/sign-in/email', status: 200, outcome: 'signed-in', durationMs: 4 })
+ */
+const nodeServerSignInEntrySchema = z
+  .strictObject({
+    type: z.literal('sign-in'),
+    ...base,
+    path: z.string().min(1).max(NODE_SERVER_HISTORY_LOCATION_LIMIT_CHARS),
+    status: z.number().int().min(100).max(599).nullable(),
+    outcome: z.enum(['signed-in', 'failed']),
+    code: z
+      .string()
+      .min(1)
+      .max(NODE_SERVER_HISTORY_CODE_LIMIT_CHARS)
+      .optional(),
+    durationMs: z.number().finite().nonnegative(),
+  })
+  .refine(
+    (entry) => (entry.outcome === 'failed') === (entry.code !== undefined),
+    'A sign-in entry names a code when it failed, and only then.',
+  )
+
 /** One entry of a node-server journal; each carries its journal `sequence` and `elapsedMs` since launch. */
 export const nodeServerHistoryEntrySchema = z.discriminatedUnion('type', [
   nodeRunOutputEntrySchema,
@@ -172,6 +204,7 @@ export const nodeServerHistoryEntrySchema = z.discriminatedUnion('type', [
     path: z.string().min(1).max(NODE_SERVER_HISTORY_LOCATION_LIMIT_CHARS),
     bodyBytes: z.number().int().nonnegative(),
   }),
+  nodeServerSignInEntrySchema,
   z.strictObject({
     type: z.literal('request-withdrawn'),
     ...base,

@@ -17,7 +17,7 @@ import {
   rehydrateNodeServerEntries,
 } from './rehydrateServerStopSnapshot'
 
-/** The entries of a server journal a learner moves through: the request attempt and its withdrawal, output, a stop hit, the response and the request failure. `source` is storage only and a server's `end` ends the timeline, so neither is an event. A script journal has no request or response: its `end` entry is the moment that takes their place, so it is an event there. */
+/** The entries of a server journal a learner moves through: the sign-in, the request attempt and its withdrawal, output, a stop hit, the response and the request failure. `source` is storage only and a server's `end` ends the timeline, so neither is an event. A script journal has no request or response: its `end` entry is the moment that takes their place, so it is an event there. */
 export type ServerReplayEvent =
   | Exclude<
       NodeServerHistoryEntry,
@@ -84,7 +84,7 @@ export type ServerReplayModel = {
   /** The recorded response or request failure, when the journal holds one. */
   terminal?: Extract<
     ServerReplayEvent,
-    { type: 'response' | 'request-failed' | 'end' }
+    { type: 'response' | 'request-failed' | 'sign-in' | 'end' }
   >
   /** The time the recording ended: the `end` entry's, else the last event's; the timeline ends here. */
   endedAtMs: number
@@ -126,10 +126,12 @@ export function buildServerReplayModel(
       ? rehydrateMaskedEntries(maskSavedOutputEntries(history.entries))
       : rehydrateNodeServerEntries(history.entries)
   const events = entries.filter((entry) => isReplayEvent(entry, isScript))
+  // A failed sign-in is the request's terminal entry; a signed-in one is only the first step before the request.
   const terminal = events.find(
     (event) =>
       event.type === 'response' ||
       event.type === 'request-failed' ||
+      (event.type === 'sign-in' && event.outcome === 'failed') ||
       event.type === 'end',
   )
   const end = entries.find((entry) => entry.type === 'end')
@@ -145,6 +147,7 @@ export function buildServerReplayModel(
     attempts: isScript ? [] : collectAttempts(entries),
     ...(terminal?.type === 'response' ||
     terminal?.type === 'request-failed' ||
+    terminal?.type === 'sign-in' ||
     terminal?.type === 'end'
       ? { terminal }
       : {}),

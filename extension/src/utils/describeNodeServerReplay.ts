@@ -231,6 +231,36 @@ function describeServerStopOf(
 }
 
 /**
+ * Words the heading of a recorded sign-in: `Signed in` or `Sign-in failed: <code>`; never a value, cookie or secret.
+ * @param event - The recorded sign-in.
+ * @returns The heading without its time.
+ * @example describeSignInHeadline(failedEntry) // => 'Sign-in failed: SIGN_IN_REJECTED'
+ */
+function describeSignInHeadline(
+  event: Extract<ServerReplayEvent, { type: 'sign-in' }>,
+): string {
+  return event.outcome === 'signed-in'
+    ? 'Signed in'
+    : `Sign-in failed: ${event.code ?? 'unknown'}`
+}
+
+/**
+ * Words the body of a recorded sign-in: where, with which HTTP status and how long it took.
+ * @param event - The recorded sign-in.
+ * @returns `Signed in at <path> (HTTP <status>)` or `Sign-in failed at <path> (<code>)`, then the duration.
+ * @example describeSignInBody(signedIn) // => 'Signed in at /login (HTTP 200) · 25 ms'
+ */
+function describeSignInBody(
+  event: Extract<ServerReplayEvent, { type: 'sign-in' }>,
+): string {
+  const where =
+    event.outcome === 'signed-in'
+      ? `Signed in at ${event.path} (HTTP ${event.status ?? 'unknown'})`
+      : `Sign-in failed at ${event.path} (${event.code ?? 'unknown'})`
+  return `${where} · ${Math.round(event.durationMs)} ms`
+}
+
+/**
  * Words the Study section's locator of the selected event of a server replay.
  * @param event - The selected event.
  * @param model - The replay model.
@@ -243,6 +273,8 @@ export function describeServerPosition(
 ): string {
   const time = `${formatEventSeconds(event.elapsedMs)} s`
   switch (event.type) {
+    case 'sign-in':
+      return `${describeSignInHeadline(event)} · ${time}`
     case 'request':
       return `${NODE_SERVER_REPLAY_TEXT.eventRequest} · ${time}`
     case 'request-withdrawn':
@@ -275,6 +307,8 @@ export function describeServerStepAction(
   switch (event.type) {
     case 'stop':
       return `Inspect ${describeServerStopOf(event, model)} · ${time}`
+    case 'sign-in':
+      return `Show sign-in · ${time}`
     case 'request':
     case 'request-withdrawn':
       return `Show request · ${time}`
@@ -323,6 +357,8 @@ export function describeServerAnswer(
     return `${NODE_SERVER_REPLAY_TEXT.eventResult} ${terminal.status}`
   // A script replay answers with how its run ended.
   if (terminal?.type === 'end') return describeScriptEndHeadline(terminal)
+  if (terminal?.type === 'sign-in')
+    return `Sign-in failed: ${terminal.code ?? 'unknown'}`
   if (terminal) return `Request failed: ${terminal.code}`
   // An interrupted script history has no end entry, and a script never has a response.
   return profile === 'node-script' ? 'No end recorded' : 'No response recorded'
@@ -342,6 +378,11 @@ export function describeServerEventRow(
 ): ServerReplayEventRow {
   const time = `${formatEventSeconds(event.elapsedMs)} s`
   switch (event.type) {
+    case 'sign-in':
+      return {
+        heading: `${describeSignInHeadline(event)} · ${time}`,
+        body: describeSignInBody(event),
+      }
     case 'request':
       return {
         heading: `${NODE_SERVER_REPLAY_TEXT.eventRequest} · ${time}`,

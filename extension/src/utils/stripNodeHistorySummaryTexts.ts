@@ -41,6 +41,9 @@ function stripServerSummaryTexts(
           requestFailureCode: stripTerminalControls(summary.requestFailureCode),
         }
       : {}),
+    ...(summary.signInLine
+      ? { signInLine: stripTerminalControls(summary.signInLine) }
+      : {}),
   }
 }
 
