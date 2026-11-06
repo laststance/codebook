@@ -1,5 +1,6 @@
 import type { ConfiguredStudy } from '../configuredStudySchemas'
 import {
+  API_ROUTE_STUDY_VERSION,
   MODULE_EVALUATION_STUDY_VERSION,
   ROUTE_HANDLER_STUDY_VERSION,
 } from '../constants'
@@ -7,6 +8,7 @@ import {
 import { afterOperationOf } from './afterOperationOf'
 import type { configuredStops } from './configuredStops'
 import {
+  isApiRouteObservation,
   isModuleEvaluationObservation,
   isRouteHandlerObservation,
   usesServerRenderEvidence,
@@ -41,6 +43,8 @@ function assertFormat8Observation(
   const stop = stops[declaredIndex]
   if (observation.routeHandler !== undefined && execution !== 'route-handler')
     throw new Error('Only a route-handler observation has a routeHandler.')
+  if (observation.apiRoute !== undefined && execution !== 'api-route')
+    throw new Error('Only an API-route observation has an apiRoute.')
   if (!stop || seenStops.has(declaredIndex))
     throw new Error(
       'Configured observation names a stop that is not declared or already observed.',
@@ -53,6 +57,8 @@ function assertFormat8Observation(
   const group = afterOperationOf(stop) ?? 1
   if (execution === 'route-handler')
     assertRouteHandlerObservation(observation, group)
+  else if (execution === 'api-route')
+    assertApiRouteObservation(observation, group)
   else assertAttributionFitsGroup(observation, group)
 }
 
@@ -79,6 +85,37 @@ function assertRouteHandlerObservation(
   if (routeHandler === undefined || scope !== undefined)
     throw new Error(
       'A route-handler observation needs a routeHandler and has no scope.',
+    )
+}
+
+/**
+ * Checks an API-route observation (format 14) against the group of its stop: it is observed after operation k >= 1 (a Pages API route runs for a request an operation sent, never for the page load), names its request in `apiRoute` and no `routeHandler`, and has no module scope.
+ * @param observation - The observation, whose `execution` is `api-route`.
+ * @param group - The stop's `afterOperation`.
+ * @throws When the attribution, the operation index, `apiRoute`, `routeHandler` or `scope` contradicts that.
+ * @example assertApiRouteObservation({ execution: 'api-route', attribution: 'after-operation', operationIndex: 2, apiRoute }, 2)
+ */
+function assertApiRouteObservation(
+  observation: Observation,
+  group: number,
+): void {
+  const { attribution, operationIndex, apiRoute, routeHandler, scope } =
+    observation
+  if (attribution !== 'after-operation' || group === 0)
+    throw new Error(
+      'An API-route observation is attributed after an operation.',
+    )
+  if (operationIndex !== group)
+    throw new Error(
+      'Configured observation operationIndex differs from its stop.',
+    )
+  if (
+    apiRoute === undefined ||
+    routeHandler !== undefined ||
+    scope !== undefined
+  )
+    throw new Error(
+      'An API-route observation needs an apiRoute and has no routeHandler or scope.',
     )
 }
 
@@ -142,6 +179,7 @@ export function assertObservationFormatFields(
         (observation) =>
           observation.scope !== undefined ||
           observation.routeHandler !== undefined ||
+          observation.apiRoute !== undefined ||
           observation.execution !== undefined ||
           observation.attribution !== undefined ||
           observation.operationIndex !== undefined ||
@@ -159,7 +197,7 @@ export function assertObservationFormatFields(
 }
 
 /**
- * Pairs a format 12 or 13 study with the fields only it keeps: format 12 is written only for a study that holds a module-evaluation or preparation observation, format 13 only for one that holds a route-handler observation (and keeps format 12's fields too).
+ * Pairs a format 12, 13 or 14 study with the fields only it keeps: format 12 is written only for a study that holds a module-evaluation or preparation observation, format 13 only for one that holds a route-handler observation (and keeps format 12's fields too), format 14 only for one that holds an API-route observation (and keeps the fields of 12 and 13).
  * Called by {@link assertObservationFormatFields}.
  * @param study - The saved study, without its images; it follows the format 8 rules.
  * @throws When a field sits in a format that does not keep it, or a format holds none of its fields.
@@ -172,11 +210,13 @@ function assertFormatHoldsItsFields(
     isModuleEvaluationObservation,
   )
   const holdsRouteHandler = study.observations.some(isRouteHandlerObservation)
-  // The scope and the preparation attribution belong to formats 12 and 13.
+  const holdsApiRoute = study.observations.some(isApiRouteObservation)
+  // The scope and the preparation attribution belong to formats 12 to 14.
   if (
     holdsModuleEvaluation &&
     study.version !== MODULE_EVALUATION_STUDY_VERSION &&
-    study.version !== ROUTE_HANDLER_STUDY_VERSION
+    study.version !== ROUTE_HANDLER_STUDY_VERSION &&
+    study.version !== API_ROUTE_STUDY_VERSION
   )
     throw new Error(
       'Only a study of format 12 keeps a module scope or a preparation attribution.',
@@ -188,11 +228,25 @@ function assertFormatHoldsItsFields(
     throw new Error(
       'A study of format 12 holds a module-evaluation or preparation observation.',
     )
-  // A route-handler observation makes the study format 13, and format 13 is written only for one that holds it.
-  if (holdsRouteHandler !== (study.version === ROUTE_HANDLER_STUDY_VERSION))
+  // An API-route observation makes the study format 14, and format 14 is written only for one that holds it.
+  if (holdsApiRoute !== (study.version === API_ROUTE_STUDY_VERSION))
     throw new Error(
-      holdsRouteHandler
-        ? 'Only a study of format 13 keeps a route-handler observation.'
-        : 'A study of format 13 holds a route-handler observation.',
+      holdsApiRoute
+        ? 'Only a study of format 14 keeps an API-route observation.'
+        : 'A study of format 14 holds an API-route observation.',
     )
+  // A route-handler observation makes the study format 13 (or 14 beside an API-route one); format 13 is written only for a study that holds one and none of the API route.
+  if (
+    holdsRouteHandler &&
+    study.version !== ROUTE_HANDLER_STUDY_VERSION &&
+    study.version !== API_ROUTE_STUDY_VERSION
+  )
+    throw new Error(
+      'Only a study of format 13 keeps a route-handler observation.',
+    )
+  if (
+    study.version === ROUTE_HANDLER_STUDY_VERSION &&
+    (!holdsRouteHandler || holdsApiRoute)
+  )
+    throw new Error('A study of format 13 holds a route-handler observation.')
 }

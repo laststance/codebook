@@ -1,3 +1,4 @@
+import { describeApiRoutePauseMessage } from './describeApiRoutePauseMessage'
 import { describeRouteHandlerPauseMessage } from './describeRouteHandlerPauseMessage'
 
 /** What the run knows about a render in progress, for {@link describeRenderRunMessage}. */
@@ -10,6 +11,13 @@ export type RenderRunMessageInput = {
   unconfirmedReason?: string
   /** A route-handler pause is held now: the handler's HTTP method, route pattern and the request's pathname, and the operation after which it was observed. */
   routeHandler?: {
+    method: string
+    route: string
+    path: string
+    operationIndex: number
+  }
+  /** A Pages API route pause is held now: the handler's HTTP method, route pattern and the request's pathname, and the operation after which it was observed. */
+  apiRoute?: {
     method: string
     route: string
     path: string
@@ -33,6 +41,10 @@ export type RenderRunMessageInput = {
 export function describeRenderRunMessage(
   input: RenderRunMessageInput,
 ): string | undefined {
+  if (input.apiRoute) {
+    const { operationIndex, ...apiRoute } = input.apiRoute
+    return `${describeApiRoutePauseMessage({ apiRoute, operationIndex })}. The page's request waits for the handler; continue to let it answer, or stop it with codebook_stop.`
+  }
   if (input.routeHandler) {
     const { operationIndex, ...routeHandler } = input.routeHandler
     return `${describeRouteHandlerPauseMessage({ routeHandler, operationIndex })}. The page's request waits for the handler; continue to let it answer, or stop it with codebook_stop.`

@@ -13,6 +13,7 @@ type PauseFields = {
   attribution?: unknown
   scope?: unknown
   routeHandler?: unknown
+  apiRoute?: unknown
   operationIndex?: unknown
   declaredIndex?: unknown
   executionIndex?: unknown
@@ -37,6 +38,7 @@ const EXECUTIONS: readonly string[] = [
   'server-action',
   'server-render',
   'route-handler',
+  'api-route',
 ]
 const ATTRIBUTIONS: readonly string[] = [
   'entry-load',
@@ -92,6 +94,24 @@ function routeHandlerOf(fields: PauseFields): {
     : {}
 }
 
+/**
+ * Reads the request of an API-route observation (format 14) from its loosely typed fields.
+ * Called by {@link nameOf}; other observations carry none.
+ * @param fields - The observation's fields.
+ * @returns `{ apiRoute: { method, route } }` when both are strings, else an empty object.
+ * @example apiRouteOf({ apiRoute: { method: 'GET', route: '/api/data', path: '/api/data' } }) // => { apiRoute: { method: 'GET', route: '/api/data' } }
+ */
+function apiRouteOf(fields: PauseFields): {
+  apiRoute?: { method: string; route: string }
+} {
+  const request = fields.apiRoute as
+    { method?: unknown; route?: unknown } | undefined
+  return typeof request?.method === 'string' &&
+    typeof request.route === 'string'
+    ? { apiRoute: { method: request.method, route: request.route } }
+    : {}
+}
+
 /** Names the pause of one observation. @example nameOf({ participant: 'server' }, stops) // the Server action name */
 function nameOf(
   fields: PauseFields,
@@ -114,6 +134,7 @@ function nameOf(
     attribution,
     ...(fields.scope === 'module' && { scope: 'module' as const }),
     ...routeHandlerOf(fields),
+    ...apiRouteOf(fields),
     operationIndex: numberOf(fields.operationIndex),
     path: pathOfStop(stops, fields, position),
     line: lineOf(fields) ?? 1,

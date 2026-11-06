@@ -21,6 +21,7 @@ export function observationOfFormat(
   const {
     scope: _scope,
     routeHandler: _routeHandler,
+    apiRoute: _apiRoute,
     execution: _execution,
     attribution: _attribution,
     operationIndex: _operationIndex,

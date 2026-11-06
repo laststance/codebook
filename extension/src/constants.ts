@@ -1815,8 +1815,10 @@ export const REACT_SCRIPTS_STUDY_VERSION = 11
 export const MODULE_EVALUATION_STUDY_VERSION = 12
 /** The format of a Next study (at the repository root or with a `packageRoot`) that holds a route-handler observation (`execution: "route-handler"` with its `routeHandler` object): the format 8 rules plus those fields, and any module-evaluation field format 12 keeps. Every other Next study keeps {@link SERVER_RENDER_STUDY_VERSION}, {@link PACKAGE_ROOT_STUDY_VERSION} or {@link MODULE_EVALUATION_STUDY_VERSION}; the suffix `.study.v13.json` makes Codebook 0.2.86 and older list such a study as saved by a newer Codebook, never as a server render. */
 export const ROUTE_HANDLER_STUDY_VERSION = 13
+/** The format of a Next study (at the repository root or with a `packageRoot`) that holds a Pages API route observation (`execution: "api-route"` with its `apiRoute` object): the format 8 rules plus those fields, and every field format 12 and 13 keep. Every other Next study keeps {@link SERVER_RENDER_STUDY_VERSION}, {@link PACKAGE_ROOT_STUDY_VERSION}, {@link MODULE_EVALUATION_STUDY_VERSION} or {@link ROUTE_HANDLER_STUDY_VERSION}; the suffix `.study.v14.json` makes Codebook 0.2.87 and older list such a study as saved by a newer Codebook, never as a server render. */
+export const API_ROUTE_STUDY_VERSION = 14
 /** The highest study format this Codebook reads; a saved study above it is listed as saved by a newer Codebook. */
-export const READABLE_STUDY_VERSION = ROUTE_HANDLER_STUDY_VERSION
+export const READABLE_STUDY_VERSION = API_ROUTE_STUDY_VERSION
 /** The replay's operation marks closer than this many pixels stack vertically instead of overlapping. */
 export const OPERATION_MARK_STACK_PX = 24
 /** Below this webview width in pixels the operation marks show their numbers only. */
@@ -1828,6 +1830,12 @@ export const CONFIGURED_STUDY_METADATA_SUFFIX = '.study.meta.v3.json'
 // Highest existing version owns a logical study, including when its bytes are corrupt.
 // A change of the saved study format that an older Codebook cannot read takes the next format number and its own `.study.v<n>.json` suffix in this table; an older Codebook then lists such a study as saved by a newer one and keeps it, instead of failing on its schema.
 export const STUDY_STORAGE_FORMATS = [
+  {
+    version: API_ROUTE_STUDY_VERSION,
+    format: 'v14',
+    archiveSuffix: '.study.v14.json',
+    metadataSuffix: '.study.meta.v14.json',
+  },
   {
     version: ROUTE_HANDLER_STUDY_VERSION,
     format: 'v13',
