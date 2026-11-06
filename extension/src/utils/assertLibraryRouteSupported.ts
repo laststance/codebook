@@ -6,6 +6,7 @@ import type { StudyError } from '../errors'
 
 import { createLibraryBuildError } from './createLibraryBuildError'
 import { isAtOrInsideFolder } from './isAtOrInsideFolder'
+import { isNpmPackageName } from './isNpmPackageName'
 import { readInstalledPackageManifest } from './readInstalledPackageManifest'
 import {
   resolveRepositoryPackageManager,
@@ -156,10 +157,11 @@ async function readSupportedManifest(
   refuse: Refuser,
 ): Promise<Manifest & { name: string }> {
   const library = await readManifest(libraryRoot)
-  if (library?.name === undefined)
+  // A name that is not a plain package name could build a path outside the pack folders.
+  if (library?.name === undefined || !isNpmPackageName(library.name))
     throw refuse(
       'not-a-package',
-      '`library.packageRoot` holds no package.json with a name.',
+      '`library.packageRoot` holds no package.json with a valid package name.',
       { field: LIBRARY_PACKAGE_ROOT_FIELD },
     )
   const example = await readManifest(inputs.examplePackageRoot)

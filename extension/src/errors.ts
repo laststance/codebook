@@ -22,7 +22,7 @@ const LIBRARY_BUILD_UNSUPPORTED_RECOVERY: Record<
   'outside-repository':
     'library.packageRoot is not a folder inside the opened repository (a link that leaves it counts too): point it at the library package folder, relative to the repository root.',
   'not-a-package':
-    'library.packageRoot holds no package.json with a name: point it at the folder of the library package.',
+    'library.packageRoot holds no package.json with a valid package name: point it at the folder of the library package.',
   'not-a-dependency':
     "the Example's package.json does not depend on the library (details.package): name the package the Example imports, or do not declare library.",
   'inside-example':
