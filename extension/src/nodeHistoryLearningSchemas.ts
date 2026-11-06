@@ -5,13 +5,14 @@ import { HISTORY_SHARED_MAX_SEQUENCE } from './constants'
 import { nodeServerLearningReferenceSchema } from './nodeServerLearningSchemas'
 import { buildNodeLearningMaterialContentSchema } from './nodeTestHistorySchemas'
 
-/** Every entry a step of any history profile may cite (a node-script history cites stops, outputs and its end): a node-server history has the request, stops, outputs, the response or the request failure (its own reference schema); a node-test history has stops, outputs and the result; a chrome-extension history has captured stops (with their context), pauses and the result. One schema for both, so a malformed step is refused at its own element, whichever profile its study id names. */
+/** Every entry a step of any history profile may cite (a node-script history cites stops, outputs and its end): a node-server history has the request, stops, outputs, the response, the request failure or the sign-in (its own reference schema); a node-test history has stops, outputs and the result; a chrome-extension history has captured stops (with their context), pauses and the result. One schema for both, so a malformed step is refused at its own element, whichever profile its study id names. */
 const [
   requestReference,
   serverStopReference,
   outputReference,
   responseReference,
   requestFailedReference,
+  signInReference,
 ] = nodeServerLearningReferenceSchema.options
 // Citations of either profile share one schema, so every sequence takes the largest history's bound; the service parses again with the study's own profile schema.
 const sharedSequence = z
@@ -24,6 +25,7 @@ const nodeHistoryReferenceSchema = z.discriminatedUnion('type', [
   outputReference.extend({ sequence: sharedSequence }),
   responseReference.extend({ sequence: sharedSequence }),
   requestFailedReference.extend({ sequence: sharedSequence }),
+  signInReference.extend({ sequence: sharedSequence }),
   // A stop of a node-server history, or of a chrome-extension history (which also names its context, and optionally its target URL or worker generation).
   z.strictObject({
     ...serverStopReference.shape,
@@ -52,6 +54,6 @@ const nodeHistoryReferenceSchema = z.discriminatedUnion('type', [
 export const nodeHistoryLearningMaterialContentSchema =
   buildNodeLearningMaterialContentSchema(
     nodeHistoryReferenceSchema,
-    'Required for an observed or source-derived step: an entry of this history by its sequence number. node-test: a stop (with its sourceHash), an output (with its channel) or the result. node-script: a stop (with its sourceHash), an output (with its channel) or the end. node-server: the request, a stop (with its sourceHash), an output (with its channel), the response or the request failure. chrome-extension: a captured stop (with its sourceHash and its context, page or service-worker), a pause (with its context) or the result. Omit it only for an unknown step.',
-    'Give it the reference of an entry of this history ({type, sequence}, with sourceHash for a stop and channel for an output): node-test cites stops, outputs and the result, node-script stops, outputs and the end, node-server the request, stops, outputs, the response or the request failure, chrome-extension captured stops (with context), pauses and the result; or label it unknown.',
+    'Required for an observed or source-derived step: an entry of this history by its sequence number. node-test: a stop (with its sourceHash), an output (with its channel) or the result. node-script: a stop (with its sourceHash), an output (with its channel) or the end. node-server: the request, a stop (with its sourceHash), an output (with its channel), the response, the request failure or the sign-in. chrome-extension: a captured stop (with its sourceHash and its context, page or service-worker), a pause (with its context) or the result. Omit it only for an unknown step.',
+    'Give it the reference of an entry of this history ({type, sequence}, with sourceHash for a stop and channel for an output): node-test cites stops, outputs and the result, node-script stops, outputs and the end, node-server the request, stops, outputs, the response, the request failure or the sign-in, chrome-extension captured stops (with context), pauses and the result; or label it unknown.',
   )

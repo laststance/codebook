@@ -47,6 +47,8 @@ export async function editorHarness(
     }>
     /** How long after js-debug's root session the target child session starts; the root is announced first, as in the real tree. */
     childStartDelayMs?: number
+    /** Runs the real {@link captureReplayDebugSnapshot} over the Local scope offering these variables, instead of the empty snapshot stand-in. */
+    localVariables?: DebugProtocol.Variable[]
   } = {},
 ) {
   const calls: string[] = []
@@ -200,6 +202,10 @@ export async function editorHarness(
         return {
           scopes: [{ name: 'Local', variablesReference: 1, expensive: false }],
         } satisfies DebugProtocol.ScopesResponse['body']
+      if (command === 'variables' && options.localVariables)
+        return {
+          variables: options.localVariables,
+        } satisfies DebugProtocol.VariablesResponse['body']
       return {}
     },
   }
@@ -359,14 +365,19 @@ export async function editorHarness(
           unavailable: [],
         }),
       },
-      './utils/captureReplayDebugSnapshot': {
-        captureReplayDebugSnapshot: async () => ({
-          version: 1,
-          frames: [],
-          variables: [],
-          limitations: [],
-        }),
-      },
+      // Absent, the real capture runs over the variables the Local scope offers.
+      ...(options.localVariables
+        ? {}
+        : {
+            './utils/captureReplayDebugSnapshot': {
+              captureReplayDebugSnapshot: async () => ({
+                version: 1,
+                frames: [],
+                variables: [],
+                limitations: [],
+              }),
+            },
+          }),
     },
   )
   /** The adapter's side: stops and the learner's resume. */
@@ -463,6 +474,7 @@ export async function editorHarness(
         workspace: EDITOR_WORKSPACE,
       },
       citedSources: NodeServerDebuggerInput['citedSources'] = [],
+      maskKnownText?: NodeServerDebuggerInput['maskKnownText'],
     ) {
       sourceFile = source.file
       const events: Array<{ type: string; detail: unknown }> = []
@@ -480,6 +492,7 @@ export async function editorHarness(
           inspections: [],
         })),
         record: (type, detail) => events.push({ type, detail }),
+        ...(maskKnownText ? { maskKnownText } : {}),
       })
       return { debug, events }
     },

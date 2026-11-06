@@ -3,6 +3,7 @@ import {
   NODE_SERVER_HISTORY_HEADER_FORMAT_VERSION,
   NODE_SERVER_HISTORY_LIMIT_BYTES,
   NODE_SERVER_HISTORY_SEAL_LIMIT_BYTES,
+  NODE_SERVER_HISTORY_SIGN_IN_HEADER_FORMAT_VERSION,
 } from './constants'
 import type { HistoryStorageDescriptor } from './historyStorageDescriptor'
 import {
@@ -38,7 +39,7 @@ import {
 import type { CitableEvent } from './utils/recordingJournalScan'
 
 /**
- * Reduces a server entry to what a learning step may cite: the request, a stop (by its source hash), an output (by its channel), the response or the request failure; the storage-only entries (`source`, `end`, the send marks) are never citable.
+ * Reduces a server entry to what a learning step may cite: the sign-in, the request, a stop (by its source hash), an output (by its channel), the response or the request failure; the storage-only entries (`source`, `end`, the send marks) are never citable.
  * @param entry - A journal entry.
  * @returns The citable form, or `undefined` for an entry no step may cite.
  * @example citableServerEvent(outputEntry) // => { type: 'output', channel: 'stdout' }
@@ -50,6 +51,7 @@ function citableServerEvent(
     case 'stop':
     case 'output':
       return citableRunEvidenceEvent(entry)
+    case 'sign-in':
     case 'request':
     case 'response':
     case 'request-failed':
@@ -57,6 +59,20 @@ function citableServerEvent(
     default:
       return undefined
   }
+}
+
+/**
+ * Words the recorded sign-in as one line for the summary: where it signed in and with which status, or where it failed and why. Never holds a value, cookie or secret.
+ * @param entry - The history's `sign-in` entry.
+ * @returns `Signed in at /login (HTTP 200)` or `Sign-in failed at /login (SIGN_IN_REJECTED)`.
+ * @example describeSignInLine(signedInEntry) // => 'Signed in at /login (HTTP 200)'
+ */
+function describeSignInLine(
+  entry: Extract<NodeServerHistoryEntry, { type: 'sign-in' }>,
+): string {
+  if (entry.outcome === 'signed-in')
+    return `Signed in at ${entry.path} (HTTP ${entry.status ?? 'unknown'})`
+  return `Sign-in failed at ${entry.path} (${entry.code ?? 'unknown'})`
 }
 
 /**
@@ -112,7 +128,11 @@ export const nodeServerStorageDescriptor: HistoryStorageDescriptor<NodeServerHis
     ),
     stampHeader: (input) => ({
       ...input,
-      formatVersion: NODE_SERVER_HISTORY_HEADER_FORMAT_VERSION,
+      // A run that declared signIn writes format 3, which a Codebook without sign-in neither lists nor deletes; every other run keeps 2.
+      formatVersion:
+        input.configuration.signIn === undefined
+          ? NODE_SERVER_HISTORY_HEADER_FORMAT_VERSION
+          : NODE_SERVER_HISTORY_SIGN_IN_HEADER_FORMAT_VERSION,
     }),
     parseHeader: (value) => nodeServerHistoryHeaderSchema.parse(value),
     parseSeal: (value) => nodeServerHistorySealSchema.parse(value),
@@ -144,6 +164,7 @@ export const nodeServerStorageDescriptor: HistoryStorageDescriptor<NodeServerHis
       const { header, entries, seal } = history
       const response = entries.find((entry) => entry.type === 'response')
       const failure = entries.find((entry) => entry.type === 'request-failed')
+      const signIn = entries.find((entry) => entry.type === 'sign-in')
       const summary: NodeServerHistorySummary = {
         ...emptyNodeServerSummary(header),
         ...summarizeRunEvidence({
@@ -165,6 +186,7 @@ export const nodeServerStorageDescriptor: HistoryStorageDescriptor<NodeServerHis
         }),
         ...(response ? { responseStatus: response.status } : {}),
         ...(failure ? { requestFailureCode: failure.code } : {}),
+        ...(signIn ? { signInLine: describeSignInLine(signIn) } : {}),
       }
       return { summary }
     },

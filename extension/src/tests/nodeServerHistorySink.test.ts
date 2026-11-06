@@ -39,12 +39,28 @@ async function startSink(
     roots?: CauseRoots
     schedule?: NonNullable<NodeServerHistorySinkInput['schedule']>
     onAppendFailed?: () => void
+    /** The run declares `signIn`, so its header is written as format 3 and the journal accepts a sign-in entry. */
+    withSignIn?: boolean
   } = {},
 ) {
   const { repository, learningDirectory } = await openServerRepository(context)
-  const header = nodeServerHistoryHeader(SERVER_WORKSPACE_KEY, {
+  const plainHeader = nodeServerHistoryHeader(SERVER_WORKSPACE_KEY, {
     declaredStops: 2,
   })
+  const header = options.withSignIn
+    ? {
+        ...plainHeader,
+        configuration: {
+          ...plainHeader.configuration,
+          signIn: {
+            path: '/login',
+            fields: { email: 'learner@example.test' },
+            secretField: 'password',
+            secret: 'ask-learner' as const,
+          },
+        },
+      }
+    : plainHeader
   const writer = await repository.serverHistories.start(header)
   let fire: (() => void) | undefined
   const sink = new NodeServerHistorySinkImpl({
@@ -546,6 +562,77 @@ test('reports after a request failure are dropped and leave the writer unfailed'
     history.entries.map((entry) => entry.type),
     ['request', 'request-sent', 'request-failed', 'end'],
   )
+})
+
+// protects=a sign-in reported after a request attempt opened is dropped and the writer is not faulted; fails_when=the late sign-in reaches the writer, whose rules refuse it, and the history seals as an append failure; no_claim=the run's own order of reports
+test('a sign-in reported after a request attempt is dropped and leaves the writer unfailed', async (context) => {
+  // Arrange
+  const { sink, writer, store, studyId } = await startSink(context, {
+    withSignIn: true,
+  })
+  const signedIn = {
+    path: '/login',
+    status: 200,
+    outcome: 'signed-in' as const,
+    durationMs: 4,
+  }
+  sink.signIn(5, signedIn)
+  sink.openRequest(10, { method: 'GET', path: '/api/x', bodyBytes: 0 })
+
+  // Act
+  sink.signIn(11, signedIn)
+  await writer.seal({ elapsedMs: 30, reason: 'stopped' })
+  const history = await store.read(studyId)
+
+  // Assert
+  assert.equal(writer.appendFailure, undefined)
+  assert.deepEqual(
+    history.entries.map((entry) => entry.type),
+    ['sign-in', 'request', 'end'],
+  )
+})
+
+// protects=a sign-in reported after a failed sign-in (a terminal entry) is dropped and the writer is not faulted; fails_when=the second sign-in reaches the writer, whose rules refuse it, and the history seals as an append failure; no_claim=the run's own order of reports
+test('a sign-in reported after a failed sign-in is dropped and leaves the writer unfailed', async (context) => {
+  // Arrange
+  const { sink, writer, store, studyId } = await startSink(context, {
+    withSignIn: true,
+  })
+  sink.signIn(5, {
+    path: '/login',
+    status: 401,
+    outcome: 'failed',
+    code: 'NODE_SERVER_SIGN_IN_FAILED',
+    durationMs: 3,
+  })
+
+  // Act
+  sink.signIn(6, {
+    path: '/login',
+    status: 200,
+    outcome: 'signed-in',
+    durationMs: 4,
+  })
+  await writer.seal({ elapsedMs: 30, reason: 'stopped' })
+  const history = await store.read(studyId)
+
+  // Assert
+  assert.equal(writer.appendFailure, undefined)
+  assert.deepEqual(
+    history.entries.map((entry) => entry.type),
+    ['sign-in', 'end'],
+  )
+})
+
+// protects=a request failure reported while no request was ever opened is dropped, so the writer is not faulted and the seal keeps the run's real cause; fails_when=the stray request-failed reaches the writer and the history seals as an append failure; no_claim=which run path reports it
+test('a request failure with no opened request is dropped and leaves the writer unfailed', async (context) => {
+  // Arrange
+  const { sink, writer } = await startSink(context)
+  // Act
+  sink.failRequest(5, 'REQUEST_TIMEOUT', 'never opened')
+  await writer.seal({ elapsedMs: 10, reason: 'stopped' })
+  // Assert
+  assert.equal(writer.appendFailure, undefined)
 })
 
 // protects=a withdrawal reported after the bytes were sent is dropped, the answer is still recorded and the history seals complete; fails_when=the late withdrawal reaches the writer and marks it failed; no_claim=the run's own retry rule

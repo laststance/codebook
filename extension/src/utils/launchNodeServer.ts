@@ -14,7 +14,7 @@ import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { buildNodeServerEnvironment } from './buildNodeServerEnvironment'
-import type { ProcessOutputEvent } from './captureProcessOutput'
+import type { KnownValueMask, ProcessOutputEvent } from './captureProcessOutput'
 import {
   confirmLaunchedGroup,
   type LaunchedGroupVerdict,
@@ -41,6 +41,8 @@ export type NodeServerLaunchRequest = ResolvedNodeServerLaunch & {
   node: { executable: string; version: string }
   /** The private roots the server's output must not carry; hidden statefully, across chunk boundaries, before the output is journaled or stored ({@link captureProcessOutput}). */
   privateRoots?: CauseRoots
+  /** The run's known secret values; masked statefully in the server's output, across chunk boundaries, before it is journaled or stored ({@link captureProcessOutput}). */
+  knownValues?: KnownValueMask
 }
 
 /** How an owned server process ended. */
@@ -256,6 +258,7 @@ export async function launchNodeServer(
         'Node server output capture failed: output outpaced its delivery beyond its limit.',
       failurePrefix: 'Node server output capture failed',
       ...(launch.privateRoots ? { privateRoots: launch.privateRoots } : {}),
+      ...(launch.knownValues ? { knownValues: launch.knownValues } : {}),
     })
   const exitOf = (): NodeServerExit => ({
     exitCode: child.exitCode,
@@ -286,6 +289,15 @@ export async function launchNodeServer(
       Number(process.hrtime.bigint() - startedAt) / NANOSECONDS_PER_MILLISECOND,
     /** The last redacted output, for a failure's cause. @example server.output() // => 'fixture listening on 127.0.0.1:4100\n' */
     output: () => capture.tail(),
+    // Present only for a launch given `knownValues`, so a launcher without them (or a test's fake) stays a valid owned process.
+    ...(launch.knownValues
+      ? {
+          /** Publishes the output held for known values that is settled under the current mask, as the run calls when its sign-in response is read. @example server.releaseHeldOutput?.() */
+          releaseHeldOutput: (): void => capture.releaseHeld(),
+          /** Discards the output held for known values, reporting its bytes through the mask's `onWithheld`, as the run calls when its sign-in ends without a session. @example server.dropHeldOutput?.() */
+          dropHeldOutput: (): void => capture.dropHeld(),
+        }
+      : {}),
     /** How the process ended, or `undefined` while it runs. @example server.exited() // => { exitCode: 3, signal: null } */
     exited: (): NodeServerExit | undefined =>
       hasExited() ? exitOf() : undefined,

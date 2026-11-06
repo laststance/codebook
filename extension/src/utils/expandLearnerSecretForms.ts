@@ -7,6 +7,10 @@ const HTML_ESCAPES: ReadonlyArray<readonly [string, string]> = [
   ["'", '&#39;'],
 ]
 
+/** Matches a lone UTF-16 surrogate (a high one not followed by a low one, or a low one not preceded by a high one); the compiler's library lacks `String.prototype.isWellFormed`. */
+const LONE_SURROGATE =
+  /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/
+
 /**
  * Adds to a set of learner secrets the encoded forms a page, URL or server may carry them in.
  *
@@ -28,9 +32,15 @@ export function expandLearnerSecretForms(
     let html = secret
     for (const [raw, escaped] of HTML_ESCAPES)
       html = html.split(raw).join(escaped)
+    // A lone surrogate cannot be percent-encoded (encodeURIComponent throws), so a secret that is not well-formed keeps only its other forms.
+    const urlForms = !LONE_SURROGATE.test(secret)
+      ? [
+          encodeURIComponent(secret),
+          new URLSearchParams({ s: secret }).toString().slice(2),
+        ]
+      : []
     const candidates = [
-      encodeURIComponent(secret),
-      new URLSearchParams({ s: secret }).toString().slice(2),
+      ...urlForms,
       html,
       ...(includeJsonEscapes ? [JSON.stringify(secret).slice(1, -1)] : []),
     ]

@@ -10,6 +10,7 @@ import type {
 } from '../nodeServerDebugger'
 import { codebookStopLedger } from '../runtimeSupport/codebookStopLedger'
 import { sha256 } from '../runtimeSupport/utils/sha256'
+import { maskLearnerSecretText } from '../utils/maskLearnerSecretText'
 
 import { defer } from './utils/defer'
 import {
@@ -466,6 +467,73 @@ test('capturing an owned pause returns its facts and source hash, and resuming c
         'code' in error &&
         error.code === 'SOURCE_CHANGED',
     )
+  } finally {
+    await debug.release()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// protects=a stop captured while a string holds the run's secret across the snapshot's cut saves [masked] and no fragment of the secret; fails_when=the debugger passes no maskKnownText, so the cut at 4,096 characters leaves the first half of the secret in the saved text; no_claim=the real adapter's variable previews (a scripted Local scope stands in) and the inspections' display text
+test('a stop whose captured string holds the run secret across the snapshot cut saves the masked value without a fragment', async () => {
+  // Arrange
+  const secret = 'hunter2-session-secret'
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-server-debugger-'))
+  const file = join(directory, 'src/routes/users.ts')
+  await mkdir(join(directory, 'src/routes'), { recursive: true })
+  const text = 'export const handler = () => 1\n'
+  await writeFile(file, text)
+  // The secret begins inside the saved-text limit and ends beyond it, so an unmasked cut would keep its first 13 characters while the masked text still fits.
+  const longValue = `${'x'.repeat(4_070)}${secret}${'y'.repeat(50)}`
+  const editor = await editorHarness({
+    localVariables: [
+      {
+        name: 'cookieHeader',
+        value: longValue,
+        type: 'string',
+        variablesReference: 0,
+      },
+    ],
+  })
+  const secrets = new Set<string>()
+  const { debug } = editor.createDebugger(
+    [{ line: 14, column: 3 }],
+    { file, hash: sha256(text), workspace: directory },
+    [],
+    (value) => maskLearnerSecretText(value, secrets),
+  )
+  try {
+    await debug.attach({
+      ...ATTACH,
+      packageRoot: directory,
+      signal: AbortSignal.timeout(5_000),
+    })
+    const heard = listen(debug)
+    await debug.armStops(
+      [
+        {
+          declaredStopIndex: 0,
+          path: 'src/routes/users.ts',
+          file,
+          line: 14,
+          column: 3,
+          hash: sha256(text),
+          inspections: [],
+        },
+      ],
+      AbortSignal.timeout(5_000),
+    )
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], { file, line: 14 })
+    const pause = await heard.nextPause()
+    // The secret joins the set after the debugger was made: the mask is read at capture time.
+    secrets.add(secret)
+    // Act
+    const capture = await debug.capture(pause, AbortSignal.timeout(5_000))
+    // Assert
+    const saved = JSON.stringify(plain(capture.snapshot))
+    assert.equal(saved.includes('[masked]'), true)
+    assert.equal(saved.includes('hunter2'), false)
+    assert.equal(saved.includes('hunter'), false)
   } finally {
     await debug.release()
     await rm(directory, { recursive: true, force: true })

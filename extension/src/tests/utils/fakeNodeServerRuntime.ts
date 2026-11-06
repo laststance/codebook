@@ -37,6 +37,12 @@ export class FakeNodeServerRuntime implements NodeServerRuntime {
   /** When set, `prepare()` waits for it before it settles (a preparation a stop can cancel). */
   readonly prepareGate = defer<void>()
   holdsPrepare = false
+  /** The secret the service handed to the last `sendRequest`, when it handed one (a run with signIn). */
+  lastSecret?: string
+  /** The secrets the fake reports as the run's, as a run with signIn does after it signed in. */
+  readonly learnerSecrets = new Set<string>()
+  /** Each value the service gave `setSignInAwaiting`, in order. */
+  readonly awaitingCalls: boolean[] = []
   /** The time since launch the fake reports; a test moves it to place a Stop on the run's clock. */
   launchElapsedMs = 0
   /** Receives the events the service passes to the environment's `record` callback. */
@@ -79,8 +85,13 @@ export class FakeNodeServerRuntime implements NodeServerRuntime {
     return { dispose: () => this.listeners.delete(listener) }
   }
 
-  async sendRequest(key: string): Promise<void> {
+  setSignInAwaiting(awaiting: boolean): void {
+    this.awaitingCalls.push(awaiting)
+  }
+
+  async sendRequest(key: string, options?: { secret?: string }): Promise<void> {
     this.calls.push(`sendRequest:${key}`)
+    this.lastSecret = options?.secret
     if (this.current.heldPause) throw new StudyError('LEARNER_PAUSED', 'held')
     if (this.current.request)
       throw new StudyError('REQUEST_ALREADY_SENT', 'sent')

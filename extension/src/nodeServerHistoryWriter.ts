@@ -33,8 +33,9 @@ const NODE_SERVER_RULE_PROFILE: NodeRunRuleProfile<NodeServerHistoryTypes> = {
   accept: acceptNodeServerEntry,
   evaluate: evaluateNodeServerCapture,
   describeEntry: describeLastNodeServerEntry,
-  // A server history with no request holds nothing to replay.
-  holdsNothingToReplay: (progress) => progress.lastAttempt === 0,
+  // A server history with no request and no sign-in holds nothing to replay.
+  holdsNothingToReplay: (progress) =>
+    progress.lastAttempt === 0 && !progress.hasSignIn,
 }
 
 type EntryInputOf<Type extends NodeServerHistoryEntry['type']> = Omit<
@@ -99,6 +100,30 @@ export class NodeServerHistoryWriter extends NodeRunHistoryWriter<NodeServerHist
   }): Promise<void> {
     return this.appendEntry({
       type: 'request',
+      ...input,
+      // The mask can lengthen a value (`[masked]`), so the bound is applied after it.
+      path: cutTextToLength(
+        maskSecretQueryValues(input.path),
+        NODE_SERVER_HISTORY_LOCATION_LIMIT_CHARS,
+      ),
+    })
+  }
+
+  /**
+   * Records the sign-in exchange of a run that declared `signIn`; the path is stored with the values of secret-named query parameters masked ({@link maskSecretQueryValues}). Holds no body, header or value.
+   * @param input - When it settled, its path and HTTP status (null when none arrived), its outcome, the failure code when it failed and its duration.
+   * @example await writer.appendSignIn({ elapsedMs: 30, path: '/api/auth/sign-in/email', status: 200, outcome: 'signed-in', durationMs: 25 })
+   */
+  appendSignIn(input: {
+    elapsedMs: number
+    path: string
+    status: number | null
+    outcome: 'signed-in' | 'failed'
+    code?: string
+    durationMs: number
+  }): Promise<void> {
+    return this.appendEntry({
+      type: 'sign-in',
       ...input,
       // The mask can lengthen a value (`[masked]`), so the bound is applied after it.
       path: cutTextToLength(

@@ -8,6 +8,7 @@ import type {
   ServerReplayEvent,
   ServerReplayModel,
 } from './buildServerReplayModel'
+import { findServerReplayTerminal } from './findServerReplayTerminal'
 import {
   indexNodeTestOutput,
   stripOutputEntries,
@@ -51,20 +52,11 @@ function sanitizeServerReplayModel(
   const events = model.events.map((event) =>
     sanitizeServerReplayEvent(event, shownOutput),
   )
-  const terminal = events.find(
-    (event) =>
-      event.type === 'response' ||
-      event.type === 'request-failed' ||
-      event.type === 'end',
-  )
+  const terminal = findServerReplayTerminal(events)
   return {
     ...model,
     events,
-    ...(terminal?.type === 'response' ||
-    terminal?.type === 'request-failed' ||
-    terminal?.type === 'end'
-      ? { terminal }
-      : {}),
+    ...(terminal ? { terminal } : {}),
   }
 }
 
@@ -84,6 +76,14 @@ function sanitizeServerReplayEvent(
       return { ...event, text: shownOutput.get(event.sequence)! }
     case 'request':
       return { ...event, path: stripTerminalControls(event.path) }
+    case 'sign-in':
+      return {
+        ...event,
+        path: stripTerminalControls(event.path),
+        ...(event.code === undefined
+          ? {}
+          : { code: stripTerminalControls(event.code) }),
+      }
     case 'request-withdrawn':
       return { ...event, code: stripTerminalControls(event.code) }
     case 'stop':

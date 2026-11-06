@@ -21,6 +21,17 @@ import { cutTextToLength } from './utils/cutTextToLength'
  * Implemented by {@link NodeServerHistorySinkImpl}; the run ({@link createOwnedNodeServerRun}) holds the interface only.
  */
 export interface NodeServerHistorySink {
+  /** The sign-in exchange settled (before the declared request opens); it holds no body, header or value. */
+  signIn(
+    elapsedMs: number,
+    input: {
+      path: string
+      status: number | null
+      outcome: 'signed-in' | 'failed'
+      code?: string
+      durationMs: number
+    },
+  ): void
   /** The request window opened: Codebook is about to send the declared request (one attempt). */
   openRequest(
     elapsedMs: number,
@@ -71,6 +82,43 @@ export class NodeServerHistorySinkImpl
   /** The server writer, typed concretely so its request methods are traced to this sink. */
   private get serverWriter(): NodeServerHistoryWriter {
     return this.input.writer
+  }
+
+  signIn(
+    elapsedMs: number,
+    input: {
+      path: string
+      status: number | null
+      outcome: 'signed-in' | 'failed'
+      code?: string
+      durationMs: number
+    },
+  ): void {
+    this.guard(() => {
+      // A failed sign-in closes the request for good, as the journal's rules do; a late report after any terminal entry is dropped, never a fault.
+      if (this.terminal || this.attempts > 0) return
+      const at = this.structural(elapsedMs)
+      if (input.outcome === 'failed') this.terminal = true
+      return this.serverWriter.appendSignIn({
+        elapsedMs: at,
+        path: cutTextToLength(
+          this.hide(input.path),
+          NODE_SERVER_HISTORY_LOCATION_LIMIT_CHARS,
+        ),
+        status: input.status,
+        outcome: input.outcome,
+        ...(input.outcome === 'failed'
+          ? {
+              code:
+                cutTextToLength(
+                  this.hide(input.code ?? ''),
+                  NODE_SERVER_HISTORY_CODE_LIMIT_CHARS,
+                ) || 'SIGN_IN_FAILED',
+            }
+          : {}),
+        durationMs: input.durationMs,
+      })
+    })
   }
 
   openRequest(
@@ -182,6 +230,8 @@ export class NodeServerHistorySinkImpl
     this.guard(() => {
       // A second failure, or one after the answer, is a late report: dropped, never a fault.
       if (this.terminal) return
+      // A failure with no request ever opened (the run ended before the declared request opened) has nothing to close: dropped, so the seal keeps the real cause instead of an append failure.
+      if (this.openAttempt === undefined && this.attempts === 0) return
       const at = this.structural(elapsedMs)
       this.terminal = true
       // The failure closes the open attempt, as the journal's rules do.

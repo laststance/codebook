@@ -13,6 +13,7 @@ export function nodeServerConfigurationOf(
     method: 'GET',
     path: '/api/healthz',
   },
+  signIn?: NodeServerConfiguration['signIn'],
 ) {
   const base = harness.configuration
   return {
@@ -22,6 +23,7 @@ export function nodeServerConfigurationOf(
     entry: 'src/server.ts',
     port: 4100,
     request,
+    ...(signIn ? { signIn } : {}),
     source: base.source,
     inspections: base.inspections.slice(0, 1),
     additionalStops: [
@@ -40,6 +42,10 @@ type FakeNodeServerRunOptions = {
   request?: NodeServerConfiguration['request']
   /** Answers the confirmation of a state-changing request; the environment has no such hook when left out. */
   confirm?: StudyEnvironment['confirmStateChangingRequest']
+  /** The run's optional sign-in declaration. */
+  signIn?: NodeServerConfiguration['signIn']
+  /** Answers the editor's masked password box. */
+  ask?: StudyEnvironment['askLearnerSecret']
   /** Holds the run's `prepare()` until the test releases `run.prepareGate`. */
   holdPrepare?: boolean
 }
@@ -69,11 +75,16 @@ export async function startFakeNodeServerRun(
   }
   if (options.confirm)
     service.environment.confirmStateChangingRequest = options.confirm
+  if (options.ask) service.environment.askLearnerSecret = options.ask
   const receipt = service.start({
     instanceId: service.instanceId,
     profile: NODE_SERVER_PROFILE,
     key: options.key ?? 'server-run',
-    configuration: nodeServerConfigurationOf(harness, options.request),
+    configuration: nodeServerConfigurationOf(
+      harness,
+      options.request,
+      options.signIn,
+    ),
   })
   const record: StudyRecord = service.record(receipt)
   if (!options.holdPrepare) await record.preparation

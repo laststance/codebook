@@ -68,14 +68,17 @@ export function settleLearningNeeds<Part extends { sequence: number }>(
 
 /** One citation a server history's learning material still owes: the entry a step should cite, with its declared stop and hit for a stop. */
 export type NodeServerLearningPart =
-  | { type: 'request' | 'response' | 'request-failed'; sequence: number }
+  | {
+      type: 'sign-in' | 'request' | 'response' | 'request-failed'
+      sequence: number
+    }
   | { type: 'stop'; sequence: number; declaredStopIndex: number; hit: number }
 
 /** How much of a server history the chat's material explains: `none` before any needed entry is cited, `complete` when every need is, else `partial`. */
 export type NodeServerLearningCoverage = 'none' | 'partial' | 'complete'
 
 /**
- * Decides the learning-complete verdict of a server history: the material cites the request, at least one recorded hit of every reached declared stop and the recorded terminal entry; further hits and output are optional, and `source` and `end` are never required.
+ * Decides the learning-complete verdict of a server history: the material cites the request (or, when no request was made, the sign-in), at least one recorded hit of every reached declared stop and the recorded terminal entry; further hits and output are optional, and `source` and `end` are never required.
  * Called by the store when it summarizes a server history, by Save and by the MCP resources; the answers cap `missing` with {@link capMissingList}.
  * @param entries - The journal's entries.
  * @param citedSequences - The sequences the saved material cites; `undefined` before any material was saved.
@@ -93,6 +96,15 @@ export function evaluateNodeServerLearning(
       part: { type: 'request', sequence: request.sequence },
       satisfiedBy: [request.sequence],
     })
+  else {
+    // A history with no request (a failed sign-in, or a run that ended after signing in) still owes one explanation, citing the sign-in.
+    const signIn = entries.find((entry) => entry.type === 'sign-in')
+    if (signIn)
+      needs.push({
+        part: { type: 'sign-in', sequence: signIn.sequence },
+        satisfiedBy: [signIn.sequence],
+      })
+  }
   needs.push(...stopLearningNeeds(entries))
   const terminal = entries.find(
     (entry) => entry.type === 'response' || entry.type === 'request-failed',

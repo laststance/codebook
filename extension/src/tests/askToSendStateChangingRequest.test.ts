@@ -226,6 +226,38 @@ test('a request with another content type asks in its own modal', async () => {
   assert.equal(modals.length, 2)
 })
 
+// protects=the shared modal belongs to one sign-in route: the same question differing only in signInPath asks in its own modal, and a retry with the same signInPath joins the open one; fails_when=signInPath is left out of the identity so a Send for one sign-in route answers another, or a retry opens a second modal; no_claim=how the editor draws the modal; the modal is a hand-settled stand-in
+test('questions that differ only in the sign-in path open two modals and a retry with the same sign-in path joins the open one', async () => {
+  // Arrange
+  const modals: ReturnType<typeof defer<string | undefined>>[] = []
+  const show: ShowModalQuestion = () => {
+    const learner = defer<string | undefined>()
+    modals.push(learner)
+    return learner.promise
+  }
+  const ask = createStateChangingRequestAsker(show)
+  const base = { runId: 'run-a', method: 'GET', path: '/api/users/7' }
+  const gaveUp = new AbortController()
+  // Act
+  const firstAnswer = ask({ ...base, signInPath: '/login' }, gaveUp.signal)
+  gaveUp.abort()
+  const retryAnswer = ask(
+    { ...base, signInPath: '/login' },
+    new AbortController().signal,
+  )
+  const otherAnswer = ask(
+    { ...base, signInPath: '/api/auth/sign-in' },
+    new AbortController().signal,
+  )
+  modals[0]?.resolve('Send')
+  modals[1]?.resolve(undefined)
+  // Assert
+  assert.equal(await firstAnswer, false)
+  assert.equal(await retryAnswer, true)
+  assert.equal(await otherAnswer, false)
+  assert.equal(modals.length, 2)
+})
+
 // protects=a retry of an earlier run still joins that run's modal after another run asked: the editor never stacks a second identical modal for it; fails_when=the earlier run's retry opens a new modal; no_claim=the editor's modal queue
 test("a retry of an earlier run joins that run's modal still on screen after another run asked", async () => {
   // Arrange

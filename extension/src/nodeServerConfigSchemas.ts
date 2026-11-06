@@ -1,9 +1,13 @@
 import { z } from 'zod'
 
 import {
+  ASK_LEARNER_SECRET,
   CONFIGURED_OBSERVATION_LIMIT,
   NODE_SERVER_PORT_MAX,
   NODE_SERVER_PORT_MIN,
+  NODE_SERVER_SIGN_IN_FIELD_LIMIT_CHARS,
+  NODE_SERVER_SIGN_IN_FIELDS_MAX,
+  NODE_SERVER_SIGN_IN_SECRET_FIELD_LIMIT_CHARS,
   REPOSITORY_CONFIG_LIMIT_BYTES,
 } from './constants'
 import { nodeTestStopSchema } from './nodeTestConfigSchemas'
@@ -15,7 +19,9 @@ import {
 import { repositoryPathSchema } from './sourceSchemas'
 import { addStopInspectionIssues } from './utils/addStopInspectionIssues'
 import { describeNodeServerRequestBodyIssues } from './utils/describeNodeServerRequestBodyIssues'
+import { isSecretName } from './utils/isSecretName'
 import { nodeServerRequestPathProblem } from './utils/nodeServerRequestPathProblem'
+import { redactSecretText } from './utils/redactSecretText'
 
 /** The entry files node runs: TypeScript ones through the repository's own tsx, JavaScript ones directly. */
 const ENTRY_EXTENSION = /\.(?:ts|mts|cts|js|mjs|cjs)$/
@@ -136,19 +142,130 @@ export function addNodeRunConfigurationIssues(
     })
 }
 
+/** A path on the server, refused with the same words for the declared request and for `signIn`. */
+const serverPathSchema = z.string().superRefine((path, context) => {
+  const problem = nodeServerRequestPathProblem(path)
+  if (problem)
+    context.addIssue({
+      code: 'custom',
+      message: `expected a path on the server starting with "/", ${problem}.`,
+    })
+})
+
+const SIGN_IN_FIELD_TEXT = `expected a non-empty string of at most ${NODE_SERVER_SIGN_IN_FIELD_LIMIT_CHARS} characters.`
+
+/**
+ * The one sign-in request a node-server run sends before its declared request: POST JSON of `fields` plus the learner's typed secret under `secretField`.
+ * Why: an authenticated route answers 401 before its handler runs; the learner types the password into the editor's masked box, so it is never in the configuration or the chat. Each refusal names its field path and never quotes the refused value.
+ * Parsed as the optional `signIn` of {@link nodeServerConfigSchema}.
+ * @example
+ * signInSchema.parse({ path: '/api/auth/sign-in/email', fields: { email: 'learner@example.test' }, secretField: 'password', secret: 'ask-learner' })
+ */
+const signInSchema = z
+  .strictObject({
+    path: serverPathSchema.describe(
+      'The sign-in route, from the server root (for example "/api/auth/sign-in/email"); always sent as POST with content-type application/json.',
+    ),
+    fields: z
+      .record(
+        z
+          .string(SIGN_IN_FIELD_TEXT)
+          .min(1, SIGN_IN_FIELD_TEXT)
+          .max(NODE_SERVER_SIGN_IN_FIELD_LIMIT_CHARS, SIGN_IN_FIELD_TEXT),
+        z
+          .string(SIGN_IN_FIELD_TEXT)
+          .min(1, SIGN_IN_FIELD_TEXT)
+          .max(NODE_SERVER_SIGN_IN_FIELD_LIMIT_CHARS, SIGN_IN_FIELD_TEXT),
+      )
+      .describe(
+        "The account's non-secret fields, such as its email; ask the learner which account to use. Never a password: name that field in secretField.",
+      ),
+    secretField: z
+      .string()
+      .min(1, 'expected the body key the password is sent under.')
+      .max(
+        NODE_SERVER_SIGN_IN_SECRET_FIELD_LIMIT_CHARS,
+        `expected a key of at most ${NODE_SERVER_SIGN_IN_SECRET_FIELD_LIMIT_CHARS} characters.`,
+      )
+      .describe(
+        'The body key the learner\'s typed secret is sent under (for example "password").',
+      ),
+    secret: z
+      .literal(ASK_LEARNER_SECRET, {
+        error: `expected "${ASK_LEARNER_SECRET}": the learner types the secret into the editor's box.`,
+      })
+      .describe(
+        'The literal "ask-learner": Codebook asks the learner for the secret in the editor\'s masked box.',
+      ),
+  })
+  .superRefine((signIn, context) => {
+    const keys = Object.keys(signIn.fields)
+    // One to eight fields: the account needs an identifier, and the bound keeps the body small.
+    if (keys.length < 1 || keys.length > NODE_SERVER_SIGN_IN_FIELDS_MAX)
+      context.addIssue({
+        code: 'custom',
+        path: ['fields'],
+        message: `expected 1 to ${NODE_SERVER_SIGN_IN_FIELDS_MAX} non-secret fields.`,
+      })
+    for (const key of keys) {
+      // The secret goes under secretField only, so the same key in fields would be sent twice.
+      if (key === signIn.secretField)
+        context.addIssue({
+          code: 'custom',
+          path: ['fields', key],
+          message: 'expected no field named like secretField.',
+        })
+      // A secret-named key would put a password in the configuration and the chat.
+      else if (isSecretName(key))
+        context.addIssue({
+          code: 'custom',
+          path: ['fields', key],
+          message:
+            'expected a non-secret field: name a password or token field in secretField, so the learner types it.',
+        })
+      // A credential-shaped value is refused without quoting it.
+      else if (redactSecretText(signIn.fields[key]!) !== signIn.fields[key])
+        context.addIssue({
+          code: 'custom',
+          path: ['fields', key],
+          message:
+            'expected a non-secret value: this one has the shape of a credential.',
+        })
+    }
+  })
+
+/**
+ * Refuses a declared request that is itself the sign-in (its path, without the query, equals `signIn.path`): it would sign in a second time.
+ * Called by the superRefine of {@link nodeServerConfigSchema}.
+ * @param configuration - The parsed declaration, before defaults.
+ * @param context - Zod's refinement context.
+ * @example addSignInRequestIssue({ request: { method: 'POST', path: '/login' }, signIn: { path: '/login', … } }, context) // adds an issue at request.path
+ */
+function addSignInRequestIssue(
+  configuration: {
+    request: { path: string }
+    signIn?: { path: string }
+  },
+  context: z.RefinementCtx,
+): void {
+  if (!configuration.signIn) return
+  const requestPath = configuration.request.path.split('?')[0]
+  const signInPath = configuration.signIn.path.split('?')[0]
+  if (requestPath === signInPath)
+    context.addIssue({
+      code: 'custom',
+      path: ['request', 'path'],
+      message:
+        'expected a request other than the signIn route: Codebook sends the sign-in first, then this request.',
+    })
+}
+
 const requestSchema = z
   .strictObject({
     method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE'], {
       error: 'expected GET, POST, PUT, PATCH or DELETE.',
     }),
-    path: z.string().superRefine((path, context) => {
-      const problem = nodeServerRequestPathProblem(path)
-      if (problem)
-        context.addIssue({
-          code: 'custom',
-          message: `expected a path on the server starting with "/", ${problem}.`,
-        })
-    }),
+    path: serverPathSchema,
     contentType: z
       .enum(CONTENT_TYPES, {
         error: `expected ${CONTENT_TYPES.join(', ')}.`,
@@ -192,11 +309,19 @@ export const nodeServerConfigSchema = z
         "The port the server's own code listens on. Codebook never sets PORT or any variable; it only checks this port.",
       ),
     request: requestSchema,
+    signIn: signInSchema
+      .optional()
+      .describe(
+        'Optional (API 1.31): one sign-in request sent before the declared request; its session cookie is kept in memory and sent with the declared request.',
+      ),
     source: repositorySourceStopSchema,
     inspections: nodeTestStopInspectionsSchema,
     additionalStops: nodeAdditionalStopsSchema,
   })
-  .superRefine(addNodeRunConfigurationIssues)
+  .superRefine((configuration, context) => {
+    addNodeRunConfigurationIssues(configuration, context)
+    addSignInRequestIssue(configuration, context)
+  })
   .transform(withDefaultNodeLoader)
 
 export type NodeServerConfiguration = z.infer<typeof nodeServerConfigSchema>

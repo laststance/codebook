@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { getEventListeners } from 'node:events'
+import { createServer } from 'node:http'
 import { test } from 'node:test'
 
 import { z } from 'zod'
@@ -357,5 +358,102 @@ test('a sanitizer that throws rejects the response with REQUEST_FAILED, saying t
   assert.equal(
     outcome.message,
     'The server answered with HTTP 200, but Codebook could not prepare the response body for display.',
+  )
+})
+
+/**
+ * Starts a loopback server that answers every request with two Set-Cookie headers and echoes the request's Cookie header as the body.
+ * @param t - The test context; the server closes when the test ends.
+ * @returns The listening port.
+ */
+async function startCookieServer(t: {
+  after: (hook: () => void) => void
+}): Promise<number> {
+  const server = createServer((request, reply) => {
+    reply.setHeader('Set-Cookie', ['sid=abc123; Path=/', 'theme=dark'])
+    reply.setHeader('Content-Type', 'text/plain')
+    reply.end(`cookie:${request.headers.cookie ?? 'none'}`)
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => server.close())
+  const address = server.address()
+  if (address === null || typeof address === 'string')
+    throw new Error('The cookie server has no port.')
+  return address.port
+}
+
+// protects=the sign-in session cookie reaches the server and is absent otherwise; fails_when=cookie is dropped when given or a Cookie header appears when not given; no_claim=cookie scoping; real loopback server stands for the app
+test('a given cookie is sent as the Cookie header and none is sent without one', async (t) => {
+  // Arrange
+  const port = await startCookieServer(t)
+  const send = (cookie?: string) =>
+    sendDeclaredRequest({
+      host: '127.0.0.1',
+      port,
+      request: { method: 'GET', path: '/' },
+      runId: 'run-1',
+      verifyPeer: acceptPeer,
+      signal: new AbortController().signal,
+      ...(cookie === undefined ? {} : { cookie }),
+    }).response
+  // Act
+  const withCookie = await send('sid=abc123; theme=dark')
+  const withoutCookie = await send()
+  // Assert
+  assert.equal(withCookie.body, 'cookie:sid=abc123; theme=dark')
+  assert.equal(withoutCookie.body, 'cookie:none')
+})
+
+// protects=both Set-Cookie values are handed over before the response resolves; fails_when=onSetCookie is not called, is called late, or loses a value; no_claim=cookie semantics
+test('onSetCookie receives both Set-Cookie values before the response resolves', async (t) => {
+  // Arrange
+  const port = await startCookieServer(t)
+  const received: (readonly string[])[] = []
+  let resolvedBeforeCallback = false
+  // Act
+  const { response } = sendDeclaredRequest({
+    host: '127.0.0.1',
+    port,
+    request: { method: 'GET', path: '/' },
+    runId: 'run-1',
+    verifyPeer: acceptPeer,
+    signal: new AbortController().signal,
+    onSetCookie: (values) => received.push(values),
+  })
+  void response.then(() => {
+    if (received.length === 0) resolvedBeforeCallback = true
+  })
+  await response
+  // Assert
+  assert.equal(resolvedBeforeCallback, false)
+  assert.deepEqual(received, [['sid=abc123; Path=/', 'theme=dark']])
+})
+
+// protects=a throwing onSetCookie hook rejects the response with REQUEST_FAILED naming the status and never the thrown text; fails_when=the throw escapes as an uncaught exception, the response stays pending, or the error text is quoted; no_claim=the cookie hook's own logic (a throwing stand-in is injected)
+test('a throwing onSetCookie hook rejects the response with REQUEST_FAILED without quoting the error', async (t) => {
+  // Arrange
+  const port = await startCookieServer(t)
+  // Act
+  const { response } = sendDeclaredRequest({
+    host: '127.0.0.1',
+    port,
+    request: { method: 'GET', path: '/' },
+    runId: 'run-1',
+    verifyPeer: acceptPeer,
+    signal: new AbortController().signal,
+    onSetCookie: () => {
+      throw new Error('leaky-cookie-detail')
+    },
+  })
+  const error = await response.then(
+    () => undefined,
+    (thrown: unknown) => thrown,
+  )
+  // Assert
+  assert.ok(error instanceof StudyError)
+  assert.equal(error.code, 'REQUEST_FAILED')
+  assert.equal(
+    error.message,
+    'The server answered with HTTP 200, but Codebook could not process its session cookies.',
   )
 })

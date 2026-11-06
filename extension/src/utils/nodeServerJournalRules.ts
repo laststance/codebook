@@ -1,4 +1,7 @@
-import { NODE_SERVER_HISTORY_MAX_STOPS } from '../constants'
+import {
+  NODE_SERVER_HISTORY_MAX_STOPS,
+  NODE_SERVER_HISTORY_SIGN_IN_HEADER_FORMAT_VERSION,
+} from '../constants'
 import type {
   NodeScriptHistoryEntry,
   NodeScriptHistoryHeader,
@@ -18,6 +21,8 @@ export type NodeServerJournalProgress = {
   openAttempt?: number
   /** Whether the open attempt has its `request-sent` mark. */
   openAttemptSent: boolean
+  /** Whether the journal holds its one `sign-in` entry (only a format 3 history may, before any request). */
+  hasSignIn: boolean
   /** Whether a `response` or `request-failed` entry closed the run's request for good. */
   hasTerminal: boolean
   stopCount: number
@@ -42,6 +47,7 @@ export function newNodeServerJournalProgress(): NodeServerJournalProgress {
     lastElapsedMs: 0,
     lastAttempt: 0,
     openAttemptSent: false,
+    hasSignIn: false,
     hasTerminal: false,
     stopCount: 0,
     hitsByStop: new Map<number, number>(),
@@ -90,7 +96,7 @@ export function nodeServerSourceKey(path: string, hash: string): string {
 export function acceptNodeServerEntry(
   progress: NodeServerJournalProgress,
   entry: NodeServerHistoryEntry,
-  header: Pick<NodeServerHistoryHeader, 'declaredStops'>,
+  header: RuleHeader,
 ): void {
   acceptOrderedEntry(progress, entry, SERVER_SUBJECT, () =>
     applyEntryRule(progress, entry, header),
@@ -145,7 +151,8 @@ type EntryOfType<Type extends NodeServerHistoryEntry['type']> = Extract<
   NodeServerHistoryEntry,
   { type: Type }
 >
-type RuleHeader = Pick<NodeServerHistoryHeader, 'declaredStops'>
+type RuleHeader = Pick<NodeServerHistoryHeader, 'declaredStops'> &
+  Partial<Pick<NodeServerHistoryHeader, 'formatVersion'>>
 
 /** The rule of an `output` entry: nothing follows an output cut. */
 const acceptOutput = (
@@ -189,7 +196,27 @@ const ENTRY_RULES: {
   output: (progress) => acceptOutput(progress, SERVER_SUBJECT),
   'output-truncated': (progress) =>
     acceptOutputTruncated(progress, SERVER_SUBJECT),
-  request: (progress, entry) => {
+  'sign-in': (progress, entry, header) => {
+    if (
+      header.formatVersion !== NODE_SERVER_HISTORY_SIGN_IN_HEADER_FORMAT_VERSION
+    )
+      throw new Error('Node server history signs in without a format 3 header.')
+    if (progress.hasSignIn)
+      throw new Error('Node server history signs in twice.')
+    if (progress.lastAttempt > 0)
+      throw new Error('Node server history signs in after its request.')
+    progress.hasSignIn = true
+    // A failed sign-in is the request's terminal entry: no request follows it.
+    if (entry.outcome === 'failed') closeRequest(progress)
+  },
+  request: (progress, entry, header) => {
+    // A format 3 history signed in first; its request follows the sign-in.
+    if (
+      header.formatVersion ===
+        NODE_SERVER_HISTORY_SIGN_IN_HEADER_FORMAT_VERSION &&
+      !progress.hasSignIn
+    )
+      throw new Error('Node server history opens a request before its sign-in.')
     if (progress.hasTerminal || progress.openAttempt !== undefined)
       throw new Error(
         'Node server history opens a request while one is open or finished.',

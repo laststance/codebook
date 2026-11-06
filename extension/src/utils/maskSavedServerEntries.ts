@@ -17,6 +17,9 @@ export function maskSavedServerEntries(
   return maskSavedOutputEntries(entries).map((entry) => {
     if (entry.type === 'request')
       return { ...entry, path: maskSecretQueryValues(entry.path) }
+    // A sign-in exchange's path may carry a query as a request path does.
+    if (entry.type === 'sign-in')
+      return { ...entry, path: maskSecretQueryValues(entry.path) }
     // A response without a redirect keeps its null location.
     if (entry.type === 'response' && entry.location !== null)
       return { ...entry, location: maskSecretQueryValues(entry.location) }

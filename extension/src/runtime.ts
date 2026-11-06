@@ -188,8 +188,24 @@ export type NodeServerResponse = {
 
 /** A failure that ended the declared request, not the server (D1): the run reads `request-failed`. */
 export type NodeServerRequestFailure = {
-  code: Extract<ErrorCode, 'REQUEST_FAILED' | 'REQUEST_TIMEOUT'>
+  code: Extract<
+    ErrorCode,
+    | 'REQUEST_FAILED'
+    | 'REQUEST_TIMEOUT'
+    | 'NODE_SERVER_SIGN_IN_FAILED'
+    | 'LISTENER_NOT_OWNED'
+    | 'PORT_OWNER_UNKNOWN'
+  >
   message: string
+  /** Structured fields of the failure, present only for a run with `signIn`: `{ phase }` for a failure after the sign-in was written, `{ status, reason }` for a refused sign-in. */
+  details?: Readonly<Record<string, unknown>>
+}
+
+/** Where a run's optional sign-in stands: `none` before the learner is asked, `awaiting-learner` while the editor asks, `signing-in` while the sign-in request is out, then `signed-in` or `failed`. */
+export type NodeServerSignInView = {
+  state: 'none' | 'awaiting-learner' | 'signing-in' | 'signed-in' | 'failed'
+  /** The HTTP status of the sign-in response, once it arrived. */
+  status?: number
 }
 
 /** What a node-server run shows the service: its state, stops, current or held pause, request, response or failure, and captures. */
@@ -202,6 +218,10 @@ export type NodeServerView = {
   stops: NodeServerStop[]
   /** Zero-based indices of declared stops hit during preparation, before readiness: the request may not reach those lines. */
   stopsHitAtStart: number[]
+  /** Zero-based indices of declared stops the sign-in request reached; Codebook resumed them without capturing. Present only for a run with `signIn`. */
+  stopsHitDuringSignIn?: number[]
+  /** The sign-in's progress; present only for a run with `signIn`. */
+  signIn?: NodeServerSignInView
   /** Zero-based indices of declared stops hit during the request, in hit order. */
   stopsReached: number[]
   /** The run-wide pause generation; it grows with every pause. */
@@ -233,8 +253,12 @@ export interface NodeServerRuntime {
   elapsedSinceLaunchMs(): number
   /** Calls the listener after every change of {@link NodeServerRuntime.view}. */
   onDidChange(listener: () => void): { dispose(): void }
-  /** Sends the declared request once; resolves once its bytes went to the owned listener (the response arrives in the view). Throws `RUN_NOT_READY`, `REQUEST_ALREADY_SENT`, `LEARNER_PAUSED`, or `LISTENER_NOT_OWNED` with zero bytes sent. */
-  sendRequest(key: string): Promise<void>
+  /** Sends the declared request once; resolves once its bytes went to the owned listener (the response arrives in the view). Throws `RUN_NOT_READY`, `REQUEST_ALREADY_SENT`, `LEARNER_PAUSED`, or `LISTENER_NOT_OWNED` with zero bytes sent. With `signIn` the learner's typed `secret` is required and the first bytes are the sign-in request; the declared request follows by itself. */
+  sendRequest(key: string, options?: { secret?: string }): Promise<void>
+  /** The secrets the learner typed for this run's sign-in and the session cookie forms it learned, in memory only; every sink that stores or serves run data masks them. Present only on a run with `signIn`. */
+  readonly learnerSecrets?: ReadonlySet<string>
+  /** Tells the run that the service is (or no longer is) asking the learner for the sign-in secret, so the view reads `awaiting-learner`. Present only on a run with `signIn`. */
+  setSignInAwaiting?(awaiting: boolean): void
   /** Continues the current pause: reserves its generation atomically, then resumes; resolves once the debugger resumed. Throws `STALE_PAUSE`, `NO_PAUSE` or `LEARNER_PAUSED`. */
   continue(pause: PauseIdentity): Promise<void>
   /** Stops the server within one 10 s deadline (D14 v3: a server paused in the debugger, or with its request under way, is ended before its debugger detaches, so the paused code never runs on; otherwise detach, SIGTERM, SIGKILL after 5 s); idempotent, retryable after a failure. */
@@ -804,12 +828,17 @@ export interface StudyEnvironment {
   ): Promise<boolean>
   /**
    * Asks the learner, in the editor's password input box, for the secret of a `secret: "ask-learner"` operation; the chat never sees the answer.
-   * @param question - The run, the repository folder name and the operation's title, which the box shows as `<repository> · <title>`.
+   * @param question - The run, the repository folder name and the operation's title, which the box shows as `<repository> · <title>`; `minChars` is the shortest answer the box accepts (default: the secret frame gate's minimum).
    * @param signal - Closes the box when the run stops or the wait ends.
    * @returns The typed secret, or `undefined` when the learner dismissed the box or the signal aborted.
    */
   askLearnerSecret?(
-    question: { runId: string; repository: string; title: string },
+    question: {
+      runId: string
+      repository: string
+      title: string
+      minChars?: number
+    },
     signal: AbortSignal,
   ): Promise<string | undefined>
   /**

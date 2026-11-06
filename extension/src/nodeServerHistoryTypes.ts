@@ -35,6 +35,8 @@ export type NodeServerHistorySummary = {
   responseStatus?: number
   /** The code of a recorded request failure. */
   requestFailureCode?: string
+  /** The recorded sign-in in words (`Signed in at /login (HTTP 200)`), absent when the run declared no `signIn`. */
+  signInLine?: string
   declaredStopCount: number
   /** The distinct declared stops with at least one recorded hit. */
   reachedStopCount: number

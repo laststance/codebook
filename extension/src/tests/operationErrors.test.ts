@@ -210,3 +210,40 @@ test('the secret box refuses an answer shorter than 4 characters and accepts 4',
   )
   assert.equal(validate('abcd'), undefined)
 })
+
+// protects=the sign-in password box refuses 7 characters with its own sentence and accepts 8, while a question without a minimum keeps the 4-character rule; fails_when=a 7-character password is accepted for sign-in, 8 is refused, or the browser rule changes; no_claim=the editor's real input box (a stand-in is injected)
+test('the sign-in password box refuses 7 characters and accepts 8 while the default box still refuses 3', async () => {
+  // Arrange
+  const shown: { validateInput: (value: string) => string | undefined }[] = []
+  const ask = createLearnerSecretAsker(
+    (options) => {
+      shown.push(options)
+      return Promise.resolve('abcdefgh')
+    },
+    () => ({ token: 'token', cancel: (): void => {}, dispose: (): void => {} }),
+  )
+  // Act
+  await ask(
+    {
+      runId: 'r1',
+      repository: 'nextjs-dashboard',
+      title: 'Sign in',
+      minChars: 8,
+    },
+    new AbortController().signal,
+  )
+  await ask(
+    { runId: 'r1', repository: 'nextjs-dashboard', title: 'Password' },
+    new AbortController().signal,
+  )
+  const signIn = shown[0]!.validateInput
+  const browser = shown[1]!.validateInput
+  // Assert
+  assert.equal(
+    signIn('abcdefg'),
+    'Codebook needs at least 8 characters to keep a typed password out of the answers it publishes. Use a test account password of 8 or more characters.',
+  )
+  assert.equal(signIn('abcdefgh'), undefined)
+  assert.equal(browser('abcd'), undefined)
+  assert.notEqual(browser('abc'), undefined)
+})

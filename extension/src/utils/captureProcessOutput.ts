@@ -8,6 +8,8 @@ import {
 } from '../constants'
 import { NANOSECONDS_PER_MILLISECOND } from '../runtimeSupport/constants'
 
+import { createKnownValueMaskStage } from './createKnownValueMaskStage'
+import type { KnownValueMask } from './createKnownValueMaskStage'
 import { createOutputRedactor } from './createOutputRedactor'
 import { createRootHidingStage } from './createRootHidingStage'
 import type { RootHoldTimer } from './createRootHidingStage'
@@ -21,6 +23,8 @@ export type ProcessOutputEvent = {
   channel: 'stdout' | 'stderr'
   text: string
 }
+
+export type { KnownValueMask } from './createKnownValueMaskStage'
 
 /** How {@link captureProcessOutput} stamps, delivers and bounds an owned process's output. */
 export type ProcessOutputOptions = {
@@ -38,6 +42,8 @@ export type ProcessOutputOptions = {
   privateRoots?: CauseRoots
   /** Runs a callback once after a delay and returns its canceller; the timed release of text held for a possible root uses it. Defaults to an unref'd real timer; tests inject a hand-driven one. */
   scheduleRootRelease?: RootHoldTimer['schedule']
+  /** The run's known secret values; when given, every channel masks them statefully after the roots are hidden and before anything is redacted, cut, delivered or kept, so a value split over two chunks is still masked. Read at call time; absent, output is unchanged. */
+  knownValues?: KnownValueMask
 }
 
 /** Real-timer {@link RootHoldTimer}`.schedule`: unref'd so a pending release never keeps the process alive. */
@@ -60,10 +66,15 @@ export type ProcessOutputCapture = {
   settled(): Promise<void>
   /** The capture's first failure, if any. */
   failure(): Error | undefined
+  /** Re-runs every channel's held text through the current mask and holdback now and publishes what is settled (nothing under an infinite holdback). */
+  releaseHeld(): void
+  /** Discards every channel's held text, reporting its bytes through {@link KnownValueMask.onWithheld}. */
+  dropHeld(): void
 }
 
 /**
  * Captures an owned process's stdout and stderr: each channel is decoded as UTF-8 and redacted statefully ({@link createOutputRedactor}) before anything is cut, then kept as a bounded tail and handed over as stamped events of at most {@link PROCESS_OUTPUT_EVENT_LIMIT_CHARS} characters, in arrival order.
+ * With `knownValues`, a mask stage between the root hiding and the redactor masks the run's secret values ({@link createKnownValueMaskStage}).
  * The raw start of the output is kept apart, only to read the inspector's announcement.
  * Called by {@link watchOwnedProcess} for the test or server an owned launcher spawned.
  * @param child - The spawned process's output streams.
@@ -138,6 +149,8 @@ export function captureProcessOutput(
     }
     if (part && !failure) enqueue(channel, part)
   }
+  // Per channel, what releases or drops that channel's held known-value text; filled below.
+  const heldControls: Array<{ release(): void; drop(): void }> = []
   for (const [channel, stream] of [
     ['stdout', child.stdout],
     ['stderr', child.stderr],
@@ -147,13 +160,28 @@ export function captureProcessOutput(
     const redactor = createOutputRedactor()
     // Set once the channel's output is finished (end or close), so a late timed release delivers nothing after the capture settled.
     let channelEnded = false
+    const known = options.knownValues
+    const maskStage = known
+      ? createKnownValueMaskStage(known, {
+          holdMs: NODE_SERVER_OUTPUT_ROOT_HOLD_MS,
+          schedule: options.scheduleRootRelease ?? scheduleWithRealTimer,
+          // Held text released by time is already masked and follows the redactor like any settled text.
+          release: (text) => {
+            if (!channelEnded) acceptRedacted(channel, redactor.write(text))
+          },
+        })
+      : undefined
     const rootStage = options.privateRoots
       ? createRootHidingStage(options.privateRoots, {
           holdMs: NODE_SERVER_OUTPUT_ROOT_HOLD_MS,
           schedule: options.scheduleRootRelease ?? scheduleWithRealTimer,
           // A held start released by time follows the same path as any root-hidden text.
           release: (text) => {
-            if (!channelEnded) acceptRedacted(channel, redactor.write(text))
+            if (!channelEnded)
+              acceptRedacted(
+                channel,
+                redactor.write(maskStage ? maskStage.write(text) : text),
+              )
           },
         })
       : undefined
@@ -162,12 +190,21 @@ export function captureProcessOutput(
         announcement = Buffer.from(announcement + text)
           .subarray(0, PROCESS_OUTPUT_LIMIT_BYTES)
           .toString('utf8')
-      // Roots are hidden over a held tail first, so the secret redactor and the event split only ever see hidden text.
+      // Roots are hidden over a held tail first, then known values are masked, so the secret redactor and the event split only ever see hidden, masked text.
+      const rootHidden = rootStage ? rootStage.write(text) : text
       acceptRedacted(
         channel,
-        redactor.write(rootStage ? rootStage.write(text) : text),
+        redactor.write(maskStage ? maskStage.write(rootHidden) : rootHidden),
       )
     }
+    if (maskStage)
+      heldControls.push({
+        release: () => {
+          if (!channelEnded)
+            acceptRedacted(channel, redactor.write(maskStage.release()))
+        },
+        drop: () => maskStage.drop(),
+      })
     stream.on('data', (chunk: Buffer) => {
       if (!channelEnded) accept(decoder.write(chunk))
     })
@@ -177,7 +214,13 @@ export function captureProcessOutput(
       channelEnded = true
       accept(decoder.end())
       // What the root stage held back for a possible root is released, hidden, before the redactor's own end.
-      if (rootStage) acceptRedacted(channel, redactor.write(rootStage.end()))
+      const rootTail = rootStage ? rootStage.end() : ''
+      // What the mask stage holds is published masked, or dropped under an infinite holdback, after the root stage's last text passed through it.
+      const maskedTail = maskStage
+        ? maskStage.write(rootTail) + maskStage.end()
+        : rootTail
+      if (rootStage || maskStage)
+        acceptRedacted(channel, redactor.write(maskedTail))
       // What the redactor held back for a possibly incomplete secret is released, redacted, at the channel's end.
       acceptRedacted(channel, redactor.end())
     }
@@ -189,5 +232,11 @@ export function captureProcessOutput(
     tail: () => tail,
     settled: (): Promise<void> => deliveries,
     failure: () => failure,
+    releaseHeld: (): void => {
+      for (const control of heldControls) control.release()
+    },
+    dropHeld: (): void => {
+      for (const control of heldControls) control.drop()
+    },
   }
 }

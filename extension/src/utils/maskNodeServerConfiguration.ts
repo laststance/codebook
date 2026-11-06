@@ -10,19 +10,31 @@ import { maskNodeServerRequestBody } from './maskNodeServerRequestBody'
 import { maskSecretQueryValues } from './maskSecretQueryValues'
 
 /**
- * Masks the secrets a node-server declaration can carry, its request path's query values and its request body's secret-named fields, so the history header stores a declaration that is safe at rest.
+ * Masks the secrets a node-server declaration can carry, its request path's and sign-in path's query values and its request body's secret-named fields, so the history header stores a declaration that is safe at rest.
  * Called by {@link buildNodeServerHistoryHeader} when it builds the history header, and by {@link maskSavedServerHeader} when it serves a saved one; the SHA-256 of the original declaration is kept beside it as identity.
  * Why the cut: a mask can lengthen a value (`code=x` reads `code=[masked]`), and the header schema bounds the path ({@link NODE_SERVER_REQUEST_PATH_LIMIT_CHARS} characters) and the body ({@link NODE_SERVER_REQUEST_BODY_LIMIT_BYTES} bytes) the declaration itself is bounded by, so a request that fit the declaration would otherwise leave the run with no history. The cut comes after the mask, never before, so no cut leaves a fragment of a secret; only the stored copy is masked and cut, never the request sent.
  * @param configuration - The validated declaration.
- * @returns A copy with the request's path and body masked and, when the mask lengthened them past their bounds, cut to those bounds; everything else unchanged.
+ * @returns A copy with the request's path and body and the sign-in path (when declared) masked and, when the mask lengthened them past their bounds, cut to those bounds; everything else unchanged.
  * @example maskNodeServerConfiguration(configuration).request.path // => '/api?token=[masked]'
  */
 export function maskNodeServerConfiguration(
   configuration: NodeServerConfiguration,
 ): NodeServerConfiguration {
-  const { request } = configuration
+  const { request, signIn } = configuration
   return {
     ...configuration,
+    // The sign-in route may carry a query too (`/api/login?token=…`); it is masked and cut like the request path.
+    ...(signIn === undefined
+      ? {}
+      : {
+          signIn: {
+            ...signIn,
+            path: cutTextToLength(
+              maskSecretQueryValues(signIn.path),
+              NODE_SERVER_REQUEST_PATH_LIMIT_CHARS,
+            ),
+          },
+        }),
     request: {
       ...request,
       path: cutTextToLength(

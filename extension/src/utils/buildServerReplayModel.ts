@@ -10,6 +10,7 @@ import type {
 } from '../nodeServerHistorySchemas'
 import type { NodeServerHistorySummary } from '../nodeServerHistoryTypes'
 
+import { findServerReplayTerminal } from './findServerReplayTerminal'
 import { maskSavedOutputEntries } from './maskSavedOutputEntries'
 import { maskSavedServerHeader } from './maskSavedServerHeader'
 import {
@@ -17,7 +18,7 @@ import {
   rehydrateNodeServerEntries,
 } from './rehydrateServerStopSnapshot'
 
-/** The entries of a server journal a learner moves through: the request attempt and its withdrawal, output, a stop hit, the response and the request failure. `source` is storage only and a server's `end` ends the timeline, so neither is an event. A script journal has no request or response: its `end` entry is the moment that takes their place, so it is an event there. */
+/** The entries of a server journal a learner moves through: the sign-in, the request attempt and its withdrawal, output, a stop hit, the response and the request failure. `source` is storage only and a server's `end` ends the timeline, so neither is an event. A script journal has no request or response: its `end` entry is the moment that takes their place, so it is an event there. */
 export type ServerReplayEvent =
   | Exclude<
       NodeServerHistoryEntry,
@@ -84,7 +85,7 @@ export type ServerReplayModel = {
   /** The recorded response or request failure, when the journal holds one. */
   terminal?: Extract<
     ServerReplayEvent,
-    { type: 'response' | 'request-failed' | 'end' }
+    { type: 'response' | 'request-failed' | 'sign-in' | 'end' }
   >
   /** The time the recording ended: the `end` entry's, else the last event's; the timeline ends here. */
   endedAtMs: number
@@ -126,12 +127,8 @@ export function buildServerReplayModel(
       ? rehydrateMaskedEntries(maskSavedOutputEntries(history.entries))
       : rehydrateNodeServerEntries(history.entries)
   const events = entries.filter((entry) => isReplayEvent(entry, isScript))
-  const terminal = events.find(
-    (event) =>
-      event.type === 'response' ||
-      event.type === 'request-failed' ||
-      event.type === 'end',
-  )
+  // A failed sign-in is the request's terminal entry; a signed-in one is only the first step before the request.
+  const terminal = findServerReplayTerminal(events)
   const end = entries.find((entry) => entry.type === 'end')
   return {
     studyId: history.header.studyId,
@@ -143,11 +140,7 @@ export function buildServerReplayModel(
       events.map((event, position) => [event.sequence, position]),
     ),
     attempts: isScript ? [] : collectAttempts(entries),
-    ...(terminal?.type === 'response' ||
-    terminal?.type === 'request-failed' ||
-    terminal?.type === 'end'
-      ? { terminal }
-      : {}),
+    ...(terminal ? { terminal } : {}),
     // The timeline ends at `end`; a journal with no `end` ends at its last event.
     endedAtMs: Math.max(end?.elapsedMs ?? 0, events.at(-1)?.elapsedMs ?? 0),
     endedBeforeAnswer: terminal === undefined,

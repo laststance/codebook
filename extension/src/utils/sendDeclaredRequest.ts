@@ -33,6 +33,10 @@ export type DeclaredRequestInput = {
   sanitize?: (text: string) => string
   /** A clock in milliseconds for `elapsedMs`; `performance.now` unless a test names its own. */
   now?: () => number
+  /** Sent as the `Cookie` header when present (the sign-in session); no `Cookie` header otherwise. */
+  cookie?: string
+  /** Called once when the response headers arrive, before the body is read, with the raw `Set-Cookie` values (empty when none). */
+  onSetCookie?: (values: readonly string[]) => void
 }
 
 /**
@@ -81,7 +85,7 @@ function readBody(
  * Sends the run's one declared request to the server over a single new loopback connection and observes its response.
  * Why: the answer is only evidence if the bytes went to the launched server: after the socket connects and before any byte is written, `verifyPeer` must accept the peer, else the socket is destroyed with nothing sent. No retry, no reconnect, no proxy, no redirect; the 1 MiB read limit and the shaped, redacted body keep the response bounded and safe to relay.
  * Called by the node-server run for `codebook_action` `http-request`.
- * @param input - The address, port, declared request, run id, peer check, abort signal and clock ({@link DeclaredRequestInput}).
+ * @param input - The address, port, declared request, run id, peer check, abort signal, clock, optional `Cookie` header value and optional `Set-Cookie` observer ({@link DeclaredRequestInput}).
  * @returns
  * - `written`: resolves when the request is written, or when an abort comes after it was handed to the socket (its bytes may be on the wire); rejects with the `verifyPeer` error (zero bytes sent), a `REQUEST_FAILED` error when the connection fails first, or the abort reason of an abort before any byte was handed over
  * - `response`: resolves with the observed response (4xx, 5xx and 3xx included); rejects with `StudyError('REQUEST_FAILED')` on a reset or close before a complete response, with the `verifyPeer` error when refused, or with the signal's reason on abort
@@ -136,6 +140,7 @@ export function sendDeclaredRequest(input: DeclaredRequestInput): {
     'User-Agent': 'codebook',
     'x-codebook-run': input.runId,
   }
+  if (input.cookie !== undefined) headers.Cookie = input.cookie
   if (body && declared.contentType) {
     headers['Content-Type'] = declared.contentType
     headers['Content-Length'] = String(body.length)
@@ -186,6 +191,19 @@ export function sendDeclaredRequest(input: DeclaredRequestInput): {
   })
   outgoing.once('response', (incoming: IncomingMessage) => {
     const contentType = incoming.headers['content-type']
+    // Hand over the cookies before the body is read, so the sign-in session is known as soon as the headers arrive.
+    // A throwing cookie hook must reject `response`, not escape as an uncaught exception that leaves it pending; the message never quotes the thrown error.
+    try {
+      input.onSetCookie?.(incoming.headers['set-cookie'] ?? [])
+    } catch {
+      fail(
+        new StudyError(
+          'REQUEST_FAILED',
+          `The server answered with HTTP ${incoming.statusCode}, but Codebook could not process its session cookies.`,
+        ),
+      )
+      return
+    }
     readBody(
       incoming,
       (bytes, readCut) => {

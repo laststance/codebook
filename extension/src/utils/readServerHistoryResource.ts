@@ -46,6 +46,18 @@ function leanServerEvent(
         bodyBytes: entry.bodyBytes,
         readCut: entry.readCut,
       }
+    case 'sign-in':
+      return {
+        sequence: entry.sequence,
+        type: entry.type,
+        elapsedMs: entry.elapsedMs,
+        path: entry.path,
+        status: entry.status,
+        outcome: entry.outcome,
+        // A signed-in exchange has no failure code.
+        ...(entry.code === undefined ? {} : { code: entry.code }),
+        durationMs: entry.durationMs,
+      }
     case 'request-failed':
       return {
         sequence: entry.sequence,

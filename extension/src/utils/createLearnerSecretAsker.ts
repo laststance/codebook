@@ -26,6 +26,7 @@ export type SecretBoxCancellation<Token> = {
 /**
  * Makes the question the environment asks the learner for the secret of a `secret: "ask-learner"` operation: the editor's masked input box titled `<repository> · <operation title>`.
  * Why: the chat must never carry a password, so the learner types it in the editor; the service awaits the answer before it hands the secret to the run. The answer is returned to the caller only: it is never logged or kept here.
+ * A question may name its own `minChars` (the sign-in password); otherwise the frame gate's minimum applies.
  * Called once by the environment; the service calls the asker for each ask-learner operation (DX-3).
  * @param show - The editor's input box.
  * @param createCancellation - Makes the cancellation that closes the box when the signal aborts.
@@ -39,7 +40,12 @@ export function createLearnerSecretAsker<Token>(
   createCancellation: () => SecretBoxCancellation<Token>,
 ) {
   return async (
-    question: { runId: string; repository: string; title: string },
+    question: {
+      runId: string
+      repository: string
+      title: string
+      minChars?: number
+    },
     signal: AbortSignal,
   ): Promise<string | undefined> => {
     if (signal.aborted) return undefined
@@ -55,10 +61,16 @@ export function createLearnerSecretAsker<Token>(
             'Codebook types this into the page for the operation your AI chat sent. The chat never sees it.',
           ignoreFocusOut: true,
           // A secret shorter than the frame gate can verify would fail every later image of the recording.
-          validateInput: (value) =>
-            value.length < SECRET_FRAME_VALUE_COPY_MIN_CHARS
+          validateInput: (value) => {
+            // A question with its own minimum (the sign-in password) words its own refusal.
+            if (question.minChars !== undefined)
+              return value.length < question.minChars
+                ? `Codebook needs at least ${question.minChars} characters to keep a typed password out of the answers it publishes. Use a test account password of ${question.minChars} or more characters.`
+                : undefined
+            return value.length < SECRET_FRAME_VALUE_COPY_MIN_CHARS
               ? `Codebook needs at least ${SECRET_FRAME_VALUE_COPY_MIN_CHARS} characters to keep a typed secret out of the recording. Use a test account password of ${SECRET_FRAME_VALUE_COPY_MIN_CHARS} or more characters.`
-              : undefined,
+              : undefined
+          },
         },
         cancellation.token,
       )

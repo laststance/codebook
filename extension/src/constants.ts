@@ -5,6 +5,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 /**
  * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ * 1.31 is additive: a `node-server` configuration may declare an optional `signIn` object `{ path, fields, secretField, secret: "ask-learner" }`; Codebook asks the learner for the password in its own masked box, signs in with one POST, keeps the session cookie in memory only and sends the declared request with it. An older Codebook refuses the field as INVALID_CONFIGURATION.
  * 1.30 is additive: the `expo-web-dev` adapter of the `repository-browser` profile runs an Expo SDK 57 web app (Metro) at the repository root or below it, in a version 3 configuration only. Codebook starts the app's own `expo start --web` on the port its web script declares (it sets `CI=1`, `BROWSER=none` and `EXPO_NO_TELEMETRY=1`), treats the app as ready when Metro serves the entry bundle and its source map, and pauses at browser stops in the app's own source that the entry bundle includes. The refusals are `EXPO_WEB_UNSUPPORTED`, `EXPO_WEB_LAUNCHER_FAILED`, `EXPO_WEB_PORT_UNAVAILABLE`, `EXPO_WEB_SETUP_DEADLINE` and `EXPO_WEB_SEAL_FAILED`, `codebook_status` gains `profiles[].prerequisites.adapters["expo-web-dev"]`, `codebook://help/repository-browser` gains `expoWebQuickStart`, and a study of an Expo run is saved as format 15 (`.study.v15.json`) with its `expoVersion`.
  * 1.29 is additive: a Next Pages Router server stop with `afterOperation` of 1 or more in a file under the Pages folder's `api/` (`pages/api` or `src/pages/api`) pauses in the API-route handler that answers the browser's own request after that operation: the pause reports `execution: "api-route"`, `attribution: "after-operation"`, `operationIndex` and `apiRoute { method, route, path }`, read from the paused request object; a study with such a pause is saved as format 14 (`.study.v14.json`). A stop with `afterOperation: 0`, in a version 2 configuration or in a route whose exported config declares the edge runtime is refused with `NEXT_STOP_NOT_SEALED` (`details.reason` `api-route-before-operation` or `api-route-edge-runtime`); `_document` keeps `NEXT_SERVER_ONLY_STOP`.
  * 1.28 is additive: a Next App Router server stop with `afterOperation` of 1 or more in a route handler file (`route.ts`, `route.js`, `route.tsx` or `route.jsx` under `app/` or `src/app/`) pauses in the handler that answers the browser's own request after that operation: the pause reports `execution: "route-handler"`, `attribution: "after-operation"`, `operationIndex` and `routeHandler { method, route, path }`; the refusals are `NEXT_STOP_NOT_SEALED` with `details.reason` `route-handler-before-operation`, `route-handler-edge-runtime` or `route-handler-not-app-source`, `SERVER_STOP_NOT_REACHED` gains `details.routeHandler` and route-handler `resumedHits` reasons, `codebook://help/repository-browser` gains `routeHandlerQuickStart` and `routeHandlerStops`, and a study with such a pause is saved as format 13.
@@ -32,7 +33,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.9 is additive: a node-server run is saved as a Server replay. `codebook_explain_node_history` accepts a server history's material (steps citing the request, a stop, output, the response or the request failure), the server run resource gains `nodeServer.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing` and `captureMissing`, `nextActions` offers `save-node-learning`, and `codebook://help/node-server` has a save section.
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
-export const API_VERSION = '1.30'
+export const API_VERSION = '1.31'
 
 /** The API that first accepts the `expo-web-dev` adapter in a version 3 configuration (skill 1.0.79). */
 export const EXPO_WEB_MINIMUM_API = '1.30'
@@ -103,7 +104,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.90'
+export const EXTENSION_VERSION = '0.2.91'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -1480,6 +1481,18 @@ export const NODE_SERVER_PORT_MAX = TCP_PORT_MAX
 export const NODE_SERVER_REQUEST_PATH_LIMIT_CHARS = 2_048
 /** The largest request body, in UTF-8 bytes, a node-server declaration may send. */
 export const NODE_SERVER_REQUEST_BODY_LIMIT_BYTES = 16_384
+/** The most non-secret fields a node-server `signIn` declaration may send beside its one secret field. */
+export const NODE_SERVER_SIGN_IN_FIELDS_MAX = 8
+/** The longest key, and the longest value, of one non-secret `signIn` field. */
+export const NODE_SERVER_SIGN_IN_FIELD_LIMIT_CHARS = 256
+/** The longest `signIn.secretField` name: the body key the learner's typed secret is sent under. */
+export const NODE_SERVER_SIGN_IN_SECRET_FIELD_LIMIT_CHARS = 64
+/** The shortest sign-in password the password box accepts (characters); Better Auth's default minimum, and long enough that masking the typed value service-wide cannot corrupt ordinary protocol words such as `paused`. */
+export const NODE_SERVER_SIGN_IN_SECRET_MIN_CHARS = 8
+/** The shortest session cookie value that is masked in published output whatever its characters (characters); session tokens are long, while shorter all-letter values (`theme=system`, `status=failed`) are no session secret and masking them would corrupt protocol words. A shorter value is still masked when it bears a letter and a digit, see {@link NODE_SERVER_COOKIE_MASK_DIGIT_MIN_CHARS}. */
+export const NODE_SERVER_COOKIE_MASK_MIN_CHARS = 16
+/** The shortest session cookie value that is masked when it contains both an ASCII letter and an ASCII digit (characters): such a value of 8 or more characters is masked because no protocol word contains a digit, so masking it cannot corrupt `request-failed` or `signed-in`; a pure-digit value (a date such as `20261106`) is no session secret and would mask unrelated text. */
+export const NODE_SERVER_COOKIE_MASK_DIGIT_MIN_CHARS = 8
 /** The most server output delivered but not yet settled; a server printing faster than its events settle fails its capture instead of buffering without bound. */
 export const NODE_SERVER_OUTPUT_PENDING_LIMIT_BYTES = 1_048_576
 /** How long a stopping server's debugger may take to detach before SIGTERM is sent anyway: a server handling SIGTERM waits for an attached debugger before it exits (Part A, Issue #139). */
@@ -1575,8 +1588,10 @@ export const NODE_TEST_HISTORY_MAX_ENTRIES = 10_000
 export const NODE_SERVER_HISTORY_DIRECTORY = 'node-servers.v1'
 /** The `version` of a node-server history's seal and every record other than its header (the header has {@link NODE_SERVER_HISTORY_HEADER_FORMAT_VERSION}); a later cycle relates several histories of one explanation without a format break. */
 export const NODE_SERVER_HISTORY_FORMAT_VERSION = 1
-/** The `formatVersion` a node-server history header is written with since replay frames keep their recorded location; Codebook reads headers 1 and 2, and an earlier Codebook does not list a history with header 2 and keeps its files. */
+/** The `formatVersion` a node-server history header is written with since replay frames keep their recorded location; Codebook reads headers 1, 2 and 3 (3 is {@link NODE_SERVER_HISTORY_SIGN_IN_HEADER_FORMAT_VERSION}), and an earlier Codebook does not list a history with header 2 and keeps its files. */
 export const NODE_SERVER_HISTORY_HEADER_FORMAT_VERSION = 2
+/** The `formatVersion` a node-server history header is written with when its run declared `signIn`; a Codebook without it neither lists such a header nor deletes its files, and the header carries the `sign-in` entry's rules (format 3 if and only if the configuration has `signIn`). */
+export const NODE_SERVER_HISTORY_SIGN_IN_HEADER_FORMAT_VERSION = 3
 /** The most entries one node-server history holds, `source` and `end` included. */
 export const NODE_SERVER_HISTORY_MAX_ENTRIES = 10_000
 /** The largest journal of a node-server history. */

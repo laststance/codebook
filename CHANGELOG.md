@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.2.91.0] - 2026-11-07 (development candidate)
+
+Cycle 0091 ([Issue #235](https://github.com/laststance/codebook/issues/235)), a feature cycle. **A server path behind sign-in now pauses inside its signed-in handler, and you type the password into Codebook's own box, never the chat.** A learner can ask how the server handles a signed-in user's request (P08's activity switch and display-settings update in the checks below). Before, a `node-server` run sent its request without credentials, so the server answered 401 before the handler ran and the stop was never reached.
+
+**Sign-in for a server path (MCP API 1.31).**
+- **What the chat declares:** an optional `signIn` on a `node-server` configuration with the sign-in path, the account's non-secret fields (for example the email) and the name of the password field (`secretField`). The password never goes into the configuration, and a field named like a secret (`password`, `token`) or a value shaped like a credential is refused with `INVALID_CONFIGURATION`.
+- **What you see:** one dialog that names the sign-in and your request (also for a GET), then a masked password box in the editor. The box refuses a password shorter than 8 characters.
+- **What Codebook does:** it signs in with one POST, keeps the session cookie in memory only and sends your request with it, so the declared stop pauses inside the signed-in handler with the session's own values. A stop that the sign-in request itself reaches is resumed without capturing anything, so the same stop can still pause during your request.
+- **What stays private:** the password and the session cookie's values are masked wherever Codebook writes or shows the run. With sign-in, the server's output appears once your request's response begins, so a new session value is masked first, and output of a request that ends without a response is not kept.
+- **When sign-in fails:** a wrong password or an account the app does not know fails the request with `NODE_SERVER_SIGN_IN_FAILED`, and the server keeps running. Stop it; one new run tries again.
+- **Saved replays and older versions:** a Server replay of a run with `signIn` keeps the sign-in step with its path, status and time only, and is saved as history format 3, which an older Codebook does not list and keeps on disk. An older Codebook refuses `signIn` as `INVALID_CONFIGURATION`.
+- **The bundled skill (1.0.80)** tells the chat to declare `signIn` for a server path behind sign-in and to let you type the password into Codebook's box. Run **Codebook: Set Up AI Chat** after updating, so Cursor's managed skill updates to 1.0.80.
+
+**Release details:** checked in both editors on a development target (no nine-project credit):
+
+| Check | Host | Target | Observed outcome |
+| --- | --- | --- | --- |
+| C91-1 | VS Code 1.145.2, Copilot Chat (GPT-6.1 Terra) | P08 API, switching activities (`activities/list`, `switches/current`, `switches/switchTo`) | Each sign-in answered 200. The first pause came 1 min 50 s after the question, in `activities.ts` with the session user's values. The Server replay reopened with the recorded user id in native Variables |
+| C91-2 | Cursor 3.29.9, Agent (Grok 4.6 High Fast) | P08 API, changing the display settings (`settings/update`) | The sign-in answered 200. The first pause came 3 min 1 s after the question, in the `authed` middleware, then in the settings handler with `changes = {theme: 'dark'}` and the session's `userId`. The response was 200, and the replay reopened at the recorded stop with native Variables |
+
+In both checks the typed password and the session token were found nowhere in Codebook's storage, the chat transcripts, the evidence or the clone.
+
 ## [0.2.90.0] - 2026-11-06 (development candidate)
 
 Cycle 0090 ([Issue #233](https://github.com/laststance/codebook/issues/233)), a bug-fix cycle. **A browser pause now reaches the chat in under 2 seconds on the checked app, instead of about 6, and a stop declared on the first line of a statement that spans several lines now pauses instead of being refused.**
