@@ -1558,30 +1558,52 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @throws `INVALID_CONFIGURATION` from {@link resolveReactScriptsPackage}; `REACT_SCRIPTS_UNSUPPORTED` (`not-a-react-scripts-app`); `REACT_SCRIPTS_SEAL_FAILED` (reason `outside-package`) for stops outside the package, and (reason `node-modules`) for stops in the app's node_modules.
    * @example this.reactScriptsPackage = await this.resolveReactScriptsPackageOfRun()
    */
-  private async resolveReactScriptsPackageOfRun(): Promise<ResolvedPackage> {
+  private resolveReactScriptsPackageOfRun(): Promise<ResolvedPackage> {
+    return this.resolveAppPackageOfRun(resolveReactScriptsPackage, {
+      outside: reactScriptsOutsidePackageRefusal,
+      nodeModules: reactScriptsNodeModulesRefusal,
+    })
+  }
+
+  /**
+   * Resolves a react-scripts or Expo app once, then refuses stop files outside it and stops in the app's node_modules, all before any process starts.
+   * Shared by {@link resolveReactScriptsPackageOfRun} and {@link resolveExpoWebPackageOfRun}, which differ only in the resolver and the two refusals; the refusal order is the real path, the adapter's app rule, then stops outside the package, then published packages.
+   * @param resolve - The adapter's package resolver.
+   * @param refusals - The adapter's refusal for stops outside the package (`outside`) and for stops in node_modules (`nodeModules`).
+   * @returns The resolved package; the root package for an absent or `"."` packageRoot.
+   * @throws Whatever `resolve` throws, or the adapter's refusal for stops outside the package or in node_modules.
+   * @example await this.resolveAppPackageOfRun(resolveExpoWebPackage, { outside: expoWebOutsidePackageRefusal, nodeModules: expoWebNodeModulesRefusal })
+   */
+  private async resolveAppPackageOfRun(
+    resolve: (
+      workspace: string,
+      declared: string | undefined,
+    ) => Promise<ResolvedPackage>,
+    refusals: {
+      outside: (
+        packageRootRelative: string,
+        files: readonly string[],
+      ) => StudyError
+      nodeModules: (files: readonly string[]) => StudyError
+    },
+  ): Promise<ResolvedPackage> {
     const configuration = this.definition.configuration
     const declared =
       'packageRoot' in configuration ? configuration.packageRoot : undefined
-    const reactScriptsPackage = await resolveReactScriptsPackage(
-      this.options.workspace,
-      declared,
-    )
-    // A library stop is out of scope for react-scripts (decision D4): every stop outside the app is refused.
-    const outside = await this.stopFilesOutside(reactScriptsPackage)
+    const resolved = await resolve(this.options.workspace, declared)
+    // A library stop is out of scope for these adapters (decision D4): every stop outside the app is refused.
+    const outside = await this.stopFilesOutside(resolved)
     if (outside.length)
-      throw reactScriptsOutsidePackageRefusal(
-        reactScriptsPackage.packageRootRelative,
-        outside,
-      )
+      throw refusals.outside(resolved.packageRootRelative, outside)
     // A published package in the app's node_modules is not the checked-out library: refused here, before the server starts.
     const published = publishedStopFiles(
       configuredStops(this.definition.configuration).map(
         (stop) => stop.source.path,
       ),
-      (path) => reactScriptsPackage.toPackageRelative(path),
+      (path) => resolved.toPackageRelative(path),
     )
-    if (published.length) throw reactScriptsNodeModulesRefusal(published)
-    return reactScriptsPackage
+    if (published.length) throw refusals.nodeModules(published)
+    return resolved
   }
 
   /**
@@ -1593,12 +1615,25 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private async resolveBrowserOnlyPackageOfRun(
     adapter: DevelopmentServerAdapterName,
   ): Promise<void> {
-    if (adapter === 'vite-dev')
-      this.vitePackage = await this.resolveVitePackageOfRun()
-    else if (adapter === 'react-scripts-dev')
-      this.reactScriptsPackage = await this.resolveReactScriptsPackageOfRun()
-    else if (adapter === 'expo-web-dev')
-      this.expoWebPackage = await this.resolveExpoWebPackageOfRun()
+    // Exhaustive over the adapter names: a new adapter fails to compile here until it picks a resolver.
+    switch (adapter) {
+      case 'vite-dev':
+        this.vitePackage = await this.resolveVitePackageOfRun()
+        return
+      case 'react-scripts-dev':
+        this.reactScriptsPackage = await this.resolveReactScriptsPackageOfRun()
+        return
+      case 'expo-web-dev':
+        this.expoWebPackage = await this.resolveExpoWebPackageOfRun()
+        return
+      case 'next-dev-webpack':
+        // Next resolves its own package before this runs.
+        return
+      default: {
+        const unhandledAdapter: never = adapter
+        throw new Error(`Unhandled adapter: ${String(unhandledAdapter)}`)
+      }
+    }
   }
 
   /**
@@ -1628,30 +1663,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @throws `INVALID_CONFIGURATION` from {@link resolveExpoWebPackage}; `EXPO_WEB_UNSUPPORTED` (`not-an-expo-app`); `EXPO_WEB_SEAL_FAILED` (reason `outside-package`) for stops outside the package, and (reason `node-modules`) for stops in the app's node_modules.
    * @example this.expoWebPackage = await this.resolveExpoWebPackageOfRun()
    */
-  private async resolveExpoWebPackageOfRun(): Promise<ResolvedPackage> {
-    const configuration = this.definition.configuration
-    const declared =
-      'packageRoot' in configuration ? configuration.packageRoot : undefined
-    const expoWebPackage = await resolveExpoWebPackage(
-      this.options.workspace,
-      declared,
-    )
-    // A library stop is out of scope for Expo web: every stop outside the app is refused.
-    const outside = await this.stopFilesOutside(expoWebPackage)
-    if (outside.length)
-      throw expoWebOutsidePackageRefusal(
-        expoWebPackage.packageRootRelative,
-        outside,
-      )
-    // A published package in the app's node_modules is not the checked-out library: refused here, before the server starts.
-    const published = publishedStopFiles(
-      configuredStops(this.definition.configuration).map(
-        (stop) => stop.source.path,
-      ),
-      (path) => expoWebPackage.toPackageRelative(path),
-    )
-    if (published.length) throw expoWebNodeModulesRefusal(published)
-    return expoWebPackage
+  private resolveExpoWebPackageOfRun(): Promise<ResolvedPackage> {
+    return this.resolveAppPackageOfRun(resolveExpoWebPackage, {
+      outside: expoWebOutsidePackageRefusal,
+      nodeModules: expoWebNodeModulesRefusal,
+    })
   }
 
   /**
