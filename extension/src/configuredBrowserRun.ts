@@ -3132,6 +3132,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private endRouteHandlerJudging(entry: RouteHandlerStop): void {
     this.judgingRouteHandler = false
     if (entry.prepared || this.status === 'failed' || this.cleaning) return
+    this.replayQueuedStops()
+  }
+
+  /**
+   * Gives back the CDP pause and the DAP stopped event that waited behind a held moment, the CDP pause first, as if they had just arrived.
+   * Called by {@link endRouteHandlerJudging} when a judged hit adopted no stop, and by {@link beginAfter} when a continuation advances to the next stop.
+   * The pause was journaled when it was observed and its clock keeps running, so it is admitted, not observed again.
+   * @example this.replayQueuedStops()
+   */
+  private replayQueuedStops(): void {
     const cdpStop = this.pendingCdpStop,
       dapStop = this.pendingDapStop
     this.pendingCdpStop = undefined
@@ -14355,17 +14365,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.progressDeadline(ACTIVE_TIMEOUT_MS, () =>
         this.nextStopNotReachedText(nextStop),
       )
-      const cdpStop = this.pendingCdpStop,
-        dapStop = this.pendingDapStop
-      this.pendingCdpStop = undefined
-      this.pendingDapStop = undefined
-      // Publish queued events only after the previous generation has retired completely. The pause was journaled when it was observed and its clock keeps running, so it is admitted, not observed again.
-      if (cdpStop) this.admitPause(cdpStop.participant, cdpStop.event)
-      if (dapStop)
-        this.onEvent(
-          this.participants[dapStop.participant].selected!,
-          dapStop.event,
-        )
+      // Publish queued events only after the previous generation has retired completely.
+      this.replayQueuedStops()
       return
     }
     this.status = 'resuming'
