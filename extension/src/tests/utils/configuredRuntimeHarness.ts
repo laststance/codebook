@@ -356,6 +356,8 @@ export async function configuredRuntimeHarness(
      * Moves the cited source `src/mode.ts` (the study's second anchor) to this repository-relative path and makes every additional stop declare that file, so one run can hold a stop in the first file and stops in a second one (such as a library browser stop beside a server stop in the app's own page). Only in a version 3 run with `operations`; by default every additional stop stays in the first file.
      */
     additionalStopFile?: string
+    /** With `additionalStopFile`: the additional stops (0-based) declared in that file; the others stay in the first file. Default: every additional stop. */
+    additionalStopFileStops?: number[]
     /** The configuration's entry path (default: none, so `/`). */
     entryPath?: string
     /** Makes the stand-in browser's first `close` fail, as a close that could not confirm Chrome's exit does; the second succeeds. */
@@ -458,6 +460,9 @@ export async function configuredRuntimeHarness(
   if (options.initialInputs)
     reference.configuration.initialInputs = options.initialInputs
   // A version 2 configuration names the first stop's participant; its other fields are the version 1 ones.
+  const isInStopFile = (index: number): boolean =>
+    Boolean(options.additionalStopFile) &&
+    (options.additionalStopFileStops?.includes(index) ?? true)
   const unnestedConfiguration = options.operations
     ? {
         version: 3 as const,
@@ -481,7 +486,7 @@ export async function configuredRuntimeHarness(
             ('browser' as const),
           source: {
             ...reference.configuration.source,
-            ...(options.additionalStopFile
+            ...(isInStopFile(index)
               ? {
                   path: options.additionalStopFile,
                   hash: reference.descriptor!.sources[1]!.hash,
@@ -490,7 +495,7 @@ export async function configuredRuntimeHarness(
             line: stop.line,
             column: stop.column,
           },
-          anchorIndex: options.additionalStopFile
+          anchorIndex: isInStopFile(index)
             ? 1
             : reference.configuration.book.anchorIndex,
           inspections: stop.inspections,
@@ -1806,7 +1811,11 @@ export async function configuredRuntimeHarness(
           },
         })
         if (serverParticipant)
-          queueMicrotask(() => serverParticipant.acknowledgeBreakpoints())
+          queueMicrotask(() =>
+            serverParticipant.acknowledgeBreakpoints(
+              removed[0]?.location.uri?.fsPath,
+            ),
+          )
         if (removedAck)
           queueMicrotask(() =>
             run.onResponse(selected, {

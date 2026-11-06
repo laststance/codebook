@@ -212,3 +212,105 @@ test('a route-handler pause masks a typed secret in the request path it publishe
   // Assert
   assert.equal(serverPause.routeHandler?.path, '/api/todos/[masked]')
 })
+
+// Value: protects=a browser stop of the same operation that pauses while a route-handler hit is being sealed waits behind that hit, so the pause observed first is published first and the run does not fail; fails_when=the run fails with "Unexpected or additional server stop invalidated the declared operation" because the browser stop was accepted while the route handler's seal was still reading the script, or a route-handler.published row follows run.failed; why_new=Cycle 0088 native check (Cursor, two browser stops and one API-route stop of one operation); seam=holdScriptRead (the seal's script read) and emitPause (the second browser stop); no_claim=a real Next request or the browser stop's own snapshot content
+test('a browser stop that pauses while a route-handler hit is being sealed is shown after that hit is continued', async (context) => {
+  // Arrange
+  const routeFile = 'app/api/todos/route.ts'
+  const harness = await routeHandlerRunHarness(context, {
+    stopOperations: [2, 2, 2],
+    stopParticipants: ['browser', 'server', 'browser'],
+    operations: [
+      { kind: 'click', title: 'Focus', selector: 'button[type=submit]' },
+      { ...ADD, title: 'Add' },
+    ],
+    additionalStops: [
+      {
+        line: 1,
+        column: 7,
+        inspections: [{ path: 'nextTheme', mode: 'value', required: true }],
+      },
+      {
+        line: 1,
+        column: 1,
+        inspections: [{ path: 'nextTheme', mode: 'value', required: true }],
+      },
+    ],
+    extra: {
+      participant: 'browser',
+      sourcePath: 'components/TodoListCache.tsx',
+      additionalStopFile: routeFile,
+      additionalStopFileStops: [0],
+    },
+  })
+  await harness.run.prepare()
+  await sendOperation(harness, 1)
+  await waitUntil(
+    () => harness.run.view().status === 'ready',
+    'operation 1 done',
+  )
+  await sendOperation(harness, 2)
+  const firstBrowserPause = await waitUntil(
+    () => harness.run.view().participants.browser?.snapshot,
+    'the first browser stop paused',
+  )
+  await harness.run.continue('browser', firstBrowserPause.pause)
+  const releaseRead = harness.server!.holdScriptRead('route-script')
+  context.after(releaseRead)
+  // Act: the route handler's hit is judged and its seal waits on the script read while the second browser stop pauses
+  sendRequest(harness, '9', 'POST', '/api/todos')
+  await hitRouteFile(harness, routeFile)
+  await waitUntil(
+    () => harness.server!.scriptReads.includes('route-script'),
+    'the seal reads the route script',
+  )
+  harness.emitPause(1, 1)
+  await setTimeout(200)
+  releaseRead()
+  const serverPause = await publishedPause(harness)
+  const whileServerHeld = {
+    status: harness.run.view().status,
+    failures: [...harness.run.view().failures],
+    order: [...harness.run.view().snapshots].map((snapshot) => [
+      snapshot.participant,
+      snapshot.execution,
+    ]),
+  }
+  await harness.run.continue('server', serverPause.pause)
+  const secondBrowserPause = await waitUntil(
+    () =>
+      harness.run.view().snapshots.length === 3
+        ? harness.run.view().participants.browser?.snapshot
+        : undefined,
+    'the second browser stop paused after the route handler was continued',
+  )
+  // Assert
+  assert.deepEqual(
+    {
+      whileServerHeld,
+      failures: [...harness.run.view().failures],
+      secondBrowserIsNext: secondBrowserPause !== firstBrowserPause,
+      order: [...harness.run.view().snapshots].map((snapshot) => [
+        snapshot.participant,
+        snapshot.execution,
+      ]),
+    },
+    {
+      whileServerHeld: {
+        status: 'paused-server',
+        failures: [],
+        order: [
+          ['browser', 'browser'],
+          ['server', 'route-handler'],
+        ],
+      },
+      failures: [],
+      secondBrowserIsNext: true,
+      order: [
+        ['browser', 'browser'],
+        ['server', 'route-handler'],
+        ['browser', 'browser'],
+      ],
+    },
+  )
+})

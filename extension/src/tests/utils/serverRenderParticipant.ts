@@ -1045,7 +1045,7 @@ export function createServerParticipant(parts: ServerParticipantParts) {
   let verifiedRegistrationLines: number[] = []
 
   /** Sends the breakpoint registrations the editor holds for the sealed source to the server session, as the adapter acknowledges them (pending until the pause). */
-  const acknowledgeBreakpoints = (): void => {
+  const acknowledgeBreakpoints = (removedPath?: string): void => {
     const run = parts.run()
     const verifiedLines = verifiedRegistrationLines
     const selected = parts.breakpoints
@@ -1055,7 +1055,8 @@ export function createServerParticipant(parts: ServerParticipantParts) {
       seq: requestSequence,
       command: 'setBreakpoints',
       arguments: {
-        source: { path: pausedFramePath() },
+        // A removal names the file of the breakpoint just removed, even when a later stop of another file is already armed.
+        source: { path: removedPath ?? pausedFramePath() },
         breakpoints: selected.map((breakpoint) => ({
           line: breakpoint.location.range.start.line + 1,
           column: breakpoint.location.range.start.character + 1,

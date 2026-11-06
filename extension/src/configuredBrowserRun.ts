@@ -1206,6 +1206,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     participant: Participant
     event: Protocol.Debugger.PausedEvent
   }
+  /** Set while a route-handler or API-route hit is judged and sealed: another participant's stop that arrives meanwhile is queued behind it, like a stop that arrives during a continuation ({@link settleRouteHandlerHit}). */
+  private judgingRouteHandler = false
   private transientBrowserPause?: {
     timer: ReturnType<typeof setTimeout>
     event: Protocol.Debugger.PausedEvent
@@ -3024,9 +3026,48 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       (event.body?.hitBreakpointIds as number[] | undefined) ?? []
     const entry = this.armedRouteHandlerOf(session, scriptUrl, hitIds)
     if (!entry || event.body?.reason !== 'breakpoint') return false
-    const profile = ROUTE_HANDLER_PROFILES[entry.kind]
     // A pause while another stop of the run is held or being continued is judged once that stop is continued, so the stop takes its place in order. The server stays paused meanwhile; the held stop's own deadline (and the run's) still ends the wait.
     const heldMs = await this.waitBehindHeldStop()
+    // From here the hit is judged and sealed; a browser stop that arrives meanwhile waits behind it (the pause observed first is published first).
+    this.judgingRouteHandler = true
+    try {
+      return await this.judgeRouteHandlerHit(session, event, {
+        entry,
+        held,
+        scriptId,
+        scriptUrl,
+        hitIds,
+        heldMs,
+      })
+    } finally {
+      this.endRouteHandlerJudging(entry)
+    }
+  }
+
+  /**
+   * Classifies a route-handler or API-route hit and publishes or resumes it, the body of {@link settleRouteHandlerHit} that runs while {@link judgingRouteHandler} is set.
+   * @param session - The server session.
+   * @param event - The `stopped` event.
+   * @param hit - The stop the pause belongs to, the held pause, its script, the breakpoint ids the adapter named and how long a held stop kept it waiting.
+   * @returns `true` when the pause was published or resumed; `false` when a learner's breakpoint owns it, so the other handling goes on.
+   * @throws The seal's refusal after the runtime was resumed.
+   * @example if (await this.judgeRouteHandlerHit(session, event, hit)) return true
+   */
+  private async judgeRouteHandlerHit(
+    session: vscode.DebugSession,
+    event: DebugProtocol.Event,
+    hit: {
+      entry: RouteHandlerStop
+      held: NonNullable<DebugParticipant['copyPause' | 'unannouncedPause']>
+      scriptId: string
+      scriptUrl: string | undefined
+      hitIds: readonly number[]
+      heldMs: number
+    },
+  ): Promise<boolean> {
+    const participant = this.participants.server
+    const { entry, held, scriptId, scriptUrl, hitIds, heldMs } = hit
+    const profile = ROUTE_HANDLER_PROFILES[entry.kind]
     // After an await Next's caller is only on the async stack (E2), so the classifier reads both.
     const handler = routeHandlerStackOf(
       held.event.callFrames,
@@ -3079,6 +3120,61 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       scriptUrl: scriptUrl!,
       heldMs,
     })
+    return true
+  }
+
+  /**
+   * Ends the judging window of a route-handler or API-route hit and gives back a stop that was queued during it when the hit adopted no stop of its own (a resumed hit, a learner's breakpoint).
+   * Called by {@link settleRouteHandlerHit} when the hit is settled; a published hit already cleared the window and keeps the queue for its continuation ({@link beginAfter}).
+   * @param entry - The route-handler stop the hit belonged to.
+   * @example this.endRouteHandlerJudging(entry)
+   */
+  private endRouteHandlerJudging(entry: RouteHandlerStop): void {
+    this.judgingRouteHandler = false
+    if (entry.prepared || this.status === 'failed' || this.cleaning) return
+    const cdpStop = this.pendingCdpStop,
+      dapStop = this.pendingDapStop
+    this.pendingCdpStop = undefined
+    this.pendingDapStop = undefined
+    if (cdpStop) this.admitPause(cdpStop.participant, cdpStop.event)
+    if (dapStop)
+      this.onEvent(
+        this.participants[dapStop.participant].selected!,
+        dapStop.event,
+      )
+  }
+
+  /**
+   * Tells whether another participant's pause must wait behind the route-handler or API-route hit being judged.
+   * Called by {@link admitPause} before it makes a pause current.
+   * @param name - The participant that paused.
+   * @returns `true` while a hit is judged and the pause is not the server's own.
+   * @example if (this.isQueuedBehindRouteHandler('browser')) queue()
+   */
+  private isQueuedBehindRouteHandler(name: Participant): boolean {
+    return this.judgingRouteHandler && name !== 'server'
+  }
+
+  /**
+   * Queues a debug-adapter `stopped` of another participant that arrives while a route-handler or API-route hit is judged and sealed, so the stop observed first is published first.
+   * Called by the DAP event handler before it accepts a stop.
+   * @param name - The participant whose `stopped` arrived.
+   * @param event - The `stopped` event.
+   * @returns `true` when the event was queued (or the run failed for a second queued stop); `false` when no hit is being judged or the event is the server's own.
+   * @example if (this.queueStopBehindRouteHandler('browser', event)) return
+   */
+  private queueStopBehindRouteHandler(
+    name: Participant,
+    event: DebugProtocol.Event,
+  ): boolean {
+    if (!this.isQueuedBehindRouteHandler(name)) return false
+    if (this.pendingDapStop || !Number.isInteger(event.body?.threadId)) {
+      this.fail(
+        `Unexpected or additional ${name} stop invalidated the declared operation`,
+      )
+      return true
+    }
+    this.pendingDapStop = { participant: name, event }
     return true
   }
 
@@ -3190,12 +3286,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         if (profile.field === 'apiRoute') prepared.apiRoute = request
         else prepared.routeHandler = request
         entry.prepared = prepared
+        // The hit now has its place in the order; the replay of its own `stopped` is judged against it.
+        this.judgingRouteHandler = false
         // Every stop before this one was continued: it takes the place of the first stop still ahead.
         this.stops.splice(this.stopIndex, 0, prepared)
         // A run whose only stops are route handlers freezes its manifest at the first of their pauses.
         if (!this.sealedManifest) this.freezeSealedStops()
       },
     })
+    // A run that failed meanwhile published nothing.
+    if (this.status === 'failed' || this.cleaning) return
     // The latency row: the request's start, the observed pause and the publish; time a held stop kept the pause waiting is named apart (E-10).
     this.evidence.record('route-handler.published', {
       declaredIndex: entry.index,
@@ -10495,7 +10595,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       return
     }
     // The expected stop's pause becomes current only after the preceding continuation has all its receipts.
-    if (this.continuation) this.pendingCdpStop = { participant: name, event }
+    if (this.continuation || this.isQueuedBehindRouteHandler(name))
+      this.pendingCdpStop = { participant: name, event }
     else this.participants[name].stopped = { event }
   }
 
@@ -12552,6 +12653,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         this.track(this.verifyStackRefresh(name, session, refresh))
         return
       }
+      if (this.queueStopBehindRouteHandler(name, event)) return
       if (this.continuation) {
         const next = this.stops[this.stopIndex + 1]
         if (
