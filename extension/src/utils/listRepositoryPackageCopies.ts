@@ -5,6 +5,8 @@ import { z } from 'zod'
 
 import { NODE_SCRIPT_PACKAGE_COPY_SCAN_LIMIT_COUNT } from '../constants'
 
+import { isNpmPackageName } from './isNpmPackageName'
+
 /** The `package.json` fields the disclosure reads: the direct dependency sections of the Example, and the `version` and `repository` of an installed copy. */
 const manifestSchema = z.looseObject({
   version: z.string().optional(),
@@ -228,7 +230,9 @@ export async function listRepositoryPackageCopies(
     ...Object.keys(example.optionalDependencies ?? {}),
   ])
   const copies: RepositoryPackageCopy[] = []
+  // A name that is no npm package name could climb out of node_modules when joined into a path: it is never read.
   for (const name of [...names]
+    .filter(isNpmPackageName)
     .sort()
     .slice(0, NODE_SCRIPT_PACKAGE_COPY_SCAN_LIMIT_COUNT)) {
     // A stop or limit of the run ends the scan; what was found stays.

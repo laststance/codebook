@@ -256,3 +256,33 @@ test('stops scanning dependencies at the cap and at an aborted signal', async ()
     await rm(repositoryRoot, { recursive: true, force: true })
   }
 })
+
+// protects=a dependency name that is no npm package name (one that climbs out of node_modules) is never read or listed as an installed copy; fails_when=the name is joined into a path and a package.json elsewhere in the repository is disclosed; no_claim=names npm itself would reject for other reasons
+test('ignores a dependency whose name climbs out of node_modules to another installed folder', async () => {
+  // Arrange
+  const repositoryRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-copies-')),
+  )
+  const exampleRoot = join(repositoryRoot, 'examples', 'app')
+  try {
+    await writePackage(exampleRoot, {
+      name: 'app',
+      dependencies: { '../../../store/node_modules/fake': '1.0.0' },
+    })
+    await writePackage(join(repositoryRoot, 'store', 'node_modules', 'fake'), {
+      name: 'fake',
+      version: '9.9.9',
+      repository: 'https://github.com/acme/tool.git',
+    })
+    // Act
+    const copies = await listRepositoryPackageCopies(
+      exampleRoot,
+      repositoryRoot,
+      ORIGIN,
+    )
+    // Assert
+    assert.deepEqual(copies, [])
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true })
+  }
+})
