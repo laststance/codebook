@@ -184,6 +184,23 @@ test('mask values keep a 16-character cookie value and skip a 15-character one a
   assert.deepEqual(masked, ['b'.repeat(16)])
 })
 
+// protects=a digit-bearing cookie value of 8 to 15 characters is masked while protocol words and short or digitless values are not; fails_when=a 12-character digit value is skipped, or a digitless 10-character word or a 7-character value is kept; no_claim=which cookie names a server sets
+test('mask values keep digit-bearing values of 8 or more characters and skip protocol words', () => {
+  // Arrange
+  const values = [
+    'k3J9xQ2mV8aZ',
+    'abcdefghij',
+    'system',
+    'failed',
+    'signed-in',
+    'a1b2c3d',
+  ]
+  // Act
+  const masked = cookieMaskValues(values)
+  // Assert
+  assert.deepEqual(masked, ['k3J9xQ2mV8aZ'])
+})
+
 // protects=a quoted cookie value is masked with and without its quotes and split unquoted; fails_when=only the quoted form is kept or the signature stays unmasked; no_claim=server quoting rules
 test('mask values cover a quoted cookie value both quoted and unquoted', () => {
   // Arrange

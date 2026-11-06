@@ -330,6 +330,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
           : this.secrets.size === 0
             ? 0
             : this.maskForms().longestChars,
+      forms: () => (this.secrets.size === 0 ? [] : [...this.maskForms().forms]),
       onWithheld: (bytes): void =>
         this.record('node-server.output-withheld', { bytes }),
     }

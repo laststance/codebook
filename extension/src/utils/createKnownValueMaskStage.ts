@@ -1,6 +1,7 @@
 import { NODE_SERVER_OUTPUT_PENDING_LIMIT_BYTES } from '../constants'
 
 import type { RootHoldTimer } from './createRootHidingStage'
+import { maskPartialSecretTail } from './maskPartialSecretTail'
 
 /** What one run knows about its secret values, read at call time so the set can grow while the run's output is captured. */
 export type KnownValueMask = {
@@ -8,6 +9,8 @@ export type KnownValueMask = {
   mask(text: string): string
   /** How many characters the longest masked form has, read at call time; Infinity holds everything (a sign-in exchange in progress; its held text is capped at NODE_SERVER_OUTPUT_PENDING_LIMIT_BYTES, past which it is dropped and reported); 0 when the run holds no secret. */
   holdback(): number
+  /** The expanded masking forms, read at call time; a timed release or the channel's end replaces a held ending that starts one of them with the mask. Omitted when the run holds no secret. */
+  forms?(): readonly string[]
   /** Called with the UTF-8 byte count of held text that was dropped instead of published. */
   onWithheld(bytes: number): void
 }
@@ -57,11 +60,15 @@ export function createKnownValueMaskStage(
       cancelRelease = undefined
       // An infinite holdback releases nothing by time: the exchange decides.
       if (known.holdback() === Number.POSITIVE_INFINITY || held === '') return
-      const text = known.mask(held)
+      const text = publishable(held)
       held = ''
       if (text) timer.release(text)
     }, timer.holdMs)
   }
+
+  /** Masks held text for publication without waiting for more output: an ending that starts a secret form is masked too, so a value written in two parts far apart leaks no fragment. */
+  const publishable = (text: string): string =>
+    maskPartialSecretTail(known.mask(text), known.forms?.() ?? [])
 
   /** Reports and discards the held text. */
   const withhold = (): void => {
@@ -109,7 +116,7 @@ export function createKnownValueMaskStage(
         withhold()
         return ''
       }
-      const text = known.mask(held)
+      const text = publishable(held)
       held = ''
       return text
     },
