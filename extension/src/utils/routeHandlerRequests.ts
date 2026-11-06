@@ -1,4 +1,7 @@
-import { ROUTE_HANDLER_REQUEST_LIMIT } from '../constants'
+import {
+  MILLISECONDS_PER_SECOND,
+  ROUTE_HANDLER_REQUEST_LIMIT,
+} from '../constants'
 
 import { routeHandlerPathMatches } from './routeHandlerPathMatches'
 
@@ -7,8 +10,12 @@ export type TrackedRouteHandlerRequest = {
   id: string
   method: string
   pathname: string
+  /** The pathname plus the query string, as the browser sent it: how an API-route pause names its request (E-2). */
+  target: string
   window: number
   startedAtMs: number
+  /** Wall time of the request's start in epoch milliseconds: the browser's own `wallTime` when the event carried one, else the wall time Codebook received the event. */
+  wallTimeMs: number
 }
 
 /**
@@ -18,10 +25,12 @@ export type TrackedRouteHandlerRequest = {
  * @example
  * const tracker = new RouteHandlerRequests(['/api/todos'])
  * tracker.start({ requestId: '7', method: 'POST', url: 'http://localhost:3000/api/todos' }, 2, 100)
- * tracker.list() // => [{ id: '7', method: 'POST', pathname: '/api/todos', window: 2, startedAtMs: 100 }]
+ * tracker.list() // => [{ id: '7', method: 'POST', pathname: '/api/todos', target: '/api/todos', window: 2, startedAtMs: 100, wallTimeMs: … }]
  */
 export class RouteHandlerRequests {
   private readonly requests = new Map<string, TrackedRouteHandlerRequest>()
+  /** The wall time, in epoch milliseconds, at which Codebook sent each operation's input, by operation order (index 0 is operation 1). */
+  private readonly dispatchedAtMs: number[] = []
 
   /**
    * @param routes - The route patterns the run's route-handler stops declare.
@@ -34,14 +43,51 @@ export class RouteHandlerRequests {
   ) {}
 
   /**
-   * Notes a request the browser sent when its pathname matches a declared route; a redirect hop to another declared route or with another method is kept as its own entry (id `<requestId> <METHOD> <pathname>`).
-   * @param event - The method and URL of `Network.requestWillBeSent`.
-   * @param window - The number of operations dispatched so far.
+   * Records the wall time at which Codebook sent an operation's input, so a request is placed in a window by when the page sent it and not by when its event arrived (E-3).
+   * @param operation - The operation (1-based) whose input is being sent.
+   * @param wallMs - The wall clock in epoch milliseconds.
+   * @example tracker.noteDispatch(1, 1_700_000_000_000)
+   */
+  noteDispatch(operation: number, wallMs: number): void {
+    this.dispatchedAtMs[operation - 1] = wallMs
+  }
+
+  /**
+   * Gives the window a request belongs to: the operations whose input was sent no later than the request's own start, never more than the operations dispatched when its event arrived.
+   * @param receiptWindow - The operations dispatched when the event arrived.
+   * @param wallTimeMs - The request's own start in epoch milliseconds; `undefined` when the event carried none.
+   * @returns The window; `receiptWindow` when no wall time or no dispatch time is known, since an operation whose send time was never noted counts by receipt order.
+   * @example tracker.windowOf(1, undefined) // => 1
+   */
+  private windowOf(
+    receiptWindow: number,
+    wallTimeMs: number | undefined,
+  ): number {
+    if (wallTimeMs === undefined) return receiptWindow
+    let window = 0
+    // Operations are sent in order, so the first one known to be sent after the request ends the count; one without a noted time was dispatched before the event arrived.
+    for (let index = 0; index < receiptWindow; index++) {
+      const sentAtMs = this.dispatchedAtMs[index]
+      if (sentAtMs !== undefined && sentAtMs > wallTimeMs) break
+      window = index + 1
+    }
+    return window
+  }
+
+  /**
+   * Notes a request the browser sent when its pathname matches a declared route; a redirect hop to another declared route or with another method is kept as its own entry (id `<requestId> <METHOD> <target>`, the target being the pathname plus the query string, so a hop that changes only the query is its own entry).
+   * @param event - The method and URL of `Network.requestWillBeSent`, and its `wallTime` in seconds since the epoch when the event has one.
+   * @param window - The number of operations dispatched so far, when the event arrived.
    * @param nowMs - The run's clock reading.
    * @example tracker.start({ requestId: '7', method: 'GET', url: 'http://localhost:3000/api/todos' }, 0, 5)
    */
   start(
-    event: { requestId: string; method: string; url: string },
+    event: {
+      requestId: string
+      method: string
+      url: string
+      wallTime?: number
+    },
     window: number,
     nowMs: number,
   ): void {
@@ -60,19 +106,26 @@ export class RouteHandlerRequests {
     )
       return
     const method = event.method.toUpperCase()
+    const target = `${parsed.pathname}${parsed.search}`
     const first = this.requests.get(event.requestId)
-    // Chrome reports each redirect hop under the request's id: the same method and path is the same hop, another one is a hop of its own.
-    if (first?.method === method && first.pathname === parsed.pathname) return
+    // Chrome reports each redirect hop under the request's id: the same method and target (path plus query) is the same hop, another one is a hop of its own.
+    if (first?.method === method && first.target === target) return
     const id = first
-      ? `${event.requestId} ${method} ${parsed.pathname}`
+      ? `${event.requestId} ${method} ${target}`
       : event.requestId
     if (this.requests.has(id)) return
+    const wallTimeMs =
+      event.wallTime === undefined
+        ? undefined
+        : event.wallTime * MILLISECONDS_PER_SECOND
     this.requests.set(id, {
       id,
       method,
       pathname: parsed.pathname,
-      window,
+      target,
+      window: this.windowOf(window, wallTimeMs),
       startedAtMs: nowMs,
+      wallTimeMs: wallTimeMs ?? Date.now(),
     })
     // The oldest request goes first when the bound is passed.
     if (this.requests.size > ROUTE_HANDLER_REQUEST_LIMIT) {

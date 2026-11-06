@@ -105,6 +105,10 @@ const ROUTE_HANDLER_REFUSAL_TEXT: Record<RouteHandlerRefusalReason, string> = {
     'is a route handler declared afterOperation 0; a route handler runs for a request the page sends after an operation',
   'route-handler-edge-runtime':
     'is a route handler that declares export const runtime = "edge", which Codebook cannot pause',
+  'api-route-before-operation':
+    'is a Pages API route declared with afterOperation 0 or in a version 2 configuration; an API-route stop pauses only for a request the page sends after an operation',
+  'api-route-edge-runtime':
+    'is a Pages API route whose exported config declares the edge runtime, which Codebook cannot pause',
   'route-handler-not-app-source':
     "is a route handler in node_modules or a workspace library, not in the app's own source",
 }

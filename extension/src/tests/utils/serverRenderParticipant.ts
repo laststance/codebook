@@ -116,6 +116,18 @@ export interface ServerHit {
     | 'route-handler'
     | 'route-handler-after-await'
     | 'route-handler-after-timer'
+    | 'api-route'
+    | 'api-route-after-await'
+  /**
+   * With `stack: 'api-route'` or `'api-route-after-await'` (Cycle 0088, E1 and E1b: Next 16.2.2, `next dev --webpack`): what the handler frame's local scope holds. Before the handler's first `await` the synchronous frames are the handler (`__WEBPACK_DEFAULT_EXPORT__`), `apiResolver` (`pages-api.runtime.dev.js`, resolved by script id: synchronous frames carry no URL) and `processTicksAndRejections`; after it the handler alone, with `apiResolver` heading the first async segment. The local scope holds `req` (`IncomingMessage` with own data properties `url` and `method`, `query` and `body`), `res` (`ServerResponse`), `add` and `clear`.
+   * `shape` changes what the scope holds: `plain` (default), `renamed` (the parameter is `request`), `destructured` (no request object), `two-requests` (two `IncomingMessage` locals) or `accessor-url` (`url` is a getter).
+   */
+  apiRequest?: {
+    method: string
+    url: string
+    shape?:
+      'plain' | 'renamed' | 'destructured' | 'two-requests' | 'accessor-url'
+  }
   /**
    * With `stack: 'route-handler'`, `'route-handler-after-await'` or `'route-handler-after-timer'`: the handler frame's function name (default `POST`). The raw CDP stacks E2 recorded (Cycle 0087, Next 16.2, `next dev --webpack`): before the handler's first `await`, the handler frame in the route file, then `run` (the async context) and `do` (Next's route module); after it, the handler frame and `processTicksAndRejections`, with `run` and `do` at the head of the `asyncStackTrace`. A debugger's display names them `AsyncLocalStorage.run` and `AppRouteRouteModule.do`, as E1 recorded through DAP; an alias (`export { handle as POST }`) runs a function named `handle`. After an awaited timer (E3, Cycle 0087, the same Next, `await new Promise((resolve) => setTimeout(resolve, 500))`) the handler frame stands alone, the async stack's first segment holds only `processTicksAndRejections` and `run` and `do` lead the segment before it.
    */
@@ -185,6 +197,8 @@ export function createServerParticipant(parts: ServerParticipantParts) {
   const evaluationHits = new Set<number>()
   /** The hits that stand in a route handler (`stack: 'route-handler'`), with the handler frame's name; their top frame answers E1's recorded scope chain. */
   const routeHandlerHits = new Map<number, string>()
+  /** The answers of `Runtime.getProperties` by remote object id: the handler frame's local scope and the request object of an API-route hit. */
+  const objectProperties = new Map<string, object[]>()
   let currentHit = 0
   let currentStopReason = 'breakpoint'
   let currentHitBreakpointIds: number[] | undefined
@@ -493,6 +507,8 @@ export function createServerParticipant(parts: ServerParticipantParts) {
         scriptId?: string
         callFrameId?: string
         stackTraceId?: { id: string }
+        objectId?: string
+        ownProperties?: boolean
       },
     ) {
       journaledInspectorMethods.push(method)
@@ -506,10 +522,18 @@ export function createServerParticipant(parts: ServerParticipantParts) {
         scriptId?: string
         callFrameId?: string
         stackTraceId?: { id: string }
+        objectId?: string
+        ownProperties?: boolean
       },
     ) {
       inspectorMethods.push(method)
       if (method === 'Runtime.evaluate') return { result: { value: undefined } }
+      if (method === 'Runtime.getProperties') {
+        const objectId = parameters?.objectId
+        const properties = objectProperties.get(objectId ?? '')
+        if (!properties) throw new Error('Cannot find object with id')
+        return { result: properties }
+      }
       if (method === 'Debugger.getStackTrace') {
         const answer = stackTraces.get(parameters?.stackTraceId?.id ?? '')
         if (answer === undefined || answer === 'fail')
@@ -634,8 +658,15 @@ export function createServerParticipant(parts: ServerParticipantParts) {
       hit.stack === 'route-handler' ||
       hit.stack === 'route-handler-after-await' ||
       hit.stack === 'route-handler-after-timer'
+    const isApiRouteStack =
+      hit.stack === 'api-route' || hit.stack === 'api-route-after-await'
     if (isRouteHandlerStack)
       routeHandlerHits.set(currentHit, hit.handlerName ?? 'POST')
+    if (isApiRouteStack)
+      routeHandlerHits.set(
+        currentHit,
+        hit.handlerName ?? '__WEBPACK_DEFAULT_EXPORT__',
+      )
     currentStopReason = hit.stopReason ?? 'breakpoint'
     currentHitBreakpointIds = hit.hitBreakpoints?.map((id) => adapterId({ id }))
     routes.set(
@@ -658,7 +689,9 @@ export function createServerParticipant(parts: ServerParticipantParts) {
                 ? 'serverStep'
                 : isRouteHandlerStack
                   ? (hit.handlerName ?? 'POST')
-                  : '',
+                  : isApiRouteStack
+                    ? (hit.handlerName ?? '__WEBPACK_DEFAULT_EXPORT__')
+                    : '',
           }),
     })
     if (hit.stack === 'route-handler') {
@@ -670,6 +703,7 @@ export function createServerParticipant(parts: ServerParticipantParts) {
       // The handler, then the async context and Next's route module that called it, by their raw CDP names (E2).
       own.callFrames.push(nextFrame('run', 1), nextFrame('do', 2))
     }
+    if (isApiRouteStack) addApiRouteStack(hit, own)
     if (hit.stack === 'route-handler-after-await') {
       // Resumed after an await: Node's continuation frame below the handler, Next's caller at the head of the async stack (E2).
       own.callFrames.push({
@@ -755,6 +789,184 @@ export function createServerParticipant(parts: ServerParticipantParts) {
   }
 
   /**
+   * Gives an API-route hit E1's recorded frames, async segments and local scope: the handler frame carries a local scope whose `Runtime.getProperties` answer holds `req` and `res`.
+   * @param hit - The hit (`stack` `api-route` or `api-route-after-await`, and `apiRequest`).
+   * @param own - The paused event of the hit's own frame, which is extended in place.
+   * @example addApiRouteStack({ stack: 'api-route' }, own)
+   */
+  const addApiRouteStack = (
+    hit: ServerHit,
+    own: ReturnType<typeof debuggerPausedEvent>,
+  ): void => {
+    const resolverUrl =
+      'file:///repo/node_modules/next/dist/compiled/next-server/pages-api.runtime.dev.js'
+    if (!announced.has('server-api-resolver'))
+      announce('server-api-resolver', resolverUrl)
+    const nodeFrame = {
+      functionName: 'processTicksAndRejections',
+      scriptId: 'server-node',
+      url: 'node:internal/process/task_queues',
+      lineNumber: 103,
+      columnNumber: 0,
+    }
+    if (hit.stack === 'api-route')
+      // Before the handler's first await: the handler, `apiResolver` and Node's microtask frame (E1).
+      own.callFrames.push(
+        {
+          callFrameId: `server-next-${currentHit}-1`,
+          functionName: 'apiResolver',
+          location: {
+            scriptId: 'server-api-resolver',
+            lineNumber: 270,
+            columnNumber: 0,
+          },
+        },
+        {
+          callFrameId: `server-next-${currentHit}-2`,
+          functionName: 'processTicksAndRejections',
+          location: {
+            scriptId: 'server-node',
+            lineNumber: 103,
+            columnNumber: 0,
+          },
+        },
+      )
+    else
+      // After the await the handler stands alone; `apiResolver` heads the first async segment, `runApi` and `handleApiRequest` come later (E1).
+      Object.assign(own, {
+        asyncStackTrace: {
+          description: 'await',
+          callFrames: [
+            {
+              functionName: 'apiResolver',
+              scriptId: 'server-api-resolver',
+              url: resolverUrl,
+              lineNumber: 270,
+              columnNumber: 0,
+            },
+            nodeFrame,
+          ],
+          parent: {
+            description: 'await',
+            callFrames: [
+              {
+                functionName: 'runApi',
+                scriptId: 'server-next-server',
+                url: 'file:///repo/node_modules/next/dist/server/next-server.js',
+                lineNumber: 10,
+                columnNumber: 0,
+              },
+              {
+                functionName: 'handleApiRequest',
+                scriptId: 'server-next-server',
+                url: 'file:///repo/node_modules/next/dist/server/next-server.js',
+                lineNumber: 20,
+                columnNumber: 0,
+              },
+            ],
+          },
+        },
+      })
+    const request = hit.apiRequest ?? { method: 'GET', url: '/api/data' }
+    const shape = request.shape ?? 'plain'
+    const dataProperty = (name: string, type: string, value: unknown) => ({
+      name,
+      value: { type, value },
+      configurable: true,
+      enumerable: true,
+      isOwn: true,
+    })
+    const requestObject = (id: string) => ({
+      type: 'object',
+      className: 'IncomingMessage',
+      objectId: id,
+    })
+    const requestId = `req-${currentHit}`
+    const locals: object[] =
+      shape === 'destructured'
+        ? [
+            dataProperty('method', 'string', request.method),
+            dataProperty('url', 'string', request.url),
+          ]
+        : [
+            {
+              name: shape === 'renamed' ? 'request' : 'req',
+              value: requestObject(requestId),
+              configurable: true,
+              enumerable: true,
+              isOwn: true,
+            },
+            {
+              name: 'res',
+              value: {
+                type: 'object',
+                className: 'ServerResponse',
+                objectId: `res-${currentHit}`,
+              },
+              configurable: true,
+              enumerable: true,
+              isOwn: true,
+            },
+            {
+              name: 'add',
+              value: { type: 'undefined' },
+              configurable: true,
+              enumerable: true,
+              isOwn: true,
+            },
+            {
+              name: 'clear',
+              value: { type: 'string', value: '1' },
+              configurable: true,
+              enumerable: true,
+              isOwn: true,
+            },
+          ]
+    if (shape === 'two-requests')
+      locals.push({
+        name: 'original',
+        value: requestObject(`req-other-${currentHit}`),
+        configurable: true,
+        enumerable: true,
+        isOwn: true,
+      })
+    objectProperties.set(`scope-${currentHit}`, locals)
+    const urlProperty =
+      shape === 'accessor-url'
+        ? {
+            name: 'url',
+            get: { type: 'function', objectId: `getter-${currentHit}` },
+            configurable: true,
+            enumerable: true,
+            isOwn: true,
+          }
+        : dataProperty('url', 'string', request.url)
+    const requestProperties = [
+      urlProperty,
+      dataProperty('method', 'string', request.method),
+      {
+        name: 'query',
+        value: { type: 'object', objectId: `query-${currentHit}` },
+        configurable: true,
+        enumerable: true,
+        isOwn: true,
+      },
+      dataProperty('body', 'string', ''),
+    ]
+    objectProperties.set(requestId, requestProperties)
+    objectProperties.set(`req-other-${currentHit}`, requestProperties)
+    Object.assign(own.callFrames[0]!, {
+      scopeChain: [
+        {
+          type: 'local',
+          object: { type: 'object', objectId: `scope-${currentHit}` },
+        },
+        { type: 'global', object: { type: 'object', objectId: 'global' } },
+      ],
+    })
+  }
+
+  /**
    * Builds the paused event of a Pages data-function hit from an E0b payload: the hit's own frame in place of the data function's frame (or before the fixture's frames), the fixture's other frames and async chain, and the scripts they name announced.
    * @param script - The fixture and its edits.
    * @param own - The event of the hit's own frame.
@@ -833,7 +1045,7 @@ export function createServerParticipant(parts: ServerParticipantParts) {
   let verifiedRegistrationLines: number[] = []
 
   /** Sends the breakpoint registrations the editor holds for the sealed source to the server session, as the adapter acknowledges them (pending until the pause). */
-  const acknowledgeBreakpoints = (): void => {
+  const acknowledgeBreakpoints = (removedPath?: string): void => {
     const run = parts.run()
     const verifiedLines = verifiedRegistrationLines
     const selected = parts.breakpoints
@@ -843,7 +1055,8 @@ export function createServerParticipant(parts: ServerParticipantParts) {
       seq: requestSequence,
       command: 'setBreakpoints',
       arguments: {
-        source: { path: pausedFramePath() },
+        // A removal names the file of the breakpoint just removed, even when a later stop of another file is already armed.
+        source: { path: removedPath ?? pausedFramePath() },
         breakpoints: selected.map((breakpoint) => ({
           line: breakpoint.location.range.start.line + 1,
           column: breakpoint.location.range.start.character + 1,

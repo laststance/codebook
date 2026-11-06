@@ -101,7 +101,8 @@ export async function sendOperation(
  * @param harness - The run's harness.
  * @param requestId - The request's id.
  * @param method - The HTTP method.
- * @param pathname - The request pathname.
+ * @param pathname - The request pathname, with its query for an API-route request.
+ * @param wallTime - The event's `wallTime` in seconds since the epoch; absent as an older event.
  * @example sendRequest(harness, '9', 'POST', '/api/todos')
  */
 export function sendRequest(
@@ -109,6 +110,7 @@ export function sendRequest(
   requestId: string,
   method: string,
   pathname: string,
+  wallTime?: number,
 ): void {
   harness.pageRequest.start(
     requestId,
@@ -116,6 +118,7 @@ export function sendRequest(
     'Fetch',
     'main',
     method,
+    wallTime,
   )
 }
 

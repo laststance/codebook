@@ -32,7 +32,8 @@ import { rootNextPackage, type ResolvedNextPackage } from './resolveNextPackage'
 import { serverChunkOfRoute } from './serverChunkOfRoute'
 
 /** Which webpack layer a server stop was sealed from: `action-browser` or `rsc` in the entry route's App Router server chunk ({@link readDevelopmentBundle}), `pages-dir-node` in a Pages page's server compile or the server chunks it loads ({@link readPagesServerBundle}). */
-export type DevelopmentServerLayer = 'action-browser' | 'rsc' | 'pages-dir-node'
+export type DevelopmentServerLayer =
+  'action-browser' | 'rsc' | 'pages-dir-node' | 'api-node'
 
 /**
  * Seals selected-route source for runtime preparation; a server stop uses its `(action-browser)` module, else the `(rsc)` module of the same route chunk, and reports which layer it sealed (a client component's reference stub is refused), rather than an SSR reference.

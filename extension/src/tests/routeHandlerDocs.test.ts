@@ -69,7 +69,7 @@ test('the help states the route-handler rule, identity rule, values guidance, re
     assert.ok(text.includes(phrase), phrase)
 })
 
-// Value: protects=route handlers are no longer listed as unsupported in the help limits or in the Next help's notStoppable list, while Pages API routes, middleware and proxy stay; fails_when="route handlers (route.ts)" returns as unsupported or middleware leaves the lists; no_claim=the run refusing a Pages API route
+// Value: protects=route handlers are no longer listed as unsupported in the help limits or in the Next help's notStoppable list, while middleware and proxy stay; fails_when="route handlers (route.ts)" returns as unsupported or middleware leaves the lists; no_claim=the run refusing a Pages API route
 test('the help limits and notStoppable no longer list route handlers as unsupported but keep middleware and proxy', () => {
   // Arrange
   const { limits } = serverRenderHelp().serverRenderQuickStart
@@ -78,9 +78,9 @@ test('the help limits and notStoppable no longer list route handlers as unsuppor
   const limit = limits[0] ?? ''
   // Assert
   assert.equal(limit.includes('route handlers (route.ts)'), false)
-  assert.ok(limit.includes('Pages API routes, middleware or proxy'))
+  assert.ok(limit.includes('middleware or proxy'))
   assert.equal(notStoppable.includes('route handlers (route.ts)'), false)
-  assert.ok(notStoppable.includes('Pages API routes, middleware or proxy'))
+  assert.ok(notStoppable.includes('middleware or proxy'))
 })
 
 // Value: protects=the error texts a chat reads cover the route-handler refusal reasons and the not-reached possibilities; fails_when=a reason or the details.routeHandler wording leaves ERROR_RECOVERY; no_claim=that the run raises them
@@ -99,12 +99,12 @@ test('the error recovery texts name the three route-handler refusals and the rou
   assert.ok(notReached.includes('other-method, other-path'))
 })
 
-// Value: protects=the bundled skill allows route handlers only on API 1.28 or later with afterOperation >= 1 and keeps Pages API routes, middleware and proxy unsupported; fails_when=the gate, the afterOperation rule or the remaining limits leave line 44; no_claim=chat behavior
+// Value: protects=the bundled skill allows route handlers only on API 1.28 or later with afterOperation >= 1 and keeps middleware and proxy unsupported; fails_when=the gate, the afterOperation rule or the remaining limits leave line 44; no_claim=chat behavior
 test('the bundled skill gates route-handler stops by API 1.28 and afterOperation 1 or more', async () => {
   // Arrange
   const skill = await readPackaged('skills', 'codebook', 'SKILL.md')
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.77"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.78"\n'))
   assert.ok(
     skill.includes(
       'A route handler (`route.ts` under `app/`) takes a `participant: "server"` stop only when `codebook_status` reports API 1.28 or later',
@@ -113,7 +113,7 @@ test('the bundled skill gates route-handler stops by API 1.28 and afterOperation
   assert.ok(skill.includes('`afterOperation` of 1 or more'))
   assert.ok(
     skill.includes(
-      'Pages API routes and `_document`, other routes, middleware or proxy and Turbopack are not supported',
+      '`_document`, other routes, middleware or proxy and Turbopack are not supported',
     ),
   )
 })
@@ -123,7 +123,7 @@ test('the README documents route-handler stops under API 1.28 and no longer list
   // Arrange
   const readme = await readPackaged('README.md')
   // Act / Assert
-  assert.ok(readme.includes('**MCP API 1.28**'))
+  assert.ok(readme.includes('**MCP API 1.29**'))
   assert.ok(
     readme.includes('API 1.28 is additive: it adds route-handler stops'),
   )
@@ -159,7 +159,7 @@ test('the help and README state the route-handler identity limits, except route 
   )
   assert.ok(
     limit.includes(
-      'other routes than the entry route (except an App Router route handler with afterOperation 1 or more from API 1.28, routeHandlerStops)',
+      'other routes than the entry route (except an App Router route handler with afterOperation 1 or more from API 1.28, routeHandlerStops, and a Pages API route with afterOperation 1 or more from API 1.29, apiRouteStops)',
     ),
   )
   assert.ok(
@@ -179,7 +179,7 @@ test('the help and README state the route-handler identity limits, except route 
   )
   assert.ok(
     readme.includes(
-      'in the server code of any route other than the entry route (an App Router route handler is the exception from MCP API 1.28, see **Route handlers** below)',
+      'in the server code of any route other than the entry route (an App Router route handler is the exception from MCP API 1.28, see **Route handlers** below, and a Pages API route from MCP API 1.29, see **API routes** below)',
     ),
   )
 })

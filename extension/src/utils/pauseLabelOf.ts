@@ -5,6 +5,7 @@ type PauseLabel = Pick<
   ConfiguredRuntimeSnapshot,
   | 'execution'
   | 'routeHandler'
+  | 'apiRoute'
   | 'attribution'
   | 'scope'
   | 'preparationRequest'
@@ -28,6 +29,7 @@ export function pauseLabelOf(snapshot: PauseLabel): PauseLabel {
   if (snapshot.execution !== undefined) label.execution = snapshot.execution
   if (snapshot.routeHandler !== undefined)
     label.routeHandler = snapshot.routeHandler
+  if (snapshot.apiRoute !== undefined) label.apiRoute = snapshot.apiRoute
   if (snapshot.attribution !== undefined)
     label.attribution = snapshot.attribution
   if (snapshot.scope !== undefined) label.scope = snapshot.scope

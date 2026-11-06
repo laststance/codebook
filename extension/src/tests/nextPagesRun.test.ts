@@ -923,7 +923,7 @@ test('a Pages stop in _document is refused as server-only before any chunk is re
   assert.equal(harness.pagesSeals.length, 0)
 })
 
-// Value: protects=a browser stop in a Pages API route is refused as server-only before any chunk is read, saying API routes are not supported in this version and pointing a question about the page's data at a server stop in its getServerSideProps or getStaticProps (E1), with router pages and sideEffects unknown; fails_when=the run reads the build first, gives another code, drops the pointer or the details; why_new=Cycle 0065 (pages/api refused before any chunk read), pointer added in Cycle 0073 (AC 6); seam=sourcePath moves the stop into src/pages/api; no_claim=a server stop in an API route (refused before the server starts, below)
+// Value: protects=a browser stop in a Pages API route is refused as server-only before any chunk is read, pointing at a server stop declared after an operation (API 1.29, apiRouteStops), with router pages and sideEffects unknown; fails_when=the run reads the build first, gives another code, drops the pointer or the details; why_new=Cycle 0065 (pages/api refused before any chunk read), pointer added in Cycle 0073 (AC 6); seam=sourcePath moves the stop into src/pages/api; no_claim=a server stop in an API route (refused before the server starts, below)
 test('a Pages stop in an API route is refused as server-only before any chunk is read', async (context) => {
   // Arrange
   const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
@@ -937,7 +937,7 @@ test('a Pages stop in an API route is refused as server-only before any chunk is
   assert.equal(failure.code, 'NEXT_SERVER_ONLY_STOP')
   assert.equal(
     failure.message,
-    'Declared stop src/pages/api/hello.ts:1 cannot pause in the browser: it is in an API route, which runs only on the server. API routes are not supported in this version. A question about the page\'s data can use a server stop (participant "server", configuration version 3) in the page\'s getServerSideProps or getStaticProps.',
+    'Declared stop src/pages/api/hello.ts:1 cannot pause in the browser: it is in an API route, which runs only on the server. To pause in the handler, declare it with participant "server" and afterOperation of 1 or more in a configuration version 3 (API 1.29, see apiRouteStops in codebook://help/repository-browser).',
   )
   assert.deepEqual(failure.details, PAGES_DETAILS_AFTER_READINESS)
   assert.equal(harness.pagesSeals.length, 0)
@@ -969,28 +969,6 @@ test('a server stop in a version 2 Pages run is refused as server-only naming co
 
 // --- Pages server stops (Cycle 0073) ---
 
-// Value: protects=a server stop in an API route is refused before the development server starts, saying API routes are not supported in this version and pointing a question about the page's data at a server stop in its getServerSideProps or getStaticProps (E1), with router pages and sideEffects none; fails_when=the stop is sealed, the message omits the limit or the pointer, or the details report that something may have run; no_claim=that no process started (the lexical-refusal test below counts launches)
-test('a server stop in an API route is refused saying API routes are not supported and naming the page data function', async (context) => {
-  // Arrange
-  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
-    sourcePath: 'src/pages/api/hello.ts',
-    operations: SERVER_STOP_AT_ENTRY_LOAD,
-    nextPages: {},
-  })
-  // Act
-  const failure = await preparationFailure(harness)
-  // Assert
-  assert.ok(failure instanceof StudyError, String(failure))
-  assert.equal(failure.code, 'NEXT_SERVER_ONLY_STOP')
-  assert.equal(
-    failure.message,
-    'Declared stop src/pages/api/hello.ts:1 is a server stop in an API route. API routes are not supported in this version. A question about the page\'s data can use a server stop (participant "server", configuration version 3) in the page\'s getServerSideProps or getStaticProps.',
-  )
-  assert.deepEqual(failure.details, { router: 'pages', sideEffects: 'none' })
-  assert.match(failure.recoveryOverride ?? '', /Nothing was started/)
-  assert.equal(harness.pagesSeals.length, 0)
-})
-
 // Value: protects=a server stop in _document is refused before the development server starts, saying _document is not supported in this version, with router pages and sideEffects none; fails_when=the stop is sealed, the message omits the limit, or the details report that something may have run; no_claim=that no process started (the lexical-refusal test below counts launches)
 test('a server stop in _document is refused saying _document is not supported in this version', async (context) => {
   // Arrange
@@ -1012,11 +990,11 @@ test('a server stop in _document is refused saying _document is not supported in
   assert.equal(harness.pagesSeals.length, 0)
 })
 
-// Value: protects=AC 19: a server stop in an API route or _document is refused before any development server process starts, with no readiness request sent and no browser opened, and sideEffects none; fails_when=the server is launched or asked for the entry before the refusal, or the details say a data function may have run; no_claim=a real process table (the harness counts launches of the launcher)
-test('a server stop in an API route or _document is refused before any development server starts', async (context) => {
+// Value: protects=AC 19: a server stop in _document is refused before any development server process starts, with no readiness request sent and no browser opened, and sideEffects none; fails_when=the server is launched or asked for the entry before the refusal, or the details say a data function may have run; no_claim=a real process table (the harness counts launches of the launcher)
+test('a server stop in _document is refused before any development server starts', async (context) => {
   // Arrange
   const refused: object[] = []
-  const paths = ['src/pages/api/hello.ts', 'src/pages/_document.tsx']
+  const paths = ['src/pages/_document.tsx']
   // Act
   for (const sourcePath of paths) {
     const harness = await configuredRuntimeHarness(
@@ -1049,35 +1027,7 @@ test('a server stop in an API route or _document is refused before any developme
     acquired: false,
     browsers: 0,
   }
-  assert.deepEqual(refused, [notStarted, notStarted])
-})
-
-// Value: protects=a server stop in a Pages API route of a workspace that also holds an App folder is refused before the development server starts without claiming a Pages run: no router in the details, and neither the message nor the recovery points at getServerSideProps or getStaticProps, which an App entry does not have; fails_when=the early refusal carries router pages or the data-function pointer, or the development server is launched; why_new=Cycle 0073 red-team finding (the lexical refusal ran before the entry route is resolved); seam=withAppFolder gives the workspace both routers; no_claim=a Pages entry in a workspace with both routers (it gets the same neutral refusal; the entry route is resolved only after the server starts)
-test('a server stop in pages/api of a workspace with both routers is refused before the server starts without claiming a Pages run', async (context) => {
-  // Arrange
-  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
-    sourcePath: 'src/pages/api/hello.ts',
-    operations: SERVER_STOP_AT_ENTRY_LOAD,
-    nextPages: { withAppFolder: true },
-  })
-  // Act
-  const failure = await preparationFailure(harness)
-  // Assert
-  assert.ok(failure instanceof StudyError, String(failure))
-  assert.equal(failure.code, 'NEXT_SERVER_ONLY_STOP')
-  assert.equal(
-    failure.message,
-    'Declared stop src/pages/api/hello.ts:1 is a server stop in an API route under the Pages folder, which runs only on the server. API routes are not supported in this version.',
-  )
-  assert.deepEqual(failure.details, { sideEffects: 'none' })
-  assert.doesNotMatch(
-    `${failure.message} ${failure.recoveryOverride ?? ''}`,
-    /getServerSideProps|getStaticProps/,
-  )
-  assert.match(failure.recoveryOverride ?? '', /Nothing was started/)
-  assert.equal(harness.developmentServerLaunches(), 0)
-  assert.equal(harness.entryChecks.length, 0)
-  assert.equal(harness.launchConfigurations.length, 0)
+  assert.deepEqual(refused, [notStarted])
 })
 
 // Value: protects=a server stop in _document of a workspace that also holds an App folder is refused before the development server starts without claiming a Pages run: no router in the details and no data-function pointer; fails_when=the early refusal carries router pages, or the development server is launched; why_new=Cycle 0073 red-team finding (the lexical refusal ran before the entry route is resolved); seam=withAppFolder gives the workspace both routers; no_claim=the API route wording (the test above)
