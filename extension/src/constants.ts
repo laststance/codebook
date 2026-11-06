@@ -170,6 +170,8 @@ export const VITE_APP_SELECTION_RULE =
 
 /** The API that first serves the `node-script` profile (skill 1.0.75). */
 export const NODE_SCRIPT_MINIMUM_API = '1.26'
+/** The API that first accepts `library.packageRoot` in a `node-script` configuration (skill 1.0.82). */
+export const NODE_SCRIPT_LIBRARY_MINIMUM_API = '1.33'
 /** The first extension version that offers the node-script profile, for the profile entry of `codebook_status` (API 1.26, skill 1.0.75). */
 export const NODE_SCRIPT_MINIMUM_EXTENSION_VERSION = '0.2.84'
 
