@@ -74,21 +74,26 @@ function defaultPathOf(requestPath: string): string {
 }
 
 /**
- * Reads the `Path` attribute of a parsed Set-Cookie header.
+ * Reads the `Path` attribute of a parsed Set-Cookie header; the last one wins (RFC 6265 5.3 step 7).
  * @param attributes - The attribute segments after the first `;`.
- * @returns The path when it starts with `/`, else undefined (the default path applies).
- * @example pathAttributeOf(['Path=/api']) // => '/api'
+ * @returns The last `Path` value when it starts with `/`, else undefined (the default path applies).
+ * @example
+ * pathAttributeOf(['Path=/api']) // => '/api'
+ * pathAttributeOf(['Path=/login', 'Path=/']) // => '/'
+ * pathAttributeOf(['Path=/', 'Path=api']) // => undefined
  */
 function pathAttributeOf(attributes: readonly string[]): string | undefined {
+  let path: string | undefined
   for (const attribute of attributes) {
     const separator = attribute.indexOf('=')
-    if (separator === -1) continue
-    if (attribute.slice(0, separator).trim().toLowerCase() !== 'path') continue
-    const value = attribute.slice(separator + 1).trim()
-    // A Path that does not start with `/` is ignored, like a browser does.
-    return value.startsWith('/') ? value : undefined
+    // An attribute without `=` is a name with an empty value (RFC 6265 5.2).
+    const name = separator === -1 ? attribute : attribute.slice(0, separator)
+    if (name.trim().toLowerCase() !== 'path') continue
+    const value = separator === -1 ? '' : attribute.slice(separator + 1).trim()
+    // A Path that is empty or does not start with `/` stands for the default path, like a browser reads it.
+    path = value.startsWith('/') ? value : undefined
   }
-  return undefined
+  return path
 }
 
 /**

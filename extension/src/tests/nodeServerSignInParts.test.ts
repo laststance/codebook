@@ -99,6 +99,38 @@ test('a cookie without Path from POST /api/auth/sign-in/email is scoped to /api/
   assert.equal(inside, 'sid=session')
 })
 
+// protects=a Set-Cookie with several Path attributes is scoped by the last one, as RFC 6265 5.3 and browsers do; fails_when=the first Path wins and the session cookie is left off the declared request; no_claim=none
+test('a cookie with two Path attributes is sent by the last one', () => {
+  // Arrange
+  const cookies = applySetCookies(
+    ['sid=session; Path=/login; Path=/'],
+    NOW_MS,
+    undefined,
+    '/api/auth/sign-in/email',
+  )
+  // Act
+  const toApi = cookieHeaderOf(cookies, '/api/rpc/x')
+  // Assert
+  assert.equal(toApi, 'sid=session')
+})
+
+// protects=a last Path attribute that is empty or does not start with "/" stands for the default path; fails_when=an earlier valid Path still scopes the cookie; no_claim=none
+test('a last Path without a leading slash scopes the cookie to the sign-in directory', () => {
+  // Arrange
+  const cookies = applySetCookies(
+    ['sid=session; Path=/; Path=api'],
+    NOW_MS,
+    undefined,
+    '/api/auth/sign-in/email',
+  )
+  // Act
+  const outside = cookieHeaderOf(cookies, '/api/rpc/x')
+  const inside = cookieHeaderOf(cookies, '/api/auth/sign-in/session')
+  // Assert
+  assert.equal(outside, undefined)
+  assert.equal(inside, 'sid=session')
+})
+
 // protects=a deletion removes only the cookie with the same name and path; fails_when=a deletion at one path removes the same-named cookie of another path; no_claim=none
 test('a deletion removes only the pair with the same name and path', () => {
   // Arrange
