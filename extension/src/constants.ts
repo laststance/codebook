@@ -86,6 +86,9 @@ export const WXT_VERSION_PATTERN = /^[0-9A-Za-z.+-]{1,32}$/
 /** The name prefix of the private folder a `wxt-build` run builds into, made beside the test Chrome profiles and removed with the run. */
 export const EXTENSION_BUILD_FOLDER_PREFIX = 'codebook-extension-build-'
 
+/** The name prefix of a `node-script` library run's private folder (tarball, unpacked package, hook, observation), made in the system's temporary folder, outside the repository. */
+export const LIBRARY_RUN_FOLDER_PREFIX = 'codebook-library-run-'
+
 /** The largest source map, in bytes, a `wxt-build` run reads; a larger map leaves its chunk's sources unlisted. */
 export const EXTENSION_SOURCE_MAP_LIMIT_BYTES = 32 * 1024 * 1024
 

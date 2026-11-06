@@ -9,6 +9,7 @@ export const RUN_SCRIPT_LABEL = 'Run once'
 /**
  * Makes the question the environment asks before a node-script run is spawned: a native modal that names the script, its package folder and the run, and says the script does whatever it does and may change files, databases or remote services. The chat AI cannot answer it.
  * Each dialog is its own question with its own wait, so an answer belongs only to the run that asked. The editor offers no way to close a modal, so one whose run stopped waiting (no answer within the pause hold, a stop) stays on screen; its late **Run once** starts nothing and shows a notice that the run already ended.
+ * A question that declares a library adds the sentence naming the build (`<pm> run build` in the library folder) and the pack, because the build comes after this answer and runs the project's code.
  * Called once by the environment for the window's life; the script run awaits the result before it spawns anything.
  * @param show - The editor's modal question ({@link ShowModalQuestion}).
  * @param notifyEnded - Shows the notice for a late answer; receives the run's short id.
@@ -27,11 +28,15 @@ export function createNodeScriptRunAsker(
   ): Promise<boolean> => {
     if (signal.aborted) return false
     const shortRunId = question.runId.slice(0, NODE_SERVER_MODAL_RUN_ID_CHARS)
+    // A run with `library` builds before it runs: the build executes the project's own scripts, so the learner is told here, before anything builds.
+    const libraryNotice = question.library
+      ? ` Before it, Codebook builds ${question.library.package} with ${question.library.packageManager} run build in ${question.library.packageRoot} and packs it; the build runs the project's own build scripts and rewrites its ignored build output.`
+      : ''
     let waiting = true
     const answered = Promise.resolve(
       show(
         `Run ${question.entry} once?`,
-        `Codebook will run the repository's script ${question.entry} (package folder ${question.packageRoot}) once, under the debugger, for run ${shortRunId}. The script does whatever it does: it may change files, databases or remote services. Run it only if that is safe here. If this question stays after Codebook gave up waiting, Cancel it: an answer to it starts nothing.`,
+        `Codebook will run the repository's script ${question.entry} (package folder ${question.packageRoot}) once, under the debugger, for run ${shortRunId}.${libraryNotice} The script does whatever it does: it may change files, databases or remote services. Run it only if that is safe here. If this question stays after Codebook gave up waiting, Cancel it: an answer to it starts nothing.`,
         RUN_SCRIPT_LABEL,
       ),
     ).then((choice) => {

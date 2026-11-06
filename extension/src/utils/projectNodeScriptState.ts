@@ -24,7 +24,7 @@ export type NodeScriptProjectionInput = {
 }
 
 /**
- * Says the run's state as the seven words of {@link NodeScriptState}: what the run's view reports, except that a released run reads `stopped` (or `ended` when the script ended by itself or a limit) and a run being released, or whose own failure ended it, reads `stopping`.
+ * Says the run's state as the eight words of {@link NodeScriptState}: what the run's view reports, except that a released run reads `stopped` (or `ended` when the script ended by itself or a limit) and a run being released, or whose own failure ended it, reads `stopping`.
  * @param view - The run's view; `undefined` before the run exists, which reads `preparing`.
  * @param stopped - Whether the run was released.
  * @param ending - Whether the release is in flight, failed or caused by the run's own failure.
@@ -48,10 +48,10 @@ function nodeScriptStateWord(
  * Called by {@link StudyService.state} for a run of the node-script profile.
  * @param input - The service's record of the run ({@link NodeScriptProjectionInput}).
  * @returns
- * - `state`: one of the seven {@link NodeScriptState} words
+ * - `state`: one of the eight {@link NodeScriptState} words
  * - `nextActions`: `continue-server` while paused at a declared stop, `stop` until the run is released
  * - `participant`: the participant the continuation names; `continueArguments` only while paused at a declared stop and controllable
- * - `nodeScript`: `state`, `confirmation`, the stops and those reached, the pause with its capture's facts, a held pause, the end, the capture count and `continueArguments`
+ * - `nodeScript`: `state`, `confirmation`, the stops and those reached, the pause with its capture's facts, a held pause, the end, the capture count, `continueArguments` and, by run, the `library` facts or the `repositoryPackageCopies`
  * @example
  * projectNodeScriptState({ ...input, view: pausedView }).participant.continueArguments?.generation // => 3
  */
@@ -95,6 +95,25 @@ export function projectNodeScriptState(input: NodeScriptProjectionInput) {
       captureCount: view.captures.length,
       captureBudgetExhausted: view.captureBudgetExhausted,
       failedStops: view.failedStops,
+      // A run with `library` reports its facts and observation; the first other copy's path hides the private roots.
+      ...(view.library
+        ? {
+            library: {
+              ...view.library,
+              ...(view.library.publishedCopyPath === undefined
+                ? {}
+                : {
+                    publishedCopyPath: input.sanitize(
+                      view.library.publishedCopyPath,
+                    ),
+                  }),
+            },
+          }
+        : {}),
+      // A run without `library` lists the installed copies of the repository's own packages, correspondence unverified.
+      ...(view.repositoryPackageCopies
+        ? { repositoryPackageCopies: view.repositoryPackageCopies }
+        : {}),
     },
   }
 }

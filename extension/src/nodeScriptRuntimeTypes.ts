@@ -7,14 +7,16 @@ import type {
   NodeServerStop,
 } from './runtime'
 import type { PauseIdentity } from './runtimeSupport/pauseGate'
+import type { RepositoryPackageCopy } from './utils/listRepositoryPackageCopies'
 
 /** The learner's answer to the editor's confirmation of a script run, as the run resource's `confirmation` reads: asked, accepted or refused (cancelled, closed or unanswered within the pause hold). */
 export type NodeScriptConfirmation =
   'awaiting-learner' | 'confirmed' | 'declined'
 
-/** Where a node-script run stands: asking the learner, preparing, running, paused at a declared stop, ended by itself or a limit, being stopped, or stopped by `codebook_stop` (or released without an end). */
+/** Where a node-script run stands: asking the learner, building the declared library (only a run with `library`), preparing, running, paused at a declared stop, ended by itself or a limit, being stopped, or stopped by `codebook_stop` (or released without an end). */
 export type NodeScriptState =
   | 'confirming'
+  | 'building'
   | 'preparing'
   | 'running'
   | 'paused'
@@ -26,6 +28,39 @@ export type NodeScriptState =
 export type NodeScriptEndView = NodeScriptEnd & {
   /** The last part of the combined stdout and stderr, private roots hidden, and whether the output was cut. */
   output: { tail: string; truncated: boolean }
+}
+
+/**
+ * What the run resource says about the library a run declared: the declared identity, the build facts once built and packed, what the script was seen to load once it ended, and what became of the private folder.
+ * `loaded`, `loadCount` and `publishedCopyLoaded` are absent until the observation is read (`observation: 'pending'`); an `incomplete` or `unreadable` observation never reads as "not loaded" (its counts are lower bounds).
+ */
+export type NodeScriptLibraryView = {
+  /** The library's package name; the declared folder until the name is known. */
+  package: string
+  /** The declared `library.packageRoot`. */
+  packageRoot: string
+  /** Whether the library was built and packed. */
+  prepared: boolean
+  version?: string
+  /** The repository's HEAD before the build. */
+  revision?: string
+  dirty?: boolean
+  packageManager?: { name: 'pnpm' | 'npm'; version: string | null }
+  buildMs?: number
+  packMs?: number
+  tarballSha256?: string
+  /** The version the Example's own `node_modules` held, or `null`; for disclosure only. */
+  installedVersion?: string | null
+  observation: 'pending' | 'complete' | 'incomplete' | 'unreadable'
+  /** True when a module of the packed copy was loaded (not merely resolved). */
+  loaded?: boolean
+  loadCount?: number
+  /** True when a module of a package with the same name was loaded from any other real path, the Example's installed copy among them. */
+  publishedCopyLoaded?: boolean
+  /** The first such path, private roots hidden. */
+  publishedCopyPath?: string
+  /** Whether the private folder is `removed` or its removal is `pending`; absent until the run released it. */
+  cleanup?: 'removed' | 'pending'
 }
 
 /** What a node-script run shows the service: its state, confirmation, stops, current or held pause, captures, failure and (once it ended) its end. */
@@ -51,6 +86,10 @@ export type NodeScriptView = {
   failedStops: number
   /** Set once the run ended: how, which stops it reached and its output tail. */
   end?: NodeScriptEndView
+  /** The declared library's facts and observation; only a run with `library` has it. */
+  library?: NodeScriptLibraryView
+  /** A run without `library`: the installed copies of the opened repository's own packages that the Example runs, with correspondence `unverified`. Absent when none were found or the repository has no `origin` remote. */
+  repositoryPackageCopies?: RepositoryPackageCopy[]
 }
 
 /**

@@ -234,6 +234,8 @@ export async function launchNodeServer(
   const args = [
     INSPECTOR_OPTION,
     ...(launch.loader.kind === 'tsx' ? ['--import', launch.loader.url] : []),
+    // The library's resolve hook loads after the tsx loader, which stays first.
+    ...(launch.libraryArguments ?? []),
     launch.entry,
   ]
   const environment = buildNodeServerEnvironment()
@@ -271,6 +273,7 @@ export async function launchNodeServer(
       ...(launch.loader.kind === 'tsx'
         ? ['--import', journalPath(launch.workspace, launch.loader.path)]
         : []),
+      ...(launch.libraryArguments ? ['--import', '<library-hook>'] : []),
       journalPath(launch.workspace, launch.entry),
     ],
     cwd: journalPath(launch.workspace, launch.packageRoot),

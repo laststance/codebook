@@ -11,6 +11,7 @@ import {
   REPOSITORY_SETUP_TIMEOUT_MS,
   REPOSITORY_SOURCE_LIMIT_BYTES,
 } from './constants'
+import type { RepositoryPackageManagerStatus } from './utils/describeRepositoryPackageManager'
 
 /** What `codebook_status` says about the repository's own tsx: it depends on the declared entry, so it is checked at start, not here. */
 const NODE_SCRIPT_LOADER_NOTE =
@@ -19,7 +20,7 @@ const NODE_SCRIPT_LOADER_NOTE =
 /**
  * Describes the node-script profile for `codebook_status`: its identity, its limits and its machine prerequisites, so an agent knows before a start whether a script run can happen here and what is missing.
  * Called by {@link StudyService.status} with the environment's report.
- * @param prerequisites - Whether the profile can start here and each missing item, named (Node, `ps`, a supported system, the owned adapter).
+ * @param prerequisites - Whether the profile can start here and each missing item, named (Node, `ps`, a supported system, the owned adapter), and the repository's package manager (`repositoryPackageManager`: name, found and version, or `unknown`/`unsupported`/`missing` with its reason), which only a run with `library` needs.
  * @returns The profile entry; it has no action, because the script starts itself once the learner confirms.
  * @example
  * describeNodeScriptProfile({ ready: false, missing: ['node-script needs ps.'] }).prerequisites.ready // => false
@@ -27,6 +28,7 @@ const NODE_SCRIPT_LOADER_NOTE =
 export function describeNodeScriptProfile(prerequisites: {
   ready: boolean
   missing: string[]
+  repositoryPackageManager?: RepositoryPackageManagerStatus
 }) {
   return {
     id: NODE_SCRIPT_PROFILE,

@@ -66,6 +66,7 @@ import type {
 import type { SecretFrameWithholdReason } from './runtimeSupport/secretFrameGate'
 import type { SourceMapLimits } from './sourceMapLimits'
 import type { StateChangingRequestQuestion } from './utils/askToSendStateChangingRequest'
+import type { RepositoryPackageManagerStatus } from './utils/describeRepositoryPackageManager'
 import type { WxtProjectReport } from './utils/discoverWxtProjects'
 import type {
   RetryVitestListingRelease,
@@ -738,6 +739,8 @@ export interface StudyEnvironment {
           wxtProjects?: WxtProjectReport[]
           /** chrome-extension only, and only with a listed WXT project: the external Node the build needs (24 or later); `nodeVersion` is null when none is usable. */
           wxtNode?: { nodeVersion: string | null; nodeReady: boolean }
+          /** node-script only: the package manager the library route builds the repository with ({@link describeRepositoryPackageManager}). */
+          repositoryPackageManager?: RepositoryPackageManagerStatus
         }
       >
     >
