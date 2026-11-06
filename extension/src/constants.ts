@@ -113,6 +113,18 @@ export const EXTENSION_BUILD_OUTPUT_TAIL_CHARS = 65_536
 /** How many tracked files a `wxt-build` run hashes at the same time. */
 export const EXTENSION_BUILD_HASH_CONCURRENCY = 32
 
+/** How long the private folder of a library run is waited for when its removal follows a failure or a stop; past it the removal continues in the background and reads `pending` (API 1.33). */
+export const LIBRARY_CLEANUP_BOUND_MS = 10_000
+
+/** The most bytes a library tarball may unpack to; a larger tarball is a `pack-error` with step `unpack` (API 1.33). */
+export const LIBRARY_UNPACK_LIMIT_BYTES = 1024 * 1024 * 1024
+
+/** The most entries a library tarball may hold; more is a `pack-error` with step `unpack` (API 1.33). */
+export const LIBRARY_UNPACK_ENTRY_LIMIT_COUNT = 100_000
+
+/** The most bytes of the observation file a library run reads; a larger file reads `incomplete` (API 1.33). */
+export const LIBRARY_OBSERVATION_LIMIT_BYTES = 16 * 1024 * 1024
+
 /** The most project sources a `STOP_FILE_NOT_LOADED` refusal of a `wxt-build` run lists in `details.contextSources`. */
 export const EXTENSION_CONTEXT_SOURCES_LIMIT = 20
 
