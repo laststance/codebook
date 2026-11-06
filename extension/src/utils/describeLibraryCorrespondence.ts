@@ -30,10 +30,14 @@ export function describeLibraryCorrespondence(
   // No complete observation: the line must not read a missing or damaged file as "not loaded".
   if (observed?.observation !== 'complete')
     return 'What the script loaded was not fully observed.'
-  if (!observed.loaded) return `Built ${built}, but not loaded by this script.`
   const revision = prepared.revision.slice(0, SHORT_REVISION_CHARS)
   const dirty = prepared.dirty ? ' (uncommitted changes)' : ''
+  const otherCopy = observed.otherCopyPath ?? 'an unknown path'
+  // Another copy is named before "not loaded": a script that loaded only another copy did not load the built one, and saying just that would hide the copy it ran on.
   if (observed.otherCopyLoaded)
-    return `Built ${built} from ${revision}${dirty}, but the script also loaded another copy at ${observed.otherCopyPath ?? 'an unknown path'}.`
+    return observed.loaded
+      ? `Built ${built} from ${revision}${dirty}, but the script also loaded another copy at ${otherCopy}.`
+      : `Built ${built} from ${revision}${dirty}, but the script did not load it; it loaded another copy at ${otherCopy}.`
+  if (!observed.loaded) return `Built ${built}, but not loaded by this script.`
   return `Ran on the checked-out ${built} built from ${revision}${dirty} (packed by ${prepared.packageManager})`
 }

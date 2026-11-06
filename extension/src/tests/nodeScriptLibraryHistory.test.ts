@@ -526,3 +526,76 @@ test('the Script replay section carries the library line and keeps library entri
   assert.equal(section.libraryLine, libraryModel.libraryLine)
   assert.equal(plainModel.libraryLine, undefined)
 })
+
+// protects=a script that loaded only another copy of the package reads as having loaded that copy, not as "not loaded"; fails_when=a complete observation with loaded false and another copy hides the copy behind the not-loaded sentence; no_claim=which import resolved to which copy
+test('the replay line names the other copy when the script loaded only that copy and not the built one', async (context) => {
+  // Arrange / Act
+  const line = await replayLineOf(context, {
+    ...OBSERVED_FACTS,
+    loaded: false,
+    loadCount: 0,
+    otherCopyLoaded: true,
+    otherCopyPath: 'node_modules/@reduxjs/toolkit/dist/index.js',
+  })
+
+  // Assert
+  assert.equal(
+    line,
+    'Built @reduxjs/toolkit 2.14.0 from 7114787, but the script did not load it; it loaded another copy at node_modules/@reduxjs/toolkit/dist/index.js.',
+  )
+})
+
+// protects=a header input whose library key is present but undefined stays format 1, which older versions read; fails_when=the key's presence alone stamps format 2; no_claim=how callers build the input
+test('a header input with an undefined library is stamped format 1', () => {
+  // Arrange
+  const input = { ...headerFor('workspace-key', false), library: undefined }
+
+  // Act
+  const stamped = nodeScriptStorageDescriptor.stampHeader(input)
+
+  // Assert
+  assert.equal((stamped as { formatVersion: number }).formatVersion, 1)
+})
+
+// protects=library.prepared texts are hidden of private roots and cut to their schema bounds, so one long value never fails the history; fails_when=a long package, version or revision leaves the history unverified, or a private root survives in packageRoot or installedVersion; no_claim=the real build facts
+test('library.prepared hides private roots and cuts long texts so the history stays verified', async (context) => {
+  // Arrange
+  const { repository, learningDirectory } = await openServerRepository(context)
+
+  // Act
+  const { studyId } = await runScriptHistory(
+    context,
+    {
+      declaredStops: 1,
+      hits: [],
+      output: ['a\n'],
+      end: EXITED,
+      hideRoots: (text) => text.replaceAll('/private/root', '<root>'),
+      library: {
+        identity: LIBRARY_IDENTITY,
+        prepared: {
+          ...PREPARED_FACTS,
+          package: 'p'.repeat(300),
+          version: 'v'.repeat(300),
+          revision: 'r'.repeat(1_500),
+          packageRoot: '/private/root/packages/toolkit',
+          installedVersion: '/private/root/node_modules/x',
+        },
+        observed: OBSERVED_FACTS,
+      },
+    },
+    repository,
+  )
+  const prepared = (await readJournal(learningDirectory, studyId)).find(
+    (entry) => entry.type === 'library.prepared',
+  ) as Record<string, string> | undefined
+  const { scripts } = await repository.listByProfile()
+
+  // Assert
+  assert.equal(scripts[0]!.verification, 'verified')
+  assert.equal(prepared?.package?.length, 214)
+  assert.equal(prepared?.version?.length, 256)
+  assert.equal(prepared?.revision?.length, 1_024)
+  assert.equal(prepared?.packageRoot, '<root>/packages/toolkit')
+  assert.equal(prepared?.installedVersion, '<root>/node_modules/x')
+})

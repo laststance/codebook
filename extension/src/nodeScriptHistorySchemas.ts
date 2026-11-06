@@ -10,7 +10,10 @@ import {
   NODE_SCRIPT_HISTORY_SEAL_VERSION,
   NODE_SCRIPT_LIBRARY_OBSERVATIONS,
   NODE_SCRIPT_LIBRARY_PACKAGE_MANAGERS,
+  NODE_SCRIPT_LIBRARY_PACKAGE_LIMIT_CHARS,
   NODE_SCRIPT_LIBRARY_PATH_LIMIT_CHARS,
+  NODE_SCRIPT_LIBRARY_REVISION_LIMIT_CHARS,
+  NODE_SCRIPT_LIBRARY_VERSION_LIMIT_CHARS,
   NODE_SCRIPT_LOADERS,
   NODE_SCRIPT_PROFILE,
   NODE_SERVER_HISTORY_MAX_ENTRIES,
@@ -64,7 +67,7 @@ const nodeScriptHistoryHeaderShape = {
 
 /** The library a format 2 header declares: its package name and folder only. What the build made and what the script loaded are journal events, because the header is written before the build. */
 const nodeScriptHistoryLibrarySchema = z.strictObject({
-  package: z.string().min(1).max(214),
+  package: z.string().min(1).max(NODE_SCRIPT_LIBRARY_PACKAGE_LIMIT_CHARS),
   packageRoot: z.string().min(1).max(REPOSITORY_PATH_LIMIT_CHARS),
 })
 
@@ -97,16 +100,20 @@ export const nodeScriptHistoryHeaderSchema = z
 const nodeScriptLibraryPreparedEntrySchema = z.strictObject({
   type: z.literal('library.prepared'),
   ...nodeRunEntryBase,
-  package: z.string().min(1).max(214),
-  version: z.string().min(1).max(256),
+  package: z.string().min(1).max(NODE_SCRIPT_LIBRARY_PACKAGE_LIMIT_CHARS),
+  version: z.string().min(1).max(NODE_SCRIPT_LIBRARY_VERSION_LIMIT_CHARS),
   packageRoot: z.string().min(1).max(REPOSITORY_PATH_LIMIT_CHARS),
-  revision: z.string().min(1).max(1_024),
+  revision: z.string().min(1).max(NODE_SCRIPT_LIBRARY_REVISION_LIMIT_CHARS),
   dirty: z.boolean(),
   packageManager: z.enum(NODE_SCRIPT_LIBRARY_PACKAGE_MANAGERS),
   buildMs: z.number().finite().nonnegative(),
   packMs: z.number().finite().nonnegative(),
   tarballSha256: repositoryHashSchema,
-  installedVersion: z.string().min(1).max(256).nullable(),
+  installedVersion: z
+    .string()
+    .min(1)
+    .max(NODE_SCRIPT_LIBRARY_VERSION_LIMIT_CHARS)
+    .nullable(),
 })
 
 /**

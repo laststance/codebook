@@ -1556,6 +1556,12 @@ export const NODE_SCRIPT_LIBRARY_OBSERVATIONS = [
 ] as const
 /** The most characters of the other copy's path a `library.observed` event keeps. */
 export const NODE_SCRIPT_LIBRARY_PATH_LIMIT_CHARS = 2_048
+/** The most characters of a library's package name a `library.prepared` event keeps (the npm name limit). */
+export const NODE_SCRIPT_LIBRARY_PACKAGE_LIMIT_CHARS = 214
+/** The most characters of a library version (built or installed) a `library.prepared` event keeps. */
+export const NODE_SCRIPT_LIBRARY_VERSION_LIMIT_CHARS = 256
+/** The most characters of a library's repository revision a `library.prepared` event keeps. */
+export const NODE_SCRIPT_LIBRARY_REVISION_LIMIT_CHARS = 1_024
 /** How a script run ended, as the `end` entry of its history records it: it exited by itself, a signal Codebook did not send ended it, `codebook_stop` ended it, or a limit Codebook enforced did. */
 export const NODE_SCRIPT_END_KINDS = [
   'exited',

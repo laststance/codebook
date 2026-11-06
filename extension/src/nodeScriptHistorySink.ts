@@ -1,6 +1,10 @@
 import {
   NODE_SCRIPT_EXIT_UNKNOWN_LIMIT_CHARS,
+  NODE_SCRIPT_LIBRARY_PACKAGE_LIMIT_CHARS,
   NODE_SCRIPT_LIBRARY_PATH_LIMIT_CHARS,
+  NODE_SCRIPT_LIBRARY_REVISION_LIMIT_CHARS,
+  NODE_SCRIPT_LIBRARY_VERSION_LIMIT_CHARS,
+  REPOSITORY_PATH_LIMIT_CHARS,
 } from './constants'
 import {
   NodeRunHistorySinkBase,
@@ -104,8 +108,23 @@ export class NodeScriptHistorySinkImpl
   ): void {
     this.guard(() => {
       if (this.ended) return
+      const { installedVersion, ...rest } = facts
+      // Every recorded text is hidden of private roots, then cut to its schema bound so one long value never fails the whole history.
+      const text = (value: string, limit: number): string =>
+        cutTextToLength(this.hide(value), limit)
       return this.input.writer.appendLibraryPrepared({
-        ...facts,
+        ...rest,
+        package: text(facts.package, NODE_SCRIPT_LIBRARY_PACKAGE_LIMIT_CHARS),
+        version: text(facts.version, NODE_SCRIPT_LIBRARY_VERSION_LIMIT_CHARS),
+        packageRoot: text(facts.packageRoot, REPOSITORY_PATH_LIMIT_CHARS),
+        revision: text(
+          facts.revision,
+          NODE_SCRIPT_LIBRARY_REVISION_LIMIT_CHARS,
+        ),
+        installedVersion:
+          installedVersion === null
+            ? null
+            : text(installedVersion, NODE_SCRIPT_LIBRARY_VERSION_LIMIT_CHARS),
         elapsedMs: this.structural(elapsedMs),
       })
     })

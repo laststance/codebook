@@ -111,7 +111,7 @@ export const nodeScriptStorageDescriptor: HistoryStorageDescriptor<NodeScriptHis
     stampHeader: (input) => ({
       ...input,
       formatVersion:
-        'library' in input
+        'library' in input && input.library !== undefined
           ? NODE_SCRIPT_HISTORY_LIBRARY_FORMAT_VERSION
           : NODE_SCRIPT_HISTORY_FORMAT_VERSION,
     }),

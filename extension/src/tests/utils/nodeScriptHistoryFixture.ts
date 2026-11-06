@@ -64,6 +64,8 @@ export type ScriptRunScript = {
   output?: string[]
   /** How the run ended; `undefined` seals the history without the run's own end. */
   end?: NodeScriptEnd
+  /** Hides private roots in every recorded text; defaults to leaving text as is. */
+  hideRoots?: (text: string) => string
   /** Told the capture budget was spent before the end. */
   budgetExhausted?: boolean
   /** A declared library: its identity makes the history format 2; the sink is told the preparation before the output and the observation before the end, when given. */
@@ -117,7 +119,7 @@ export async function runScriptHistory(
       sourceHashes: [{ path: 'src/handler.ts', hash: sourceHash }],
       ...(script.library ? { library: script.library.identity } : {}),
     },
-    hideRoots: (text) => text,
+    hideRoots: script.hideRoots ?? ((text) => text),
     describeCause: String,
   })
   if (!('recorder' in begun)) throw new Error(begun.unavailable)
