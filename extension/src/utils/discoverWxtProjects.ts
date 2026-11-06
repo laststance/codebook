@@ -1,5 +1,5 @@
-import { readFile, readdir, stat } from 'node:fs/promises'
-import { dirname, join, relative } from 'node:path'
+import { readdir, stat } from 'node:fs/promises'
+import { join, relative } from 'node:path'
 
 import {
   WXT_CONFIG_FILE_NAMES,
@@ -7,6 +7,8 @@ import {
   WXT_PROJECT_LIMIT,
   WXT_SUPPORTED_MAJOR_MINOR,
 } from '../constants'
+
+import { readInstalledWxtVersion } from './readInstalledWxtVersion'
 
 /** One WXT project `codebook_status` lists: its folder (repository-relative, `.` for the root), the WXT version resolved from it or `missing`, and whether the `wxt-build` adapter builds that version. */
 export interface WxtProjectReport {
@@ -30,55 +32,6 @@ async function hasWxtConfig(folder: string): Promise<boolean> {
     if (found) return true
   }
   return false
-}
-
-/**
- * Reads the version of the `wxt` package installed in one `node_modules` parent folder.
- * @param parent - The absolute folder whose `node_modules/wxt` is read.
- * @returns The version; `undefined` when no `wxt` package is there; `missing` when its manifest has no readable version.
- */
-async function readInstalledWxtVersion(
-  parent: string,
-): Promise<string | undefined> {
-  const text = await readFile(
-    join(parent, 'node_modules', 'wxt', 'package.json'),
-    'utf8',
-  ).catch(() => undefined)
-  if (text === undefined) return undefined
-  try {
-    const parsed: unknown = JSON.parse(text)
-    if (
-      typeof parsed === 'object' &&
-      parsed !== null &&
-      'version' in parsed &&
-      typeof parsed.version === 'string'
-    )
-      return parsed.version
-  } catch {
-    // An unreadable manifest reads as missing below.
-  }
-  return 'missing'
-}
-
-/**
- * Resolves the WXT version a folder would build with, the way Node resolves a package: the nearest `node_modules/wxt` from the folder up to the repository root.
- * @param folder - The absolute project folder.
- * @param root - The absolute repository root, where the climb ends.
- * @returns The installed version, or `missing`.
- */
-async function resolveWxtVersion(
-  folder: string,
-  root: string,
-): Promise<string> {
-  let current = folder
-  // Climb one level at a time; the repository root is the last place looked in.
-  for (;;) {
-    const version = await readInstalledWxtVersion(current)
-    if (version !== undefined) return version
-    const parent = dirname(current)
-    if (current === root || parent === current) return 'missing'
-    current = parent
-  }
 }
 
 /**
@@ -135,7 +88,8 @@ export async function discoverWxtProjects(
     for (const folder of level) {
       if (projects.length >= WXT_PROJECT_LIMIT) return projects
       if (await hasWxtConfig(folder)) {
-        const wxtVersion = await resolveWxtVersion(folder, root)
+        // The same lookup the build uses, so status and start agree.
+        const wxtVersion = (await readInstalledWxtVersion(folder)) ?? 'missing'
         projects.push({
           folder: relative(root, folder) || '.',
           wxtVersion,

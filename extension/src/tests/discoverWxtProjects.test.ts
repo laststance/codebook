@@ -136,3 +136,42 @@ test('resolves a WXT hoisted to the repository root for a project below it', asy
     { folder: 'hoisted', wxtVersion: '0.21.2', supported: true },
   ])
 })
+
+// protects=a WXT hoisted to a folder above the repository root counts for a project, as the build resolves it; fails_when=the status stops climbing at the repository root and reads missing while the build would start; no_claim=real WXT installs; the package file is a stand-in
+test('resolves a WXT hoisted to a folder above the repository root', async (context) => {
+  // Arrange
+  const outer = await repository(context)
+  const root = join(outer, 'repo')
+  await put(join(root, 'app', 'wxt.config.ts'))
+  await put(
+    join(outer, 'node_modules', 'wxt', 'package.json'),
+    JSON.stringify({ version: '0.21.3' }),
+  )
+  // Act
+  const projects = await discoverWxtProjects(root)
+  // Assert
+  assert.deepEqual(projects, [
+    { folder: 'app', wxtVersion: '0.21.3', supported: true },
+  ])
+})
+
+// protects=an unreadable nearest wxt manifest does not hide a valid one further up, matching the build's lookup; fails_when=the status answers missing at the broken nearest manifest while the build would use the one above; no_claim=real WXT installs; the package files are stand-ins
+test('reports the valid WXT further up when the nearest wxt manifest is broken', async (context) => {
+  // Arrange
+  const root = await repository(context)
+  await put(join(root, 'app', 'wxt.config.ts'))
+  await put(
+    join(root, 'app', 'node_modules', 'wxt', 'package.json'),
+    '{ not json',
+  )
+  await put(
+    join(root, 'node_modules', 'wxt', 'package.json'),
+    JSON.stringify({ version: '0.21.5' }),
+  )
+  // Act
+  const projects = await discoverWxtProjects(root)
+  // Assert
+  assert.deepEqual(projects, [
+    { folder: 'app', wxtVersion: '0.21.5', supported: true },
+  ])
+})
