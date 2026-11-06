@@ -60,17 +60,19 @@ function hasExpoWebListening(output: string, port: number): boolean {
 }
 
 /**
- * Words what the output says of the start so far: a busy port refuses, the `Waiting on` line is listening.
+ * Words what the output says of the start so far: the `Waiting on` line is listening (checked first), a busy port refuses.
  * @param output - The masked output tail.
  * @param port - The port the run listens on.
  * @returns `true` when Metro listens; `false` while it has not said so.
  * @throws `EXPO_WEB_PORT_UNAVAILABLE` for the port-conflict line.
  * @example classifyExpoWebOutput('Waiting on http://localhost:4101', 4101) // => true
  */
-function classifyExpoWebOutput(output: string, port: number): boolean {
+export function classifyExpoWebOutput(output: string, port: number): boolean {
+  // Listening wins: a plugin may print EADDRINUSE-like text while Metro starts and still listen.
+  if (hasExpoWebListening(output, port)) return true
   if (PORT_CONFLICT_LINE.test(output))
     throw expoWebPortRefusal(port, 'expo-exit')
-  return hasExpoWebListening(output, port)
+  return false
 }
 
 /**
@@ -116,7 +118,7 @@ async function awaitExpoWebListening(
 /**
  * Starts the owned Expo CLI through the shared launcher on the web script's declared port, and returns once Metro listens.
  *
- * Why it exists: the Expo adapter needs no launcher module: `node_modules/expo/bin/cli start --web --port <declared>` runs as the child of {@link launchDevelopmentServer}, which owns its process group and ends it as a group on completion, failure and cancellation (E-3). Called by the adapter's `start`. The process is handed to the run the moment it exists (`onApp`), so any refusal below is closed by the run's cleanup.
+ * Why it exists: the Expo adapter needs no launcher module: `node_modules/expo/bin/cli start --web --localhost --port <declared>` runs as the child of {@link launchDevelopmentServer}, which owns its process group and ends it as a group on completion, failure and cancellation (E-3). Called by the adapter's `start`. The process is handed to the run the moment it exists (`onApp`), so any refusal below is closed by the run's cleanup.
  * @param request - What the run provides.
  * @param workspace - The installed Expo, the web script's assignments and port, and the settled environment.
  * @param afterClose - Runs once the process group is gone, with the run's port, to drop what the adapter keeps for the run.
@@ -154,6 +156,8 @@ export async function launchExpoWebDevelopmentServer(
         expoWebCliPath(workspace.installationDirectory),
         'start',
         '--web',
+        // Metro listens on loopback only: Expo's default host mode binds all interfaces (the learner's LAN would reach the app).
+        '--localhost',
         '--port',
         String(port),
       ],

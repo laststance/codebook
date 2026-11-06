@@ -3,7 +3,7 @@ import { expoWebSealedOutsidePackageRefusal } from './expoWebRefusals'
 import { EXPO_WEB_SINGLE_BUNDLE_PROFILE } from './expoWebSingleBundleProfile'
 import { assessExpoWebWorkspace } from './utils/assessExpoWebWorkspace'
 import { awaitExpoWebBundle } from './utils/awaitExpoWebBundle'
-import { isViteScriptOfModule } from './utils/isViteScriptOfModule'
+import { isExpoWebScriptOfModule } from './utils/isExpoWebScriptOfModule'
 import { launchExpoWebDevelopmentServer } from './utils/launchExpoWebDevelopmentServer'
 import {
   SingleBundleCache,
@@ -132,6 +132,6 @@ export const EXPO_WEB_DEV_ADAPTER: DevelopmentServerAdapter = {
   },
   // js-debug's defaults bind a stop in the app folder (E1c): no path overrides.
   browserDebugFields: (workspace) => ({ webRoot: workspace, sourceMaps: true }),
-  // The bundle's address is a loopback URL with Metro's query, which must match exactly (the cache-busting parameters of Vite never appear on it).
-  isScriptOfModule: isViteScriptOfModule,
+  // The bundle's address is a loopback URL with Metro's query, which must match exactly (Vite's `t`/`v` cache-busting parameters mean nothing here).
+  isScriptOfModule: isExpoWebScriptOfModule,
 }

@@ -79,6 +79,7 @@ test('the Expo CLI starts with the declared port, the app folder as its working 
   assert.deepEqual(launch.argv, [
     'start',
     '--web',
+    '--localhost',
     '--port',
     String(repository.port),
   ])
