@@ -134,9 +134,8 @@ const CODE_FACTS: Record<string, { when: string; sentence: string }> = {
       'Stop <n> is in a bundled file; this version explains unbundled extension sources only.',
   },
   EXTENSION_BUILD_UNSUPPORTED: {
-    when: 'start (wxt-build): no WXT config, WXT not installed, a WXT other than 0.21, a tracked .wxt folder, no external Node 24 or later, or a stop outside the project or in node_modules; details.reason names which; nothing started',
-    sentence:
-      'extensionRoot holds no wxt.config.ts, .mts, .js or .mjs. / This version builds WXT 0.21 only; the project has <version>.',
+    when: `start (wxt-build): no WXT config, WXT not installed, a WXT other than ${WXT_SUPPORTED_MAJOR_MINOR}, a tracked .wxt folder, no external Node ${MIN_NODE_MAJOR_VERSION} or later, or a stop outside the project or in node_modules; details.reason names which; nothing started`,
+    sentence: `extensionRoot holds no wxt.config.ts, .mts, .js or .mjs. / This version builds WXT ${WXT_SUPPORTED_MAJOR_MINOR} only; the project has <version>.`,
   },
   EXTENSION_BUILD_FAILED: {
     when: 'start (wxt-build): the WXT build ended with an error, took over 120 seconds, changed a tracked file, left no Chrome build, or its tracked-file check could not be confirmed; details.reason names which; Chrome did not start',
