@@ -10,6 +10,7 @@ import type {
 } from '../nodeServerHistorySchemas'
 import type { NodeServerHistorySummary } from '../nodeServerHistoryTypes'
 
+import { describeLibraryCorrespondence } from './describeLibraryCorrespondence'
 import { findServerReplayTerminal } from './findServerReplayTerminal'
 import { maskSavedOutputEntries } from './maskSavedOutputEntries'
 import { maskSavedServerHeader } from './maskSavedServerHeader'
@@ -94,6 +95,8 @@ export type ServerReplayModel = {
   /** The declared stops hit more than once, by declared index. */
   repeatedStops: ReadonlySet<number>
   verdicts: ServerReplayVerdicts
+  /** The line a Script replay shows under its title for a run that declared a library; absent for every other history. */
+  libraryLine?: string
 }
 
 /**
@@ -146,7 +149,17 @@ export function buildServerReplayModel(
     endedBeforeAnswer: terminal === undefined,
     repeatedStops: repeatedStopIndexes(events),
     verdicts,
+    ...(isScript ? libraryLineOf(history) : {}),
   }
+}
+
+/** The model's `libraryLine` field for a script history, empty when the history declares no library or recorded no preparation. */
+function libraryLineOf(history: ScriptHistoryShape): { libraryLine?: string } {
+  const libraryLine = describeLibraryCorrespondence(
+    history.header,
+    history.entries,
+  )
+  return libraryLine === undefined ? {} : { libraryLine }
 }
 
 /** Reads each request attempt's send mark and withdrawal code from the journal's entries. */
@@ -193,6 +206,9 @@ function isReplayEvent(
   isScript: boolean,
 ): entry is ServerReplayEvent {
   if (entry.type === 'end') return isScript
+  // The library entries state what the build made and the script loaded; they are no moment a learner steps to.
+  if (entry.type === 'library.prepared' || entry.type === 'library.observed')
+    return false
   return (
     entry.type !== 'source' &&
     entry.type !== 'request-sent' &&

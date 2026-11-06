@@ -28,6 +28,8 @@ export type NodeTestSectionView = {
   unverified?: string
   /** Why the capture is interrupted or partial, worded without "Node" (DS14); absent for a complete capture or one without a stored reason. */
   captureReason?: string
+  /** The line under a Script replay's title that says whether the run used the checked-out library; absent for every other replay. */
+  libraryLine?: string
   /** Where the output up to the selected moment is, or that its pane is closed. */
   pointer: string
   applicationClosed: boolean

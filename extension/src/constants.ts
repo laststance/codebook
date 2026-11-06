@@ -1525,8 +1525,22 @@ export const NODE_SCRIPT_PROFILE = 'node-script'
 export const NODE_SCRIPT_RUN_TIMEOUT_MS = 60_000
 /** The folder of node-script histories beside `node-servers.v1`, so older Codebooks never read it. */
 export const NODE_SCRIPT_HISTORY_DIRECTORY = 'node-scripts.v1'
-/** The `version` of a node-script history's header, seal and every record. */
+/** The `formatVersion` of a node-script history header for a run without `library`: older versions read it. */
 export const NODE_SCRIPT_HISTORY_FORMAT_VERSION = 1
+/** The `formatVersion` of a node-script history header for a run with `library`: it adds the declared `library` identity and allows the `library.prepared` and `library.observed` events. Older versions neither list nor delete such a history. */
+export const NODE_SCRIPT_HISTORY_LIBRARY_FORMAT_VERSION = 2
+/** The `version` of a node-script history's seal, separate from the header format so a header change never rejects existing seals. */
+export const NODE_SCRIPT_HISTORY_SEAL_VERSION = 1
+/** The package managers a `library.prepared` entry names: the ones the library route supports. */
+export const NODE_SCRIPT_LIBRARY_PACKAGE_MANAGERS = ['pnpm', 'npm'] as const
+/** How far a `library.observed` entry can be trusted: `complete` (the observation file ended with its closing line), `incomplete` (it did not) or `unreadable` (it could not be read). Only `complete` may support a negative. */
+export const NODE_SCRIPT_LIBRARY_OBSERVATIONS = [
+  'complete',
+  'incomplete',
+  'unreadable',
+] as const
+/** The most characters of the other copy's path a `library.observed` event keeps. */
+export const NODE_SCRIPT_LIBRARY_PATH_LIMIT_CHARS = 2_048
 /** How a script run ended, as the `end` entry of its history records it: it exited by itself, a signal Codebook did not send ended it, `codebook_stop` ended it, or a limit Codebook enforced did. */
 export const NODE_SCRIPT_END_KINDS = [
   'exited',

@@ -1,6 +1,7 @@
 import {
   NODE_SCRIPT_HISTORY_DIRECTORY,
   NODE_SCRIPT_HISTORY_FORMAT_VERSION,
+  NODE_SCRIPT_HISTORY_LIBRARY_FORMAT_VERSION,
   NODE_SERVER_HISTORY_LIMIT_BYTES,
   NODE_SERVER_HISTORY_SEAL_LIMIT_BYTES,
 } from './constants'
@@ -106,9 +107,13 @@ export const nodeScriptStorageDescriptor: HistoryStorageDescriptor<NodeScriptHis
       nodeScriptLearningMaterialSchema,
       nodeScriptLearningMaterialContentSchema,
     ),
+    // A header that declares its library is a `library` run's (format 2); every other run keeps format 1, which older versions read.
     stampHeader: (input) => ({
       ...input,
-      formatVersion: NODE_SCRIPT_HISTORY_FORMAT_VERSION,
+      formatVersion:
+        'library' in input
+          ? NODE_SCRIPT_HISTORY_LIBRARY_FORMAT_VERSION
+          : NODE_SCRIPT_HISTORY_FORMAT_VERSION,
     }),
     parseHeader: (value) => nodeScriptHistoryHeaderSchema.parse(value),
     parseSeal: (value) => nodeScriptHistorySealSchema.parse(value),

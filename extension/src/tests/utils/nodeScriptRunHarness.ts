@@ -77,6 +77,10 @@ export function fakeScriptHistory() {
       told.push({ call: 'output', detail: { channel, text } }),
     stop: (_elapsed, pause) =>
       told.push({ call: 'stop', detail: pause.declaredStopIndex }),
+    libraryPrepared: (_elapsed, facts) =>
+      told.push({ call: 'libraryPrepared', detail: facts }),
+    libraryObserved: (_elapsed, facts) =>
+      told.push({ call: 'libraryObserved', detail: facts }),
     end: (_elapsed, end) => told.push({ call: 'end', detail: end }),
     markCaptureBudgetExhausted: () => told.push({ call: 'budget' }),
     flush: () => undefined,

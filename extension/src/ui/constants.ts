@@ -360,7 +360,7 @@ body.moments-only #recording-transport{display:flex;flex-wrap:wrap;align-items:c
 /* Each event card's text wraps inside the reader, and scrolls there if a line still cannot, instead of widening the page (Cycle 0044, 0031-W1 and 0038-W). */
 .node-history-event pre{white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%;overflow:auto}
 /* A test replay's transport stays in view while its summary and steps scroll under it (DS16); Previous stop and Next stop lead it (DS12). */
-#node-history-moment p{margin:4px 0}#node-history-explanation:empty,#node-history-not-recorded:empty,#node-history-unverified:empty,#node-history-capture-reason:empty{display:none}.same-moment{color:var(--vscode-descriptionForeground,#aaa);font-size:12px}
+#node-history-moment p{margin:4px 0}#node-history-explanation:empty,#node-history-not-recorded:empty,#node-history-unverified:empty,#node-history-capture-reason:empty,#node-history-library:empty{display:none}.same-moment{color:var(--vscode-descriptionForeground,#aaa);font-size:12px}
 #node-history-moment>p:empty{margin:0;padding:0;border:0}
 #node-learning-title{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}#node-learning-title:focus{display:block;overflow:visible}#node-learning-title:focus-visible,#test-output-test:focus-visible,#test-output-request-line:focus-visible{outline:2px solid var(--vscode-focusBorder,#007fd4);outline-offset:2px}
 /* A test replay's Learning summary (Cycle 0051, DS-B, DS-E): long texts clamped to three lines with Show more, a capped diagram, the moment's step heading, the drawing's step mark (not color alone) and the summary's focusable headings. */
