@@ -270,6 +270,7 @@ test('a nested server stop in the Pages api folder is refused before the server 
   )
   // Assert
   assert.ok(failure instanceof StudyError, String(failure))
-  assert.equal(failure.code, 'NEXT_SERVER_ONLY_STOP', failure.message)
+  assert.equal(failure.code, 'NEXT_STOP_NOT_SEALED', failure.message)
+  assert.equal(failure.details?.reason, 'api-route-before-operation')
   assert.equal(harness.launchConfigurations.length, 0)
 })

@@ -105,6 +105,16 @@ interface BeforeFailure {
 }
 
 /** What the stand-in page reports of one control a version 3 operation names; a control without an entry is an ordinary text input. */
+/**
+ * Names the webpack layer a scripted server stop is sealed at: `rsc`, `api-node` (a Pages API route) or `action-browser` (the default).
+ * @param seal - The harness option `serverSeal`.
+ * @returns The layer in the module address `webpack-internal:///(<layer>)/./<path>`.
+ * @example serverLayerOf('api-node') // => 'api-node'
+ */
+function serverLayerOf(seal: string | undefined): string {
+  return seal === 'rsc' || seal === 'api-node' ? seal : 'action-browser'
+}
+
 export interface FakeControl {
   tagName?: 'input' | 'textarea' | 'select'
   /** The `<input type>`; `text` by default. */
@@ -226,7 +236,7 @@ export async function configuredRuntimeHarness(
     /** Makes the stand-in seal (the Vite served-module read, or the Next `.next/dev` read) never finish, as a server that stops answering does while a stop is sealed. */
     sealHangs?: boolean
     /** Makes the stand-in server seal answer as {@link readDevelopmentBundle} does for a Next server stop: the layer it sealed (`action-browser` or `rsc`), or the client-component refusal of a `'use client'` file's reference stub. */
-    serverSeal?: 'action-browser' | 'rsc' | 'client-component'
+    serverSeal?: 'action-browser' | 'rsc' | 'client-component' | 'api-node'
     /**
      * Gives a version 3 run its scripted Node participant (`harness.server`, see {@link createServerParticipant}): the stand-in server offers an inspector, the run attaches a `pwa-node` session and a second CDP channel, acknowledges the server stops' registrations, and a test sends the server's hits itself. Server stops are sealed at `(<serverSeal ?? 'action-browser'>)/./<path>`; `route` is the route the work store answers by default (`null`: unreadable). Without it a server stop's preparation ends after the seal, as before.
      */
@@ -659,7 +669,7 @@ export async function configuredRuntimeHarness(
       pagesBuild?.moduleJavascript ??
       (fixture ? source : 'const nextTheme = "dark";'),
     javascript = options.serverModuleSourceUrl
-      ? `${baseJavascript}\n//# sourceURL=webpack-internal:///(${options.serverSeal === 'rsc' ? 'rsc' : 'action-browser'})/./${packageSourcePath}`
+      ? `${baseJavascript}\n//# sourceURL=webpack-internal:///(${serverLayerOf(options.serverSeal)})/./${packageSourcePath}`
       : baseJavascript
   const bundle: BundleSource = {
     sourcePath,
@@ -1696,14 +1706,19 @@ export async function configuredRuntimeHarness(
   ]
   // The scripted Node participant of a run that declares server stops (opt in with `serverRuntime`).
   // A Pages run seals its server stops from the page's server compile, so the Next server executes that `(pages-dir-node)` module.
-  const isPagesServer = Boolean(options.nextPages && options.serverRuntime)
+  // An API-route run is a Pages run whose server stop is sealed at its pause, from the `(api-node)` layer, not from the page's server compile.
+  const isPagesServer = Boolean(
+    options.nextPages &&
+    options.serverRuntime &&
+    options.serverSeal !== 'api-node',
+  )
   const serverScriptUrl = isPagesServer
     ? library
       ? `webpack-internal:///(pages-dir-node)/${library.runtimePath}`
       : `webpack-internal:///(pages-dir-node)/./${packageSourcePath}`
     : library?.appRouterServer
       ? library.appRouterServer.rscAddress
-      : `webpack-internal:///(${options.serverSeal === 'rsc' ? 'rsc' : 'action-browser'})/./${packageSourcePath}`
+      : `webpack-internal:///(${serverLayerOf(options.serverSeal)})/./${packageSourcePath}`
   const serverParticipant = options.serverRuntime
     ? createServerParticipant({
         run: () => run,
@@ -1723,7 +1738,7 @@ export async function configuredRuntimeHarness(
     : undefined
   const serverLaunches: DebugSession['configuration'][] = []
   // The compiled App paths manifest the run reads to know the entry route's pattern; a Pages run reads the Pages manifest the build harness wrote.
-  if (options.serverRuntime && !isPagesServer) {
+  if (options.serverRuntime && !isPagesServer && !options.nextPages) {
     const entryPathname = (options.entryPath ?? '/').split(/[?#]/)[0]!
     const stem = entryPathname === '/' ? '' : entryPathname.replace(/\/$/, '')
     const manifestPath = join(
@@ -2608,12 +2623,15 @@ export async function configuredRuntimeHarness(
         type = 'Document',
         frameId = 'main',
         method = 'GET',
+        wallTime?: number,
       ): void {
         listeners.get('Network.requestWillBeSent')?.({
           requestId,
           frameId,
           request: { url, method },
           type,
+          // The browser's own start of the request, in seconds since the epoch; absent as an older event.
+          ...(wallTime === undefined ? {} : { wallTime }),
         })
       },
       /** Reports that the page attached an iframe under its main frame, as `Page.frameAttached` does. @example harness.pageRequest.attachChildFrame('child-1') */

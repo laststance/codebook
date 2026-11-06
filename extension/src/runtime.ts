@@ -459,6 +459,11 @@ export type ServerRenderFailure = {
     method?: string
     resumedHits: { reason: string; count: number }[]
   }
+  /** Set only for an API-route stop (Cycle 0088) that no request reached: its route pattern and the hits the run resumed by reason. */
+  apiRoute?: {
+    route: string
+    resumedHits: { reason: string; count: number }[]
+  }
   /** Set only for a Pages run: what the failure adds there (`details.router`, `resumedHits`, `attributionMode`, `nextVersion`). */
   pages?: PagesNotReachedFacts
 }
