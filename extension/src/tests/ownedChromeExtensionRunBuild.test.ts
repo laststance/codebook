@@ -319,6 +319,35 @@ test('a stop during a build that does not settle ends at the stop bound', async 
   assert.equal(harness.run.view().phase, 'failed')
 })
 
+// protects=a second stop during the build returns the first stop's pending ending and arms no second bound, so the deadline does not restart; fails_when=the second stop arms another 10 s bound (two pending 10 s timers) or settles apart from the first; no_claim=the real 10 s (a manual clock fires the bound)
+test('a second stop during the build shares the first stop and arms no second bound', async () => {
+  // Arrange
+  const timers = manualClock()
+  const build = controlledBuild()
+  const harness = createRunHarness({
+    configuration: WXT_CONFIGURATION,
+    clock: timers.clock,
+    prepareSource: build.prepareSource,
+    timings: { runMs: 600_000, setupMs: 90_000 },
+  })
+  void harness.run.prepare().catch(() => undefined)
+  await settle()
+  // Act
+  const firstStop = harness.run.stop()
+  await settle()
+  const secondStop = harness.run.stop()
+  await settle()
+  const stopBoundsArmed = timers
+    .pendingDelays()
+    .filter((delayMs) => delayMs === 10_000).length
+  timers.fire(10_000)
+  await Promise.all([firstStop, secondStop])
+  // Assert
+  assert.equal(stopBoundsArmed, 1)
+  assert.equal(harness.run.view().runFailure?.code, 'RUNTIME_FAILED')
+  assert.equal(harness.run.view().phase, 'failed')
+})
+
 // protects=the build folder is removed after the run ends, also for a run that stopped while building; fails_when=a build folder outlives its run; no_claim=the folder's real deletion (the product's dispose is checked with the dependencies)
 test('the build folder is removed when the run ends', async () => {
   // Arrange

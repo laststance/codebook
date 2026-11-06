@@ -219,6 +219,8 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
   private outputsDropped = 0
   private ending: RunEnding | undefined
   private endingPromise: Promise<void> | undefined
+  /** The pending stop of a run that was building; a later stop in that phase returns it instead of arming a second bound (D16). */
+  private buildStopPromise: Promise<void> | undefined
   private stepsPromise: Promise<void> | undefined
   private cancelRunTimer: (() => void) | undefined
   private cancelSetupTimer: (() => void) | undefined
@@ -1318,7 +1320,11 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
       this.stage !== 'ready' &&
       this.stage !== 'observing' &&
       this.stage !== 'paused'
-    if (this.stage === 'building') return this.stopDuringBuild()
+    if (this.stage === 'building') {
+      // A repeat stop shares the pending one, so the stop bound is armed once and never restarts.
+      this.buildStopPromise ??= this.stopDuringBuild()
+      return this.buildStopPromise
+    }
     if (beforeReady)
       return this.endRun({
         kind: 'failed',
