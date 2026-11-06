@@ -1,9 +1,9 @@
+import { createHash } from 'node:crypto'
 import { readFile, realpath } from 'node:fs/promises'
 import { relative, resolve, sep } from 'node:path'
 
 import { EXTENSION_CONTEXT_SOURCES_LIMIT } from '../constants'
 
-import { hashFileSha256 } from './hashFileSha256'
 import type { MappedSources } from './listMappedSources'
 
 /** Why a stop's source is not accepted; each cause has one fixed sentence. */
@@ -133,8 +133,9 @@ export async function resolveMappedStop(options: {
       cause: 'sources-content-missing',
       message: `Stop file ${stopPath} is listed by ${listed.map}, but that map embeds no text for it, so the executed source cannot be confirmed.`,
     })
-  const onDisk = await readFile(real, 'utf8').catch(() => undefined)
-  if (onDisk !== listed.sourcesContent)
+  // One read serves both the comparison and the hash, so the pinned hash is of the bytes that were compared.
+  const bytes = await readFile(real).catch(() => undefined)
+  if (bytes === undefined || bytes.toString('utf8') !== listed.sourcesContent)
     return refuse({
       cause: 'sources-content-differs',
       message: `Stop file ${stopPath} differs from the source the build embedded in ${listed.map}; the build's source differs from the file.`,
@@ -142,7 +143,7 @@ export async function resolveMappedStop(options: {
   return {
     ok: true,
     sourcePath: real,
-    sha256: await hashFileSha256(real),
+    sha256: createHash('sha256').update(bytes).digest('hex'),
     executedText: listed.sourcesContent,
   }
 }

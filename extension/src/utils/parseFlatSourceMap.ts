@@ -23,7 +23,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * @returns
  * - The map's sources, `sourceRoot` and `sourcesContent` for a flat version 3 map
  * - `'indexed'` for a map with `sections`
- * - `'malformed'` for text that is not JSON, not version 3, or whose `sources` is not a list of strings
+ * - `'malformed'` for text that is not JSON, not version 3, or whose `sources` is not a list of strings and nulls (a `null` source is skipped)
  * @example
  * parseFlatSourceMap('{"version":3,"sources":["../src/a.ts"],"mappings":""}')
  * // => { sources: ['../src/a.ts'], sourceRoot: '', sourcesContent: undefined }
@@ -44,7 +44,7 @@ export function parseFlatSourceMap(
   const { sources, sourceRoot, sourcesContent } = parsed
   if (
     !Array.isArray(sources) ||
-    !sources.every((source) => typeof source === 'string')
+    !sources.every((source) => typeof source === 'string' || source === null)
   )
     return 'malformed'
   const content =
@@ -52,9 +52,17 @@ export function parseFlatSourceMap(
     sourcesContent.every((entry) => typeof entry === 'string' || entry === null)
       ? sourcesContent
       : undefined
+  // The spec allows a `null` source; skip it and keep `sourcesContent` aligned by index.
+  const keptSources: string[] = []
+  const keptContent: (string | null)[] = []
+  sources.forEach((source, index) => {
+    if (typeof source !== 'string') return
+    keptSources.push(source)
+    keptContent.push(content?.[index] ?? null)
+  })
   return {
-    sources,
+    sources: keptSources,
     sourceRoot: typeof sourceRoot === 'string' ? sourceRoot : '',
-    sourcesContent: content,
+    sourcesContent: content && keptContent,
   }
 }

@@ -31,8 +31,9 @@ export type ChunkSourceMap =
       location: string
     }
 
-/** The `sourceMappingURL` comments of a script, in either comment style and the legacy `@` form. */
-const SOURCE_MAP_COMMENT = /(?:\/\/|\/\*)[#@]\s*sourceMappingURL=([^\s*]+)/g
+/** A line that is only a `sourceMappingURL` comment, in either comment style and the legacy `@` form. */
+const SOURCE_MAP_COMMENT =
+  /^\s*(?:\/\/|\/\*)[#@]\s*sourceMappingURL=([^\s*]+)\s*(?:\*\/)?\s*$/
 
 /** A `data:` JSON map: optional media parameters, then base64 or percent-encoded text. */
 const DATA_MAP = /^data:application\/json((?:;[^,;]+)*?)(;base64)?,([\s\S]*)$/
@@ -40,12 +41,13 @@ const DATA_MAP = /^data:application\/json((?:;[^,;]+)*?)(;base64)?,([\s\S]*)$/
 /** A URL scheme at the start of a reference. */
 const URL_SCHEME = /^[a-zA-Z][a-zA-Z\d+.-]*:/
 
-/** The reference of the chunk's last `sourceMappingURL` comment, or `undefined` when it has none. */
+/** The reference of the comment on the chunk's last non-empty line, or `undefined` when that line is not such a comment. */
 function lastMapReference(chunkText: string): string | undefined {
-  let reference: string | undefined
-  for (const match of chunkText.matchAll(SOURCE_MAP_COMMENT))
-    reference = match[1]
-  return reference
+  // Only a trailing comment counts, as in browsers and Vite; a string literal earlier in the chunk is ignored.
+  const last = chunkText
+    .split(/\r?\n|\r/)
+    .findLast((line) => line.trim() !== '')
+  return last === undefined ? undefined : SOURCE_MAP_COMMENT.exec(last)?.[1]
 }
 
 /** Builds an `unlisted` answer. */
