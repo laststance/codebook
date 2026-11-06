@@ -42,7 +42,9 @@ export async function runWxtBuildProcess(
   let onCancel = (): void => undefined
   const cancelled = new Promise<'cancelled'>((resolve) => {
     onCancel = (): void => resolve('cancelled')
-    signal.addEventListener('abort', onCancel, { once: true })
+    // An already aborted signal never fires `abort` again: a stop between the caller's last check and the spawn is answered at once.
+    if (signal.aborted) onCancel()
+    else signal.addEventListener('abort', onCancel, { once: true })
   })
   let exit: WxtBuildExit | undefined
   try {

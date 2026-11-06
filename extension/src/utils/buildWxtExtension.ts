@@ -116,6 +116,8 @@ export async function buildWxtExtension(
   const resultFile = join(privateFolder, 'wxt-build-result.json')
   await rm(resultFile, { force: true })
   const startedAtMs = clock.nowMs()
+  // A stop that arrived during the preparation above: no process started, so nothing could have changed.
+  if (input.signal.aborted) return { kind: 'cancelled' }
   const end = await runWxtBuildProcess(
     {
       executable: input.node?.executable ?? '',
