@@ -6194,7 +6194,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         stop.source.path,
         folder,
       )
-      if (reason)
+      // Only `_document` is refused here; an API-route stop is armed by the API-route pass.
+      if (reason === 'document')
         throw pagesServerStopRefusal({
           kind: 'lexical',
           place: `${stop.source.path}:${stop.source.line}`,

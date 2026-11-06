@@ -2,34 +2,30 @@ import { OPERATIONS_CONFIG_VERSION } from '../constants'
 import type { StudyError } from '../errors'
 import { nextRefusal, PAGES_STOP_REFUSAL_DETAILS } from '../nextRefusals'
 
-import {
-  PAGES_API_ROUTE_POINTER,
-  PAGES_API_ROUTES_UNSUPPORTED,
-  PAGES_DOCUMENT_UNSUPPORTED,
-} from './nextServerOnlyStopMessage'
+import { PAGES_DOCUMENT_UNSUPPORTED } from './nextServerOnlyStopMessage'
 import { redactNextEntryPath } from './redactNextEntryPath'
 
 /**
- * The recovery of a server stop refused before the development server started (an API route or `_document`): nothing ran, so the static recovery of the code, which says the server was started, would mislead.
+ * The recovery of a server stop refused before the development server started (`_document`): nothing ran, so the static recovery of the code, which says the server was started, would mislead.
  * It names fields, never values: a recovery override reaches MCP without the sanitizer.
  */
 const LEXICAL_SERVER_STOP_RECOVERY =
-  'Tell the learner that API routes and _document are not supported in this version. For a question about the page\'s data, declare the stop in the page\'s getServerSideProps or getStaticProps (configuration version 3, participant "server"). Never pick an unrelated stop to make a run succeed. Recovery: fix the configuration, then one new start. Nothing was started: no development server, no browser, no declared input and no click, so details.sideEffects is none. See codebook://help/repository-browser#NEXT_SERVER_ONLY_STOP.'
+  'Tell the learner that _document is not supported in this version. For a question about the page\'s data, declare the stop in the page\'s getServerSideProps or getStaticProps (configuration version 3, participant "server"). Never pick an unrelated stop to make a run succeed. Recovery: fix the configuration, then one new start. Nothing was started: no development server, no browser, no declared input and no click, so details.sideEffects is none. See codebook://help/repository-browser#NEXT_SERVER_ONLY_STOP.'
 
 /**
  * The recovery of the same refusal in a workspace that holds both an App and a Pages folder: the entry route is resolved only after the server starts, so the run is not known to be a Pages run and the recovery names no data function.
  * It names fields, never values: a recovery override reaches MCP without the sanitizer.
  */
 const LEXICAL_SERVER_STOP_RECOVERY_ROUTER_UNKNOWN =
-  "Tell the learner that API routes and _document are not supported in this version. Declare a stop in the entry route's own code instead. Never pick an unrelated stop to make a run succeed. Recovery: fix the configuration, then one new start. Nothing was started: no development server, no browser, no declared input and no click, so details.sideEffects is none. See codebook://help/repository-browser#NEXT_SERVER_ONLY_STOP."
+  "Tell the learner that _document is not supported in this version. Declare a stop in the entry route's own code instead. Never pick an unrelated stop to make a run succeed. Recovery: fix the configuration, then one new start. Nothing was started: no development server, no browser, no declared input and no click, so details.sideEffects is none. See codebook://help/repository-browser#NEXT_SERVER_ONLY_STOP."
 
 /** Why Codebook refused a declared `participant: "server"` stop of a Pages run; each variant names the stop as `<path>:<line>`. */
 export type PagesServerStopRefusal =
   | {
-      /** Refused before the development server started: the file is an API route or `_document`, where no server stop is valid in either router. */
+      /** Refused before the development server started: the file is `_document`, where no server stop is valid in either router. */
       kind: 'lexical'
       place: string
-      reason: 'api-route' | 'document'
+      reason: 'document'
       /** Whether the run is known to be a Pages run before the start: `true` for a workspace with a Pages folder and no App folder, `false` when both routers exist (the entry route is resolved only after the server starts). */
       pagesRun: boolean
     }
@@ -67,9 +63,9 @@ export type PagesServerStopRefusal =
  * @param refusal - Which refusal, with the stop's place (and the route for an absent server module).
  * @returns The error to throw: `NEXT_SERVER_ONLY_STOP` for the lexical and version 2 refusals, `NEXT_STOP_NOT_SEALED` for the rest.
  * @example
- * throw pagesServerStopRefusal({ kind: 'lexical', place: 'src/pages/api/hello.ts:3', reason: 'api-route', pagesRun: true })
+ * throw pagesServerStopRefusal({ kind: 'lexical', place: 'src/pages/_document.tsx:3', reason: 'document', pagesRun: true })
  * // code NEXT_SERVER_ONLY_STOP, details { router: 'pages', sideEffects: 'none' }
- * throw pagesServerStopRefusal({ kind: 'lexical', place: 'src/pages/api/hello.ts:3', reason: 'api-route', pagesRun: false })
+ * throw pagesServerStopRefusal({ kind: 'lexical', place: 'src/pages/_document.tsx:3', reason: 'document', pagesRun: false })
  * // code NEXT_SERVER_ONLY_STOP, details { sideEffects: 'none' }, no pointer at a data function
  * throw pagesServerStopRefusal({ kind: 'client-component', place: 'src/pages/index.tsx:2' })
  * // code NEXT_STOP_NOT_SEALED, details { reason: 'client-component', stop: 'src/pages/index.tsx:2', router: 'pages', sideEffects: 'unknown' }
@@ -83,9 +79,7 @@ export function pagesServerStopRefusal(
       return refusal.pagesRun
         ? nextRefusal(
             'NEXT_SERVER_ONLY_STOP',
-            refusal.reason === 'api-route'
-              ? `Declared stop ${refusal.place} is a server stop in an API route. ${PAGES_API_ROUTES_UNSUPPORTED} ${PAGES_API_ROUTE_POINTER}`
-              : `Declared stop ${refusal.place} is a server stop in the Pages _document file. ${PAGES_DOCUMENT_UNSUPPORTED}`,
+            `Declared stop ${refusal.place} is a server stop in the Pages _document file. ${PAGES_DOCUMENT_UNSUPPORTED}`,
             {
               details: { router: 'pages', sideEffects: 'none' },
               recovery: LEXICAL_SERVER_STOP_RECOVERY,
@@ -93,9 +87,7 @@ export function pagesServerStopRefusal(
           )
         : nextRefusal(
             'NEXT_SERVER_ONLY_STOP',
-            refusal.reason === 'api-route'
-              ? `Declared stop ${refusal.place} is a server stop in an API route under the Pages folder, which runs only on the server. ${PAGES_API_ROUTES_UNSUPPORTED}`
-              : `Declared stop ${refusal.place} is a server stop in the Pages _document file, which runs only on the server. ${PAGES_DOCUMENT_UNSUPPORTED}`,
+            `Declared stop ${refusal.place} is a server stop in the Pages _document file, which runs only on the server. ${PAGES_DOCUMENT_UNSUPPORTED}`,
             {
               details: { sideEffects: 'none' },
               recovery: LEXICAL_SERVER_STOP_RECOVERY_ROUTER_UNKNOWN,

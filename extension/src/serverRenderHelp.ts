@@ -1,5 +1,6 @@
-import { REPOSITORY_OPERATION_ACTION } from './constants'
+import { API_ROUTE_MINIMUM_API, REPOSITORY_OPERATION_ACTION } from './constants'
 import {
+  API_ROUTE_NOT_REACHED_POSSIBILITIES,
   ROUTE_HANDLER_NOT_REACHED_POSSIBILITIES,
   ROUTE_HANDLER_REFUSAL_RECOVERY,
 } from './utils/routeHandlerWording'
@@ -83,6 +84,58 @@ export const ROUTE_HANDLER_CONFIGURATION = {
   ],
   inspections: [{ path: 'title', mode: 'value', required: true }],
 } as const
+
+/**
+ * A complete version 3 configuration for a Pages API-route stop (API 1.29): one click operation sends the page's request, and the one server stop in `src/pages/api/data.ts` has `afterOperation: 1`, the operation after which the page sends it.
+ * Served as `apiRouteStops.configuration` and parsed by the same test as {@link SERVER_RENDER_ENTRY_CONFIGURATION}. It copies the shape of {@link SERVER_RENDER_PAGES_ENTRY_CONFIGURATION} but never its `afterOperation: 0`, which an API-route stop refuses. Every path, selector and line is a neutral placeholder; the book identity and the source hash are placeholders the agent replaces. The run-level `after` is a shape example: it must hold only after the click.
+ */
+export const API_ROUTE_CONFIGURATION = {
+  version: 3,
+  adapter: 'next-dev-webpack',
+  book: {
+    bookId: 'my-article',
+    revision: 1,
+    nodeId: 'my-node',
+    anchorIndex: 0,
+  },
+  source: {
+    path: 'src/pages/api/data.ts',
+    hash: '0000000000000000000000000000000000000000000000000000000000000000',
+    line: 17,
+    column: 3,
+  },
+  participant: 'server',
+  afterOperation: 1,
+  entryPath: '/',
+  before: [{ kind: 'visible', selector: 'button' }],
+  after: [{ kind: 'text', selector: 'p.status', equals: 'Loaded' }],
+  operations: [
+    {
+      kind: 'click',
+      title: 'Load the data',
+      selector: 'button',
+    },
+  ],
+  inspections: [{ path: 'req.query.clear', mode: 'value', required: true }],
+} as const
+
+/** The reasons of {@link ROUTE_HANDLER_REFUSAL_RECOVERY} that belong to a stop in an App Router route handler, in the help's `routeHandlerStops` (the API-route reasons are served by `apiRouteStops`). */
+const ROUTE_HANDLER_ONLY_RECOVERY = {
+  'route-handler-before-operation':
+    ROUTE_HANDLER_REFUSAL_RECOVERY['route-handler-before-operation'],
+  'route-handler-edge-runtime':
+    ROUTE_HANDLER_REFUSAL_RECOVERY['route-handler-edge-runtime'],
+  'route-handler-not-app-source':
+    ROUTE_HANDLER_REFUSAL_RECOVERY['route-handler-not-app-source'],
+}
+
+/** The reasons of {@link ROUTE_HANDLER_REFUSAL_RECOVERY} that belong to a stop in a Pages API route. */
+const API_ROUTE_RECOVERY = {
+  'api-route-before-operation':
+    ROUTE_HANDLER_REFUSAL_RECOVERY['api-route-before-operation'],
+  'api-route-edge-runtime':
+    ROUTE_HANDLER_REFUSAL_RECOVERY['api-route-edge-runtime'],
+}
 
 /**
  * A complete version 3 configuration for a re-render observed after one operation: one `text` operation into the search box, a server stop in the page and a server stop in the data function, both `afterOperation: 1`.
@@ -215,7 +268,7 @@ const SERVER_RENDER_ROUTER_CHOICE = {
 
 /** What the Pages quick start says about the code a Pages server stop does not pause in this version. */
 const PAGES_NOT_PAUSED =
-  "A Pages server stop does not pause, in this version: getStaticPaths (Next runs it apart from the page render), a page that sets runtime: 'experimental-edge', and _app. Such a stop ends not reached (SERVER_STOP_NOT_REACHED) or not sealed (NEXT_STOP_NOT_SEALED); a hit Codebook cannot attribute to the entry page's data function pauses at most as unconfirmed (pagesUnconfirmed), never as a confirmed data-function pause. A server stop in an API route (pages/api) or in _document is refused with NEXT_SERVER_ONLY_STOP before the development server starts."
+  "A Pages server stop does not pause, in this version: getStaticPaths (Next runs it apart from the page render), a page that sets runtime: 'experimental-edge', and _app. Such a stop ends not reached (SERVER_STOP_NOT_REACHED) or not sealed (NEXT_STOP_NOT_SEALED); a hit Codebook cannot attribute to the entry page's data function pauses at most as unconfirmed (pagesUnconfirmed), never as a confirmed data-function pause. A server stop in _document is refused with NEXT_SERVER_ONLY_STOP before the development server starts. A server stop in an API route (pages/api) with afterOperation 1 or more pauses from API 1.29 (apiRouteStops)."
 
 /**
  * What a hit Codebook could not attribute means and what the chat does with it; shared by the quick start and the reason anchors.
@@ -228,7 +281,7 @@ const PAGES_UNCONFIRMED =
  *
  * Why it exists: an agent that meets a Next question about code that runs while the server renders an App Router page, or about a Pages Router page's `getServerSideProps` or `getStaticProps`, needs the router's own minimums, the supported code, the exact configuration shape (`afterOperation: 0`, omitted `operations`) and the failure meanings before it reads the long contract sections. Called by the resource reader for the repository-browser help, which spreads these keys after {@link nextHelp}.
  *
- * @returns Keys to spread into the help object: `routeHandlerQuickStart`, `routeHandlerStops`, `serverRenderQuickStart`, `serverRenderMigration` and `serverRenderErrors`.
+ * @returns Keys to spread into the help object: `routeHandlerQuickStart`, `routeHandlerStops`, `apiRouteStops`, `serverRenderQuickStart`, `serverRenderMigration` and `serverRenderErrors`.
  * @example
  * const help = { ...nextHelp(), ...serverRenderHelp() }
  * help.serverRenderQuickStart.anchor // => 'codebook://help/repository-browser#server-render-quick-start'
@@ -254,14 +307,34 @@ export function serverRenderHelp() {
       values:
         "The request body cannot be read at the pause without a side effect (request.json() consumes it and the debugger refuses the call): declare the stop on a line after the handler parsed the body and inspect that variable. request.method, request.url and request.headers are getters of the Request object, which Codebook's side-effect-free inspection refuses (a required one ends the run at the pause), so never declare them as inspections: the pause's routeHandler names the method, the route and the request's path, and the native debugger shows the request's members. Header values pass through the existing redaction, and a header that carries a credential (cookie, authorization) is never a required inspection.",
       refusals: {
-        reasons: ROUTE_HANDLER_REFUSAL_RECOVERY,
+        reasons: ROUTE_HANDLER_ONLY_RECOVERY,
         note: 'Each is NEXT_STOP_NOT_SEALED with details.sideEffects none, raised before any process starts. A file outside packageRoot keeps the reason outside-package.',
       },
       notReached: `${ROUTE_HANDLER_NOT_REACHED_POSSIBILITIES} details.routeHandler is { route, method } of the stop. After-operation inputs were sent and side effects are unknown: explain what ran, offer the partial replay and never start again unasked.`,
       notSupported:
-        'Pages API routes (pages/api), middleware and proxy stay unsupported, and so does a route file that declares the edge runtime.',
+        'Middleware and proxy stay unsupported, and so does a route file that declares the edge runtime. A Pages API route has its own section (apiRouteStops).',
       savedStudy:
         'A study with a route-handler pause is saved as format 13 (.study.v13.json), which also keeps the fields of format 12; Codebook 0.2.86 and older list it as saved by a newer Codebook, and opening it needs a Codebook on API 1.28 or later.',
+    },
+    apiRouteStops: {
+      anchor: 'codebook://help/repository-browser#api-route-stops',
+      rule: `API ${API_ROUTE_MINIMUM_API} or later, Pages Router run (next-dev-webpack, configuration version 3): a participant "server" stop with afterOperation of 1 or more in a file under the Pages folder's api/ (pages/api or src/pages/api, including api.ts itself, nested folders and dynamic segments such as [id], [...slug] and [[...slug]]) pauses the real Next server in the handler that answers the browser's request.`,
+      fields:
+        'The pause reads execution "api-route", attribution "after-operation", operationIndex k and apiRoute { method, route, path }: the method and the pathname (no query) read from the paused request object, and the route pattern from the file path (/api/users/[id]). The label reads "After operation 1 · API route GET /api/data · src/pages/api/data.ts:17" and the message "Paused in the API route GET /api/data (request /api/data), observed after operation 1"; never call it a server render or a page load.',
+      identityRule:
+        "The pause names the request that actually paused, because Codebook reads the request object (req.method and req.url). It attributes the pause to the operation by comparing that method and the full URL (query included) with the browser's requests sent after operation k, the earliest unclaimed one first. Every other hit is resumed and listed in details.resumedHits with a reason (before-operation, other-method, other-path, no-browser-request, after-retired, unclassified) and a count. Limits: an earlier request with the same method and URL that reaches the line after the operation, or the server's own fetch of the same URL, can be the one that is attributed; say so when the explanation depends on which request paused.",
+      values:
+        "req.method, req.url and req.query are plain properties that Codebook reads without a side effect: declare locals of the handler or req.query.<name> as inspections, whatever the request parameter is named in the handler. A local the handler assigned before the line is readable, but a local declared on the stop's own line has no value yet. When the request object cannot be read (a destructured parameter, for example), the pause is attributed by the window rule: the earliest unclaimed matching browser request of the operation.",
+      configuration: API_ROUTE_CONFIGURATION,
+      configurationNote:
+        "One click operation sends the request, so the stop in src/pages/api/data.ts has afterOperation 1. Placeholders only: replace the path, selectors, line, book and hash with the learner's own. Never copy serverRenderQuickStart.configurationPagesEntryRender for an API route: its afterOperation 0 is refused (api-route-before-operation).",
+      refusals: {
+        reasons: API_ROUTE_RECOVERY,
+        note: 'Each is NEXT_STOP_NOT_SEALED with details.sideEffects none, raised before any process starts. A stop in _document keeps NEXT_SERVER_ONLY_STOP.',
+      },
+      notReached: `${API_ROUTE_NOT_REACHED_POSSIBILITIES} details.apiRoute is { route } of the stop. After-operation inputs were sent and side effects are unknown: explain what ran, offer the partial replay and never start again unasked.`,
+      savedStudy:
+        'A study with an API-route pause is saved as format 14 (.study.v14.json), which also keeps the fields of format 13; Codebook 0.2.87 and older list it as saved by a newer Codebook, and opening it needs a Codebook on API 1.29 or later.',
     },
     serverRenderQuickStart: {
       anchor: 'codebook://help/repository-browser#server-render-quick-start',
@@ -344,7 +417,7 @@ export function serverRenderHelp() {
       wording:
         'after-operation is "observed after operation k". An operation is never said to cause a render; the unreached causes below are possibilities ("may"), never the established cause.',
       limits: [
-        'Not supported in either router: server-side code of other routes than the entry route (except an App Router route handler with afterOperation 1 or more from API 1.28, routeHandlerStops), Pages API routes, middleware or proxy, and Turbopack (Codebook always starts next dev --webpack, whatever the dev script says).',
+        'Not supported in either router: server-side code of other routes than the entry route (except an App Router route handler with afterOperation 1 or more from API 1.28, routeHandlerStops, and a Pages API route with afterOperation 1 or more from API 1.29, apiRouteStops), middleware or proxy, and Turbopack (Codebook always starts next dev --webpack, whatever the dev script says).',
         'App Router: a stop in a client component is refused with NEXT_STOP_NOT_SEALED (details.reason client-component); a render hit of another route is resumed and not counted.',
         PAGES_NOT_PAUSED,
         'There is no timeout override: each wait is bounded at 20 s, restarting at each continue, and the pause hold and run deadline stay as they are. There is no attribution override: Codebook reads the rendering route itself (a Pages run reads the data function from the paused stack).',
@@ -395,6 +468,11 @@ export function serverRenderHelp() {
         {
           item: 'saved study of an App Router module-evaluation pause (API 1.27)',
           change: `format 12 (.study.v12.json), for a study whose observation carries scope module. Codebook 0.2.85 and older list it as saved by a newer Codebook; update Codebook (${SERVER_RENDER_MODULE_MINIMUM_EXTENSION} or later) to open it (moduleScope)`,
+        },
+        {
+          item: 'saved study of a Pages API-route pause (API 1.29)',
+          change:
+            'format 14 (.study.v14.json), for a study whose observation carries execution api-route. Codebook 0.2.87 and older list it as saved by a newer Codebook; update Codebook to open it (apiRouteStops)',
         },
         {
           item: 'saved study of an App Router route-handler pause (API 1.28)',

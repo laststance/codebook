@@ -200,6 +200,7 @@ test('the repository-browser help keeps its existing top keys and leads with sta
     'operationsErrorCodes',
     'routeHandlerQuickStart',
     'routeHandlerStops',
+    'apiRouteStops',
     'serverRenderQuickStart',
     'serverRenderMigration',
     'serverRenderErrors',
@@ -305,7 +306,7 @@ test('the Next support section names the stoppable Pages code, the server-only l
   ])
   assert.ok(
     support.notStoppable[0]?.startsWith(
-      'Pages server-side code no stop can pause in this version: API routes (pages/api) and _document',
+      'Pages server-side code no stop can pause in this version: _document, and,',
     ),
   )
   assert.ok(support.notStoppable[0]?.includes('NEXT_SERVER_ONLY_STOP'))
@@ -377,11 +378,7 @@ test('the README Next section states the redirect rule, the stop limits, the sta
       'a browser stop in code that runs only on the server cannot pause in the browser',
     ),
   )
-  assert.ok(
-    section.includes(
-      'API routes and `_document` are not supported in this version',
-    ),
-  )
+  assert.ok(section.includes('`_document` is not supported in this version'))
   assert.ok(
     section.includes('a `next/dynamic` module is, which cannot be sealed'),
   )
@@ -613,7 +610,7 @@ test('the help says a Pages server stop is refused as server-only and that a pre
   // Assert
   assert.ok(
     meaning.includes(
-      'A server stop (participant server) in a file under pages/api or in _document: API routes and _document are not supported in this version, and the refusal comes before the development server starts (details.sideEffects none)',
+      'A server stop (participant server) in _document: _document is not supported in this version, and the refusal comes before the development server starts (details.sideEffects none)',
     ),
   )
   assert.ok(
