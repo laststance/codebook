@@ -23,7 +23,8 @@ export function observeBuildExit(
 ): { exited: Promise<BuildProcessExit>; hasLeaderExited(): boolean } {
   let leaderExited = false
   const exited = new Promise<BuildProcessExit>((resolve) => {
-    child.once('error', () => {
+    // `on`, not `once`: a second error event must still have a listener or it would throw as unhandled.
+    child.on('error', () => {
       leaderExited = true
       resolve({ code: null, signal: null })
     })

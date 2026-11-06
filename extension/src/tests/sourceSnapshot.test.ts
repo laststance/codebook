@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import {
   chmod,
+  mkdir,
   mkdtemp,
   realpath,
   rm,
@@ -139,6 +140,85 @@ test(
     assert.equal(snapshot.get('link.ts')?.startsWith('link:tracked.ts'), true)
   },
 )
+
+// protects=a symbolic link is recorded by its target text only, so editing the file it points at changes that file's entry and never the link's; fails_when=a link entry carries its target's content and the build is blamed for the link; no_claim=Windows, where links need privileges
+test(
+  'does not report a link as changed when only the content of its target changed',
+  { skip: process.platform === 'win32' },
+  async () => {
+    // Arrange
+    const root = await createRepository()
+    await symlink('tracked.ts', join(root, 'link.ts'))
+    const snapshot = await hashTrackedFiles(root, ['link.ts'])
+    // Act
+    await writeFile(join(root, 'tracked.ts'), 'edited target')
+    const changed = await findChangedTrackedFile(root, snapshot)
+    // Assert
+    assert.equal(snapshot.get('link.ts'), 'link:tracked.ts')
+    assert.equal(changed, undefined)
+  },
+)
+
+// protects=a FIFO is recorded as special:fifo without being opened, so a snapshot never blocks on a pipe; fails_when=the snapshot reads a FIFO and hangs until the test times out; no_claim=sockets and devices, Windows
+test(
+  'records a FIFO as special without opening it',
+  { skip: process.platform === 'win32', timeout: 10_000 },
+  async () => {
+    // Arrange
+    const root = await createRepository()
+    execFileSync('mkfifo', [join(root, 'pipe.ts')])
+    // Act
+    const snapshot = await hashTrackedFiles(root, ['pipe.ts'])
+    const changed = await findChangedTrackedFile(root, snapshot)
+    // Assert
+    assert.equal(snapshot.get('pipe.ts'), 'special:fifo')
+    assert.equal(changed, undefined)
+  },
+)
+
+// protects=a tracked file the build deleted is reported as changed; fails_when=a deleted tracked file passes unnoticed; no_claim=that Git tracks the file
+test('reports a deleted tracked file as changed', async () => {
+  // Arrange
+  const root = await createRepository()
+  const snapshot = await hashTrackedFiles(root, ['tracked.ts'])
+  // Act
+  await unlink(join(root, 'tracked.ts'))
+  const changed = await findChangedTrackedFile(root, snapshot)
+  // Assert
+  assert.deepEqual(changed, { kind: 'changed', path: 'tracked.ts' })
+})
+
+// protects=an untracked file the build deleted is reported as changed for the tracked-and-untracked file set; fails_when=a deleted untracked source file passes unnoticed; no_claim=ignored files
+test('reports a deleted untracked file as changed', async () => {
+  // Arrange
+  const root = await createRepository()
+  const paths = await listTrackedFiles(root, root, 'tracked-and-untracked')
+  const snapshot = await hashTrackedFiles(root, paths)
+  // Act
+  await unlink(join(root, 'fresh.ts'))
+  const changed = await findChangedTrackedFile(
+    root,
+    snapshot,
+    'tracked-and-untracked',
+  )
+  // Assert
+  assert.deepEqual(changed, { kind: 'changed', path: 'fresh.ts' })
+})
+
+// protects=a tracked path the build replaced with a folder is reported as changed and recorded as directory; fails_when=a file turned folder passes unnoticed or reads as unreadable; no_claim=the folder's contents
+test('reports a tracked path that became a directory as changed', async () => {
+  // Arrange
+  const root = await createRepository()
+  const snapshot = await hashTrackedFiles(root, ['tracked.ts'])
+  // Act
+  await unlink(join(root, 'tracked.ts'))
+  await mkdir(join(root, 'tracked.ts'))
+  const changed = await findChangedTrackedFile(root, snapshot)
+  const after = await hashTrackedFiles(root, ['tracked.ts'])
+  // Assert
+  assert.equal(after.get('tracked.ts'), 'directory')
+  assert.deepEqual(changed, { kind: 'changed', path: 'tracked.ts' })
+})
 
 // protects=additions of the caller win over the inherited allow-list while credentials stay out; fails_when=the library build cannot put the external Node first on PATH or a secret leaks through the additions step; no_claim=that a build uses the environment (native check)
 test('lets a build environment addition replace an inherited variable without admitting credentials', () => {

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import type { Stats } from 'node:fs'
 import { lstat, readFile, readlink } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -12,43 +13,57 @@ export const UNREADABLE_HASH_PREFIX = 'unreadable:'
 /** Suffix of an entry whose file has an executable bit; a changed bit is a changed entry. */
 const EXECUTABLE_ENTRY_SUFFIX = ':executable'
 
-/** Prefix of an entry whose path is a symbolic link; the link's target text follows, then the content state of what it points at. */
+/** Prefix of an entry whose path is a symbolic link; only the link's target text follows, never the content it points at. */
 const LINK_ENTRY_PREFIX = 'link:'
 
-/** The content state of a path: its SHA-256, `absent`, `directory` or `unreadable:<code>`. */
-async function readContentState(absolutePath: string): Promise<string> {
-  try {
-    const content = await readFile(absolutePath)
-    return createHash('sha256').update(content).digest('hex')
-  } catch (error) {
-    const code = systemErrorCode(error)
-    // Absent and directory are states of the path, so they stay comparable; every other code is a read that failed.
-    if (code === 'ENOENT' || code === 'ENOTDIR') return 'absent'
-    if (code === 'EISDIR') return 'directory'
-    return `${UNREADABLE_HASH_PREFIX}${code === '' ? 'unknown' : code}`
-  }
+/** Prefix of an entry whose path is neither a regular file, a directory nor a link (FIFO, socket, device); it is never opened. */
+const SPECIAL_ENTRY_PREFIX = 'special:'
+
+/** The state of a path that cannot be inspected or read: `absent` for a missing path, else `unreadable:<code>`. */
+function unavailableState(error: unknown): string {
+  const code = systemErrorCode(error)
+  // Absent is a state of the path, so it stays comparable; every other code is a failed inspection.
+  if (code === 'ENOENT' || code === 'ENOTDIR') return 'absent'
+  return `${UNREADABLE_HASH_PREFIX}${code === '' ? 'unknown' : code}`
 }
 
-/** The snapshot entry of one path: content state, plus the link target of a symbolic link and the executable bit. */
+/** The type name of a stat result that is not a regular file, directory or link. */
+function specialType(stats: Stats): string {
+  if (stats.isFIFO()) return 'fifo'
+  if (stats.isSocket()) return 'socket'
+  if (stats.isCharacterDevice()) return 'character-device'
+  if (stats.isBlockDevice()) return 'block-device'
+  return 'unknown'
+}
+
+/** The snapshot entry of one path, decided by `lstat` first so only a regular file is ever opened. */
 async function readSnapshotEntry(absolutePath: string): Promise<string> {
-  let linkTarget: string | undefined
-  let isExecutable = false
+  let stats: Stats
   try {
-    const stats = await lstat(absolutePath)
-    isExecutable = (stats.mode & 0o111) !== 0 && !stats.isDirectory()
-    if (stats.isSymbolicLink()) linkTarget = await readlink(absolutePath)
-  } catch {
-    // The content read below names the state (absent, unreadable) of a path that cannot be inspected.
+    stats = await lstat(absolutePath)
+  } catch (error) {
+    return unavailableState(error)
   }
-  const content = await readContentState(absolutePath)
-  // A link records where it points, because retargeting a link to equal content is still a change.
-  const entry =
-    linkTarget === undefined
-      ? content
-      : `${LINK_ENTRY_PREFIX}${linkTarget}\0${content}`
-  // An unreadable state stays a bare `unreadable:` value so the comparison can recognise it.
-  if (content.startsWith(UNREADABLE_HASH_PREFIX)) return content
-  return isExecutable ? `${entry}${EXECUTABLE_ENTRY_SUFFIX}` : entry
+  // A directory (gitlink, submodule entry, or a path that became a folder) has no content to read.
+  if (stats.isDirectory()) return 'directory'
+  try {
+    // A link records where it points; retargeting a link to equal content is still a change.
+    if (stats.isSymbolicLink()) {
+      return `${LINK_ENTRY_PREFIX}${await readlink(absolutePath)}`
+    }
+    // A FIFO or socket would block a read, so every non-regular type is recorded by name and left unopened.
+    if (!stats.isFile()) return `${SPECIAL_ENTRY_PREFIX}${specialType(stats)}`
+    const content = await readFile(absolutePath)
+    const hash = createHash('sha256').update(content).digest('hex')
+    return (stats.mode & 0o111) !== 0
+      ? `${hash}${EXECUTABLE_ENTRY_SUFFIX}`
+      : hash
+  } catch (error) {
+    // The path may have become a folder between the lstat and the read.
+    return systemErrorCode(error) === 'EISDIR'
+      ? 'directory'
+      : unavailableState(error)
+  }
 }
 
 /**
@@ -56,7 +71,7 @@ async function readSnapshotEntry(absolutePath: string): Promise<string> {
  * Called by {@link buildWxtExtension} and the library build before the build and again (through {@link findChangedTrackedFile}) after the build's process tree ended.
  * @param repositoryRoot - The folder the paths are relative to.
  * @param paths - Repository-relative paths, from {@link listTrackedFiles}.
- * @returns Path to entry. A regular file's entry is its SHA-256, with `:executable` appended when it has an executable bit. A symbolic link's entry is `link:<target>`, a NUL and the content state of what it points at. A missing file (`ENOENT`) or one whose parent is now a file (`ENOTDIR`) is `absent`, and a directory (`EISDIR`, a tracked gitlink or submodule entry) is `directory`. Any other read error is `unreadable:<code>`, which {@link findChangedTrackedFile} never counts as a match.
+ * @returns Path to entry. A regular file's entry is its SHA-256, with `:executable` appended when it has an executable bit. A symbolic link's entry is `link:<target>` (target text only, its content is never read). A FIFO, socket or device is `special:<type>` and is never opened. A missing file (`ENOENT`) or one whose parent is now a file (`ENOTDIR`) is `absent`, and a directory (`EISDIR`, a tracked gitlink or submodule entry) is `directory`. Any other read error is `unreadable:<code>`, which {@link findChangedTrackedFile} never counts as a match.
  * @example
  * await hashTrackedFiles('/repo', ['a.ts']) // => Map { 'a.ts' => 'e3b0c442…' }
  */

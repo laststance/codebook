@@ -96,6 +96,21 @@ test('settles exited on close without waiting for the flush bound', async () => 
   assert.deepEqual(status, { code: 2, signal: null })
 })
 
+// protects=a second error event of the leader process still has a listener, so it never escapes as an unhandled error event; fails_when=the error listener is removed after the first event and the second emit throws; no_claim=real spawn failures
+test('keeps an error listener after the first error event of the leader', async () => {
+  // Arrange
+  const child = new EventEmitter()
+  const { exited } = observeBuildExit(child, 5)
+  child.emit('error', new Error('first'))
+  // Act
+  const listenerCountAfterFirstError = child.listenerCount('error')
+  const emitSecondError = () => child.emit('error', new Error('second'))
+  // Assert
+  assert.equal(listenerCountAfterFirstError, 1)
+  assert.doesNotThrow(emitSecondError)
+  assert.deepEqual(await exited, { code: null, signal: null })
+})
+
 // protects=a build failure quotes only the last twenty non-empty output lines, so a chatty build never floods the refusal; fails_when=the tail keeps every line, keeps blank lines or drops the newest; no_claim=the masking of secrets (the redactor's own tests)
 test('keeps only the last twenty non-empty build output lines in order', () => {
   // Arrange
