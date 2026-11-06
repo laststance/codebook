@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict'
+import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { isFrameInStopSource } from '../utils/isFrameInStopSource'
 
 import {
   extensionEditorHarness,
@@ -117,4 +120,25 @@ test('an unpacked pause is captured without a frame-source check', async () => {
   assert.equal(run.debug.pauses()[0]?.captured?.path, 'popup.js')
   await run.debug.release()
   await run.editor.dispose()
+})
+
+// protects=a frame without a path or in another file never counts as the stop's source, while a link spelling of the same file does; fails_when=an undefined or empty path matches, or a symlinked spelling of the stop's file is rejected so a valid pause records no capture; no_claim=what path spelling js-debug reports
+test('matches a frame reached through a link to the stop file and rejects a missing path', async () => {
+  // Arrange
+  const root = await mkdtemp(join(tmpdir(), 'wxt-frame-'))
+  const stopPath = join(root, 'App.tsx')
+  const linkPath = join(root, 'linked.tsx')
+  await writeFile(stopPath, 'export {}')
+  await symlink(stopPath, linkPath)
+  // Act
+  const throughLink = await isFrameInStopSource(linkPath, stopPath)
+  const missing = await isFrameInStopSource(undefined, stopPath)
+  const empty = await isFrameInStopSource('', stopPath)
+  const other = await isFrameInStopSource(join(root, 'Other.tsx'), stopPath)
+  await rm(root, { recursive: true, force: true })
+  // Assert
+  assert.equal(throughLink, true)
+  assert.equal(missing, false)
+  assert.equal(empty, false)
+  assert.equal(other, false)
 })
