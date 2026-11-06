@@ -118,6 +118,61 @@ test('a route-handler hit that arrives while a browser stop is paused is publish
   )
 })
 
+// Value: protects=E-10 the publish row names the time the route-handler pause waited behind a paused browser stop of the run, so the native check's 2 s gate can subtract it; fails_when=heldMs reads 0 (or less than the wait) although the pause waited behind the browser stop; no_claim=the exact milliseconds (the test only holds the browser stop for at least 400 ms)
+test('a route-handler pause that waited behind a paused browser stop journals that wait as held time', async (context) => {
+  // Arrange
+  const routeFile = 'app/api/todos/route.ts'
+  const harness = await routeHandlerRunHarness(context, {
+    stopOperations: [2, 2],
+    stopParticipants: ['browser', 'server'],
+    operations: [
+      { kind: 'click', title: 'Focus', selector: 'button[type=submit]' },
+      { ...ADD, title: 'Add' },
+    ],
+    additionalStops: [
+      {
+        line: 1,
+        column: 7,
+        inspections: [{ path: 'nextTheme', mode: 'value', required: true }],
+      },
+    ],
+    extra: {
+      participant: 'browser',
+      sourcePath: 'components/TodoListCache.tsx',
+      additionalStopFile: routeFile,
+    },
+  })
+  await harness.run.prepare()
+  await sendOperation(harness, 1)
+  await waitUntil(
+    () => harness.run.view().status === 'ready',
+    'operation 1 done',
+  )
+  await sendOperation(harness, 2)
+  const browserPause = await waitUntil(
+    () => harness.run.view().participants.browser?.snapshot,
+    'the browser stop paused',
+  )
+  // Act: the route handler's hit arrives while the browser stop is paused, which is then held 400 ms before its continue
+  sendRequest(harness, '9', 'POST', '/api/todos')
+  await hitRouteFile(harness, routeFile)
+  await setTimeout(400)
+  await harness.run.continue('browser', browserPause.pause)
+  await publishedPause(harness)
+  // Assert
+  const row = harness.run
+    .view()
+    .events.find((event) => event.type === 'route-handler.published')
+  const detail = row?.detail as Record<string, unknown>
+  assert.deepEqual(
+    {
+      execution: detail.execution,
+      isHeldAtLeastTheWait: Number(detail.heldMs) >= 400,
+    },
+    { execution: 'route-handler', isHeldAtLeastTheWait: true },
+  )
+})
+
 // Value: protects=ENG-4 a request path that holds a value the learner typed is masked in the published route-handler pause like in the journal; fails_when=the snapshot's routeHandler.path keeps the typed value; no_claim=masking of the route pattern or of the method
 test('a route-handler pause masks a typed secret in the request path it publishes', async (context) => {
   // Arrange

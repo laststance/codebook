@@ -3023,13 +3023,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const profile = ROUTE_HANDLER_PROFILES[entry.kind]
     // A pause while another stop of the run is held or being continued is judged once that stop is continued, so the stop takes its place in order. The server stays paused meanwhile; the held stop's own deadline (and the run's) still ends the wait.
     const heldWaitStartedAtMs = Date.now()
+    const isHeldBehindStop = Boolean(this.continuation || this.acceptedStop)
     await waitUntil(
       () => !this.continuation && !this.acceptedStop,
       'the held stop before a route-handler pause',
       REPOSITORY_RUN_TIMEOUT_MS,
       this.abort.signal,
     )
-    const heldMs = Date.now() - heldWaitStartedAtMs
+    // Only a wait behind another stop counts as held; the wait's own poll under load is no held time.
+    const heldMs = isHeldBehindStop ? Date.now() - heldWaitStartedAtMs : 0
     // After an await Next's caller is only on the async stack (E2), so the classifier reads both.
     const handler = routeHandlerStackOf(
       held.event.callFrames,
