@@ -1,6 +1,7 @@
 import type { z } from 'zod'
 
 import {
+  HTTP_REDIRECT_STATUS_END,
   SINGLE_BUNDLE_ERROR_BODY_LIMIT_BYTES,
   VITE_MODULE_FETCH_TIMEOUT_MS,
 } from '../constants'
@@ -125,8 +126,9 @@ async function readServedText(
   })
   if (!response.ok) {
     // Only a profile that quotes the server's error reads its body (its head, cut at the cap); the others cancel it unread, so a stalled body never holds the poll.
+    const isErrorStatus = response.status >= HTTP_REDIRECT_STATUS_END
     const body =
-      profile.quoteErrorBody === true
+      profile.quoteErrorBody === true && isErrorStatus
         ? await readErrorBodyHead(
             response,
             SINGLE_BUNDLE_ERROR_BODY_LIMIT_BYTES,
@@ -135,7 +137,8 @@ async function readServedText(
     await response.body?.cancel().catch(() => undefined)
     throw new SingleBundleNotReadyError(
       `${url} answered status ${response.status}`,
-      { status: response.status, body },
+      // A redirect (never followed) is "not ready yet", not Metro's error answer.
+      isErrorStatus ? { status: response.status, body } : undefined,
     )
   }
   return readCappedBody(response, limitBytes).catch((error: unknown) => {
