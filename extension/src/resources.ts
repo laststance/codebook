@@ -37,6 +37,7 @@ import {
   REPOSITORY_ANNOUNCED_PAUSE_RESUME_LIMIT_MS,
 } from './constants'
 import { ERROR_RECOVERY, EvidenceIntegrityError, StudyError } from './errors'
+import { expoWebHelp } from './expoWebHelp'
 import { nextHelp, REPOSITORY_BROWSER_START_HERE } from './nextHelp'
 import type { NodeHistorySummary } from './nodeHistorySummary'
 import { nodeScriptHelp } from './nodeScriptHelp'
@@ -285,6 +286,8 @@ export async function readResource(
       ...viteHelp(),
       // The react-scripts (Create React App) quick start, selection rule, refusal anchors and limits (API 1.25).
       ...reactScriptsHelp(),
+      // The Expo web (Metro) quick start, selection rule, refusal anchors and limits (API 1.30).
+      ...expoWebHelp(),
       ...nextHelp(),
       // The version 3 quick start, the operations and secrets sections and the error table (API 1.14).
       ...operationsHelp(),

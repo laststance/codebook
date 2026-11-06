@@ -17,6 +17,8 @@ import {
   MODULE_EVALUATION_STUDY_VERSION,
   ROUTE_HANDLER_STUDY_VERSION,
   API_ROUTE_STUDY_VERSION,
+  EXPO_VERSION_MAX_CHARS,
+  EXPO_WEB_STUDY_VERSION,
   REACT_SCRIPTS_STUDY_VERSION,
   VITE_PACKAGE_ROOT_STUDY_VERSION,
   SERVER_RENDER_STUDY_VERSION,
@@ -215,6 +217,7 @@ export const configuredStudySchema = z.strictObject({
     z.literal(MODULE_EVALUATION_STUDY_VERSION),
     z.literal(ROUTE_HANDLER_STUDY_VERSION),
     z.literal(API_ROUTE_STUDY_VERSION),
+    z.literal(EXPO_WEB_STUDY_VERSION),
   ]),
   workspaceKey: repositoryHashSchema,
   id: studyIdSchema,
@@ -239,6 +242,8 @@ export const configuredStudySchema = z.strictObject({
   descriptor: configuredDescriptorSchema.optional(),
   // The Vite version a `vite-dev` run started on (read from the resolved `vite/package.json`); a Next study has none.
   viteVersion: z.string().min(1).max(64).optional(),
+  // The Expo SDK version an `expo-web-dev` run started on (read from the resolved `expo/package.json`, format 15 only); other studies have none.
+  expoVersion: z.string().min(1).max(EXPO_VERSION_MAX_CHARS).optional(),
   operation: z
     .strictObject({
       id: z.uuid(),

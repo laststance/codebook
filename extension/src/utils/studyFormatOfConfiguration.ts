@@ -1,6 +1,7 @@
 import type { ConfiguredStudy } from '../configuredStudySchemas'
 import {
   API_ROUTE_STUDY_VERSION,
+  EXPO_WEB_STUDY_VERSION,
   MODULE_EVALUATION_STUDY_VERSION,
   OPERATIONS_CONFIG_VERSION,
   OPERATIONS_STUDY_VERSION,
@@ -218,7 +219,9 @@ export function evidenceFormatOfStudy(study: StudyFormatSubject): number {
       study.version !== REACT_SCRIPTS_STUDY_VERSION &&
       study.version !== MODULE_EVALUATION_STUDY_VERSION &&
       study.version !== ROUTE_HANDLER_STUDY_VERSION &&
-      study.version !== API_ROUTE_STUDY_VERSION) ||
+      study.version !== API_ROUTE_STUDY_VERSION &&
+      // Format 15 (`expo-web-dev`) follows the format 7 rules derived from its configuration, like format 11.
+      study.version !== EXPO_WEB_STUDY_VERSION) ||
     study.configuration.version !== OPERATIONS_CONFIG_VERSION
   )
     return study.version
@@ -237,7 +240,7 @@ export function usesServerRenderEvidence(study: StudyFormatSubject): boolean {
 }
 
 /**
- * Says whether a saved format number is written only from a version 3 configuration (formats 7 to 14), which no study of version 1 or 2 may carry.
+ * Says whether a saved format number is written only from a version 3 configuration (formats 7 to 15), which no study of version 1 or 2 may carry.
  * Called by {@link validateConfiguredStudyEvidence} for the version 1 and 2 configurations.
  * @param version - The study's saved format.
  * @returns `true` for the formats written only from a version 3 configuration.
@@ -245,7 +248,7 @@ export function usesServerRenderEvidence(study: StudyFormatSubject): boolean {
  */
 export function isOperationsStudyFormat(version: number): boolean {
   return (
-    version >= OPERATIONS_STUDY_VERSION && version <= API_ROUTE_STUDY_VERSION
+    version >= OPERATIONS_STUDY_VERSION && version <= EXPO_WEB_STUDY_VERSION
   )
 }
 

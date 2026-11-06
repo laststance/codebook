@@ -4,6 +4,11 @@ import {
 } from '../constants'
 import { PACKAGE_ROOT_FRESH_SESSION_RECOVERY, type ErrorCode } from '../errors'
 import {
+  EXPO_WEB_REFUSAL_CODES,
+  expoWebSetupDeadlineDetailsOf,
+  type ExpoWebSetupDeadlineFailureDetails,
+} from '../expoWebRefusals'
+import {
   libraryDetailsOfFailure,
   libraryRecoveryOf,
   libraryRecoveryRouterOfFailure,
@@ -31,6 +36,8 @@ const CODED_FAILURE_CODES = [
   ...NEXT_REFUSAL_CODES,
   // The react-scripts-dev refusals a timer raises (a setup deadline) reach the service as text too.
   ...REACT_SCRIPTS_REFUSAL_CODES,
+  // The expo-web-dev refusals a timer raises (a setup deadline) reach the service as text too.
+  ...EXPO_WEB_REFUSAL_CODES,
   'SOURCE_CHANGED',
   // The failures of one operation of a version 3 run, raised by timers and events after the action's receipt.
   'OPTION_NOT_AVAILABLE',
@@ -72,6 +79,7 @@ export type RefusalFailure = {
     | ViteLibraryFailureDetails
     // The service forwards this slot as the error's `details`, so the react-scripts setup deadline's fields ride here too.
     | ReactScriptsSetupDeadlineFailureDetails
+    | ExpoWebSetupDeadlineFailureDetails
 }
 
 /** The fields a Vite library failure text restores: the reason (and cause) with `sideEffects: "unknown"`, and the package root, library and file its variant carries. */
@@ -212,8 +220,8 @@ function restoredViteFailure(text: string): RefusalFailure | undefined {
         sideEffects: 'unknown',
       },
     }
-  // The react-scripts deadline is read here too, so it is restored before the general Next and run codes.
-  return viteFailureOf(text) ?? restoredReactScriptsDeadline(text)
+  // The react-scripts and Expo deadlines are read here too, so it is restored before the general Next and run codes.
+  return viteFailureOf(text) ?? restoredSetupDeadline(text)
 }
 
 /**
@@ -238,23 +246,31 @@ function viteLibraryFailureLead(
   return identity && { message: text.slice(lead[0].length), identity }
 }
 
+/** The setup-deadline codes whose timer-raised text restores `details`, each with the reader of its message. */
+const SETUP_DEADLINE_RESTORERS = [
+  ['REACT_SCRIPTS_SETUP_DEADLINE', reactScriptsSetupDeadlineDetailsOf],
+  ['EXPO_WEB_SETUP_DEADLINE', expoWebSetupDeadlineDetailsOf],
+] as const
+
 /**
- * Restores a react-scripts setup-deadline failure raised by a timer: the code and message plus the reason, step and side effects its text carries.
+ * Restores a react-scripts or Expo setup-deadline failure raised by a timer: the code and message plus the reason, step and side effects its text carries.
  *
  * Why it exists: the timer has no thrown error, so the details the API note promises must come from the text. Called by {@link restoredViteFailure} as its last step, on the way from {@link refusalFailureOf}.
  * @param text - A run's failure reason.
  * @returns The refusal with `libraryDetails` set when the message names its step; the code and message alone when it does not; `undefined` for any other text.
  * @example
- * restoredReactScriptsDeadline('REACT_SCRIPTS_SETUP_DEADLINE: Setup took too long.') // => { code: 'REACT_SCRIPTS_SETUP_DEADLINE', message: 'Setup took too long.' }
+ * restoredSetupDeadline('REACT_SCRIPTS_SETUP_DEADLINE: Setup took too long.') // => { code: 'REACT_SCRIPTS_SETUP_DEADLINE', message: 'Setup took too long.' }
+ * restoredSetupDeadline('EXPO_WEB_SETUP_DEADLINE: Setup took too long.') // => { code: 'EXPO_WEB_SETUP_DEADLINE', message: 'Setup took too long.' }
  */
-function restoredReactScriptsDeadline(
-  text: string,
-): RefusalFailure | undefined {
+function restoredSetupDeadline(text: string): RefusalFailure | undefined {
   const lead = CODED_FAILURE_LEAD.exec(text)
-  if (lead?.[1] !== 'REACT_SCRIPTS_SETUP_DEADLINE') return undefined
-  const code = 'REACT_SCRIPTS_SETUP_DEADLINE'
+  const restorer = SETUP_DEADLINE_RESTORERS.find(
+    ([known]) => known === lead?.[1],
+  )
+  if (!lead || !restorer) return undefined
+  const [code, detailsOf] = restorer
   const message = text.slice(lead[0].length)
-  const details = reactScriptsSetupDeadlineDetailsOf(message)
+  const details = detailsOf(message)
   return details
     ? { code, message, libraryDetails: details }
     : { code, message }

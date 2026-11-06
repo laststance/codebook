@@ -5,6 +5,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 /**
  * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ * 1.30 is additive: the `expo-web-dev` adapter of the `repository-browser` profile runs an Expo SDK 57 web app (Metro) at the repository root or below it, in a version 3 configuration only. Codebook starts the app's own `expo start --web` on the port its web script declares (it sets `CI=1`, `BROWSER=none` and `EXPO_NO_TELEMETRY=1`), treats the app as ready when Metro serves the entry bundle and its source map, and pauses at browser stops in the app's own source that the entry bundle includes. The refusals are `EXPO_WEB_UNSUPPORTED`, `EXPO_WEB_LAUNCHER_FAILED`, `EXPO_WEB_PORT_UNAVAILABLE`, `EXPO_WEB_SETUP_DEADLINE` and `EXPO_WEB_SEAL_FAILED`, `codebook_status` gains `profiles[].prerequisites.adapters["expo-web-dev"]`, `codebook://help/repository-browser` gains `expoWebQuickStart`, and a study of an Expo run is saved as format 15 (`.study.v15.json`) with its `expoVersion`.
  * 1.29 is additive: a Next Pages Router server stop with `afterOperation` of 1 or more in a file under the Pages folder's `api/` (`pages/api` or `src/pages/api`) pauses in the API-route handler that answers the browser's own request after that operation: the pause reports `execution: "api-route"`, `attribution: "after-operation"`, `operationIndex` and `apiRoute { method, route, path }`, read from the paused request object; a study with such a pause is saved as format 14 (`.study.v14.json`). A stop with `afterOperation: 0`, in a version 2 configuration or in a route whose exported config declares the edge runtime is refused with `NEXT_STOP_NOT_SEALED` (`details.reason` `api-route-before-operation` or `api-route-edge-runtime`); `_document` keeps `NEXT_SERVER_ONLY_STOP`.
  * 1.28 is additive: a Next App Router server stop with `afterOperation` of 1 or more in a route handler file (`route.ts`, `route.js`, `route.tsx` or `route.jsx` under `app/` or `src/app/`) pauses in the handler that answers the browser's own request after that operation: the pause reports `execution: "route-handler"`, `attribution: "after-operation"`, `operationIndex` and `routeHandler { method, route, path }`; the refusals are `NEXT_STOP_NOT_SEALED` with `details.reason` `route-handler-before-operation`, `route-handler-edge-runtime` or `route-handler-not-app-source`, `SERVER_STOP_NOT_REACHED` gains `details.routeHandler` and route-handler `resumedHits` reasons, `codebook://help/repository-browser` gains `routeHandlerQuickStart` and `routeHandlerStops`, and a study with such a pause is saved as format 13.
  * 1.27 is additive: a Next App Router server stop with `afterOperation: 0` on code that runs when Next first evaluates a server module of the entry route (module scope of the page, its layout, or a module they import) pauses at that evaluation: the pause reports `scope: "module"`, and when the evaluation happens in a request Codebook made while preparing the run, `attribution: "preparation"` with the live `preparationRequest` (`readiness` or `warm-load`); such a study is saved as format 12 ({@link MODULE_EVALUATION_STUDY_VERSION}). A preparation pause before any page could be drawn reads capture status `absent` with {@link STOP_IMAGE_APPLICATION_NOT_YET_AVAILABLE_TEXT}: no image is owed, so the run can still complete.
@@ -31,7 +32,21 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.9 is additive: a node-server run is saved as a Server replay. `codebook_explain_node_history` accepts a server history's material (steps citing the request, a stop, output, the response or the request failure), the server run resource gains `nodeServer.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing` and `captureMissing`, `nextActions` offers `save-node-learning`, and `codebook://help/node-server` has a save section.
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
-export const API_VERSION = '1.29'
+export const API_VERSION = '1.30'
+
+/** The API that first accepts the `expo-web-dev` adapter in a version 3 configuration (skill 1.0.79). */
+export const EXPO_WEB_MINIMUM_API = '1.30'
+
+/** The one Expo SDK major the `expo-web-dev` adapter supports, judged from the installed `expo` package (Cycle 0089, E-17); widening needs a native run on that major. */
+export const EXPO_WEB_SUPPORTED_MAJOR = 57
+
+/**
+ * The selection rule for an Expo web question, shared word for word by the repository-browser help (`expoWebQuickStart`); the bundled skill paraphrases it and a test pins the key phrases.
+ *
+ * Why it exists: a hoisted `node_modules/expo` at the root makes the root look usable although the question is about an app below it, so the chat must choose the app the question is about, never "the one that is ready". The twin of {@link REACT_SCRIPTS_APP_SELECTION_RULE}.
+ */
+export const EXPO_WEB_APP_SELECTION_RULE =
+  "Choose the Expo app the question is about: the repository root only when the expo-web-dev readiness reports rootIsApp true (the root package.json declares expo), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.30 or later); a node_modules/expo at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
 
 /** The MCP API that first pauses a stop in a Pages API route (Cycle 0088): the help, the migration table and the bundled skill name it as the minimum. */
 export const API_ROUTE_MINIMUM_API = '1.29'
@@ -1821,8 +1836,10 @@ export const MODULE_EVALUATION_STUDY_VERSION = 12
 export const ROUTE_HANDLER_STUDY_VERSION = 13
 /** The format of a Next study (at the repository root or with a `packageRoot`) that holds a Pages API route observation (`execution: "api-route"` with its `apiRoute` object): the format 8 rules plus those fields, and every field format 12 and 13 keep. Every other Next study keeps {@link SERVER_RENDER_STUDY_VERSION}, {@link PACKAGE_ROOT_STUDY_VERSION}, {@link MODULE_EVALUATION_STUDY_VERSION} or {@link ROUTE_HANDLER_STUDY_VERSION}; the suffix `.study.v14.json` makes Codebook 0.2.87 and older list such a study as saved by a newer Codebook, never as a server render. */
 export const API_ROUTE_STUDY_VERSION = 14
+/** The format of a study saved from a version 3 `expo-web-dev` configuration, whether its `packageRoot` is absent, `"."` or a nested folder: its evidence follows the same format 7 rules as the other browser-only formats, derived from the configuration by {@link evidenceFormatOfStudy}, and it may carry `expoVersion`. An `expo-web-dev` configuration is readable only as this format; the suffix `.study.v15.json` makes Codebook 0.2.88 and older list such a study as saved by a newer Codebook, never as unreadable. */
+export const EXPO_WEB_STUDY_VERSION = 15
 /** The highest study format this Codebook reads; a saved study above it is listed as saved by a newer Codebook. */
-export const READABLE_STUDY_VERSION = API_ROUTE_STUDY_VERSION
+export const READABLE_STUDY_VERSION = EXPO_WEB_STUDY_VERSION
 /** The replay's operation marks closer than this many pixels stack vertically instead of overlapping. */
 export const OPERATION_MARK_STACK_PX = 24
 /** Below this webview width in pixels the operation marks show their numbers only. */
@@ -1834,6 +1851,12 @@ export const CONFIGURED_STUDY_METADATA_SUFFIX = '.study.meta.v3.json'
 // Highest existing version owns a logical study, including when its bytes are corrupt.
 // A change of the saved study format that an older Codebook cannot read takes the next format number and its own `.study.v<n>.json` suffix in this table; an older Codebook then lists such a study as saved by a newer one and keeps it, instead of failing on its schema.
 export const STUDY_STORAGE_FORMATS = [
+  {
+    version: EXPO_WEB_STUDY_VERSION,
+    format: 'v15',
+    archiveSuffix: '.study.v15.json',
+    metadataSuffix: '.study.meta.v15.json',
+  },
   {
     version: API_ROUTE_STUDY_VERSION,
     format: 'v14',
@@ -2910,6 +2933,9 @@ export const REACT_SCRIPTS_SUPPORTED_MAJOR = 5
 
 /** The longest a `react-scripts/package.json` version may be to be published in `codebook_status`: the studied repository chose that text, so a longer one reads as a version that could not be read. */
 export const REACT_SCRIPTS_VERSION_MAX_CHARS = 64
+
+/** The longest an `expo/package.json` version may be (the study schema's `expoVersion` limit): the studied repository chose that text, so a longer one reads as a version that could not be read. */
+export const EXPO_VERSION_MAX_CHARS = 64
 
 /** The path react-scripts 5 serves its one development bundle at; its source map is the `sourceMappingURL` the bundle names. */
 export const REACT_SCRIPTS_BUNDLE_PATH = '/static/js/bundle.js'
