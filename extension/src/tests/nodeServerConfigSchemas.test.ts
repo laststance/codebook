@@ -358,37 +358,48 @@ test('a node-server declaration without signIn parses with no signIn key', () =>
   assert.equal('signIn' in configuration, false)
 })
 
-// protects=each signIn refusal names its field path; fails_when=a bad path, a missing or oversized field set, a bad key or value, a wrong secret marker is accepted or reported under another path; no_claim=the wording beyond the quoted paths
+// protects=each signIn refusal names its field path and its exact message; fails_when=a bad path, a missing or oversized field set, a bad key or value, a wrong secret marker is accepted or reported under another path; no_claim=that a server accepts a sign-in (only the schema runs)
 test('a node-server signIn is refused with the path of each violation', () => {
   // Arrange
   const nineFields = Object.fromEntries(
     Array.from({ length: 9 }, (_, index) => [`field${index}`, 'value']),
   )
-  const cases: { name: string; signIn: unknown; path: string }[] = [
+  const cases: {
+    name: string
+    signIn: unknown
+    path: string
+    message: string
+  }[] = [
     {
       name: 'bad path',
       signIn: { ...validSignIn(), path: 'api/sign-in' },
       path: 'signIn.path',
+      message:
+        'expected a path on the server starting with "/", not a URL or "//host".',
     },
     {
       name: 'zero fields',
       signIn: { ...validSignIn(), fields: {} },
       path: 'signIn.fields',
+      message: 'expected 1 to 8 non-secret fields.',
     },
     {
       name: 'nine fields',
       signIn: { ...validSignIn(), fields: nineFields },
       path: 'signIn.fields',
+      message: 'expected 1 to 8 non-secret fields.',
     },
     {
       name: 'over-long key',
       signIn: { ...validSignIn(), fields: { ['k'.repeat(257)]: 'value' } },
       path: `signIn.fields.${'k'.repeat(257)}`,
+      message: 'Invalid key in record',
     },
     {
       name: 'over-long value',
       signIn: { ...validSignIn(), fields: { email: 'v'.repeat(257) } },
       path: 'signIn.fields.email',
+      message: 'expected a non-empty string of at most 256 characters.',
     },
     {
       name: 'field named like secretField',
@@ -398,6 +409,7 @@ test('a node-server signIn is refused with the path of each violation', () => {
         secretField: 'pin',
       },
       path: 'signIn.fields.pin',
+      message: 'expected no field named like secretField.',
     },
     {
       name: 'password key',
@@ -407,11 +419,15 @@ test('a node-server signIn is refused with the path of each violation', () => {
         secretField: 'passphrase',
       },
       path: 'signIn.fields.password',
+      message:
+        'expected a non-secret field: name a password or token field in secretField, so the learner types it.',
     },
     {
       name: 'accessToken key',
       signIn: { ...validSignIn(), fields: { accessToken: 'value' } },
       path: 'signIn.fields.accessToken',
+      message:
+        'expected a non-secret field: name a password or token field in secretField, so the learner types it.',
     },
     {
       name: 'JWT value',
@@ -420,25 +436,26 @@ test('a node-server signIn is refused with the path of each violation', () => {
         fields: { email: 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abc' },
       },
       path: 'signIn.fields.email',
+      message:
+        'expected a non-secret value: this one has the shape of a credential.',
     },
     {
       name: 'secret other than ask-learner',
       signIn: { ...validSignIn(), secret: 'hunter2hunter2' },
       path: 'signIn.secret',
+      message:
+        'expected "ask-learner": the learner types the secret into the editor\'s box.',
     },
   ]
   // Act
-  const outcomes = cases.map(({ name, signIn, path }) => ({
+  const outcomes = cases.map(({ name, signIn, path, message }) => ({
     name,
-    path,
+    expected: `${path}: ${message}`,
     refusals: signInRefusals(signIn),
   }))
   // Assert
-  for (const { name, path, refusals } of outcomes)
-    assert.ok(
-      refusals.some((refusal) => refusal.startsWith(`${path}: `)),
-      `${name}: ${refusals.join(' | ')}`,
-    )
+  for (const { name, expected, refusals } of outcomes)
+    assert.ok(refusals.includes(expected), `${name}: ${refusals.join(' | ')}`)
 })
 
 // protects=a request whose path (query ignored) equals signIn.path is refused at request.path; fails_when=the declared request may be the sign-in itself; no_claim=that other paths are accepted by a real server

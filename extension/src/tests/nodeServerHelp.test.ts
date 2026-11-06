@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { resolve } from 'node:path'
+import { readFile } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 
 import * as constants from '../constants'
@@ -44,7 +45,7 @@ function filled(value: unknown, key = ''): unknown {
   return value
 }
 
-// protects=the four samples of the help (a minimal GET, a POST with a JSON body, a monorepo packageRoot) are complete starts that parse once their placeholders are replaced, and every placeholder names the answer it comes from; fails_when=a sample stops parsing, a placeholder names no answer, or a sample no longer shows its shape; no_claim=that the samples' lines run in any repository
+// protects=the four samples of the help (a minimal GET, a POST with a JSON body, a request behind signIn, a monorepo packageRoot) are complete starts that parse once their placeholders are replaced, and every placeholder names the answer it comes from; fails_when=a sample stops parsing, a placeholder names no answer, or a sample no longer shows its shape; no_claim=that the samples' lines run in any repository
 test('the node-server help samples parse as starts once their placeholders are replaced', async () => {
   // Arrange
   const { body } = await servedHelp()
@@ -394,5 +395,131 @@ test('the node-server help documents signIn: questions, failure, observed 401, A
   assert.match(
     walkthrough,
     /a GET is sent at once, except with signIn, where the modal always asks/,
+  )
+})
+
+/** Reads a file of the package (`README.md`, `skills/...`, `src/...`) as the packaged text. */
+function readPackaged(...segments: string[]): Promise<string> {
+  return readFile(join(__dirname, '..', '..', ...segments), 'utf8')
+}
+
+// protects=the sign-in failure recovery tells the chat what to say for each status class (400/401/403/422, 404, 429, 5xx, 3xx, no session cookie), that the declared request was not sent, and that the run reads request-failed; fails_when=one branch or the side-effects sentence leaves errors.ts, so a chat retries or blames the wrong thing; no_claim=that a chat follows the sentences
+test('the NODE_SERVER_SIGN_IN_FAILED recovery names every status branch and its side effects', () => {
+  // Arrange
+  const recovery = ERROR_RECOVERY.NODE_SERVER_SIGN_IN_FAILED
+  // Act
+  const phrases = [
+    "details.status is the sign-in's HTTP status and details.reason is rejected or no-session-cookie",
+    'rejected with 400, 401, 403 or 422: the account or the password was not accepted; ask the learner to check the account (create it in the app if it does not exist), then one new run if they ask.',
+    "rejected with 404: signIn.path names no sign-in route; correct it from the server's source, then one new run.",
+    'rejected with 429: the server limits sign-in attempts; tell the learner and start one new run only after they wait and ask.',
+    "rejected with 5xx: the server failed; read the run's server output and report it.",
+    'rejected with 3xx: the route redirects (a browser form sign-in), which signIn does not follow.',
+    'no-session-cookie: the route answered 2xx without a cookie (for example an API that answers a bearer token), which signIn does not support.',
+    'Recovery: learner check, at most one new run.',
+    'Side effects: the declared request was not sent; after a 2xx a session may exist on the server. The run reads request-failed; stop it before the new run.',
+  ]
+  // Assert
+  for (const phrase of phrases) assert.ok(recovery.includes(phrase), phrase)
+})
+
+// protects=the recoveries of the codes a signIn run can also answer say what details.phase means (sign-in before any byte, or request after the sign-in) and the REQUEST_NOT_CONFIRMED recovery says what details.question request and secret mean; fails_when=a phase or question sentence leaves errors.ts; no_claim=that the codes carry those details at runtime (the integration tests pin that)
+test('the signIn details.phase and details.question sentences stay in the recoveries', () => {
+  // Arrange
+  const phaseCodes = [
+    {
+      code: 'LISTENER_NOT_OWNED',
+      phrase:
+        'For a run with signIn, details.phase says which request was refused: sign-in, before any byte (the run still reads ready, as above), or request, after the sign-in was sent (the sign-in changed the server, so the run reads request-failed: stop it and start one new run).',
+    },
+    {
+      code: 'PORT_OWNER_UNKNOWN',
+      phrase:
+        'For a run with signIn, details.phase says which request was refused: sign-in, before any byte (the run still reads ready, as above), or request, after the sign-in was sent (the run reads request-failed: stop it and start one new run).',
+    },
+    {
+      code: 'REQUEST_FAILED',
+      phrase:
+        'With details.phase sign-in the connection failed during the sign-in of a run with signIn, so the declared request was never sent.',
+    },
+    {
+      code: 'REQUEST_TIMEOUT',
+      phrase:
+        'With details.phase sign-in the sign-in of a run with signIn did not answer, so the declared request was never sent.',
+    },
+    {
+      code: 'REQUEST_NOT_CONFIRMED',
+      phrase:
+        'details.question request: the dialog confirming the request (for a run with signIn, the sign-in and the request) was cancelled, closed or not answered; details.question secret: the password box of a run with signIn was dismissed, left empty or not answered.',
+    },
+  ] as const
+  // Act
+  const missing = phaseCodes.filter(
+    ({ code, phrase }) => !ERROR_RECOVERY[code].includes(phrase),
+  )
+  // Assert
+  assert.deepEqual(missing, [])
+})
+
+// protects=the packaged skill, README and API note state the signIn contract (password typed only in Codebook's box, API 1.31 gate, request-failed run, 8-character password, additive API 1.31 note); fails_when=one of these sentences leaves SKILL.md, the README or constants.ts; no_claim=that the README sentences describe every behavior (the runtime tests do)
+test('the skill, README and constants state the node-server signIn contract', async () => {
+  // Arrange
+  const skill = await readPackaged('skills', 'codebook', 'SKILL.md')
+  const readme = await readPackaged('README.md')
+  const constantsText = await readPackaged('src', 'constants.ts')
+  // Act
+  const note =
+    constantsText
+      .split('\n')
+      .find((line) => line.startsWith(' * 1.31 is additive')) ?? ''
+  const readmeLines = readme.split('\n')
+  const bullet =
+    readmeLines.find((line) =>
+      line.startsWith('- **Sign-in for a server path (MCP API 1.31).**'),
+    ) ?? ''
+  const additive =
+    readmeLines.find((line) => line.includes('API 1.31 is additive')) ?? ''
+  // Assert
+  assert.ok(
+    skill.includes(
+      "For a server path behind sign-in, and only when `codebook_status` reports API 1.31 or later, also declare `signIn` with the account's non-secret fields (ask the learner which account; never ask for or accept the password in the chat) and let the learner type the password into Codebook's own prompt.",
+    ),
+  )
+  for (const phrase of [
+    "the chat declares `signIn` with the account's non-secret fields",
+    "so you type the password in Codebook's box and never in the chat",
+    'keeps the session cookie in memory only (never saved, shown or sent to the chat)',
+    'The box refuses a password shorter than 8 characters, so use a test account whose password has 8 or more characters.',
+    'fails the request with `NODE_SERVER_SIGN_IN_FAILED` and the run reads `request-failed` (the server keeps running); stop it, then one new run tries again, and you create a missing account in the app yourself.',
+  ])
+    assert.ok(bullet.includes(phrase), phrase)
+  for (const phrase of [
+    'API 1.31 is additive: it adds the optional `signIn` of a `node-server` configuration',
+    'which an older Codebook refuses as `INVALID_CONFIGURATION`',
+    'adds the `NODE_SERVER_SIGN_IN_FAILED` refusal',
+    'saves a run with `signIn` as Server replay history format 3, which an older Codebook does not list',
+  ])
+    assert.ok(additive.includes(phrase), phrase)
+  for (const phrase of [
+    'optional `signIn` object `{ path, fields, secretField, secret: "ask-learner" }`',
+    'masked box',
+    'signs in with one POST',
+    'session cookie in memory only',
+    'An older Codebook refuses the field as INVALID_CONFIGURATION.',
+  ])
+    assert.ok(note.includes(phrase), phrase)
+})
+
+// protects=the signIn help section says the password box refuses a password shorter than 8 characters; fails_when=that sentence leaves the help; no_claim=that the box enforces it (the prompt tests do)
+test('the node-server help tells the chat the sign-in password needs 8 characters', async () => {
+  // Arrange
+  const { body } = await servedHelp()
+  // Act
+  const questions: string = body.signIn.learnerQuestions
+  // Assert
+  assert.ok(
+    questions.includes(
+      'it refuses a password shorter than 8 characters, so tell the learner to use a test account whose password has 8 or more characters.',
+    ),
   )
 })
