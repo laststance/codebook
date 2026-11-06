@@ -11,7 +11,7 @@ import {
 } from './chromeExtensionHistorySchemas'
 import type { ExtensionHistoryTypes } from './chromeExtensionHistoryTypes'
 import {
-  CHROME_EXTENSION_HISTORY_FORMAT_VERSION,
+  CHROME_EXTENSION_HISTORY_SEAL_VERSION,
   EXTENSION_HISTORY_JOURNAL_LIMIT_BYTES,
   EXTENSION_HISTORY_MAX_ENTRIES,
   EXTENSION_HISTORY_SEAL_LIMIT_BYTES,
@@ -147,7 +147,7 @@ class ExtensionWriterRules implements HistoryWriterRules<ExtensionHistoryTypes> 
     })
     return extensionHistorySealSchema.parse(
       structuredSealFields({
-        version: CHROME_EXTENSION_HISTORY_FORMAT_VERSION,
+        version: CHROME_EXTENSION_HISTORY_SEAL_VERSION,
         studyId: input.studyId,
         entryCount: input.entryCount,
         journal: input.journal,

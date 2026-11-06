@@ -2910,8 +2910,6 @@ export const CHROME_EXTENSION_MINIMUM_EXTENSION_VERSION = '0.2.59'
 // Cycle 0069 lane A1: the chrome-extension history profile
 /** The folder of chrome-extension histories beside `node-tests.v1` and `node-servers.v1`; 0.2.69.0 builds no store for it, so a revert leaves its histories on disk, unlisted and never deleted. */
 export const CHROME_EXTENSION_HISTORY_DIRECTORY = 'chrome-extensions.v1'
-/** The `formatVersion` of a chrome-extension history's header and the `version` of its seal. */
-export const CHROME_EXTENSION_HISTORY_FORMAT_VERSION = 1
 /** The `formatVersion` of a chrome-extension history header by build kind: `unpacked` runs keep 1 (older versions read it), `wxtBuild` runs write 2 (it adds the `build` fact). */
 export const CHROME_EXTENSION_HISTORY_HEADER_FORMATS = {
   unpacked: 1,

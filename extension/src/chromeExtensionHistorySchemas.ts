@@ -1,7 +1,8 @@
 import { z } from 'zod'
 
 import {
-  CHROME_EXTENSION_HISTORY_FORMAT_VERSION,
+  CHROME_EXTENSION_HISTORY_HEADER_FORMATS,
+  CHROME_EXTENSION_HISTORY_SEAL_VERSION,
   CHROME_EXTENSION_PROFILE,
   EXTENSION_HISTORY_FORMAT_NEWER_TEXT,
   EXTENSION_HISTORY_KNOWN_CONTEXTS,
@@ -30,46 +31,69 @@ const context = z.string().min(1).max(64)
 const pauseId = z.string().min(1).max(256)
 const stopIndex = z.number().int().min(1).max(EXTENSION_STOP_LIMIT)
 
+/** The fields every header format carries; `formatVersion` and the format 2 `build` fact are added per format. */
+const extensionHistoryHeaderShape = {
+  profile: z.literal(CHROME_EXTENSION_PROFILE),
+  workspaceKey: repositoryHashSchema,
+  studyId: studyIdSchema,
+  instanceId: z.uuid(),
+  runId: z.uuid(),
+  createdAt: z.iso.datetime(),
+  question: z.string().min(1).max(MAX_EXPLANATION_CHARS),
+  extension: z.strictObject({
+    id: z.string().min(1).max(64),
+    name: z.string().min(1).max(256),
+    version: z.string().min(1).max(64),
+  }),
+  surface: z.strictObject({
+    kind: z.enum(['popup', 'page']),
+    path: repositoryPath,
+  }),
+  declaredStops: z
+    .array(
+      z.strictObject({
+        index: stopIndex,
+        path: repositoryPath,
+        line: z.number().int().positive(),
+        context,
+      }),
+    )
+    .min(1)
+    .max(EXTENSION_STOP_LIMIT),
+  repositoryRevision: z.strictObject({
+    revision: z.string().min(1).max(1_024),
+    dirty: z.boolean(),
+  }),
+  chrome: z.strictObject({ version: z.string().min(1).max(128) }),
+}
+
+/** The build a `wxt-build` run made, recorded by header format 2: the tool and the version it resolved from the project. */
+const extensionHistoryBuildSchema = z.strictObject({
+  tool: z.literal('wxt'),
+  version: z.string().min(1).max(64),
+})
+
 /**
  * The header of a chrome-extension history: the run's identity, its question, the extension (name and version from its manifest), the surface it opened, the declared stops, the repository revision and the Chrome that ran it.
+ * Format 1 (an unpacked run) has no `build`; format 2 (a `wxt-build` run) requires it.
  * @example extensionHistoryHeaderSchema.parse({ formatVersion: 1, profile: 'chrome-extension', … })
  */
 const extensionHistoryHeaderSchema = z
-  .strictObject({
-    formatVersion: z.literal(CHROME_EXTENSION_HISTORY_FORMAT_VERSION),
-    profile: z.literal(CHROME_EXTENSION_PROFILE),
-    workspaceKey: repositoryHashSchema,
-    studyId: studyIdSchema,
-    instanceId: z.uuid(),
-    runId: z.uuid(),
-    createdAt: z.iso.datetime(),
-    question: z.string().min(1).max(MAX_EXPLANATION_CHARS),
-    extension: z.strictObject({
-      id: z.string().min(1).max(64),
-      name: z.string().min(1).max(256),
-      version: z.string().min(1).max(64),
+  .discriminatedUnion('formatVersion', [
+    z.strictObject({
+      formatVersion: z.literal(
+        CHROME_EXTENSION_HISTORY_HEADER_FORMATS.unpacked,
+      ),
+      ...extensionHistoryHeaderShape,
     }),
-    surface: z.strictObject({
-      kind: z.enum(['popup', 'page']),
-      path: repositoryPath,
+    z.strictObject({
+      formatVersion: z.literal(
+        CHROME_EXTENSION_HISTORY_HEADER_FORMATS.wxtBuild,
+      ),
+      ...extensionHistoryHeaderShape,
+      build: extensionHistoryBuildSchema,
     }),
-    declaredStops: z
-      .array(
-        z.strictObject({
-          index: stopIndex,
-          path: repositoryPath,
-          line: z.number().int().positive(),
-          context,
-        }),
-      )
-      .min(1)
-      .max(EXTENSION_STOP_LIMIT),
-    repositoryRevision: z.strictObject({
-      revision: z.string().min(1).max(1_024),
-      dirty: z.boolean(),
-    }),
-    chrome: z.strictObject({ version: z.string().min(1).max(128) }),
-  })
+  ])
   .refine(
     (value) => value.studyId === `${value.instanceId}_${value.runId}`,
     'Chrome extension history identity differs from its run.',
@@ -145,13 +169,18 @@ const extensionHistoryEntrySchema = z.discriminatedUnion('type', [
 
 /** The seal of a chrome-extension history: status, every reason uncut and the journal's hash. `interrupted` is never persisted: it is read when a history has no seal and no live writer. */
 export const extensionHistorySealSchema = buildStructuredHistorySealSchema(
-  CHROME_EXTENSION_HISTORY_FORMAT_VERSION,
+  CHROME_EXTENSION_HISTORY_SEAL_VERSION,
   EXTENSION_HISTORY_MAX_ENTRIES,
 )
 
-export type ExtensionHistoryHeader = z.infer<
-  typeof extensionHistoryHeaderSchema
->
+/** A stored header of either format: `build` is present for format 2 only. Written as one shape so a caller builds a header with an optional `build` and the store stamps the format from it. */
+export type ExtensionHistoryHeader = Omit<
+  Extract<z.infer<typeof extensionHistoryHeaderSchema>, { formatVersion: 1 }>,
+  'formatVersion'
+> & {
+  formatVersion: 1 | 2
+  build?: z.infer<typeof extensionHistoryBuildSchema>
+}
 export type ExtensionHistoryEntry = z.infer<typeof extensionHistoryEntrySchema>
 export type ExtensionHistorySeal = z.infer<typeof extensionHistorySealSchema>
 export type ExtensionHistorySealReason = z.infer<typeof historySealReasonSchema>
@@ -188,16 +217,34 @@ function assertKnownExtensionContext(value: unknown): void {
 }
 
 /**
+ * Refuses a header format above the newest this build reads, with the format-newer code, so a history a later Codebook recorded lists as unavailable and is never deleted.
+ * Called by {@link parseExtensionHistoryHeader} before the schema runs.
+ * @param value - The `formatVersion` of a stored header.
+ * @throws An error that starts with `EXTENSION_HISTORY_FORMAT_NEWER` for a number above format 2.
+ * @example assertKnownHeaderFormat(3) // throws 'EXTENSION_HISTORY_FORMAT_NEWER: Recorded by a newer Codebook; …'
+ */
+function assertKnownHeaderFormat(value: unknown): void {
+  if (
+    typeof value === 'number' &&
+    value > CHROME_EXTENSION_HISTORY_HEADER_FORMATS.wxtBuild
+  )
+    throw new Error(
+      `${EXTENSION_HISTORY_REASON_CODES.formatNewer}: ${EXTENSION_HISTORY_FORMAT_NEWER_TEXT}`,
+    )
+}
+
+/**
  * Parses a stored header; the one reader behind the descriptor, so a header with an unknown declared context is refused (and never listed or deleted).
  * @param value - The parsed JSON of a header file.
  * @returns The header.
- * @throws The format-newer error for an unknown context; the schema's error otherwise.
+ * @throws The format-newer error for a header format above 2 or an unknown context; the schema's error otherwise.
  * @example parseExtensionHistoryHeader(JSON.parse(text)).extension.name // => 'Notes'
  */
 export function parseExtensionHistoryHeader(
   value: unknown,
 ): ExtensionHistoryHeader {
   if (typeof value === 'object' && value !== null) {
+    assertKnownHeaderFormat(Reflect.get(value, 'formatVersion'))
     const stops: unknown = Reflect.get(value, 'declaredStops')
     if (Array.isArray(stops))
       for (const stop of stops)
