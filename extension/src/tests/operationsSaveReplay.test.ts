@@ -349,8 +349,8 @@ test('a study saved in a format one above the readable one is listed, refused wi
   context.after(() => rm(directory, { recursive: true, force: true }))
   const study = createOperationsStudy()
   const library = new LearningLibrary(directory, study.workspaceKey)
-  const futurePath = join(directory, `${study.id}.study.v15.json`)
-  const futureBytes = JSON.stringify({ ...study, version: 15 })
+  const futurePath = join(directory, `${study.id}.study.v16.json`)
+  const futureBytes = JSON.stringify({ ...study, version: 16 })
   await writeFile(futurePath, futureBytes)
   // Act
   const listed = await library.list()
@@ -360,11 +360,11 @@ test('a study saved in a format one above the readable one is listed, refused wi
   assert.equal(listed[0]?.format, 'newer')
   assert.equal(
     listed[0]?.reason,
-    'This study was saved in format 15 by a newer Codebook; this Codebook reads formats up to 14. Update the extension to open it. The study is kept as it is.',
+    'This study was saved in format 16 by a newer Codebook; this Codebook reads formats up to 15. Update the extension to open it. The study is kept as it is.',
   )
   await assert.rejects(read, {
     message:
-      'This study was saved in format 15 by a newer Codebook; this Codebook reads formats up to 14. Update the extension to open it. The study is kept as it is.',
+      'This study was saved in format 16 by a newer Codebook; this Codebook reads formats up to 15. Update the extension to open it. The study is kept as it is.',
   })
   assert.equal(await readFile(futurePath, 'utf8'), futureBytes)
 })
