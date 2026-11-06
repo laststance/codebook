@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -253,6 +253,36 @@ test('the environment reports node-script readiness for a ready machine, a missi
     [...(nodeProfile?.missing ?? [])],
     ['codebook.nodeExecutable: configure an executable external Node.js >=24.'],
   )
+})
+
+// protects=a root package.json whose packageManager is an object (JSON allows it) or a failing status read leaves node-script ready and every other profile reported; fails_when=prerequisites() throws or node-script turns not ready because of the package manager text; no_claim=that the library route accepts such a repository
+test('a hostile packageManager field or a failing status read never fails the readiness report', async (context) => {
+  // Arrange
+  const hostile = await createEnvironmentWith(context, { gaps: [] })
+  await writeFile(
+    join(hostile.directory, 'package.json'),
+    '{"packageManager":{"toString":null}}',
+  )
+  const failing = await createEnvironmentWith(context, {
+    gaps: [],
+    packageManagerStatusFails: true,
+  })
+  // Act
+  const hostileProfile = (await hostile.environment.prerequisites()).profiles?.[
+    'node-script'
+  ]
+  const failingProfile = (await failing.environment.prerequisites()).profiles?.[
+    'node-script'
+  ]
+  // Assert
+  assert.equal(hostileProfile?.ready, true)
+  assert.deepEqual(hostileProfile?.repositoryPackageManager, {
+    found: false,
+    reason: 'unsupported',
+    packageManager: 'object',
+  })
+  assert.equal(failingProfile?.ready, true)
+  assert.equal(failingProfile?.repositoryPackageManager, undefined)
 })
 
 // protects=the three samples of the node-script help are complete configurations that parse with the live schema once their placeholders are replaced; fails_when=a sample stops parsing, or one loses its shape (ES module entry, CommonJS entry with a stop in a required file, package root below the root); no_claim=that the sample lines run in any repository

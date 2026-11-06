@@ -80,6 +80,16 @@ export const LIBRARY_BUILD_FAILED_REASONS = [
   'tracked-files-unverified',
 ] as const
 
+/** The `details.step` values of a `pack-error`: the pack process itself, the single tarball it leaves, its unpacking, its manifest, and the resolve hook that links the Example's imports to it. One source for the library package, the error recovery, the help and the tests. */
+export const LIBRARY_PACK_ERROR_STEPS = [
+  'build',
+  'pack',
+  'tarball',
+  'unpack',
+  'metadata',
+  'link',
+] as const
+
 /** The only shape of a WXT version a `wxt-build` run quotes from the build's result file (a file the project's code could write); anything else reads as `unknown`. */
 export const WXT_VERSION_PATTERN = /^[0-9A-Za-z.+-]{1,32}$/
 

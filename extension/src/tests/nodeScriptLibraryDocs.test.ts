@@ -6,6 +6,7 @@ import { test } from 'node:test'
 import {
   LIBRARY_BUILD_FAILED_REASONS,
   LIBRARY_BUILD_UNSUPPORTED_REASONS,
+  LIBRARY_PACK_ERROR_STEPS,
 } from '../constants'
 import { nodeScriptConfigSchema } from '../nodeScriptConfigSchemas'
 import { nodeScriptHelp } from '../nodeScriptHelp'
@@ -65,13 +66,65 @@ test('the library help section states the route, its observation states, refusal
     'Overlapping builds',
     'Content scripts do not apply',
     'Yarn and Bun',
+    'details.packageManager and details.nodeVersion when they are known',
   ])
     assert.ok(text.includes(phrase), phrase)
-  for (const reason of [
-    ...LIBRARY_BUILD_UNSUPPORTED_REASONS,
-    ...LIBRARY_BUILD_FAILED_REASONS,
-  ])
-    assert.ok(text.includes(reason), reason)
+  // The reason lists the help names are read back from its sentences and compared with the product lists, in order.
+  const listAfter = (sentence: string, marker: RegExp): string[] =>
+    (marker.exec(sentence)?.[1] ?? '').split(', ')
+  assert.deepEqual(
+    listAfter(
+      library.refusals.unsupportedNothingStarted,
+      /details\.reason one of ([a-z, -]+):/,
+    ),
+    [...LIBRARY_BUILD_UNSUPPORTED_REASONS],
+  )
+  assert.deepEqual(
+    listAfter(
+      library.refusals.failedAfterStart,
+      /details\.reason one of ([a-z, -]+):/,
+    ),
+    [...LIBRARY_BUILD_FAILED_REASONS],
+  )
+  const codeWhen = (code: string): string =>
+    nodeScriptHelp().codes.find((entry) => entry.code === code)?.when ?? ''
+  assert.deepEqual(
+    listAfter(
+      codeWhen('LIBRARY_BUILD_UNSUPPORTED'),
+      /details\.reason is one of ([a-z, -]+);/,
+    ),
+    [...LIBRARY_BUILD_UNSUPPORTED_REASONS],
+  )
+  assert.deepEqual(
+    listAfter(
+      codeWhen('LIBRARY_BUILD_FAILED'),
+      /details\.reason is one of ([a-z, -]+);/,
+    ),
+    [...LIBRARY_BUILD_FAILED_REASONS],
+  )
+  // The pack-error steps are named in the section, in order.
+  assert.deepEqual(
+    listAfter(
+      library.refusals.failedAfterStart,
+      /pack-error details\.step is one of ([a-z, -]+)\./,
+    ),
+    [...LIBRARY_PACK_ERROR_STEPS],
+  )
+})
+
+// protects=the help and the README say the installed-copy disclosure compares the package's repository URL with the origin remote, so a repository with no origin or a fork whose origin differs lists nothing; fails_when=either drops the origin comparison or the no-disclosure cases; no_claim=how the comparison normalizes URLs
+test('the help and the README state that the installed-copy disclosure needs a matching origin remote', async () => {
+  // Arrange
+  const text = JSON.stringify(nodeScriptHelp().library)
+  const readme = await readPackaged('README.md')
+  // Act / Assert
+  for (const phrase of [
+    'compared with the origin remote',
+    'lists nothing without an origin remote or for a fork whose origin differs',
+  ]) {
+    assert.ok(text.includes(phrase), `help: ${phrase}`)
+    assert.ok(readme.includes(phrase), `README: ${phrase}`)
+  }
 })
 
 // protects=the bundled skill 1.0.82 tells the chat to declare library.packageRoot behind the API 1.33 gate, to say the build runs the project's own scripts, and to call a copy without library unverified; fails_when=a sentence or the version leaves the skill or a project name enters it; no_claim=how a chat follows it
@@ -84,7 +137,8 @@ test('the bundled skill 1.0.82 routes a library Example to library.packageRoot b
     'declare `library.packageRoot` so the Example runs the checked-out library',
     'only when `codebook_status` reports API 1.33 or later',
     "the build runs the project's own build scripts",
-    '`library.loaded` true and `library.publishedCopyLoaded` false',
+    '`nodeScript.library.loaded` true, `nodeScript.library.publishedCopyLoaded` false and `nodeScript.library.observation` `complete`',
+    'no other copy was loaded',
     'an installed copy whose correspondence to the checked-out source is unverified',
     '`repositoryPackageCopies`',
   ])
@@ -105,6 +159,8 @@ test('the README documents the library route, its facts, refusals, limits and di
     'built but not loaded by this script',
     '`LIBRARY_BUILD_UNSUPPORTED`',
     '`LIBRARY_BUILD_FAILED`',
+    'package manager and Node version when they are known',
+    '`details.step` is build, pack, tarball, unpack, metadata or link',
     'two windows building the same library at once are not prevented',
     'Yarn and Bun are not supported',
     '`repositoryPackageCopies`',

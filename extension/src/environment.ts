@@ -484,10 +484,11 @@ export async function createEnvironment(
           ).version,
       )
       // The package manager the library route would build with; only a run that declares `library` needs it, so it never changes readiness.
+      // A failed read only omits the status; it must not fail the whole readiness report.
       const repositoryPackageManager = await describeRepositoryPackageManager(
         workspace,
         nodeExecutable,
-      )
+      ).catch(() => undefined)
       // A managed run that is preparing or releasing blocks a new start under either adapter.
       const managedRunState = releasingConfiguredRun
         ? [MANAGED_RUN_RELEASING_MESSAGE]

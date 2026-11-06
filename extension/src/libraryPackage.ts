@@ -10,6 +10,7 @@ import {
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
+import type { LIBRARY_PACK_ERROR_STEPS } from './constants'
 import {
   EXTENSION_BUILD_GIT_MAX_BUFFER_BYTES,
   EXTENSION_BUILD_GIT_TIMEOUT_MS,
@@ -230,7 +231,9 @@ function processFailure(
     sentence: `The library ${step} ended with an error. Last output lines:\n${lines}`,
     details: {
       ...details,
-      ...(step === 'pack' ? { step: 'pack' } : {}),
+      ...(step === 'pack'
+        ? { step: 'pack' satisfies (typeof LIBRARY_PACK_ERROR_STEPS)[number] }
+        : {}),
       exitCode: end.exit?.code ?? null,
       signal: end.exit?.signal ?? null,
     },
@@ -262,7 +265,7 @@ async function runManagerCommand(
 /** A `pack-error` failure for a step of the pack that is not the process itself. */
 function packStepFailure(
   context: RouteContext,
-  step: 'build' | 'pack' | 'tarball' | 'unpack' | 'metadata',
+  step: (typeof LIBRARY_PACK_ERROR_STEPS)[number],
   sentence: string,
 ): StepFailure {
   return {
@@ -716,7 +719,7 @@ export async function prepareLibraryPackage(
     fail(
       'pack-error',
       `The resolve hook could not be prepared: ${error instanceof Error ? error.message : String(error)}`,
-      { step: 'unpack' },
+      { step: 'link' satisfies (typeof LIBRARY_PACK_ERROR_STEPS)[number] },
     ),
   )
   const installed = await readInstalledPackageManifest(

@@ -1,6 +1,9 @@
 import { delimiter, dirname } from 'node:path'
 
-import { resolveRepositoryPackageManager } from './resolveRepositoryPackageManager'
+import {
+  boundedPackageManagerText,
+  resolveRepositoryPackageManager,
+} from './resolveRepositoryPackageManager'
 
 /** What `codebook_status` says about the repository's package manager under the `node-script` prerequisites. */
 export type RepositoryPackageManagerStatus =
@@ -46,5 +49,9 @@ export async function describeRepositoryPackageManager(
       : result.reason === 'package-manager-unsupported'
         ? 'unsupported'
         : 'unknown'
-  return { found: false, reason, packageManager: result.packageManager }
+  return {
+    found: false,
+    reason,
+    packageManager: boundedPackageManagerText(result.packageManager),
+  }
 }

@@ -3,6 +3,23 @@ import { delimiter, isAbsolute, join } from 'node:path'
 
 import { isProgramFile } from './isProgramFile'
 
+/** The most characters of a declared `packageManager` text that status and error details quote. */
+const PACKAGE_MANAGER_TEXT_LIMIT_CHARS = 200
+
+/**
+ * Makes a declared `packageManager` text safe to quote: control characters removed, then cut to {@link PACKAGE_MANAGER_TEXT_LIMIT_CHARS}.
+ * Used by the manager decision and by `codebook_status`, because the field is the repository's own text.
+ * @param text - The raw field text, a lockfile list or a manager name.
+ * @returns The text without control characters, at most 200 characters.
+ * @example
+ * boundedPackageManagerText('pnpm\u001b[0m') // => 'pnpm[0m'
+ */
+export function boundedPackageManagerText(text: string): string {
+  return text
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, '')
+    .slice(0, PACKAGE_MANAGER_TEXT_LIMIT_CHARS)
+}
+
 /** The package managers the library route can build with. */
 export type RepositoryPackageManagerName = 'pnpm' | 'npm'
 
@@ -79,14 +96,20 @@ async function readDeclaredField(repositoryRoot: string): Promise<unknown> {
 
 /** Judges a declared `packageManager` value. */
 function judgeDeclared(declared: unknown): ManagerDecision {
-  const match =
-    typeof declared === 'string' ? PACKAGE_MANAGER_FIELD.exec(declared) : null
+  // A value that is not text (JSON allows an object) is unsupported; it is never converted to text, which can throw.
+  if (typeof declared !== 'string')
+    return {
+      ok: false,
+      reason: 'package-manager-unsupported',
+      packageManager: declared === null ? 'null' : typeof declared,
+    }
+  const match = PACKAGE_MANAGER_FIELD.exec(declared)
   // A malformed value cannot be trusted to name the manager.
   if (match === null)
     return {
       ok: false,
       reason: 'package-manager-unsupported',
-      packageManager: String(declared),
+      packageManager: boundedPackageManagerText(declared),
     }
   const [, name, version] = match
   if (name === 'pnpm' || name === 'npm')
@@ -94,7 +117,7 @@ function judgeDeclared(declared: unknown): ManagerDecision {
   return {
     ok: false,
     reason: 'package-manager-unsupported',
-    packageManager: String(declared),
+    packageManager: boundedPackageManagerText(declared),
   }
 }
 

@@ -6,6 +6,7 @@ import {
   LIBRARY_BUILD_FAILED_REASONS,
   LIBRARY_BUILD_TIMEOUT_MS,
   LIBRARY_BUILD_UNSUPPORTED_REASONS,
+  LIBRARY_PACK_ERROR_STEPS,
 } from '../constants'
 import { ERROR_RECOVERY } from '../errors'
 import { nodeScriptConfigSchema } from '../nodeScriptConfigSchemas'
@@ -140,4 +141,20 @@ test('lists the two library codes with anchors, reasons and recovery in the node
   assert.match(failed?.when ?? '', /tracked-files-unverified/)
   assert.equal(unsupported?.recovery, ERROR_RECOVERY.LIBRARY_BUILD_UNSUPPORTED)
   assert.equal(failed?.recovery, ERROR_RECOVERY.LIBRARY_BUILD_FAILED)
+})
+
+// protects=the pack-error steps are one list (build, pack, tarball, unpack, metadata, link) that the error recovery names; fails_when=a step is added or renamed without the recovery following; no_claim=which step a given failure reports (the pack tests pin that)
+test('lists the five pack-error steps once and names them in the LIBRARY_BUILD_FAILED recovery', () => {
+  // Arrange
+  const failed = ERROR_RECOVERY.LIBRARY_BUILD_FAILED
+  // Act / Assert
+  assert.deepEqual(
+    [...LIBRARY_PACK_ERROR_STEPS],
+    ['build', 'pack', 'tarball', 'unpack', 'metadata', 'link'],
+  )
+  assert.ok(
+    failed.includes(
+      'details.step is one of build, pack, tarball, unpack, metadata, link',
+    ),
+  )
 })

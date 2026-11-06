@@ -6,6 +6,7 @@ import {
   LIBRARY_BUILD_FAILED_REASONS,
   LIBRARY_BUILD_TIMEOUT_MS,
   LIBRARY_BUILD_UNSUPPORTED_REASONS,
+  LIBRARY_PACK_ERROR_STEPS,
   MILLISECONDS_PER_SECOND,
   NODE_SCRIPT_LIBRARY_MINIMUM_API,
   NODE_SCRIPT_MINIMUM_API,
@@ -156,7 +157,7 @@ function nodeScriptLibraryHelp() {
   return {
     requires: `codebook_status reports API ${NODE_SCRIPT_LIBRARY_MINIMUM_API} or later (compare the number after the dot as a whole number).`,
     whenToUse:
-      "The Example lives inside a library repository and its package.json depends on that library by a published version, so its own node_modules holds an installed copy, not the checked-out source. Declare library.packageRoot (the library package's folder, relative to the repository root; it may be an ancestor of the Example, never the Example's own folder or a folder inside it) and the Example runs on the checked-out library. Without it the Example runs the installed copy, and the run resource lists repositoryPackageCopies: each direct dependency installed from outside the repository's source folder whose package.json names the opened repository, with correspondence unverified. Say so to the learner; never call that copy the checked-out library.",
+      "The Example lives inside a library repository and its package.json depends on that library by a published version, so its own node_modules holds an installed copy, not the checked-out source. Declare library.packageRoot (the library package's folder, relative to the repository root; it may be an ancestor of the Example, never the Example's own folder or a folder inside it) and the Example runs on the checked-out library. Without it the Example runs the installed copy, and the run resource lists repositoryPackageCopies: each direct dependency installed from outside the repository's source folder whose package.json repository URL names the opened repository, compared with the origin remote, with correspondence unverified. The disclosure lists nothing without an origin remote or for a fork whose origin differs. Say so to the learner; never call that copy the checked-out library.",
     whatRuns: [
       "The learner's editor confirmation comes first and names the build and pack, because the build runs the project's own build scripts. A declined confirmation starts nothing.",
       "The repository's package manager (the root package.json packageManager field, else pnpm or npm by the lockfile at the root) runs the library's own build script in library.packageRoot with the external Node 24 or later first on PATH, then packs the library into the run's private folder with lifecycle scripts off, and the Example's imports of that package resolve to the packed build.",
@@ -176,7 +177,7 @@ function nodeScriptLibraryHelp() {
     ],
     refusals: {
       unsupportedNothingStarted: `LIBRARY_BUILD_UNSUPPORTED, details.reason one of ${LIBRARY_BUILD_UNSUPPORTED_REASONS.join(', ')}: follow codebook://help/node-script#LIBRARY_BUILD_UNSUPPORTED; fix the field, install, or point the setting at a Node 24.`,
-      failedAfterStart: `LIBRARY_BUILD_FAILED, details.reason one of ${LIBRARY_BUILD_FAILED_REASONS.join(', ')}: follow codebook://help/node-script#LIBRARY_BUILD_FAILED. Retry a build-error or timeout once at most; never retry tracked-file-changed or tracked-files-unverified, and tell the learner to inspect git diff or git status. Every refusal and failure carries details.command, details.packageManager and details.nodeVersion.`,
+      failedAfterStart: `LIBRARY_BUILD_FAILED, details.reason one of ${LIBRARY_BUILD_FAILED_REASONS.join(', ')}: follow codebook://help/node-script#LIBRARY_BUILD_FAILED. Retry a build-error or timeout once at most; never retry tracked-file-changed or tracked-files-unverified, and tell the learner to inspect git diff or git status. pack-error details.step is one of ${LIBRARY_PACK_ERROR_STEPS.join(', ')}. A refusal or failure carries details.command, details.packageManager and details.nodeVersion when they are known.`,
     },
     limits: [
       'Ignored inputs: the build reads and writes what the project ignores (generated files, build output); Codebook compares tracked and untracked-not-ignored files only.',
