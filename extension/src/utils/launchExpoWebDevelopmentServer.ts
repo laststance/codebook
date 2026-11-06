@@ -76,6 +76,20 @@ export function classifyExpoWebOutput(output: string, port: number): boolean {
 }
 
 /**
+ * Classifies the CLI's raw output, so a masked value inside the listening line cannot hide it.
+ *
+ * Why it exists: an app may set `EXPO_PUBLIC_SITE_URL=http://localhost:8081`, which the run masks, so the published tail reads `Waiting on [masked]`. Called by {@link awaitExpoWebListening}; the raw text stays inside the launcher and only the verdict (or a refusal naming the port) leaves.
+ * @param app - The spawned CLI.
+ * @param port - The port the run listens on.
+ * @returns `true` once Metro listens.
+ * @throws `EXPO_WEB_PORT_UNAVAILABLE` as {@link classifyExpoWebOutput}.
+ * @example judgeExpoWebOutput(app, 4101) // => false while nothing was printed
+ */
+function judgeExpoWebOutput(app: DevelopmentApp, port: number): boolean {
+  return app.judgeRawOutput((raw) => classifyExpoWebOutput(raw, port))
+}
+
+/**
  * Waits until the Expo CLI says Metro listens, it ends, or it reports a busy port, and words each ending as its refusal.
  *
  * Why it exists: the shared readiness only looks for listening evidence, so a busy port (the CLI exits) and any other exit would read as a timeout. Called by {@link launchExpoWebDevelopmentServer} right after the spawn. The output of an ended process is drained before the ending is worded, so a line printed just before the exit still counts.
@@ -85,7 +99,7 @@ export function classifyExpoWebOutput(output: string, port: number): boolean {
  * @throws `EXPO_WEB_PORT_UNAVAILABLE`, `EXPO_WEB_LAUNCHER_FAILED` (`exited`), `EXPO_WEB_SETUP_DEADLINE` when the budget passes first.
  * @example await awaitExpoWebListening(app, 4101, signal)
  */
-async function awaitExpoWebListening(
+export async function awaitExpoWebListening(
   app: DevelopmentApp,
   port: number,
   signal: AbortSignal,
@@ -93,11 +107,11 @@ async function awaitExpoWebListening(
   try {
     await waitUntil(
       async () => {
-        if (classifyExpoWebOutput(app.outputTail(), port)) return true
+        if (judgeExpoWebOutput(app, port)) return true
         if (app.isRunning()) return false
         // The exit can arrive before the last output: read what is left, then word the ending.
         await drainDevelopmentServerOutput(app, EXPO_WEB_OUTPUT_DRAIN_MS)
-        if (classifyExpoWebOutput(app.outputTail(), port)) return true
+        if (judgeExpoWebOutput(app, port)) return true
         throw expoWebExitedRefusal(app.exitStatus())
       },
       'the Expo CLI start',

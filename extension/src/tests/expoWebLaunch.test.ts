@@ -5,7 +5,12 @@ import { SINGLE_BUNDLE_ERROR_BODY_LIMIT_BYTES } from '../constants'
 import { expoWebBundlerLineOf } from '../utils/expoWebBundlerLineOf'
 import { buildExpoWebEnvironment } from '../utils/expoWebChildEnvironment'
 import { isExpoWebScriptOfModule } from '../utils/isExpoWebScriptOfModule'
-import { classifyExpoWebOutput } from '../utils/launchExpoWebDevelopmentServer'
+import { launchDevelopmentServer } from '../utils/launchDevelopmentServer'
+import {
+  awaitExpoWebListening,
+  classifyExpoWebOutput,
+} from '../utils/launchExpoWebDevelopmentServer'
+import { maskKnownValues } from '../utils/maskKnownValues'
 import { readErrorBodyHead } from '../utils/readErrorBodyHead'
 
 // Value: protects=Metro is not reachable from the learner's LAN: the child gets IPv4-first DNS so --localhost binds 127.0.0.1; fails_when=the option is missing from NODE_OPTIONS; why_new=Cycle 0089 review (OCR security); seam=none; no_claim=real Metro bind
@@ -131,4 +136,44 @@ test('a secret straddling the error-body cap leaves no fragment in the quoted li
   // Assert
   assert.equal(line.includes('SECRET'), false)
   assert.equal(line, 'Metro answered status 500')
+})
+
+// Value: protects=Metro that listens is not waited out when the app masks its own localhost URL; fails_when=the listening check reads the masked tail where the URL became [masked]; why_new=masked EXPO_PUBLIC_ URL hid the Waiting on line; seam=none; no_claim=real Expo CLI
+test('a masked localhost URL in the Waiting on line still counts as listening and the journal keeps it masked', async () => {
+  // Arrange
+  const port = 47213
+  const url = `http://localhost:${port}`
+  const journal: { type: string; detail: unknown }[] = []
+  const app = launchDevelopmentServer(
+    process.cwd(),
+    process.execPath,
+    (type, detail) => journal.push({ type, detail }),
+    false,
+    port,
+    {
+      arguments: [
+        '-e',
+        `process.stdout.write('Waiting on ${url}\\n');setInterval(()=>{},1000)`,
+      ],
+      environment: { PATH: process.env.PATH },
+      mask: (text) => maskKnownValues(text, [url]),
+      maskHoldback: () => url.length,
+      name: 'expo',
+    },
+  )
+  const started = Date.now()
+  try {
+    // Act
+    await awaitExpoWebListening(app, port, new AbortController().signal)
+    // Assert
+    assert.ok(Date.now() - started < 10_000)
+    assert.ok(app.outputTail().includes('Waiting on [masked]'))
+    assert.equal(app.outputTail().includes(url), false)
+  } finally {
+    await app.close()
+  }
+  const closed = journal.find((entry) => entry.type === 'application.closed')
+  const log = (closed?.detail as { log: string }).log
+  assert.ok(log.includes('Waiting on [masked]'))
+  assert.equal(log.includes(url), false)
 })

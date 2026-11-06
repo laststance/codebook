@@ -336,6 +336,14 @@ export function launchDevelopmentServer(
     exitStatus: () => ({ exitCode: child.exitCode, signal: child.signalCode }),
     /** The output tail a refusal may quote: redacted and masked. @example app.outputTail() */
     outputTail: publishedTail,
+    /**
+     * Lets a caller judge the raw (unmasked) output without ever receiving it: a value the run masks may sit inside a line the judgment needs (a masked `EXPO_PUBLIC_*` URL in the listening line).
+     * @param judge - Reads the raw tail and returns its verdict; the verdict must not carry the raw text (a thrown refusal names the port, never the output).
+     * @returns What `judge` returned.
+     * @example app.judgeRawOutput((raw) => raw.includes('ready'))
+     */
+    judgeRawOutput: <Verdict>(judge: (rawOutput: string) => Verdict): Verdict =>
+      judge(log.toString('utf8')),
     /** Claims the port a launcher resolved, so no other run starts on it and the readiness check looks for it. @example app.declarePort(3010) */
     declarePort(resolved: number): void {
       declaredPort = resolved
