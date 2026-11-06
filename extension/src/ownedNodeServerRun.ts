@@ -207,7 +207,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
   /** The expanded masking forms of {@link OwnedNodeServerRun.secrets}, rebuilt only when the set changes. */
   private maskCache?: MaskCache
   private signInView: NodeServerSignInView = { state: 'none' }
-  /** True from the moment the sign-in window opens until its response headers (or its end) settle what the output may show. */
+  /** True from the moment the sign-in window opens until the DECLARED response's headers (or the end of the exchange) settle what the output may show: a rotated session value may be printed before those headers. */
   private awaitingSignInHeaders = false
   /** Which of the two requests is under way: the sign-in, then the declared request. */
   private requestPhase: 'sign-in' | 'request' = 'request'
@@ -337,8 +337,8 @@ class OwnedNodeServerRun implements NodeServerRuntime {
   }
 
   /**
-   * Ends the hold on the server's output once the sign-in exchange settled what it may show.
-   * @param output - `release` publishes the held output under the mask (the exchange gave its cookies, or no byte was sent); `drop` discards it (the exchange ended without headers, so a session value may be in it).
+   * Ends the hold on the server's output once the sign-in exchange (the sign-in and the declared request) settled what it may show.
+   * @param output - `release` publishes the held output under the mask (the declared response's headers gave the last cookies, the sign-in failed with a response, or no byte was sent); `drop` discards it (the exchange ended without those headers, so a session value may be in it).
    */
   private endOutputHold(output: 'release' | 'drop'): void {
     if (!this.awaitingSignInHeaders) return
@@ -702,7 +702,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
 
   /**
    * Sends the sign-in request that precedes the declared request; resolves once its bytes are written (the receipt of D10). The declared request follows by itself after a sign-in response that keeps a session cookie.
-   * The secret joins the run's mask set before the first byte, and the server's output is held from now until the response headers say which cookie values to mask.
+   * The secret joins the run's mask set before the first byte, and the server's output is held from now until the DECLARED request's response headers say which cookie values to mask (a rotated session is printed before them); output of an exchange that ends without those headers is dropped and journaled as `node-server.output-withheld`.
    * @param key - The action key.
    * @param ready - The server and endpoint ({@link OwnedNodeServerRun.assertReadyForRequest}).
    * @param secret - The password the learner typed in the editor's box.
@@ -757,12 +757,16 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     await this.awaitWritten(token, handle, undefined, 'sign-in')
   }
 
-  /** The sign-in response headers arrived: the session's cookies and every form of their values join the mask set before the held output is published. */
+  /** The sign-in response headers arrived: the session's cookies and every form of their values join the mask set. The output stays held, because the declared response may rotate the session. */
   private onSignInHeaders(values: readonly string[], token: number): void {
     if (token !== this.requestToken || this.requestPhase !== 'sign-in') return
-    this.cookies = applySetCookies(values, Date.now(), this.cookies)
+    this.cookies = applySetCookies(
+      values,
+      Date.now(),
+      this.cookies,
+      this.input.configuration.signIn?.path,
+    )
     this.addSecrets(cookieMaskValues(this.cookies.seenValues))
-    this.endOutputHold('release')
   }
 
   /** The sign-in response arrived: a session sends the declared request with its cookie, anything else ends the request. */
@@ -772,13 +776,13 @@ class OwnedNodeServerRun implements NodeServerRuntime {
   ): Promise<void> {
     if (token !== this.requestToken || !this.inRequestWindow()) return
     if (this.core.lifecycle !== 'live') return
-    // A sender that reported no headers first still ends the hold: the response is the end of the exchange.
-    this.endOutputHold('release')
     const { signIn } = this.input.configuration
     if (!signIn) return
     const cookies = this.cookies ?? applySetCookies([], Date.now())
     const outcome = signInOutcomeOf(response.status, cookies)
     if (outcome.kind === 'failed') {
+      // No declared request follows, so nothing more can rotate the session: the held output is published masked.
+      this.endOutputHold('release')
       this.signInView = { state: 'failed', status: response.status }
       const message =
         outcome.reason === 'no-session-cookie'
@@ -809,11 +813,17 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     await this.sendDeclaredAfterSignIn(token, cookies)
   }
 
-  /** The declared request's response headers set cookies (a rotated session): their forms join the mask set before the body is cut. */
+  /** The declared request's response headers arrived: cookies they set (a rotated session) join the mask set before the body is cut, and only then is the held server output published, masked with the values of both responses. */
   private onDeclaredSetCookie(values: readonly string[], token: number): void {
     if (token !== this.requestToken) return
-    this.cookies = applySetCookies(values, Date.now(), this.cookies)
+    this.cookies = applySetCookies(
+      values,
+      Date.now(),
+      this.cookies,
+      this.input.configuration.signIn?.path,
+    )
     this.addSecrets(cookieMaskValues(this.cookies.seenValues))
+    this.endOutputHold('release')
   }
 
   /** Sends the declared request with the session cookie; every failure from here on ends the request (D14), and nothing is awaited by the receipt. */
@@ -841,7 +851,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
       bodyBytes: Buffer.byteLength(declared.body ?? ''),
     })
     this.notify()
-    const cookie = cookieHeaderOf(cookies)
+    const cookie = cookieHeaderOf(cookies, declared.path)
     let handle: ReturnType<NodeServerRunDependencies['sendRequest']>
     try {
       handle = this.dependencies.sendRequest(
@@ -976,6 +986,8 @@ class OwnedNodeServerRun implements NodeServerRuntime {
   private onResponse(response: NodeServerResponse, token: number): void {
     if (token !== this.requestToken || !this.inRequestWindow()) return
     if (this.core.lifecycle !== 'live') return
+    // A response whose headers reported no cookies callback still ends the hold (a no-op once released).
+    this.endOutputHold('release')
     this.response = response
     this.input.history?.response(this.elapsedSinceLaunchMs(), response)
     this.record('node-server.response', {
@@ -1044,9 +1056,9 @@ class OwnedNodeServerRun implements NodeServerRuntime {
       return
     }
     const phase = this.requestPhase
+    // The exchange ended without the declared response's headers: output held for a possible session value is dropped (a no-op once released).
+    this.endOutputHold('drop')
     if (phase === 'sign-in') {
-      // The exchange ended without a response: output held for a possible session value is dropped.
-      this.endOutputHold('drop')
       this.signInView = { state: 'failed' }
       this.input.history?.signIn(this.elapsedSinceLaunchMs(), {
         path: signIn.path,

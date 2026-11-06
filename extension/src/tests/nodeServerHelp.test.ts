@@ -372,6 +372,10 @@ test('the node-server help documents signIn: questions, failure, observed 401, A
     /details\.question "request" \(the modal\) or "secret" \(the box\)/,
   )
   assert.match(text, /The receipt returns once the sign-in request is written/)
+  assert.match(
+    text,
+    /server output appears once the declared request's response begins.*node-server\.output-withheld/,
+  )
   assert.match(text, /stopsHitDuringSignIn/)
   assert.match(
     text,

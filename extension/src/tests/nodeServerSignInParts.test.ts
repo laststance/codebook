@@ -33,19 +33,106 @@ test('later cookie of the same name replaces the earlier one and the header keep
   // Act
   const cookies = applySetCookies(headers, NOW_MS)
   // Assert
-  assert.equal(cookieHeaderOf(cookies), 'a=3; b=2')
+  assert.equal(cookieHeaderOf(cookies, '/'), 'a=3; b=2')
 })
 
-// protects=attributes never leak into the value or name; fails_when=Path, Domain, Secure, SameSite or HttpOnly changes what is sent; no_claim=scoping rules are applied
-test('cookie attributes are ignored', () => {
+// protects=attributes never leak into the value or name; fails_when=Domain, Secure, SameSite or HttpOnly changes what is sent; no_claim=Domain scoping (one server)
+test('Domain, Secure, SameSite and HttpOnly are ignored', () => {
   // Arrange
   const headers = [
-    ' sid = abc123 ; Path=/x; Domain=example.test; Secure; SameSite=Lax; HttpOnly',
+    ' sid = abc123 ; Path=/; Domain=example.test; Secure; SameSite=Lax; HttpOnly',
   ]
   // Act
   const cookies = applySetCookies(headers, NOW_MS)
   // Assert
-  assert.equal(cookieHeaderOf(cookies), 'sid=abc123')
+  assert.equal(cookieHeaderOf(cookies, '/'), 'sid=abc123')
+})
+
+// protects=same-name cookies under different paths are separate and only the one whose path matches is sent; fails_when=the later cookie replaces the earlier by name alone, so sid=other reaches /api/rpc/x; no_claim=Domain scoping
+test('the same cookie name under /api and /login sends only the /api one to an /api path', () => {
+  // Arrange
+  const cookies = applySetCookies(
+    ['sid=session; Path=/api', 'sid=other; Path=/login'],
+    NOW_MS,
+  )
+  // Act
+  const toApi = cookieHeaderOf(cookies, '/api/rpc/x')
+  const toLogin = cookieHeaderOf(cookies, '/login')
+  // Assert
+  assert.equal(toApi, 'sid=session')
+  assert.equal(toLogin, 'sid=other')
+})
+
+// protects=a cookie with Path=/ (as Better Auth sets) is sent to every path, with or without a query; fails_when=Path=/ stops matching deeper paths; no_claim=none
+test('a cookie with Path=/ from a deep sign-in path is sent to every path', () => {
+  // Arrange
+  const cookies = applySetCookies(
+    ['sid=session; Path=/; HttpOnly'],
+    NOW_MS,
+    undefined,
+    '/api/auth/sign-in/email',
+  )
+  // Act
+  const headers = ['/', '/api/rpc/x', '/api/rpc/x?y=1'].map((path) =>
+    cookieHeaderOf(cookies, path),
+  )
+  // Assert
+  assert.deepEqual(headers, ['sid=session', 'sid=session', 'sid=session'])
+})
+
+// protects=a cookie without Path takes the RFC default path of the sign-in request (its directory); fails_when=it is sent outside that directory, or not sent inside it; no_claim=none
+test('a cookie without Path from POST /api/auth/sign-in/email is scoped to /api/auth/sign-in', () => {
+  // Arrange
+  const cookies = applySetCookies(
+    ['sid=session'],
+    NOW_MS,
+    undefined,
+    '/api/auth/sign-in/email',
+  )
+  // Act
+  const outside = cookieHeaderOf(cookies, '/api/rpc/x')
+  const sibling = cookieHeaderOf(cookies, '/api/auth/sign-in-other')
+  const inside = cookieHeaderOf(cookies, '/api/auth/sign-in/session')
+  // Assert
+  assert.equal(outside, undefined)
+  assert.equal(sibling, undefined)
+  assert.equal(inside, 'sid=session')
+})
+
+// protects=a deletion removes only the cookie with the same name and path; fails_when=a deletion at one path removes the same-named cookie of another path; no_claim=none
+test('a deletion removes only the pair with the same name and path', () => {
+  // Arrange
+  const previous = applySetCookies(
+    ['sid=session; Path=/api', 'sid=other; Path=/login'],
+    NOW_MS,
+  )
+  // Act
+  const cookies = applySetCookies(
+    ['sid=; Path=/login; Max-Age=0'],
+    NOW_MS,
+    previous,
+  )
+  // Assert
+  assert.equal(cookieHeaderOf(cookies, '/api/rpc/x'), 'sid=session')
+  assert.equal(cookieHeaderOf(cookies, '/login'), undefined)
+})
+
+// protects=longer paths come first in the Cookie header, then insertion order; fails_when=the shorter path is listed first; no_claim=none
+test('cookies with a longer matching path are listed first', () => {
+  // Arrange
+  const cookies = applySetCookies(
+    [
+      'a=root; Path=/',
+      'b=deep; Path=/api/rpc',
+      'c=mid; Path=/api',
+      'd=root2; Path=/',
+    ],
+    NOW_MS,
+  )
+  // Act
+  const header = cookieHeaderOf(cookies, '/api/rpc/x')
+  // Assert
+  assert.equal(header, 'b=deep; c=mid; a=root; d=root2')
 })
 
 // protects=lines that are not cookies are skipped; fails_when=a line without = or with an empty name adds a cookie; no_claim=none
@@ -55,7 +142,7 @@ test('malformed cookie lines are ignored', () => {
   // Act
   const cookies = applySetCookies(headers, NOW_MS)
   // Assert
-  assert.equal(cookieHeaderOf(cookies), 'ok=1')
+  assert.equal(cookieHeaderOf(cookies, '/'), 'ok=1')
   assert.deepEqual(cookies.seenValues, ['1'])
 })
 
@@ -76,7 +163,7 @@ test('empty value, Max-Age zero, negative Max-Age and past Expires each delete t
       applySetCookies(['sid=abcdef', 'keep=1'], NOW_MS),
     )
     // Assert
-    assert.equal(cookieHeaderOf(cookies), 'keep=1', deletion)
+    assert.equal(cookieHeaderOf(cookies, '/'), 'keep=1', deletion)
   }
 })
 
@@ -90,7 +177,7 @@ test('future Expires and positive Max-Age keep the cookie', () => {
   // Act
   const cookies = applySetCookies(headers, NOW_MS)
   // Assert
-  assert.equal(cookieHeaderOf(cookies), 'a=1; b=2')
+  assert.equal(cookieHeaderOf(cookies, '/'), 'a=1; b=2')
 })
 
 // protects=every value ever seen stays maskable; fails_when=a replaced or deleted value is forgotten, or a value is duplicated; no_claim=none
@@ -105,7 +192,7 @@ test('seen values keep replaced and deleted values without duplicates', () => {
   )
   // Assert
   assert.deepEqual(second.seenValues, ['old-value', 'same', 'new-value'])
-  assert.equal(cookieHeaderOf(second), 'x=same')
+  assert.equal(cookieHeaderOf(second, '/'), 'x=same')
 })
 
 // protects=previous cookies are not mutated; fails_when=applying headers changes the earlier result; no_claim=none
@@ -115,7 +202,7 @@ test('applying cookies leaves the previous result unchanged', () => {
   // Act
   applySetCookies(['a=2', 'b=3'], NOW_MS, previous)
   // Assert
-  assert.equal(cookieHeaderOf(previous), 'a=1')
+  assert.equal(cookieHeaderOf(previous, '/'), 'a=1')
   assert.deepEqual(previous.seenValues, ['1'])
 })
 
@@ -124,7 +211,7 @@ test('cookie header is undefined when no cookie remains', () => {
   // Arrange
   const cookies = applySetCookies([], NOW_MS)
   // Act
-  const header = cookieHeaderOf(cookies)
+  const header = cookieHeaderOf(cookies, '/')
   // Assert
   assert.equal(header, undefined)
 })

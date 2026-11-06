@@ -6,6 +6,7 @@ import type { NodeServerHistorySink } from '../nodeServerHistorySink'
 import type { NodeServerResponse } from '../runtime'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type { StateChangingRequestQuestion } from '../utils/askToSendStateChangingRequest'
+import { createKnownValueMaskStage } from '../utils/createKnownValueMaskStage'
 
 import { createHarness as createServiceHarness } from './helpers'
 import {
@@ -381,17 +382,116 @@ test('the run reads awaiting-learner while the password box is open and none aft
   assert.deepEqual(closed, { state: 'none' })
 })
 
-// protects=the response headers end the hold: the held output is released and holdback becomes the longest masking form; fails_when=output stays held after the headers or the holdback is wrong; no_claim=the launcher's mask stage
-test('the sign-in response headers release the held output and make the holdback finite', async () => {
+// protects=the DECLARED response's headers end the hold: the held output is released and holdback becomes the longest masking form; the sign-in headers alone keep it held; fails_when=output is released at the sign-in headers, stays held after the declared headers, or the holdback is wrong; no_claim=the launcher's mask stage
+test('only the declared response headers release the held output and make the holdback finite', async () => {
   // Arrange
   const harness = await signingIn()
   const known = harness.calls.knownValues
+  answerSignIn(harness)
+  await declaredRequestSent(harness)
+  const releasedAfterSignIn = harness.server.releasedHeld
+  const holdbackAfterSignIn = known?.holdback()
   // Act
-  harness.sender.exchanges[0]?.onSetCookie?.([SET_COOKIE])
+  harness.sender.exchanges[1]?.onSetCookie?.([])
   // Assert
+  assert.equal(releasedAfterSignIn, 0)
+  assert.equal(holdbackAfterSignIn, Number.POSITIVE_INFINITY)
   assert.equal(harness.server.releasedHeld, 1)
   // The longest form is the cookie value percent-encoded again (s%253A...).
   assert.equal(known?.holdback(), 45)
+})
+
+/**
+ * Wires the run's real known-value mask into the fake server's hold, the way the launcher does: output goes through a real mask stage, and the run's release and drop reach it.
+ * @param harness - A harness whose run has signIn.
+ * @returns The pieces the stage published so far and a function that feeds server output to it.
+ * @example
+ * const output = serverOutputStage(harness)
+ * output.write('line\n')
+ */
+function serverOutputStage(harness: Harness) {
+  const known = harness.calls.knownValues
+  if (!known) throw new Error('The run gave the launcher no known values.')
+  const stage = createKnownValueMaskStage(known)
+  const published: string[] = []
+  harness.server.releaseHeldOutput = (): void => {
+    harness.server.releasedHeld += 1
+    published.push(stage.release())
+  }
+  harness.server.dropHeldOutput = (): void => {
+    harness.server.droppedHeld += 1
+    stage.drop()
+  }
+  return {
+    published,
+    write: (text: string): void => void published.push(stage.write(text)),
+  }
+}
+
+const ROTATED_VALUE = 'rotatedSessionValue9'
+/** Pads output past the mask stage's pending tail so the settled text is visible. */
+const TAIL_PADDING = ' padding'.repeat(12)
+
+// protects=output a server prints during the declared request, before its headers, is held, and a rotated session value set by the declared response is published as [masked]; fails_when=the hold ends at the sign-in headers so the rotated value is printed unmasked, or the output is published before the declared headers; no_claim=the launcher's own stream plumbing; the real mask stage is wired to a fake server by hand
+test('output printed before the declared response headers is held and a rotated cookie in it is published masked', async () => {
+  // Arrange
+  const harness = await signingIn()
+  const output = serverOutputStage(harness)
+  answerSignIn(harness)
+  await declaredRequestSent(harness)
+  // Act
+  output.write(`new session ${ROTATED_VALUE}${TAIL_PADDING}\n`)
+  const publishedBeforeHeaders = output.published.join('')
+  harness.sender.exchanges[1]?.onSetCookie?.([`sid=${ROTATED_VALUE}; Path=/`])
+  // Assert
+  assert.equal(publishedBeforeHeaders, '')
+  assert.equal(harness.server.releasedHeld, 1)
+  assert.equal(harness.server.droppedHeld, 0)
+  assert.match(output.published.join(''), /^new session \[masked\] padding/)
+  assert.doesNotMatch(output.published.join(''), new RegExp(ROTATED_VALUE))
+})
+
+// protects=a declared request that resets before its headers drops the held output and journals its bytes as output-withheld; fails_when=the held output is released after the reset or the withheld event is missing; no_claim=the launcher's stream plumbing; the real mask stage is wired to a fake server by hand
+test('a declared request that resets before its headers drops the held output and journals output-withheld', async () => {
+  // Arrange
+  const harness = await signingIn()
+  const output = serverOutputStage(harness)
+  answerSignIn(harness)
+  await declaredRequestSent(harness)
+  output.write(`new session ${ROTATED_VALUE}\n`)
+  // Act
+  harness.sender.exchanges[1]?.response.reject(
+    new StudyError('REQUEST_FAILED', 'reset'),
+  )
+  const view = await until(
+    harness,
+    (current) => current.state === 'request-failed',
+  )
+  // Assert
+  assert.equal(harness.server.droppedHeld, 1)
+  assert.equal(harness.server.releasedHeld, 0)
+  assert.equal(output.published.join(''), '')
+  assert.deepEqual(view.requestFailure?.details, { phase: 'request' })
+  assert.deepEqual(
+    harness.events
+      .filter((event) => event.type === 'node-server.output-withheld')
+      .map((event) => event.detail),
+    [{ bytes: 33 }],
+  )
+})
+
+// protects=a run without signIn keeps its live output: no hold, no known values, nothing released or dropped; fails_when=the plain path gains a hold; no_claim=the launcher's stream plumbing
+test('a run without signIn never holds server output', async () => {
+  // Arrange
+  const harness = await readyHarness()
+  // Act
+  await harness.run.sendRequest('key-1')
+  harness.sender.exchanges[0]?.response.resolve(RESPONSE_200)
+  await until(harness, (current) => current.state !== 'request-in-flight')
+  // Assert
+  assert.equal(harness.calls.knownValues, undefined)
+  assert.equal(harness.server.releasedHeld, 0)
+  assert.equal(harness.server.droppedHeld, 0)
 })
 
 // protects=the typed password and the session cookie never appear in the journal, the run view, the history or an error text, however the server echoes them; fails_when=any of those values, or its signature or payload part, reaches one of those sinks; no_claim=masking of the launcher's output stage and of MCP answers (their own tests); the sender here is a fake that applies the run's sanitize to a body the way the real one does

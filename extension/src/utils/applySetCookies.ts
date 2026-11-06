@@ -1,7 +1,15 @@
+/** One cookie to send: its name, value and the path it is scoped to. */
+export type SessionCookie = {
+  name: string
+  value: string
+  /** The `Path` attribute when it starts with `/`, else the default path of the request that set it (RFC 6265 5.1.4). */
+  path: string
+}
+
 /** The cookies a sign-in produced: what to send, and every value ever seen (for masking). */
 export type SessionCookies = {
-  /** Cookie name to value, in insertion order. */
-  send: ReadonlyMap<string, string>
+  /** Cookies by name and path (a name may exist under several paths), in insertion order. */
+  send: ReadonlyMap<string, SessionCookie>
   /** Every non-empty value ever seen, replaced and deleted ones included; no duplicates. */
   seenValues: readonly string[]
 }
@@ -42,23 +50,82 @@ function isDeletion(
 }
 
 /**
+ * Strips the query and fragment from a request target.
+ * @param target - A request path, possibly with `?query` or `#fragment`.
+ * @returns The path alone.
+ * @example pathOnly('/a/b?x=1') // => '/a/b'
+ */
+function pathOnly(target: string): string {
+  const end = target.search(/[?#]/)
+  return end === -1 ? target : target.slice(0, end)
+}
+
+/**
+ * Computes the default cookie path of a request path (RFC 6265 5.1.4).
+ * @param requestPath - The path of the request whose response set the cookie.
+ * @returns `/` when the path is empty, relative or holds one `/`, else the path up to its rightmost `/`.
+ * @example defaultPathOf('/api/auth/sign-in/email') // => '/api/auth/sign-in'
+ */
+function defaultPathOf(requestPath: string): string {
+  const path = pathOnly(requestPath)
+  if (!path.startsWith('/')) return '/'
+  const last = path.lastIndexOf('/')
+  return last === 0 ? '/' : path.slice(0, last)
+}
+
+/**
+ * Reads the `Path` attribute of a parsed Set-Cookie header.
+ * @param attributes - The attribute segments after the first `;`.
+ * @returns The path when it starts with `/`, else undefined (the default path applies).
+ * @example pathAttributeOf(['Path=/api']) // => '/api'
+ */
+function pathAttributeOf(attributes: readonly string[]): string | undefined {
+  for (const attribute of attributes) {
+    const separator = attribute.indexOf('=')
+    if (separator === -1) continue
+    if (attribute.slice(0, separator).trim().toLowerCase() !== 'path') continue
+    const value = attribute.slice(separator + 1).trim()
+    // A Path that does not start with `/` is ignored, like a browser does.
+    return value.startsWith('/') ? value : undefined
+  }
+  return undefined
+}
+
+/**
+ * Tells whether a cookie path path-matches a request path (RFC 6265 5.1.4).
+ * @param cookiePath - The cookie's path.
+ * @param requestPath - The request path, without query.
+ * @returns True for the same path, or a prefix that ends at a `/` boundary.
+ * @example pathMatches('/api', '/api/rpc/x') // => true
+ */
+function pathMatches(cookiePath: string, requestPath: string): boolean {
+  if (cookiePath === requestPath) return true
+  if (!requestPath.startsWith(cookiePath)) return false
+  return (
+    cookiePath.endsWith('/') || requestPath.charAt(cookiePath.length) === '/'
+  )
+}
+
+/**
  * Applies raw `Set-Cookie` header values, in order, to the session's cookies.
  *
  * Why it exists: the sign-in response sets the session cookie, which Codebook keeps in memory only and sends with the declared request.
- * Called by the node-server run for the sign-in response's headers.
- * Only `name=value` matters; Path, Domain, Secure, SameSite and HttpOnly are ignored.
+ * Called by the node-server run for the sign-in response's headers and for the declared response's headers.
+ * Cookies are keyed by name and path, so the same name under two paths is two cookies. Domain, Secure, SameSite and HttpOnly are ignored (one server).
  *
  * @param headers - The raw `Set-Cookie` header values.
  * @param nowMs - The current time in epoch milliseconds, for `Expires`.
  * @param previous - The cookies so far, if any; it is not mutated.
+ * @param requestPath - The path of the request whose response set the headers; its directory is the path of a cookie without a `Path` attribute.
  * @returns The updated cookies.
  * @example
- * applySetCookies(['sid=abc123; Path=/; HttpOnly'], 0).send.get('sid') // => 'abc123'
+ * cookieHeaderOf(applySetCookies(['sid=abc123; Path=/; HttpOnly'], 0), '/x') // => 'sid=abc123'
  */
 export function applySetCookies(
   headers: readonly string[],
   nowMs: number,
   previous?: SessionCookies,
+  requestPath = '/',
 ): SessionCookies {
   const send = new Map(previous?.send)
   const seen = new Set(previous?.seenValues)
@@ -71,19 +138,31 @@ export function applySetCookies(
     if (name === '') continue
     const value = pair.slice(separator + 1).trim()
     if (value !== '') seen.add(value)
-    if (isDeletion(value, attributes, nowMs)) send.delete(name)
-    else send.set(name, value)
+    const path = pathAttributeOf(attributes) ?? defaultPathOf(requestPath)
+    // A cookie is one (name, path) pair: a deletion removes only that pair.
+    const key = `${path}\u0000${name}`
+    if (isDeletion(value, attributes, nowMs)) send.delete(key)
+    else send.set(key, { name, value, path })
   }
   return { send, seenValues: [...seen] }
 }
 
 /**
- * Formats the cookies as a `Cookie` request header value.
+ * Formats the cookies that apply to a request path as a `Cookie` request header value.
  * @param cookies - The session's cookies.
- * @returns `name=value; name2=value2` in insertion order, or undefined when nothing is left.
- * @example cookieHeaderOf(applySetCookies(['a=1', 'b=2'], 0)) // => 'a=1; b=2'
+ * @param requestPath - The path of the request that carries the header (a query is ignored).
+ * @returns `name=value; name2=value2` for the cookies whose path path-matches, longer paths first and then insertion order, or undefined when none applies.
+ * @example cookieHeaderOf(applySetCookies(['a=1', 'b=2'], 0), '/') // => 'a=1; b=2'
  */
-export function cookieHeaderOf(cookies: SessionCookies): string | undefined {
-  if (cookies.send.size === 0) return undefined
-  return [...cookies.send].map(([name, value]) => `${name}=${value}`).join('; ')
+export function cookieHeaderOf(
+  cookies: SessionCookies,
+  requestPath: string,
+): string | undefined {
+  const path = pathOnly(requestPath)
+  const matching = [...cookies.send.values()]
+    .filter((cookie) => pathMatches(cookie.path, path))
+    // Array sort is stable, so equal paths keep insertion order.
+    .sort((a, b) => b.path.length - a.path.length)
+  if (matching.length === 0) return undefined
+  return matching.map(({ name, value }) => `${name}=${value}`).join('; ')
 }
