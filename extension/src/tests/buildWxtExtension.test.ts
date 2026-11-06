@@ -348,6 +348,37 @@ test('starts the external Node with the inline source-map config and the private
   assert.match(script, /sourcemap: true, minify: false/)
 })
 
+// protects=the WXT build never receives a host credential or NODE_OPTIONS and still receives PATH; fails_when=the spawn request carries the whole extension-host environment; no_claim=that the real child sees exactly this environment (fake spawner; the builder has its own test)
+test('hands the build only the allow-listed host variables, not credentials or NODE_OPTIONS', async (context) => {
+  // Arrange
+  context.mock.property(process, 'env', {
+    PATH: '/usr/bin',
+    GITHUB_TOKEN: 'ghp_secret',
+    NODE_OPTIONS: '--require /tmp/evil.js',
+  })
+  const project = createProject()
+  const fake = createFakeSpawner({
+    onSpawn(control) {
+      writeSuccessfulBuild(project.privateFolder)
+      control.exit({ code: 0, signal: null })
+    },
+  })
+  // Act
+  await buildWxtExtension({
+    ...project,
+    node: NODE_24,
+    signal: new AbortController().signal,
+    spawner: fake.spawner,
+    clock: createFakeClock(),
+  })
+  // Assert
+  const environment = fake.spawned[0]?.environment
+  assert.equal(environment?.PATH, '/usr/bin')
+  assert.equal(environment?.GITHUB_TOKEN, undefined)
+  assert.equal(environment?.NODE_OPTIONS, undefined)
+  assert.equal(environment?.CI, 'true')
+})
+
 // protects=a failed WXT build is refused as build-error with only masked output lines, the versions and the exit code; fails_when=a token the build printed reaches the message or the details are missing; no_claim=every secret shape (the redactor's own tests)
 test('reports a failed build as build-error with masked output lines', async () => {
   // Arrange

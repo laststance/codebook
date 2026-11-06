@@ -2,6 +2,7 @@ import { access, realpath, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { assertWxtBuildSupported } from './assertWxtBuildSupported'
+import { buildWxtBuildEnvironment } from './buildWxtBuildEnvironment'
 import { createExtensionBuildError } from './createExtensionBuildError'
 import { createWxtBuildSpawner } from './createWxtBuildSpawner'
 import { findChangedTrackedFile } from './findChangedTrackedFile'
@@ -130,6 +131,7 @@ export async function buildWxtExtension(
         resultFile,
       ],
       cwd: input.projectRoot,
+      environment: buildWxtBuildEnvironment(),
     },
     spawner,
     clock,

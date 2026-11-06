@@ -69,6 +69,9 @@ export const EXTENSION_BUILD_KILL_GRACE_MS = 5_000
 /** How often the production spawner of a `wxt-build` run asks whether the build's process group is gone. */
 export const EXTENSION_BUILD_TREE_POLL_MS = 50
 
+/** How long the production spawner of a `wxt-build` run waits after the leader's exit for its output pipes to close, so the last output lines are flushed; a grandchild holding a pipe cannot delay the exit past it. */
+export const EXTENSION_BUILD_OUTPUT_FLUSH_MS = 1_000
+
 /** The longest one `git ls-files` call of a `wxt-build` run may take (the tracked-file snapshot and the `.wxt` check). */
 export const EXTENSION_BUILD_GIT_TIMEOUT_MS = 30_000
 

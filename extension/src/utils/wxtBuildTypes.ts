@@ -12,6 +12,8 @@ export type WxtBuildSpawnRequest = {
   arguments: readonly string[]
   /** The folder the process starts in (the project root, so `wxt` resolves from it). */
   cwd: string
+  /** The complete environment of the build process; nothing else is inherited from the extension host. */
+  environment: NodeJS.ProcessEnv
   /** Receives each raw chunk of output, per channel. */
   onOutput(text: string, channel: 'stdout' | 'stderr'): void
 }
