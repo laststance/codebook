@@ -111,3 +111,18 @@ test('a paged resource masks the secret before slicing so the joined pages and t
   })
   assert.equal(hash, sha256(joined))
 })
+
+// protects=a secret with a lone surrogate no longer throws and still masks its raw and HTML-escaped forms; fails_when=expanding or masking throws a URIError or the raw form stays visible; no_claim=percent-encoded forms of such a secret (they cannot exist)
+test('a secret with a lone surrogate is masked without throwing', () => {
+  // Arrange
+  const secret = 'pass\ud800word&1'
+  // Act
+  const raw = maskLearnerSecretText(`bad ${secret} given`, new Set([secret]))
+  const escaped = maskLearnerSecretText(
+    'bad pass\ud800word&amp;1 given',
+    new Set([secret]),
+  )
+  // Assert
+  assert.equal(raw, 'bad [masked] given')
+  assert.equal(escaped, 'bad [masked] given')
+})

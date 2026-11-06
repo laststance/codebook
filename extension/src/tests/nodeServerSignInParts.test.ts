@@ -132,37 +132,71 @@ test('cookie header is undefined when no cookie remains', () => {
 // protects=express-session style signed value is masked in every echoed form; fails_when=decoded form, s: stripped form, payload or signature is missing; no_claim=the server echoes these forms
 test('mask values for an express-session cookie cover encoded, decoded, unprefixed and split forms', () => {
   // Arrange
-  const values = ['s%3Asid123456.sigABCDEF']
+  const values = ['s%3Asid1234567890abcdef.sigABCDEFGHIJKLMNOP']
   // Act
   const masked = cookieMaskValues(values)
   // Assert
   assert.deepEqual(masked, [
-    's%3Asid123456.sigABCDEF',
-    's:sid123456.sigABCDEF',
-    'sid123456.sigABCDEF',
-    'sid123456',
-    'sigABCDEF',
+    's%3Asid1234567890abcdef.sigABCDEFGHIJKLMNOP',
+    's:sid1234567890abcdef.sigABCDEFGHIJKLMNOP',
+    'sid1234567890abcdef.sigABCDEFGHIJKLMNOP',
+    'sid1234567890abcdef',
+    'sigABCDEFGHIJKLMNOP',
   ])
 })
 
 // protects=Better Auth token.signature is split at the last dot; fails_when=split happens at the first dot; no_claim=signature encoding
 test('mask values split a token and signature at the last dot', () => {
   // Arrange
-  const values = ['abc.def.signature1']
+  const values = ['abc.def.signature1234567']
   // Act
   const masked = cookieMaskValues(values)
   // Assert
-  assert.deepEqual(masked, ['abc.def.signature1', 'signature1', 'abc.def'])
+  assert.deepEqual(masked, ['abc.def.signature1234567', 'signature1234567'])
 })
 
-// protects=short parts and duplicates never become masks; fails_when=a part under six characters is kept or a candidate repeats; no_claim=none
-test('mask values drop parts under six characters, dedupe and sort longest first', () => {
+// protects=short parts and duplicates never become masks; fails_when=a part under sixteen characters is kept or a candidate repeats; no_claim=none
+test('mask values drop parts under sixteen characters, dedupe and sort longest first', () => {
   // Arrange
-  const values = ['abc.defghijk', 'abc.defghijk', 'tiny', 'bad%zzvalue']
+  const values = [
+    'abc.defghijklmnopqrstu',
+    'abc.defghijklmnopqrstu',
+    'tiny',
+    'bad%zzvaluebad%zzvalue',
+  ]
   // Act
   const masked = cookieMaskValues(values)
   // Assert
-  assert.deepEqual(masked, ['abc.defghijk', 'bad%zzvalue', 'defghijk'])
+  assert.deepEqual(masked, [
+    'abc.defghijklmnopqrstu',
+    'bad%zzvaluebad%zzvalue',
+    'defghijklmnopqrstu',
+  ])
+})
+
+// protects=non-session cookie values stay unmasked so protocol words survive; fails_when=a 15-character value is masked or a 16-character one is not; no_claim=which cookie names a server sets
+test('mask values keep a 16-character cookie value and skip a 15-character one and theme=system', () => {
+  // Arrange
+  const values = ['system', 'failed', 'a'.repeat(15), 'b'.repeat(16)]
+  // Act
+  const masked = cookieMaskValues(values)
+  // Assert
+  assert.deepEqual(masked, ['b'.repeat(16)])
+})
+
+// protects=a quoted cookie value is masked with and without its quotes and split unquoted; fails_when=only the quoted form is kept or the signature stays unmasked; no_claim=server quoting rules
+test('mask values cover a quoted cookie value both quoted and unquoted', () => {
+  // Arrange
+  const values = ['"token1234567890ab.signatureABCDEFGH"']
+  // Act
+  const masked = cookieMaskValues(values)
+  // Assert
+  assert.deepEqual(masked, [
+    '"token1234567890ab.signatureABCDEFGH"',
+    'token1234567890ab.signatureABCDEFGH',
+    'token1234567890ab',
+    'signatureABCDEFGH',
+  ])
 })
 
 // protects=sign-in is judged by status and cookie; fails_when=a redirect, error or cookie-less 2xx counts as signed in; no_claim=the server's real status for wrong passwords

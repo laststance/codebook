@@ -192,7 +192,18 @@ export function sendDeclaredRequest(input: DeclaredRequestInput): {
   outgoing.once('response', (incoming: IncomingMessage) => {
     const contentType = incoming.headers['content-type']
     // Hand over the cookies before the body is read, so the sign-in session is known as soon as the headers arrive.
-    input.onSetCookie?.(incoming.headers['set-cookie'] ?? [])
+    // A throwing cookie hook must reject `response`, not escape as an uncaught exception that leaves it pending; the message never quotes the thrown error.
+    try {
+      input.onSetCookie?.(incoming.headers['set-cookie'] ?? [])
+    } catch {
+      fail(
+        new StudyError(
+          'REQUEST_FAILED',
+          `The server answered with HTTP ${incoming.statusCode}, but Codebook could not process its session cookies.`,
+        ),
+      )
+      return
+    }
     readBody(
       incoming,
       (bytes, readCut) => {

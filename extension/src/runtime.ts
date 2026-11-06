@@ -828,12 +828,17 @@ export interface StudyEnvironment {
   ): Promise<boolean>
   /**
    * Asks the learner, in the editor's password input box, for the secret of a `secret: "ask-learner"` operation; the chat never sees the answer.
-   * @param question - The run, the repository folder name and the operation's title, which the box shows as `<repository> · <title>`.
+   * @param question - The run, the repository folder name and the operation's title, which the box shows as `<repository> · <title>`; `minChars` is the shortest answer the box accepts (default: the secret frame gate's minimum).
    * @param signal - Closes the box when the run stops or the wait ends.
    * @returns The typed secret, or `undefined` when the learner dismissed the box or the signal aborted.
    */
   askLearnerSecret?(
-    question: { runId: string; repository: string; title: string },
+    question: {
+      runId: string
+      repository: string
+      title: string
+      minChars?: number
+    },
     signal: AbortSignal,
   ): Promise<string | undefined>
   /**

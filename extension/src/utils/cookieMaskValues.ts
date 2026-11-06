@@ -1,22 +1,27 @@
-import { VITE_MASKED_VALUE_MIN_CHARS } from '../constants'
+import { NODE_SERVER_COOKIE_MASK_MIN_CHARS } from '../constants'
+
+import { unquoteCookieValue } from './unquoteCookieValue'
 
 /**
  * Lists the texts that stand for each session cookie value, for masking in published output.
  *
  * Why it exists: a signed cookie (express-session `s%3Asid.sig`, Better Auth `token.signature`) is echoed by servers in decoded or split forms, and each form must be hidden.
  * Called by the node-server run when it builds the masking set from the session cookies' seen values.
- * Candidates: the value, its URL-decoded form, and the parts split at the last `.` (after decoding, with a leading `s:` removed), each at least {@link VITE_MASKED_VALUE_MIN_CHARS} characters.
+ * Candidates: the value, its URL-decoded form, and the parts split at the last `.` (after decoding, with a leading `s:` removed), each at least {@link NODE_SERVER_COOKIE_MASK_MIN_CHARS} characters (shorter cookie values are no session secret). A value in double quotes is also masked without its quotes.
  *
  * @param values - The cookie values.
  * @returns The distinct candidates, longest first.
  * @example
- * cookieMaskValues(['s%3Asid123456.sigABCDEF'])
- * // => ['s%3Asid123456.sigABCDEF', 's:sid123456.sigABCDEF', 'sid123456.sigABCDEF', 'sid123456', 'sigABCDEF']
+ * cookieMaskValues(['s%3Asid1234567890abcdef.sigABCDEFGHIJKLMNOP'])
+ * // => ['s%3Asid1234567890abcdef.sigABCDEFGHIJKLMNOP', 's:sid1234567890abcdef.sigABCDEFGHIJKLMNOP', 'sid1234567890abcdef.sigABCDEFGHIJKLMNOP', 'sid1234567890abcdef', 'sigABCDEFGHIJKLMNOP']
  */
 export function cookieMaskValues(values: readonly string[]): string[] {
   const candidates = new Set<string>()
-  for (const value of values) {
-    const forms = [value]
+  for (const quotedValue of values) {
+    const forms = [quotedValue]
+    // A quoted cookie value (`sid="abc"`) is echoed with or without its quotes; the unquoted form is the one decoded and split.
+    const value = unquoteCookieValue(quotedValue)
+    if (value !== quotedValue) forms.push(value)
     // The decoded form (the value itself when the escape is malformed) is the one that gets split.
     let decoded = value
     try {
@@ -32,7 +37,7 @@ export function cookieMaskValues(values: readonly string[]): string[] {
     if (dot !== -1)
       forms.push(unprefixed.slice(0, dot), unprefixed.slice(dot + 1))
     for (const form of forms)
-      if (form.length >= VITE_MASKED_VALUE_MIN_CHARS) candidates.add(form)
+      if (form.length >= NODE_SERVER_COOKIE_MASK_MIN_CHARS) candidates.add(form)
   }
   // Stable sort keeps first-seen order among equal lengths.
   return [...candidates].sort((a, b) => b.length - a.length)

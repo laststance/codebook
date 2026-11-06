@@ -19,8 +19,9 @@ import { startFakeNodeServerRun } from './utils/startFakeNodeServerRun'
 
 const SECRET = 'hunter2-correct-horse'
 /** A signed session cookie as express-session writes it: percent-encoded, with a signature. */
-const SET_COOKIE = 'sid=s%3Asid123456.sigABCDEF; Path=/; HttpOnly'
-const COOKIE_VALUE = 's%3Asid123456.sigABCDEF'
+const SET_COOKIE =
+  'sid=s%3Asid1234567890abcdef.sigABCDEFGHIJKLMNOP; Path=/; HttpOnly'
+const COOKIE_VALUE = 's%3Asid1234567890abcdef.sigABCDEFGHIJKLMNOP'
 const SIGN_IN = {
   path: '/login',
   fields: { email: 'learner@example.test' },
@@ -390,7 +391,7 @@ test('the sign-in response headers release the held output and make the holdback
   // Assert
   assert.equal(harness.server.releasedHeld, 1)
   // The longest form is the cookie value percent-encoded again (s%253A...).
-  assert.equal(known?.holdback(), 25)
+  assert.equal(known?.holdback(), 45)
 })
 
 // protects=the typed password and the session cookie never appear in the journal, the run view, the history or an error text, however the server echoes them; fails_when=any of those values, or its signature or payload part, reaches one of those sinks; no_claim=masking of the launcher's output stage and of MCP answers (their own tests); the sender here is a fake that applies the run's sanitize to a body the way the real one does
@@ -398,11 +399,11 @@ test('no password or cookie value reaches the journal, the view, the history or 
   // Arrange
   const history = recordingHistory()
   const harness = await signingIn({ ...SIGN_IN_OPTIONS, history: history.sink })
-  const echoed = `{"session":"${COOKIE_VALUE}","payload":"sid123456","signature":"sigABCDEF","pw":"${SECRET}"}`
+  const echoed = `{"session":"${COOKIE_VALUE}","payload":"sid1234567890abcdef","signature":"sigABCDEFGHIJKLMNOP","pw":"${SECRET}"}`
   // Act
   answerSignIn(harness)
   // Output printed once the headers are known is masked by the run even where the launcher's own mask is absent.
-  await harness.emitOutput(`logged in ${SECRET} with sid123456\n`)
+  await harness.emitOutput(`logged in ${SECRET} with sid1234567890abcdef\n`)
   await declaredRequestSent(harness)
   const declaredExchange = harness.sender.exchanges[1]
   declaredExchange?.response.resolve({
@@ -412,7 +413,12 @@ test('no password or cookie value reaches the journal, the view, the history or 
   const view = await until(harness, (current) => current.state === 'responded')
   // Assert
   const published = JSON.stringify([harness.events, view, history.log])
-  for (const hidden of [SECRET, COOKIE_VALUE, 'sid123456', 'sigABCDEF'])
+  for (const hidden of [
+    SECRET,
+    COOKIE_VALUE,
+    'sid1234567890abcdef',
+    'sigABCDEFGHIJKLMNOP',
+  ])
     assert.equal(published.includes(hidden), false, `${hidden} leaked`)
   assert.equal(
     view.response?.body,
@@ -429,11 +435,11 @@ test('learnerSecrets holds the password and the session cookie forms', async () 
   // Assert
   assert.deepEqual([...(harness.run.learnerSecrets ?? [])].sort(), [
     SECRET,
-    's%3Asid123456.sigABCDEF',
-    's:sid123456.sigABCDEF',
-    'sid123456',
-    'sid123456.sigABCDEF',
-    'sigABCDEF',
+    's%3Asid1234567890abcdef.sigABCDEFGHIJKLMNOP',
+    's:sid1234567890abcdef.sigABCDEFGHIJKLMNOP',
+    'sid1234567890abcdef',
+    'sid1234567890abcdef.sigABCDEFGHIJKLMNOP',
+    'sigABCDEFGHIJKLMNOP',
   ])
 })
 
@@ -589,6 +595,37 @@ test('Cancel at the password box is REQUEST_NOT_CONFIRMED for the secret and sen
   assert.deepEqual(refusal.details, { question: 'secret' })
   assert.deepEqual(run.calls, ['prepare'])
   assert.equal(service.state(record).state, 'ready')
+})
+
+// protects=the sign-in box is asked for at least 8 characters and an answer of 7 is no answer, so a short value is never masked service-wide; fails_when=the question lacks minChars 8 or a 7-character answer reaches the run; no_claim=the box's own validation (asker test); the stand-in ignores validateInput on purpose
+test('the sign-in box asks for 8 characters and a 7-character answer sends nothing', async (context) => {
+  // Arrange
+  const harness = await createServiceHarness()
+  context.after(() => harness.close())
+  const minimums: (number | undefined)[] = []
+  const { service, record, run } = await startFakeNodeServerRun(harness, {
+    signIn: SERVICE_SIGN_IN,
+    confirm: async () => true,
+    ask: async (question) => {
+      minimums.push(question.minChars)
+      return 'pausedx'
+    },
+  })
+  // Act
+  const refusal = await refusalOf(() =>
+    service.performAction({
+      instanceId: service.instanceId,
+      runId: record.id,
+      key: 'send-1',
+      action: 'http-request',
+    }),
+  )
+  // Assert
+  assert.deepEqual(minimums, [8])
+  assert.ok(refusal instanceof StudyError)
+  assert.equal(refusal.code, 'REQUEST_NOT_CONFIRMED')
+  assert.deepEqual(refusal.details, { question: 'secret' })
+  assert.deepEqual(run.calls, ['prepare'])
 })
 
 // protects=an editor without the password box cannot sign in: PREREQUISITE_MISSING and nothing is sent; fails_when=the sign-in is sent without a typed password; no_claim=none

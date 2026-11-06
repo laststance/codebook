@@ -1487,6 +1487,10 @@ export const NODE_SERVER_SIGN_IN_FIELDS_MAX = 8
 export const NODE_SERVER_SIGN_IN_FIELD_LIMIT_CHARS = 256
 /** The longest `signIn.secretField` name: the body key the learner's typed secret is sent under. */
 export const NODE_SERVER_SIGN_IN_SECRET_FIELD_LIMIT_CHARS = 64
+/** The shortest sign-in password the password box accepts (characters); Better Auth's default minimum, and long enough that masking the typed value service-wide cannot corrupt ordinary protocol words such as `paused`. */
+export const NODE_SERVER_SIGN_IN_SECRET_MIN_CHARS = 8
+/** The shortest session cookie value that is masked in published output (characters); session tokens are long, while shorter cookie values (`theme=system`, `status=failed`) are no session secret and masking them would corrupt protocol words. */
+export const NODE_SERVER_COOKIE_MASK_MIN_CHARS = 16
 /** The most server output delivered but not yet settled; a server printing faster than its events settle fails its capture instead of buffering without bound. */
 export const NODE_SERVER_OUTPUT_PENDING_LIMIT_BYTES = 1_048_576
 /** How long a stopping server's debugger may take to detach before SIGTERM is sent anyway: a server handling SIGTERM waits for an attached debugger before it exits (Part A, Issue #139). */

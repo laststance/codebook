@@ -1,10 +1,12 @@
+import { NODE_SERVER_OUTPUT_PENDING_LIMIT_BYTES } from '../constants'
+
 import type { RootHoldTimer } from './createRootHidingStage'
 
 /** What one run knows about its secret values, read at call time so the set can grow while the run's output is captured. */
 export type KnownValueMask = {
   /** Masks the run's known secret values in a text; read at call time, so the set can grow during the run. */
   mask(text: string): string
-  /** How many characters the longest masked form has, read at call time; Infinity holds everything (a sign-in exchange in progress); 0 when the run holds no secret. */
+  /** How many characters the longest masked form has, read at call time; Infinity holds everything (a sign-in exchange in progress; its held text is capped at NODE_SERVER_OUTPUT_PENDING_LIMIT_BYTES, past which it is dropped and reported); 0 when the run holds no secret. */
   holdback(): number
   /** Called with the UTF-8 byte count of held text that was dropped instead of published. */
   onWithheld(bytes: number): void
@@ -75,6 +77,9 @@ export function createKnownValueMaskStage(
     // Everything waits while the run may still learn a value (a sign-in exchange in progress).
     if (holdback === Number.POSITIVE_INFINITY) {
       held = combined
+      // Past the cap the held text is dropped and reported; text arriving later is held afresh, so the hold never grows without bound.
+      if (Buffer.byteLength(held) > NODE_SERVER_OUTPUT_PENDING_LIMIT_BYTES)
+        withhold()
       return ''
     }
     const masked = known.mask(combined)

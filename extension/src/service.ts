@@ -64,6 +64,7 @@ import {
   EXTENSION_HISTORY_SEAL_BOUND_MS,
   EXTENSION_HISTORY_START_BOUND_MS,
   NODE_SERVER_HISTORY_START_BOUND_MS,
+  NODE_SERVER_SIGN_IN_SECRET_MIN_CHARS,
 } from './constants'
 import {
   BUSY_AWAITING_CONFIRMATION_RECOVERY,
@@ -6721,6 +6722,7 @@ export class StudyService {
    * @param ask - The environment's input box hook.
    * @param title - What the box is titled after the repository's name.
    * @param onFault - Decides what a throw of the box means when the wait was not aborted: it throws, or returns the answer to use.
+   * @param minChars - The shortest answer the box accepts; omitted keeps the box's default.
    * @returns The typed secret, or `undefined` when the box was dismissed, the wait ended, or `onFault` gave none.
    * @example await this.promptLearnerSecret(record, ask, 'Password', () => undefined) // => 'typed secret'
    */
@@ -6729,6 +6731,7 @@ export class StudyService {
     ask: NonNullable<StudyEnvironment['askLearnerSecret']>,
     title: string,
     onFault: (error: unknown) => undefined,
+    minChars?: number,
   ): Promise<string | undefined> {
     const signal = AbortSignal.any([
       AbortSignal.timeout(this.confirmationTimeoutMs),
@@ -6741,6 +6744,7 @@ export class StudyService {
           runId: record.id,
           repository: basename(this.environment.workspace),
           title,
+          ...(minChars === undefined ? {} : { minChars }),
         },
         signal,
       )
@@ -6774,9 +6778,13 @@ export class StudyService {
       ask,
       `Sign in to ${signInPath}`,
       () => undefined,
+      NODE_SERVER_SIGN_IN_SECRET_MIN_CHARS,
     )
-    // An empty answer is no answer.
-    if (secret === undefined || secret === '')
+    // An empty or too short answer (an editor that skipped the box's check) is no answer: a short value masked service-wide would corrupt ordinary words.
+    if (
+      secret === undefined ||
+      secret.length < NODE_SERVER_SIGN_IN_SECRET_MIN_CHARS
+    )
       throw new StudyError(
         'REQUEST_NOT_CONFIRMED',
         `The learner did not provide the password for the sign-in to ${signInPath}, so nothing was sent. The run stays ready.`,
