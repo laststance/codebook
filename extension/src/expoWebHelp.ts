@@ -6,6 +6,7 @@ import {
   MILLISECONDS_PER_SECOND,
   NEXT_PACKAGE_DISCOVERY_APP_LIMIT,
   NEXT_PACKAGE_DISCOVERY_MAX_DEPTH,
+  REPOSITORY_OPERATION_ACTION,
   REPOSITORY_SETUP_TIMEOUT_MS,
 } from './constants'
 import {
@@ -44,7 +45,7 @@ const EXPO_WEB_REFUSAL_REASON_TEXTS = {
     'env-file-unreadable':
       "One of the app's .env files (details.file) exists but cannot be read safely (an open or read failure, over the size limit, or not a regular file), and Expo would still read it, so its EXPO_PUBLIC_* values could not be masked. Tell the learner; never edit the project. Nothing started.",
     'dynamic-config':
-      'The app is configured by app.config.js or app.config.ts (details.file); this version reads only app.json and never runs project code to resolve a configuration. Tell the learner; never edit the project. Nothing started.',
+      "The app is configured by app.config.js or app.config.ts (details.file); this version reads only app.json and runs no project code before it starts the app's own Expo CLI. Tell the learner; never edit the project. Nothing started.",
     'server-output':
       "app.json sets expo.web.output to server, which needs Expo's server rendering, a server participant this version does not support. Tell the learner; never edit the project. Nothing started.",
     'web-script-form':
@@ -120,7 +121,7 @@ export function expoWebHelp() {
         'codebook_sources, then codebook_source: read the file the stop is in; copy its path, full SHA-256 and the line and column from numberedText.',
         'codebook_publish_book: publish a source-only article whose node cites that file.',
         'codebook_start: profile repository-browser, the configuration above with the copied values and a stable key.',
-        'Poll the run resource until it reads ready, paused or an error; then codebook_action repository-click, and at each pause explain the values and codebook_continue with the current continueArguments.',
+        `Poll the run resource until it reads ready, paused or an error; read its nextActions (it offers ${REPOSITORY_OPERATION_ACTION} while an operation is left) and send codebook_action ${REPOSITORY_OPERATION_ACTION} once per declared operation, each with a new stable key; at each pause explain the values, then codebook_continue with the current continueArguments.`,
       ],
       refusals: Object.fromEntries(
         EXPO_WEB_REFUSAL_CODES.map((code) => [
@@ -132,7 +133,7 @@ export function expoWebHelp() {
         ]),
       ),
       limits: [
-        'Browser stops only: participant "server" and a stop in an Expo Router API route (+api.ts) are refused. A stop in node_modules is refused (EXPO_WEB_SEAL_FAILED, node-modules): stop in the app\'s own source, which must lie inside the app\'s own folder and in the entry bundle Metro serves (EXPO_WEB_SEAL_FAILED, not-in-entry-bundle).',
+        'Browser stops only: participant "server" and a stop in an Expo Router API route (`+api.*`, such as `+api.ts`) are refused. A stop in node_modules is refused (EXPO_WEB_SEAL_FAILED, node-modules): stop in the app\'s own source, which must lie inside the app\'s own folder and in the entry bundle Metro serves (EXPO_WEB_SEAL_FAILED, not-in-entry-bundle).',
         `Only Expo SDK ${EXPO_WEB_SUPPORTED_MAJOR} is supported, judged from the installed expo package (EXPO_WEB_UNSUPPORTED, expo-version).`,
         'Only app.json is read: an app configured by app.config.js or app.config.ts is refused (EXPO_WEB_UNSUPPORTED, dynamic-config), and so is expo.web.output "server".',
         'The web script (else start) must be exactly expo start --web, optionally with --port N or -p N and NAME=value assignments; any other form (cross-env, extra arguments, a wrapper) is refused, and so is a preweb or prestart script. Codebook runs no project script.',

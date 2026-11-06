@@ -228,7 +228,7 @@ export function expoWebEnvFileRefusal(
 export function expoWebDynamicConfigRefusal(file: string): StudyError {
   return expoWebRefusal(
     'EXPO_WEB_UNSUPPORTED',
-    `The app is configured by ${file}, and Codebook reads only app.json: it never runs project code to resolve a configuration. ${NOTHING_STARTED}`,
+    `The app is configured by ${file}, and Codebook reads only app.json and runs no project code before it starts the app's own Expo CLI. ${NOTHING_STARTED}`,
     `Tell the learner that this version reads only app.json, so an app configured by ${file} (details.file) cannot be observed; never edit the project or its configuration. ${recoveryEnd('EXPO_WEB_UNSUPPORTED')}`,
     { reason: 'dynamic-config', file, sideEffects: 'none' },
   )

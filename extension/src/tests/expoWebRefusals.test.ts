@@ -132,6 +132,13 @@ test('the Expo dynamic-config refusal names its file and says this version reads
   // Assert
   assert.equal(dynamic.details?.file, 'app.config.js')
   assert.ok(recoveryOf(dynamic).includes('reads only app.json'))
+  // The started Expo CLI runs project code (metro.config.js), so the text must not claim no code runs at all
+  assert.ok(
+    dynamic.message.includes(
+      "runs no project code before it starts the app's own Expo CLI",
+    ),
+  )
+  assert.ok(!dynamic.message.includes('never runs project code'))
   assert.equal(env.details?.file, '.env.development')
 })
 

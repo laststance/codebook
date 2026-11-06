@@ -13,6 +13,7 @@ import {
   EXPO_WEB_REFUSAL_CODES,
   EXPO_WEB_REFUSAL_REASONS,
 } from '../expoWebRefusals'
+import { reactScriptsHelp } from '../reactScriptsHelp'
 import { readResource } from '../resources'
 
 import { createHarness } from './helpers'
@@ -124,7 +125,7 @@ test('the Expo help states its limits, the line rule, the sign-in note and the f
   const limitText = section.limits.join('\n')
   // Assert
   for (const phrase of [
-    'Browser stops only: participant "server" and a stop in an Expo Router API route (+api.ts) are refused',
+    'Browser stops only: participant "server" and a stop in an Expo Router API route (`+api.*`, such as `+api.ts`) are refused',
     'Only Expo SDK 57 is supported',
     'Only app.json is read',
     'exactly expo start --web, optionally with --port N or -p N and NAME=value assignments',
@@ -299,4 +300,24 @@ test('the bundled skill 1.0.79 routes an Expo web app to expo-web-dev behind the
   ])
     assert.ok(paragraph.includes(phrase), phrase)
   assert.ok(skill.includes('`expo-web-dev` for an Expo SDK 57 web app'))
+})
+
+// Value: protects=a chat that follows the Expo or react-scripts quick start sends the one action a version 3 run accepts; fails_when=a quick start call order names repository-click, which a version 3 run refuses with BUSY; why_new=ship review found both steps naming the version 2 action; seam=none; no_claim=the run's nextActions content
+test('the Expo and react-scripts quick starts tell the chat to send repository-operation, never repository-click', () => {
+  // Arrange
+  const stepLists = [
+    expoWebHelp().expoWebQuickStart.callOrder.join('\n'),
+    reactScriptsHelp().reactScriptsQuickStart.callOrder.join('\n'),
+  ]
+  // Act
+  const names = stepLists.map((steps) => ({
+    operation: steps.includes('codebook_action repository-operation'),
+    nextActions: steps.includes('nextActions'),
+    click: steps.includes('repository-click'),
+  }))
+  // Assert
+  assert.deepEqual(names, [
+    { operation: true, nextActions: true, click: false },
+    { operation: true, nextActions: true, click: false },
+  ])
 })
