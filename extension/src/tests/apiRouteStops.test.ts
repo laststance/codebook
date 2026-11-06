@@ -3,6 +3,7 @@ import { readFile, realpath } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import { REPLAY_DEBUG_MAX_VARIABLES } from '../constants'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import {
@@ -384,4 +385,39 @@ test('an API-route pause masks a typed secret in the request path it publishes',
   const snapshot = await publishedPause(harness)
   // Assert
   assert.equal(snapshot.apiRoute?.path, '/api/todos/[masked]')
+})
+
+// Value: protects=AC 5 and E-7 (native C88-1): the saved replay of an API-route pause keeps every top-level local of the handler frame even when the request object holds more members than the variable budget; fails_when=the capture expands `req` depth first and drops `res`, `add` or `clear` (Historical variable count limit reached); why_new=no test paired an API-route pause with a request larger than the budget; seam=none; no_claim=js-debug's real member order or the real size of an IncomingMessage
+test('an API-route pause saves res, add and clear after a request object larger than the variable budget', async (context) => {
+  // Arrange
+  const harness = await apiRouteRunHarness(context)
+  await harness.run.prepare()
+  await sendOperation(harness, 1)
+  sendRequest(harness, '9', 'GET', '/api/data?clear=1')
+  const members = Object.fromEntries(
+    Array.from({ length: REPLAY_DEBUG_MAX_VARIABLES + 100 }, (_, index) => [
+      `member${index}`,
+      index,
+    ]),
+  )
+  harness.server!.setScope({
+    req: { url: '/api/data?clear=1', socket: members },
+    res: { statusCode: 200 },
+    add: undefined,
+    clear: '1',
+  })
+  // Act
+  apiRouteHit(harness, {
+    apiRequest: { method: 'GET', url: '/api/data?clear=1' },
+  })
+  const snapshot = await publishedPause(harness)
+  // Assert
+  const recorded = snapshot.debugger!
+  const local = recorded.frames[0]!.scopes[0]!
+  const topLevel = local.variables.map((index) => recorded.variables[index]!)
+  assert.deepEqual(
+    topLevel.map((variable) => variable.name),
+    ['req', 'res', 'add', 'clear'],
+  )
+  assert.equal(topLevel[3]!.value, "'1'")
 })

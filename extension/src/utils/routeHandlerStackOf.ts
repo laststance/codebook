@@ -116,24 +116,41 @@ function isContinuationFrame(
 }
 
 /**
- * Gives the first async stack segment that holds a caller: segments of only Node's continuation work (a timer list that resumed the awaiting function) are passed over.
+ * Gives the first async stack segment that holds a caller: segments of only Node's continuation work (a timer list that resumed the awaiting function) are passed over, and so are the leading frames of the route file itself (a handler awaiting its helper).
+ *
+ * Why it exists: a stop in an async helper after the helper's own `await` has only the helper on the synchronous stack; the awaiting handler is the async chain's first frame and Next's caller comes after it (Cycle 0088, Codex outside voice). Called by {@link routeHandlerStackOf}.
  * @param stack - The paused event's async stack; `undefined` when the event has none.
- * @returns The segment's frames with their names and script addresses; empty when no segment holds a caller.
- * @example firstCallerSegment({ callFrames: [{ functionName: 'listOnTimeout', url: 'node:internal/timers' }], parent: { callFrames: [{ functionName: 'do', url: '…/app-route.runtime.dev.js' }] } }) // => [{ name: 'do', url: '…/app-route.runtime.dev.js' }]
+ * @param routeUrl - The route file's script address; `undefined` when unknown (no frame is then taken for the route file's).
+ * @returns
+ * - `frames`: the segment's frames after the route file's own leading frames, with their names and script addresses; empty when no segment holds a caller
+ * - `routeFrameName`: the function name of the outermost route-file frame skipped; `undefined` when none was
+ * @example firstCallerSegment({ callFrames: [{ functionName: 'POST', url: 'file:///app/route.ts' }, { functionName: 'do', url: '…/app-route.runtime.dev.js' }] }, 'file:///app/route.ts') // => { frames: [{ name: 'do', url: '…/app-route.runtime.dev.js' }], routeFrameName: 'POST' }
  */
 function firstCallerSegment(
   stack: RouteHandlerAsyncStack | undefined,
-): { name?: string; url?: string }[] {
+  routeUrl: string | undefined,
+): {
+  frames: { name?: string; url?: string }[]
+  routeFrameName?: string
+} {
+  let routeFrameName: string | undefined
   // The chain is short (Node's default async stack depth); each segment is read once.
   for (let segment = stack; segment; segment = segment.parent) {
     const frames = segment.callFrames.map((frame) => ({
       name: frame.functionName,
       url: frame.url,
     }))
-    if (frames.some((frame) => !isContinuationFrame(frame.name, frame.url)))
-      return frames
+    // The awaiting route-file frames lead the segment; the last one skipped is the outermost.
+    let start = 0
+    while (routeUrl && frames[start]?.url === routeUrl) {
+      routeFrameName = frames[start]?.name
+      start++
+    }
+    const rest = frames.slice(start)
+    if (rest.some((frame) => !isContinuationFrame(frame.name, frame.url)))
+      return { frames: rest, routeFrameName }
   }
-  return []
+  return { frames: [] }
 }
 
 /**
@@ -144,7 +161,7 @@ function firstCallerSegment(
  * @param frames - The paused event's call frames, top frame first.
  * @param moduleScriptId - The id of the route file's script (the top frame must be in it).
  * @param asyncStack - The event's `asyncStackTrace`; `undefined` when the event has none.
- * @param urlOf - Gives a synchronous frame's script address by its script id (CDP frames carry none); `undefined` when unknown.
+ * @param urlOf - Gives a synchronous frame's script address by its script id (CDP frames carry none); `undefined` when unknown. Its address for `moduleScriptId` also marks the route file's own frames on the async stack.
  * @param caller - Which Next frame calls the handler: {@link APP_ROUTE_CALLER} (default) or {@link PAGES_API_CALLER}.
  * @returns
  * - `{ handlerName }` when the frames from the top down to the handler are in the route file and the handler is called by Next's route module, on the synchronous stack or, after an `await`, at the head of the async stack
@@ -176,14 +193,17 @@ export function routeHandlerStackOf(
     url: frame.location ? urlOf(frame.location.scriptId) : undefined,
   }))
   if (calledByRouteModule(synchronousCallers, caller)) return handler
-  // Resumed after an `await`: only Node's continuation work follows, and the caller leads the async stack.
+  // Resumed after an `await`: only Node's continuation work follows, and the caller leads the async stack, behind the route file's own awaiting frames (a handler that awaited the helper the stop is in).
   const isResumed = synchronousCallers.every((frame) =>
     isContinuationFrame(frame.name, frame.url),
   )
-  return isResumed &&
-    calledByRouteModule(firstCallerSegment(asyncStack), caller)
+  if (!isResumed) return undefined
+  const segment = firstCallerSegment(asyncStack, urlOf(moduleScriptId))
+  if (!calledByRouteModule(segment.frames, caller)) return undefined
+  // The outermost route-file frame is the handler (an App Router method name), also when it only stands on the async stack.
+  return segment.routeFrameName === undefined
     ? handler
-    : undefined
+    : { handlerName: segment.routeFrameName }
 }
 
 /**

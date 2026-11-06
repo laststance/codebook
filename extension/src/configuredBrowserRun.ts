@@ -80,6 +80,10 @@ import {
   SIGN_IN_REPOSITORY_NAME_FALLBACK,
   ROUTE_HANDLER_FILE_NAME,
   UI_CAUSE_MAX_CHARS,
+  REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
+  REPLAY_DEBUG_MAX_DEPTH,
+  REPLAY_DEBUG_MAX_FRAMES,
+  REPLAY_DEBUG_MAX_VARIABLES,
 } from './constants'
 import type {
   DevelopmentBundle,
@@ -13895,6 +13899,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       workspaceRoot: this.options.workspace,
       maskKnownText: this.maskRunText,
       moduleEvaluation: isModuleEvaluation,
+      // A request object can spend the whole variable budget before the handler's other locals (`res`, …): keep every local first.
+      ...(stop.apiRoute || stop.routeHandler
+        ? {
+            limits: {
+              timeoutMs: REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
+              maxFrames: REPLAY_DEBUG_MAX_FRAMES,
+              maxVariables: REPLAY_DEBUG_MAX_VARIABLES,
+              maxDepth: REPLAY_DEBUG_MAX_DEPTH,
+              topLevelFirst: true,
+            },
+          }
+        : {}),
     })
     current()
     let inspectionFailure: Error | undefined

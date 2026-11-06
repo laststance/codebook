@@ -75,7 +75,7 @@ export class RouteHandlerRequests {
   }
 
   /**
-   * Notes a request the browser sent when its pathname matches a declared route; a redirect hop to another declared route or with another method is kept as its own entry (id `<requestId> <METHOD> <pathname>`).
+   * Notes a request the browser sent when its pathname matches a declared route; a redirect hop to another declared route or with another method is kept as its own entry (id `<requestId> <METHOD> <target>`, the target being the pathname plus the query string, so a hop that changes only the query is its own entry).
    * @param event - The method and URL of `Network.requestWillBeSent`, and its `wallTime` in seconds since the epoch when the event has one.
    * @param window - The number of operations dispatched so far, when the event arrived.
    * @param nowMs - The run's clock reading.
@@ -106,11 +106,12 @@ export class RouteHandlerRequests {
     )
       return
     const method = event.method.toUpperCase()
+    const target = `${parsed.pathname}${parsed.search}`
     const first = this.requests.get(event.requestId)
-    // Chrome reports each redirect hop under the request's id: the same method and path is the same hop, another one is a hop of its own.
-    if (first?.method === method && first.pathname === parsed.pathname) return
+    // Chrome reports each redirect hop under the request's id: the same method and target (path plus query) is the same hop, another one is a hop of its own.
+    if (first?.method === method && first.target === target) return
     const id = first
-      ? `${event.requestId} ${method} ${parsed.pathname}`
+      ? `${event.requestId} ${method} ${target}`
       : event.requestId
     if (this.requests.has(id)) return
     const wallTimeMs =
@@ -121,7 +122,7 @@ export class RouteHandlerRequests {
       id,
       method,
       pathname: parsed.pathname,
-      target: `${parsed.pathname}${parsed.search}`,
+      target,
       window: this.windowOf(window, wallTimeMs),
       startedAtMs: nowMs,
       wallTimeMs: wallTimeMs ?? Date.now(),

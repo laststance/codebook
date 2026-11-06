@@ -117,3 +117,95 @@ test('the App Router stack keeps its caller and is no API-route stack', () => {
   ])
   assert.equal(handlerFrameIndexOf(apiFrames, '12'), 0)
 })
+
+const ROUTE_URL = 'webpack-internal:///(api-node)/./src/pages/api/x.ts'
+const routeUrls = (scriptId: string): string | undefined =>
+  scriptId === '12' ? ROUTE_URL : urlOf(scriptId)
+const helperFrame = { functionName: 'helper', location: { scriptId: '12' } }
+const continuationFrame = {
+  functionName: 'processTicksAndRejections',
+  location: { scriptId: '32' },
+}
+const resolverFrame = { functionName: 'apiResolver', url: RESOLVER_URL }
+
+// Value: protects=a stop in an async helper after the helper's own await, whose awaiting handler and Next's apiResolver are on the async chain, is a handler hit; fails_when=the async chain must start with the caller, so the pause is resumed as unclassified and the run ends SERVER_STOP_NOT_REACHED; why_new=E1 shapes had the caller first; seam=none; no_claim=reading the request from the helper's scope
+test('an API-route stop after a helper await is recognised when the handler segment leads the async chain', () => {
+  // Arrange
+  const separateSegments = {
+    callFrames: [
+      { functionName: '__WEBPACK_DEFAULT_EXPORT__', url: ROUTE_URL },
+    ],
+    parent: { callFrames: [resolverFrame] },
+  }
+  const sharedSegment = {
+    callFrames: [
+      { functionName: '__WEBPACK_DEFAULT_EXPORT__', url: ROUTE_URL },
+      resolverFrame,
+    ],
+  }
+  // Act
+  const results = [separateSegments, sharedSegment].map((asyncStack) =>
+    routeHandlerStackOf(
+      [helperFrame, continuationFrame],
+      '12',
+      asyncStack,
+      routeUrls,
+      PAGES_API_CALLER,
+    ),
+  )
+  // Assert
+  assert.deepEqual(results, [
+    { handlerName: '__WEBPACK_DEFAULT_EXPORT__' },
+    { handlerName: '__WEBPACK_DEFAULT_EXPORT__' },
+  ])
+})
+
+// Value: protects=a helper chain that never reaches apiResolver is no handler hit; fails_when=skipping the route file's awaiting frames accepts any chain; why_new=the walk skips route-file frames and must still need the caller; seam=none; no_claim=chains deeper than two segments
+test('an API-route stop after a helper await stays unclassified when the async chain never reaches apiResolver', () => {
+  // Arrange
+  const asyncStack = {
+    callFrames: [{ functionName: 'handler', url: ROUTE_URL }],
+    parent: {
+      callFrames: [{ functionName: 'somethingElse', url: RESOLVER_URL }],
+    },
+  }
+  // Act
+  const result = routeHandlerStackOf(
+    [helperFrame, continuationFrame],
+    '12',
+    asyncStack,
+    routeUrls,
+    PAGES_API_CALLER,
+  )
+  // Assert
+  assert.equal(result, undefined)
+})
+
+// Value: protects=an App Router method handler that awaited a helper keeps its method name when the stop is in the helper; fails_when=the handler name is taken from the synchronous helper frame (verdict then finds no HTTP method) or the chain is dropped; why_new=same shape as the API route; seam=none; no_claim=route resolution
+test('an App Router stop after a helper await names the exported method frame as the handler', () => {
+  // Arrange
+  const appRouteUrl = 'webpack-internal:///(rsc)/./app/api/x/route.ts'
+  const appUrls = (scriptId: string): string | undefined =>
+    scriptId === '12' ? appRouteUrl : undefined
+  const asyncStack = {
+    callFrames: [{ functionName: 'POST', url: appRouteUrl }],
+    parent: {
+      callFrames: [
+        { functionName: 'run', url: 'node:internal/async_local_storage' },
+        {
+          functionName: 'do',
+          url: 'file:///repo/node_modules/next/dist/compiled/next-server/app-route.runtime.dev.js',
+        },
+      ],
+    },
+  }
+  // Act
+  const result = routeHandlerStackOf(
+    [helperFrame, continuationFrame],
+    '12',
+    asyncStack,
+    appUrls,
+  )
+  // Assert
+  assert.deepEqual(result, { handlerName: 'POST' })
+})

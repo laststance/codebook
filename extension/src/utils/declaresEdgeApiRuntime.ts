@@ -41,8 +41,10 @@ export function declaresEdgeApiRuntime(sourceText: string): boolean {
 function hasEdgeRuntimeKey(code: string, openingBrace: number): boolean {
   let depth = 0
   for (let index = openingBrace; index < code.length; index++) {
-    // A quoted string is skipped whole, so a brace inside it never moves the depth.
-    if (code[index] === "'" || code[index] === '"') {
+    if (isQuote(code[index])) {
+      // A quoted key right after `{` or `,` is a property start, so it is tested before the quote is skipped as a string.
+      if (startsEdgeProperty(code, index, depth)) return true
+      // A quoted string is skipped whole, so a brace inside it never moves the depth.
       index = closingQuoteOf(code, index)
       continue
     }
@@ -50,22 +52,49 @@ function hasEdgeRuntimeKey(code: string, openingBrace: number): boolean {
     else if (code[index] === '}') depth--
     // Past the literal's end or too deep to decide from the text.
     if (depth === 0 || depth > MAX_CONFIG_DEPTH) return false
-    const startsProperty = code[index - 1] === '{' || code[index - 1] === ','
-    if (
-      depth === 1 &&
-      startsProperty &&
-      EDGE_RUNTIME_PROPERTY.test(code.slice(index))
-    )
-      return true
+    if (startsEdgeProperty(code, index, depth)) return true
   }
   return false
+}
+
+/**
+ * Tells whether a character opens a quoted string.
+ * Called by {@link hasEdgeRuntimeKey} for each scanned character.
+ * @param character - One character of the route's code.
+ * @returns `true` for `'` and `"`.
+ * @example isQuote("'") // => true
+ */
+function isQuote(character: string | undefined): boolean {
+  return character === "'" || character === '"'
+}
+
+/**
+ * Tells whether an Edge `runtime` property starts at an index of the literal's top level.
+ * Called by {@link hasEdgeRuntimeKey} at each position where a property can begin.
+ * @param code - The route file's code with comments and templates blanked.
+ * @param index - The index to test.
+ * @param depth - The object nesting depth at the index (1 = the literal's own body).
+ * @returns `true` when depth is 1, the previous character is `{` or `,`, and `runtime: 'edge'` (bare or quoted key) starts there.
+ * @example startsEdgeProperty("{ runtime: 'edge' }", 1, 1) // => true
+ */
+function startsEdgeProperty(
+  code: string,
+  index: number,
+  depth: number,
+): boolean {
+  const startsProperty = code[index - 1] === '{' || code[index - 1] === ','
+  return (
+    depth === 1 &&
+    startsProperty &&
+    EDGE_RUNTIME_PROPERTY.test(code.slice(index))
+  )
 }
 
 /**
  * Finds the closing quote of the string literal that opens at an index, so {@link hasEdgeRuntimeKey} can step over it.
  * @param code - The route file's code with comments and templates blanked.
  * @param openingQuote - The index of the literal's `'` or `"`.
- * @returns The index of the matching unescaped quote, or the text's last index when the literal never closes.
+ * @returns The index of the matching unescaped quote, or the opening quote's own index when the line ends first (quote strings cannot span lines), or the text's last index.
  * @example closingQuoteOf("{ x: '}' }", 5) // => 7
  */
 function closingQuoteOf(code: string, openingQuote: number): number {
@@ -73,6 +102,8 @@ function closingQuoteOf(code: string, openingQuote: number): number {
   for (let index = openingQuote + 1; index < code.length; index++) {
     // An escaped character never ends the literal.
     if (code[index] === '\\') index++
+    // A line break ends an unterminated string (e.g. a quote inside a regular-expression literal): the quote is a plain character, so braces after it on the line still count.
+    else if (code[index] === '\n') return openingQuote
     else if (code[index] === quote) return index
   }
   return code.length - 1

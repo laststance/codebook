@@ -213,3 +213,59 @@ test('the request tracker keeps the target with its query', () => {
     [['/api/data', '/api/data?clear=1']],
   )
 })
+
+// Value: protects=E-2 a redirect hop that changes only the query is its own tracked entry, an exact repeat is not; fails_when=the second hop is dropped because the pathname matches, so a pause in the redirected request is resumed as other-path; why_new=Cycle 0088 pass 1 finding, the hop dedupe compared the pathname only; seam=none; no_claim=App Router route-handler claiming (the routeHandler tests)
+test('a redirect hop that differs only in query is kept as its own request and an exact repeat is dropped', () => {
+  // Arrange
+  const tracker = new RouteHandlerRequests(['/api/data'])
+  const hop = (stage: number) => ({
+    requestId: 'r',
+    method: 'GET',
+    url: `http://localhost:3000/api/data?stage=${stage}`,
+  })
+  // Act
+  tracker.start(hop(1), 1, 5)
+  tracker.start(hop(2), 1, 6)
+  tracker.start(hop(2), 1, 7)
+  // Assert
+  assert.deepEqual(
+    tracker.list().map((request) => [request.id, request.target]),
+    [
+      ['r', '/api/data?stage=1'],
+      ['r GET /api/data?stage=2', '/api/data?stage=2'],
+    ],
+  )
+})
+
+// Value: protects=E-2 an API-route pause in the redirected request (query-only hop) is published with that hop; fails_when=the hop is missing from the list and the hit is resumed as other-path, ending the run SERVER_STOP_NOT_REACHED; why_new=Cycle 0088 pass 1 finding; seam=none; no_claim=redirect hops that change the pathname (existing coverage)
+test('an API-route hit in the query-only redirect hop is published with that hop', () => {
+  // Arrange
+  const tracker = new RouteHandlerRequests(['/api/data'])
+  for (const stage of [1, 2]) {
+    tracker.start(
+      {
+        requestId: 'r',
+        method: 'GET',
+        url: `http://localhost:3000/api/data?stage=${stage}`,
+      },
+      1,
+      5,
+    )
+  }
+  const requests = tracker.list().map((request) => ({
+    id: request.id,
+    method: request.method,
+    pathname: request.pathname,
+    target: request.target,
+    window: request.window,
+    claimed: false,
+  }))
+  // Act
+  const verdict = routeHandlerHitVerdictOf({
+    ...BASE,
+    hitRequest: { method: 'GET', target: '/api/data?stage=2' },
+    requests,
+  })
+  // Assert
+  assert.deepEqual(verdict, { action: 'publish', request: requests[1] })
+})

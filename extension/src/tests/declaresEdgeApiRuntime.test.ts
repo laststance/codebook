@@ -68,3 +68,27 @@ test('a quoted runtime key and a brace inside a string before it still mark an E
   // Assert
   assert.deepEqual(results, [true, true])
 })
+
+// Value: protects=a quoted runtime key right after `{` or `,` with no space is read as Edge; fails_when=the key is skipped as a string and an Edge route is armed; why_new=review round found the skip-before-test order; seam=none; no_claim=a runtime set through a constant
+test('a quoted runtime key with no space after the brace or comma still marks an Edge route', () => {
+  // Arrange
+  const sources = [
+    'export const config = {"runtime":"edge"}',
+    'export const config = { api: { bodyParser: false },"runtime":"edge" }',
+  ]
+  // Act
+  const results = sources.map(declaresEdgeApiRuntime)
+  // Assert
+  assert.deepEqual(results, [true, true])
+})
+
+// Value: protects=an unbalanced quote inside a regular-expression literal does not desync the depth count; fails_when=the quote scan runs past the line and an Edge route is armed; why_new=review round found the unterminated-quote scan; seam=none; no_claim=other regex content
+test('an unbalanced quote in a regular expression before runtime still marks an Edge route', () => {
+  // Arrange
+  const source =
+    "export const config = {\n  api: { match: /'/ },\n  runtime: 'edge',\n}\n"
+  // Act
+  const result = declaresEdgeApiRuntime(source)
+  // Assert
+  assert.equal(result, true)
+})
