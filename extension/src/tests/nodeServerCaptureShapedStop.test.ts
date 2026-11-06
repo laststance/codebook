@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
 import { before, test, type TestContext } from 'node:test'
 
+import {
+  NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
+  NODE_REPLAY_DEBUG_MAX_DEPTH,
+  NODE_REPLAY_DEBUG_MAX_FRAMES,
+  NODE_REPLAY_DEBUG_MAX_VARIABLES,
+} from '../constants'
 import type { NodeServerWriterStop } from '../nodeServerHistoryWriter'
 import type { ReplayDebugSnapshot } from '../replayDebugSchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
@@ -198,6 +204,122 @@ test('a stop whose Local scope was truncated at the variable count limit seals a
     snapshot.frames[0]?.scopes[0]?.unavailable,
     'Historical variable count limit reached.',
   )
+  assert.equal(opened.status, 'complete')
+  assert.deepEqual(opened.seal?.reasons, [])
+})
+
+// protects=a Node server stop's snapshot, under its own smaller limits, skips a handler function's members and a prototype chain like a browser stop and still seals complete; fails_when=the Node capture reads the function's members or the request's [[Prototype]] (using its 1.5 s budget on engine internals), saves them unlabelled, or the label makes the stop read as a missing snapshot; no_claim=the scripted debugger stands in for js-debug's Node session
+test("a Node server stop's snapshot skips a function's members and a prototype chain and seals a complete history", async (context) => {
+  // Arrange
+  const requestedReferences: number[] = []
+  const snapshot = await captureReplayDebugSnapshot({
+    stack: {
+      stackFrames: [{ id: 5, name: 'handler', line: 2, column: 1 }],
+      totalFrames: 1,
+    },
+    verifiedSource: {
+      name: 'src/handler.ts',
+      text: HANDLER_SOURCE_TEXT,
+      hash: sha256(HANDLER_SOURCE_TEXT),
+      line: 2,
+    },
+    assertCurrent() {},
+    limits: {
+      timeoutMs: NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
+      maxFrames: NODE_REPLAY_DEBUG_MAX_FRAMES,
+      maxVariables: NODE_REPLAY_DEBUG_MAX_VARIABLES,
+      maxDepth: NODE_REPLAY_DEBUG_MAX_DEPTH,
+    },
+    request(command, arguments_) {
+      if (command === 'scopes')
+        return Promise.resolve({
+          scopes: [
+            {
+              name: 'Local',
+              presentationHint: 'locals',
+              variablesReference: 1,
+            },
+          ],
+        })
+      const reference = arguments_.variablesReference!
+      requestedReferences.push(reference)
+      const variablesByReference: Record<
+        number,
+        {
+          name: string
+          value: string
+          type: string
+          variablesReference: number
+        }[]
+      > = {
+        1: [
+          {
+            name: 'next',
+            value: 'ƒ next(error)',
+            type: 'function',
+            variablesReference: 4,
+          },
+          {
+            name: 'request',
+            value: 'IncomingMessage',
+            type: 'IncomingMessage',
+            variablesReference: 5,
+          },
+        ],
+        4: [
+          {
+            name: '[[Scopes]]',
+            value: 'Scopes[2]',
+            type: 'internal#scopeList',
+            variablesReference: 7,
+          },
+        ],
+        5: [
+          {
+            name: 'method',
+            value: "'POST'",
+            type: 'string',
+            variablesReference: 0,
+          },
+          {
+            name: '[[Prototype]]',
+            value: 'Readable',
+            type: 'Readable',
+            variablesReference: 6,
+          },
+        ],
+        6: [
+          {
+            name: 'read',
+            value: 'ƒ read(size)',
+            type: 'function',
+            variablesReference: 8,
+          },
+        ],
+      }
+      return Promise.resolve({
+        variables: variablesByReference[reference] ?? [],
+      })
+    },
+  })
+
+  // Act
+  const opened = await sealedWith(context, snapshot)
+
+  // Assert
+  assert.deepEqual(requestedReferences, [1, 5])
+  const savedByName = new Map(
+    snapshot.variables.map((variable) => [variable.name, variable]),
+  )
+  assert.equal(
+    savedByName.get('next')?.unavailable,
+    'Engine internals are not recorded.',
+  )
+  assert.equal(
+    savedByName.get('[[Prototype]]')?.unavailable,
+    'Engine internals are not recorded.',
+  )
+  assert.equal(savedByName.get('method')?.value, "'POST'")
   assert.equal(opened.status, 'complete')
   assert.deepEqual(opened.seal?.reasons, [])
 })

@@ -2380,6 +2380,16 @@ export const REPLAY_FRAME_TEXT_NOT_RECORDED_ORIGIN =
   'Executed text not recorded'
 export const REPLAY_DEBUG_MAX_VARIABLES = 2_000
 export const REPLAY_DEBUG_MAX_DEPTH = 5
+/** What a recorded variable reads in place of children the debugger capture did not read: a function's members and a prototype chain are JavaScript engine internals, not the app's data (C89-D1: reading them one request at a time used the whole {@link REPLAY_DEBUG_CAPTURE_TIMEOUT_MS} at a browser stop). */
+export const REPLAY_DEBUG_INTERNALS_NOT_RECORDED =
+  'Engine internals are not recorded.'
+/** Members a JavaScript debugger lists beside an object's own properties whose children are engine internals: the prototype chain, a closure's scopes and a function's location. `[[Entries]]`, `[[Target]]`, `[[Handler]]` and `[[PrimitiveValue]]` hold the app's own values and are not listed. */
+export const REPLAY_DEBUG_ENGINE_INTERNAL_NAMES = [
+  '[[Prototype]]',
+  '__proto__',
+  '[[Scopes]]',
+  '[[FunctionLocation]]',
+] as const
 export const REPLAY_DEBUG_TEXT_LIMIT_CHARS = 4_096
 /** What the debugger capture appends to a text it cut at {@link REPLAY_DEBUG_TEXT_LIMIT_CHARS}. */
 export const REPLAY_DEBUG_TRUNCATION_MARKER = '… [truncated]'

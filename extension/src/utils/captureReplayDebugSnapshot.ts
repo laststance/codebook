@@ -6,6 +6,7 @@ import { z } from 'zod'
 import {
   REDACTION_MASK,
   REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
+  REPLAY_DEBUG_INTERNALS_NOT_RECORDED,
   REPLAY_DEBUG_MAX_DEPTH,
   REPLAY_DEBUG_MAX_FRAMES,
   REPLAY_DEBUG_MAX_SCOPES,
@@ -21,6 +22,7 @@ import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
 
 import { boundedClassNameOf } from './boundedClassNameOf'
 import { cutToSavedTextLimit } from './cutToSavedTextLimit'
+import { isEngineInternalVariable } from './isEngineInternalVariable'
 import { isInsideFolder } from './isInsideFolder'
 import { maskSavedDebugSnapshot } from './maskSavedDebugSnapshot'
 import { moduleScopePositionOf } from './moduleScopePositionOf'
@@ -441,7 +443,7 @@ export async function captureReplayDebugSnapshot(
     })
     return snapshot.variables.length - 1
   }
-  /** Reads a saved variable's children into it; the subtree of a variable the capture withholds is never read. */
+  /** Reads a saved variable's children into it; the subtree of a variable the capture withholds, or of an engine internal ({@link isEngineInternalVariable}), is never read. */
   const expandVariable = async (
     index: number,
     variable: PendingExpansion['variable'],
@@ -457,6 +459,13 @@ export async function captureReplayDebugSnapshot(
       ) !== undefined
     )
       return
+    // A function's members and a prototype chain are engine internals: no request reads them, and an entry that had children says they are not recorded.
+    if (isEngineInternalVariable(variable)) {
+      if (variable.variablesReference > 0)
+        snapshot.variables[index]!.unavailable =
+          REPLAY_DEBUG_INTERNALS_NOT_RECORDED
+      return
+    }
     const firstChildIndex = snapshot.variables.length
     const nested = await captureVariables(
       variable.variablesReference,
