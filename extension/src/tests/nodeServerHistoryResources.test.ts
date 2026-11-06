@@ -4,6 +4,7 @@ import { before, test } from 'node:test'
 import { StudyError } from '../errors'
 import { readResource } from '../resources'
 import { buildServerReplayModel } from '../utils/buildServerReplayModel'
+import { maskSavedServerEntries } from '../utils/maskSavedServerEntries'
 
 import { createHarness } from './helpers'
 import {
@@ -184,6 +185,83 @@ test('the events list names citable events with a stop reduced to its position, 
   assert.equal(
     JSON.stringify(events).includes('export function handler'),
     false,
+  )
+})
+
+// protects=the events list names the sign-in exchange of a run that declared signIn, with its masked path, status and outcome; fails_when=the sign-in event is dropped from the served events; no_claim=the learning material or a failed sign-in's code
+test('the events list names the sign-in exchange with its path, status and outcome', async (context) => {
+  // Arrange
+  const { service, built } = await serviceWith(context, async (repository) => {
+    const header = nodeServerHistoryHeader(SERVER_WORKSPACE_KEY)
+    const writer = await repository.serverHistories.start({
+      ...header,
+      configuration: {
+        ...header.configuration,
+        signIn: {
+          path: '/api/login',
+          fields: { email: 'learner@example.test' },
+          secretField: 'password',
+          secret: 'ask-learner',
+        },
+      },
+    })
+    await writer.appendSignIn({
+      elapsedMs: 3,
+      path: '/api/login?api_key=abc123',
+      status: 200,
+      outcome: 'signed-in',
+      durationMs: 2,
+    })
+    await writer.appendRequest({
+      elapsedMs: 5,
+      attempt: 1,
+      method: 'GET',
+      path: '/x',
+      bodyBytes: 0,
+    })
+    await writer.seal({ elapsedMs: 9, reason: 'stopped' })
+    return header
+  })
+
+  // Act
+  const { value } = await wholeJson(
+    service,
+    `codebook://node-history/${built.studyId}/events`,
+  )
+
+  // Assert
+  const events = value as Array<Record<string, unknown>>
+  assert.deepEqual(events[0], {
+    sequence: 1,
+    type: 'sign-in',
+    elapsedMs: 3,
+    path: '/api/login?api_key=[masked]',
+    status: 200,
+    outcome: 'signed-in',
+    durationMs: 2,
+  })
+})
+
+// protects=a stored sign-in entry's path is masked again on read; fails_when=a secret query value stored by an older version is served; no_claim=the other entry types
+test('reading saved entries masks a secret query value left in a sign-in entry path', () => {
+  // Arrange
+  const entry = {
+    type: 'sign-in',
+    sequence: 1,
+    elapsedMs: 3,
+    path: '/api/login?api_key=abc123&next=/home',
+    status: 200,
+    outcome: 'signed-in',
+    durationMs: 2,
+  } as const
+
+  // Act
+  const [masked] = maskSavedServerEntries([entry])
+
+  // Assert
+  assert.equal(
+    masked?.type === 'sign-in' ? masked.path : undefined,
+    '/api/login?api_key=[masked]&next=/home',
   )
 })
 
