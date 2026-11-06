@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.2.88.0] - 2026-11-06 (development candidate)
+
+Cycle 0088 ([Issue #228](https://github.com/laststance/codebook/issues/228)), a feature cycle. **A server stop in a Next Pages API route now pauses in the request the page sends after an operation.** A learner can ask what the server does when a click calls the app's own API (a handler under `pages/api`), and the native debugger stops in the handler with `req.query` and the handler's locals. Before, Codebook refused such a stop before anything started, so the chat could explain only the browser half from execution.
+
+**API routes (MCP API 1.29).**
+- **Where it applies:** a Pages Router run (`next-dev-webpack`, configuration version 3) with a `participant: "server"` stop whose `afterOperation` is 1 or more, in a file under `pages/api` or `src/pages/api`.
+- **What the chat sees:** the pause reads `execution: "api-route"`, and `apiRoute` names the method and the pathname read from the paused request object, with the route pattern from the file path. The saved moment is labelled `After operation <k> · API route <method> <route> · <path:line>`. The chat says the handler ran after operation k, never that the operation caused it.
+- **Which request pauses:** Codebook compares the paused request's method and full URL, query included, with the browser's requests after the operation, the earliest unclaimed one first. So a click's request and the polling with another query are told apart. Any other hit is resumed and listed in `details.resumedHits` with its reason. An earlier request with the same method and URL that reaches the line late, or a request the server sends to its own API with the same URL, can still be the one that pauses.
+- **Values:** `req.method`, `req.url` and `req.query` are plain properties Codebook reads without a side effect, whatever the request parameter is named. Declare the handler's own locals or `req.query.<name>`. When the request object cannot be read (a destructured parameter, for example), the pause is matched by the operation's window instead.
+- **Refused before anything starts** with `NEXT_STOP_NOT_SEALED`: a stop with `afterOperation: 0` (`api-route-before-operation`) and an API route whose exported `config` declares the edge runtime (`api-route-edge-runtime`). A version 2 configuration keeps its existing refusal.
+- **When no request reaches the line:** `SERVER_STOP_NOT_REACHED` lists the possibilities and never picks one as the cause: no such request after the operation, a request sent before it, a branch that did not run, a line outside the handler, or an unrecognised caller. The inputs were already sent, so their side effects are unknown.
+- **What stays the same:** `_document` keeps `NEXT_SERVER_ONLY_STOP`, and middleware and `proxy` stay unsupported. Every other server stop keeps its behavior.
+
+**Fixed for route handlers and API routes.**
+- A browser stop of the same operation that pauses while Codebook is still sealing the handler's pause now waits and is published after you continue the handler's pause. Before, the run could fail with "Unexpected or additional server stop".
+- The saved pause keeps every local of the handler's own scope, the request and the response included, before it expands any of them. Before, a large request object could use up the value budget, and the replay's native debugger then lacked later locals such as `res`.
+- A stop after an `await` in a helper of the same route file pauses like a stop in the handler. A request redirected to the same path with another query is matched as its own request.
+
+**Saved studies and updating.** A study with an API-route pause is saved as format 14 (`.study.v14.json`); Codebook 0.2.87 and older list it as saved by a newer Codebook. After installing, run **Codebook: Set Up AI Chat** so Cursor's managed skill updates to **1.0.78**.
+
+**Release details:** checked in both editors on development targets (no nine-project credit):
+
+| Check | Host | Target | Pause and observed outcome |
+| --- | --- | --- | --- |
+| C88-1 | VS Code, Copilot Chat (GPT-6.1 Terra) | P02 `auto-refetching-nextjs-pages-router`, `src/pages/api/data.ts` | `GET /api/data?clear=1` after **Clear All**, before the list is emptied; the list then reads empty, and the replay shows `req`, `res` and the locals |
+| C88-2 | Cursor, Agent (Grok 4.6 High) | P02 `pagination-nextjs-pages-router`, `src/pages/api/projects.ts` | `GET /api/projects?page=1` after **Next Page** (the refetch of the cached page); Current Page 2 shows Project 11–20 |
+
 ## [0.2.87.0] - 2026-11-06 (development candidate)
 
 Cycle 0087 ([Issue #226](https://github.com/laststance/codebook/issues/226)), a feature cycle. **A server stop in a Next App Router route handler now pauses in the request the page sends after an operation.** A learner can ask what the server does when a click calls the app's own API (a `route.ts` under `app/`), and the native debugger stops in the handler with the request's values and the handler's locals. Before, such a stop failed after the server had started, so the chat could explain only the browser half from execution.
