@@ -50,6 +50,23 @@ test('learning material may cite an Extension stop and the result up to sequence
   assert.equal(resultParsed.success, true)
 })
 
+// protects=the shared MCP and Study input schema accepts a node-server sign-in citation and still a request, response and request failure; fails_when=the shared schema takes the node-server options by position and a sign-in shifts them (a request then parses as a sign-in or is refused); no_claim=the per-profile check that the cited entry exists
+test('learning material may cite a node-server sign-in beside the request, response and request failure', () => {
+  // Arrange
+  const citations = ['sign-in', 'request', 'response', 'request-failed'].map(
+    (type) => materialCiting({ type, sequence: 3 }),
+  )
+
+  // Act
+  const parsed = citations.map(
+    (material) =>
+      nodeHistoryLearningMaterialContentSchema.safeParse(material).success,
+  )
+
+  // Assert
+  assert.deepEqual(parsed, [true, true, true, true])
+})
+
 // protects=a citation past the largest history of any profile (13,101) is still refused by the shared schema; fails_when=the shared bound is lifted without limit; no_claim=the wording of the refusal
 test('learning material citing sequence 13,101 is refused', () => {
   // Arrange
