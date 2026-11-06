@@ -16,6 +16,7 @@ import {
   EXTENSION_BUILD_GIT_TIMEOUT_MS,
   LIBRARY_BUILD_TIMEOUT_MS,
   LIBRARY_CLEANUP_BOUND_MS,
+  LIBRARY_OBSERVATION_LIMIT_BYTES,
 } from './constants'
 import type { NodeScriptConfiguration } from './nodeScriptConfigSchemas'
 import {
@@ -593,10 +594,13 @@ async function writeHook(
     libraryRoot: context.library.libraryRoot,
     peers: packed.peers,
     observationFile: join(privateFolder, OBSERVATION_FILE_NAME),
+    observationLimitBytes: LIBRARY_OBSERVATION_LIMIT_BYTES,
   }
   const hookFile = join(privateFolder, HOOK_FILE_NAME)
   await mkdir(privateFolder, { recursive: true })
   await writeFile(hookFile, buildLibraryHookSource(configuration))
+  // The hook never truncates; every observed process appends to this empty file.
+  await writeFile(configuration.observationFile, '')
   return ['--import', pathToFileURL(hookFile).href]
 }
 

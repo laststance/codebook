@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -235,6 +235,89 @@ test('resolves a # import inside the packed copy through the packed imports map,
   await library.dispose()
 })
 
+// protects=a # alias in the packed imports map that targets another package resolves like that package imported directly (a dependency from the library's install, a peer from the Example, a conditions object under import and require) while a relative target stays inside the packed copy; fails_when=Node resolves the alias from the private folder, where only the library exists, and the run fails with ERR_MODULE_NOT_FOUND; no_claim=pattern keys and array targets (not exercised here)
+test('resolves a # alias to another package like that package imported directly from the packed copy', async () => {
+  // Arrange
+  const { fixture, library, run } = await prepared((prepareFixture) => {
+    const manifestPath = join(prepareFixture.libraryRoot, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<
+      string,
+      unknown
+    >
+    manifest.imports = {
+      '#dep': 'dep',
+      '#peer': 'peer',
+      '#internal': './dist/internal.mjs',
+      '#cond': { require: 'dep', default: 'dep' },
+    }
+    manifest.exports = {
+      ...(manifest.exports as Record<string, unknown>),
+      './aliases': {
+        import: './dist/aliases.mjs',
+        require: './dist/aliases.cjs',
+      },
+    }
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    writeAt(
+      join(prepareFixture.libraryRoot, 'dist', 'internal.mjs'),
+      "export const value = 'packed-internal'\n",
+    )
+    writeAt(
+      join(prepareFixture.libraryRoot, 'dist', 'aliases.mjs'),
+      [
+        "import dep from '#dep'",
+        "import peer from '#peer'",
+        "import cond from '#cond'",
+        "import { value } from '#internal'",
+        'export { dep, peer, cond, value }',
+        '',
+      ].join('\n'),
+    )
+    writeAt(
+      join(prepareFixture.libraryRoot, 'dist', 'aliases.cjs'),
+      [
+        "const dep = require('#dep')",
+        "const peer = require('#peer')",
+        "const cond = require('#cond')",
+        'module.exports = { dep, peer, cond }',
+        '',
+      ].join('\n'),
+    )
+  })
+  writeAt(
+    join(fixture.examplePackageRoot, 'run-aliases.mjs'),
+    [
+      "import { createRequire } from 'node:module'",
+      "import * as aliases from 'lib/aliases'",
+      "import examplePeer from 'peer'",
+      "const required = createRequire(import.meta.url)('lib/aliases')",
+      'console.log(JSON.stringify({',
+      '  dep: aliases.dep.name,',
+      '  samePeer: aliases.peer === examplePeer,',
+      '  cond: aliases.cond.name,',
+      '  value: aliases.value,',
+      '  requiredDep: required.dep.name,',
+      '  requiredPeer: required.peer === examplePeer,',
+      '  requiredCond: required.cond.name,',
+      '}))',
+      '',
+    ].join('\n'),
+  )
+  // Act
+  const result: unknown = JSON.parse(run('run-aliases.mjs'))
+  // Assert
+  assert.deepEqual(result, {
+    dep: 'library-dependency',
+    samePeer: true,
+    cond: 'library-dependency',
+    value: 'packed-internal',
+    requiredDep: 'library-dependency',
+    requiredPeer: true,
+    requiredCond: 'library-dependency',
+  })
+  await library.dispose()
+})
+
 // protects=an Example outside node_modules whose package has no name (the layout where the library is the repository root) never counts as another copy of the library; fails_when=the name lookup climbs from the Example to the library's root manifest and reports the Example's own files as another copy; no_claim=copies installed under node_modules
 test('does not report a nameless Example under a library root as another copy', async () => {
   // Arrange
@@ -299,5 +382,156 @@ test('keeps the main thread observation whole when the script starts a worker th
     lines.filter((event) => event === 'start' || event === 'closing'),
     ['start', 'closing'],
   )
+  await library.dispose()
+})
+
+/** The child scripts of the fork tests: one that loads nothing, one that loads the packed copy, one that kills itself. */
+function writeForkScripts(root: string): void {
+  writeAt(join(root, 'child-idle.mjs'), '1 + 1\n')
+  writeAt(join(root, 'child-packed.mjs'), "await import('lib')\n")
+  writeAt(
+    join(root, 'child-killed.mjs'),
+    "process.kill(process.pid, 'SIGKILL')\n",
+  )
+}
+
+/** A parent script that runs `loadLine`, then forks `child` (which inherits --import) and waits for it. */
+function forkParent(loadLine: string, child: string): string {
+  return [
+    "import { fork } from 'node:child_process'",
+    loadLine,
+    `await new Promise((resolve) => fork(new URL('./${child}', import.meta.url)).on('exit', resolve))`,
+    '',
+  ].join('\n')
+}
+
+// protects=a forked child that inherits --import neither truncates the parent's records nor closes the observation alone; fails_when=the child's hook resets the file so the parent's load vanishes; no_claim=resolution inside the child
+test('keeps the parent load when a forked child that loads nothing exits', async () => {
+  // Arrange
+  const { fixture, library, run } = await prepared()
+  writeForkScripts(fixture.examplePackageRoot)
+  writeAt(
+    join(fixture.examplePackageRoot, 'run-fork-idle.mjs'),
+    forkParent("await import('lib')", 'child-idle.mjs'),
+  )
+  // Act
+  run('run-fork-idle.mjs')
+  const observed = await library.finishObservation()
+  // Assert
+  assert.equal(observed.observation, 'complete')
+  assert.equal(observed.loaded, true)
+  assert.equal(observed.loadCount, 1)
+  await library.dispose()
+})
+
+// protects=another copy loaded by the parent survives a forked child that loads the packed copy; fails_when=the child's truncation drops the parent's other-copy line; no_claim=none beyond protects
+test('keeps the other copy the parent loaded when a forked child loads the packed copy', async () => {
+  // Arrange
+  const { fixture, library, run } = await prepared()
+  writeForkScripts(fixture.examplePackageRoot)
+  writeAt(
+    join(fixture.examplePackageRoot, 'run-fork-packed.mjs'),
+    forkParent(
+      "await import(new URL('./node_modules/lib/dist/index.mjs', import.meta.url))",
+      'child-packed.mjs',
+    ),
+  )
+  // Act
+  run('run-fork-packed.mjs')
+  const observed = await library.finishObservation()
+  // Assert
+  assert.equal(observed.observation, 'complete')
+  assert.equal(observed.otherCopyLoaded, true)
+  assert.equal(observed.loaded, true)
+  await library.dispose()
+})
+
+// protects=a forked child killed by SIGKILL leaves the observation incomplete; fails_when=the parent's closing line alone makes the run complete; no_claim=what the child loaded
+test('reads the observation as incomplete when a forked child is killed', async () => {
+  // Arrange
+  const { fixture, library, run } = await prepared()
+  writeForkScripts(fixture.examplePackageRoot)
+  writeAt(
+    join(fixture.examplePackageRoot, 'run-fork-killed.mjs'),
+    forkParent("await import('lib')", 'child-killed.mjs'),
+  )
+  // Act
+  run('run-fork-killed.mjs')
+  const observed = await library.finishObservation()
+  // Assert
+  assert.equal(observed.observation, 'incomplete')
+  assert.equal(observed.loaded, true)
+  await library.dispose()
+})
+
+// protects=a write error of the hook never reaches the script, and the observation then reads incomplete; fails_when=the script's import throws, the exit code is not 0, or the observation reads complete; no_claim=Windows permissions
+test('keeps the script running when the observation file cannot be written and reads it as incomplete', async () => {
+  // Arrange
+  const { fixture, library, run } = await prepared()
+  chmodSync(join(fixture.privateFolder, 'library-observation.jsonl'), 0o444)
+  // Act
+  const printed = run('run-import.mjs')
+  const observed = await library.finishObservation()
+  // Assert
+  assert.equal(JSON.parse(printed).origin, 'packed')
+  assert.equal(observed.observation, 'incomplete')
+  await library.dispose()
+})
+
+// protects=a process stops writing once it passed the configured byte limit, closing line included; fails_when=the file keeps growing or the run reads complete; no_claim=the limit value
+test('stops writing past the observation byte limit and reads the observation as incomplete', async () => {
+  // Arrange
+  const { fixture, library, run } = await prepared()
+  const hookFile = join(fixture.privateFolder, 'library-hook.mjs')
+  writeFileSync(
+    hookFile,
+    readFileSync(hookFile, 'utf8').replace(
+      /"observationLimitBytes":\d+/,
+      '"observationLimitBytes":60',
+    ),
+  )
+  // Act
+  run('run-import.mjs')
+  const observed = await library.finishObservation()
+  const size = readFileSync(
+    join(fixture.privateFolder, 'library-observation.jsonl'),
+  ).length
+  // Assert
+  assert.equal(observed.observation, 'incomplete')
+  assert.equal(size <= 60, true)
+  await library.dispose()
+})
+
+// protects=a dynamic import of a packed JSON file imported without its attribute and caught is not counted as a load; fails_when=the load is recorded before it succeeds; no_claim=the error text
+test('does not count a caught failing import of a packed file as a load', async () => {
+  // Arrange
+  const { fixture, library } = await prepared()
+  const packedBroken = join(
+    fixture.privateFolder,
+    'node_modules',
+    'lib',
+    'dist',
+    'broken.json',
+  )
+  writeAt(packedBroken, '{}\n')
+  writeAt(
+    join(fixture.examplePackageRoot, 'run-broken.mjs'),
+    [
+      "import { pathToFileURL } from 'node:url'",
+      "try { await import(pathToFileURL(process.argv[2]).href) } catch { console.log('caught') }",
+      '',
+    ].join('\n'),
+  )
+  // Act
+  const printed = execFileSync(
+    process.execPath,
+    [...library.nodeArguments, 'run-broken.mjs', packedBroken],
+    { cwd: fixture.examplePackageRoot, encoding: 'utf8' },
+  ).trim()
+  const observed = await library.finishObservation()
+  // Assert
+  assert.equal(printed, 'caught')
+  assert.equal(observed.loadCount, 0)
+  assert.equal(observed.observation, 'complete')
   await library.dispose()
 })
