@@ -4,8 +4,16 @@ import { fileURLToPath } from 'node:url'
 
 import type { Protocol } from 'devtools-protocol'
 
-import { bundleSchema, mapSchema, type BundleSource } from '../repositoryBundle'
+import {
+  bundleSchemaOf,
+  mapSchema,
+  type BundleSource,
+} from '../repositoryBundle'
 import { sha256 } from '../runtimeSupport/utils/sha256'
+import {
+  DEFAULT_SOURCE_MAP_LIMITS,
+  type SourceMapLimits,
+} from '../sourceMapLimits'
 
 import { isCommentAt } from './isCommentAt'
 import { isSourcePosition } from './isSourcePosition'
@@ -31,9 +39,19 @@ export function isChangedOriginalError(error: unknown): boolean {
   return error instanceof Error && error.message === CHANGED_ORIGINAL_MESSAGE
 }
 
-/** Seals one parsed map for {@link ConfiguredBrowserRun} before input, rejecting ambiguous originals without changing legacy verification. @example createBundleVerifier(bundle).hashes.sourceMap.length // 64 */
-export function createBundleVerifier(input: BundleSource) {
-  const bundle = bundleSchema.parse(input),
+/**
+ * Seals one parsed map for {@link ConfiguredBrowserRun} before input, rejecting ambiguous originals without changing legacy verification.
+ * @param input - The sealed bundle.
+ * @param limits - The size limits of the adapter that sealed it (byte refinements and every scan); today's shared limits unless the adapter passes its own profile. The returned `limits` field repeats them for callers that must verify another module of the same run.
+ * @returns The verifier: hashes, scans, mappings and the exact-position check.
+ * @example createBundleVerifier(bundle).hashes.sourceMap.length // 64
+ * @example createBundleVerifier(metroBundle, EXPO_WEB_SOURCE_MAP_LIMITS).limits.mapBytes // 67108864
+ */
+export function createBundleVerifier(
+  input: BundleSource,
+  limits: SourceMapLimits = DEFAULT_SOURCE_MAP_LIMITS,
+) {
+  const bundle = bundleSchemaOf(limits).parse(input),
     payload = mapSchema.parse(JSON.parse(bundle.sourceMap))
   const originalPath = canonicalSource(bundle.mapSource)
   const matches = payload.sources.flatMap((source, index) =>
@@ -88,6 +106,7 @@ export function createBundleVerifier(input: BundleSource) {
   })
   return {
     hashes,
+    limits,
     /** Reports frozen-map positions in a line range, leaving out mappings onto a comment the generated module kept: preparation asks whether a declared line is mapped at all, the binding rule asks which later line is the first that could run, and a binding failure lists the selected citation's lines as hints; callers must still verify a real pause. @example verifier.mappedPositions(1, 3).positions // [{ line: 1, column: 1 }] */
     mappedPositions(startLine: number, endLine: number) {
       return sourceMapMappedPositions(
@@ -96,6 +115,7 @@ export function createBundleVerifier(input: BundleSource) {
         startLine,
         endLine,
         isCodeAt,
+        limits,
       )
     },
     /**
@@ -117,6 +137,7 @@ export function createBundleVerifier(input: BundleSource) {
           )
             columns.add(original.column + 1)
         },
+        limits,
       )
       return [...columns].sort((left, right) => left - right)
     },
@@ -128,7 +149,12 @@ export function createBundleVerifier(input: BundleSource) {
      * verifier.generatedRangeOfLine(2) // => { range: { start: { lineNumber: 1, columnNumber: 0 }, end: { lineNumber: 2, columnNumber: 0 } }, complete: true }
      */
     generatedRangeOfLine(line: number) {
-      return sourceMapGeneratedRange(payload.mappings, matches[0]!, line)
+      return sourceMapGeneratedRange(
+        payload.mappings,
+        matches[0]!,
+        line,
+        limits,
+      )
     },
     /**
      * Maps a generated location of this module back to a line of the sealed original, so a pause can be placed in source terms before any debugger frame exists.

@@ -6,14 +6,17 @@ import {
   REACT_SCRIPTS_ENV_EXPANSION_MAX_STEPS,
   REACT_SCRIPTS_ENV_VALUE_MAX_CHARS,
 } from '../constants'
-import { reactScriptsEnvFileRefusal } from '../reactScriptsRefusals'
 
 import { expandDotenvFile } from './expandDotenvFile'
 import {
   buildReactScriptsEnvironment,
   declaredReactScriptsPort,
 } from './reactScriptsChildEnvironment'
-import { readReactScriptsEnvFile } from './readReactScriptsEnvFile'
+import {
+  REACT_SCRIPTS_ENV_FILE_POLICY,
+  readReactScriptsEnvFile,
+  type EnvFileReadPolicy,
+} from './readReactScriptsEnvFile'
 import { readJsonInside } from './resolveNextPackage'
 
 /** What the app's own files declare that decides how its development server is reached and what its bundle holds. */
@@ -71,6 +74,39 @@ async function readHomepage(appRoot: string): Promise<string | undefined> {
 }
 
 /**
+ * Loads the app's development `.env` files into an environment, one after the other as the dev servers do, each seeing what the earlier ones set.
+ *
+ * Why it exists: react-scripts settles the values its bundle inlines with dotenv 10 and dotenv-expand 5.1.0 per file (first definition wins), so the mask list needs the settled values. Called by {@link readReactScriptsAppSettings}; Expo settles differently, see {@link loadExpoEnvFiles}.
+ * @param appRoot - The app's folder.
+ * @param environment - The environment so far; changed in place.
+ * @param policy - How an unreadable file is treated and how a refusal is worded.
+ * @throws The policy's refusal for a file it cannot read, or whose values expand past Codebook's bounds (the values the server inlines are then unknown, so they could not be masked).
+ * @example await loadEnvFiles('/app', new Map(), REACT_SCRIPTS_ENV_FILE_POLICY)
+ */
+async function loadEnvFiles(
+  appRoot: string,
+  environment: Map<string, string>,
+  policy: EnvFileReadPolicy,
+): Promise<void> {
+  const budget = {
+    remainingSteps: REACT_SCRIPTS_ENV_EXPANSION_MAX_STEPS,
+    remainingCopiedChars: REACT_SCRIPTS_ENV_EXPANSION_MAX_COPIED_CHARS,
+    exceeded: false,
+  }
+  for (const name of ENV_FILES) {
+    const text = await readReactScriptsEnvFile(appRoot, name, policy)
+    if (text === undefined) continue
+    expandDotenvFile(parseEnvText(text), environment, budget)
+    // Past a bound the inlined values are unknown, so they could not be masked: nothing may start.
+    if (budget.exceeded)
+      throw policy.refusal(
+        name,
+        `its values expand past ${REACT_SCRIPTS_ENV_VALUE_MAX_CHARS} characters, ${REACT_SCRIPTS_ENV_EXPANSION_MAX_DEPTH} nested references or ${REACT_SCRIPTS_ENV_EXPANSION_MAX_STEPS} substitutions`,
+      )
+  }
+}
+
+/**
  * Reads what a react-scripts app declares in its own files: the environment react-scripts settles (the child's environment with the `.env` files loaded and expanded in react-scripts' order) and the `homepage`.
  *
  * Why it exists: `PUBLIC_URL` and `homepage` move the served bundle, `HTTPS=true` cannot be observed over `http://`, and every `REACT_APP_*` value is inlined into the bundle the run archives, so the mask list needs the values react-scripts settles. Called by {@link assessReactScriptsWorkspace}.
@@ -95,23 +131,7 @@ export async function readReactScriptsAppSettings(
   // react-scripts' start.js sets both before env.js loads the .env files, so a reference to them settles to development.
   environment.set('BABEL_ENV', 'development')
   environment.set('NODE_ENV', 'development')
-  const budget = {
-    remainingSteps: REACT_SCRIPTS_ENV_EXPANSION_MAX_STEPS,
-    remainingCopiedChars: REACT_SCRIPTS_ENV_EXPANSION_MAX_COPIED_CHARS,
-    exceeded: false,
-  }
-  // Files load one after the other, as react-scripts' env.js does; each sees what the earlier ones set.
-  for (const name of ENV_FILES) {
-    const text = await readReactScriptsEnvFile(appRoot, name)
-    if (text === undefined) continue
-    expandDotenvFile(parseEnvText(text), environment, budget)
-    // Past a bound the values react-scripts inlines are unknown, so they could not be masked: nothing may start.
-    if (budget.exceeded)
-      throw reactScriptsEnvFileRefusal(
-        name,
-        `its values expand past ${REACT_SCRIPTS_ENV_VALUE_MAX_CHARS} characters, ${REACT_SCRIPTS_ENV_EXPANSION_MAX_DEPTH} nested references or ${REACT_SCRIPTS_ENV_EXPANSION_MAX_STEPS} substitutions`,
-      )
-  }
+  await loadEnvFiles(appRoot, environment, REACT_SCRIPTS_ENV_FILE_POLICY)
   return {
     environment: Object.fromEntries(environment),
     homepage: await readHomepage(appRoot),

@@ -53,10 +53,14 @@ export class Evidence {
   /** The failure types {@link Evidence.recordFailure} already kept past a refusal, so the journal's bounds are exceeded by one event of each type at most (Cycle 0046 row 706). */
   private readonly failureTypesKeptPastRefusal = new Set<JournaledFailureType>()
 
+  /** The bounds of a product adapter's evidence; mutable only through {@link Evidence.allowQueuedBytes}. */
+  private limits?: EvidenceLimits
+
   constructor(
     readonly directory: string,
-    private readonly limits?: EvidenceLimits,
+    limits?: EvidenceLimits,
   ) {
+    this.limits = limits
     // Even an immediate DELETE/focus event must append only after the directory exists.
     this.pending = mkdir(directory, { recursive: true })
       .then(() => undefined)
@@ -127,6 +131,18 @@ export class Evidence {
     }
     const serialized = JSON.stringify(event) + '\n'
     return { event, serialized, bytes: Buffer.byteLength(serialized) }
+  }
+
+  /**
+   * Raises the queued-write bound so one saved file of at least this size fits, for a run whose adapter reads larger bundles and maps than the default bound holds.
+   *
+   * Why it exists: a Metro bundle's map (17 MiB and more) is saved whole as evidence, and a single save larger than the default 16 MiB queue bound fails the run. Called once by the run when its adapter's source-map limits are above today's; never lowers the bound, and does nothing for evidence without limits.
+   * @param minimumBytes - The queued bytes the evidence must hold at least.
+   * @example evidence.allowQueuedBytes(80 * 1024 * 1024)
+   */
+  allowQueuedBytes(minimumBytes: number): void {
+    if (this.limits && this.limits.queuedBytes < minimumBytes)
+      this.limits = { ...this.limits, queuedBytes: minimumBytes }
   }
 
   /**

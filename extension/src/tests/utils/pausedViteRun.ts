@@ -35,7 +35,7 @@ export async function pausedViteRun(
     capturedValue: secret,
     moduleJavascript,
     maskedValues: [secret],
-    sourceMapNames: [secret],
+    sourceMapNames: harnessOptions.sourceMapNames ?? [secret],
   })
   const directory = join(harness.directory, '.learning')
   const library = new LearningLibrary(directory, '0'.repeat(64))

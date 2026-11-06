@@ -90,6 +90,7 @@ import type {
   DevelopmentBundleRequest,
   DevelopmentServerAdapter,
   DevelopmentServerAdapterName,
+  DevelopmentServerStart,
   LibraryStopSealInput,
 } from './developmentServerAdapter'
 import {
@@ -97,6 +98,13 @@ import {
   StudyError,
   type ErrorCode,
 } from './errors'
+import { EXPO_WEB_DEV_ADAPTER } from './expoWebDevAdapter'
+import {
+  expoWebNodeModulesRefusal,
+  expoWebOutsidePackageRefusal,
+  expoWebSetupDeadlineRefusal,
+  expoWebSetupDeadlineText,
+} from './expoWebRefusals'
 import {
   NEXT_PAGES_FAILURE_VARIANT,
   libraryBuildChangedFailure,
@@ -180,6 +188,10 @@ import { sha256 } from './runtimeSupport/utils/sha256'
 import { WaitTimeoutError } from './runtimeSupport/utils/waitTimeoutError'
 import { waitTimeoutText } from './runtimeSupport/utils/waitTimeoutText'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
+import {
+  DEFAULT_SOURCE_MAP_LIMITS,
+  type SourceMapLimits,
+} from './sourceMapLimits'
 import { afterOperationOf } from './utils/afterOperationOf'
 import { appResolvedPathsOf } from './utils/appResolvedPathsOf'
 import { assertConfiguredDescriptor } from './utils/assertConfiguredDescriptor'
@@ -259,6 +271,7 @@ import { isAnnouncedScriptOf } from './utils/isAnnouncedScriptOf'
 import { isBlankOrCommentLine } from './utils/isBlankOrCommentLine'
 import { isBrowserOnEntryRoute } from './utils/isBrowserOnEntryRoute'
 import { isDebugTargetSession } from './utils/isDebugTargetSession'
+import { isEntryAnswerFailure } from './utils/isEntryAnswerFailure'
 import type { GeneratedPosition } from './utils/isGeneratedPositionBefore'
 import { isHotUpdateScriptUrl } from './utils/isHotUpdateScriptUrl'
 import { isModuleEntryPause } from './utils/isModuleEntryPause'
@@ -356,6 +369,7 @@ import { redactPreparedConfiguration } from './utils/redactPreparedConfiguration
 import type { PreparedTextState } from './utils/redactPreparedTexts'
 import { renderedRouteOf } from './utils/renderedRouteOf'
 import { resolveArmedPlace } from './utils/resolveArmedPlace'
+import { resolveExpoWebPackage } from './utils/resolveExpoWebPackage'
 import { resolveNextClientManifest } from './utils/resolveNextClientManifest'
 import {
   assertNextPackageUnchanged,
@@ -613,6 +627,14 @@ export function developmentServerAdapterOf(
   return DEVELOPMENT_SERVER_ADAPTERS[name]
 }
 
+/** The setup step of an adapter whose readiness is its first served bundle and map, set while the run waits for them; the other adapters have no such wait. */
+const FIRST_BUNDLE_SETUP_STEPS: Partial<
+  Record<DevelopmentServerAdapterName, ViteSetupStep>
+> = {
+  'react-scripts-dev': VITE_SETUP_STEPS.waitingForFirstCompile,
+  'expo-web-dev': VITE_SETUP_STEPS.bundlingExpo,
+}
+
 const DEVELOPMENT_SERVER_ADAPTERS: Record<
   DevelopmentServerAdapterName,
   DevelopmentServerAdapter
@@ -620,6 +642,7 @@ const DEVELOPMENT_SERVER_ADAPTERS: Record<
   'next-dev-webpack': NEXT_DEV_WEBPACK_ADAPTER,
   'vite-dev': VITE_DEV_ADAPTER,
   'react-scripts-dev': REACT_SCRIPTS_DEV_ADAPTER,
+  'expo-web-dev': EXPO_WEB_DEV_ADAPTER,
 }
 
 interface ConfiguredBrowserOptions {
@@ -1100,6 +1123,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private vitePackage?: ResolvedVitePackage
   /** The react-scripts app this run uses, resolved once at the start of preparation (a `react-scripts-dev` run only). */
   private reactScriptsPackage?: ResolvedPackage
+  /** The Expo app this run uses, resolved once at the start of preparation (an `expo-web-dev` run only). */
+  private expoWebPackage?: ResolvedPackage
   /** The frozen library builds of the run's library stops, by `path:line:column`, taken before any process starts. */
   private readonly libraryFreezes = new Map<string, LibraryFreeze>()
   /** The discovery cache of the run's App Router library seals. */
@@ -1198,6 +1223,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private readonly snapshots: ConfiguredRuntimeSnapshot[] = []
   /** The bundle each committed snapshot ran in, by snapshot id: the sealed module's, or another layer's instance whose generated code and map differ ({@link source}, F565). */
   private readonly snapshotBundles = new Map<string, BundleSource>()
+  /** The size limits the run's adapter sealed under (one adapter serves a run), set when the first stop is placed; today's shared limits until then and for every adapter that sets none. */
+  private sourceLimits: SourceMapLimits = DEFAULT_SOURCE_MAP_LIMITS
   private pendingDapStop?: {
     participant: Participant
     event: DebugProtocol.Event
@@ -1266,6 +1293,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private portSource?: string
   /** The Vite version the launcher reported, for a `vite-dev` run. */
   private viteVersion?: string
+  /** The Expo SDK version the CLI reported, for an `expo-web-dev` run. */
+  private expoVersion?: string
   /** The Next setup step reached; a Pages run's setup deadline names it ({@link setupDeadlineText}). The Vite step stays in {@link setupStep}. */
   private nextSetupStep: NextSetupStep = NEXT_SETUP_STEPS.validatingProject
   /** The Pages route of a Next run on the Pages path, with the run's one discovery cache; set once the entry path resolved as a Pages route. The setup-deadline text, the seal and the Pages-only checks read it; every other run leaves it unset. */
@@ -1519,6 +1548,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (adapter === 'next-dev-webpack') return this.nextPackage
     if (adapter === 'vite-dev') return this.vitePackage
     if (adapter === 'react-scripts-dev') return this.reactScriptsPackage
+    if (adapter === 'expo-web-dev') return this.expoWebPackage
     return undefined
   }
 
@@ -1529,30 +1559,116 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @throws `INVALID_CONFIGURATION` from {@link resolveReactScriptsPackage}; `REACT_SCRIPTS_UNSUPPORTED` (`not-a-react-scripts-app`); `REACT_SCRIPTS_SEAL_FAILED` (reason `outside-package`) for stops outside the package, and (reason `node-modules`) for stops in the app's node_modules.
    * @example this.reactScriptsPackage = await this.resolveReactScriptsPackageOfRun()
    */
-  private async resolveReactScriptsPackageOfRun(): Promise<ResolvedPackage> {
+  private resolveReactScriptsPackageOfRun(): Promise<ResolvedPackage> {
+    return this.resolveAppPackageOfRun(resolveReactScriptsPackage, {
+      outside: reactScriptsOutsidePackageRefusal,
+      nodeModules: reactScriptsNodeModulesRefusal,
+    })
+  }
+
+  /**
+   * Resolves a react-scripts or Expo app once, then refuses stop files outside it and stops in the app's node_modules, all before any process starts.
+   * Shared by {@link resolveReactScriptsPackageOfRun} and {@link resolveExpoWebPackageOfRun}, which differ only in the resolver and the two refusals; the refusal order is the real path, the adapter's app rule, then stops outside the package, then published packages.
+   * @param resolve - The adapter's package resolver.
+   * @param refusals - The adapter's refusal for stops outside the package (`outside`) and for stops in node_modules (`nodeModules`).
+   * @returns The resolved package; the root package for an absent or `"."` packageRoot.
+   * @throws Whatever `resolve` throws, or the adapter's refusal for stops outside the package or in node_modules.
+   * @example await this.resolveAppPackageOfRun(resolveExpoWebPackage, { outside: expoWebOutsidePackageRefusal, nodeModules: expoWebNodeModulesRefusal })
+   */
+  private async resolveAppPackageOfRun(
+    resolve: (
+      workspace: string,
+      declared: string | undefined,
+    ) => Promise<ResolvedPackage>,
+    refusals: {
+      outside: (
+        packageRootRelative: string,
+        files: readonly string[],
+      ) => StudyError
+      nodeModules: (files: readonly string[]) => StudyError
+    },
+  ): Promise<ResolvedPackage> {
     const configuration = this.definition.configuration
     const declared =
       'packageRoot' in configuration ? configuration.packageRoot : undefined
-    const reactScriptsPackage = await resolveReactScriptsPackage(
-      this.options.workspace,
-      declared,
-    )
-    // A library stop is out of scope for react-scripts (decision D4): every stop outside the app is refused.
-    const outside = await this.stopFilesOutside(reactScriptsPackage)
+    const resolved = await resolve(this.options.workspace, declared)
+    // A library stop is out of scope for these adapters (decision D4): every stop outside the app is refused.
+    const outside = await this.stopFilesOutside(resolved)
     if (outside.length)
-      throw reactScriptsOutsidePackageRefusal(
-        reactScriptsPackage.packageRootRelative,
-        outside,
-      )
+      throw refusals.outside(resolved.packageRootRelative, outside)
     // A published package in the app's node_modules is not the checked-out library: refused here, before the server starts.
     const published = publishedStopFiles(
       configuredStops(this.definition.configuration).map(
         (stop) => stop.source.path,
       ),
-      (path) => reactScriptsPackage.toPackageRelative(path),
+      (path) => resolved.toPackageRelative(path),
     )
-    if (published.length) throw reactScriptsNodeModulesRefusal(published)
-    return reactScriptsPackage
+    if (published.length) throw refusals.nodeModules(published)
+    return resolved
+  }
+
+  /**
+   * Resolves the app of a Vite, react-scripts or Expo run once, before any process starts; no other adapter inherits it.
+   * Called at the start of preparation for every adapter except Next, whose package has its own resolver.
+   * @param adapter - The run's adapter.
+   * @example await this.resolveBrowserOnlyPackageOfRun('expo-web-dev') // this.expoWebPackage is set
+   */
+  private async resolveBrowserOnlyPackageOfRun(
+    adapter: DevelopmentServerAdapterName,
+  ): Promise<void> {
+    // Exhaustive over the adapter names: a new adapter fails to compile here until it picks a resolver.
+    switch (adapter) {
+      case 'vite-dev':
+        this.vitePackage = await this.resolveVitePackageOfRun()
+        return
+      case 'react-scripts-dev':
+        this.reactScriptsPackage = await this.resolveReactScriptsPackageOfRun()
+        return
+      case 'expo-web-dev':
+        this.expoWebPackage = await this.resolveExpoWebPackageOfRun()
+        return
+      case 'next-dev-webpack':
+        // Next resolves its own package before this runs.
+        return
+      default: {
+        const unhandledAdapter: never = adapter
+        throw new Error(`Unhandled adapter: ${String(unhandledAdapter)}`)
+      }
+    }
+  }
+
+  /**
+   * Gives the resolved package of whichever adapter this run uses, under the field name the adapter's start and bundle requests read.
+   * Called when the run starts its server and when it seals a stop; a package an adapter does not use is absent.
+   * @returns At most one of `nextPackage`, `vitePackage`, `reactScriptsPackage` and `expoWebPackage`.
+   * @example this.resolvedPackageFields() // => { expoWebPackage } for an expo-web-dev run
+   */
+  private resolvedPackageFields(): Pick<
+    DevelopmentServerStart,
+    'nextPackage' | 'vitePackage' | 'reactScriptsPackage' | 'expoWebPackage'
+  > {
+    return {
+      ...(this.nextPackage ? { nextPackage: this.nextPackage } : {}),
+      ...(this.vitePackage ? { vitePackage: this.vitePackage } : {}),
+      ...(this.reactScriptsPackage
+        ? { reactScriptsPackage: this.reactScriptsPackage }
+        : {}),
+      ...(this.expoWebPackage ? { expoWebPackage: this.expoWebPackage } : {}),
+    }
+  }
+
+  /**
+   * Resolves the Expo app once, then refuses stop files outside it and stops in an Expo Router API route or the app's node_modules, all before any process starts.
+   * Called at the start of preparation for an `expo-web-dev` run; the refusal order is the real path, the Expo app rule, then stops outside the package, then published packages. The installation is judged next by the adapter's workspace check.
+   * @returns The resolved package; the root package for an absent or `"."` packageRoot.
+   * @throws `INVALID_CONFIGURATION` from {@link resolveExpoWebPackage}; `EXPO_WEB_UNSUPPORTED` (`not-an-expo-app`); `EXPO_WEB_SEAL_FAILED` (reason `outside-package`) for stops outside the package, and (reason `node-modules`) for stops in the app's node_modules.
+   * @example this.expoWebPackage = await this.resolveExpoWebPackageOfRun()
+   */
+  private resolveExpoWebPackageOfRun(): Promise<ResolvedPackage> {
+    return this.resolveAppPackageOfRun(resolveExpoWebPackage, {
+      outside: expoWebOutsidePackageRefusal,
+      nodeModules: expoWebNodeModulesRefusal,
+    })
   }
 
   /**
@@ -1940,12 +2056,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       // A route-handler stop is refused here, before the sources are prepared, when its file, its operation or its runtime rules it out; the others stay unsealed until their pause.
       await this.collectRouteHandlerStops()
       this.alive()
-    } else if (this.definition.configuration.adapter === 'vite-dev') {
-      // A Vite app below the root is resolved the same way, before any process starts; no other adapter inherits it.
-      this.vitePackage = await this.resolveVitePackageOfRun()
-      this.alive()
-    } else if (this.definition.configuration.adapter === 'react-scripts-dev') {
-      this.reactScriptsPackage = await this.resolveReactScriptsPackageOfRun()
+    } else {
+      await this.resolveBrowserOnlyPackageOfRun(
+        this.definition.configuration.adapter,
+      )
       this.alive()
     }
     // A version 3 run asks the store once, before any server starts, whether it runs with the saved session; versions 1 and 2 never touch it.
@@ -1967,6 +2081,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.nextPackage,
       this.vitePackage,
       this.reactScriptsPackage,
+      this.expoWebPackage,
     )
     this.alive()
     const needsServer = configuredStops(this.definition.configuration).some(
@@ -1983,11 +2098,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const started = await adapter.start({
       ...(hasPagesFolder ? { outputMask: maskNextServerOutput } : {}),
       workspace: this.packageRoot,
-      ...(this.nextPackage ? { nextPackage: this.nextPackage } : {}),
-      ...(this.vitePackage ? { vitePackage: this.vitePackage } : {}),
-      ...(this.reactScriptsPackage
-        ? { reactScriptsPackage: this.reactScriptsPackage }
-        : {}),
+      ...this.resolvedPackageFields(),
+      entryPath: this.definition.configuration.entryPath ?? '/',
       node: this.options.node,
       record: (type, detail) => this.evidence.record(type, detail),
       inspectServer: needsServer,
@@ -2009,6 +2121,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       },
     })
     this.viteVersion = started.viteVersion
+    this.expoVersion = started.expoVersion
     this.maskText = started.maskText
     this.maskModuleText = started.maskModuleText
     const declaredPort = { port: started.port }
@@ -2022,9 +2135,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       hasPagesFolder,
       started.port,
     )
-    // react-scripts prints its origin when the first compile ends; the bundle and its map are proven readable before any stop is sealed.
-    if (adapter.name === 'react-scripts-dev') {
-      this.setupStep = VITE_SETUP_STEPS.waitingForFirstCompile
+    // react-scripts prints its origin when the first compile ends and Metro before it bundles: the bundle and its map are proven readable before any stop is sealed.
+    const firstBundleStep = FIRST_BUNDLE_SETUP_STEPS[adapter.name]
+    if (firstBundleStep) {
+      this.setupStep = firstBundleStep
       await this.waitForServerSettledWithinBudget(adapter)
       this.alive()
     }
@@ -2435,6 +2549,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
             : undefined,
         )
     } catch (error) {
+      await this.classifyExpoEntryAnswer(adapter, error)
       throw this.afterReadinessFailure(error)
     }
     // The saved session opens only on the loopback origin of the server Codebook started, and nothing is launched before this is judged.
@@ -2450,6 +2565,28 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         throw error
       }
     return ownedOrigin
+  }
+
+  /**
+   * Hands Metro's non-success answer for the entry page to the Expo bundle check, so the run ends with its own refusal instead of the generic readiness text.
+   *
+   * Why it exists: the shared readiness check throws on a 500 entry page before the bundle check ({@link waitForServerSettledWithinBudget}) is reached; that check reads the same page and words it as `EXPO_WEB_LAUNCHER_FAILED` (`bundle-failed`) with Metro's masked message. Called by {@link proveServerReady} when the readiness check threw; every other adapter and every other failure returns at once.
+   * @param adapter - The run's development-server adapter.
+   * @param error - What the readiness check threw.
+   * @throws The bundle check's refusal when it reads the entry page's error answer; nothing otherwise, so the caller throws the original failure.
+   * @example await this.classifyExpoEntryAnswer(adapter, new Error('Application root failed: 500: …'))
+   */
+  private async classifyExpoEntryAnswer(
+    adapter: DevelopmentServerAdapter,
+    error: unknown,
+  ): Promise<void> {
+    if (
+      adapter.name !== 'expo-web-dev' ||
+      this.abort.signal.aborted ||
+      !isEntryAnswerFailure(error)
+    )
+      return
+    await this.waitForServerSettledWithinBudget(adapter)
   }
 
   /**
@@ -5812,11 +5949,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const freeze = this.libraryFreezes.get(libraryFreezeKey(stop.source))
     const acquired = await adapter.readBundle({
       workspace: this.options.workspace,
-      ...(this.nextPackage ? { nextPackage: this.nextPackage } : {}),
-      ...(this.vitePackage ? { vitePackage: this.vitePackage } : {}),
-      ...(this.reactScriptsPackage
-        ? { reactScriptsPackage: this.reactScriptsPackage }
-        : {}),
+      ...this.resolvedPackageFields(),
       ...this.viteLibraryRequest(stop, adapter, ownedOrigin, generation),
       ...(freeze && this.nextPackage
         ? { library: this.librarySealInput(freeze, this.nextPackage) }
@@ -5941,6 +6074,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       mapHash: first.verifier.hashes.sourceMap,
       // Only a Vite run names its version, so a Next manifest and its hash are what they were.
       ...(this.viteVersion ? { viteVersion: this.viteVersion } : {}),
+      ...(this.expoVersion ? { expoVersion: this.expoVersion } : {}),
     }
     // Later stops are armed only in their turn, so a line that can never bind is refused here, before any application effect.
     const unmappedStop = this.unbindableStop()
@@ -5969,6 +6103,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       sourceHash: first.stop.source.hash,
       sealedAtPause: 'route-handler',
       ...(this.viteVersion ? { viteVersion: this.viteVersion } : {}),
+      ...(this.expoVersion ? { expoVersion: this.expoVersion } : {}),
     }
   }
 
@@ -6187,10 +6322,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const deadlineRefusal = (): StudyError =>
       adapter.name === 'react-scripts-dev'
         ? reactScriptsSetupDeadlineRefusal(this.setupStep, 'partial')
-        : viteRefusal(
-            'VITE_SETUP_DEADLINE',
-            viteSetupDeadlineSentence(this.setupStep, this.preparationBudgetMs),
-          )
+        : adapter.name === 'expo-web-dev'
+          ? expoWebSetupDeadlineRefusal(this.setupStep, 'partial')
+          : viteRefusal(
+              'VITE_SETUP_DEADLINE',
+              viteSetupDeadlineSentence(
+                this.setupStep,
+                this.preparationBudgetMs,
+              ),
+            )
     // No floor: a spent budget is a deadline, not a one-second grace wait.
     if (remainingMs <= 0) throw deadlineRefusal()
     try {
@@ -6231,6 +6371,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       return viteSetupDeadlineText(this.setupStep, budgetMs)
     if (this.definition.configuration.adapter === 'react-scripts-dev')
       return reactScriptsSetupDeadlineText(this.setupStep, budgetMs)
+    if (this.definition.configuration.adapter === 'expo-web-dev')
+      return expoWebSetupDeadlineText(this.setupStep, budgetMs)
     // A run on the Pages path, or one in a Pages-capable workspace whose entry is not yet resolved as App, names a code; an App run's text stays as it was.
     const mayTakePagesPath =
       this.pagesRun !== undefined ||
@@ -6985,7 +7127,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     freeze: LibraryFreeze | undefined,
     isFirstSeal: boolean,
   ) {
-    const verifier = createBundleVerifier(acquired.bundle)
+    // The adapter's limits govern every later read of this run's sealed modules.
+    this.sourceLimits = acquired.limits ?? DEFAULT_SOURCE_MAP_LIMITS
+    // A run that reads larger maps also saves them whole as evidence: its queued-write bound must hold the largest map beside the journal's own bound.
+    if (this.sourceLimits !== DEFAULT_SOURCE_MAP_LIMITS)
+      this.evidence.allowQueuedBytes(
+        this.sourceLimits.mapBytes + MAX_QUEUED_EVIDENCE_BYTES,
+      )
+    const verifier = createBundleVerifier(acquired.bundle, this.sourceLimits)
     const library =
       freeze && acquired.libraryBuiltPath
         ? this.libraryStateOf(stop, freeze, acquired.libraryBuiltPath)
@@ -9745,7 +9894,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       if (!bundle) throw new Error('The script text names another address')
       instance = {
         bundle,
-        verifier: createBundleVerifier(bundle),
+        verifier: createBundleVerifier(bundle, this.sourceLimits),
         script: event,
       }
     } catch (error) {
@@ -15005,6 +15154,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         : this.snapshotBundles.get(snapshotId)
     if (!bundle) return undefined
     const archivedModule = this.archivedModuleText(bundle)
+    // Only an adapter with its own limits names them; every other run returns what it always did.
+    const limits =
+      this.sourceLimits === DEFAULT_SOURCE_MAP_LIMITS
+        ? {}
+        : { limits: this.sourceLimits }
     return archivedModule.redacted
       ? {
           ...bundle,
@@ -15015,8 +15169,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
             javascript: sha256(bundle.javascript),
             sourceMap: sha256(bundle.sourceMap),
           },
+          ...limits,
         }
-      : bundle
+      : { ...bundle, ...limits }
   }
   /**
    * Masks the env-file and script values in the module text a Vite run keeps, and says whether anything was masked.
@@ -15184,6 +15339,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       applicationOrigin: this.origin,
       applicationPortSource: this.portSource,
       viteVersion: this.viteVersion,
+      expoVersion: this.expoVersion,
       nextRoute: this.nextRoute,
       ...this.pagesServerView(),
       ...(this.readiness.view()

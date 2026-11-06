@@ -1,6 +1,7 @@
 import type { ConfiguredStudy } from '../configuredStudySchemas'
 import {
   API_ROUTE_STUDY_VERSION,
+  EXPO_WEB_STUDY_VERSION,
   MODULE_EVALUATION_STUDY_VERSION,
   OPERATIONS_CONFIG_VERSION,
   OPERATIONS_STUDY_VERSION,
@@ -66,6 +67,7 @@ function derivedEvidenceFormat(
  * @param configuration - The sealed configuration of the run.
  * @returns
  * - {@link REACT_SCRIPTS_STUDY_VERSION} (11) for every version 3 `react-scripts-dev` configuration, whatever its `packageRoot` (absent, `"."` or nested)
+ * - {@link EXPO_WEB_STUDY_VERSION} (15) for every version 3 `expo-web-dev` configuration, whatever its `packageRoot`
  * - {@link VITE_PACKAGE_ROOT_STUDY_VERSION} (10) for a version 3 `vite-dev` configuration whose `packageRoot` is a folder other than `"."`
  * - {@link PACKAGE_ROOT_STUDY_VERSION} (9) for any other version 3 configuration whose `packageRoot` is a folder other than `"."`
  * - {@link SERVER_RENDER_STUDY_VERSION} (8) for a version 3 configuration with any server stop, a stop with `afterOperation: 0` or no `operations`
@@ -85,6 +87,8 @@ export function studyFormatOfConfiguration(
   // Every react-scripts-dev run takes format 11, root or nested: an older Codebook refuses the adapter value, so it must list the study as saved by a newer Codebook.
   if (configuration.adapter === 'react-scripts-dev')
     return REACT_SCRIPTS_STUDY_VERSION
+  // Every expo-web-dev run takes format 15, root or nested, for the same reason.
+  if (configuration.adapter === 'expo-web-dev') return EXPO_WEB_STUDY_VERSION
   // A package folder other than the repository root makes a study no earlier Codebook can run or read.
   const packageRoot = packageRootOf(configuration)
   if (packageRoot !== undefined && packageRoot !== '.')
@@ -218,7 +222,9 @@ export function evidenceFormatOfStudy(study: StudyFormatSubject): number {
       study.version !== REACT_SCRIPTS_STUDY_VERSION &&
       study.version !== MODULE_EVALUATION_STUDY_VERSION &&
       study.version !== ROUTE_HANDLER_STUDY_VERSION &&
-      study.version !== API_ROUTE_STUDY_VERSION) ||
+      study.version !== API_ROUTE_STUDY_VERSION &&
+      // Format 15 (`expo-web-dev`) follows the format 7 rules derived from its configuration, like format 11.
+      study.version !== EXPO_WEB_STUDY_VERSION) ||
     study.configuration.version !== OPERATIONS_CONFIG_VERSION
   )
     return study.version
@@ -237,7 +243,7 @@ export function usesServerRenderEvidence(study: StudyFormatSubject): boolean {
 }
 
 /**
- * Says whether a saved format number is written only from a version 3 configuration (formats 7 to 14), which no study of version 1 or 2 may carry.
+ * Says whether a saved format number is written only from a version 3 configuration (formats 7 to 15), which no study of version 1 or 2 may carry.
  * Called by {@link validateConfiguredStudyEvidence} for the version 1 and 2 configurations.
  * @param version - The study's saved format.
  * @returns `true` for the formats written only from a version 3 configuration.
@@ -245,7 +251,7 @@ export function usesServerRenderEvidence(study: StudyFormatSubject): boolean {
  */
 export function isOperationsStudyFormat(version: number): boolean {
   return (
-    version >= OPERATIONS_STUDY_VERSION && version <= API_ROUTE_STUDY_VERSION
+    version >= OPERATIONS_STUDY_VERSION && version <= EXPO_WEB_STUDY_VERSION
   )
 }
 
@@ -266,6 +272,8 @@ export function isReadableStudyFormatOfConfiguration(
   if (configuration.version !== OPERATIONS_CONFIG_VERSION) return false
   // A react-scripts-dev configuration is readable as format 11 only, also without a packageRoot, so the format 7 fallback below never accepts it (DX-10).
   if (configuration.adapter === 'react-scripts-dev') return false
+  // An expo-web-dev configuration is readable as format 15 only.
+  if (configuration.adapter === 'expo-web-dev') return false
   // Formats 12 to 14 hold a Next study with a server stop, at the repository root or in a package folder; they are what {@link studyFormatOfEvidence} gives once an observation needs them.
   if (
     version === MODULE_EVALUATION_STUDY_VERSION ||

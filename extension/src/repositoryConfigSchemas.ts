@@ -377,7 +377,7 @@ const operationsConfigurationShape = z.strictObject({
     .union([z.literal('.'), repositoryPathSchema])
     .optional()
     .describe(
-      'next-dev-webpack, vite-dev and react-scripts-dev: the app\'s folder, relative to the opened repository root (for example "examples/react/nextjs" or "examples/react/basic"). Omit it, or declare ".", for an app at the repository root. Stop files and book citations stay repository-relative and must lie inside this folder.',
+      'next-dev-webpack, vite-dev, react-scripts-dev and expo-web-dev: the app\'s folder, relative to the opened repository root (for example "examples/react/nextjs" or "examples/react/basic"). Omit it, or declare ".", for an app at the repository root. Stop files and book citations stay repository-relative and must lie inside this folder.',
     ),
 })
 
@@ -524,10 +524,14 @@ function validateStopAfterOperations(
 const BROWSER_ONLY_ADAPTERS: ReadonlySet<string> = new Set([
   'vite-dev',
   'react-scripts-dev',
+  'expo-web-dev',
 ])
 
+/** The file names of an Expo Router API route (`+api` with any extension Expo Router resolves: ts, tsx, js, jsx, mjs, cjs, mts, cts): server code, which `expo-web-dev` never observes. */
+const EXPO_API_ROUTE_FILE = /\+api\.(?:[cm]?[jt]s|[jt]sx)$/
+
 /**
- * Refuses a server participant under `adapter: "vite-dev"` or `"react-scripts-dev"`, which seal and debug browser modules only.
+ * Refuses a server participant under `adapter: "vite-dev"`, `"react-scripts-dev"` or `"expo-web-dev"`, which seal and debug browser modules only, and a stop in an Expo Router API route (`+api.ts`) under `"expo-web-dev"`, which is server code.
  * Called by {@link validateInspections} for both configuration versions, so the public schema, not a later start, rejects it.
  * @param configuration - A parsed configuration of either version.
  * @param context - The refinement context that receives one issue per server participant.
@@ -558,6 +562,35 @@ function refuseBrowserOnlyServerParticipants(
         code: 'custom',
         path,
         message: `adapter "${configuration.adapter}" supports browser stops only; participant "server" is declared at configuration.${path.join('.')}.`,
+      })
+  refuseExpoApiRouteStops(configuration, context)
+}
+
+/**
+ * Refuses a stop declared in an Expo Router API route file under `adapter: "expo-web-dev"`, before any process starts.
+ * Called by {@link refuseBrowserOnlyServerParticipants}; an API route is a server participant even when the stop says `browser`.
+ * @param configuration - A parsed configuration of any version.
+ * @param context - The refinement context that receives one issue per API-route stop.
+ * @example refuseExpoApiRouteStops({ adapter: 'expo-web-dev', source: { path: 'apps/app/src/app/hello+api.ts', … }, … }, context) // adds an issue at ['source', 'path']
+ */
+function refuseExpoApiRouteStops(
+  configuration: Parameters<typeof refuseBrowserOnlyServerParticipants>[0],
+  context: z.RefinementCtx,
+): void {
+  if (configuration.adapter !== 'expo-web-dev') return
+  const declared = [
+    { path: ['source', 'path'], file: configuration.source.path },
+    ...(configuration.additionalStops ?? []).map((stop, index) => ({
+      path: ['additionalStops', index, 'source', 'path'],
+      file: stop.source.path,
+    })),
+  ]
+  for (const { path, file } of declared)
+    if (EXPO_API_ROUTE_FILE.test(file))
+      context.addIssue({
+        code: 'custom',
+        path,
+        message: `adapter "expo-web-dev" supports browser stops only; ${file} is an Expo Router API route (+api), server code, declared at configuration.${path.join('.')}.`,
       })
 }
 
@@ -668,6 +701,11 @@ export const retainedRepositoryConfigSchema = liveRepositoryConfigSchema
     (configuration) => configuration.adapter !== 'react-scripts-dev',
     'Only a study of format 11 keeps a react-scripts-dev configuration.',
   )
+  // An `expo-web-dev` run is saved as format 15 only (Cycle 0089, DX-16), with or without a packageRoot.
+  .refine(
+    (configuration) => configuration.adapter !== 'expo-web-dev',
+    'Only a study of format 15 keeps an expo-web-dev configuration.',
+  )
 /**
  * The configuration a format 9 study retains: the version 3 `next-dev-webpack` shape with a required `packageRoot` other than `"."`.
  * Read by {@link studyConfigurationSchema}; a run whose package root is `"."` saves the formats 7 or 8 it always did, without the field.
@@ -712,12 +750,24 @@ const reactScriptsRepositoryConfigSchema = operationsConfigurationShape
     validateInspections(configuration, context)
     validateOperations(configuration, context)
   })
-/** Every configuration a saved study can hold: the retained union of formats 3 to 8, the format 9 package-root variant (Next), the format 10 package-root variant (Vite) or the format 11 variant (react-scripts). */
+/**
+ * The configuration a format 15 study retains: the version 3 `expo-web-dev` shape, root (`packageRoot` absent or `"."`) or nested.
+ * Why it exists: an older Codebook refuses the adapter value, so every `expo-web-dev` run takes its own format and is listed there as saved by a newer Codebook (DX-16). Validated like the format 11 variant (inspections, operations; {@link validateInspections} also refuses a server participant under `expo-web-dev`).
+ * Read by {@link studyConfigurationSchema}; no earlier format accepts this adapter.
+ */
+const expoWebRepositoryConfigSchema = operationsConfigurationShape
+  .extend({ adapter: z.literal('expo-web-dev') })
+  .superRefine((configuration, context) => {
+    validateInspections(configuration, context)
+    validateOperations(configuration, context)
+  })
+/** Every configuration a saved study can hold: the retained union of formats 3 to 8, the format 9 package-root variant (Next), the format 10 package-root variant (Vite), the format 11 variant (react-scripts) or the format 15 variant (Expo web). */
 export const studyConfigurationSchema = z.union([
   retainedRepositoryConfigSchema,
   packageRootRepositoryConfigSchema,
   vitePackageRootRepositoryConfigSchema,
   reactScriptsRepositoryConfigSchema,
+  expoWebRepositoryConfigSchema,
 ])
 export type RepositoryConfiguration = z.infer<typeof repositoryConfigSchema>
 export type RetainedRepositoryConfiguration = z.infer<

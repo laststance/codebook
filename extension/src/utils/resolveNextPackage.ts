@@ -38,9 +38,10 @@ export type PackageRootRefusalReason =
   | 'not-a-next-app'
   | 'not-a-vite-app'
   | 'not-a-react-scripts-app'
+  | 'not-an-expo-app'
 
 /** Which adapter's app a `packageRoot` must hold; decides the words of a refusal. */
-export type PackageAppKind = 'next' | 'vite' | 'reactScripts'
+export type PackageAppKind = 'next' | 'vite' | 'reactScripts' | 'expoWeb'
 
 /** How a module id Next printed relates to the package: inside it (with both relative paths) or outside it. */
 export type NextModuleIdClassification =
@@ -169,6 +170,8 @@ export async function invalidPackageRoot(
       'has no package.json that declares vite in dependencies or devDependencies together with an index.html or a dev script Codebook accepts',
     'not-a-react-scripts-app':
       'has no package.json that declares react-scripts in dependencies or devDependencies',
+    'not-an-expo-app':
+      'has no package.json that declares expo in dependencies or devDependencies',
   }
   const suggestions = [...((await options.suggest?.()) ?? [])]
     .slice(0, 5)
@@ -177,6 +180,7 @@ export async function invalidPackageRoot(
     next: 'Next',
     vite: 'Vite',
     reactScripts: 'react-scripts',
+    expoWeb: 'Expo',
   }[appKind]
   const message = `packageRoot "${shown}" ${words[reason]}. Declare packageRoot as the repository-relative folder of the ${appName} app (one of details.suggestions), or remove it for an app at the repository root; nothing was started.`
   return new StudyError(

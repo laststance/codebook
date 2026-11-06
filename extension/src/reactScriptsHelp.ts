@@ -5,6 +5,7 @@ import {
   REACT_SCRIPTS_APP_SELECTION_RULE,
   REACT_SCRIPTS_MINIMUM_API,
   REACT_SCRIPTS_SUPPORTED_MAJOR,
+  REPOSITORY_OPERATION_ACTION,
   REPOSITORY_SETUP_TIMEOUT_MS,
 } from './constants'
 import { packageRootAnchor } from './nextHelp'
@@ -108,7 +109,7 @@ export function reactScriptsHelp() {
         'codebook_sources, then codebook_source: read the file the stop is in; copy its path, full SHA-256 and the line and column from numberedText.',
         'codebook_publish_book: publish a source-only article whose node cites that file.',
         'codebook_start: profile repository-browser, the configuration above with the copied values and a stable key.',
-        'Poll the run resource until it reads ready, paused or an error; then codebook_action repository-click, and at each pause explain the values and codebook_continue with the current continueArguments.',
+        `Poll the run resource until it reads ready, paused or an error; read its nextActions (it offers ${REPOSITORY_OPERATION_ACTION} while an operation is left) and send codebook_action ${REPOSITORY_OPERATION_ACTION} once per declared operation, each with a new stable key; at each pause explain the values, then codebook_continue with the current continueArguments.`,
       ],
       refusals: Object.fromEntries(
         REACT_SCRIPTS_REFUSAL_CODES.map((code) => [

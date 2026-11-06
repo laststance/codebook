@@ -466,6 +466,11 @@ export function serverRenderHelp() {
             'format 11 (.study.v11.json): the evidence rules of format 7 for adapter react-scripts-dev, whether packageRoot is absent, "." or a nested folder. An older Codebook lists a format 11 study as saved by a newer Codebook; update Codebook to open it (reactScriptsQuickStart)',
         },
         {
+          item: 'saved study of an Expo web run (expo-web-dev, API 1.30)',
+          change:
+            'format 15 (.study.v15.json): the evidence rules of format 7 for adapter expo-web-dev, whether packageRoot is absent, "." or a nested folder, plus expoVersion. Codebook 0.2.88 and older list a format 15 study as saved by a newer Codebook; update Codebook to open it (expoWebQuickStart)',
+        },
+        {
           item: 'saved study of an App Router module-evaluation pause (API 1.27)',
           change: `format 12 (.study.v12.json), for a study whose observation carries scope module. Codebook 0.2.85 and older list it as saved by a newer Codebook; update Codebook (${SERVER_RENDER_MODULE_MINIMUM_EXTENSION} or later) to open it (moduleScope)`,
         },

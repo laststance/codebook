@@ -9,6 +9,11 @@ import { describeNextDevPreparation } from './describeNextDevPreparation'
 import { hasNextExecutable } from './hasNextExecutable'
 import { isSemverLikeVersion } from './isSemverLikeVersion'
 import {
+  readExpoWebPackageReadiness,
+  type ExpoWebAppReadiness,
+  type ExpoWebPackageReadiness,
+} from './readExpoWebPackageReadiness'
+import {
   readNextDevPreparation,
   type NextDevPreparation,
 } from './readNextDevPreparation'
@@ -116,11 +121,24 @@ export type ReactScriptsAdapterReadiness = ReactScriptsAppReadiness & {
   packagesTruncatedReason?: NextPackageTruncationReason
 }
 
+/** The Expo web prerequisite of one workspace: the root app's facts, and in the status answer the apps below the root. */
+export type ExpoWebAdapterReadiness = ExpoWebAppReadiness & {
+  /** Status only: whether the root is itself the Expo app (its `package.json` declares `expo`). */
+  rootIsApp?: boolean
+  /** Status only: the Expo apps below the root from tracked `package.json` files, each with the readiness a start with its `packageRoot` decides. Empty below the Git root. */
+  packages?: ExpoWebPackageReadiness[]
+  /** Status only: whether `packages` is incomplete. */
+  packagesTruncated?: boolean
+  /** Status only: why `packages` is incomplete. */
+  packagesTruncatedReason?: NextPackageTruncationReason
+}
+
 /** What `codebook_status` reports per repository-browser adapter for the current workspace. */
 export type RepositoryAdapterReadiness = {
   'next-dev-webpack': NextAdapterReadiness
   'vite-dev': ViteAdapterReadiness
   'react-scripts-dev': ReactScriptsAdapterReadiness
+  'expo-web-dev': ExpoWebAdapterReadiness
 }
 
 const nextPackageSchema = z.object({ version: z.string() })
@@ -282,7 +300,7 @@ export async function readRepositoryAdapterReadiness(
   node: string | undefined,
   signal: AbortSignal,
 ): Promise<RepositoryAdapterReadiness> {
-  const [next, vite, reactScripts] = await Promise.all([
+  const [next, vite, reactScripts, expoWeb] = await Promise.all([
     readNextReadiness(workspace),
     readViteReadiness(workspace, node, signal).catch(
       (error: unknown): ViteAdapterReadiness => ({
@@ -296,11 +314,34 @@ export async function readRepositoryAdapterReadiness(
       }),
     ),
     readReactScriptsReadiness(workspace),
+    readExpoWebReadiness(workspace),
   ])
   return {
     'next-dev-webpack': next,
     'vite-dev': vite,
     'react-scripts-dev': reactScripts,
+    'expo-web-dev': expoWeb,
+  }
+}
+
+/**
+ * Reads the root workspace's `expo-web-dev` readiness from the shared judgement ({@link readExpoWebPackageReadiness}).
+ * Called by {@link readRepositoryAdapterReadiness}; a read that throws is a not-ready report, never a rejection.
+ * @param workspace - The workspace root, which is the package root.
+ * @returns The root app's facts; a root that does not declare expo reports `not-an-expo-app`.
+ * @example await readExpoWebReadiness('/repo') // => { installed: false, ready: false, missing: ['not-an-expo-app'] }
+ */
+async function readExpoWebReadiness(
+  workspace: string,
+): Promise<ExpoWebAdapterReadiness> {
+  try {
+    return (await readExpoWebPackageReadiness(workspace, undefined)).readiness
+  } catch {
+    return {
+      installed: false,
+      ready: false,
+      missing: ['The workspace root could not be checked.'],
+    }
   }
 }
 

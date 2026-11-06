@@ -63,6 +63,7 @@ import type {
   SignInRequiredReason,
 } from './runtimeSupport/savedSessionTypes'
 import type { SecretFrameWithholdReason } from './runtimeSupport/secretFrameGate'
+import type { SourceMapLimits } from './sourceMapLimits'
 import type { StateChangingRequestQuestion } from './utils/askToSendStateChangingRequest'
 import type {
   RetryVitestListingRelease,
@@ -502,6 +503,8 @@ export type RuntimeSource = {
   redacted?: boolean
   /** With `redacted`: the SHA-256 of the unmasked JavaScript and map bytes the run still holds, so a resource read can check them against the seal although the served text is masked. */
   executedHashes?: { javascript: string; sourceMap: string }
+  /** The size limits the run's adapter sealed under; the source resource bounds the JavaScript and map it returns by them. Absent means today's shared limits. */
+  limits?: SourceMapLimits
 }
 export type Participant = 'server' | 'browser'
 export type RuntimeParticipant = {
@@ -520,6 +523,8 @@ export type ConfiguredRuntimeView = {
   applicationPortSource?: string
   /** The Vite version a `vite-dev` run started, read from the resolved `vite/package.json`. */
   viteVersion?: string
+  /** The Expo SDK version an `expo-web-dev` run started, read from the resolved `expo/package.json`. */
+  expoVersion?: string
   /** The route a Next run in a workspace with a Pages folder resolved its entry path to, once known: the router that serves it, the manifest key, and for a Pages route its workspace-relative source. Absent for a Vite run and a Next run in a workspace without a Pages folder. */
   nextRoute?: { router: 'app' | 'pages'; route: string; source?: string }
   /** The `next` package version of a Pages run that declares server stops, once read. */
@@ -587,6 +592,7 @@ export type ConfiguredRuntimeView = {
     /** Set for a run whose stops are all route handlers: the manifest names the source hash only, and each pause carries its own sealed hashes. */
     sealedAtPause?: 'route-handler'
     viteVersion?: string
+    expoVersion?: string
   }
   participants: { browser: RuntimeParticipant; server?: RuntimeParticipant }
   snapshots: ConfiguredRuntimeSnapshot[]

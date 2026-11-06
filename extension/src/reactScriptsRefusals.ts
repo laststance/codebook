@@ -88,7 +88,7 @@ const INSTALL_COMMAND_WITHOUT_LOCKFILE = 'npm install'
  * @example
  * reactScriptsInstallCommandOf(['package.json', 'yarn.lock']) // => 'yarn install --frozen-lockfile'
  */
-function reactScriptsInstallCommandOf(
+export function reactScriptsInstallCommandOf(
   lockfileNames: readonly string[],
 ): string {
   const match = INSTALL_COMMAND_BY_LOCKFILE.find(([lockfile]) =>

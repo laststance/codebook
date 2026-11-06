@@ -50,15 +50,18 @@ export const REACT_SCRIPTS_DEV_ADAPTER: DevelopmentServerAdapter = {
     const workspace = await assessReactScriptsWorkspace(
       request.reactScriptsPackage,
     )
+    // Created before the launch so the server's cleanup can tell this run's entry from a later run's on the same port.
+    const cache = new ReactScriptsBundleCache(workspace.publicPath)
     const launch = await launchReactScriptsDevelopmentServer(
       request,
       workspace,
-      // The run's cache is dropped with its server.
+      // The run's cache is dropped with its server; a stale cleanup must leave a newer run's entry.
       async (port) => {
-        aliveCachesByOrigin.delete(`http://127.0.0.1:${port}`)
+        const closedOrigin = `http://127.0.0.1:${port}`
+        if (aliveCachesByOrigin.get(closedOrigin) === cache)
+          aliveCachesByOrigin.delete(closedOrigin)
       },
     )
-    const cache = new ReactScriptsBundleCache(workspace.publicPath)
     const origin = `http://127.0.0.1:${launch.port}`
     aliveCachesByOrigin.set(origin, cache)
     runsByApp.set(launch.app, { origin, cache })

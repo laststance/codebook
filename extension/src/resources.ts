@@ -8,9 +8,7 @@ import {
   API_VERSION,
   CONFIGURED_MINIMUM_EXTENSION_VERSION,
   REPOSITORY_BROWSER_ACTION,
-  REPOSITORY_JAVASCRIPT_LIMIT_BYTES,
   REDACTED_MODULE_LABEL,
-  REPOSITORY_MAP_LIMIT_BYTES,
   BOOK_INPUT_LIMIT_BYTES,
   HTTP_BODY_LIMIT_BYTES,
   REPOSITORY_SOURCE_LIMIT_BYTES,
@@ -37,6 +35,7 @@ import {
   REPOSITORY_ANNOUNCED_PAUSE_RESUME_LIMIT_MS,
 } from './constants'
 import { ERROR_RECOVERY, EvidenceIntegrityError, StudyError } from './errors'
+import { expoWebHelp } from './expoWebHelp'
 import { nextHelp, REPOSITORY_BROWSER_START_HERE } from './nextHelp'
 import type { NodeHistorySummary } from './nodeHistorySummary'
 import { nodeScriptHelp } from './nodeScriptHelp'
@@ -50,6 +49,7 @@ import { sha256 } from './runtimeSupport/utils/sha256'
 import { savedSessionHelp } from './savedSessionHelp'
 import { serverRenderHelp } from './serverRenderHelp'
 import type { StudyService } from './service'
+import { DEFAULT_SOURCE_MAP_LIMITS } from './sourceMapLimits'
 import { describeStudy } from './utils/describeStudy'
 import { maskFactString } from './utils/maskFactString'
 import { maskSavedDebugSnapshot } from './utils/maskSavedDebugSnapshot'
@@ -285,6 +285,8 @@ export async function readResource(
       ...viteHelp(),
       // The react-scripts (Create React App) quick start, selection rule, refusal anchors and limits (API 1.25).
       ...reactScriptsHelp(),
+      // The Expo web (Metro) quick start, selection rule, refusal anchors and limits (API 1.30).
+      ...expoWebHelp(),
       ...nextHelp(),
       // The version 3 quick start, the operations and secrets sections and the error table (API 1.14).
       ...operationsHelp(),
@@ -817,8 +819,8 @@ export async function readResource(
         : sourceMatch[2] === 'typescript'
           ? REPOSITORY_SOURCE_LIMIT_BYTES
           : sourceMatch[2] === 'javascript'
-            ? REPOSITORY_JAVASCRIPT_LIMIT_BYTES
-            : REPOSITORY_MAP_LIMIT_BYTES
+            ? (source.limits ?? DEFAULT_SOURCE_MAP_LIMITS).bundleBytes
+            : (source.limits ?? DEFAULT_SOURCE_MAP_LIMITS).mapBytes
     // A masked copy cannot hash to the executed bytes' hash; the seal identity stays the executed bytes' hash. Only the generated JavaScript and its map are masked: the TypeScript source is still checked.
     // For a masked kind the retained unmasked bytes are checked against the seal instead.
     const executedHash =

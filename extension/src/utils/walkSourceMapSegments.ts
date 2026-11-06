@@ -1,7 +1,4 @@
 import {
-  REPOSITORY_MAPPED_POSITION_MAX_GENERATED_LINES,
-  REPOSITORY_MAPPED_POSITION_MAX_SCANNED_CHARS,
-  REPOSITORY_MAPPED_POSITION_SEGMENT_LIMIT,
   SOURCE_MAP_NAMED_SEGMENT_FIELDS,
   SOURCE_MAP_SOURCE_SEGMENT_FIELDS,
   SOURCE_MAP_UNMAPPED_SEGMENT_FIELDS,
@@ -10,6 +7,10 @@ import {
   SOURCE_MAP_VLQ_SIGN_DIVISOR,
   SOURCE_MAP_VLQ_VALUE_MASK,
 } from '../constants'
+import {
+  DEFAULT_SOURCE_MAP_LIMITS,
+  type SourceMapLimits,
+} from '../sourceMapLimits'
 
 /** One decoded segment of a source map's `mappings`: a generated position and, unless the segment has no original, the original position it maps to. All coordinates are zero-based, as the map holds them. */
 export interface SourceMapSegment {
@@ -21,9 +22,11 @@ export interface SourceMapSegment {
 
 /** Where a scan of a source map's `mappings` stands: what it has counted against its size limits, where the segment it is reading began, and the running sums the map's relative fields add up to. */
 interface SourceMapScan {
-  /** Segments read so far, empty ones included; bounded by {@link REPOSITORY_MAPPED_POSITION_SEGMENT_LIMIT}. */
+  /** The size limits this scan stops at (the adapter's profile). */
+  limits: SourceMapLimits
+  /** Segments read so far, empty ones included; bounded by `limits.mappedSegments`. */
   segmentsRead: number
-  /** Generated lines begun so far; bounded by {@link REPOSITORY_MAPPED_POSITION_MAX_GENERATED_LINES}. */
+  /** Generated lines begun so far; bounded by `limits.mappedGeneratedLines`. */
   generatedLinesRead: number
   /** Position in `mappings` of the first character of the segment being read. */
   segmentStart: number
@@ -127,7 +130,7 @@ function readSegment(scan: SourceMapScan, segment: string): SourceMapSegment {
  * @param cursor - The position of the delimiter that ends the segment, or the string's length.
  * @param scan - The scan; its segment count and running sums are advanced.
  * @param visit - Called with the segment.
- * @returns `false` when the segment is one more than {@link REPOSITORY_MAPPED_POSITION_SEGMENT_LIMIT}, so it was not read; `true` otherwise.
+ * @returns `false` when the segment is one more than the scan segment limit, so it was not read; `true` otherwise.
  * @throws When the segment is malformed or names a negative position.
  * @example
  * visitSegmentBefore('AAAA;AACA', 4, scan, visit) // => true, after visit({ generatedLine: 0, generatedColumn: 0, original: { sourceIndex: 0, line: 0, column: 0 } })
@@ -138,8 +141,7 @@ function visitSegmentBefore(
   scan: SourceMapScan,
   visit: (segment: SourceMapSegment) => void,
 ): boolean {
-  if (++scan.segmentsRead > REPOSITORY_MAPPED_POSITION_SEGMENT_LIMIT)
-    return false
+  if (++scan.segmentsRead > scan.limits.mappedSegments) return false
   if (cursor > scan.segmentStart)
     visit(readSegment(scan, mappings.slice(scan.segmentStart, cursor)))
   return true
@@ -164,9 +166,7 @@ function endSegmentAt(
 ): boolean {
   if (!visitSegmentBefore(mappings, cursor, scan, visit)) return false
   if (mappings[cursor] === ';') {
-    if (
-      ++scan.generatedLinesRead > REPOSITORY_MAPPED_POSITION_MAX_GENERATED_LINES
-    )
+    if (++scan.generatedLinesRead > scan.limits.mappedGeneratedLines)
       return false
     scan.generatedColumn = 0
   }
@@ -180,7 +180,7 @@ function endSegmentAt(
  * @param cursor - The position the scan stands at; the string's length is the position after its last character.
  * @param scan - The scan, which is advanced where a segment ends.
  * @param visit - Called with a segment that ends here, unless it is empty.
- * @returns `false` when the scan stops at a size limit ({@link REPOSITORY_MAPPED_POSITION_MAX_SCANNED_CHARS} characters with more of the map left, the segment limit or the generated-line limit); `true` when it goes on.
+ * @returns `false` when the scan stops at a size limit (the scanned-character limit with more of the map left, the segment limit or the generated-line limit); `true` when it goes on.
  * @throws When a segment that ends here is malformed or names a negative position.
  * @example
  * scanCharacterAt('AAAA;AACA', 2, scan, visit) // => true: inside a segment nothing happens
@@ -192,10 +192,7 @@ function scanCharacterAt(
   visit: (segment: SourceMapSegment) => void,
 ): boolean {
   // Empty delimiters consume the same bounded scan as mapped segments; no split arrays are allocated.
-  if (
-    cursor === REPOSITORY_MAPPED_POSITION_MAX_SCANNED_CHARS &&
-    cursor < mappings.length
-  )
+  if (cursor === scan.limits.mappedScannedChars && cursor < mappings.length)
     return false
   if (!isSegmentEndAt(mappings, cursor)) return true
   return endSegmentAt(mappings, cursor, scan, visit)
@@ -205,6 +202,7 @@ function scanCharacterAt(
  * Reads a source map's VLQ `mappings` segment by segment within the scan's size limits, so every reader of a sealed map decodes it the same way: {@link sourceMapMappedPositions} collects the mapped columns of original lines and {@link sourceMapGeneratedRange} the generated range of one original line.
  * @param mappings - The map's VLQ `mappings` string.
  * @param visit - Called for every segment, in the order of the generated code.
+ * @param limits - The size limits the scan stops at; today's shared limits unless the adapter passes its own profile.
  * @returns `true` when the whole map was read; `false` when the scan stopped at a size limit, so what `visit` saw proves nothing about the rest.
  * @throws When a segment is malformed or names a negative position.
  * @example
@@ -214,8 +212,10 @@ function scanCharacterAt(
 export function walkSourceMapSegments(
   mappings: string,
   visit: (segment: SourceMapSegment) => void,
+  limits: SourceMapLimits = DEFAULT_SOURCE_MAP_LIMITS,
 ): boolean {
   const scan: SourceMapScan = {
+    limits,
     segmentsRead: 0,
     generatedLinesRead: 1,
     segmentStart: 0,

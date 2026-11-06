@@ -144,6 +144,7 @@ test('the version 1/2 schema, the version 3 schema and the profile list adapters
     'next-dev-webpack',
     'vite-dev',
     'react-scripts-dev',
+    'expo-web-dev',
   ])
   assert.deepEqual(profileAdapters, [...versionThreeOptions])
 })
