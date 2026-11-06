@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.2.89.0] - 2026-11-06 (development candidate)
+
+Cycle 0089 ([Issue #230](https://github.com/laststance/codebook/issues/230)), a feature cycle. **An Expo web app served by Metro now runs and pauses in its own code.** A learner can ask how a screen of an Expo app works (P08's sign-in and forgot-password screens in the checks below). Codebook starts the app's own Expo CLI, and the native debugger stops inside the app's handler with its values. Before, no adapter started Metro, so the chat could explain an Expo app from its source only.
+
+**Expo web apps (MCP API 1.30).**
+- **Where it applies:**
+  - A version 3 `repository-browser` configuration with `adapter: "expo-web-dev"`, for an Expo SDK 57 app at the repository root or below it (`packageRoot`).
+  - `codebook_status` reports `profiles[].prerequisites.adapters["expo-web-dev"]`: whether the root is an app, each app below it with `ready`, `missing`, its web script and port.
+- **What Codebook does:**
+  - It starts the app's own `expo start --web` on the port the app's `web` script declares (else 8081), with `CI=1`, `BROWSER=none` and `EXPO_NO_TELEMETRY=1`.
+  - It binds Metro to the loopback address only (`--localhost`).
+  - It treats the app as ready once Metro has served the entry bundle and its source map.
+  - A browser stop in the app's own source pauses in the native debugger.
+- **What it refuses**, each refusal saying whether anything started:
+  - `EXPO_WEB_UNSUPPORTED`: Expo not installed, another SDK major, missing web dependencies, no web platform, `app.config.*`, server output, a `web` script that is not a plain `expo start --web`, a pre-script, or an unreadable `.env` file.
+  - `EXPO_WEB_LAUNCHER_FAILED`: Metro's own masked line, or the CLI ended.
+  - `EXPO_WEB_PORT_UNAVAILABLE`: a busy port, never taken.
+  - `EXPO_WEB_SETUP_DEADLINE`.
+  - `EXPO_WEB_SEAL_FAILED`.
+- **Browser stops only:** a server stop, an Expo Router API route (`+api.*`) and a file outside the entry bundle are refused.
+- **Masking:** values of `EXPO_PUBLIC_*` variables from the app's `.env` files are masked in the saved study.
+- **Help:** the `expoWebQuickStart` section of `codebook://help/repository-browser` has a complete configuration, the call order and the refusals.
+
+**Saved studies and updating.** A study of an Expo run is saved as format 15 (`.study.v15.json`) with its `expoVersion`. Codebook 0.2.88 and older list it as saved by a newer Codebook. After installing, run **Codebook: Set Up AI Chat** so Cursor's managed skill updates to **1.0.79**.
+
+**Release details:** checked in both editors on a development target (no nine-project credit):
+
+| Check | Host | Target | Pause and observed outcome |
+| --- | --- | --- | --- |
+| C89-1 | VS Code, Copilot Chat (GPT-6.1 Terra) | P08 `apps/app` sign-in screen (`use-auth-form.ts`) | Pauses before the sign-in request and after it. The local API answered 401 `INVALID_EMAIL_OR_PASSWORD` and the screen showed its error. The learner typed the password through Codebook's prompt, and the replay shows it as `[masked]` |
+| C89-2 | Cursor, Agent (Grok 4.6 High) | P08 `apps/app` forgot-password screen | Pauses in the submit path. The local API answered 400 `RESET_PASSWORD_DISABLED`. The replay reopened with native Variables |
+
 ## [0.2.88.0] - 2026-11-06 (development candidate)
 
 Cycle 0088 ([Issue #228](https://github.com/laststance/codebook/issues/228)), a feature cycle. **A server stop in a Next Pages API route now pauses in the request the page sends after an operation.** A learner can ask what the server does when a click calls the app's own API (a handler under `pages/api`), and the native debugger stops in the handler with `req.query` and the handler's locals. Before, Codebook refused such a stop before anything started, so the chat could explain only the browser half from execution.
