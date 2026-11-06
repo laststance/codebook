@@ -6,20 +6,24 @@ import {
 import { unquoteCookieValue } from './unquoteCookieValue'
 
 /**
- * Tells whether a cookie value candidate is long enough, or digit-bearing enough, to be masked.
+ * Tells whether a cookie value candidate is long enough, or letter-and-digit-bearing enough, to be masked.
  *
  * Called by {@link cookieMaskValues} for each candidate form.
  *
  * @param form - A candidate form of a cookie value.
- * @returns True at {@link NODE_SERVER_COOKIE_MASK_MIN_CHARS} characters, or at {@link NODE_SERVER_COOKIE_MASK_DIGIT_MIN_CHARS} characters with an ASCII digit.
+ * @returns True at {@link NODE_SERVER_COOKIE_MASK_MIN_CHARS} characters, or at {@link NODE_SERVER_COOKIE_MASK_DIGIT_MIN_CHARS} characters with both an ASCII letter and an ASCII digit.
  * @example
  * isMaskable('k3J9xQ2mV8aZ') // => true
  * isMaskable('abcdefghij') // => false
+ * isMaskable('20261106') // => false
  */
 function isMaskable(form: string): boolean {
   if (form.length >= NODE_SERVER_COOKIE_MASK_MIN_CHARS) return true
+  // A pure-digit value (a date, a port list) is no session secret; a letter and a digit together never occur in a protocol word.
   return (
-    form.length >= NODE_SERVER_COOKIE_MASK_DIGIT_MIN_CHARS && /\d/.test(form)
+    form.length >= NODE_SERVER_COOKIE_MASK_DIGIT_MIN_CHARS &&
+    /\d/.test(form) &&
+    /[A-Za-z]/.test(form)
   )
 }
 
@@ -28,7 +32,7 @@ function isMaskable(form: string): boolean {
  *
  * Why it exists: a signed cookie (express-session `s%3Asid.sig`, Better Auth `token.signature`) is echoed by servers in decoded or split forms, and each form must be hidden.
  * Called by the node-server run when it builds the masking set from the session cookies' seen values.
- * Candidates: the value, its URL-decoded form, and the parts split at the last `.` (after decoding, with a leading `s:` removed), each kept when it has at least {@link NODE_SERVER_COOKIE_MASK_MIN_CHARS} characters, or at least {@link NODE_SERVER_COOKIE_MASK_DIGIT_MIN_CHARS} characters and an ASCII digit (no protocol word contains a digit; shorter or all-letter values such as `system` and `failed` are no session secret). A value in double quotes is also masked without its quotes.
+ * Candidates: the value, its URL-decoded form, and the parts split at the last `.` (after decoding, with a leading `s:` removed), each kept when it has at least {@link NODE_SERVER_COOKIE_MASK_MIN_CHARS} characters, or at least {@link NODE_SERVER_COOKIE_MASK_DIGIT_MIN_CHARS} characters and both an ASCII letter and an ASCII digit (no protocol word contains a digit; shorter, all-letter or all-digit values such as `system`, `failed` and `20261106` are no session secret). A value in double quotes is also masked without its quotes.
  *
  * @param values - The cookie values.
  * @returns The distinct candidates, longest first.

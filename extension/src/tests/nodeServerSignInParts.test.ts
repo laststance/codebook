@@ -201,6 +201,16 @@ test('mask values keep digit-bearing values of 8 or more characters and skip pro
   assert.deepEqual(masked, ['k3J9xQ2mV8aZ'])
 })
 
+// protects=pure-digit values such as a date are never masked while a letter-and-digit value of 8 or more characters is; fails_when=20261106 or 1234567890 is registered, or k3J9xQ2mV8aZ is not; no_claim=which cookie names a server sets
+test('mask values skip pure-digit values and keep letter-and-digit ones', () => {
+  // Arrange
+  const values = ['20261106', '1234567890', 'k3J9xQ2mV8aZ', 'system', 'failed']
+  // Act
+  const masked = cookieMaskValues(values)
+  // Assert
+  assert.deepEqual(masked, ['k3J9xQ2mV8aZ'])
+})
+
 // protects=a quoted cookie value is masked with and without its quotes and split unquoted; fails_when=only the quoted form is kept or the signature stays unmasked; no_claim=server quoting rules
 test('mask values cover a quoted cookie value both quoted and unquoted', () => {
   // Arrange

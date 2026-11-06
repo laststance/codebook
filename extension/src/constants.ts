@@ -1489,12 +1489,10 @@ export const NODE_SERVER_SIGN_IN_FIELD_LIMIT_CHARS = 256
 export const NODE_SERVER_SIGN_IN_SECRET_FIELD_LIMIT_CHARS = 64
 /** The shortest sign-in password the password box accepts (characters); Better Auth's default minimum, and long enough that masking the typed value service-wide cannot corrupt ordinary protocol words such as `paused`. */
 export const NODE_SERVER_SIGN_IN_SECRET_MIN_CHARS = 8
-/** The shortest session cookie value that is masked in published output whatever its characters (characters); session tokens are long, while shorter all-letter values (`theme=system`, `status=failed`) are no session secret and masking them would corrupt protocol words. A shorter value is still masked when it bears a digit, see {@link NODE_SERVER_COOKIE_MASK_DIGIT_MIN_CHARS}. */
+/** The shortest session cookie value that is masked in published output whatever its characters (characters); session tokens are long, while shorter all-letter values (`theme=system`, `status=failed`) are no session secret and masking them would corrupt protocol words. A shorter value is still masked when it bears a letter and a digit, see {@link NODE_SERVER_COOKIE_MASK_DIGIT_MIN_CHARS}. */
 export const NODE_SERVER_COOKIE_MASK_MIN_CHARS = 16
-/** The shortest session cookie value that is masked when it contains an ASCII digit (characters): a digit-bearing value of 8 or more characters is masked because no protocol word contains a digit, so masking it cannot corrupt `request-failed` or `signed-in`. */
+/** The shortest session cookie value that is masked when it contains both an ASCII letter and an ASCII digit (characters): such a value of 8 or more characters is masked because no protocol word contains a digit, so masking it cannot corrupt `request-failed` or `signed-in`; a pure-digit value (a date such as `20261106`) is no session secret and would mask unrelated text. */
 export const NODE_SERVER_COOKIE_MASK_DIGIT_MIN_CHARS = 8
-/** The fewest characters of a secret's start that a timed release or channel end replaces with the mask when the held text ends with it (characters); shorter ends are too common in ordinary output to be told from a secret's start. */
-export const NODE_SERVER_SECRET_TAIL_MIN_CHARS = 4
 /** The most server output delivered but not yet settled; a server printing faster than its events settle fails its capture instead of buffering without bound. */
 export const NODE_SERVER_OUTPUT_PENDING_LIMIT_BYTES = 1_048_576
 /** How long a stopping server's debugger may take to detach before SIGTERM is sent anyway: a server handling SIGTERM waits for an attached debugger before it exits (Part A, Issue #139). */

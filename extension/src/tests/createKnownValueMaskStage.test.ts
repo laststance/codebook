@@ -80,7 +80,7 @@ test('a secret written in two parts with a quiet gap leaks no fragment', () => {
   // Assert
   assert.equal(firstPart, 'pass')
   assert.deepEqual(clock.released, ['word: [masked]'])
-  assert.equal(secondPart + ended, '-secret done')
+  assert.equal(secondPart + ended, '[masked] done')
 })
 
 // protects=the channel end masks a held ending that starts a secret; fails_when=end publishes the partial secret; no_claim=timed release
@@ -150,4 +150,68 @@ test('an infinite holdback releases nothing when the timer fires', () => {
   // Assert
   assert.equal(written, '')
   assert.deepEqual(clock.released, [])
+})
+
+/** Runs pieces through one stage, firing the quiet-gap timer after each; returns everything published, in order. */
+function publishWithGaps(pieces: readonly string[]): string {
+  const clock = manualTimer()
+  const stage = createKnownValueMaskStage(
+    {
+      mask: maskSecret,
+      holdback: () => 14,
+      forms: () => SECRET_FORMS,
+      onWithheld: () => undefined,
+    },
+    clock.timer,
+  )
+  let published = ''
+  for (const piece of pieces) {
+    published += stage.write(piece)
+    clock.fire()
+    published += clock.released.splice(0).join('')
+  }
+  return published + stage.end()
+}
+
+// protects=a secret written as 3 characters, a quiet gap, then the rest publishes no character of it beyond the mask; fails_when=the first piece under 4 characters or the rest after a masked ending is published raw; no_claim=real timers; a manual timer stands for the quiet gap
+test('a 3-character first piece and its rest after a gap leak nothing of the secret', () => {
+  // Act
+  const published = publishWithGaps(['pw: hun', 'ter2-secret'])
+  // Assert
+  assert.equal(published, 'pw: [masked][masked]')
+  assert.doesNotMatch(published, /hunter2|ter2-secret|hun/)
+})
+
+// protects=a 5-character first piece and its rest after a gap leaks nothing; fails_when=the remainder after a masked 4+ character ending is published raw; no_claim=real timers
+test('a 5-character first piece and its rest after a gap leak nothing of the secret', () => {
+  // Act
+  const published = publishWithGaps(['pw: hunte', 'r2-secret done'])
+  // Assert
+  assert.equal(published, 'pw: [masked][masked] done')
+  assert.doesNotMatch(published, /hunter2|r2-secret|hunte/)
+})
+
+// protects=a secret in three pieces across two gaps leaks nothing; fails_when=the state is dropped after the middle piece; no_claim=real timers
+test('a secret in three pieces across two gaps leaks nothing of the secret', () => {
+  // Act
+  const published = publishWithGaps(['pw: hun', 'ter2', '-secret!'])
+  // Assert
+  assert.equal(published, 'pw: [masked][masked][masked]!')
+  assert.doesNotMatch(published, /hunter2|ter2|-secret|hun/)
+})
+
+// protects=text that does not continue the started secret is published unchanged and clears the state; fails_when=ordinary text after a gap is masked, or the stale state masks a later look-alike; no_claim=real timers
+test('text that does not continue the started secret is published unchanged and clears the state', () => {
+  // Act
+  const published = publishWithGaps(['pw: hun', 'ks ok\n', 'ter2-secret'])
+  // Assert
+  assert.equal(published, 'pw: [masked]ks ok\nter2-secret')
+})
+
+// protects=released text ending in a newline that starts no secret is untouched; fails_when=a newline ending is masked or starts a continuation; no_claim=real timers
+test('released text ending in a newline is untouched and starts no continuation', () => {
+  // Act
+  const published = publishWithGaps(['server ready\n', 'ter2-secret'])
+  // Assert
+  assert.equal(published, 'server ready\nter2-secret')
 })

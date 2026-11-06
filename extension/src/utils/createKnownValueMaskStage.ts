@@ -1,7 +1,11 @@
 import { NODE_SERVER_OUTPUT_PENDING_LIMIT_BYTES } from '../constants'
 
+import { continueSecretForms } from './continueSecretForms'
 import type { RootHoldTimer } from './createRootHidingStage'
-import { maskPartialSecretTail } from './maskPartialSecretTail'
+import {
+  maskPartialSecretTail,
+  type StartedSecretForm,
+} from './maskPartialSecretTail'
 
 /** What one run knows about its secret values, read at call time so the set can grow while the run's output is captured. */
 export type KnownValueMask = {
@@ -47,6 +51,8 @@ export function createKnownValueMaskStage(
   // The masked text that is not yet settled: a known value may still continue in the next chunk.
   let held = ''
   let cancelRelease: (() => void) | undefined
+  // The secret forms whose start the last timed release or end published masked; the next text may continue one.
+  let started: StartedSecretForm[] = []
 
   const stopTimer = (): void => {
     cancelRelease?.()
@@ -67,8 +73,12 @@ export function createKnownValueMaskStage(
   }
 
   /** Masks held text for publication without waiting for more output: an ending that starts a secret form is masked too, so a value written in two parts far apart leaks no fragment. */
-  const publishable = (text: string): string =>
-    maskPartialSecretTail(known.mask(text), known.forms?.() ?? [])
+  const publishable = (text: string): string => {
+    const tail = maskPartialSecretTail(known.mask(text), known.forms?.() ?? [])
+    // Remember which forms the masked ending started, so their continuation is masked when it arrives.
+    started = tail.started
+    return tail.text
+  }
 
   /** Reports and discards the held text. */
   const withhold = (): void => {
@@ -104,10 +114,25 @@ export function createKnownValueMaskStage(
   }
 
   return {
-    write: (text) => (text === '' && held === '' ? '' : settle(held + text)),
+    write: (text) => {
+      if (text === '' && held === '') return ''
+      // The continuation of a secret started before a gap is masked before the normal masking and holdback; a sign-in exchange (infinite holdback) keeps its own handling.
+      if (text !== '' && started.length > 0) {
+        const pending = started
+        started = []
+        if (known.holdback() !== Number.POSITIVE_INFINITY) {
+          const next = continueSecretForms(text, pending)
+          started = next.pending
+          if (next.rest === '' && held === '') return next.masked
+          return next.masked + settle(held + next.rest)
+        }
+      }
+      return settle(held + text)
+    },
     release: () => (held === '' ? '' : settle(held)),
     drop: (): void => {
       stopTimer()
+      started = []
       withhold()
     },
     end: () => {
