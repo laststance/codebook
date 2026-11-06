@@ -9,6 +9,7 @@ import type { SingleBundleProfile } from '../singleBundleProfile'
 
 import { findSingleBundleUrl } from './findSingleBundleUrl'
 import { readCappedBody } from './readCappedBody'
+import { readErrorBodyHead } from './readErrorBodyHead'
 import { servedMapSchema } from './readViteServedModule'
 
 /** One parsed source map of the bundle. */
@@ -119,11 +120,14 @@ async function readServedText(
     )
   })
   if (!response.ok) {
-    // The start of the body is kept so an adapter can quote the server's own error; a body that cannot be read is no reason to hide the status.
-    const body = await readCappedBody(
-      response,
-      SINGLE_BUNDLE_ERROR_BODY_LIMIT_BYTES,
-    ).catch(() => undefined)
+    // Only a profile that quotes the server's error reads its body (its head, cut at the cap); the others cancel it unread, so a stalled body never holds the poll.
+    const body =
+      profile.quoteErrorBody === true
+        ? await readErrorBodyHead(
+            response,
+            SINGLE_BUNDLE_ERROR_BODY_LIMIT_BYTES,
+          )
+        : undefined
     await response.body?.cancel().catch(() => undefined)
     throw new SingleBundleNotReadyError(
       `${url} answered status ${response.status}`,
@@ -139,6 +143,61 @@ async function readServedText(
       `the body of ${url} could not be read (${error instanceof Error ? error.name : 'error'})`,
     )
   })
+}
+
+/**
+ * Tells whether a `sourceMappingURL` value is an http(s) address once resolved against the bundle.
+ * @param reference - The comment's value.
+ * @param bundleUrl - The address the bundle was read at.
+ * @returns `false` for `data:` and other schemes, or a value that is no URL.
+ * @example isHttpReference('data:application/json;base64,e30=', 'http://h:1/a.js') // => false
+ */
+function isHttpReference(reference: string, bundleUrl: string): boolean {
+  try {
+    const { protocol } = new URL(reference, bundleUrl)
+    return protocol === 'http:' || protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Finds the bundle's address on the entry page, or says why there is none.
+ * @param origin - The owned origin.
+ * @param entryPath - Where the entry page is served.
+ * @param profile - The adapter's profile.
+ * @param signal - Ends the read when the run is cancelled.
+ * @param timeoutMs - The most the request may take.
+ * @returns The bundle's address.
+ * @throws {@link SingleBundleNotReadyError} while the page names no bundle yet, or with `response` when a quoting profile's server answered an error; the profile's `unclearEntryPage` refusal for a page naming zero or several bundles.
+ * @example await entryBundleUrl('http://127.0.0.1:3000', '/', profile, signal, 15_000) // => 'http://127.0.0.1:3000/static/js/bundle.js'
+ */
+async function entryBundleUrl(
+  origin: string,
+  entryPath: string,
+  profile: SingleBundleProfile,
+  signal: AbortSignal,
+  timeoutMs: number,
+): Promise<string> {
+  // The bundle's address is the one the entry page names, which a homepage, PUBLIC_URL or Metro's query decides.
+  const found = await findSingleBundleUrl(
+    origin,
+    entryPath,
+    profile,
+    signal,
+    timeoutMs,
+  )
+  if (found.kind === 'found') return found.url
+  if (found.kind === 'failed')
+    throw new SingleBundleNotReadyError(
+      `the entry page at ${entryPath} answered status ${found.status}`,
+      { status: found.status, body: found.body },
+    )
+  if (found.kind === 'unclear' && profile.unclearEntryPage !== undefined)
+    throw profile.unclearEntryPage.refusal(found.count)
+  throw new SingleBundleNotReadyError(
+    `the entry page at ${entryPath} names no development bundle yet`,
+  )
 }
 
 /** Finds the `sourceMappingURL` comment the bundle ends with. @example sourceMappingUrlOf('a();\n//# sourceMappingURL=bundle.js.map\n') // => 'bundle.js.map' */
@@ -198,20 +257,15 @@ export async function readSingleServedBundle(
   onProgress?: (step: SingleBundleProgress) => void,
 ): Promise<SingleServedBundle> {
   const { limits, refusals } = profile
-  // The bundle's address is the one the entry page names, which a homepage, PUBLIC_URL or Metro's query decides.
   const bundleUrl =
     cache.bundleUrl ??
-    (await findSingleBundleUrl(
+    (await entryBundleUrl(
       origin,
       cache.entryPath,
       profile,
       signal,
       requestTimeoutMs(deadlineAtMs),
     ))
-  if (bundleUrl === undefined)
-    throw new SingleBundleNotReadyError(
-      `the entry page at ${cache.entryPath} names no development bundle yet`,
-    )
   cache.bundleUrl = bundleUrl
   onProgress?.('html')
   const javascript = await readServedText(
@@ -234,9 +288,14 @@ export async function readSingleServedBundle(
     throw refusals.mapUnreadable(
       'the bundle names no source map (no sourceMappingURL comment)',
     )
+  // A reference that is not an http(s) address (an inline `data:` map) is refused now, not waited for.
+  if (!isHttpReference(reference, bundleUrl))
+    throw refusals.mapUnreadable(
+      'the bundle names a source map that is not an http(s) address',
+    )
   const mapUrl = profile.resolveMapUrl(reference, bundleUrl, origin)
-  // Only the owned origin is ever fetched.
-  if (mapUrl === undefined)
+  // Only the owned origin is ever fetched, whatever the profile returned.
+  if (mapUrl === undefined || mapUrl.origin !== new URL(origin).origin)
     throw refusals.mapUnreadable(
       'the bundle names a source map on another origin',
     )

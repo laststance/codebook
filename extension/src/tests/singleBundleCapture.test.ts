@@ -4,54 +4,22 @@ import { createServer } from 'node:http'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
-import { StudyError } from '../errors'
 import { readResource } from '../resources'
-import type { SingleBundleProfile } from '../singleBundleProfile'
 import {
   DEFAULT_SOURCE_MAP_LIMITS,
   EXPO_WEB_SOURCE_MAP_LIMITS,
-  type SourceMapLimits,
 } from '../sourceMapLimits'
 import { SingleBundleCache } from '../utils/readSingleServedBundle'
 import { sealSingleBundleStop } from '../utils/sealSingleBundleStop'
 
 import { pausedViteRun } from './utils/pausedViteRun'
+import { profileWith } from './utils/singleBundleProfileWith'
 
 const MIB = 1_048_576
 /** The generated JavaScript of the served bundle: above the 8 MiB default and inside the Expo profile's 32 MiB. */
 const BUNDLE_PADDING_BYTES = 9 * MIB
 /** The served map's names: above the 16 MiB default and inside the Expo profile's 64 MiB. */
 const MAP_PADDING_BYTES = 17 * MIB
-
-/** A profile with today's refusal-free shape for the stop's seal: only the limits differ between the two runs of the test. */
-function profileWith(limits: SourceMapLimits): SingleBundleProfile {
-  const refuse = (reason: string, details: Record<string, unknown> = {}) =>
-    new StudyError(
-      'REACT_SCRIPTS_SEAL_FAILED',
-      reason,
-      reason,
-      undefined,
-      undefined,
-      { reason, ...details },
-    )
-  return {
-    limits,
-    refusals: {
-      outsidePackage: () => refuse('outside-package'),
-      ambiguousSource: () => refuse('ambiguous-source'),
-      nodeModules: () => refuse('node-modules'),
-      unmappedLine: () => refuse('unmapped-line'),
-      mapLimit: (limit, limitValue) =>
-        refuse('map-limit', { limit, limitValue }),
-      mapUnreadable: (problem) => refuse('map-unreadable', { problem }),
-      sourceChanged: () => refuse('source-changed'),
-      notInEntryBundle: () => refuse('not-in-entry-bundle'),
-    },
-    selectBundleScript: (scripts) =>
-      [...scripts].find((script) => script.pathname.endsWith('.bundle')),
-    resolveMapUrl: (reference, bundleUrl) => new URL(reference, bundleUrl),
-  }
-}
 
 /** Serves an entry page, a 9 MiB bundle and a 17 MiB map whose one source is the file `stop()` names. */
 async function serveLargeBundle(context: TestContext) {

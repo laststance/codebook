@@ -231,21 +231,66 @@ test('an Expo CLI that ends while bundling is refused as exited with its exit co
   )
 })
 
-// Value: protects=E-2: an entry page that names two web bundles is not ready (the bundle is ambiguous); fails_when=the first script is chosen; why_new=exactly one web bundle; seam=real launcher, fake Metro; no_claim=the wording
-test('an entry page naming two web bundles is not ready', async (context) => {
+// Value: protects=E-2 and review round: an entry page that names two web bundles is refused at once as bundle-failed naming the count, not polled to the setup deadline; fails_when=the first script is chosen or the wait runs to its budget; why_new=exactly one web bundle, refused early; seam=real launcher, fake Metro; no_claim=the wording beyond the count
+test('an entry page naming two web bundles is refused at once as bundle-failed naming the count', async (context) => {
   // Arrange
   const { controller, started } = await startAdapter(context, {
     mode: 'two-bundles',
   })
   const { app } = await started()
   // Act
-  const waiting = EXPO_WEB_DEV_ADAPTER.waitForServerSettled(
-    app,
-    800,
-    controller.signal,
+  const refusal = await refusalOf(
+    EXPO_WEB_DEV_ADAPTER.waitForServerSettled(app, 10_000, controller.signal),
   )
   // Assert
-  await assert.rejects(waiting, WaitTimeoutError)
+  assert.equal(refusal.code, 'EXPO_WEB_LAUNCHER_FAILED')
+  assert.deepEqual(
+    { reason: refusal.details?.reason, line: refusal.details?.bundlerLine },
+    {
+      reason: 'bundle-failed',
+      line: 'The entry page names 2 web bundles, so the bundle to seal is unknown.',
+    },
+  )
+})
+
+// Value: protects=review round: a 200 entry page with no web bundle is refused at once as bundle-failed naming zero; fails_when=the wait polls to the setup deadline; why_new=zero bundles refused early; seam=real launcher, fake Metro; no_claim=the wording beyond the count
+test('an entry page naming no web bundle is refused at once as bundle-failed naming zero', async (context) => {
+  // Arrange
+  const { controller, started } = await startAdapter(context, {
+    mode: 'no-bundles',
+  })
+  const { app } = await started()
+  // Act
+  const refusal = await refusalOf(
+    EXPO_WEB_DEV_ADAPTER.waitForServerSettled(app, 10_000, controller.signal),
+  )
+  // Assert
+  assert.deepEqual(
+    { reason: refusal.details?.reason, line: refusal.details?.bundlerLine },
+    {
+      reason: 'bundle-failed',
+      line: 'The entry page names 0 web bundles, so the bundle to seal is unknown.',
+    },
+  )
+})
+
+// Value: protects=review round: a non-success entry page is refused at once as bundle-failed quoting Metro's masked message; fails_when=the wait polls to the deadline or the secret is quoted; why_new=entry page error; seam=real launcher, fake Metro answering 500 JSON for the page; no_claim=Metro's real error JSON fields beyond message
+test('a Metro error response for the entry page is refused as bundle-failed with the masked message', async (context) => {
+  // Arrange
+  const { controller, started } = await startAdapter(context, {
+    mode: 'entry-error',
+    files: { '.env': 'EXPO_PUBLIC_API_KEY=pk-live-abc123xyz\n' },
+  })
+  const { app } = await started()
+  // Act
+  const refusal = await refusalOf(
+    EXPO_WEB_DEV_ADAPTER.waitForServerSettled(app, 10_000, controller.signal),
+  )
+  // Assert
+  assert.equal(refusal.details?.reason, 'bundle-failed')
+  const bundlerLine = String(refusal.details?.bundlerLine)
+  assert.match(bundlerLine, /^Metro could not render the entry page/)
+  assert.equal(bundlerLine.includes('pk-live-abc123xyz'), false)
 })
 
 // Value: protects=AC 2 and 4: a stop in the app's own source seals from the served bundle and map (the map named by a localhost address is read at the owned origin), under the Expo limits, with the bundle's address and Metro's query kept; fails_when=the map is not read, the limits are today's, or the address loses its query; why_new=seal through the Expo profile; seam=real launcher, fake Metro; no_claim=js-debug's binding (native checks)

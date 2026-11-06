@@ -28,6 +28,10 @@ export type FakeExpoWebMode =
   | 'late-bundle'
   /** The entry page names a second web bundle. */
   | 'two-bundles'
+  /** The entry page itself answers a 500 error response whose message holds a secret. */
+  | 'entry-error'
+  /** The entry page answers 200 but names no web bundle. */
+  | 'no-bundles'
 
 /** The settings of one fake Expo app. */
 export type ExpoWebFixtureOptions = {
@@ -112,7 +116,17 @@ const bundle = 'console.log("metro bundle", ' + JSON.stringify(process.env.EXPO_
 const startedAt = Date.now()
 const server = http.createServer((request, response) => {
   if (request.url === '/' || request.url === '/sign-in') {
+    if (mode === 'entry-error') {
+      response.statusCode = 500
+      response.setHeader('content-type', 'application/json')
+      response.end(JSON.stringify({ type: 'InternalError', message: 'Metro could not render the entry page EXPO_PUBLIC_API_KEY=' + process.env.EXPO_PUBLIC_API_KEY }))
+      return
+    }
     response.setHeader('content-type', 'text/html')
+    if (mode === 'no-bundles') {
+      response.end('<!doctype html><title>Metro</title>')
+      return
+    }
     const extra = mode === 'two-bundles' ? '<script src="/second.bundle?platform=web"></script>' : ''
     response.end('<!doctype html><script src="' + bundlePath + '" defer></script>' + extra)
   } else if (request.url === bundlePath) {

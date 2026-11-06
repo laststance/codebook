@@ -1,6 +1,7 @@
 import { StudyError } from './errors'
 import {
   expoWebAmbiguousSourceRefusal,
+  expoWebBundleFailedRefusal,
   expoWebMapLimitRefusal,
   expoWebMapUnreadableRefusal,
   expoWebNotInEntryBundleRefusal,
@@ -13,6 +14,23 @@ import { EXPO_WEB_SOURCE_MAP_LIMITS } from './sourceMapLimits'
 
 /** The query value that names Metro's web bundle among the entry page's scripts. */
 const WEB_PLATFORM = 'web'
+
+/**
+ * Picks the distinct web bundles among an entry page's scripts.
+ * @param scripts - Each script address on the owned origin.
+ * @returns The scripts that end in `.bundle` and name `platform=web`, once per address.
+ * @example webBundleScripts([new URL('http://h:1/a.bundle?platform=web')]).length // => 1
+ */
+function webBundleScripts(scripts: Iterable<URL>): URL[] {
+  const bundles = new Map<string, URL>()
+  for (const candidate of scripts)
+    if (
+      candidate.pathname.endsWith('.bundle') &&
+      candidate.searchParams.get('platform') === WEB_PLATFORM
+    )
+      bundles.set(candidate.href, candidate)
+  return [...bundles.values()]
+}
 
 /**
  * Builds the `SOURCE_CHANGED` refusal of a stop file that is no longer the text Metro compiled.
@@ -46,20 +64,35 @@ export const EXPO_WEB_SINGLE_BUNDLE_PROFILE: SingleBundleProfile =
         expoWebNotInEntryBundleRefusal(files[0] ?? ''),
     },
     limits: EXPO_WEB_SOURCE_MAP_LIMITS,
+    // Metro's error answer is quoted (masked, capped) in the bundle-failed refusal.
+    quoteErrorBody: true,
+    unclearEntryPage: {
+      count: (scripts) => webBundleScripts(scripts).length,
+      refusal: (count) =>
+        expoWebBundleFailedRefusal(
+          `The entry page names ${count} web bundles, so the bundle to seal is unknown.`,
+        ),
+    },
     selectBundleScript(scripts) {
-      const bundles = new Map<string, URL>()
       // The page must name exactly one web bundle: Metro's other platforms or a second bundle make the choice ambiguous.
-      for (const candidate of scripts)
-        if (
-          candidate.pathname.endsWith('.bundle') &&
-          candidate.searchParams.get('platform') === WEB_PLATFORM
-        )
-          bundles.set(candidate.href, candidate)
-      return bundles.size === 1 ? [...bundles.values()][0] : undefined
+      const bundles = webBundleScripts(scripts)
+      return bundles.length === 1 ? bundles[0] : undefined
     },
     resolveMapUrl(reference, bundleUrl, ownedOrigin) {
+      // A protocol-relative reference would name another host; refuse it before any rebasing.
+      if (reference.startsWith('//')) return undefined
       // Metro writes its own host name (`localhost`) while Codebook reaches it at the owned origin: only the path and query are kept, so only the owned origin is ever fetched.
       const named = new URL(reference, bundleUrl)
-      return new URL(`${named.pathname}${named.search}`, ownedOrigin)
+      if (named.protocol !== 'http:' && named.protocol !== 'https:')
+        return undefined
+      // A path that starts with `//` reads as another host to a relative-URL parser; it is refused, never joined.
+      if (named.pathname.startsWith('//')) return undefined
+      // Assigning onto the owned origin's URL cannot change its host.
+      const rebased = new URL(ownedOrigin)
+      rebased.pathname = named.pathname
+      rebased.search = named.search
+      return rebased.origin === new URL(ownedOrigin).origin
+        ? rebased
+        : undefined
     },
   })

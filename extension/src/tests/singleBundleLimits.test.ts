@@ -4,7 +4,6 @@ import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { StudyError } from '../errors'
-import type { SingleBundleProfile } from '../singleBundleProfile'
 import {
   DEFAULT_SOURCE_MAP_LIMITS,
   EXPO_WEB_SOURCE_MAP_LIMITS,
@@ -18,6 +17,7 @@ import {
   createReactScriptsRepository,
   type ReactScriptsRepository,
 } from './utils/reactScriptsFixture'
+import { profileWith } from './utils/singleBundleProfileWith'
 
 const APP_FOLDER = 'examples/counter'
 /** Generated lines before the stop's mappings: above the shared 100,000 limit and inside the Expo profile's 1,000,000. */
@@ -25,49 +25,6 @@ const LEADING_GENERATED_LINES = 150_000
 /** The first generated line the stop file is mapped on (the original lines 1 to 3 follow). */
 const STOP_GENERATED_LINE = LEADING_GENERATED_LINES
 const MIB = 1_048_576
-
-/** Builds a profile shaped like the Expo one (a `.bundle` script with `platform=web`, a map host rebased to the owned origin) with the given limits and refusals that name the limit reached. */
-function profileWith(limits: SourceMapLimits): SingleBundleProfile {
-  const refuse = (reason: string, details: Record<string, unknown> = {}) =>
-    new StudyError(
-      'REACT_SCRIPTS_SEAL_FAILED',
-      reason,
-      reason,
-      undefined,
-      undefined,
-      { reason, ...details },
-    )
-  return {
-    limits,
-    refusals: {
-      outsidePackage: () => refuse('outside-package'),
-      ambiguousSource: () => refuse('ambiguous-source'),
-      nodeModules: () => refuse('node-modules'),
-      unmappedLine: () => refuse('unmapped-line'),
-      mapLimit: (limit, limitValue) =>
-        refuse('map-limit', { limit, limitValue }),
-      mapUnreadable: (problem) => refuse('map-unreadable', { problem }),
-      sourceChanged: () => refuse('source-changed'),
-      notInEntryBundle: () => refuse('not-in-entry-bundle'),
-    },
-    selectBundleScript(scripts) {
-      const bundles = [...scripts].filter(
-        (script) =>
-          script.pathname.endsWith('.bundle') &&
-          script.searchParams.get('platform') === 'web',
-      )
-      return bundles.length === 1 ? bundles[0] : undefined
-    },
-    resolveMapUrl(reference, bundleUrl, ownedOrigin) {
-      const mapUrl = new URL(reference, bundleUrl)
-      const owned = new URL(ownedOrigin)
-      // Metro writes `localhost` for the port Codebook reaches as 127.0.0.1.
-      return mapUrl.port === owned.port
-        ? new URL(`${mapUrl.pathname}${mapUrl.search}`, owned)
-        : undefined
-    },
-  }
-}
 
 /** How the served map differs from a small one: the generated lines before the stop and padding. */
 type ServedMetroMap = {

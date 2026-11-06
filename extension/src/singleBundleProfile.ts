@@ -46,6 +46,18 @@ export type SingleBundleProfile = Readonly<{
    */
   selectBundleScript: (scripts: Iterable<URL>) => URL | undefined
   /**
+   * Opts in to quoting the server's error body: a non-success answer keeps the start of its body for the adapter to quote (Expo quotes Metro's message). Left out, a non-success body is cancelled unread, so a stalled body never holds a readiness poll.
+   */
+  quoteErrorBody?: boolean
+  /**
+   * Opts in to refusing an entry page that does not name exactly one bundle, instead of polling for one.
+   * `count` counts the web bundles among the page's scripts; `refusal` words the refusal for a page that names a count other than one. Absent (react-scripts), such a page is "not ready yet".
+   */
+  unclearEntryPage?: {
+    count: (scripts: Iterable<URL>) => number
+    refusal: (count: number) => StudyError
+  }
+  /**
    * Finds the address of the bundle's source map from the `sourceMappingURL` comment the bundle ends with.
    * @param reference - The comment's value, absolute or relative.
    * @param bundleUrl - The address the bundle was read at.
