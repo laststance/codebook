@@ -297,6 +297,35 @@ test('the evaluator words the size-limit and append-failure reasons the writer r
   )
 })
 
+// protects=a failed sign-in followed by the end gives the no-response reason that names the sign-in code; fails_when=the reason names a request failure, the run's end or no code; no_claim=how the writer records the sign-in entry
+test('a failed sign-in then the end words the no-response reason with the sign-in code', () => {
+  // Arrange
+  const header = nodeServerHistoryHeader(
+    SERVER_WORKSPACE_KEY,
+  ) as NodeServerHistoryHeader
+  const entries: NodeServerHistoryEntry[] = [
+    {
+      type: 'sign-in',
+      elapsedMs: 10,
+      path: '/login',
+      status: 401,
+      outcome: 'failed',
+      code: 'NODE_SERVER_SIGN_IN_FAILED',
+      durationMs: 5,
+    },
+    { type: 'end', elapsedMs: 20, reason: 'stopped' },
+  ] as NodeServerHistoryEntry[]
+
+  // Act
+  const reasons = evaluateNodeServerCapture(header, entries, {})
+
+  // Assert
+  assert.equal(
+    reasons.find((reason) => reason.text.startsWith('No response'))?.text,
+    'No response was recorded: the sign-in failed with NODE_SERVER_SIGN_IN_FAILED, so the request was not sent.',
+  )
+})
+
 // protects=a snapshot that cannot be presented makes the capture incomplete: empty frames, another position, another source, unread scopes; fails_when=such a stop reads as complete; no_claim=lower frames, which may lack source
 const SNAPSHOT_CASES: Array<{
   name: string

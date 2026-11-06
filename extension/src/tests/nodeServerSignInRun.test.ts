@@ -426,6 +426,41 @@ test('no password or cookie value reaches the journal, the view, the history or 
   )
 })
 
+// protects=the facts and the frame name of a stop captured after the sign-in read [masked] where they hold the typed password, in the run view and in the entry the history is handed; fails_when=maskedCapture is skipped so a fact display or the frame name keeps the password in the view or the history; no_claim=the debugger's own snapshot masking; the debugger is a fake that returns a capture holding the password
+test('a stop whose fact display and frame name hold the typed password reads [masked] in the view and the history', async () => {
+  // Arrange
+  const history = recordingHistory()
+  const harness = await signingIn({
+    ...SIGN_IN_OPTIONS,
+    history: history.sink,
+    capture: () => ({
+      path: 'src/routes/users.ts',
+      line: 14,
+      sourceHash: 'cited-hash',
+      frameName: `login(${SECRET})`,
+      facts: [{ path: 'body.password', mode: 'value', display: SECRET }],
+      unavailable: [],
+      snapshot: { version: 1, frames: [], variables: [], limitations: [] },
+    }),
+  })
+  answerSignIn(harness)
+  await declaredRequestSent(harness)
+  // Act
+  harness.debug.hit(0)
+  const paused = await until(harness, (current) => current.state === 'paused')
+  // Assert
+  assert.deepEqual(paused.captures[0]?.facts, {
+    'value:body.password': '[masked]',
+  })
+  const stopCall = history.log.find(([name]) => name === 'stop')
+  const read = stopCall?.[4] as { frameName?: string; facts: unknown[] }
+  assert.equal(read.frameName, 'login([masked])')
+  assert.deepEqual(read.facts, [
+    { path: 'body.password', mode: 'value', display: '[masked]' },
+  ])
+  assert.equal(JSON.stringify([paused, history.log]).includes(SECRET), false)
+})
+
 // protects=the run lists the typed password and every cookie form for the service's protocol masking; fails_when=the password, the whole value, its decoded form, its parts or the JSON-escaped forms are missing; no_claim=the service merging the set (service test)
 test('learnerSecrets holds the password and the session cookie forms', async () => {
   // Arrange
