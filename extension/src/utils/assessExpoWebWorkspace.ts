@@ -16,13 +16,12 @@ import {
 } from '../expoWebRefusals'
 
 import { buildExpoWebEnvironment } from './expoWebChildEnvironment'
-import { parseExpoEnvText } from './parseExpoEnvText'
+import { loadExpoEnvFiles } from './loadExpoEnvFiles'
 import {
   readExpoWebPackageReadiness,
   type ExpoWebPackageJudgement,
 } from './readExpoWebPackageReadiness'
 import { readInstallLockfileNames } from './readInstallLockfileNames'
-import { loadEnvFiles } from './readReactScriptsAppSettings'
 import type { EnvFileReadPolicy } from './readReactScriptsEnvFile'
 import type { ResolvedPackage } from './resolveNextPackage'
 
@@ -110,13 +109,8 @@ async function settleExpoWebEnvironment(
     if (value !== undefined) environment.set(name, value)
   // Expo starts in development, so a reference to NODE_ENV settles to it.
   environment.set('NODE_ENV', 'development')
-  // Expo reads `.env` with dotenv 16 (@expo/env), not react-scripts' dotenv 10.
-  await loadEnvFiles(
-    appRoot,
-    environment,
-    EXPO_ENV_FILE_POLICY,
-    parseExpoEnvText,
-  )
+  // Expo (@expo/env) parses with dotenv 16, merges the files by priority and then expands, unlike react-scripts.
+  await loadExpoEnvFiles(appRoot, environment, EXPO_ENV_FILE_POLICY)
   return Object.fromEntries(environment)
 }
 

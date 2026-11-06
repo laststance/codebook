@@ -6,6 +6,8 @@ import { test, type TestContext } from 'node:test'
 import { StudyError } from '../errors'
 import { EXPO_WEB_DEV_ADAPTER } from '../expoWebDevAdapter'
 import { assessExpoWebWorkspace } from '../utils/assessExpoWebWorkspace'
+import { inlinedEnvironmentValues } from '../utils/inlinedEnvironmentValues'
+import { maskEnvValues } from '../utils/maskKnownValues'
 import { parseExpoWebScript } from '../utils/parseExpoWebScript'
 import { readExpoWebPackageReadiness } from '../utils/readExpoWebPackageReadiness'
 import { readReactScriptsEnvFile } from '../utils/readReactScriptsEnvFile'
@@ -369,4 +371,75 @@ test('a nested app without its own lockfile is told the install command of the r
   assert.ok(thrown instanceof StudyError)
   assert.equal(thrown.details?.reason, 'not-installed')
   assert.equal(thrown.details?.installCommand, 'pnpm install --frozen-lockfile')
+})
+
+/** Settles the environment of a staged Expo app whose `.env*` files hold the given texts. */
+async function environmentOfEnvFiles(
+  context: TestContext,
+  files: Record<string, string>,
+): Promise<Record<string, string>> {
+  const repository = await createExpoWebRepository(context, { files })
+  const expoPackage = await resolveExpoWebPackage(repository.root, 'apps/app')
+  return (await assessExpoWebWorkspace(expoPackage)).environment
+}
+
+/** Applies the mask the Expo run builds from the settled environment to one generated-JavaScript line. */
+function maskedModuleLine(
+  environment: Record<string, string>,
+  line: string,
+): string {
+  return maskEnvValues(
+    line,
+    inlinedEnvironmentValues(environment, /^EXPO_PUBLIC_/i),
+  )
+}
+
+// Value: protects=Expo's ${NAME:-default} form: the default Expo inlines is what the mask holds; fails_when=the react-scripts expansion reads the file, so the mask holds ':-synthetic-fallback-value}' and the inlined default escapes; why_new=ship review F1; seam=temporary repository, real files, nothing executed; no_claim=that Metro inlines it
+test('a default value in an EXPO_PUBLIC reference is masked in generated JavaScript', async (context) => {
+  // Arrange
+  const files = {
+    '.env': 'EXPO_PUBLIC_KEY=${MISSING:-synthetic-fallback-value}\n',
+  }
+  // Act
+  const environment = await environmentOfEnvFiles(context, files)
+  const masked = maskedModuleLine(
+    environment,
+    'var key = "synthetic-fallback-value";',
+  )
+  // Assert
+  assert.equal(environment.EXPO_PUBLIC_KEY, 'synthetic-fallback-value')
+  assert.equal(masked, 'var key = "[masked]";')
+})
+
+// Value: protects=Expo merges the files by priority before expanding: a higher-priority file's reference sees a name only a lower-priority file defines, and the whole real value is masked; fails_when=files are expanded one after the other, so only the prefix is masked and the base leaks; why_new=ship review F1; seam=temporary repository, real files, nothing executed; no_claim=that Metro inlines it
+test('a reference in .env.local to a name only .env defines is masked as the whole value', async (context) => {
+  // Arrange
+  const files = {
+    '.env.local': 'EXPO_PUBLIC_KEY=prefix-${SUFFIX}\n',
+    '.env': 'SUFFIX=synthetic-base\n',
+  }
+  // Act
+  const environment = await environmentOfEnvFiles(context, files)
+  const masked = maskedModuleLine(
+    environment,
+    'var key = "prefix-synthetic-base";',
+  )
+  // Assert
+  assert.equal(environment.EXPO_PUBLIC_KEY, 'prefix-synthetic-base')
+  assert.equal(masked, 'var key = "[masked]";')
+})
+
+// Value: protects=Expo's file priority and escape rule: the highest-priority file wins and an escaped dollar stays a literal dollar; fails_when=a lower-priority file wins or an escaped dollar is expanded; why_new=ship review F1; seam=temporary repository, real files, nothing executed; no_claim=the test-mode file list
+test('the Expo environment follows file priority and keeps escaped dollars literal', async (context) => {
+  // Arrange
+  const files = {
+    '.env.development.local': 'EXPO_PUBLIC_WINNER=from-development-local\n',
+    '.env.local': 'EXPO_PUBLIC_WINNER=from-local\nEXPO_PUBLIC_ESC=cost-\\$5\n',
+    '.env': 'EXPO_PUBLIC_WINNER=from-base\n',
+  }
+  // Act
+  const environment = await environmentOfEnvFiles(context, files)
+  // Assert
+  assert.equal(environment.EXPO_PUBLIC_WINNER, 'from-development-local')
+  assert.equal(environment.EXPO_PUBLIC_ESC, 'cost-$5')
 })

@@ -3245,3 +3245,11 @@ export const HTTP_METHOD_NAMES = [
   'DELETE',
   'OPTIONS',
 ] as const
+
+/** The `.env` files `expo start` loads in development, highest priority first (`@expo/env` `getEnvFiles` for `NODE_ENV=development`): a name set by an earlier file wins. */
+export const EXPO_WEB_ENV_FILES = [
+  '.env.development.local',
+  '.env.local',
+  '.env.development',
+  '.env',
+] as const
