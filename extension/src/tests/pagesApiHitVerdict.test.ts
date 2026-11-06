@@ -136,6 +136,43 @@ test('a request event delivered after the click keeps the window its own wallTim
   )
 })
 
+// Value: protects=review round: a request whose event carries wallTime, received after an operation whose send time was never noted, keeps the window of receipt order, while a noted later operation still bounds it; fails_when=a missing send time places the request before every operation, so the click's own request is resumed as before-operation; no_claim=why a send time would be missing (the run notes every dispatch)
+test('a request with wallTime keeps receipt order for an operation whose send time was not noted', () => {
+  // Arrange
+  const tracker = new RouteHandlerRequests(['/api/data'])
+  const secondSentAtMs = 1_700_000_000_000
+  tracker.noteDispatch(2, secondSentAtMs)
+  // Act: operation 1's send time is unknown; one event was sent before operation 2, one after it
+  tracker.start(
+    {
+      requestId: 'a',
+      method: 'GET',
+      url: 'http://localhost:3000/api/data?clear=1',
+      wallTime: (secondSentAtMs - 40) / 1000,
+    },
+    2,
+    10,
+  )
+  tracker.start(
+    {
+      requestId: 'b',
+      method: 'GET',
+      url: 'http://localhost:3000/api/data?clear=1',
+      wallTime: (secondSentAtMs + 40) / 1000,
+    },
+    2,
+    11,
+  )
+  // Assert
+  assert.deepEqual(
+    tracker.list().map((request) => [request.id, request.window]),
+    [
+      ['a', 1],
+      ['b', 2],
+    ],
+  )
+})
+
 // Value: protects=E-3 the tracker keeps the target (path and query) of each request for the API-route match; fails_when=the query is dropped so every poll looks like the click; no_claim=other origins (the isApplicationOrigin tests)
 test('the request tracker keeps the target with its query', () => {
   // Arrange

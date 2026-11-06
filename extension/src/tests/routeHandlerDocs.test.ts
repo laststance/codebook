@@ -179,7 +179,7 @@ test('the help and README state the route-handler identity limits, except route 
   )
   assert.ok(
     readme.includes(
-      'in the server code of any route other than the entry route (an App Router route handler is the exception from MCP API 1.28, see **Route handlers** below)',
+      'in the server code of any route other than the entry route (an App Router route handler is the exception from MCP API 1.28, see **Route handlers** below, and a Pages API route from MCP API 1.29, see **API routes** below)',
     ),
   )
 })

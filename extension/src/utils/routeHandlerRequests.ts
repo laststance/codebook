@@ -56,7 +56,7 @@ export class RouteHandlerRequests {
    * Gives the window a request belongs to: the operations whose input was sent no later than the request's own start, never more than the operations dispatched when its event arrived.
    * @param receiptWindow - The operations dispatched when the event arrived.
    * @param wallTimeMs - The request's own start in epoch milliseconds; `undefined` when the event carried none.
-   * @returns The window; `receiptWindow` when no wall time or no dispatch time is known.
+   * @returns The window; `receiptWindow` when no wall time or no dispatch time is known, since an operation whose send time was never noted counts by receipt order.
    * @example tracker.windowOf(1, undefined) // => 1
    */
   private windowOf(
@@ -65,10 +65,10 @@ export class RouteHandlerRequests {
   ): number {
     if (wallTimeMs === undefined) return receiptWindow
     let window = 0
-    // Operations are sent in order, so the first one sent after the request ends the count.
+    // Operations are sent in order, so the first one known to be sent after the request ends the count; one without a noted time was dispatched before the event arrived.
     for (let index = 0; index < receiptWindow; index++) {
       const sentAtMs = this.dispatchedAtMs[index]
-      if (sentAtMs === undefined || sentAtMs > wallTimeMs) break
+      if (sentAtMs !== undefined && sentAtMs > wallTimeMs) break
       window = index + 1
     }
     return window

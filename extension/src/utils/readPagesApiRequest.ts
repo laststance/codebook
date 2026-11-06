@@ -1,7 +1,6 @@
 import type { Protocol } from 'devtools-protocol'
 
-/** The longest `req.url` the read accepts: a longer target is treated as unreadable, so a hostile request cannot fill the journal or the saved text. */
-const MAX_REQUEST_URL_CHARS = 2048
+import { API_ROUTE_MAX_REQUEST_URL_CHARS } from '../constants'
 
 /** The class name Node gives a request object of an API route's handler. */
 const REQUEST_CLASS_NAME = 'IncomingMessage'
@@ -52,7 +51,7 @@ export async function readPagesApiRequest(
     method === undefined ||
     url === undefined ||
     method === '' ||
-    url.length > MAX_REQUEST_URL_CHARS
+    url.length > API_ROUTE_MAX_REQUEST_URL_CHARS
   )
     return undefined
   return { method: method.toUpperCase(), url }

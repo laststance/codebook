@@ -1970,7 +1970,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const hasPagesFolder = await this.hasNextPagesFolder(adapter)
     this.pagesCapable = hasPagesFolder
     this.alive()
-    // A server stop in `_document` or an API route is refused before any process starts: no server stop is valid there in either router.
+    // A server stop in `_document` is refused before any process starts; an API-route stop was collected by collectRouteHandlerStops and is armed just before its operation.
     if (hasPagesFolder) await this.refuseLexicalPagesServerStops()
     this.nextSetupStep = NEXT_SETUP_STEPS.startingNext
     // The app runs on the port the project declares (its auth origin points there); a busy port refuses the start instead of moving the app.
@@ -3220,11 +3220,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const scopeId = frame?.scopeChain.find((scope) => scope.type === 'local')
       ?.object.objectId
     if (!cdp || scopeId === undefined) return undefined
+    // Quiet like the other classification reads: every resumed polling hit would otherwise spend two reads of the journal's capped entries.
     const ownPropertiesOf = async (
       objectId: string,
     ): Promise<readonly Protocol.Runtime.PropertyDescriptor[]> =>
       (
-        await cdp.request('Runtime.getProperties', {
+        await cdp.requestQuietly('Runtime.getProperties', {
           objectId,
           ownProperties: true,
         })
@@ -6375,12 +6376,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Refuses a server stop in `_document` or under the Pages folder's `api/` before the development server starts: no server stop is valid there in either router, so nothing needs to run to know it, and the refusal reports `details.sideEffects` `none`.
+   * Refuses a server stop in `_document` before the development server starts: no server stop is valid there in either router, so nothing needs to run to know it, and the refusal reports `details.sideEffects` `none`. A server stop under the Pages folder's `api/` is an API-route stop ({@link collectRouteHandlerStops}), not refused here.
    * Called by {@link prepareOwned} for a Next run in a workspace with a Pages folder, before {@link DevelopmentServerAdapter.start}. A browser stop in these files is refused later, after the route resolved ({@link refuseServerOnlyPagesStop}).
    * Only a workspace with no App folder (router kind `pages`, {@link readNextRouterKind}) is known to run a Pages route before the start; with both routers the entry route is resolved only after the server compiled, so the refusal claims no router and points at no data function.
-   * @throws `NEXT_SERVER_ONLY_STOP` saying API routes and `_document` are not supported in this version. In a workspace with a Pages folder and no App folder it carries `details.router` `pages` and `details.sideEffects` `none`, and an API route adds the pointer to the page's data function; with both routers it carries `details.sideEffects` `none` alone and no pointer.
+   * @throws `NEXT_SERVER_ONLY_STOP` saying `_document` is not supported in this version. In a workspace with a Pages folder and no App folder it carries `details.router` `pages` and `details.sideEffects` `none`; with both routers it carries `details.sideEffects` `none` alone.
    * @example
-   * await this.refuseLexicalPagesServerStops() // throws for a server stop in src/pages/api/hello.ts
+   * await this.refuseLexicalPagesServerStops() // throws for a server stop in src/pages/_document.tsx
    */
   private async refuseLexicalPagesServerStops(): Promise<void> {
     const folder = await findNextRouteFolder(this.packageRoot, 'pages')

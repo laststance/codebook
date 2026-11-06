@@ -143,7 +143,7 @@ test('the migration table lists the API-route study and no help limit calls Page
   assert.equal(API_VERSION, '1.29')
 })
 
-// Value: protects=the README documents API-route stops beside Route handlers (fields, identity limit, values, refusals, not-reached, configuration pointer), the format 14 sentence, skill 1.0.78 and API 1.29, and no longer lists Pages API routes as unsupported; fails_when=a sentence leaves the README; no_claim=the behavior itself
+// Value: protects=the README documents API-route stops beside Route handlers (fields, identity limit, values, refusals, not-reached, configuration pointer), the format 14 sentence, skill 1.0.78 and API 1.29, names Pages API routes beside route handlers as the exception to the entry-route rule, and no longer lists Pages API routes as unsupported; fails_when=a sentence leaves the README or the entry-route limits still call every other route's server code unsupported; no_claim=the behavior itself
 test('the README documents API-route stops under API 1.29 and no longer lists Pages API routes as unsupported', async () => {
   // Arrange
   const readme = await readPackaged('README.md')
@@ -167,12 +167,14 @@ test('the README documents API-route stops under API 1.29 and no longer lists Pa
     'is saved as format 14 (`.study.v14.json`), which also keeps the fields of format 13; Codebook 0.2.87 and older list it as saved by a newer Codebook',
     'updates to **1.0.78**',
     '- **Not supported.** Stops in `_document` (see `NEXT_SERVER_ONLY_STOP` below)',
+    'and a Pages API route from MCP API 1.29, see **API routes** below)',
+    '(except an App Router route handler and a Pages API route, see **Route handlers** and **API routes** above)',
   ])
     assert.ok(readme.includes(phrase), phrase)
   assert.equal(readme.includes('Stops in a Pages API route'), false)
 })
 
-// Value: protects=the bundled skill gives Pages API routes their minimum API 1.29 and afterOperation rule and no longer lists them as unsupported; fails_when=the gate, the rule or the version leaves the skill; no_claim=chat behavior
+// Value: protects=the bundled skill gives Pages API routes their minimum API 1.29 and afterOperation rule, tells the chat to offer the partial replay and never start again after an API route was not reached, and no longer lists them as unsupported; fails_when=the gate, the rule, the no-restart line or the version leaves the skill; no_claim=chat behavior
 test('the bundled skill gates Pages API-route stops by API 1.29 and afterOperation 1 or more', async () => {
   // Arrange
   const skill = await readPackaged('skills', 'codebook', 'SKILL.md')
@@ -185,6 +187,11 @@ test('the bundled skill gates Pages API-route stops by API 1.29 and afterOperati
   )
   assert.ok(
     skill.includes('`api-route-before-operation` or `api-route-edge-runtime`'),
+  )
+  assert.ok(
+    skill.includes(
+      'for `SERVER_STOP_NOT_REACHED` give `details.apiRoute` and the possibilities, never one as the cause; the inputs were already sent, so offer the partial replay and never start again unasked',
+    ),
   )
   assert.equal(skill.includes('Pages API routes and `_document`'), false)
 })

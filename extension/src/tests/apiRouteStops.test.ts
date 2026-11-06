@@ -64,6 +64,32 @@ test('an API-route stop declared after operation 1 pauses in the request the pag
   assert.equal(journalTypes(harness).includes('route-handler.armed'), true)
 })
 
+// Value: protects=review round: the two request reads of an API-route hit go quietly, like the stack and text reads, so polling hits that are resumed never spend the journal's capped entries; fails_when=`Runtime.getProperties` goes through the journaled request path, two `cdp.sent`/`cdp.response` pairs per hit; no_claim=the journal's cap itself (the stand-in channel only lists which path a read took)
+test('an API-route hit reads the request without journaling the reads', async (context) => {
+  // Arrange
+  const harness = await apiRouteRunHarness(context)
+  await harness.run.prepare()
+  await sendOperation(harness, 1)
+  sendRequest(harness, '9', 'GET', '/api/data?clear=1')
+  // Act
+  apiRouteHit(harness, {
+    apiRequest: { method: 'GET', url: '/api/data?clear=1' },
+  })
+  await publishedPause(harness)
+  // Assert
+  assert.deepEqual(
+    {
+      reads: harness.server!.inspectorMethods.filter(
+        (method) => method === 'Runtime.getProperties',
+      ).length,
+      journaledReads: harness.server!.journaledInspectorMethods.filter(
+        (method) => method === 'Runtime.getProperties',
+      ).length,
+    },
+    { reads: 2, journaledReads: 0 },
+  )
+})
+
 // Value: protects=AC 1 for a stop on a line after the handler awaited: Next's apiResolver is then only on the async stack, and the run still pauses; fails_when=the classifier reads only the synchronous frames, so the hit is resumed as unclassified and the run ends SERVER_STOP_NOT_REACHED; no_claim=real Next timing (the harness answers the raw CDP stack E1 recorded after the await)
 test('an API-route stop on a line after the handler awaited pauses in the request', async (context) => {
   // Arrange

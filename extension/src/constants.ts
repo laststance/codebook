@@ -3172,6 +3172,8 @@ export const NODE_SCRIPT_RUN_WORDS = { noun: 'script', profile: 'node-script' }
 export const ROUTE_HANDLER_REQUEST_WAIT_MS = 1000
 /** How often that wait reads the tracked requests again. */
 export const ROUTE_HANDLER_REQUEST_POLL_MS = 50
+/** The longest `req.url` an API-route pause reads from the handler's request: a longer target is treated as unreadable, so a hostile request cannot fill the journal or the saved text. */
+export const API_ROUTE_MAX_REQUEST_URL_CHARS = 2048
 /** The most app-origin API requests the run keeps for route-handler correlation; the oldest is dropped past it. */
 export const ROUTE_HANDLER_REQUEST_LIMIT = 256
 /** The file name of an App Router route handler (`route.ts|js|tsx|jsx`); the one pattern the route lookup and the stop judgement read. */
