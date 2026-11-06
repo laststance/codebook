@@ -4,7 +4,7 @@
  * Why it exists: an adapter that quotes the server's own error (Metro's bundle failure) needs the start of a body even when the body is longer than the cap. Called by {@link readServedText} and {@link findSingleBundleUrl} when the profile opts in to quoting.
  * @param response - The non-success response whose body is read.
  * @param limit - The most bytes kept.
- * @returns The first `limit` bytes decoded leniently (a cut multi-byte character becomes U+FFFD); `undefined` when the body cannot be read.
+ * @returns The first `limit` bytes decoded leniently (a cut multi-byte character becomes U+FFFD); when the body reached the cap, without its last line, which the cut may have split (kept when the body is one line) (a secret fragment the mask cannot match); `undefined` when the body cannot be read.
  * @example await readErrorBodyHead(response, 65_536) // => '{"message":"Unable to resolve ./x"}'
  */
 export async function readErrorBodyHead(
@@ -21,7 +21,9 @@ export async function readErrorBodyHead(
       chunks.push(value.subarray(0, limit - total))
       total += value.byteLength
     }
-    return new TextDecoder('utf-8').decode(Buffer.concat(chunks))
+    const text = new TextDecoder('utf-8').decode(Buffer.concat(chunks))
+    // A body that reached the cap may end inside a secret the later mask cannot match: drop the cut last line. A body without a line break keeps its text, since the quote takes only its first 300 characters, far from the cut.
+    return total >= limit ? text.replace(/\n[^\n]*$/, '') : text
   } catch {
     return undefined
   } finally {

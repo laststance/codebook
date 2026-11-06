@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { SINGLE_BUNDLE_ERROR_BODY_LIMIT_BYTES } from '../constants'
 import { expoWebBundlerLineOf } from '../utils/expoWebBundlerLineOf'
 import { buildExpoWebEnvironment } from '../utils/expoWebChildEnvironment'
 import { isExpoWebScriptOfModule } from '../utils/isExpoWebScriptOfModule'
 import { classifyExpoWebOutput } from '../utils/launchExpoWebDevelopmentServer'
+import { readErrorBodyHead } from '../utils/readErrorBodyHead'
 
 // Value: protects=Metro is not reachable from the learner's LAN: the child gets IPv4-first DNS so --localhost binds 127.0.0.1; fails_when=the option is missing from NODE_OPTIONS; why_new=Cycle 0089 review (OCR security); seam=none; no_claim=real Metro bind
 test('the Expo child gets the IPv4-first Node option so the loopback bind is 127.0.0.1', () => {
@@ -112,4 +114,21 @@ test('the quoted Metro line is masked, kept to one line and cut at 300 character
   assert.equal(line.length, 300)
   assert.equal(line.startsWith('Failed with *** in file xxxx'), true)
   assert.equal(line.includes('pk-live-abc123'), false)
+})
+
+// Value: protects=a secret cut by the error-body byte cap never reaches the quoted Metro line as an unmaskable fragment; fails_when=the head keeps the partial token at the cut; why_new=Cycle 0089 ship review (adversarial); seam=none; no_claim=mask quality
+test('a secret straddling the error-body cap leaves no fragment in the quoted line', async () => {
+  // Arrange
+  const secret = 'SECRETVALUE-0123456789'
+  const body = `${'\n'.repeat(SINGLE_BUNDLE_ERROR_BODY_LIMIT_BYTES - 8)}${secret}`
+  const mask = (text: string) => text.replaceAll(secret, '***')
+  // Act
+  const head = await readErrorBodyHead(
+    new Response(body, { status: 500 }),
+    SINGLE_BUNDLE_ERROR_BODY_LIMIT_BYTES,
+  )
+  const line = expoWebBundlerLineOf({ status: 500, body: head }, mask)
+  // Assert
+  assert.equal(line.includes('SECRET'), false)
+  assert.equal(line, 'Metro answered status 500')
 })
