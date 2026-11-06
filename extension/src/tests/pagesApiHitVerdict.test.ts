@@ -48,6 +48,26 @@ test('an API-route hit of another query is resumed as other-path', () => {
   assert.deepEqual(verdict, { action: 'resume', reason: 'other-path' })
 })
 
+// Value: protects=E-2 a same-target request of another method in the window is named other-method, not published or labelled other-path; fails_when=a hit GET is published against a window POST of the same target, or the reason reads other-path; why_new=no pages-api verdict test asserted other-method; seam=none; no_claim=which method the handler really served
+test('an API-route hit of another method for the same target is resumed as other-method', () => {
+  // Arrange
+  const input = {
+    ...BASE,
+    hitRequest: { method: 'GET', target: '/api/data' },
+    requests: [
+      {
+        ...CLICK_REQUEST,
+        method: 'POST',
+        target: '/api/data',
+      },
+    ],
+  }
+  // Act
+  const verdict = routeHandlerHitVerdictOf(input)
+  // Assert
+  assert.deepEqual(verdict, { action: 'resume', reason: 'other-method' })
+})
+
 // Value: protects=E-2 a request that started before the operation and reaches the line late is not attributed to it; fails_when=a before-click request is published as the click's pause; no_claim=the wait for a later event
 test('an API-route hit whose only matching request started before the operation is resumed as before-operation', () => {
   // Arrange

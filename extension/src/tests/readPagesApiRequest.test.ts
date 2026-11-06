@@ -113,3 +113,38 @@ test('a request whose url is an accessor reads as unreadable', async () => {
   // Assert
   assert.equal(request, undefined)
 })
+
+// Value: protects=E-1 an oversized url, a rejected read, a non-string method and an empty method read as unreadable so the operation window decides; fails_when=a 3000-character url or an empty method publishes a bogus request, or a rejecting reader crashes the hit; why_new=only the valid, renamed, destructured, two-request and accessor shapes were tested; seam=none; no_claim=a url of exactly 2048 characters (the bound's edge)
+test('an oversized url, a rejected read, a non-string method and an empty method read as unreadable', async () => {
+  // Arrange
+  const locals = [local('req', 'IncomingMessage', '1')]
+  const ownWith = (properties: Property[]) => async () => properties
+  const cases: Record<string, () => Promise<Property[]>> = {
+    oversizedUrl: ownWith([
+      data('url', 'string', `/api/data?q=${'a'.repeat(3000)}`),
+      data('method', 'string', 'GET'),
+    ]),
+    rejectedRead: async () => {
+      throw new Error('object released')
+    },
+    nonStringMethod: ownWith([
+      data('url', 'string', '/api/data'),
+      data('method', 'object', null),
+    ]),
+    emptyMethod: ownWith([
+      data('url', 'string', '/api/data'),
+      data('method', 'string', ''),
+    ]),
+  }
+  // Act
+  const results: Record<string, unknown> = {}
+  for (const [name, read] of Object.entries(cases))
+    results[name] = await readPagesApiRequest(locals, read)
+  // Assert
+  assert.deepEqual(results, {
+    oversizedUrl: undefined,
+    rejectedRead: undefined,
+    nonStringMethod: undefined,
+    emptyMethod: undefined,
+  })
+})

@@ -344,3 +344,44 @@ test('a Pages run with a getServerSideProps stop and an API-route stop pauses at
     { method: 'GET', route: '/api/data', path: '/api/data' },
   )
 })
+
+// Value: protects=ENG-4 an API-route request path that holds a value the learner typed is masked in the published pause like routeHandler.path; fails_when=the snapshot's apiRoute.path keeps the typed value; why_new=only routeHandler.path masking was tested (routeHandlerHeldStop.test.ts); seam=none; no_claim=masking of the route pattern or of the method
+test('an API-route pause masks a typed secret in the request path it publishes', async (context) => {
+  // Arrange
+  const secret = 'typed-by-learner'
+  const harness = await apiRouteRunHarness(context, {
+    stopOperations: [2],
+    extra: {
+      sourcePath: 'src/pages/api/todos/[id].ts',
+      operations: {
+        operations: [
+          {
+            kind: 'text' as const,
+            title: 'Password',
+            selector: '#password',
+            secret: 'ask-learner' as const,
+          },
+          { ...ADD, title: 'Add' },
+        ],
+        stopOperations: [2],
+        stopParticipants: ['server'],
+        controls: { '#password': { tagName: 'input', type: 'password' } },
+      },
+    },
+  })
+  await harness.run.prepare()
+  harness.run.action('op-1', 'repository-operation', { learnerSecret: secret })
+  await waitUntil(
+    () => harness.run.view().status === 'ready',
+    'operation 1 done',
+  )
+  await sendOperation(harness, 2)
+  sendRequest(harness, '9', 'POST', `/api/todos/${secret}`)
+  // Act
+  apiRouteHit(harness, {
+    apiRequest: { method: 'POST', url: `/api/todos/${secret}` },
+  })
+  const snapshot = await publishedPause(harness)
+  // Assert
+  assert.equal(snapshot.apiRoute?.path, '/api/todos/[masked]')
+})
