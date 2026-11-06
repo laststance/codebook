@@ -25,6 +25,8 @@ export async function createEnvironmentWith(
     jsDebugEnabled?: boolean
     /** Whether no external Node executable resolves, as on a machine without Node; one resolves by default. */
     nodeUnavailable?: boolean
+    /** The version the fake external Node reports; 24.22.1 by default. */
+    externalNodeVersion?: string
   },
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-server-env-'))
@@ -54,6 +56,13 @@ export async function createEnvironmentWith(
         resolveExternalNodeExecutable: async () => {
           if (options.nodeUnavailable) throw new Error('no node')
           return '/external/node'
+        },
+        resolveExternalNode: async () => {
+          if (options.nodeUnavailable) throw new Error('no node')
+          return {
+            executable: '/external/node',
+            version: options.externalNodeVersion ?? '24.22.1',
+          }
         },
       },
       './utils/nodeServerMachineGaps': {

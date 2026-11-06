@@ -65,6 +65,7 @@ import type {
 import type { SecretFrameWithholdReason } from './runtimeSupport/secretFrameGate'
 import type { SourceMapLimits } from './sourceMapLimits'
 import type { StateChangingRequestQuestion } from './utils/askToSendStateChangingRequest'
+import type { WxtProjectReport } from './utils/discoverWxtProjects'
 import type {
   RetryVitestListingRelease,
   VitestListingReleaseFailure,
@@ -727,6 +728,10 @@ export interface StudyEnvironment {
           vitestSearch?: NodeTestVitestSearch
           /** repository-browser only: each adapter's readiness for this workspace ({@link readRepositoryAdapterReadiness}). */
           adapters?: RepositoryAdapterReadiness
+          /** chrome-extension only: the WXT projects the `wxt-build` adapter can build ({@link discoverWxtProjects}). */
+          wxtProjects?: WxtProjectReport[]
+          /** chrome-extension only, and only with a listed WXT project: the external Node the build needs (24 or later); `nodeVersion` is null when none is usable. */
+          wxtNode?: { nodeVersion: string | null; nodeReady: boolean }
         }
       >
     >

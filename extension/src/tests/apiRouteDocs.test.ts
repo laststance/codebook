@@ -163,7 +163,7 @@ test('the README documents API-route stops under API 1.29 and no longer lists Pa
   // Arrange
   const readme = await readPackaged('README.md')
   // Act / Assert
-  assert.ok(readme.includes('with **MCP API 1.31**'))
+  assert.ok(readme.includes('with **MCP API 1.32**'))
   assert.ok(
     readme.includes('API 1.29 is additive: it adds Pages API-route stops'),
   )
@@ -181,7 +181,7 @@ test('the README documents API-route stops under API 1.29 and no longer lists Pa
     '`SERVER_STOP_NOT_REACHED`',
     '`apiRouteStops.configuration`',
     'is saved as format 14 (`.study.v14.json`), which also keeps the fields of format 13; Codebook 0.2.87 and older list it as saved by a newer Codebook',
-    'updates to **1.0.80**',
+    'updates to **1.0.81**',
     '- **Not supported.** Stops in `_document` (see `NEXT_SERVER_ONLY_STOP` below)',
     'and a Pages API route from MCP API 1.29, see **API routes** below)',
     '(except an App Router route handler and a Pages API route, see **Route handlers** and **API routes** above)',
@@ -195,7 +195,7 @@ test('the bundled skill gates Pages API-route stops by API 1.29 and afterOperati
   // Arrange
   const skill = await readPackaged('skills', 'codebook', 'SKILL.md')
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.80"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.81"\n'))
   assert.ok(
     skill.includes(
       'A Pages API route (`pages/api` or `src/pages/api`) takes a `participant: "server"` stop only when `codebook_status` reports API 1.29 or later',

@@ -203,7 +203,7 @@ test('the bundled skill 1.0.71 gates packageRoot on API 1.18 and never opens a n
   // Arrange
   const skill = await readPackaged('skills/codebook/SKILL.md')
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.80"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.81"\n'))
   for (const phrase of [
     'only when `codebook_status` reports API 1.18 or later',
     'refuses `packageRoot` as an unknown key',
@@ -224,7 +224,7 @@ test('the README replaces the nested-app limitation with the root-open entry', a
   // Act / Assert
   assert.equal(readme.includes('cannot run yet'), false)
   assert.ok(readme.includes('## Run a Next app below the repository root'))
-  assert.ok(readme.includes('**MCP API 1.31**'))
+  assert.ok(readme.includes('**MCP API 1.32**'))
   assert.ok(readme.includes('format 9 (`.study.v9.json`)'))
   assert.ok(
     readme.includes(

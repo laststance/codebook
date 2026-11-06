@@ -78,6 +78,20 @@ export const EXTENSION_BUILD_HASH_CONCURRENCY = 32
 /** The most project sources a `STOP_FILE_NOT_LOADED` refusal of a `wxt-build` run lists in `details.contextSources`. */
 export const EXTENSION_CONTEXT_SOURCES_LIMIT = 20
 
+/** The file names that make a folder a WXT project, in the order `codebook_status` looks for them. */
+export const WXT_CONFIG_FILE_NAMES = [
+  'wxt.config.ts',
+  'wxt.config.mts',
+  'wxt.config.js',
+  'wxt.config.mjs',
+] as const
+
+/** How many levels below the repository root `codebook_status` looks for a WXT project folder. */
+export const WXT_PROJECT_DEPTH_LIMIT = 2
+
+/** The most WXT project folders `codebook_status` lists under the `chrome-extension` profile. */
+export const WXT_PROJECT_LIMIT = 10
+
 /** The one WXT `major.minor` the `wxt-build` adapter builds (release versions only); widening needs a native run on that version. */
 export const WXT_SUPPORTED_MAJOR_MINOR = '0.21'
 

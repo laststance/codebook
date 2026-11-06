@@ -1482,6 +1482,16 @@ export class StudyService {
     return describeChromeExtensionProfile({
       ready: reported.ready && missing.length === 0,
       missing,
+      // The WXT report passes through as it is: folders are repository-relative and versions are plain text.
+      ...(profilePrerequisites?.[CHROME_EXTENSION_PROFILE]?.wxtProjects
+        ? {
+            wxtProjects:
+              profilePrerequisites[CHROME_EXTENSION_PROFILE].wxtProjects,
+          }
+        : {}),
+      ...(profilePrerequisites?.[CHROME_EXTENSION_PROFILE]?.wxtNode
+        ? { wxtNode: profilePrerequisites[CHROME_EXTENSION_PROFILE].wxtNode }
+        : {}),
     })
   }
 

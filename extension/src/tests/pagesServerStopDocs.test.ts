@@ -575,7 +575,7 @@ test('the bundled skill 1.0.71 states the Pages data-function stops, the readine
   const skill = await readPackaged('skills', 'codebook', 'SKILL.md')
   const paragraph = await readServerRendersSkillParagraph()
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.80"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.81"\n'))
   assert.ok(
     paragraph.startsWith(
       '**Server renders (API 1.16; Pages Router data functions API 1.17).**',
@@ -652,14 +652,14 @@ test('the README names the Pages server-stop refusals, the API 1.17 note and ski
   const readme = await readPackaged('README.md')
   // Act / Assert
   for (const phrase of [
-    'with **MCP API 1.31** (`codebook_status` reports the installed build). API 1.31 is additive:',
+    'with **MCP API 1.32** (`codebook_status` reports the installed build). API 1.32 is additive:',
     'API 1.17 is additive: it adds Pages Router data-function server stops in configuration version 3',
     'A saved Pages server run stays study format 8 with no new field.',
     'A server stop in `_document` is refused with this code before the development server starts (`details.sideEffects` is `none`).',
     'A server stop in a version 2 Pages run is refused with this code too, naming configuration version 3 and the Pages quick start (`details.requiredVersion` is `3`)',
     'Every refusal of a stop in a Pages run carries `details.router: "pages"`.',
     "(`details.reason` is `client-component`: the page component and `getInitialProps` lines also run in the page's server render and in the browser",
-    "so Cursor's managed skill updates to **1.0.80**",
+    "so Cursor's managed skill updates to **1.0.81**",
     '**What the chat asks first (1.0.66).**',
   ])
     assert.ok(readme.includes(phrase), phrase)
