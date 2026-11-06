@@ -321,7 +321,7 @@ test('the frames help tells a chat that a browser stop image the paused page cou
   )
 })
 
-// protects=the help and the packaged README tell a chat and a learner that a recorded snapshot skips a function's members and prototype chains and what such an entry reads, so neither presents them as observed; fails_when=the sentence leaves the Secrets and masking help or the README's Masked values section, or names a different label than the capture saves; no_claim=the capture itself (captureReplayDebugSnapshotInternals.test.ts)
+// protects=the help and the packaged README tell a chat and a learner that a recorded snapshot skips a function's members and prototype chains and what such an entry reads, so neither presents them as observed; fails_when=the sentence leaves the Secrets and masking help or the README's Codebook · Recorded learning paragraph, or names a different label than the capture saves; no_claim=the capture itself (captureReplayDebugSnapshotInternals.test.ts)
 test('the help and the README say a recorded snapshot does not keep engine internals and what their entries read', async (context) => {
   // Arrange
   const help = await readHelp(context)
@@ -342,12 +342,7 @@ test('the help and the README say a recorded snapshot does not keep engine inter
   )
   assert.ok(
     readme.includes(
-      "- **Engine internals are not recorded.** A saved snapshot, the values a replay shows in the native debugger, keeps the stop's values and their object, array, Map, Set and Proxy members, for every run kind.",
-    ),
-  )
-  assert.ok(
-    readme.includes(
-      'such an entry keeps its preview and reads `Engine internals are not recorded.`',
+      "debug session: the editor's own debugger shows the recorded source, scopes and call stack of the selected moment. A function's members and a prototype chain (`[[Prototype]]`, `__proto__`, `[[Scopes]]`, `[[FunctionLocation]]`) are not recorded in any run kind: such an entry keeps its preview, and its **Not recorded** row reads `Engine internals are not recorded.`",
     ),
   )
 })

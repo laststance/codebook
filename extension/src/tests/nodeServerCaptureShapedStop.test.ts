@@ -256,7 +256,7 @@ test("a Node server stop's snapshot skips a function's members and a prototype c
           {
             name: 'next',
             value: 'ƒ next(error)',
-            type: 'function',
+            type: 'Function',
             variablesReference: 4,
           },
           {
@@ -292,7 +292,7 @@ test("a Node server stop's snapshot skips a function's members and a prototype c
           {
             name: 'read',
             value: 'ƒ read(size)',
-            type: 'function',
+            type: 'Function',
             variablesReference: 8,
           },
         ],

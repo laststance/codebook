@@ -21,7 +21,7 @@ type ScriptedVariable = {
   variablesReference: number
 }
 
-/** The members js-debug lists under a function: its own properties, then its closure scopes, location and prototype. */
+/** The members js-debug lists under a function: its own properties (`arguments` and `caller` are getters, typed `function`), then its closure scopes, location and prototype. */
 const FUNCTION_MEMBERS: ScriptedVariable[] = [
   { name: 'length', value: '1', type: 'number', variablesReference: 0 },
   {
@@ -30,8 +30,13 @@ const FUNCTION_MEMBERS: ScriptedVariable[] = [
     type: 'string',
     variablesReference: 0,
   },
-  { name: 'arguments', value: 'null', type: 'object', variablesReference: 0 },
-  { name: 'caller', value: 'null', type: 'object', variablesReference: 0 },
+  {
+    name: 'arguments',
+    value: '(...)',
+    type: 'function',
+    variablesReference: 98,
+  },
+  { name: 'caller', value: '(...)', type: 'function', variablesReference: 99 },
   {
     name: 'prototype',
     value: '{constructor: ƒ}',
@@ -53,7 +58,7 @@ const FUNCTION_MEMBERS: ScriptedVariable[] = [
   {
     name: '[[Prototype]]',
     value: 'ƒ ()',
-    type: 'function',
+    type: 'Function',
     variablesReference: 92,
   },
 ]
@@ -63,13 +68,13 @@ const OBJECT_PROTOTYPE_MEMBERS: ScriptedVariable[] = [
   {
     name: 'constructor',
     value: 'ƒ Object()',
-    type: 'function',
+    type: 'Function',
     variablesReference: 93,
   },
   {
     name: 'hasOwnProperty',
     value: 'ƒ hasOwnProperty()',
-    type: 'function',
+    type: 'Function',
     variablesReference: 94,
   },
   { name: '__proto__', value: 'null', type: 'object', variablesReference: 0 },
@@ -134,21 +139,27 @@ const SIGN_IN_STOP_VARIABLES: Record<number, ScriptedVariable[]> = {
   20: [
     {
       name: 'mutationFn',
-      value: 'ƒ mutationFn(input)',
-      type: 'function',
+      value: 'async ƒ mutationFn(input)',
+      type: 'AsyncFunction',
       variablesReference: 21,
     },
     {
       name: 'onError',
       value: 'ƒ onError(error)',
-      type: 'function',
+      type: 'Function',
       variablesReference: 22,
     },
     {
       name: 'onSuccess',
       value: 'ƒ onSuccess(data)',
-      type: 'function',
+      type: 'Function',
       variablesReference: 23,
+    },
+    {
+      name: 'token',
+      value: 'ƒ token()',
+      type: 'Function',
+      variablesReference: 27,
     },
     {
       name: '[[Prototype]]',
@@ -164,13 +175,13 @@ const SIGN_IN_STOP_VARIABLES: Record<number, ScriptedVariable[]> = {
     {
       name: 'constructor',
       value: 'class MutationObserver',
-      type: 'function',
+      type: 'Function',
       variablesReference: 25,
     },
     {
       name: 'mutate',
       value: 'ƒ mutate(variables)',
-      type: 'function',
+      type: 'Function',
       variablesReference: 26,
     },
     {
@@ -244,7 +255,7 @@ const COLLECTION_STOP_VARIABLES: Record<number, ScriptedVariable[]> = {
     {
       name: 'clear',
       value: 'ƒ clear()',
-      type: 'function',
+      type: 'Function',
       variablesReference: 34,
     },
   ],
@@ -276,7 +287,7 @@ const COLLECTION_STOP_VARIABLES: Record<number, ScriptedVariable[]> = {
     {
       name: 'get',
       value: 'ƒ get(target, key)',
-      type: 'function',
+      type: 'Function',
       variablesReference: 43,
     },
   ],
@@ -309,19 +320,85 @@ const COLLECTION_STOP_VARIABLES: Record<number, ScriptedVariable[]> = {
     {
       name: 'charAt',
       value: 'ƒ charAt()',
-      type: 'function',
+      type: 'Function',
       variablesReference: 52,
     },
   ],
 }
 
 /**
+ * The variables of a stop whose local object has an own getter: js-debug types a getter by its raw type `function` and answers its expansion with the value the getter computes.
+ * Keys are DAP variables references; a reference without an entry answers no variables.
+ */
+const GETTER_STOP_VARIABLES: Record<number, ScriptedVariable[]> = {
+  1: [
+    {
+      name: 'order',
+      value: '{lines: Array(2)}',
+      type: 'Object',
+      variablesReference: 60,
+    },
+  ],
+  60: [
+    {
+      name: 'lines',
+      value: 'Array(2)',
+      type: 'Array',
+      variablesReference: 0,
+    },
+    { name: 'total', value: '(...)', type: 'function', variablesReference: 61 },
+  ],
+  61: [{ name: 'total', value: '42', type: 'number', variablesReference: 0 }],
+}
+
+/**
+ * The variables of a stop whose plain object lists each skipped internal name with children: `__proto__`, `[[Scopes]]` and `[[FunctionLocation]]` beside an own value, so the name rule is checked apart from the function rule.
+ * Keys are DAP variables references; a reference without an entry answers no variables.
+ */
+const NAMED_INTERNALS_STOP_VARIABLES: Record<number, ScriptedVariable[]> = {
+  1: [
+    {
+      name: 'state',
+      value: '{step: 2}',
+      type: 'Object',
+      variablesReference: 70,
+    },
+  ],
+  70: [
+    { name: 'step', value: '2', type: 'number', variablesReference: 0 },
+    {
+      name: '__proto__',
+      value: 'Object',
+      type: 'Object',
+      variablesReference: 71,
+    },
+    {
+      name: '[[Scopes]]',
+      value: 'Scopes[1]',
+      type: 'internal#scopeList',
+      variablesReference: 72,
+    },
+    {
+      name: '[[FunctionLocation]]',
+      value: 'state.ts:3',
+      type: 'internal#location',
+      variablesReference: 73,
+    },
+  ],
+  71: OBJECT_PROTOTYPE_MEMBERS,
+  72: [{ name: '0', value: 'Global', type: 'Window', variablesReference: 74 }],
+  73: [{ name: 'line', value: '3', type: 'number', variablesReference: 0 }],
+}
+
+/**
  * Captures one browser stop with the real capture function over a scripted debugger, recording every `variables` request it sends.
  * @param variablesByReference - The scripted answers of the stop's Local scope (reference 1) and its members.
+ * @param limits - The caller's limits, as an API-route or route-handler stop passes them (`topLevelFirst`); absent for a page stop's defaults.
  * @returns The snapshot, and the references of the `variables` requests in the order they were sent.
  */
 async function capturedBrowserStop(
   variablesByReference: Record<number, ScriptedVariable[]>,
+  limits?: Parameters<typeof captureReplayDebugSnapshot>[0]['limits'],
 ): Promise<{ snapshot: ReplayDebugSnapshot; requestedReferences: number[] }> {
   const requestedReferences: number[] = []
   const snapshot = await captureReplayDebugSnapshot({
@@ -333,6 +410,7 @@ async function capturedBrowserStop(
       line: 41,
     },
     assertCurrent() {},
+    ...(limits !== undefined && { limits }),
     request(command, arguments_) {
       if (command === 'scopes')
         return Promise.resolve({
@@ -377,24 +455,30 @@ function savedVariableAt(
   return found!
 }
 
-// protects=a browser pause publishes within its gate because the snapshot sends no request into a function's members or a prototype chain, and labels those entries; fails_when=the capture reads mutationFn's members, [[Scopes]] or any [[Prototype]] (the C89-D1 path that used the whole 5 s deadline), or saves them without the reason; no_claim=the scripted debugger stands in for js-debug: the native time to publish is measured by C90-1 and C90-2
+// protects=a browser pause publishes within its gate because the snapshot sends no request into a function's members or a prototype chain, and labels those entries; fails_when=the capture reads mutationFn's members, [[Scopes]] or any [[Prototype]] (the C89-D1 path that used the whole 5 s deadline), saves them without the reason, or misses js-debug's own spelling of a function's type (Function, AsyncFunction); no_claim=the scripted debugger stands in for js-debug: the native time to publish is measured by C90-1 and C90-2
 test("a browser stop's snapshot reads no function members or prototype chains, and says they are not recorded", async () => {
-  // Arrange / Act
-  const { snapshot, requestedReferences } = await capturedBrowserStop(
-    SIGN_IN_STOP_VARIABLES,
-  )
+  // Arrange
+  const variablesByReference = SIGN_IN_STOP_VARIABLES
+
+  // Act
+  const { snapshot, requestedReferences } =
+    await capturedBrowserStop(variablesByReference)
 
   // Assert
   assert.deepEqual(requestedReferences, [1, 10, 11, 20])
-  for (const callback of ['mutationFn', 'onError', 'onSuccess']) {
-    const saved = savedVariableAt(snapshot, ['this', callback])
-    assert.equal(saved.type, 'function')
+  for (const [callback, type] of [
+    ['mutationFn', 'AsyncFunction'],
+    ['onError', 'Function'],
+    ['onSuccess', 'Function'],
+  ]) {
+    const saved = savedVariableAt(snapshot, ['this', callback!])
+    assert.equal(saved.type, type)
     assert.deepEqual(saved.children, [])
     assert.equal(saved.unavailable, 'Engine internals are not recorded.')
   }
   assert.equal(
     savedVariableAt(snapshot, ['this', 'mutationFn']).value,
-    'ƒ mutationFn(input)',
+    'async ƒ mutationFn(input)',
   )
   for (const path of [
     ['this', '[[Prototype]]'],
@@ -407,10 +491,13 @@ test("a browser stop's snapshot reads no function members or prototype chains, a
   }
 })
 
-// protects=the learner's own values at the same stop are still recorded to their depth, and a secret among them still reads [masked]; fails_when=the skip rule drops plain object members (parsed.data.email, parsed.success) or lets the password through unmasked; no_claim=the masking rules themselves, which their own tests cover
+// protects=the learner's own values at the same stop are still recorded to their depth, and a secret among them still reads [masked]; fails_when=the skip rule drops plain object members (parsed.data.email, parsed.success) or lets the password through unmasked; no_claim=the C89-D1 skip itself: this test passes with or without it and guards only against the skip removing data
 test("a browser stop's snapshot still records the form's values and masks its password", async () => {
-  // Arrange / Act
-  const { snapshot } = await capturedBrowserStop(SIGN_IN_STOP_VARIABLES)
+  // Arrange
+  const variablesByReference = SIGN_IN_STOP_VARIABLES
+
+  // Act
+  const { snapshot } = await capturedBrowserStop(variablesByReference)
 
   // Assert
   assert.equal(savedVariableAt(snapshot, ['parsed', 'success']).value, 'true')
@@ -428,12 +515,96 @@ test("a browser stop's snapshot still records the form's values and masks its pa
   )
 })
 
+// protects=masking decides a secret-named function's entry before the skip rule: it reads [masked] with no internals reason; fails_when=the skip runs first and saves the function's preview or adds the reason to a withheld entry; no_claim=which names count as secret, which the masking tests cover
+test("a browser stop's secret-named function reads [masked] without the internals reason", async () => {
+  // Arrange
+  const variablesByReference = SIGN_IN_STOP_VARIABLES
+
+  // Act
+  const { snapshot } = await capturedBrowserStop(variablesByReference)
+
+  // Assert
+  const saved = savedVariableAt(snapshot, ['this', 'token'])
+  assert.equal(saved.value, '[masked]')
+  assert.equal(saved.unavailable, undefined)
+  assert.deepEqual(saved.children, [])
+})
+
+// protects=an API-route or route-handler stop, captured top-level-first, skips the same internals in its second pass; fails_when=the pending expansions of a top-level-first capture still read function members or prototype chains; no_claim=the order of top-level values, which captureReplayDebugSnapshotTopLevelFirst.test.ts covers
+test("a top-level-first stop's snapshot reads no function members or prototype chains either", async () => {
+  // Arrange
+  const limits = {
+    timeoutMs: 5_000,
+    maxFrames: 8,
+    maxVariables: 2_000,
+    maxDepth: 5,
+    topLevelFirst: true,
+  }
+
+  // Act
+  const { snapshot, requestedReferences } = await capturedBrowserStop(
+    SIGN_IN_STOP_VARIABLES,
+    limits,
+  )
+
+  // Assert
+  assert.deepEqual(requestedReferences, [1, 10, 11, 20])
+  assert.equal(
+    savedVariableAt(snapshot, ['this', 'onSuccess']).unavailable,
+    'Engine internals are not recorded.',
+  )
+  assert.equal(
+    savedVariableAt(snapshot, ['parsed', 'data', 'email']).value,
+    "'learner@example.test'",
+  )
+})
+
+// protects=a getter on the learner's object (raw type function, which js-debug resolves by calling it) keeps its computed value in the replay; fails_when=the skip rule treats js-debug's raw getter type as a function and labels the getter an engine internal; no_claim=whether js-debug marks every getter lazy
+test("a browser stop's snapshot still records the value an object's getter computes", async () => {
+  // Arrange
+  const variablesByReference = GETTER_STOP_VARIABLES
+
+  // Act
+  const { snapshot, requestedReferences } =
+    await capturedBrowserStop(variablesByReference)
+
+  // Assert
+  assert.deepEqual(requestedReferences, [1, 60, 61])
+  const getter = savedVariableAt(snapshot, ['order', 'total'])
+  assert.equal(getter.unavailable, undefined)
+  assert.equal(
+    savedVariableAt(snapshot, ['order', 'total', 'total']).value,
+    '42',
+  )
+})
+
+// protects=each skipped member name ([[Prototype]] aside) is skipped by its name alone, even on a plain object; fails_when=__proto__, [[Scopes]] or [[FunctionLocation]] leaves the name list and its children are read; no_claim=that js-debug lists [[Scopes]] or [[FunctionLocation]] under a plain object (it lists them under functions, which are skipped by type)
+test("a browser stop's snapshot skips __proto__, [[Scopes]] and [[FunctionLocation]] by name", async () => {
+  // Arrange
+  const variablesByReference = NAMED_INTERNALS_STOP_VARIABLES
+
+  // Act
+  const { snapshot, requestedReferences } =
+    await capturedBrowserStop(variablesByReference)
+
+  // Assert
+  assert.deepEqual(requestedReferences, [1, 70])
+  assert.equal(savedVariableAt(snapshot, ['state', 'step']).value, '2')
+  for (const name of ['__proto__', '[[Scopes]]', '[[FunctionLocation]]']) {
+    const saved = savedVariableAt(snapshot, ['state', name])
+    assert.deepEqual(saved.children, [])
+    assert.equal(saved.unavailable, 'Engine internals are not recorded.')
+  }
+})
+
 // protects=a Map's entries, a Proxy's handler and target and a boxed string's value stay recorded while their prototype chains are skipped; fails_when=the skip rule is widened to every [[…]] member (losing the learner's Map entries or Proxy target) or still reads the Map, target or String prototypes; no_claim=the exact names js-debug gives these members in every version
 test("a browser stop's snapshot still records a Map's entries, a Proxy's target and a boxed string's value", async () => {
-  // Arrange / Act
-  const { snapshot, requestedReferences } = await capturedBrowserStop(
-    COLLECTION_STOP_VARIABLES,
-  )
+  // Arrange
+  const variablesByReference = COLLECTION_STOP_VARIABLES
+
+  // Act
+  const { snapshot, requestedReferences } =
+    await capturedBrowserStop(variablesByReference)
 
   // Assert
   assert.deepEqual(requestedReferences, [1, 30, 31, 33, 40, 41, 42, 50])
