@@ -2,6 +2,7 @@ import {
   EXPO_WEB_SUPPORTED_MAJOR,
   MILLISECONDS_PER_SECOND,
   REPOSITORY_SETUP_TIMEOUT_MS,
+  VITE_SETUP_STEPS,
 } from './constants'
 import { StudyError, type ErrorCode } from './errors'
 import { reactScriptsInstallCommandOf } from './reactScriptsRefusals'
@@ -353,18 +354,32 @@ export function expoWebPortRefusal(
 }
 
 /**
- * Words the setup-deadline sentence of an Expo run, naming the step it reached.
+ * Words the setup-deadline sentence of an Expo run, naming the step it reached and what started.
+ *
+ * Why it exists: the sentence must not claim a stopped server when nothing started, must say no input was sent, and may only mention the long first Metro bundle when that is the step reached. Called by {@link expoWebSetupDeadlineText} (timer-raised, always `partial`) and {@link expoWebSetupDeadlineRefusal}.
  * @param step - The sentence fragment of the step reached (for example `bundling the app`).
  * @param limitMs - The setup budget that expired.
- * @returns The sentence that names the budget and the step.
+ * @param sideEffects - `none` when no server had started, `partial` when one started and was stopped.
+ * @returns The sentence that names the budget, the step and what started.
  * @example
- * expoWebSetupDeadlineSentence('bundling the app', 90_000) // => 'Repository setup deadline (90 s) exceeded while bundling the app. …'
+ * expoWebSetupDeadlineSentence('bundling the app', 90_000, 'partial') // => 'Repository setup deadline (90 s) exceeded while bundling the app. The first Metro bundle of an Expo app can take long. The owned server was stopped and no input was sent, so start again once.'
  */
 function expoWebSetupDeadlineSentence(
   step: string,
-  limitMs: number = REPOSITORY_SETUP_TIMEOUT_MS,
+  limitMs: number,
+  sideEffects: ExpoWebSideEffects,
 ): string {
-  return `Repository setup deadline (${Math.round(limitMs / MILLISECONDS_PER_SECOND)} s) exceeded while ${step}. The first Metro bundle of an Expo app can take long; the owned server was stopped, so start again once.`
+  // Only the bundling step explains itself by the first Metro bundle
+  const slowBundle =
+    step === VITE_SETUP_STEPS.bundlingExpo
+      ? ' The first Metro bundle of an Expo app can take long.'
+      : ''
+  // What started follows the side effects, never a fixed claim
+  const started =
+    sideEffects === 'none'
+      ? 'Nothing started and no input was sent'
+      : 'The owned server was stopped and no input was sent'
+  return `Repository setup deadline (${Math.round(limitMs / MILLISECONDS_PER_SECOND)} s) exceeded while ${step}.${slowBundle} ${started}, so start again once.`
 }
 
 /**
@@ -379,12 +394,12 @@ export function expoWebSetupDeadlineText(
   step: string,
   limitMs: number = REPOSITORY_SETUP_TIMEOUT_MS,
 ): string {
-  return `EXPO_WEB_SETUP_DEADLINE: ${expoWebSetupDeadlineSentence(step, limitMs)}`
+  return `EXPO_WEB_SETUP_DEADLINE: ${expoWebSetupDeadlineSentence(step, limitMs, 'partial')}`
 }
 
 /** Reads the step fragment out of the sentence {@link expoWebSetupDeadlineSentence} writes. */
 const EXPO_WEB_SETUP_DEADLINE_STEP =
-  /exceeded while (.+?)\. The first Metro bundle of an Expo app/
+  /exceeded while (.+?)\. (?:The first Metro bundle of an Expo app|The owned server was stopped|Nothing started)/
 
 /** The fields an Expo setup-deadline failure text restores: the reason, the step it reached and `partial` side effects (the owned server was stopped, as the text says). */
 export type ExpoWebSetupDeadlineFailureDetails = {
@@ -400,7 +415,7 @@ export type ExpoWebSetupDeadlineFailureDetails = {
  * @param message - The failure message after the code lead.
  * @returns The restored fields, or `undefined` when the message does not hold the deadline sentence.
  * @example
- * expoWebSetupDeadlineDetailsOf('Repository setup deadline (90 s) exceeded while bundling the app. The first Metro bundle of an Expo app can take long; …') // => { reason: 'setup-deadline', step: 'bundling the app', sideEffects: 'partial' }
+ * expoWebSetupDeadlineDetailsOf('Repository setup deadline (90 s) exceeded while bundling the app. The first Metro bundle of an Expo app can take long. The owned server was stopped and no input was sent, so start again once.') // => { reason: 'setup-deadline', step: 'bundling the app', sideEffects: 'partial' }
  */
 export function expoWebSetupDeadlineDetailsOf(
   message: string,
@@ -425,7 +440,11 @@ export function expoWebSetupDeadlineRefusal(
 ): StudyError {
   return expoWebRefusal(
     'EXPO_WEB_SETUP_DEADLINE',
-    expoWebSetupDeadlineSentence(step),
+    expoWebSetupDeadlineSentence(
+      step,
+      REPOSITORY_SETUP_TIMEOUT_MS,
+      sideEffects,
+    ),
     `Start once more with a new key (Metro's cache is warm after the first start); a second failure means the app is too slow to start for Codebook, so tell the learner the step in details.step. ${sideEffects === 'none' ? NOTHING_STARTED : STOPPED_NO_INPUT} ${recoveryEnd('EXPO_WEB_SETUP_DEADLINE')}`,
     { reason: 'setup-deadline', step, sideEffects },
   )

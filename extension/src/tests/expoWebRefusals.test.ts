@@ -163,6 +163,18 @@ test('Expo launcher, port and deadline refusals tell what started and what was s
   assert.ok(recoveryOf(early).includes('Nothing started.'))
   assert.equal(late.details?.step, 'bundling the app')
   assert.ok(recoveryOf(late).includes(stopped))
+  // The message follows the side effects and the step reached
+  assert.ok(early.message.includes('Nothing started and no input was sent'))
+  assert.equal(early.message.includes('owned server was stopped'), false)
+  assert.equal(early.message.includes('first Metro bundle'), false)
+  assert.ok(
+    late.message.includes(
+      'The first Metro bundle of an Expo app can take long.',
+    ),
+  )
+  assert.ok(
+    late.message.includes('The owned server was stopped and no input was sent'),
+  )
 })
 
 // Value: protects=every seal refusal after the start reports partial side effects and the stop sentence, the not-in-entry-bundle one says this version seals only files the entry bundle includes, and the before-start twins say nothing started; fails_when=a seal refusal after the start claims nothing started; why_new=Expo's seven seal reasons are new; seam=none; no_claim=the seal that raises them
@@ -217,12 +229,20 @@ test('an Expo setup-deadline text restores its code, step and side effects throu
   const text = expoWebSetupDeadlineText('bundling the app')
   // Act
   const restored = refusalFailureOf(text)
+  const early = refusalFailureOf(
+    expoWebSetupDeadlineText('starting the Expo CLI'),
+  )
   const bare = refusalFailureOf('EXPO_WEB_SETUP_DEADLINE: Setup took too long.')
   // Assert
   assert.equal(restored?.code, 'EXPO_WEB_SETUP_DEADLINE')
   assert.deepEqual(restored?.libraryDetails, {
     reason: 'setup-deadline',
     step: 'bundling the app',
+    sideEffects: 'partial',
+  })
+  assert.deepEqual(early?.libraryDetails, {
+    reason: 'setup-deadline',
+    step: 'starting the Expo CLI',
     sideEffects: 'partial',
   })
   assert.deepEqual(bare, {
@@ -245,6 +265,17 @@ test('each Expo refusal code has a recovery that points at its own help anchor',
     'EXPO_WEB_SETUP_DEADLINE',
     'EXPO_WEB_SEAL_FAILED',
   ])
+  // The port and seal recoveries say what started
+  assert.ok(
+    ERROR_RECOVERY.EXPO_WEB_PORT_UNAVAILABLE.includes(
+      'details.sideEffects tells what started',
+    ),
+  )
+  assert.ok(
+    ERROR_RECOVERY.EXPO_WEB_SEAL_FAILED.includes(
+      'details.sideEffects tells what started',
+    ),
+  )
   recoveries.forEach((recovery, index) =>
     assert.ok(
       recovery.endsWith(

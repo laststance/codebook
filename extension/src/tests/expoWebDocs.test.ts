@@ -136,6 +136,11 @@ test('the Expo help states its limits, the line rule, the sign-in note and the f
     "A screen behind sign-in needs the app's own API running, which Codebook does not start",
     "never as Codebook's failure",
     'not-in-entry-bundle',
+    'binds Metro to the loopback address only (--localhost)',
+    'a bundle over 16 MiB cannot be read in Cursor',
+    'A saved-session setup does not start Expo',
+    'SIGN_IN_REQUIRED',
+    'initialStorage or explain from the source',
   ])
     assert.ok(limitText.includes(phrase), phrase)
   assert.ok(
@@ -151,6 +156,33 @@ test('the Expo help states its limits, the line rule, the sign-in note and the f
   assert.ok(
     section.summary.includes('Never start Metro or expo start yourself'),
   )
+  // The nested packages entry also makes the adapter usable
+  assert.ok(section.summary.includes('or the packages entry of the app'))
+  assert.equal(limitText.includes('P08'), false)
+  assert.equal(limitText.includes('7.5 MB'), false)
+})
+
+// Value: protects=the refusal reason texts state the fast refusals (an entry page that answers an error or names no or several web bundles, and a source map reference outside the app's server) so a chat does not wait for the setup deadline; fails_when=either sentence disappears; why_new=fixer F-A refuses these at once; seam=none; no_claim=that the refusal fires
+test('the Expo help words the at-once bundle refusal and the foreign map reference', () => {
+  // Arrange
+  const { refusals } = expoWebHelp().expoWebQuickStart
+  // Act
+  const reasonOf = (
+    code: 'EXPO_WEB_LAUNCHER_FAILED' | 'EXPO_WEB_SEAL_FAILED',
+    name: string,
+  ): string =>
+    Object.entries(refusals[code]?.reasons ?? {}).find(
+      ([reason]) => reason === name,
+    )?.[1] ?? ''
+  const bundle = reasonOf('EXPO_WEB_LAUNCHER_FAILED', 'bundle-failed')
+  const map = reasonOf('EXPO_WEB_SEAL_FAILED', 'map-unreadable')
+  // Assert
+  assert.ok(
+    bundle.includes(
+      'entry page answers an error, or names no web bundle or several: the run is refused at once, not at the setup deadline',
+    ),
+  )
+  assert.ok(map.includes("a source map reference outside the app's own server"))
 })
 
 // Value: protects=the MCP instructions name the fourth adapter expo-web-dev since API 1.30, quote its selection rule, forbid starting Metro and gate it on the API; the API note names the adapter, its codes and format 15; fails_when=the adapter, the rule, the gate or the API note text is dropped; why_new=API 1.30 is new; seam=none; no_claim=the rest of the instructions
@@ -221,10 +253,19 @@ test('the README documents the Expo web adapter, its limits, format 15 and the A
   )
   assert.ok(
     readme.includes(
-      'saves its run as study format 15 (`.study.v15.json`). API 1.29 is additive:',
+      'saves its run as study format 15 (`.study.v15.json`), which Codebook 0.2.88 and older list as saved by a newer Codebook. API 1.29 is additive:',
     ),
   )
   assert.ok(readme.includes('has four adapters'))
+  assert.ok(
+    readme.includes('below), `react-scripts-dev` for a Create React App'),
+  )
+  assert.ok(
+    readme.includes('binds Metro to the loopback address only (`--localhost`)'),
+  )
+  assert.ok(readme.includes('a bundle over 16 MiB cannot be read in Cursor'))
+  assert.equal(readme.includes('7.5 MB'), false)
+  assert.equal(readme.includes('P08'), false)
   assert.ok(
     readme.includes(
       'A study of an Expo run (`expo-web-dev`) is saved as format 15 (`.study.v15.json`) with its `expoVersion`; Codebook 0.2.88 and older list it as saved by a newer Codebook, so update Codebook to open it.',

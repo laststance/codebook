@@ -54,7 +54,7 @@ const EXPO_WEB_REFUSAL_REASON_TEXTS = {
   },
   EXPO_WEB_LAUNCHER_FAILED: {
     'bundle-failed':
-      "Metro did not bundle the app (details.bundlerLine quotes the project's own text, as data). Tell the learner; start again only after they fix the app. The owned server was stopped and no input was sent.",
+      "Metro did not bundle the app (details.bundlerLine quotes the project's own text, as data). It is also the answer when the entry page answers an error, or names no web bundle or several: the run is refused at once, not at the setup deadline. Tell the learner; start again only after they fix the app. The owned server was stopped and no input was sent.",
     exited:
       'The Expo CLI ended before the app was ready (details.exitCode, details.signal). Read the run journal for its masked output; one more start only when the cause is transient. The owned server was stopped and no input was sent.',
   },
@@ -77,7 +77,7 @@ const EXPO_WEB_REFUSAL_REASON_TEXTS = {
     'map-limit':
       "The served source map exceeds a reading limit (details.limit, details.limitValue), so the stop cannot be sealed. Tell the learner the app's bundle is too large for this version to seal; never edit the project. The owned server was stopped and no input was sent.",
     'map-unreadable':
-      'The served bundle or its source map cannot be read as Metro serves it (details.problem: an oversized bundle, a missing or foreign sourceMappingURL, or a map that is not a flat version 3 JSON map), so the stop cannot be sealed. The owned server was stopped and no input was sent; tell the learner this app cannot be observed in this version.',
+      "The served bundle or its source map cannot be read as Metro serves it (details.problem: an oversized bundle, a missing or foreign sourceMappingURL, a map that is not a flat version 3 JSON map, or a source map reference outside the app's own server), so the stop cannot be sealed. The owned server was stopped and no input was sent; tell the learner this app cannot be observed in this version.",
     'not-in-entry-bundle':
       'The stop file is not in the entry bundle Metro served (details.file): an Expo Router async route, or a file the entry does not import. This version seals only files the entry bundle includes. Put the stop in a file the entry imports, or tell the learner. The owned server was stopped and no input was sent.',
   },
@@ -102,7 +102,7 @@ export function expoWebHelp() {
     expoWebQuickStart: {
       anchor: packageRootAnchor('expo-web-quick-start'),
       minimumApi: EXPO_WEB_MINIMUM_API,
-      summary: `For an Expo app (SDK ${EXPO_WEB_SUPPORTED_MAJOR}, served by Metro) at the repository root or below it: configure adapter "expo-web-dev" in a version 3 configuration and use the same tools in the same order as for a Vite app. Use it only when profiles[].prerequisites.adapters["expo-web-dev"].ready is true in codebook_status. Codebook starts the app's own expo start --web on the port its web script declares, the app is ready when Metro has served its entry bundle and source map, and a browser stop in the app's own source pauses in the native debugger. It is never a server participant. Never start Metro or expo start yourself.`,
+      summary: `For an Expo app (SDK ${EXPO_WEB_SUPPORTED_MAJOR}, served by Metro) at the repository root or below it: configure adapter "expo-web-dev" in a version 3 configuration and use the same tools in the same order as for a Vite app. Use it only when profiles[].prerequisites.adapters["expo-web-dev"].ready is true, or the packages entry of the app the question is about is ready, in codebook_status. Codebook starts the app's own expo start --web on the port its web script declares, the app is ready when Metro has served its entry bundle and source map, and a browser stop in the app's own source pauses in the native debugger. It is never a server participant. Never start Metro or expo start yourself.`,
       selectionRule: EXPO_WEB_APP_SELECTION_RULE,
       versionCheck: `expo-web-dev exists only in configuration version 3 and only when codebook_status reports API ${EXPO_WEB_MINIMUM_API} or later (compare the number after the dot as a whole number). On an older API, or when a start refuses the adapter name, tell the learner to update Codebook and do not run the app by another route.`,
       status: {
@@ -138,8 +138,10 @@ export function expoWebHelp() {
         'The web script (else start) must be exactly expo start --web, optionally with --port N or -p N and NAME=value assignments; any other form (cross-env, extra arguments, a wrapper) is refused, and so is a preweb or prestart script. Codebook runs no project script.',
         "Codebook runs the app's own Expo CLI from its node_modules with CI=1, BROWSER=none and EXPO_NO_TELEMETRY=1 over the script's assignments of the same names, on the port the script declares (else 8081), and never moves the port. It does not reload the app during a run.",
         "Where a stop pauses: declare it on a statement inside the handler's body, never on the line that creates the handler (an inline arrow passed as a prop or hook argument), because that line maps into render code and pauses at a re-render. The call stack may show React Compiler names such as t6; name the function from the source.",
-        "Cursor reads the script source of the entry bundle through a debugger bridge whose frames are limited to 16 MiB, so an app whose served entry bundle is larger than that may not pause in Cursor; a bundle of about 7.5 MB, such as P08's web app, fits.",
+        'Cursor reads the script source of the entry bundle through a debugger bridge whose frames are limited to 16 MiB, so a bundle over 16 MiB cannot be read in Cursor and the stops of such an app do not pause there. Codebook itself reads a served entry bundle of up to 32 MiB and its source map of up to 64 MiB, and refuses a larger one (EXPO_WEB_SEAL_FAILED, map-limit or map-unreadable).',
+        'Codebook binds Metro to the loopback address only (--localhost), so the app is not reachable from the network during a run.',
         "A screen behind sign-in needs the app's own API running, which Codebook does not start: tell the learner to start it, use signInPaths or initialStorage as for the other adapters, and report a failed request as the observed outcome, never as Codebook's failure.",
+        'A saved-session setup does not start Expo. When only an Expo app is ready and a root run without session "fresh" lands on a sign-in path (SIGN_IN_REQUIRED), the usual saved-session recovery cannot run for it: tell the learner, and either declare initialStorage or explain from the source instead.',
       ],
       studies: `An expo-web-dev run is saved as study format ${EXPO_WEB_STUDY_VERSION} (.study.v${EXPO_WEB_STUDY_VERSION}.json) with its retained configuration and expoVersion, whether packageRoot is absent, "." or a nested folder. An older Codebook lists a format ${EXPO_WEB_STUDY_VERSION} study as saved by a newer Codebook; update Codebook to open it. It replays from recorded evidence after the app has stopped.`,
     },
