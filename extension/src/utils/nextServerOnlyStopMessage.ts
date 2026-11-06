@@ -5,7 +5,7 @@ export const PAGES_DOCUMENT_UNSUPPORTED =
   '_document is not supported in this version.'
 
 /** What a refusal of a browser stop in an API route offers instead (Cycle 0088): the handler takes a server stop declared after an operation. */
-export const PAGES_API_ROUTE_POINTER =
+const PAGES_API_ROUTE_POINTER =
   'To pause in the handler, declare it with participant "server" and afterOperation of 1 or more in a configuration version 3 (API 1.29, see apiRouteStops in codebook://help/repository-browser).'
 
 /** Why a Pages line runs only on the server, as the refusal names it. */
