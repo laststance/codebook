@@ -308,3 +308,190 @@ test('a refused node-server declaration lists every violation with its field and
     'configuration.port: expected an integer from 1024 to 65535, the port the server\'s own code listens on. configuration.request.path: expected a path on the server starting with "/", without ".." segments. See codebook://help/node-server.',
   )
 })
+
+/** A valid signIn object: the shape the help's sample shows, with placeholder values. */
+function validSignIn() {
+  return {
+    path: '/api/auth/sign-in/email',
+    fields: { email: 'learner@example.test' },
+    secretField: 'password',
+    secret: 'ask-learner',
+  }
+}
+
+/** Parses a declaration with the given signIn and returns the refusal as `path: message` strings. */
+function signInRefusals(signIn: unknown, request?: Record<string, unknown>) {
+  const result = nodeServerConfigSchema.safeParse({
+    ...minimalGetDeclaration(),
+    ...(request ? { request } : {}),
+    signIn,
+  })
+  return result.success
+    ? []
+    : result.error.issues.map(
+        (issue) => `${issue.path.join('.')}: ${issue.message}`,
+      )
+}
+
+// protects=a configuration with signIn parses and keeps the signIn as declared; fails_when=the optional signIn object is refused or its fields are rewritten; no_claim=that a server accepts the sign-in (no run happens, only the schema parses)
+test('a node-server declaration with signIn parses and keeps the signIn as declared', () => {
+  // Arrange
+  const declaration = { ...minimalGetDeclaration(), signIn: validSignIn() }
+  // Act
+  const configuration = nodeServerConfigSchema.parse(declaration)
+  // Assert
+  assert.deepEqual(configuration.signIn, {
+    path: '/api/auth/sign-in/email',
+    fields: { email: 'learner@example.test' },
+    secretField: 'password',
+    secret: 'ask-learner',
+  })
+})
+
+// protects=a declaration without signIn parses exactly as before (no signIn key appears); fails_when=signIn becomes required or gets a default; no_claim=none
+test('a node-server declaration without signIn parses with no signIn key', () => {
+  // Arrange
+  const declaration = minimalGetDeclaration()
+  // Act
+  const configuration = nodeServerConfigSchema.parse(declaration)
+  // Assert
+  assert.equal('signIn' in configuration, false)
+})
+
+// protects=each signIn refusal names its field path; fails_when=a bad path, a missing or oversized field set, a bad key or value, a wrong secret marker is accepted or reported under another path; no_claim=the wording beyond the quoted paths
+test('a node-server signIn is refused with the path of each violation', () => {
+  // Arrange
+  const nineFields = Object.fromEntries(
+    Array.from({ length: 9 }, (_, index) => [`field${index}`, 'value']),
+  )
+  const cases: { name: string; signIn: unknown; path: string }[] = [
+    {
+      name: 'bad path',
+      signIn: { ...validSignIn(), path: 'api/sign-in' },
+      path: 'signIn.path',
+    },
+    {
+      name: 'zero fields',
+      signIn: { ...validSignIn(), fields: {} },
+      path: 'signIn.fields',
+    },
+    {
+      name: 'nine fields',
+      signIn: { ...validSignIn(), fields: nineFields },
+      path: 'signIn.fields',
+    },
+    {
+      name: 'over-long key',
+      signIn: { ...validSignIn(), fields: { ['k'.repeat(257)]: 'value' } },
+      path: `signIn.fields.${'k'.repeat(257)}`,
+    },
+    {
+      name: 'over-long value',
+      signIn: { ...validSignIn(), fields: { email: 'v'.repeat(257) } },
+      path: 'signIn.fields.email',
+    },
+    {
+      name: 'field named like secretField',
+      signIn: {
+        ...validSignIn(),
+        fields: { pin: 'value' },
+        secretField: 'pin',
+      },
+      path: 'signIn.fields.pin',
+    },
+    {
+      name: 'password key',
+      signIn: {
+        ...validSignIn(),
+        fields: { password: 'value' },
+        secretField: 'passphrase',
+      },
+      path: 'signIn.fields.password',
+    },
+    {
+      name: 'accessToken key',
+      signIn: { ...validSignIn(), fields: { accessToken: 'value' } },
+      path: 'signIn.fields.accessToken',
+    },
+    {
+      name: 'JWT value',
+      signIn: {
+        ...validSignIn(),
+        fields: { email: 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abc' },
+      },
+      path: 'signIn.fields.email',
+    },
+    {
+      name: 'secret other than ask-learner',
+      signIn: { ...validSignIn(), secret: 'hunter2hunter2' },
+      path: 'signIn.secret',
+    },
+  ]
+  // Act
+  const outcomes = cases.map(({ name, signIn, path }) => ({
+    name,
+    path,
+    refusals: signInRefusals(signIn),
+  }))
+  // Assert
+  for (const { name, path, refusals } of outcomes)
+    assert.ok(
+      refusals.some((refusal) => refusal.startsWith(`${path}: `)),
+      `${name}: ${refusals.join(' | ')}`,
+    )
+})
+
+// protects=a request whose path (query ignored) equals signIn.path is refused at request.path; fails_when=the declared request may be the sign-in itself; no_claim=that other paths are accepted by a real server
+test('a node-server request that is the signIn route is refused at request.path', () => {
+  // Arrange
+  const request = { method: 'GET', path: '/api/auth/sign-in/email?next=1' }
+  // Act
+  const refusals = signInRefusals(validSignIn(), request)
+  // Assert
+  assert.deepEqual(refusals, [
+    'request.path: expected a request other than the signIn route: Codebook sends the sign-in first, then this request.',
+  ])
+})
+
+// protects=no signIn refusal quotes the refused value; fails_when=a JWT, a long value or a secret marker appears in a refusal message; no_claim=refusals of other fields
+test('a node-server signIn refusal never repeats the refused value', () => {
+  // Arrange
+  const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abc'
+  const longValue = 'v'.repeat(257)
+  const marker = 'hunter2hunter2'
+  const signIn = {
+    path: '/api/auth/sign-in/email',
+    fields: { email: jwt, name: longValue, password: 'p4ssw0rd-secret' },
+    secretField: 'password2',
+    secret: marker,
+  }
+  // Act
+  const text = signInRefusals(signIn).join('\n')
+  // Assert
+  assert.notEqual(text, '')
+  for (const value of [jwt, longValue, marker, 'p4ssw0rd-secret'])
+    assert.equal(text.includes(value), false, value)
+})
+
+// protects=signIn issues read well in the INVALID_CONFIGURATION cause the agent sees (field path, expectation, help link); fails_when=a signIn issue loses its configuration.signIn path or the help link; no_claim=the MCP error envelope
+test('a refused signIn is worded with its configuration path and the help link', () => {
+  // Arrange
+  const result = nodeServerConfigSchema.safeParse({
+    ...minimalGetDeclaration(),
+    signIn: {
+      ...validSignIn(),
+      fields: { password: 'x' },
+      secretField: 'passphrase',
+    },
+  })
+  assert.equal(result.success, false)
+  // Act
+  const description = describeNodeServerConfigurationIssues(
+    result.error?.issues ?? [],
+  )
+  // Assert
+  assert.equal(
+    description,
+    'configuration.signIn.fields.password: expected a non-secret field: name a password or token field in secretField, so the learner types it. See codebook://help/node-server.',
+  )
+})

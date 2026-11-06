@@ -423,7 +423,7 @@ test('API 1.26 is served with a note for the additive node-script profile', asyn
       .split('\n')
       .find((line) => line.startsWith(' * 1.26 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.30')
+  assert.equal(API_VERSION, '1.31')
   assert.equal(NODE_SCRIPT_HISTORY_DIRECTORY, 'node-scripts.v1')
   for (const phrase of [
     '`node-script` profile',
@@ -457,7 +457,7 @@ test('the bundled skill 1.0.78 routes a Node script question to node-script with
   // Arrange
   const skill = await readPackaged('skills/codebook/SKILL.md')
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.79"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.80"\n'))
   for (const phrase of [
     '**Script runs (API 1.26).**',
     'uses the `node-script` profile, only when `codebook_status` lists it and reports API 1.26 or later',
@@ -491,9 +491,9 @@ test('the README documents the Node script run, its confirmation, its end and it
     "At stops the chat declares in the package's own source",
     'A nonzero exit is the script failing, not a Codebook error',
     'saved through `codebook_explain_node_history` as a Script replay',
-    'with **MCP API 1.30**',
+    'with **MCP API 1.31**',
     '`SCRIPT_NOT_CONFIRMED`',
-    "so Cursor's managed skill updates to **1.0.79**",
+    "so Cursor's managed skill updates to **1.0.80**",
   ])
     assert.ok(readme.includes(phrase), phrase)
 })

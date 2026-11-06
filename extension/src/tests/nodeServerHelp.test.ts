@@ -44,7 +44,7 @@ function filled(value: unknown, key = ''): unknown {
   return value
 }
 
-// protects=the three samples of the help (a minimal GET, a POST with a JSON body, a monorepo packageRoot) are complete starts that parse once their placeholders are replaced, and every placeholder names the answer it comes from; fails_when=a sample stops parsing, a placeholder names no answer, or a sample no longer shows its shape; no_claim=that the samples' lines run in any repository
+// protects=the four samples of the help (a minimal GET, a POST with a JSON body, a monorepo packageRoot) are complete starts that parse once their placeholders are replaced, and every placeholder names the answer it comes from; fails_when=a sample stops parsing, a placeholder names no answer, or a sample no longer shows its shape; no_claim=that the samples' lines run in any repository
 test('the node-server help samples parse as starts once their placeholders are replaced', async () => {
   // Arrange
   const { body } = await servedHelp()
@@ -62,6 +62,7 @@ test('the node-server help samples parse as starts once their placeholders are r
   assert.deepEqual(Object.keys(samples), [
     'minimalGet',
     'postWithJsonBody',
+    'signInThenPost',
     'monorepoPackageRoot',
   ])
   for (const outcome of outcomes) {
@@ -341,4 +342,57 @@ test('the node-server help states the 30 s running-time limit and the run deadli
     ),
   )
   assert.ok(!limit.includes('15'))
+})
+
+// protects=the signIn section tells an agent when to declare signIn, the learner's two questions and cancel codes, the failure recoveries, the 401/403 rule, the API gate and the non-secret rule, and the walkthrough names the GET exception; fails_when=any of those sentences is dropped; no_claim=an agent following it (the native check)
+test('the node-server help documents signIn: questions, failure, observed 401, API gate and non-secret fields', async () => {
+  // Arrange
+  const { body } = await servedHelp()
+  const section: { when: string; shape: string } = body.signIn
+  const text = Object.values<string>(body.signIn).join('\n')
+  const walkthrough: string = body.walkthrough.join('\n')
+  // Assert
+  assert.match(
+    section.when,
+    /only when codebook_status reports API 1\.31 or later/,
+  )
+  assert.match(
+    section.when,
+    /an older Codebook refuses the field as INVALID_CONFIGURATION/,
+  )
+  assert.match(
+    section.shape,
+    /fields plus the learner's typed password under secretField/,
+  )
+  assert.match(text, /First one modal names the sign-in/)
+  assert.match(text, /also when the declared request is a GET/)
+  assert.match(
+    text,
+    /details\.question "request" \(the modal\) or "secret" \(the box\)/,
+  )
+  assert.match(text, /The receipt returns once the sign-in request is written/)
+  assert.match(text, /stopsHitDuringSignIn/)
+  assert.match(
+    text,
+    /it does not count as reached, so it can still pause during the declared request/,
+  )
+  assert.match(text, /NODE_SERVER_SIGN_IN_FAILED/)
+  assert.match(text, /A wrong password is one new run/)
+  assert.match(text, /created by the learner in the app/)
+  assert.match(
+    text,
+    /Never ask for the password and never put it in the configuration or the chat/,
+  )
+  assert.match(text, /Ask the learner in the chat which account/)
+  assert.match(
+    text,
+    /A 401 or 403 from the declared request after nodeServer\.signIn reads signed-in is an observed response/,
+  )
+  assert.match(text, /never loop on new runs/)
+  assert.match(text, /they must stay non-secret/)
+  assert.match(text, /history format 3, which an older Codebook does not list/)
+  assert.match(
+    walkthrough,
+    /a GET is sent at once, except with signIn, where the modal always asks/,
+  )
 })

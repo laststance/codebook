@@ -161,7 +161,7 @@ const SIGN_IN_FIELD_TEXT = `expected a non-empty string of at most ${NODE_SERVER
  * @example
  * signInSchema.parse({ path: '/api/auth/sign-in/email', fields: { email: 'learner@example.test' }, secretField: 'password', secret: 'ask-learner' })
  */
-export const signInSchema = z
+const signInSchema = z
   .strictObject({
     path: serverPathSchema.describe(
       'The sign-in route, from the server root (for example "/api/auth/sign-in/email"); always sent as POST with content-type application/json.',
