@@ -10,6 +10,7 @@ import {
 import { LibraryPackageCancelled, type LibraryPackage } from '../libraryPackage'
 import { createOwnedNodeScriptRun } from '../ownedNodeScriptRun'
 import { readResource } from '../resources'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { createLibraryBuildError } from '../utils/createLibraryBuildError'
 
 import { createHarness } from './helpers'
@@ -92,21 +93,6 @@ function startRun(
   return { receipt, record: service.record(receipt) }
 }
 
-/**
- * Waits, a turn at a time, until a condition holds: the service's start reaches the run through several asynchronous steps, so a fixed number of turns would race it.
- * @param condition - Read after every turn.
- * @throws When the condition still fails after 20 s.
- */
-async function waitUntil(condition: () => boolean): Promise<void> {
-  // The start reads files and Git before the run exists, so real time passes between turns; a loaded runner (the coverage run, CI) can take seconds.
-  const deadline = Date.now() + 20_000
-  while (!condition() && Date.now() < deadline) {
-    // gstack-timing-ok: the deadline only bounds a failing test; a passing one returns as soon as the condition holds.
-    await new Promise((resolve) => setTimeout(resolve, 5))
-  }
-  assert.equal(condition(), true, 'the awaited step never happened')
-}
-
 /** A build that waits for the run's abort and then fails with `error`. */
 function buildEndingOnAbort(error: unknown) {
   return (request: { signal: AbortSignal }): Promise<LibraryPackage> =>
@@ -151,10 +137,16 @@ test('the start receipt answers at once and the run resource follows confirming 
 
   // Act
   const { receipt, record } = startRun(harness)
-  await waitUntil(() => scripts.questions.length > 0)
+  await waitUntil(
+    () => scripts.questions.length > 0,
+    'the run confirmation question',
+  )
   const whileAsked = (await runJson(harness, record)).state
   scripts.answer(true)
-  await waitUntil(() => scripts.order.includes('prepareLibrary'))
+  await waitUntil(
+    () => scripts.order.includes('prepareLibrary'),
+    'the library preparation',
+  )
   const whileBuilding = await runJson(harness, record)
   build.resolve(fakeLibraryPackage(scripts.order))
   await record.preparation
@@ -218,7 +210,10 @@ test('a stop while building keeps tracked-file-changed as the run error', async 
   })
   wireRealRun(harness, scripts)
   const { record } = startRun(harness)
-  await waitUntil(() => scripts.order.includes('prepareLibrary'))
+  await waitUntil(
+    () => scripts.order.includes('prepareLibrary'),
+    'the library preparation',
+  )
 
   // Act
   await harness.service.stop({
@@ -251,7 +246,10 @@ test('a stop while the build ends with a build-error and no tracked-file change 
   })
   wireRealRun(harness, scripts)
   const { record } = startRun(harness)
-  await waitUntil(() => scripts.order.includes('prepareLibrary'))
+  await waitUntil(
+    () => scripts.order.includes('prepareLibrary'),
+    'the library preparation',
+  )
 
   // Act
   await harness.service.stop({
@@ -278,7 +276,10 @@ test('a stop while building that ends as a verified cancellation is a plain stop
   })
   wireRealRun(harness, scripts)
   const { record } = startRun(harness)
-  await waitUntil(() => scripts.order.includes('prepareLibrary'))
+  await waitUntil(
+    () => scripts.order.includes('prepareLibrary'),
+    'the library preparation',
+  )
 
   // Act
   // The fake clock is never advanced, so only the build's own ending can settle the stop within the bound.
@@ -306,7 +307,10 @@ test('a stop whose build never settles ends at the stop bound as tracked-files-u
   })
   wireRealRun(harness, scripts)
   const { record } = startRun(harness)
-  await waitUntil(() => scripts.order.includes('prepareLibrary'))
+  await waitUntil(
+    () => scripts.order.includes('prepareLibrary'),
+    'the library preparation',
+  )
   let didStopResolve = false
 
   // Act
@@ -431,7 +435,10 @@ test('a library run starts a format 2 history header with the declared identity'
 
   // Act
   const { record } = startRun(harness)
-  await waitUntil(() => scripts.order.includes('prepareLibrary'))
+  await waitUntil(
+    () => scripts.order.includes('prepareLibrary'),
+    'the library preparation',
+  )
   const folder = join(
     learningDirectory,
     NODE_SCRIPT_HISTORY_DIRECTORY,
