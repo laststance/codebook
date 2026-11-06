@@ -356,7 +356,7 @@ test('hands the build only the allow-listed host variables, not credentials or N
   // Arrange
   context.mock.property(process, 'env', {
     PATH: '/usr/bin',
-    GITHUB_TOKEN: 'ghp_secret',
+    GITHUB_TOKEN: 'from-host',
     NODE_OPTIONS: '--require /tmp/evil.js',
   })
   const project = createProject()

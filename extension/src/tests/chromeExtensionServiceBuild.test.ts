@@ -29,7 +29,7 @@ test('codebook_start answers the building phase when the build outlasts its boun
   const answer = await harness.service.startOnStoredBook({
     instanceId: harness.service.instanceId,
     profile: 'chrome-extension',
-    key: 'building-start',
+    key: 'b1',
     configuration: chromeExtensionConfigurationOf(harness),
   })
   run.prepareGate.resolve()
@@ -60,7 +60,7 @@ test('codebook_start answers the build facts of a built extension', async (conte
   const answer = await harness.service.startOnStoredBook({
     instanceId: harness.service.instanceId,
     profile: 'chrome-extension',
-    key: 'built-start',
+    key: 'b2',
     configuration: chromeExtensionConfigurationOf(harness),
   })
   // Assert

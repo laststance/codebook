@@ -12,7 +12,7 @@ test('builds the WXT environment from the allow-list without credentials or Node
   const host = {
     PATH: '/usr/bin',
     HOME: '/home/learner',
-    GITHUB_TOKEN: 'ghp_secret',
+    GITHUB_TOKEN: 'from-host',
     NODE_OPTIONS: '--require /tmp/evil.js',
     ELECTRON_RUN_AS_NODE: '1',
   }
@@ -41,6 +41,7 @@ test('treats a throwing process-group probe as not confirmed gone and stops poll
     pollMs: 1,
   })
   // Act
+  // gstack-timing-ok: the contract is that no probe follows a failed one, so the test waits about 30 poll intervals and counts the calls
   await new Promise((resolve) => setTimeout(resolve, 30))
   const callsAfterWaiting = probeCalls
   // Assert
