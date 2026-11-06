@@ -95,12 +95,15 @@ function startRun(
 /**
  * Waits, a turn at a time, until a condition holds: the service's start reaches the run through several asynchronous steps, so a fixed number of turns would race it.
  * @param condition - Read after every turn.
- * @throws When the condition still fails after many turns.
+ * @throws When the condition still fails after 20 s.
  */
 async function waitUntil(condition: () => boolean): Promise<void> {
-  // The start reads files and Git before the run exists, so real time passes between turns.
-  for (let turn = 0; turn < 400 && !condition(); turn += 1)
+  // The start reads files and Git before the run exists, so real time passes between turns; a loaded runner (the coverage run, CI) can take seconds.
+  const deadline = Date.now() + 20_000
+  while (!condition() && Date.now() < deadline) {
+    // gstack-timing-ok: the deadline only bounds a failing test; a passing one returns as soon as the condition holds.
     await new Promise((resolve) => setTimeout(resolve, 5))
+  }
   assert.equal(condition(), true, 'the awaited step never happened')
 }
 
