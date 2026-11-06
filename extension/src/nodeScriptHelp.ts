@@ -3,6 +3,8 @@ import { z } from 'zod'
 import {
   ACTIVE_TIMEOUT_MS,
   CONFIGURED_OBSERVATION_LIMIT,
+  LIBRARY_BUILD_FAILED_REASONS,
+  LIBRARY_BUILD_UNSUPPORTED_REASONS,
   MILLISECONDS_PER_SECOND,
   NODE_SCRIPT_MINIMUM_API,
   NODE_SCRIPT_MINIMUM_EXTENSION_VERSION,
@@ -103,6 +105,14 @@ const NODE_SCRIPT_CODES: readonly { code: ErrorCode; when: string }[] = [
   {
     code: 'RUNTIME_FAILED',
     when: 'run: an unexpected failure after the spawn; sideEffects is unknown, so read nodeScript.end and the output to reconcile what the script did',
+  },
+  {
+    code: 'LIBRARY_BUILD_UNSUPPORTED',
+    when: `start (with library): the library route is refused before any process starts; details.reason is one of ${LIBRARY_BUILD_UNSUPPORTED_REASONS.join(', ')}; nothing started`,
+  },
+  {
+    code: 'LIBRARY_BUILD_FAILED',
+    when: `run (with library): the library build or pack started and the script did not; details.reason is one of ${LIBRARY_BUILD_FAILED_REASONS.join(', ')}; the library's ignored build output may have been rewritten`,
   },
 ]
 

@@ -5,6 +5,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 /**
  * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ * 1.33 is additive: a `node-script` configuration may declare an optional `library: { packageRoot }` naming the opened repository's own library package; Codebook then builds it with the repository's package manager (pnpm or npm), packs it into the run's private folder and resolves the Example's imports of that package to the packed build, so the Example runs on the checked-out library and not on its installed copy. The refusals gain two codes, each with `details.reason`: `LIBRARY_BUILD_UNSUPPORTED` (nothing started) and `LIBRARY_BUILD_FAILED` (the build or pack started and the script did not). A run without `library` lists `repositoryPackageCopies` in its run resource: each direct dependency of the Example installed from outside the repository's source with `correspondence: "unverified"`. A Script replay of a run with `library` is recorded with history header format 2.
  * 1.32 is additive: the `chrome-extension` profile accepts a second adapter, `wxt-build`, for a WXT 0.21 project. `extensionRoot` names the project folder and each stop's `path` is a source file under it. Codebook builds the project with the repository's own WXT and source maps into the run's private folder, loads that build as an unpacked extension and resolves each stop through the build's source maps. The refusals are `EXTENSION_BUILD_UNSUPPORTED` and `EXTENSION_BUILD_FAILED`; an Extension replay of such a run is recorded with history header format 2.
  * 1.31 is additive: a `node-server` configuration may declare an optional `signIn` object `{ path, fields, secretField, secret: "ask-learner" }`; Codebook asks the learner for the password in its own masked box, signs in with one POST, keeps the session cookie in memory only and sends the declared request with it. An older Codebook refuses the field as INVALID_CONFIGURATION.
  * 1.30 is additive: the `expo-web-dev` adapter of the `repository-browser` profile runs an Expo SDK 57 web app (Metro) at the repository root or below it, in a version 3 configuration only. Codebook starts the app's own `expo start --web` on the port its web script declares (it sets `CI=1`, `BROWSER=none` and `EXPO_NO_TELEMETRY=1`), treats the app as ready when Metro serves the entry bundle and its source map, and pauses at browser stops in the app's own source that the entry bundle includes. The refusals are `EXPO_WEB_UNSUPPORTED`, `EXPO_WEB_LAUNCHER_FAILED`, `EXPO_WEB_PORT_UNAVAILABLE`, `EXPO_WEB_SETUP_DEADLINE` and `EXPO_WEB_SEAL_FAILED`, `codebook_status` gains `profiles[].prerequisites.adapters["expo-web-dev"]`, `codebook://help/repository-browser` gains `expoWebQuickStart`, and a study of an Expo run is saved as format 15 (`.study.v15.json`) with its `expoVersion`.
@@ -34,7 +35,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.9 is additive: a node-server run is saved as a Server replay. `codebook_explain_node_history` accepts a server history's material (steps citing the request, a stop, output, the response or the request failure), the server run resource gains `nodeServer.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing` and `captureMissing`, `nextActions` offers `save-node-learning`, and `codebook://help/node-server` has a save section.
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
-export const API_VERSION = '1.32'
+export const API_VERSION = '1.33'
 
 /** The API that first accepts the `expo-web-dev` adapter in a version 3 configuration (skill 1.0.79). */
 export const EXPO_WEB_MINIMUM_API = '1.30'
@@ -50,6 +51,34 @@ export const CHROME_EXTENSION_ADAPTERS = [
 
 /** The longest a `wxt-build` run lets the WXT build take before its process tree is ended; the 90 s preparation bound starts only after the build. */
 export const EXTENSION_BUILD_TIMEOUT_MS = 120_000
+
+/** The longest a `node-script` run lets the library build and pack take together before their process tree is ended (API 1.33). */
+export const LIBRARY_BUILD_TIMEOUT_MS = 180_000
+
+/** The `details.reason` values of `LIBRARY_BUILD_UNSUPPORTED`: the library route refused before any process started. One source for the error recovery, the help and the tests. */
+export const LIBRARY_BUILD_UNSUPPORTED_REASONS = [
+  'outside-repository',
+  'not-a-package',
+  'not-a-dependency',
+  'inside-example',
+  'no-build-script',
+  'package-manager-unsupported',
+  'package-manager-unknown',
+  'package-manager-missing',
+  'library-not-installed',
+  'peer-not-installed',
+  'node-version',
+] as const
+
+/** The `details.reason` values of `LIBRARY_BUILD_FAILED`: the build or pack started and the script did not. One source for the error recovery, the help and the tests. */
+export const LIBRARY_BUILD_FAILED_REASONS = [
+  'build-error',
+  'timeout',
+  'pack-error',
+  'source-changed',
+  'tracked-file-changed',
+  'tracked-files-unverified',
+] as const
 
 /** The only shape of a WXT version a `wxt-build` run quotes from the build's result file (a file the project's code could write); anything else reads as `unknown`. */
 export const WXT_VERSION_PATTERN = /^[0-9A-Za-z.+-]{1,32}$/

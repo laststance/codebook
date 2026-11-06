@@ -379,6 +379,8 @@ test('the node-script help has an anchor and recovery for each code, and the new
       'LEARNER_PAUSED',
       'PAUSE_HOLD_EXPIRED',
       'RUNTIME_FAILED',
+      'LIBRARY_BUILD_UNSUPPORTED',
+      'LIBRARY_BUILD_FAILED',
     ].map((code) => [code, `codebook://help/node-script#${code}`]),
   )
   assert.equal(help.codes[0]?.recovery, refused)
@@ -423,7 +425,7 @@ test('API 1.26 is served with a note for the additive node-script profile', asyn
       .split('\n')
       .find((line) => line.startsWith(' * 1.26 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.32')
+  assert.equal(API_VERSION, '1.33')
   assert.equal(NODE_SCRIPT_HISTORY_DIRECTORY, 'node-scripts.v1')
   for (const phrase of [
     '`node-script` profile',
@@ -491,7 +493,7 @@ test('the README documents the Node script run, its confirmation, its end and it
     "At stops the chat declares in the package's own source",
     'A nonzero exit is the script failing, not a Codebook error',
     'saved through `codebook_explain_node_history` as a Script replay',
-    'with **MCP API 1.32**',
+    'with **MCP API 1.33**',
     '`SCRIPT_NOT_CONFIRMED`',
     "so Cursor's managed skill updates to **1.0.81**",
   ])

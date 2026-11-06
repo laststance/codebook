@@ -6,24 +6,22 @@ import {
   EXTENSION_BUILD_TREE_POLL_MS,
 } from '../constants'
 
+import type { BuildProcess, BuildSpawnRequest } from './buildProcessTypes'
 import { isProcessGroupGone } from './isProcessGroupGone'
-import { observeWxtBuildExit } from './observeWxtBuildExit'
+import { observeBuildExit } from './observeBuildExit'
 import { signalProcessGroup } from './signalProcessGroup'
-import { watchWxtBuildTree } from './watchWxtBuildTree'
+import { watchBuildTree } from './watchBuildTree'
 import { windowsSystemProgramPath } from './windowsSystemProgramPath'
-import type { WxtBuildProcess, WxtBuildSpawnRequest } from './wxtBuildTypes'
 
 /**
- * Starts the WXT build process for {@link buildWxtExtension} in its own process group (POSIX) or ends its tree with `taskkill /T /F` (Windows).
+ * Starts a build process (the WXT build, the library build) in its own process group (POSIX) or ends its tree with `taskkill /T /F` (Windows).
  * Why: the build must be endable as a whole tree, because WXT starts workers. It is the default spawner of the build step; tests inject a fake.
  * @param request - The executable, arguments, folder and output receiver.
  * @returns The started process with its exit, tree signalling and tree-gone promise.
  * @example
- * const build = createWxtBuildSpawner({ executable: '/usr/bin/node', arguments: ['-e', ''], cwd: '/repo', environment: { PATH: '/usr/bin' }, onOutput() {} })
+ * const build = createBuildSpawner({ executable: '/usr/bin/node', arguments: ['-e', ''], cwd: '/repo', environment: { PATH: '/usr/bin' }, onOutput() {} })
  */
-export function createWxtBuildSpawner(
-  request: WxtBuildSpawnRequest,
-): WxtBuildProcess {
+export function createBuildSpawner(request: BuildSpawnRequest): BuildProcess {
   const child = spawn(request.executable, [...request.arguments], {
     cwd: request.cwd,
     env: request.environment,
@@ -38,12 +36,12 @@ export function createWxtBuildSpawner(
     )
     child[channel].on('end', () => request.onOutput(decoder.end(), channel))
   }
-  const { exited, hasLeaderExited } = observeWxtBuildExit(
+  const { exited, hasLeaderExited } = observeBuildExit(
     child,
     EXTENSION_BUILD_OUTPUT_FLUSH_MS,
   )
   const processGroup = child.pid
-  const { treeGone, isTreeGone } = watchWxtBuildTree({
+  const { treeGone, isTreeGone } = watchBuildTree({
     hasLeaderExited,
     // Windows has no process group to probe; the leader's exit is the best signal there.
     probe: () =>
