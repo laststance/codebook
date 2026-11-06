@@ -252,7 +252,7 @@ test('refuses an external Node below 24', async () => {
   assert.equal(route.requests.length, 0)
 })
 
-// protects=the build runs pnpm run build in the library folder and the pack runs with scripts off into the private folder, nothing builds twice; fails_when=another command, folder or a prepack-driven second build is started; no_claim=that real pnpm skips prepack (checked in E1)
+// protects=the build runs pnpm run build in the library folder and the pack runs with scripts off into the private folder, nothing builds twice; fails_when=another command, folder or a prepack-driven second build is started; no_claim=that real pnpm honors --config.ignore-scripts=true and skips prepack (E1 evidence with the real pnpm, not proved here: the spawner is a fake)
 test('builds then packs with scripts off and starts exactly two processes', async () => {
   // Arrange
   const { fixture, route, clock, prepare } = setUp(
@@ -637,7 +637,269 @@ test('reports tracked-files-unverified and a pending cleanup when the stopped tr
   // Assert
   assert.equal(error.details?.reason, 'tracked-files-unverified')
   assert.equal(error.details?.cleanup, 'pending')
-  assert.deepEqual(stuck.route.signals, ['SIGTERM', 'SIGKILL', 'SIGKILL'])
+  // The tree is asked to end with SIGTERM first and then only killed; how many SIGKILL retries follow is not pinned.
+  assert.equal(stuck.route.signals[0], 'SIGTERM')
+  assert.equal(stuck.route.signals[1], 'SIGKILL')
+  assert.equal(
+    stuck.route.signals.slice(1).every((signal) => signal === 'SIGKILL'),
+    true,
+  )
   assert.equal(existsSync(stuck.fixture.privateFolder), true)
   rmSync(stuck.fixture.privateFolder, { recursive: true, force: true })
+})
+
+// protects=a packed package.json that is not JSON is pack-error with step metadata and the folder is removed; fails_when=a raw SyntaxError escapes without cleanup; no_claim=the wording
+test('reports a packed package.json that is not JSON as pack-error with step metadata', async () => {
+  // Arrange
+  const { fixture, prepare } = setUp(
+    {},
+    {
+      onPack: (control) => {
+        writeTestTarball(
+          { 'package.json': '{not json' },
+          join(fixture.privateFolder, 'lib-2.0.0.tgz'),
+        )
+        control.exit({ code: 0, signal: null })
+      },
+    },
+  )
+  // Act
+  const error = await errorOf(prepare())
+  // Assert
+  assert.equal(error.code, 'LIBRARY_BUILD_FAILED')
+  assert.equal(error.details?.reason, 'pack-error')
+  assert.equal(error.details?.step, 'metadata')
+  assert.equal(existsSync(fixture.privateFolder), false)
+})
+
+// protects=a private folder that cannot be listed after the pack is pack-error with step tarball; fails_when=a raw ENOENT escapes; no_claim=the wording
+test('reports an unreadable private folder after the pack as pack-error with step tarball', async () => {
+  // Arrange
+  const { fixture, prepare } = setUp(
+    {},
+    {
+      onPack: (control) => {
+        rmSync(fixture.privateFolder, { recursive: true, force: true })
+        control.exit({ code: 0, signal: null })
+      },
+    },
+  )
+  // Act
+  const error = await errorOf(prepare())
+  // Assert
+  assert.equal(error.details?.reason, 'pack-error')
+  assert.equal(error.details?.step, 'tarball')
+})
+
+// protects=a spawner that throws is pack-error with step build and the folder is removed; fails_when=a raw error escapes; no_claim=real spawn failures (the production spawner reports them as an exit)
+test('reports a throwing spawner as pack-error with step build', async () => {
+  // Arrange
+  const { fixture, prepare } = setUp(
+    {},
+    {},
+    {
+      spawner: () => {
+        throw new Error('spawn exploded')
+      },
+    },
+  )
+  // Act
+  const error = await errorOf(prepare())
+  // Assert
+  assert.equal(error.details?.reason, 'pack-error')
+  assert.equal(error.details?.step, 'build')
+  assert.match(error.message, /spawn exploded/)
+  assert.equal(existsSync(fixture.privateFolder), false)
+})
+
+// protects=a build process still running when the route throws has its tree ended before the folder is removed; fails_when=the tree is left running under a removed folder; no_claim=the wording
+test('ends a running build tree before removing the folder when the route throws', async () => {
+  // Arrange
+  const base = createLibraryClock()
+  const { fixture, route, prepare } = setUp(
+    {},
+    { onBuild: () => undefined },
+    {
+      clock: {
+        ...base,
+        delay: () => {
+          throw new Error('timer exploded')
+        },
+      },
+    },
+  )
+  // Act
+  const error = await errorOf(prepare())
+  // Assert
+  assert.equal(error.details?.reason, 'pack-error')
+  assert.equal(error.details?.step, 'build')
+  assert.equal(route.signals[0], 'SIGTERM')
+  assert.equal(error.details?.cleanup, 'removed')
+  assert.equal(existsSync(fixture.privateFolder), false)
+})
+
+// protects=a changed tracked file is still reported when the HEAD read after the build fails; fails_when=the failing read turns the result into tracked-files-unverified; no_claim=the wording
+test('keeps tracked-file-changed when the HEAD read after the build fails', async () => {
+  // Arrange
+  let reads = 0
+  const changing = setUp(
+    {},
+    {
+      onBuild: (control) => {
+        writeFileSync(
+          join(changing.fixture.libraryRoot, 'src', 'index.ts'),
+          'changed\n',
+        )
+        control.exit({ code: 0, signal: null })
+      },
+    },
+    {
+      readRevision: () =>
+        ++reads === 1
+          ? Promise.resolve('a'.repeat(40))
+          : Promise.reject(new Error('git is gone')),
+    },
+  )
+  // Act
+  const error = await errorOf(changing.prepare())
+  // Assert
+  assert.equal(error.details?.reason, 'tracked-file-changed')
+})
+
+// protects=a HEAD read that fails with no file change is tracked-files-unverified; fails_when=the sources are called verified; no_claim=the wording
+test('reports tracked-files-unverified when only the HEAD read after the build fails', async () => {
+  // Arrange
+  let reads = 0
+  const { prepare } = setUp(
+    {},
+    {},
+    {
+      readRevision: () =>
+        ++reads === 1
+          ? Promise.resolve('a'.repeat(40))
+          : Promise.reject(new Error('git is gone')),
+    },
+  )
+  // Act
+  const error = await errorOf(prepare())
+  // Assert
+  assert.equal(error.details?.reason, 'tracked-files-unverified')
+})
+
+// protects=the build-and-pack budget starts after the snapshot, so a slow snapshot does not eat the build's time; fails_when=a pack after a long snapshot reads timeout; no_claim=real elapsed time
+test('starts the build budget after the snapshot is taken', async () => {
+  // Arrange
+  let reads = 0
+  const slow = setUp(
+    {},
+    {
+      onBuild: (control) => {
+        slow.clock.tick(1500)
+        control.exit({ code: 0, signal: null })
+      },
+    },
+    {
+      readRevision: () => {
+        // The snapshot step uses all but one second of the budget.
+        if (++reads === 1) slow.clock.tick(LIBRARY_BUILD_TIMEOUT_MS - 1000)
+        return Promise.resolve('a'.repeat(40))
+      },
+    },
+  )
+  // Act
+  const library = await slow.prepare()
+  // Assert
+  assert.equal(library.facts.package, 'lib')
+  await library.dispose()
+})
+
+// protects=D17 precedence for each adjacent pair that can happen together: tracked-file-changed over tracked-files-unverified, tracked-files-unverified over source-changed, source-changed over timeout, source-changed over pack-error; fails_when=a lower reason hides a higher one; no_claim=timeout over pack-error and pack-error over build-error, which cannot happen together (a run has one step failure)
+test('reports tracked-file-changed before tracked-files-unverified when both happened', async () => {
+  // Arrange
+  const stuck = setUp(
+    {},
+    {
+      onBuild: () =>
+        writeFileSync(
+          join(stuck.fixture.libraryRoot, 'src', 'index.ts'),
+          'changed\n',
+        ),
+      endsOn: 'never',
+    },
+  )
+  // Act
+  const pending = errorOf(stuck.prepare())
+  await untilSpawned(stuck.route)
+  stuck.controller.abort()
+  await settle()
+  await stuck.clock.advance(5_000)
+  await stuck.clock.advance(5_000)
+  const error = await pending
+  // Assert
+  assert.equal(error.details?.reason, 'tracked-file-changed')
+  rmSync(stuck.fixture.privateFolder, { recursive: true, force: true })
+})
+
+// protects=an unconfirmed process tree outranks a moved HEAD; fails_when=source-changed hides the unverified tree; no_claim=the wording
+test('reports tracked-files-unverified before source-changed when both happened', async () => {
+  // Arrange
+  let reads = 0
+  const stuck = setUp(
+    {},
+    { onBuild: () => undefined, endsOn: 'never' },
+    {
+      readRevision: () =>
+        Promise.resolve(++reads === 1 ? 'a'.repeat(40) : 'b'.repeat(40)),
+    },
+  )
+  // Act
+  const pending = errorOf(stuck.prepare())
+  await untilSpawned(stuck.route)
+  stuck.controller.abort()
+  await settle()
+  await stuck.clock.advance(5_000)
+  await stuck.clock.advance(5_000)
+  const error = await pending
+  // Assert
+  assert.equal(error.details?.reason, 'tracked-files-unverified')
+  rmSync(stuck.fixture.privateFolder, { recursive: true, force: true })
+})
+
+// protects=a moved HEAD outranks a build timeout; fails_when=timeout hides the moved HEAD; no_claim=the wording
+test('reports source-changed before timeout when both happened', async () => {
+  // Arrange
+  let reads = 0
+  const slow = setUp(
+    {},
+    { onBuild: () => undefined },
+    {
+      readRevision: () =>
+        Promise.resolve(++reads === 1 ? 'a'.repeat(40) : 'b'.repeat(40)),
+    },
+  )
+  // Act
+  const pending = errorOf(slow.prepare())
+  await untilSpawned(slow.route)
+  await slow.clock.advance(LIBRARY_BUILD_TIMEOUT_MS)
+  const error = await pending
+  // Assert
+  assert.equal(error.details?.reason, 'source-changed')
+})
+
+// protects=a moved HEAD outranks a failed pack; fails_when=pack-error hides the moved HEAD; no_claim=the wording
+test('reports source-changed before pack-error when both happened', async () => {
+  // Arrange
+  let reads = 0
+  const { prepare } = setUp(
+    {},
+    { onPack: (control) => control.exit({ code: 1, signal: null }) },
+    {
+      readRevision: () =>
+        Promise.resolve(++reads === 1 ? 'a'.repeat(40) : 'b'.repeat(40)),
+    },
+  )
+  // Act
+  const error = await errorOf(prepare())
+  // Assert
+  assert.equal(error.details?.reason, 'source-changed')
 })

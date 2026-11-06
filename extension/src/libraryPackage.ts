@@ -30,6 +30,7 @@ import type {
 } from './utils/buildProcessTypes'
 import { createBuildSpawner } from './utils/createBuildSpawner'
 import { createLibraryBuildError } from './utils/createLibraryBuildError'
+import { endBuildTree } from './utils/endBuildTree'
 import { extractPackageTarball } from './utils/extractPackageTarball'
 import { findChangedTrackedFile } from './utils/findChangedTrackedFile'
 import { hashTrackedFiles } from './utils/hashTrackedFiles'
@@ -154,6 +155,13 @@ type RouteContext = {
   spawner: BuildSpawner
   environment: NodeJS.ProcessEnv
   commandDetails: { packageManager: string; nodeVersion: string }
+  /** Every process the spawner started, so a failure can end the trees still running. */
+  processes: BuildProcess[]
+}
+
+/** The shared context once the snapshot is taken and the build-and-pack budget runs. */
+type BudgetedContext = RouteContext & {
+  /** When the shared budget of the build and the pack ends, by the clock. */
   deadlineMs: number
 }
 
@@ -231,7 +239,7 @@ function processFailure(
 
 /** Runs one manager command in the library folder under what is left of the shared budget. */
 async function runManagerCommand(
-  context: RouteContext,
+  context: BudgetedContext,
   commandArguments: string[],
 ): Promise<BuildProcessEnd | undefined> {
   const remainingMs = context.deadlineMs - context.clock.nowMs()
@@ -254,7 +262,7 @@ async function runManagerCommand(
 /** A `pack-error` failure for a step of the pack that is not the process itself. */
 function packStepFailure(
   context: RouteContext,
-  step: 'tarball' | 'unpack' | 'metadata',
+  step: 'build' | 'pack' | 'tarball' | 'unpack' | 'metadata',
   sentence: string,
 ): StepFailure {
   return {
@@ -262,6 +270,16 @@ function packStepFailure(
     sentence,
     details: { ...context.commandDetails, step },
   }
+}
+
+/** The message of a thrown value. */
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+/** Whether an error says the file does not exist. */
+function isFileMissing(error: unknown): boolean {
+  return error instanceof Error && Reflect.get(error, 'code') === 'ENOENT'
 }
 
 /** Finds the one tarball, unpacks it into `node_modules/<name>` and reads its manifest. */
@@ -272,9 +290,20 @@ async function unpackTarball(
   | { tarballSha256: string; version: string; peers: string[] }
 > {
   const { privateFolder } = context.roots
-  const tarballs = (await readdir(privateFolder)).filter((name) =>
-    name.endsWith('.tgz'),
-  )
+  let tarballs: string[]
+  try {
+    tarballs = (await readdir(privateFolder)).filter((name) =>
+      name.endsWith('.tgz'),
+    )
+  } catch (error) {
+    return {
+      failure: packStepFailure(
+        context,
+        'tarball',
+        `The private folder could not be listed after the pack: ${describeError(error)}`,
+      ),
+    }
+  }
   if (tarballs.length !== 1)
     return {
       failure: packStepFailure(
@@ -292,17 +321,29 @@ async function unpackTarball(
       failure: packStepFailure(
         context,
         'unpack',
-        `The tarball could not be unpacked: ${error instanceof Error ? error.message : String(error)}`,
+        `The tarball could not be unpacked: ${describeError(error)}`,
       ),
     }
   }
-  const manifest: unknown = await readFile(
-    join(packedFolder, 'package.json'),
-    'utf8',
-  ).then(
-    (text): unknown => JSON.parse(text),
-    () => undefined,
-  )
+  let manifest: unknown
+  try {
+    manifest = await readFile(join(packedFolder, 'package.json'), 'utf8').then(
+      (text): unknown => JSON.parse(text),
+      (error: unknown): unknown => {
+        // A missing file reads as no manifest; the name check below answers it.
+        if (isFileMissing(error)) return undefined
+        throw error
+      },
+    )
+  } catch (error) {
+    return {
+      failure: packStepFailure(
+        context,
+        'metadata',
+        `The packed package.json could not be read: ${describeError(error)}`,
+      ),
+    }
+  }
   const name: unknown =
     typeof manifest === 'object' && manifest !== null
       ? Reflect.get(manifest, 'name')
@@ -336,7 +377,7 @@ async function unpackTarball(
 }
 
 /** Packs the build into the private folder and unpacks it. */
-async function packLibrary(context: RouteContext): Promise<{
+async function packLibrary(context: BudgetedContext): Promise<{
   end: BuildProcessEnd | undefined
   failure?: StepFailure
   packed?: StepsResult['packed']
@@ -364,8 +405,48 @@ async function packLibrary(context: RouteContext): Promise<{
     : { end, packed: unpacked }
 }
 
-/** Runs the build, then the pack, and reports what happened; the source checks come after. */
+/** Ends every process tree still running; a failure to end one is left to the late removal in {@link abandonPrivateFolder}. */
+async function endRunningTrees(context: RouteContext): Promise<void> {
+  const running = context.processes.filter((process) => !process.isTreeGone())
+  await Promise.all(
+    running.map((process) =>
+      endBuildTree(process, context.clock).catch(() => false),
+    ),
+  )
+}
+
+/** Runs the build, then the pack, and reports what happened; an unexpected throw becomes a `pack-error` with the step it happened in, after the running trees were ended. The source checks come after. */
 async function runBuildAndPack(context: RouteContext): Promise<StepsResult> {
+  const progress = { step: 'build' as 'build' | 'pack' }
+  try {
+    return await runBuildAndPackSteps(
+      {
+        ...context,
+        deadlineMs: context.clock.nowMs() + LIBRARY_BUILD_TIMEOUT_MS,
+      },
+      progress,
+    )
+  } catch (error) {
+    await endRunningTrees(context)
+    return {
+      failure: packStepFailure(
+        context,
+        progress.step,
+        `The library ${progress.step} stopped unexpectedly: ${describeError(error)}`,
+      ),
+      wasCancelled: false,
+      endings: [],
+      buildMs: 0,
+      packMs: 0,
+    }
+  }
+}
+
+/** The build, then the pack, under one budget that started when this was called. */
+async function runBuildAndPackSteps(
+  context: BudgetedContext,
+  progress: { step: 'build' | 'pack' },
+): Promise<StepsResult> {
   const { clock, dependencies } = context
   const buildStartMs = clock.nowMs()
   const buildCommand = `${context.library.packageManager.name} run build`
@@ -387,6 +468,7 @@ async function runBuildAndPack(context: RouteContext): Promise<StepsResult> {
   // A stop during the build, or just after it, leaves no pack to run.
   if (buildEnd?.ending === 'cancelled' || dependencies.signal.aborted)
     return { wasCancelled: true, endings, buildMs, packMs: 0 }
+  progress.step = 'pack'
   const packStartMs = clock.nowMs()
   const pack = await packLibrary(context)
   const packMs = clock.nowMs() - packStartMs
@@ -413,24 +495,30 @@ async function judgeSource(
   const { repositoryRoot } = context.roots
   const readRevision = context.dependencies.readRevision ?? readHeadRevision
   let comparison: Awaited<ReturnType<typeof findChangedTrackedFile>>
-  let revisionAfter: string | undefined
   try {
     comparison = await findChangedTrackedFile(
       repositoryRoot,
       snapshot,
       'tracked-and-untracked',
     )
-    revisionAfter = await readRevision(repositoryRoot)
   } catch {
     comparison = { kind: 'unverified', path: '' }
   }
+  // A failing HEAD read must not replace the comparison result: a changed file still outranks it.
+  const revisionAfter: string | undefined = await readRevision(
+    repositoryRoot,
+  ).catch(() => undefined)
   if (comparison?.kind === 'changed')
     return {
       reason: 'tracked-file-changed',
       sentence: `The library build changed the file ${comparison.path}; Codebook did not restore it.`,
       details: { path: comparison.path },
     }
-  if (comparison?.kind === 'unverified' || !allTreesEnded)
+  if (
+    comparison?.kind === 'unverified' ||
+    !allTreesEnded ||
+    revisionAfter === undefined
+  )
     return {
       reason: 'tracked-files-unverified',
       sentence:
@@ -566,7 +654,7 @@ export async function prepareLibraryPackage(
         : library.packageManager.name,
       nodeVersion: dependencies.node?.version ?? 'none',
     },
-    deadlineMs: clock.nowMs() + LIBRARY_BUILD_TIMEOUT_MS,
+    processes,
   }
   const cleanupBoundMs = dependencies.cleanupBoundMs ?? LIBRARY_CLEANUP_BOUND_MS
   const fail = async (
@@ -601,7 +689,8 @@ export async function prepareLibraryPackage(
     context,
     before.snapshot,
     before.revision,
-    steps.endings.every((end) => end.treeEnded),
+    steps.endings.every((end) => end.treeEnded) &&
+      processes.every((process) => process.isTreeGone()),
   )
   if (sourceProblem !== undefined)
     return fail(

@@ -18,6 +18,26 @@ type TarEntry = {
   content: Buffer
 }
 
+/** How much an unpack accepts. */
+export type UnpackLimits = { totalBytes: number; entryCount: number }
+
+const DEFAULT_UNPACK_LIMITS: UnpackLimits = {
+  totalBytes: LIBRARY_UNPACK_LIMIT_BYTES,
+  entryCount: LIBRARY_UNPACK_ENTRY_LIMIT_COUNT,
+}
+
+/** Gunzips without ever holding more than the byte limit; a stream that expands past it is refused while it inflates. */
+function gunzipBounded(compressed: Buffer, limits: UnpackLimits): Buffer {
+  try {
+    return gunzipSync(compressed, { maxOutputLength: limits.totalBytes })
+  } catch (error) {
+    // zlib reports an expansion past maxOutputLength as ERR_BUFFER_TOO_LARGE.
+    if (error instanceof RangeError)
+      throw new Error('The tarball unpacks to too many bytes.')
+    throw error
+  }
+}
+
 /** Reads a NUL-terminated text field of a tar header. */
 function readField(header: Buffer, start: number, length: number): string {
   const field = header.subarray(start, start + length)
@@ -95,7 +115,10 @@ function readHeader(archive: Buffer, offset: number) {
 }
 
 /** Walks the entries of an archive, applying pax `path` records and GNU long names to the entry that follows. */
-function* readTarEntries(archive: Buffer): Generator<TarEntry> {
+function* readTarEntries(
+  archive: Buffer,
+  entryLimit: number,
+): Generator<TarEntry> {
   let offset = 0
   let pendingName: string | undefined
   let entryCount = 0
@@ -106,7 +129,7 @@ function* readTarEntries(archive: Buffer): Generator<TarEntry> {
       TAR_BLOCK_BYTES +
       Math.ceil(header.size / TAR_BLOCK_BYTES) * TAR_BLOCK_BYTES
     entryCount++
-    if (entryCount > LIBRARY_UNPACK_ENTRY_LIMIT_COUNT)
+    if (entryCount > entryLimit)
       throw new Error('The tarball holds too many entries.')
     if (header.typeFlag === 'x')
       pendingName = parsePaxRecords(header.content).get('path') ?? pendingName
@@ -132,6 +155,7 @@ function* readTarEntries(archive: Buffer): Generator<TarEntry> {
  * Called by {@link prepareLibraryPackage}.
  * @param tarballPath - The `.tgz` file.
  * @param folder - The existing or new folder the package contents go to; the first path segment of each entry (`package/`) is dropped.
+ * @param limits - The most file bytes and the most entries to accept; the production limits unless a test names smaller ones. The gunzipped archive is bounded by the byte limit too.
  * @returns The number of files written.
  * @throws When the archive is not gzip or tar, holds an entry that is not a file or directory, leaves the folder, or passes the entry or size limit.
  * @example
@@ -140,12 +164,13 @@ function* readTarEntries(archive: Buffer): Generator<TarEntry> {
 export async function extractPackageTarball(
   tarballPath: string,
   folder: string,
+  limits: UnpackLimits = DEFAULT_UNPACK_LIMITS,
 ): Promise<number> {
-  const archive = gunzipSync(await readFile(tarballPath))
+  const archive = gunzipBounded(await readFile(tarballPath), limits)
   await mkdir(folder, { recursive: true })
   let totalBytes = 0
   let fileCount = 0
-  for (const entry of readTarEntries(archive)) {
+  for (const entry of readTarEntries(archive, limits.entryCount)) {
     if (entry.typeFlag === '5') {
       const directory = destinationOf(folder, entry.name.replace(/\/$/, ''))
       if (directory !== undefined) await mkdir(directory, { recursive: true })
@@ -156,7 +181,7 @@ export async function extractPackageTarball(
         `The tarball entry "${entry.name}" is neither a file nor a folder.`,
       )
     totalBytes += entry.content.length
-    if (totalBytes > LIBRARY_UNPACK_LIMIT_BYTES)
+    if (totalBytes > limits.totalBytes)
       throw new Error('The tarball unpacks to too many bytes.')
     const destination = destinationOf(folder, entry.name)
     if (destination === undefined) continue
