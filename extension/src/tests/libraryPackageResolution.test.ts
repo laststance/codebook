@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -14,9 +14,18 @@ import {
   listFolderState,
 } from './utils/libraryRouteFixture'
 
+type LibraryFixture = ReturnType<typeof createLibraryFixture>
+
+/** Writes a file, creating its folder. */
+function writeAt(path: string, text: string): void {
+  mkdirSync(join(path, '..'), { recursive: true })
+  writeFileSync(path, text)
+}
+
 /** Prepares the fixture library (fake build and pack, real tarball) and returns it with a runner that starts the real `node` with the hook. */
-async function prepared() {
+async function prepared(beforePack?: (fixture: LibraryFixture) => void) {
   const fixture = createLibraryFixture()
+  beforePack?.(fixture)
   const route = createRouteSpawner(fixture.libraryRoot)
   const library = await prepareLibraryPackage(
     fixture.configuration,
@@ -104,7 +113,8 @@ test('observes loads of the packed copy with a complete observation after a norm
   assert.equal(observed.observation, 'complete')
   assert.equal(observed.loaded, true)
   assert.equal(observed.otherCopyLoaded, false)
-  assert.ok(observed.loadCount >= 2)
+  // run-import.mjs loads the library's index and its sub module; the hidden subpath fails and mid is not part of the packed copy.
+  assert.equal(observed.loadCount, 2)
   await library.dispose()
 })
 
@@ -176,4 +186,118 @@ test('reads a truncated observation as incomplete and a missing file as unreadab
   assert.equal(truncated.loadCount, 1)
   assert.equal(withoutClosing.observation, 'incomplete')
   assert.equal(missing.observation, 'unreadable')
+})
+
+// protects=a package-internal `#` import inside the packed copy resolves through the packed package.json imports map; fails_when=the hook treats the # specifier as a bare package and resolves it through the library source folder's imports map; no_claim=CommonJS require of a # import
+test('resolves a # import inside the packed copy through the packed imports map, not the library source', async () => {
+  // Arrange
+  const { fixture, library, run } = await prepared((prepareFixture) => {
+    const manifestPath = join(prepareFixture.libraryRoot, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<
+      string,
+      unknown
+    >
+    manifest.imports = { '#internal': './dist/internal.mjs' }
+    manifest.exports = {
+      ...(manifest.exports as Record<string, unknown>),
+      './inner': { import: './dist/inner.mjs' },
+    }
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    writeAt(
+      join(prepareFixture.libraryRoot, 'dist', 'internal.mjs'),
+      "export const value = 'packed-internal'\n",
+    )
+    writeAt(
+      join(prepareFixture.libraryRoot, 'dist', 'inner.mjs'),
+      "import { value } from '#internal'\nexport const inner = value\n",
+    )
+  })
+  // The library source folder's imports map points elsewhere after the pack.
+  const manifestPath = join(fixture.libraryRoot, 'package.json')
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<
+    string,
+    unknown
+  >
+  manifest.imports = { '#internal': './src/decoy.mjs' }
+  writeFileSync(manifestPath, JSON.stringify(manifest))
+  writeAt(
+    join(fixture.libraryRoot, 'src', 'decoy.mjs'),
+    "export const value = 'source-decoy'\n",
+  )
+  writeAt(
+    join(fixture.examplePackageRoot, 'run-inner.mjs'),
+    "import { inner } from 'lib/inner'\nconsole.log(inner)\n",
+  )
+  // Act
+  const printed = run('run-inner.mjs')
+  // Assert
+  assert.equal(printed, 'packed-internal')
+  await library.dispose()
+})
+
+// protects=an Example outside node_modules whose package has no name (the layout where the library is the repository root) never counts as another copy of the library; fails_when=the name lookup climbs from the Example to the library's root manifest and reports the Example's own files as another copy; no_claim=copies installed under node_modules
+test('does not report a nameless Example under a library root as another copy', async () => {
+  // Arrange
+  const { fixture, library, run } = await prepared()
+  writeFileSync(
+    join(fixture.repositoryRoot, 'package.json'),
+    JSON.stringify({ name: 'lib', private: true }),
+  )
+  writeFileSync(
+    join(fixture.examplePackageRoot, 'package.json'),
+    JSON.stringify({ private: true }),
+  )
+  writeAt(
+    join(fixture.examplePackageRoot, 'local.mjs'),
+    "export const local = 'local'\n",
+  )
+  writeAt(
+    join(fixture.examplePackageRoot, 'run-local.mjs'),
+    "import { local } from './local.mjs'\nconsole.log(local)\n",
+  )
+  // Act
+  const printed = run('run-local.mjs')
+  const observed = await library.finishObservation()
+  // Assert
+  assert.equal(printed, 'local')
+  assert.equal(observed.observation, 'complete')
+  assert.equal(observed.otherCopyLoaded, false)
+  await library.dispose()
+})
+
+// protects=a worker thread started by the script (it inherits --import) neither truncates the main thread's observation nor writes its closing line; fails_when=the worker's copy of the hook resets the file so earlier loads vanish or a worker exit closes the observation early; no_claim=resolution inside the worker
+test('keeps the main thread observation whole when the script starts a worker thread', async () => {
+  // Arrange
+  const { fixture, library, run } = await prepared()
+  writeAt(join(fixture.examplePackageRoot, 'worker.mjs'), '1 + 1\n')
+  writeAt(
+    join(fixture.examplePackageRoot, 'run-worker.mjs'),
+    [
+      "import { Worker } from 'node:worker_threads'",
+      "import { origin } from 'lib'",
+      "await new Promise((resolve) => new Worker(new URL('./worker.mjs', import.meta.url)).on('exit', resolve))",
+      'console.log(origin)',
+      '',
+    ].join('\n'),
+  )
+  // Act
+  const printed = run('run-worker.mjs')
+  const observed = await library.finishObservation()
+  const lines = readFileSync(
+    join(fixture.privateFolder, 'library-observation.jsonl'),
+    'utf8',
+  )
+    .trim()
+    .split('\n')
+    .map((line) => (JSON.parse(line) as { event: string }).event)
+  // Assert
+  assert.equal(printed, 'packed')
+  assert.equal(observed.observation, 'complete')
+  assert.equal(observed.loaded, true)
+  assert.equal(observed.loadCount, 1)
+  assert.deepEqual(
+    lines.filter((event) => event === 'start' || event === 'closing'),
+    ['start', 'closing'],
+  )
+  await library.dispose()
 })

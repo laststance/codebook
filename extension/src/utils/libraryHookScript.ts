@@ -16,6 +16,15 @@ export type LibraryHookConfiguration = {
   observationFile: string
 }
 
+/** The static imports of the hook file; they stay at the top level, outside the main-thread guard that wraps {@link LIBRARY_HOOK_BODY}. */
+const LIBRARY_HOOK_IMPORTS = `
+import { registerHooks, createRequire, isBuiltin } from 'node:module'
+import { appendFileSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { dirname, sep } from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+import { isMainThread } from 'node:worker_threads'
+`
+
 /**
  * The body of the resolve and load hook of the library route, a module run with `node --import`.
  *
@@ -23,13 +32,11 @@ export type LibraryHookConfiguration = {
  * `resolve`: the package and its subpaths go to the packed copy (a `require` is resolved with `createRequire` from the private folder and short-circuited under a re-entry guard, because a synchronous resolve hook ignores a `parentURL` override for `require`; an `import` uses the `parentURL` override); a peer imported from inside the packed copy resolves from the Example; any other bare import from inside it resolves from the library's folder.
  * `load`: records loads inside the packed copy and loads of a package with the same name from any other real path.
  * Every event is one JSON line; a closing line is written on a normal exit.
+ * It runs on the main thread only: a worker thread inherits `--import`, and its copy of the hook would truncate the main thread's observation and write a closing line when the worker ends.
+ * A specifier starting with `#` is a package-internal import of the importing package, so it is never treated as a bare package name.
+ * Only files under a `node_modules` folder can be another copy of the package: an Example outside it is the repository's own source.
  */
 const LIBRARY_HOOK_BODY = `
-import { registerHooks, createRequire, isBuiltin } from 'node:module'
-import { appendFileSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
-import { dirname, sep } from 'node:path'
-import { pathToFileURL, fileURLToPath } from 'node:url'
-
 const packedRoot = realpathSync(CONFIG.packedRoot) + sep
 const privateResolver = CONFIG.privateFolder + sep + 'resolver.js'
 const privateParent = pathToFileURL(privateResolver).href
@@ -42,7 +49,7 @@ const record = (event) => appendFileSync(CONFIG.observationFile, JSON.stringify(
 writeFileSync(CONFIG.observationFile, '')
 record({ event: 'start' })
 
-const isBare = (specifier) => !specifier.startsWith('.') && !specifier.startsWith('/') && !specifier.includes(':') && !isBuiltin(specifier)
+const isBare = (specifier) => !specifier.startsWith('.') && !specifier.startsWith('#') && !specifier.startsWith('/') && !specifier.includes(':') && !isBuiltin(specifier)
 const isRequire = (context) => Array.isArray(context.conditions) && context.conditions.includes('require')
 const isNamed = (specifier, name) => specifier === name || specifier.startsWith(name + '/')
 const isTarget = (specifier) => isNamed(specifier, CONFIG.packageName)
@@ -102,7 +109,7 @@ registerHooks({
     if (url.startsWith('file:')) {
       const real = realPathOf(url)
       if ((real + sep).startsWith(packedRoot)) record({ event: 'load', path: real })
-      else if (real !== '' && packageNameAbove(dirname(real)) === CONFIG.packageName) record({ event: 'other-copy', path: real })
+      else if (real !== '' && real.includes(sep + 'node_modules' + sep) && packageNameAbove(dirname(real)) === CONFIG.packageName) record({ event: 'other-copy', path: real })
     }
     return nextLoad(url, context)
   },
@@ -121,6 +128,6 @@ process.on('exit', (code) => record({ event: 'closing', code }))
 export function buildLibraryHookSource(
   configuration: LibraryHookConfiguration,
 ): string {
-  // Imports are hoisted, so the literal above them is read by the body that follows.
-  return `const CONFIG = ${JSON.stringify(configuration)}\n${LIBRARY_HOOK_BODY}`
+  // Imports are hoisted, so the literal above them is read by the body that follows; the body is guarded so a worker thread installs nothing.
+  return `const CONFIG = ${JSON.stringify(configuration)}\n${LIBRARY_HOOK_IMPORTS}\nif (isMainThread) {${LIBRARY_HOOK_BODY}}\n`
 }
