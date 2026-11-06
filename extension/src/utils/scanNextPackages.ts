@@ -250,6 +250,55 @@ async function visitKind<Item>(
   }
 }
 
+/** One kind's visit outcome, as {@link visitKind} answers it. */
+type KindVisit<Item> = { item: Item } | { failed: true } | undefined
+
+/**
+ * Keeps a finished visit and drops a failed or absent one.
+ * Called by {@link appChunkResult} for each kind.
+ * @param visit - The kind's visit outcome.
+ * @returns The `{ item }` of a finished visit, else `undefined`.
+ * @example finishedVisit({ item: 'a' }) // => { item: 'a' }
+ */
+function finishedVisit<Item>(
+  visit: KindVisit<Item>,
+): { item: Item } | undefined {
+  return visit !== undefined && 'item' in visit ? visit : undefined
+}
+
+/**
+ * Builds one app's chunk result from its four kinds' visits.
+ *
+ * Why it exists: keeps {@link visitChunk}'s per-folder callback small enough to measure. Called by that callback once per app folder.
+ * @param next - The Next visit.
+ * @param vite - The Vite visit.
+ * @param reactScripts - The react-scripts visit.
+ * @param expoWeb - The Expo web visit.
+ * @returns An `apps` result with one item per finished visit, `failed` when any visit threw.
+ * @example appChunkResult({ item: 'a' }, undefined, undefined, { failed: true }) // => { kind: 'apps', failed: true, next: { item: 'a' } }
+ */
+function appChunkResult<NextItem, ViteItem, ReactScriptsItem, ExpoWebItem>(
+  next: KindVisit<NextItem>,
+  vite: KindVisit<ViteItem>,
+  reactScripts: KindVisit<ReactScriptsItem>,
+  expoWeb: KindVisit<ExpoWebItem>,
+): ChunkResult<NextItem, ViteItem, ReactScriptsItem, ExpoWebItem> {
+  const nextItem = finishedVisit(next)
+  const viteItem = finishedVisit(vite)
+  const reactScriptsItem = finishedVisit(reactScripts)
+  const expoWebItem = finishedVisit(expoWeb)
+  return {
+    kind: 'apps',
+    failed: [next, vite, reactScripts, expoWeb].some(
+      (visited) => visited !== undefined && 'failed' in visited,
+    ),
+    ...(nextItem ? { next: nextItem } : {}),
+    ...(viteItem ? { vite: viteItem } : {}),
+    ...(reactScriptsItem ? { reactScripts: reactScriptsItem } : {}),
+    ...(expoWebItem ? { expoWeb: expoWebItem } : {}),
+  }
+}
+
 /**
  * Reads and visits one chunk of manifest folders at once.
  * @param root - The repository's real path.
@@ -292,16 +341,7 @@ async function visitChunk<NextItem, ViteItem, ReactScriptsItem, ExpoWebItem>(
             signal,
           ),
         ])
-        return {
-          kind: 'apps',
-          failed: [next, vite, reactScripts, expoWeb].some(
-            (visited) => visited !== undefined && 'failed' in visited,
-          ),
-          ...(next && 'item' in next ? { next } : {}),
-          ...(vite && 'item' in vite ? { vite } : {}),
-          ...(reactScripts && 'item' in reactScripts ? { reactScripts } : {}),
-          ...(expoWeb && 'item' in expoWeb ? { expoWeb } : {}),
-        }
+        return appChunkResult(next, vite, reactScripts, expoWeb)
       },
     ),
   )

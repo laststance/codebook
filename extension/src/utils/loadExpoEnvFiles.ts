@@ -28,6 +28,46 @@ function markBoundReached(budget: DotenvExpansionBudget, text: string): string {
 }
 
 /**
+ * Settles one reference's value from its sources in Expo's order, recursing into a value that holds references.
+ *
+ * Why it exists: keeps {@link interpolateExpoValue}'s replacer small enough to measure. Called by that replacer once per reference that is not escaped.
+ * @param key - The referenced name.
+ * @param defaultValue - The reference's `:-` or `-` default, when it has one.
+ * @param sourceKey - The name whose value is being expanded; its own file value never feeds itself.
+ * @param sourceEnvironment - The process environment; it wins over every file.
+ * @param inputEnvironment - The merged file values.
+ * @param recurse - Expands a found value one level deeper.
+ * @returns
+ * - the process value (expanded unless it equals the file value);
+ * - else the file value of another name, expanded;
+ * - else the default (expanded when it starts with `$`);
+ * - else an empty string.
+ * @example resolveExpoReference('B', 'x', 'A', new Map(), new Map(), (text) => text) // => 'x'
+ */
+function resolveExpoReference(
+  key: string,
+  defaultValue: string | undefined,
+  sourceKey: string,
+  sourceEnvironment: ReadonlyMap<string, string>,
+  inputEnvironment: ReadonlyMap<string, string>,
+  recurse: (text: string, key: string) => string,
+): string {
+  const fromProcess = sourceEnvironment.get(key)
+  // A non-empty process value wins; it is taken as written when it equals the file's own value.
+  if (fromProcess)
+    return fromProcess === inputEnvironment.get(key)
+      ? fromProcess
+      : recurse(fromProcess, key)
+  const fromFiles = inputEnvironment.get(key)
+  if (fromFiles && key !== sourceKey) return recurse(fromFiles, key)
+  if (defaultValue)
+    return defaultValue.startsWith('$')
+      ? recurse(defaultValue, key)
+      : defaultValue
+  return ''
+}
+
+/**
  * Expands the references of one value exactly as `@expo/env` 2.4.3 does (dotenv-expand 11.0.7), recursively.
  *
  * Why it exists: Expo inlines the value this settles into the bundle Codebook archives, so the mask list must hold that value, not the file's text. Called by {@link expandExpoEnvironment}.
@@ -81,18 +121,14 @@ function interpolateExpoValue(
       budget.remainingSteps -= 1
       // An escaped dollar stays literal without its backslash.
       if (escaped === '\\') return match.slice(1)
-      const fromProcess = sourceEnvironment.get(key)
-      if (fromProcess)
-        return fromProcess === inputEnvironment.get(key)
-          ? fromProcess
-          : recurse(fromProcess, key)
-      const fromFiles = inputEnvironment.get(key)
-      if (fromFiles && key !== sourceKey) return recurse(fromFiles, key)
-      if (defaultValue)
-        return defaultValue.startsWith('$')
-          ? recurse(defaultValue, key)
-          : defaultValue
-      return ''
+      return resolveExpoReference(
+        key,
+        defaultValue,
+        sourceKey,
+        sourceEnvironment,
+        inputEnvironment,
+        recurse,
+      )
     },
   )
   budget.remainingCopiedChars -= expanded.length
