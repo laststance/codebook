@@ -633,6 +633,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       assertCurrent,
       signal,
       workspaceRoot: this.input.workspace,
+      // Masked before the snapshot's cut, so a secret straddling it leaves no fragment; read at call time.
+      maskKnownText: (text) => this.input.maskKnownText?.(text) ?? text,
       limits: {
         timeoutMs: NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
         maxFrames: NODE_REPLAY_DEBUG_MAX_FRAMES,

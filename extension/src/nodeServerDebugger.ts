@@ -115,4 +115,6 @@ export type NodeServerDebuggerInput = {
   citedSources: ConfiguredDescriptor['sources']
   stops: NodeServerStopTarget[]
   record: (type: string, detail?: unknown) => unknown
+  /** Masks the run's known secret values (the sign-in secret and session cookies) in every string a stop saves, before it is cut; read at call time, so values learned after the debugger was made still apply. Absent: nothing is masked. */
+  maskKnownText?: (text: string) => string
 }
