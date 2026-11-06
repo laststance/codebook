@@ -26,6 +26,9 @@ import type {
 import { runWxtBuildProcess } from '../utils/runWxtBuildProcess'
 import type { WxtBuildExit, WxtBuildSpawnRequest } from '../utils/wxtBuildTypes'
 
+/** A lost stop leaves these builds waiting for an exit that never comes; the guard turns that hang into a failure. */
+const LOST_STOP_GUARD_MS = 10_000
+
 const temporaryFolders: string[] = []
 after(() => {
   for (const folder of temporaryFolders)
@@ -719,53 +722,66 @@ test('returns cancelled without starting a process when the stop arrives during 
 })
 
 // protects=a signal already aborted when the build process starts ends the build tree and answers cancelled instead of waiting for the exit or the budget; fails_when=the abort event that never fires again leaves the build running to its exit; no_claim=the production spawner (fake spawner and fake clock)
-test('ends the build tree and answers cancelled when the signal is already aborted at the start', async () => {
-  // Arrange
-  const controller = new AbortController()
-  controller.abort()
-  const fake = createFakeSpawner({ onSpawn: () => undefined })
-  // Act
-  const end = await runWxtBuildProcess(
-    { executable: '/usr/local/bin/node', arguments: [], cwd: '/' },
-    fake.spawner,
-    createFakeClock(),
-    controller.signal,
-  )
-  // Assert
-  assert.equal(end.ending, 'cancelled')
-  assert.equal(end.treeEnded, true)
-  assert.deepEqual(fake.signals, ['SIGTERM'])
-})
+test(
+  'ends the build tree and answers cancelled when the signal is already aborted at the start',
+  { timeout: LOST_STOP_GUARD_MS },
+  async () => {
+    // Arrange
+    const controller = new AbortController()
+    controller.abort()
+    const fake = createFakeSpawner({ onSpawn: () => undefined })
+    // Act
+    const end = await runWxtBuildProcess(
+      {
+        executable: '/usr/local/bin/node',
+        arguments: [],
+        cwd: '/',
+        environment: {},
+      },
+      fake.spawner,
+      createFakeClock(),
+      controller.signal,
+    )
+    // Assert
+    assert.equal(end.ending, 'cancelled')
+    assert.equal(end.treeEnded, true)
+    assert.deepEqual(fake.signals, ['SIGTERM'])
+  },
+)
 
 // protects=a stop landing between the last check and the spawn still compares the tracked files and reports a change the build made; fails_when=the late stop returns cancelled without the comparison or the build reads as built; no_claim=the real timing of a stop (the fake spawner aborts inside the spawn call)
-test('compares the tracked files when the stop lands during the spawn', async () => {
-  // Arrange
-  const project = createProject()
-  const controller = new AbortController()
-  const fake = createFakeSpawner({
-    onSpawn() {
-      writeFileSync(
-        join(project.projectRoot, 'src', 'a.ts'),
-        'export const a = 4\n',
-      )
-      controller.abort()
-    },
-  })
-  // Act
-  const refusal = await refusalOf(
-    buildWxtExtension({
-      ...project,
-      node: NODE_24,
-      signal: controller.signal,
-      spawner: fake.spawner,
-      clock: createFakeClock(),
-    }),
-  )
-  // Assert
-  assert.equal(refusal.details?.reason, 'tracked-file-changed')
-  assert.equal(refusal.details?.path, 'ext/src/a.ts')
-  assert.deepEqual(fake.signals, ['SIGTERM'])
-})
+test(
+  'compares the tracked files when the stop lands during the spawn',
+  { timeout: LOST_STOP_GUARD_MS },
+  async () => {
+    // Arrange
+    const project = createProject()
+    const controller = new AbortController()
+    const fake = createFakeSpawner({
+      onSpawn() {
+        writeFileSync(
+          join(project.projectRoot, 'src', 'a.ts'),
+          'export const a = 4\n',
+        )
+        controller.abort()
+      },
+    })
+    // Act
+    const refusal = await refusalOf(
+      buildWxtExtension({
+        ...project,
+        node: NODE_24,
+        signal: controller.signal,
+        spawner: fake.spawner,
+        clock: createFakeClock(),
+      }),
+    )
+    // Assert
+    assert.equal(refusal.details?.reason, 'tracked-file-changed')
+    assert.equal(refusal.details?.path, 'ext/src/a.ts')
+    assert.deepEqual(fake.signals, ['SIGTERM'])
+  },
+)
 
 // protects=a WXT version in the result file that is not version-like is never quoted in the refusal sentence or details and reads as unknown; fails_when=text the project's code wrote reaches the message; no_claim=the wording around the version
 test('reads a result-file WXT version that is not version-like as unknown', async () => {
