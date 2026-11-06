@@ -80,6 +80,7 @@ async function readHomepage(appRoot: string): Promise<string | undefined> {
  * @param appRoot - The app's folder.
  * @param environment - The environment so far; changed in place.
  * @param policy - How an unreadable file is treated and how a refusal is worded.
+ * @param parse - How one file's text becomes names and values; dotenv 10's rules (react-scripts) by default, dotenv 16's for Expo.
  * @throws The policy's refusal for a file it cannot read, or whose values expand past Codebook's bounds (the values the server inlines are then unknown, so they could not be masked).
  * @example await loadEnvFiles('/app', new Map(), REACT_SCRIPTS_ENV_FILE_POLICY)
  */
@@ -87,6 +88,7 @@ export async function loadEnvFiles(
   appRoot: string,
   environment: Map<string, string>,
   policy: EnvFileReadPolicy,
+  parse: (text: string) => Map<string, string> = parseEnvText,
 ): Promise<void> {
   const budget = {
     remainingSteps: REACT_SCRIPTS_ENV_EXPANSION_MAX_STEPS,
@@ -96,7 +98,7 @@ export async function loadEnvFiles(
   for (const name of ENV_FILES) {
     const text = await readReactScriptsEnvFile(appRoot, name, policy)
     if (text === undefined) continue
-    expandDotenvFile(parseEnvText(text), environment, budget)
+    expandDotenvFile(parse(text), environment, budget)
     // Past a bound the inlined values are unknown, so they could not be masked: nothing may start.
     if (budget.exceeded)
       throw policy.refusal(

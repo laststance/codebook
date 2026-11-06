@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { StudyError } from '../errors'
 import { EXPO_WEB_DEV_ADAPTER } from '../expoWebDevAdapter'
+import { assessExpoWebWorkspace } from '../utils/assessExpoWebWorkspace'
 import { parseExpoWebScript } from '../utils/parseExpoWebScript'
 import { readExpoWebPackageReadiness } from '../utils/readExpoWebPackageReadiness'
 import { readReactScriptsEnvFile } from '../utils/readReactScriptsEnvFile'
@@ -310,4 +311,62 @@ test('the web script grammar accepts the declared forms and refuses the others',
     { ...parseExpoWebScript('A=1 expo start --web').assignments },
     { A: '1' },
   )
+})
+
+/** Settles the environment of a staged Expo app whose `.env` holds the given text. */
+async function environmentOfEnvFile(
+  context: TestContext,
+  envText: string,
+): Promise<Record<string, string>> {
+  const repository = await createExpoWebRepository(context, {
+    files: { '.env': envText },
+  })
+  const expoPackage = await resolveExpoWebPackage(repository.root, 'apps/app')
+  return (await assessExpoWebWorkspace(expoPackage)).environment
+}
+
+// Value: protects=E-9/DX-5 masking parity: every EXPO_PUBLIC value Expo (dotenv 16) loads from .env reaches the settled environment the mask list is built from, for export prefixes, inline comments, all three quotes and multi-line double quotes; fails_when=the react-scripts (dotenv 10) parser reads the file, so an exported name is lost or a comment stays in the value; why_new=Cycle 0089 review round; seam=temporary repository, real files, nothing executed; no_claim=that Metro inlines them
+test('the Expo environment holds the EXPO_PUBLIC values exactly as Expo loads them from .env', async (context) => {
+  // Arrange
+  const envText = [
+    'export EXPO_PUBLIC_EXPORTED=abc',
+    'EXPO_PUBLIC_COMMENTED=abc # note',
+    "EXPO_PUBLIC_SINGLE='single # kept'",
+    'EXPO_PUBLIC_DOUBLE="double # kept"',
+    'EXPO_PUBLIC_BACKTICK=`tick # kept`',
+    'EXPO_PUBLIC_MULTI="first',
+    'second"',
+    'EXPO_PUBLIC_ESCAPED="a\\nb"',
+    'EXPO_PUBLIC_COLON: colon',
+  ].join('\n')
+  // Act
+  const environment = await environmentOfEnvFile(context, envText)
+  // Assert
+  assert.equal(environment.EXPO_PUBLIC_EXPORTED, 'abc')
+  assert.equal(environment.EXPO_PUBLIC_COMMENTED, 'abc')
+  assert.equal(environment.EXPO_PUBLIC_SINGLE, 'single # kept')
+  assert.equal(environment.EXPO_PUBLIC_DOUBLE, 'double # kept')
+  assert.equal(environment.EXPO_PUBLIC_BACKTICK, 'tick # kept')
+  assert.equal(environment.EXPO_PUBLIC_MULTI, 'first\nsecond')
+  assert.equal(environment.EXPO_PUBLIC_ESCAPED, 'a\nb')
+  assert.equal(environment.EXPO_PUBLIC_COLON, 'colon')
+})
+
+// Value: protects=DX-3 nested-app install command: a nested app without a lockfile of its own, in a repository with a pnpm lockfile at its root, is told to install with pnpm; fails_when=the refusal names npm install because only the app folder is read; why_new=Cycle 0089 review round; seam=temporary repository; no_claim=running the command
+test('a nested app without its own lockfile is told the install command of the repository root lockfile', async (context) => {
+  // Arrange
+  const repository = await createExpoWebRepository(context, { omitExpo: true })
+  await writeFile(
+    join(repository.root, 'pnpm-lock.yaml'),
+    'lockfileVersion: 9\n',
+  )
+  const expoPackage = await resolveExpoWebPackage(repository.root, 'apps/app')
+  // Act
+  const thrown = await assessExpoWebWorkspace(expoPackage).catch(
+    (error: unknown) => error,
+  )
+  // Assert
+  assert.ok(thrown instanceof StudyError)
+  assert.equal(thrown.details?.reason, 'not-installed')
+  assert.equal(thrown.details?.installCommand, 'pnpm install --frozen-lockfile')
 })
