@@ -11,6 +11,7 @@ import {
 } from './expoWebRefusals'
 import type { SingleBundleProfile } from './singleBundleProfile'
 import { EXPO_WEB_SOURCE_MAP_LIMITS } from './sourceMapLimits'
+import { browserOriginOf } from './utils/ownedApplicationOrigin'
 
 /** The query value that names Metro's web bundle among the entry page's scripts. */
 const WEB_PLATFORM = 'web'
@@ -73,6 +74,8 @@ export const EXPO_WEB_SINGLE_BUNDLE_PROFILE: SingleBundleProfile =
           `The entry page names ${count} web bundles, so the bundle to seal is unknown.`,
         ),
     },
+    // Metro writes the request's Host into the bundle's last line, and Chrome asks at the browser origin: the same host makes the sealed bytes the executed bytes.
+    requestHostOf: (ownedOrigin) => new URL(browserOriginOf(ownedOrigin)).host,
     selectBundleScript(scripts) {
       // The page must name exactly one web bundle: Metro's other platforms or a second bundle make the choice ambiguous.
       const bundles = webBundleScripts(scripts)

@@ -5,8 +5,11 @@ import { mock, test, type TestContext } from 'node:test'
 import type { DevelopmentBundleRequest } from '../developmentServerAdapter'
 import { StudyError } from '../errors'
 import { EXPO_WEB_DEV_ADAPTER } from '../expoWebDevAdapter'
+import { sha256 } from '../runtimeSupport/utils/sha256'
 import { WaitTimeoutError } from '../runtimeSupport/utils/waitTimeoutError'
 import { EXPO_WEB_SOURCE_MAP_LIMITS } from '../sourceMapLimits'
+import { createBundleVerifier } from '../utils/createBundleVerifier'
+import { fetchOwnedServer } from '../utils/fetchOwnedServer'
 import { isProcessGone } from '../utils/isProcessGone'
 import * as expoWebLauncher from '../utils/launchExpoWebDevelopmentServer'
 
@@ -451,5 +454,63 @@ test('EXPO_PUBLIC values and secret assignments are masked in the output tail, k
   assert.equal(
     maskModuleText('const k = "pk-live-abc123xyz"').includes('pk-live'),
     false,
+  )
+})
+
+/** Reads the bundle the way Chrome asks for it: connected to 127.0.0.1, presenting `Host: localhost:<port>`. */
+async function bundleAsBrowserReads(port: number): Promise<string> {
+  const response = await fetchOwnedServer(
+    `http://127.0.0.1:${port}${FAKE_BUNDLE_PATH}`,
+    `localhost:${port}`,
+    new AbortController().signal,
+  )
+  return response.text()
+}
+
+// Value: protects=the sealed Expo bundle is the bytes Chrome executes (Metro writes the request Host into the last line); fails_when=the seal reads at 127.0.0.1 so the map line names 127.0.0.1; why_new=C89-1 native check failure "differs from its sealed bundle"; seam=real launcher, fake Metro that echoes Host; no_claim=real Metro
+test('the sealed Expo bundle ends with the browser host the way Chrome receives it', async (context) => {
+  // Arrange
+  const { repository, controller, request, started } =
+    await startAdapter(context)
+  const { app, port } = await started()
+  await EXPO_WEB_DEV_ADAPTER.waitForServerSettled(
+    app,
+    10_000,
+    controller.signal,
+  )
+  // Act
+  const sealed = await EXPO_WEB_DEV_ADAPTER.readBundle(
+    bundleRequest(repository, request),
+  )
+  const browserBytes = await bundleAsBrowserReads(port)
+  // Assert
+  assert.equal(sealed.bundle.javascript, browserBytes)
+  assert.ok(
+    sealed.bundle.javascript.includes(
+      `//# sourceMappingURL=http://localhost:${port}/apps/app/`,
+    ),
+  )
+})
+
+// Value: protects=the executed-module check (sha256 of the executed script against the verifier's javascript hash) accepts the bytes Chrome executes; fails_when=the sealed hash is of 127.0.0.1-host bytes; why_new=C89-1; seam=createBundleVerifier over the sealed bundle; no_claim=the CDP read itself
+test('the verifier of a sealed Expo bundle accepts the bytes the browser executes', async (context) => {
+  // Arrange
+  const { repository, controller, request, started } =
+    await startAdapter(context)
+  const { app, port } = await started()
+  await EXPO_WEB_DEV_ADAPTER.waitForServerSettled(
+    app,
+    10_000,
+    controller.signal,
+  )
+  const sealed = await EXPO_WEB_DEV_ADAPTER.readBundle(
+    bundleRequest(repository, request),
+  )
+  // Act
+  const executed = await bundleAsBrowserReads(port)
+  // Assert
+  assert.equal(
+    sha256(executed),
+    createBundleVerifier(sealed.bundle, sealed.limits).hashes.javascript,
   )
 })

@@ -58,6 +58,13 @@ export type SingleBundleProfile = Readonly<{
     refusal: (count: number) => StudyError
   }
   /**
+   * Names the `Host` the reads of the entry page, bundle and map present, while the connection stays on the owned origin.
+   * Absent (react-scripts), the plain address is requested with the global `fetch`. Expo's Metro writes the request's host into the bundle's last line, so it presents the browser's host and the sealed bytes equal the executed bytes.
+   * @param ownedOrigin - The owned origin (`http://127.0.0.1:<port>`).
+   * @returns The `Host` header value (`localhost:<port>`).
+   */
+  requestHostOf?: (ownedOrigin: string) => string
+  /**
    * Finds the address of the bundle's source map from the `sourceMappingURL` comment the bundle ends with.
    * @param reference - The comment's value, absolute or relative.
    * @param bundleUrl - The address the bundle was read at.

@@ -7,6 +7,7 @@ import {
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import type { SingleBundleProfile } from '../singleBundleProfile'
 
+import { fetchOwnedServer } from './fetchOwnedServer'
 import { findSingleBundleUrl } from './findSingleBundleUrl'
 import { readCappedBody } from './readCappedBody'
 import { readErrorBodyHead } from './readErrorBodyHead'
@@ -98,6 +99,7 @@ function requestTimeoutMs(deadlineAtMs: number | undefined): number {
  * @param profile - The adapter's profile, which words an unreadable body.
  * @param signal - Ends the read when the run is cancelled.
  * @param timeoutMs - The most the request and its body may take.
+ * @param requestHost - The `Host` to present (see {@link fetchOwnedServer}), or `undefined` for the plain address.
  * @returns The text, or `undefined` when it exceeds the cap.
  * @throws {@link SingleBundleNotReadyError} for a failed request, a redirect or a non-success status; an unreadable (non-UTF-8) body is the profile's `mapUnreadable` refusal.
  * @example await readServedText('http://127.0.0.1:3000/static/js/bundle.js', 8_388_608, profile, signal, 15_000) // => '(()=>{…})()'
@@ -108,11 +110,13 @@ async function readServedText(
   profile: SingleBundleProfile,
   signal: AbortSignal,
   timeoutMs: number,
+  requestHost: string | undefined,
 ): Promise<string | undefined> {
-  const response = await fetch(url, {
-    redirect: 'manual',
-    signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
-  }).catch((error: unknown) => {
+  const response = await fetchOwnedServer(
+    url,
+    requestHost,
+    AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
+  ).catch((error: unknown) => {
     // A cancelled run stays cancelled; any other failure means the server is not serving yet.
     signal.throwIfAborted()
     throw new SingleBundleNotReadyError(
@@ -257,6 +261,8 @@ export async function readSingleServedBundle(
   onProgress?: (step: SingleBundleProgress) => void,
 ): Promise<SingleServedBundle> {
   const { limits, refusals } = profile
+  // The Host the browser asked with (Metro writes it into the bundle), so the sealed bytes are the executed bytes.
+  const requestHost = profile.requestHostOf?.(origin)
   const bundleUrl =
     cache.bundleUrl ??
     (await entryBundleUrl(
@@ -274,6 +280,7 @@ export async function readSingleServedBundle(
     profile,
     signal,
     requestTimeoutMs(deadlineAtMs),
+    requestHost,
   )
   if (javascript === undefined)
     throw refusals.mapUnreadable(
@@ -306,6 +313,7 @@ export async function readSingleServedBundle(
     profile,
     signal,
     requestTimeoutMs(deadlineAtMs),
+    requestHost,
   )
   if (mapText === undefined)
     throw refusals.mapLimit('map-bytes', limits.mapBytes)

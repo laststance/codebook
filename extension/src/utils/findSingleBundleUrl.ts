@@ -4,6 +4,7 @@ import {
 } from '../constants'
 import type { SingleBundleProfile } from '../singleBundleProfile'
 
+import { fetchOwnedServer } from './fetchOwnedServer'
 import { readCappedBody } from './readCappedBody'
 import { readErrorBodyHead } from './readErrorBodyHead'
 
@@ -54,10 +55,11 @@ export async function findSingleBundleUrl(
 ): Promise<SingleBundleEntryResult> {
   const entryUrl = new URL(entryPath, origin)
   try {
-    const response = await fetch(entryUrl, {
-      redirect: 'manual',
-      signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
-    })
+    const response = await fetchOwnedServer(
+      entryUrl,
+      profile.requestHostOf?.(origin),
+      AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
+    )
     if (!response.ok) {
       // Only a profile that quotes the server's error reads its body; the others cancel it unread.
       if (profile.quoteErrorBody !== true) {

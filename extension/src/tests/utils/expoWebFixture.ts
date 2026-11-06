@@ -112,7 +112,8 @@ const map = JSON.stringify({
   sourcesContent: [sourceText, null],
   mappings: 'AAAA;AACA;AACA;AACA',
 })
-const bundle = 'console.log("metro bundle", ' + JSON.stringify(process.env.EXPO_PUBLIC_API_KEY || '') + ')\\n//# sourceMappingURL=http://localhost:' + port + mapPath + '\\n'
+// Like Metro, the map address names the Host the request asked with.
+const bundleFor = (host) => 'console.log("metro bundle", ' + JSON.stringify(process.env.EXPO_PUBLIC_API_KEY || '') + ')\\n//# sourceMappingURL=http://' + host + mapPath + '\\n'
 const startedAt = Date.now()
 const server = http.createServer((request, response) => {
   if (request.url === '/' || request.url === '/sign-in') {
@@ -139,7 +140,7 @@ const server = http.createServer((request, response) => {
     }
     const serve = () => {
       response.setHeader('content-type', 'application/javascript; charset=utf-8')
-      response.end(bundle)
+      response.end(bundleFor(request.headers.host))
     }
     if (mode === 'late-bundle') setTimeout(serve, Math.max(0, lateBundleMs - (Date.now() - startedAt)))
     else serve()
