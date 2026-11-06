@@ -54,12 +54,16 @@ import { captureReplayDebugSnapshot } from './utils/captureReplayDebugSnapshot'
 import { CHROME_EXTENSION_RECOVERY } from './utils/chromeExtensionRecovery'
 import { extensionFileUrl } from './utils/extensionFileUrl'
 import { isDebugSessionOfRun } from './utils/isDebugSessionOfRun'
+import { isFrameInStopSource } from './utils/isFrameInStopSource'
 import { PendingResumeRequests } from './utils/pendingResumeRequests'
 import { SharedAttempt } from './utils/sharedAttempt'
 import { stopRunDebugSessions } from './utils/stopRunDebugSessions'
 import { withoutFragment } from './utils/withoutFragment'
 
 type StackBody = DebugProtocol.StackTraceResponse['body']
+
+/** The reason a `wxt-build` pause is kept without a capture: its top frame is not in the stop's own source. */
+const FRAME_SOURCE_MISMATCH = 'frame-source-mismatch'
 
 /** The adapter's later news about one of its breakpoints: its id and whether it is verified in the session. */
 const breakpointNewsSchema = z.object({
@@ -617,6 +621,13 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     )) as StackBody
     const frame = stack.stackFrames[0]
     if (!frame) throw new Error('The paused stack has no frame.')
+    assertCurrent()
+    // A `wxt-build` stop is recorded only when the top frame is in the stop's own source; a frame in the bundle or in another source is a pause the capture cannot confirm (D18).
+    if (
+      this.input.run.build !== undefined &&
+      !(await isFrameInStopSource(frame.source?.path, stop.absolutePath))
+    )
+      throw new Error(FRAME_SOURCE_MISMATCH)
     assertCurrent()
     const snapshot = await captureReplayDebugSnapshot({
       stack,

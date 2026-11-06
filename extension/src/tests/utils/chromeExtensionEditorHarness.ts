@@ -7,6 +7,7 @@ import type { DebugProtocol } from '@vscode/debugprotocol'
 import type * as vscode from 'vscode'
 
 import type {
+  ExtensionBuildFacts,
   ExtensionPhaseReporter,
   ExtensionStopContext,
   WorkerStart,
@@ -569,6 +570,8 @@ export async function extensionEditorHarness(
         assertSourcesUnchanged?: () => void
         workerPath?: string
         onPhase?: ExtensionPhaseReporter
+        /** Makes the run a `wxt-build` run, whose captures are checked against the frame's source. */
+        build?: ExtensionBuildFacts
       } = {},
     ) {
       const events: Array<{ type: string; detail: unknown }> = []
@@ -591,6 +594,9 @@ export async function extensionEditorHarness(
             surfaceUrl: SURFACE_URL,
             surface: { kind: 'popup', path: 'popup.html' },
             workerPath: overrides.workerPath ?? 'service-worker.js',
+            ...(overrides.build === undefined
+              ? {}
+              : { build: overrides.build }),
             stops: stops.map((stop, position) => ({
               index: position + 1,
               path: stop.file,

@@ -122,7 +122,13 @@ export type ExtensionDebuggerInput = {
   workspace: string
   run: Pick<
     ResolvedExtensionRun,
-    'root' | 'extensionId' | 'surfaceUrl' | 'surface' | 'stops' | 'workerPath'
+    | 'root'
+    | 'extensionId'
+    | 'surfaceUrl'
+    | 'surface'
+    | 'stops'
+    | 'workerPath'
+    | 'build'
   >
   /** The owned browser's debugging port. */
   port: number
