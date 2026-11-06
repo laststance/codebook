@@ -209,3 +209,50 @@ test('matches the repository field in each URL form against the origin', async (
     await rm(repositoryRoot, { recursive: true, force: true })
   }
 })
+
+// protects=the installed-copy scan reads at most the capped number of dependencies and ends at an aborted signal; fails_when=a manifest with thousands of dependencies is scanned in full, or a stop does not end the scan; no_claim=the correspondence of a copy
+test('stops scanning dependencies at the cap and at an aborted signal', async () => {
+  // Arrange
+  const { repositoryRoot, exampleRoot } = await createRepository()
+  try {
+    const names = Array.from(
+      { length: 600 },
+      (_, index) => `dep-${String(index).padStart(3, '0')}`,
+    )
+    await writePackage(exampleRoot, {
+      name: 'app',
+      dependencies: Object.fromEntries(names.map((name) => [name, '^1.0.0'])),
+    })
+    // dep-599 sorts after the cap of 500, dep-000 before it.
+    for (const name of ['dep-000', 'dep-599'])
+      await writePackage(join(exampleRoot, 'node_modules', name), {
+        name,
+        version: '1.0.0',
+        repository: 'https://github.com/acme/tool.git',
+      })
+    const aborted = new AbortController()
+    aborted.abort()
+
+    // Act
+    const capped = await listRepositoryPackageCopies(
+      exampleRoot,
+      repositoryRoot,
+      ORIGIN,
+    )
+    const stopped = await listRepositoryPackageCopies(
+      exampleRoot,
+      repositoryRoot,
+      ORIGIN,
+      { signal: aborted.signal },
+    )
+
+    // Assert
+    assert.deepEqual(
+      capped.map((copy) => copy.package),
+      ['dep-000'],
+    )
+    assert.deepEqual(stopped, [])
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true })
+  }
+})

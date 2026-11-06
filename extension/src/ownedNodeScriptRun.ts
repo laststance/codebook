@@ -102,6 +102,7 @@ export type NodeScriptRunDependencies = NodeProcessRunDependencies & {
   /** A run without `library` only: the installed copies of the opened repository's own packages that the Example depends on, compared with the repository's `origin` remote; empty when it has none. */
   listPackageCopies?(
     examplePackageRoot: string,
+    signal?: AbortSignal,
   ): Promise<RepositoryPackageCopy[]>
 }
 
@@ -219,6 +220,10 @@ class OwnedNodeScriptRun implements NodeScriptRuntime {
   private libraryCleanup?: 'removed' | 'pending'
   /** The ending of a run with `library`: the observation, the history's end and the folder removal, in that order. */
   private libraryEnding?: Promise<void>
+  /** True once the ending finished its steps (the end reported, or none for a failure); the state reads `stopping` until then. */
+  private libraryEnded = false
+  /** Aborted by a stop or a limit: ends the installed-copy scan. */
+  private readonly disclosureAbort = new AbortController()
   private libraryRelease?: Promise<void>
   /** A run without `library`: the installed copies of the repository's own packages the Example loads. */
   private packageCopies?: RepositoryPackageCopy[]
@@ -315,7 +320,7 @@ class OwnedNodeScriptRun implements NodeScriptRuntime {
   private currentState(): NodeScriptState {
     const snapshot = this.core.snapshot()
     // A library run whose process tree ended still reads its observation and ends its history.
-    if (this.libraryEnding && !this.end) return 'stopping'
+    if (this.libraryEnding && !this.libraryEnded) return 'stopping'
     if (snapshot.lifecycle === 'stopped')
       return this.end && this.end.kind !== 'stopped' ? 'ended' : 'stopped'
     if (snapshot.lifecycle === 'stopping' || this.visibleFailure())
@@ -413,8 +418,10 @@ class OwnedNodeScriptRun implements NodeScriptRuntime {
     )
     try {
       await this.checkSource()
-      await this.discloseInstalledCopies()
       await this.askLearner()
+      this.assertStillLive()
+      // After the confirmation: a declined or stopped run reads nothing from the installed dependencies.
+      await this.discloseInstalledCopies()
       this.assertStillLive()
       await this.buildLibrary()
       await this.core.prepare({
@@ -443,11 +450,23 @@ class OwnedNodeScriptRun implements NodeScriptRuntime {
 
   /** Throws the stop's own wording when the run was stopped while the learner was asked. */
   private assertStillLive(): void {
-    if (this.core.lifecycle !== 'live')
-      throw new StudyError(
+    if (this.core.lifecycle !== 'live') throw this.preparationEndedError()
+  }
+
+  /**
+   * Says why the preparation ended early: a time limit in its own words, anything else as the stop.
+   * @returns The error the preparation rejects with.
+   */
+  private preparationEndedError(): StudyError {
+    if (this.cause?.kind === 'limit')
+      return new StudyError(
         'RUNTIME_FAILED',
-        'The run was stopped while it was preparing.',
+        `The run's time limit (${this.cause.limit}) was reached while it was preparing.`,
       )
+    return new StudyError(
+      'RUNTIME_FAILED',
+      'The run was stopped while it was preparing.',
+    )
   }
 
   /** Marks a failure after the spawn: its side effects are unknown. */
@@ -505,9 +524,10 @@ class OwnedNodeScriptRun implements NodeScriptRuntime {
     const list = this.dependencies.listPackageCopies
     if (this.input.configuration.library || !list || !this.examplePackageRoot)
       return
-    const copies = await list(this.examplePackageRoot).catch(
-      (): RepositoryPackageCopy[] => [],
-    )
+    const copies = await list(
+      this.examplePackageRoot,
+      this.disclosureAbort.signal,
+    ).catch((): RepositoryPackageCopy[] => [])
     if (copies.length > 0) this.packageCopies = copies
   }
 
@@ -587,10 +607,7 @@ class OwnedNodeScriptRun implements NodeScriptRuntime {
   private describeLibraryFailure(error: unknown): unknown {
     if (error instanceof LibraryPackageCancelled) {
       this.libraryCleanup = error.cleanup
-      return new StudyError(
-        'RUNTIME_FAILED',
-        'The run was stopped while it was preparing.',
-      )
+      return this.preparationEndedError()
     }
     const cleanup = error instanceof StudyError && error.details?.cleanup
     if (cleanup === 'removed' || cleanup === 'pending')
@@ -819,6 +836,7 @@ class OwnedNodeScriptRun implements NodeScriptRuntime {
     this.cause = { kind: 'limit', limit }
     // A limit reached while the learner is asked ends the wait too.
     this.confirmAbort.abort()
+    this.disclosureAbort.abort()
     // A limit reached while the library builds ends the build like a stop does.
     void (this.building ? this.stop() : this.core.stop()).catch(() => undefined)
   }
@@ -841,13 +859,12 @@ class OwnedNodeScriptRun implements NodeScriptRuntime {
       this.didCloseWindow = true
       this.setRequestWindow(false)
     }
-    // A library whose script never started, or failed, is released here; an ended run releases it last in its own ending.
-    if (
-      this.libraryPackage &&
-      this.core.lifecycle === 'stopped' &&
-      (!this.core.launched || this.visibleFailure())
-    )
-      void this.releaseLibrary()
+    if (this.libraryPackage && this.core.lifecycle === 'stopped') {
+      // A library whose script never started is released here.
+      if (!this.core.launched) void this.releaseLibrary()
+      // A launched run that failed visibly still reads the observation and appends it before the release (D24).
+      else if (this.visibleFailure()) this.endLibraryRun(undefined)
+    }
     if (
       this.end ||
       this.libraryEnding ||
@@ -884,40 +901,48 @@ class OwnedNodeScriptRun implements NodeScriptRuntime {
   }
 
   /**
-   * Ends a run with `library` in one order, whatever ended it (the script's exit, a stop, a limit): the process tree is already confirmed ended, then the observation file is read, `library.observed` is appended, the history ends, and last the private folder is removed (D24, D27).
+   * Ends a run with `library` in one order, whatever ended it (the script's exit, a stop, a limit, a visible failure): the process tree is already confirmed ended, then the observation file is read, `library.observed` is appended, the history ends, and last the private folder is removed (D24, D27).
    * Why the order: the history takes no entry after its end, and the folder holds the observation file; the removal's state (`removed` or `pending`) reaches the run resource beside the stop's own answer.
-   * Called by {@link OwnedNodeScriptRun.finalizeIfStopped} once the core's stop completed for a launched, unfailed run.
-   * @param view - The run's end, already described.
+   * Called by {@link OwnedNodeScriptRun.finalizeIfStopped} once the core's stop completed for a launched run. The steps run under a `finally`: a step that throws still sets the end and releases the folder, and never rejects the stop.
+   * @param view - The run's end, already described; `undefined` for a visible failure, which reports no end of its own (the history is sealed with the failure).
    */
-  private endLibraryRun(view: NodeScriptEndView): void {
+  private endLibraryRun(view: NodeScriptEndView | undefined): void {
     const built = this.libraryPackage
     if (!built || this.libraryEnding) return
     this.libraryEnding = (async () => {
       const elapsedMs = this.core.elapsedSinceLaunchMs()
-      // A file that cannot be read is an unreadable observation, never a negative.
-      const seen = await built
-        .finishObservation()
-        .catch((): LibraryObservation => ({
-          loaded: false,
-          loadCount: 0,
-          otherCopyLoaded: false,
-          observation: 'unreadable',
-        }))
-      this.libraryObservation = seen
-      this.input.history?.libraryObserved(elapsedMs, {
-        loaded: seen.loaded,
-        loadCount: seen.loadCount,
-        otherCopyLoaded: seen.otherCopyLoaded,
-        ...(seen.otherCopyPath === undefined
-          ? {}
-          : { otherCopyPath: seen.otherCopyPath }),
-        observation: seen.observation,
-      })
-      this.end = view
-      const { output: _output, ...historyEnd } = view
-      this.input.history?.end(elapsedMs, historyEnd)
-      this.notify()
-      await this.releaseLibrary()
+      try {
+        // A file that cannot be read (or is gone) is an unreadable observation, never a negative.
+        const seen = await built
+          .finishObservation()
+          .catch((): LibraryObservation => ({
+            loaded: false,
+            loadCount: 0,
+            otherCopyLoaded: false,
+            observation: 'unreadable',
+          }))
+        this.libraryObservation = seen
+        this.input.history?.libraryObserved(elapsedMs, {
+          loaded: seen.loaded,
+          loadCount: seen.loadCount,
+          otherCopyLoaded: seen.otherCopyLoaded,
+          ...(seen.otherCopyPath === undefined
+            ? {}
+            : { otherCopyPath: seen.otherCopyPath }),
+          observation: seen.observation,
+        })
+        if (view) {
+          const { output: _output, ...historyEnd } = view
+          this.input.history?.end(elapsedMs, historyEnd)
+        }
+      } catch {
+        // A step that threw must not keep the end or the folder: the finally below completes the ending.
+      } finally {
+        if (view) this.end = view
+        this.libraryEnded = true
+        this.notify()
+        await this.releaseLibrary()
+      }
     })()
   }
 
@@ -927,6 +952,7 @@ class OwnedNodeScriptRun implements NodeScriptRuntime {
       this.cause = { kind: 'stopped' }
     this.stopAskedAt ??= this.dependencies.clock.now()
     this.confirmAbort.abort()
+    this.disclosureAbort.abort()
     // A stop that finds the library building waits for the build's own ending within the stop bound.
     await this.waitForBuild()
     await this.core.stop()

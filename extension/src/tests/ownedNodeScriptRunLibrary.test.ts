@@ -22,8 +22,9 @@ import {
 
 const CLEAN_EXIT = { exitCode: 0, signal: null } as const
 
-/** The steps of an ending whose order D24 fixes. */
+/** The steps of an ending whose order D24 fixes: the process tree ends first, then the observation, the history and the folder. */
 const ENDING_STEPS = [
+  'server.closed',
   'finishObservation',
   'history:libraryObserved',
   'history:end',
@@ -37,7 +38,10 @@ function libraryHarness(
     observation?: NonNullable<
       Parameters<typeof fakeLibraryPackage>[1]
     >['observation']
-  } & Omit<ScriptHarnessOptions, 'history' | 'library' | 'prepareLibrary'> = {},
+  } & Omit<
+    ScriptHarnessOptions,
+    'history' | 'library' | 'order' | 'prepareLibrary'
+  > = {},
 ) {
   const order: string[] = []
   const history = fakeScriptHistory(order)
@@ -46,10 +50,11 @@ function libraryHarness(
     ...rest,
     library: { packageRoot: 'packages/widgets' },
     history: history.sink,
+    order,
     prepareLibrary: async () =>
       fakeLibraryPackage(order, { observation, observationFails }),
   })
-  // The harness keeps its own order list; the history and the library push to a second one that is merged by reading both.
+  // The harness, the history and the library push to one list, so a test reads the process, the history and the folder in the order they happened.
   return { harness, history, libraryOrder: order }
 }
 
@@ -423,4 +428,165 @@ test('a library run lists no repositoryPackageCopies', async () => {
   // Assert
   assert.equal(listed, false)
   assert.equal(COMPLETE_OBSERVATION.observation, 'complete')
+})
+
+// protects=D24 step one: the process exit and the tree end come before the observation is read; fails_when=the observation is read while the tree may still write it; no_claim=a real tree
+test('a natural exit ends the process tree before the observation is read', async () => {
+  // Arrange
+  const { harness, libraryOrder } = libraryHarness()
+  await harness.run.prepare()
+
+  // Act
+  harness.exits(CLEAN_EXIT)
+  await until(harness, (view) => view.end !== undefined)
+
+  // Assert
+  const ending = libraryOrder.filter((step) =>
+    ['process:exited', ...ENDING_STEPS].includes(step),
+  )
+  assert.deepEqual(ending, [
+    'process:exited',
+    'server.closed',
+    'finishObservation',
+    'history:libraryObserved',
+    'history:end',
+    'dispose',
+  ])
+})
+
+// protects=an observation that cannot be read reaches the history as the unreadable payload with no negative count; fails_when=the payload carries loaded true, a count, or another observation word; no_claim=the file format
+test('an unreadable observation is appended to the history with the unreadable payload', async () => {
+  // Arrange
+  const { harness, history } = libraryHarness({ observationFails: true })
+  await harness.run.prepare()
+
+  // Act
+  harness.exits(CLEAN_EXIT)
+  await until(harness, (view) => view.end !== undefined)
+
+  // Assert
+  const observed = history.told.filter(
+    (entry) => entry.call === 'libraryObserved',
+  )
+  assert.deepEqual(observed, [
+    {
+      call: 'libraryObserved',
+      detail: {
+        loaded: false,
+        loadCount: 0,
+        otherCopyLoaded: false,
+        observation: 'unreadable',
+      },
+    },
+  ])
+})
+
+// protects=a launched run that fails visibly still reads the observation, appends it and removes the folder, in that order; fails_when=the failure path removes the folder without the observation (it stays pending); no_claim=the history seal of the failure
+test('a launched run that fails visibly still appends the observation before the folder is removed', async () => {
+  // Arrange
+  const { harness, libraryOrder, history } = libraryHarness({
+    armFails: new Error('arming failed'),
+    duringArm: () => harness.exits({ exitCode: 3, signal: null }),
+  })
+
+  // Act
+  const failure = await harness.run.prepare().catch((error: unknown) => error)
+  await settle()
+
+  // Assert
+  assert.ok(failure instanceof StudyError)
+  assert.deepEqual(
+    libraryOrder.filter((step) =>
+      ['finishObservation', 'history:libraryObserved', 'dispose'].includes(
+        step,
+      ),
+    ),
+    ['finishObservation', 'history:libraryObserved', 'dispose'],
+  )
+  assert.equal(
+    history.told.some((entry) => entry.call === 'end'),
+    false,
+  )
+  assert.equal(harness.run.view().library?.observation, 'complete')
+  assert.equal(harness.run.view().library?.cleanup, 'removed')
+})
+
+// protects=a history step that throws still sets the end and releases the folder, and the stop does not reject; fails_when=the ending is not in a finally, so stop() rejects and the folder leaks; no_claim=the history writer's own guard
+test('a history step that throws still ends the run and removes the folder', async () => {
+  // Arrange
+  const { harness, history, libraryOrder } = libraryHarness()
+  history.sink.libraryObserved = () => {
+    throw new Error('journal broke')
+  }
+  await harness.run.prepare()
+
+  // Act
+  harness.exits(CLEAN_EXIT)
+  await until(harness, (view) => view.end !== undefined)
+  await harness.run.stop()
+
+  // Assert
+  assert.equal(harness.run.view().state, 'ended')
+  assert.equal(harness.run.view().library?.cleanup, 'removed')
+  assert.ok(libraryOrder.includes('dispose'))
+})
+
+// protects=a time limit that ends the preparation says the limit, not that the learner stopped; fails_when=the rejection reads "stopped while it was preparing"; no_claim=the stop wording
+test('a time limit during the confirmation is not reported as a stop', async () => {
+  // Arrange
+  const harness = createScriptHarness({ confirm: 'manual' })
+  const preparing = harness.run.prepare().catch((error: unknown) => error)
+  await settle()
+
+  // Act
+  harness.clock.advance(11 * 60_000)
+  harness.answer(true)
+  const failure = await preparing
+
+  // Assert
+  assert.ok(failure instanceof StudyError)
+  assert.match(failure.message, /time limit \(run-deadline\)/)
+})
+
+// protects=the installed-copy lookup runs only after the learner confirmed, with a signal a stop aborts; fails_when=the lookup runs before the answer or ignores the stop; no_claim=the lookup's own scan
+test('the installed-copy lookup waits for the confirmation and carries a stop signal', async () => {
+  // Arrange
+  const order: string[] = []
+  let signalSeen: AbortSignal | undefined
+  const harness = createScriptHarness({
+    order,
+    listPackageCopies: async (_root, signal) => {
+      order.push('listPackageCopies')
+      signalSeen = signal
+      return []
+    },
+  })
+
+  // Act
+  await harness.run.prepare()
+  await harness.run.stop()
+
+  // Assert
+  assert.ok(order.indexOf('confirmRun') < order.indexOf('listPackageCopies'))
+  assert.equal(signalSeen?.aborted, true)
+})
+
+// protects=a time limit that fires while the library builds rejects with the limit's own words, not the stop sentence; fails_when=the build's cancellation reads "stopped while it was preparing"; no_claim=the build's own tree end
+test('a time limit during the library build is not reported as a stop', async () => {
+  // Arrange
+  const harness = createScriptHarness({
+    library: { packageRoot: 'packages/widgets' },
+    prepareLibrary: buildEndingOnAbort(new LibraryPackageCancelled('removed')),
+  })
+  const preparing = harness.run.prepare().catch((error: unknown) => error)
+  await settle()
+
+  // Act
+  harness.clock.advance(11 * 60_000)
+  const failure = await preparing
+
+  // Assert
+  assert.ok(failure instanceof StudyError)
+  assert.match(failure.message, /time limit \(run-deadline\)/)
+  assert.doesNotMatch(failure.message, /stopped/)
 })

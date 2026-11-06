@@ -20,6 +20,8 @@ import {
 
 /** What a test arranges around a script run beyond the happy path. */
 export type ScriptHarnessOptions = Omit<HarnessOptions, 'history'> & {
+  /** A list the harness pushes its steps onto instead of its own, so a test can read them in order beside the history's and the library's steps. */
+  order?: string[]
   /** How the learner answers: at once yes (default), at once no, or by hand through `harness.answer`. */
   confirm?: 'yes' | 'no' | 'manual'
   /** The asker never reacts to the abort signal, so only the run itself can end the wait. */
@@ -103,8 +105,8 @@ export function fakeScriptHistory(order?: string[]) {
 
 /** Builds a script run against fakes and returns every handle a test needs. */
 export function createScriptHarness(options: ScriptHarnessOptions = {}) {
-  const { history, ...harnessOptions } = options
-  const order: string[] = []
+  const { history, order: sharedOrder, ...harnessOptions } = options
+  const order: string[] = sharedOrder ?? []
   const events: Array<{ type: string; detail: unknown }> = []
   const clock = createManualClock()
   const stopCount = options.stopCount ?? 3
@@ -242,6 +244,7 @@ export function createScriptHarness(options: ScriptHarnessOptions = {}) {
     },
     /** The script exits by itself; `pipesClosed` false leaves a descendant holding stdout. */
     exits(fact: NodeServerExit, pipesClosed = true): void {
+      order.push('process:exited')
       exitFact = fact
       exitEvent.resolve(fact)
       if (pipesClosed) base.exitNow(fact)

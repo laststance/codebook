@@ -3,6 +3,8 @@ import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 
 import { z } from 'zod'
 
+import { NODE_SCRIPT_PACKAGE_COPY_SCAN_LIMIT_COUNT } from '../constants'
+
 /** The `package.json` fields the disclosure reads: the direct dependency sections of the Example, and the `version` and `repository` of an installed copy. */
 const manifestSchema = z.looseObject({
   version: z.string().optional(),
@@ -200,6 +202,7 @@ async function classifyDependency(
  * @param exampleRoot - Absolute folder of the Example's package.
  * @param repositoryRoot - Absolute root of the opened repository.
  * @param originUrl - The repository's `origin` remote URL, or `null` when it has none (then nothing is listed).
+ * @param options - `signal` ends the scan at the next dependency when aborted (a stop or limit of the run); the copies found so far are returned. Only the first {@link NODE_SCRIPT_PACKAGE_COPY_SCAN_LIMIT_COUNT} dependency names, in sorted order, are scanned.
  * @returns The copies, sorted by package name.
  * @example
  * await listRepositoryPackageCopies('/repo/examples/app', '/repo', 'https://github.com/acme/tool.git')
@@ -209,6 +212,7 @@ export async function listRepositoryPackageCopies(
   exampleRoot: string,
   repositoryRoot: string,
   originUrl: string | null,
+  options: { signal?: AbortSignal } = {},
 ): Promise<RepositoryPackageCopy[]> {
   const origin =
     originUrl === null ? null : normalizeRepositoryLocation(originUrl)
@@ -224,7 +228,11 @@ export async function listRepositoryPackageCopies(
     ...Object.keys(example.optionalDependencies ?? {}),
   ])
   const copies: RepositoryPackageCopy[] = []
-  for (const name of [...names].sort()) {
+  for (const name of [...names]
+    .sort()
+    .slice(0, NODE_SCRIPT_PACKAGE_COPY_SCAN_LIMIT_COUNT)) {
+    // A stop or limit of the run ends the scan; what was found stays.
+    if (options.signal?.aborted) break
     const copy = await classifyDependency(
       { exampleRoot, repositoryRoot, realRepository, origin },
       name,

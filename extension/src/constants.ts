@@ -1580,6 +1580,8 @@ export const NODE_SCRIPT_END_LIMITS = [
 export const NODE_SCRIPT_LOADERS = ['tsx', 'node'] as const
 /** The most characters of the reason a script's exit code could not be read. */
 export const NODE_SCRIPT_EXIT_UNKNOWN_LIMIT_CHARS = 256
+/** The most direct dependencies of an Example that the installed-copy disclosure reads; the rest are not scanned, so a manifest that lists thousands cannot hold the run before it starts. */
+export const NODE_SCRIPT_PACKAGE_COPY_SCAN_LIMIT_COUNT = 500
 /** The one action a node-server run offers: send its declared request. */
 export const NODE_SERVER_ACTION = 'http-request'
 /** The prefix of the debug session name of a node-server run (`codebook node server <runId>`): the run recognizes only sessions whose root carries its own name. */

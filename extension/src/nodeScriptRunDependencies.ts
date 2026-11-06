@@ -16,7 +16,7 @@ import { readProcessCwd } from './utils/readProcessCwd'
 import { readProcessStart } from './utils/readProcessStart'
 import { readRepositoryOrigin } from './utils/readRepositoryOrigin'
 import { rememberNodeServerProcess } from './utils/rememberNodeServerProcess'
-import { removeWithoutFollowing } from './utils/removeWithoutFollowing'
+import { removeFolderUnlessCleanupPending } from './utils/removeFolderUnlessCleanupPending'
 import { resolveNodeServerLaunch } from './utils/resolveNodeServerLaunch'
 import { resolveNodeServerStops } from './utils/resolveNodeServerStops'
 import { signalProcessGroup } from './utils/signalProcessGroup'
@@ -76,8 +76,8 @@ export function createProductNodeScriptRunDependencies(input: {
           { node: input.node, signal: request.signal },
         )
       } catch (error) {
-        // A refusal before anything was made, or a failure whose own removal is pending, leaves the folder to this last removal.
-        await removeWithoutFollowing(privateFolder).catch(() => undefined)
+        // A refusal before anything was made leaves the folder to this last removal; a removal the build reported pending stays its own.
+        await removeFolderUnlessCleanupPending(privateFolder, error)
         throw error
       }
     },
@@ -87,11 +87,12 @@ export function createProductNodeScriptRunDependencies(input: {
         declaredPackageRoot,
         input.node.executable,
       ),
-    listPackageCopies: async (examplePackageRoot) =>
+    listPackageCopies: async (examplePackageRoot, signal) =>
       listRepositoryPackageCopies(
         examplePackageRoot,
         input.workspace,
         await readRepositoryOrigin(input.workspace),
+        { signal },
       ),
   }
 }
