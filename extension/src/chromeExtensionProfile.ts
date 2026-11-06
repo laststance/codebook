@@ -32,7 +32,7 @@ export function describeChromeExtensionProfile(prerequisites: {
     id: CHROME_EXTENSION_PROFILE,
     title: 'Repository Chrome extension (Manifest V3)',
     description:
-      "Load the repository's own unpacked Manifest V3 extension into a fresh test Chrome with seeded data, perform up to three declared clicks in its popup or page, and stop in the extension's page or service-worker source with native debugger stops.",
+      "Load the repository's own Manifest V3 extension (chrome-mv3-unpacked as it is, or wxt-build for a WXT project built with source maps) into a fresh test Chrome with seeded data, perform up to three declared clicks in its popup or page, and stop in the extension's page or service-worker source with native debugger stops.",
     requiresConfiguration: true,
     configurationVersions: [1],
     minimumExtensionVersion: CHROME_EXTENSION_MINIMUM_EXTENSION_VERSION,

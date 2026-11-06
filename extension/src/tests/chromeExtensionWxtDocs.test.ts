@@ -5,6 +5,8 @@ import { test } from 'node:test'
 
 import { chromeExtensionConfigSchema } from '../chromeExtensionConfigSchemas'
 import { chromeExtensionHelp } from '../chromeExtensionHelp'
+import { describeChromeExtensionProfile } from '../chromeExtensionProfile'
+import { ERROR_RECOVERY } from '../errors'
 
 /** The book selection a real start copies from `codebook_publish_book`, replacing the help's placeholders. */
 const REAL_BOOK = {
@@ -92,7 +94,7 @@ test('the packaged skill and README state the wxt-build route, its API gate and 
   assert.ok(skill.includes('metadata:\n  version: "1.0.81"\n'))
   assert.ok(
     skill.includes(
-      'declare `adapter: "wxt-build"` with `extensionRoot` set to that folder and stops in its `src/` files, only when `codebook_status` reports API 1.32 or later',
+      'declare `adapter: "wxt-build"` with `extensionRoot` set to that folder and stops in source files under `extensionRoot`, never in `node_modules` (for example in `src/`), only when `codebook_status` reports API 1.32 or later',
     ),
   )
   for (const phrase of [
@@ -112,4 +114,70 @@ test('the packaged skill and README state the wxt-build route, its API gate and 
     readme.includes('API 1.32 is additive: it adds the `wxt-build` adapter'),
   )
   assert.ok(readme.includes('updates to **1.0.81**'))
+})
+
+// protects=the help, README, STOP_FILE_NOT_LOADED recovery and skill give contextSources the base extensionRoot (the form a stop path takes), say the build runs the project's own code, name both adapters, document the discovery skips and the tracked-files-unverified reason; fails_when=contextSources is called repository-relative again or any of those sentences is dropped; no_claim=the behavior itself, which the build, discovery and resolver tests cover
+test('the wxt-build docs name the contextSources base, the executed project code, both adapters, the discovery rules and tracked-files-unverified', async () => {
+  // Arrange
+  const help = chromeExtensionHelp()
+  const skill = await readPackaged('skills', 'codebook', 'SKILL.md')
+  const readme = await readPackaged('README.md')
+  const bullet =
+    readme
+      .split('\n')
+      .find((line) => line.startsWith('- **WXT projects (MCP API 1.32).**')) ??
+    ''
+  const profile = describeChromeExtensionProfile({ ready: true, missing: [] })
+  const buildText = help.wxtBuild.build.join(' ')
+  const base = 'relative to extensionRoot, the form a stop path takes'
+  // Act
+  const adapterTerm = help.vocabulary.find((entry) => entry.term === 'adapter')
+  // Assert
+  assert.ok(help.wxtBuild.contextSources.includes(base))
+  assert.equal(
+    help.wxtBuild.contextSources.includes('repository-relative'),
+    false,
+  )
+  assert.ok(ERROR_RECOVERY.STOP_FILE_NOT_LOADED.includes(base))
+  assert.ok(
+    bullet.includes('relative to `extensionRoot`, the form a stop path takes'),
+  )
+  assert.ok(
+    skill.includes('(relative to `extensionRoot`, the form a stop path takes)'),
+  )
+  assert.ok(
+    buildText.includes(
+      "does run the project's own code: WXT loads wxt.config.* and the modules and Vite plugins it imports, in the external Node, before Chrome starts",
+    ),
+  )
+  assert.ok(bullet.includes("the build does run the project's own code"))
+  assert.ok(
+    skill.includes(
+      "the build runs the project's own WXT config, modules and Vite plugins in the external Node before Chrome starts",
+    ),
+  )
+  assert.equal(
+    adapterTerm?.meaning,
+    'chrome-mv3-unpacked, or wxt-build for a WXT project built with source maps',
+  )
+  assert.match(
+    profile.description,
+    /chrome-mv3-unpacked as it is, or wxt-build for a WXT project/,
+  )
+  assert.equal(profile.adapter, 'chrome-mv3-unpacked')
+  assert.ok(
+    buildText.includes(
+      'node_modules, .git and every dot-folder are skipped and linked folders are not followed; a project outside that search can still be named as extensionRoot',
+    ),
+  )
+  assert.ok(
+    bullet.includes(
+      '`node_modules`, `.git` and every dot-folder are skipped, linked folders are not followed, and a project outside that search can still be named as `extensionRoot`',
+    ),
+  )
+  assert.ok(
+    bullet.includes(
+      '`tracked-files-unverified`: do not retry, and check `git status`',
+    ),
+  )
 })

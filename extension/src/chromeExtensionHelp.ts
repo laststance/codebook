@@ -426,14 +426,14 @@ const WXT_BUILD_HELP = {
     'configuration.adapter is "wxt-build"; the rest of the declaration is the same as for chrome-mv3-unpacked (version 1, book, surface, clicks, seed, observe).',
     'extensionRoot is the WXT project folder (the one with the WXT config), relative to the repository root.',
     'surface names a page of the built extension as its manifest lists it: popup, or a page path such as options.html.',
-    "Each stop path is a source file relative to extensionRoot (for example src/lib/storage.ts or src/entrypoints/options/App.tsx), never a file inside node_modules; the stop pauses in that source through the build's source maps, with the values in the native Variables.",
+    "Each stop path is a source file relative to extensionRoot (for example src/lib/storage.ts or src/entrypoints/options/App.tsx, or entrypoints/options/App.tsx in a project without srcDir), never a file inside node_modules; the stop pauses in that source through the build's source maps, with the values in the native Variables.",
     'context is page or service-worker; there is no content-script context in this version.',
   ],
   build: [
-    `Codebook builds the project with the project's own WXT (release ${WXT_SUPPORTED_MAJOR_MINOR}.x only; a prerelease or another line is refused) through its build API, in development mode with source maps and no minification. It never runs the project's own build script and never edits wxt.config.*.`,
+    `Codebook builds the project with the project's own WXT (release ${WXT_SUPPORTED_MAJOR_MINOR}.x only; a prerelease or another line is refused) through its build API, in development mode with source maps and no minification. It never runs the project's own build script and never edits wxt.config.*. The build does run the project's own code: WXT loads wxt.config.* and the modules and Vite plugins it imports, in the external Node, before Chrome starts.`,
     "The build is written to the run's private folder beside the test Chrome profile, which is removed when the run ends, so no .output folder appears in the repository.",
     'WXT regenerates its own ignored .wxt folder inside the project, as any WXT build does. A tracked file under extensionRoot that the build changed is reported, never restored (EXTENSION_BUILD_FAILED with reason tracked-file-changed; do not retry, tell the learner). A tracked .wxt folder is refused before the build.',
-    `The build needs an external Node ${MIN_NODE_MAJOR_VERSION} or later (the setting codebook.nodeExecutable); codebook_status reports it beside wxtProjects (at most ${WXT_PROJECT_LIMIT} folders, up to two levels below the repository root). Codebook never installs packages: a project without installed dependencies is refused with wxt-not-installed.`,
+    `The build needs an external Node ${MIN_NODE_MAJOR_VERSION} or later (the setting codebook.nodeExecutable); codebook_status reports it beside wxtProjects (at most ${WXT_PROJECT_LIMIT} folders, up to two levels below the repository root; node_modules, .git and every dot-folder are skipped and linked folders are not followed; a project outside that search can still be named as extensionRoot). Codebook never installs packages: a project without installed dependencies is refused with wxt-not-installed.`,
     `The build is limited to ${EXTENSION_BUILD_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s, and when it fails the last ${EXTENSION_BUILD_OUTPUT_LINES} output lines (masked) are quoted. The 90 s preparation bound of the run starts after the build.`,
   ],
   phase:
@@ -443,7 +443,7 @@ const WXT_BUILD_HELP = {
     `A stop matches when a loaded chunk's source map (a flat version 3 map of at most ${EXTENSION_SOURCE_MAP_LIMIT_BYTES / (1024 * 1024)} MiB) lists the source and its sourcesContent equals the file on disk; otherwise the stop is refused with STOP_FILE_NOT_LOADED and no Chrome starts.`,
     'The stop rules about startup code apply too: a stop on top-level code that runs before the run is ready is reported in stopsNotReached.',
   ],
-  contextSources: `A STOP_FILE_NOT_LOADED refusal of a wxt-build run carries details.contextSources: up to ${EXTENSION_CONTEXT_SOURCES_LIMIT} project sources (repository-relative, sorted) that the stop's context does load. Choose a stop path from it, or a file that context reaches statically; the sentence says how many sources there are.`,
+  contextSources: `A STOP_FILE_NOT_LOADED refusal of a wxt-build run carries details.contextSources: up to ${EXTENSION_CONTEXT_SOURCES_LIMIT} project sources (relative to extensionRoot, the form a stop path takes; sorted) that the stop's context does load. Choose a stop path from it, or a file that context reaches statically; the sentence says how many sources there are.`,
   notIncluded:
     "Content scripts are not in this version (there is no content-script stop context). WXT's dev server, Firefox builds and other bundlers are not used.",
   apiGate: `The adapter needs MCP API ${WXT_BUILD_MINIMUM_API} or later (codebook_status apiVersion); an older Codebook refuses the adapter value as INVALID_CONFIGURATION. A run saves as an Extension replay of history format 2, which a Codebook older than API ${WXT_BUILD_MINIMUM_API} does not list and keeps on disk.`,
@@ -578,7 +578,11 @@ export function chromeExtensionHelp() {
         meaning:
           'page (the popup or extension page) and service-worker (the extension background)',
       },
-      { term: 'adapter', meaning: 'chrome-mv3-unpacked' },
+      {
+        term: 'adapter',
+        meaning:
+          'chrome-mv3-unpacked, or wxt-build for a WXT project built with source maps',
+      },
       {
         term: 'surface',
         meaning:
