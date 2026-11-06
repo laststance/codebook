@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.2.92.0] - 2026-11-07 (development candidate)
+
+Cycle 0092 ([Issue #237](https://github.com/laststance/codebook/issues/237)), a feature cycle. **A Chrome extension built with WXT now pauses in its own TypeScript source.** A learner can ask how such an extension works, for example what its Options page does with a pasted token, or how its service worker reacts when a tab opens. Before, the `chrome-extension` profile loaded only an unpacked folder with a `manifest.json` and refused a stop in a bundled file, so a WXT project could not run at all.
+
+**WXT projects (MCP API 1.32).**
+- **What the chat declares:** `adapter: "wxt-build"`, with `extensionRoot` set to the WXT project folder (the one that holds `wxt.config.ts`, `.mts`, `.js` or `.mjs`). Stops go in the project's own source files under `extensionRoot`, such as `src/`, never in `node_modules`. `codebook_status` lists such folders as `wxtProjects`, each with its installed WXT version.
+- **What Codebook does:** before Chrome starts, it builds the project with the project's own WXT 0.21, in development mode with source maps, into the run's private folder. That folder is removed when the run ends. Codebook never runs the project's build script, edits its config or writes `.output`. The build does run the project's own code, and WXT regenerates its own ignored `.wxt` folder, as any WXT build does.
+- **What you see:**
+  - while it builds, the status bar says `Building the extension (WXT <version>)…` and the run reads the `building` phase;
+  - a stop then pauses in the TypeScript file through the build's source maps, with the values in the Variables view;
+  - the run saves as an Extension replay that shows the TypeScript source that ran.
+- **What it needs:** an external Node 24 or later and the project's dependencies installed. Codebook never installs packages.
+- **When something is wrong:** each refusal has one sentence and one recovery.
+  - `EXTENSION_BUILD_UNSUPPORTED` refuses before anything starts. Its reasons are no WXT config, WXT not installed, a WXT other than 0.21, a tracked `.wxt` folder, no Node 24, or a stop outside the project.
+  - `EXTENSION_BUILD_FAILED` reports a failed or timed-out build (stopped after 120 s), a build that left no Chrome build, or a build that changed or could not verify a tracked file.
+  - A refused stop path (`STOP_FILE_NOT_LOADED`) lists up to 20 sources the stop's context does load, so the chat can correct the path.
+- **Your files:** Codebook checks the tracked files under `extensionRoot` after every build and never restores one. A changed file ends the run naming it, the chat does not retry, and you decide with `git diff`.
+- **Saved replays and older versions:** a `wxt-build` run is saved as Extension history format 2. An older Codebook does not list that history and keeps its files, and it refuses `wxt-build` as `INVALID_CONFIGURATION`. Unpacked extensions are unchanged and keep format 1.
+- **The bundled skill (1.0.81)** tells the chat to declare `wxt-build` with stops in source files for a WXT project. Run **Codebook: Set Up AI Chat** after updating, so Cursor's managed skill updates to 1.0.81.
+- Content scripts are not included in this version.
+
+**Fixed in extension runs.**
+- **Cursor:** Cursor's JavaScript debugger now attaches to an extension run's test Chrome. It tried IPv6 first and failed to connect, so the run ended as not ready within 90 s. The debugger now attaches at `127.0.0.1`, where that Chrome listens.
+- **Wrapped links:** a link that wraps onto several lines is clicked on its first line that nothing covers. Before, it was refused as covered (`element-obscured`).
+
+**Release details:** checked in both editors on a development target (P07's `browser-extension`, WXT 0.21.4; no nine-project credit):
+
+| Check | Host | Context | Observed outcome |
+| --- | --- | --- | --- |
+| C92-1 | VS Code 1.145.2, Copilot Chat (GPT-6.1 Terra) | Options page: a made-up test token typed and Connect clicked | Four stops paused in `App.tsx`, `usePersonalAccessToken.ts` (twice) and `patStorage.ts`, the first 1 min 17 s after the question. The storage result changed to the typed test value. After a window reload the replay reopened from Saved studies at its saved moment, with the TypeScript source and native Variables |
+| C92-2 | Cursor 3.29.9, Agent (Grok 4.6 High Fast) | Service worker: the Options page's token-settings link opens a tab | The worker's `tabs.onActivated` listener paused in `background.ts` 1 min 57 s after the question. The replay reopened from Saved studies with the TypeScript source and native Variables |
+
+In both checks the clone stayed clean, and the private build folder was gone after the run.
+
 ## [0.2.91.0] - 2026-11-07 (development candidate)
 
 Cycle 0091 ([Issue #235](https://github.com/laststance/codebook/issues/235)), a feature cycle. **A server path behind sign-in now pauses inside its signed-in handler, and you type the password into Codebook's own box, never the chat.** A learner can ask how the server handles a signed-in user's request (P08's activity switch and display-settings update in the checks below). Before, a `node-server` run sent its request without credentials, so the server answered 401 before the handler ran and the stop was never reached.
