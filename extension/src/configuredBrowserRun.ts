@@ -3022,16 +3022,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (!entry || event.body?.reason !== 'breakpoint') return false
     const profile = ROUTE_HANDLER_PROFILES[entry.kind]
     // A pause while another stop of the run is held or being continued is judged once that stop is continued, so the stop takes its place in order. The server stays paused meanwhile; the held stop's own deadline (and the run's) still ends the wait.
-    const heldWaitStartedAtMs = Date.now()
-    const isHeldBehindStop = Boolean(this.continuation || this.acceptedStop)
-    await waitUntil(
-      () => !this.continuation && !this.acceptedStop,
-      'the held stop before a route-handler pause',
-      REPOSITORY_RUN_TIMEOUT_MS,
-      this.abort.signal,
-    )
-    // Only a wait behind another stop counts as held; the wait's own poll under load is no held time.
-    const heldMs = isHeldBehindStop ? Date.now() - heldWaitStartedAtMs : 0
+    const heldMs = await this.waitBehindHeldStop()
     // After an await Next's caller is only on the async stack (E2), so the classifier reads both.
     const handler = routeHandlerStackOf(
       held.event.callFrames,
@@ -3085,6 +3076,27 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       heldMs,
     })
     return true
+  }
+
+  /**
+   * Waits until no other stop of the run is held or being continued, so a route-handler or API-route pause takes its place in order, and gives the time it waited behind that stop for the publish row (E-10).
+   * Called by {@link settleRouteHandlerHit} before it judges a hit; the held stop's own deadline (and the run's) still ends the wait.
+   * @returns
+   * - The milliseconds the pause waited when another stop was held or being continued as the wait began
+   * - 0 when no stop was held then, however long the wait's own polling took under load
+   * @example await this.waitBehindHeldStop() // => 0 when no other stop is paused
+   */
+  private async waitBehindHeldStop(): Promise<number> {
+    const startedAtMs = Date.now()
+    const isHeldBehindStop = Boolean(this.continuation || this.acceptedStop)
+    await waitUntil(
+      () => !this.continuation && !this.acceptedStop,
+      'the held stop before a route-handler pause',
+      REPOSITORY_RUN_TIMEOUT_MS,
+      this.abort.signal,
+    )
+    // Only a wait behind another stop counts as held; the wait's own poll under load is no held time.
+    return isHeldBehindStop ? Date.now() - startedAtMs : 0
   }
 
   /**
