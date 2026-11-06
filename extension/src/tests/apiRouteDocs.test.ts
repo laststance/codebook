@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { API_ROUTE_MINIMUM_API, API_VERSION } from '../constants'
+import { ERROR_RECOVERY } from '../errors'
 import { nextHelp } from '../nextHelp'
 import { routeHandlerStopRefusal } from '../nextRefusals'
 import { operationsRepositoryConfigSchema } from '../repositoryConfigSchemas'
@@ -103,6 +104,20 @@ test('the API-route refusals say what to set and that nothing was started', () =
     edgeRuntime.recoveryOverride,
     `The API route declares the edge runtime in its exported config, which Codebook cannot pause in, and no configuration change fixes that: explain the handler from its source and say it cannot be paused. ${closing}`,
   )
+})
+
+// Value: protects=the static recovery of NEXT_STOP_NOT_SEALED, which an agent reads at the help anchor, names both API-route reasons beside the route-handler ones, with the on-load escape, and says the five refusals started nothing; fails_when=the help entry still covers only the three route-handler reasons, so an agent at the anchor finds no word on api-route-before-operation or api-route-edge-runtime; no_claim=the per-refusal recovery (the refusal test above)
+test('the NEXT_STOP_NOT_SEALED help entry names both API-route reasons and that the five refusals started nothing', () => {
+  // Arrange
+  const recovery = ERROR_RECOVERY.NEXT_STOP_NOT_SEALED
+  // Act / Assert
+  for (const phrase of [
+    'When details.reason is api-route-before-operation, the stop is in a Pages API route with afterOperation 0 or in a version 2 configuration',
+    'a request the page sends only while it loads is reached by no afterOperation, so explain the handler from source and say so',
+    'When details.reason is api-route-edge-runtime, the API route declares the edge runtime in its exported config: no fix exists',
+    'These five refusals started nothing (details.sideEffects is none).',
+  ])
+    assert.ok(recovery.includes(phrase), phrase)
 })
 
 // Value: protects=the lexical Pages refusal names only _document and no longer says API routes are unsupported; fails_when=the API-route sentence returns to the _document refusal or its recovery; no_claim=the run's raising of it
