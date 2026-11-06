@@ -104,7 +104,6 @@ interface BeforeFailure {
   candidates?: { button: number; link: number; field: number }
 }
 
-/** What the stand-in page reports of one control a version 3 operation names; a control without an entry is an ordinary text input. */
 /**
  * Names the webpack layer a scripted server stop is sealed at: `rsc`, `api-node` (a Pages API route) or `action-browser` (the default).
  * @param seal - The harness option `serverSeal`.
@@ -115,6 +114,7 @@ function serverLayerOf(seal: string | undefined): string {
   return seal === 'rsc' || seal === 'api-node' ? seal : 'action-browser'
 }
 
+/** What the stand-in page reports of one control a version 3 operation names; a control without an entry is an ordinary text input. */
 export interface FakeControl {
   tagName?: 'input' | 'textarea' | 'select'
   /** The `<input type>`; `text` by default. */

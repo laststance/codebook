@@ -96,7 +96,7 @@ test('the API-route refusals say what to set and that nothing was started', () =
   assert.equal(beforeOperation.details?.sideEffects, 'none')
   assert.equal(
     beforeOperation.recoveryOverride,
-    `Set the stop's afterOperation to the operation after which the page sends the request (1 or more; afterOperation exists only in a version 3 configuration with operations, so a version 2 configuration moves to version 3): an API-route stop pauses only for a request the page sends after an operation. ${closing}`,
+    `Set the stop's afterOperation to the operation after which the page sends the request (1 or more; afterOperation exists only in a version 3 configuration with operations, so a version 2 configuration moves to version 3): an API-route stop pauses only for a request the page sends after an operation, never for one sent while the page loads. When the page sends that request only while it loads, no afterOperation reaches it: explain the handler from its source and say so. Otherwise recovery: fix the configuration, then one new start. ${closing}`,
   )
   assert.equal(edgeRuntime.details?.reason, 'api-route-edge-runtime')
   assert.equal(

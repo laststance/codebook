@@ -8,12 +8,16 @@ import { URL } from 'node:url'
  * @returns `{ pathname, target }`; `undefined` when the value does not parse as a request target.
  * @example
  * pagesApiTargetOf('/api/data?clear=1') // => { pathname: '/api/data', target: '/api/data?clear=1' }
+ * pagesApiTargetOf('//api/data') // => { pathname: '//api/data', target: '//api/data' }
  */
 export function pagesApiTargetOf(
   url: string,
 ): { pathname: string; target: string } | undefined {
   try {
-    const parsed = new URL(url, 'http://localhost')
+    // An origin-form target (`/api/data`, `//api/data`) is appended to a base, never resolved, so `//` stays part of the path.
+    const parsed = url.startsWith('/')
+      ? new URL(`http://localhost${url}`)
+      : new URL(url, 'http://localhost')
     return {
       pathname: parsed.pathname,
       target: `${parsed.pathname}${parsed.search}`,

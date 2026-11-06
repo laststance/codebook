@@ -55,3 +55,16 @@ test('a runtime that is not a quoted literal within one nesting level is not dec
   // Assert
   assert.deepEqual(results, [false, false, false, false])
 })
+
+// Value: protects=review round: a quoted runtime key, and a brace inside a string before it, still read as Edge; fails_when=only a bare key counts or a quoted `}` ends the literal early, so an Edge route is armed; no_claim=a runtime set through a constant
+test('a quoted runtime key and a brace inside a string before it still mark an Edge route', () => {
+  // Arrange
+  const sources = [
+    "export const config = { 'runtime': 'edge' }",
+    "export const config = { api: { note: '}' }, runtime: 'edge' }",
+  ]
+  // Act
+  const results = sources.map(declaresEdgeApiRuntime)
+  // Assert
+  assert.deepEqual(results, [true, true])
+})

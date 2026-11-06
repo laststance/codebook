@@ -1,4 +1,7 @@
-import { ROUTE_HANDLER_REQUEST_LIMIT } from '../constants'
+import {
+  MILLISECONDS_PER_SECOND,
+  ROUTE_HANDLER_REQUEST_LIMIT,
+} from '../constants'
 
 import { routeHandlerPathMatches } from './routeHandlerPathMatches'
 
@@ -111,7 +114,9 @@ export class RouteHandlerRequests {
       : event.requestId
     if (this.requests.has(id)) return
     const wallTimeMs =
-      event.wallTime === undefined ? undefined : event.wallTime * 1000
+      event.wallTime === undefined
+        ? undefined
+        : event.wallTime * MILLISECONDS_PER_SECOND
     this.requests.set(id, {
       id,
       method,

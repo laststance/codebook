@@ -806,7 +806,7 @@ export function createServerParticipant(parts: ServerParticipantParts) {
       functionName: 'processTicksAndRejections',
       scriptId: 'server-node',
       url: 'node:internal/process/task_queues',
-      lineNumber: 104,
+      lineNumber: 103,
       columnNumber: 0,
     }
     if (hit.stack === 'api-route')
@@ -910,6 +910,13 @@ export function createServerParticipant(parts: ServerParticipantParts) {
             {
               name: 'add',
               value: { type: 'undefined' },
+              configurable: true,
+              enumerable: true,
+              isOwn: true,
+            },
+            {
+              name: 'clear',
+              value: { type: 'string', value: '1' },
               configurable: true,
               enumerable: true,
               isOwn: true,

@@ -3184,8 +3184,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       operationIndex: entry.operationIndex,
       route: entry.route,
       execution: profile.execution,
+      // The tracker always sets wallTimeMs (its receipt time when the event carried none); the verdict's request type leaves it optional for hand-built inputs.
       requestStartedAt: new Date(
-        verdict.request.wallTimeMs ?? Date.now(),
+        verdict.request.wallTimeMs ?? observedAtMs,
       ).toISOString(),
       pausedAt: new Date(observedAtMs).toISOString(),
       publishedAt: new Date().toISOString(),

@@ -4,8 +4,9 @@ import { blankCommentsAndTemplates } from './blankCommentsAndTemplates'
 const EXPORTED_CONFIG_OPENING =
   /(?:^|[;{}])[ \t]*export\s+const\s+config\s*(?::[^=\n]+)?=\s*\{/m
 
-/** A `runtime` key at the top level of the literal whose value is a quoted Edge runtime name. */
-const EDGE_RUNTIME_PROPERTY = /^\s*runtime\s*:\s*(['"])(?:experimental-)?edge\1/
+/** A `runtime` key (bare or quoted) at the top level of the literal whose value is a quoted Edge runtime name. */
+const EDGE_RUNTIME_PROPERTY =
+  /^\s*(['"]?)runtime\1\s*:\s*(['"])(?:experimental-)?edge\2/
 
 /** How many object levels the scan follows below the config literal: its own body and one nested object (`api: { bodyParser: false }`). */
 const MAX_CONFIG_DEPTH = 2
@@ -40,6 +41,11 @@ export function declaresEdgeApiRuntime(sourceText: string): boolean {
 function hasEdgeRuntimeKey(code: string, openingBrace: number): boolean {
   let depth = 0
   for (let index = openingBrace; index < code.length; index++) {
+    // A quoted string is skipped whole, so a brace inside it never moves the depth.
+    if (code[index] === "'" || code[index] === '"') {
+      index = closingQuoteOf(code, index)
+      continue
+    }
     if (code[index] === '{') depth++
     else if (code[index] === '}') depth--
     // Past the literal's end or too deep to decide from the text.
@@ -53,4 +59,21 @@ function hasEdgeRuntimeKey(code: string, openingBrace: number): boolean {
       return true
   }
   return false
+}
+
+/**
+ * Finds the closing quote of the string literal that opens at an index, so {@link hasEdgeRuntimeKey} can step over it.
+ * @param code - The route file's code with comments and templates blanked.
+ * @param openingQuote - The index of the literal's `'` or `"`.
+ * @returns The index of the matching unescaped quote, or the text's last index when the literal never closes.
+ * @example closingQuoteOf("{ x: '}' }", 5) // => 7
+ */
+function closingQuoteOf(code: string, openingQuote: number): number {
+  const quote = code[openingQuote]
+  for (let index = openingQuote + 1; index < code.length; index++) {
+    // An escaped character never ends the literal.
+    if (code[index] === '\\') index++
+    else if (code[index] === quote) return index
+  }
+  return code.length - 1
 }
