@@ -190,9 +190,13 @@ const signInSchema = z
       .describe(
         'The body key the learner\'s typed secret is sent under (for example "password").',
       ),
-    secret: z.literal(ASK_LEARNER_SECRET, {
-      error: `expected "${ASK_LEARNER_SECRET}": the learner types the secret into the editor's box.`,
-    }),
+    secret: z
+      .literal(ASK_LEARNER_SECRET, {
+        error: `expected "${ASK_LEARNER_SECRET}": the learner types the secret into the editor's box.`,
+      })
+      .describe(
+        'The literal "ask-learner": Codebook asks the learner for the secret in the editor\'s masked box.',
+      ),
   })
   .superRefine((signIn, context) => {
     const keys = Object.keys(signIn.fields)
