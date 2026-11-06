@@ -183,6 +183,7 @@ function nodeScriptLibraryHelp() {
       'Ignored inputs: the build reads and writes what the project ignores (generated files, build output); Codebook compares tracked and untracked-not-ignored files only.',
       'Installed dependencies: the library must already be installed with its package manager; dependency versions come from the repository lockfile, not a fresh install of the packed tarball, so a version can differ (one measured case: a transitive dependency at 5.1.1 against 5.2.0 in a fresh install).',
       "Overlapping builds: two windows building the same library at once are not prevented in this version; the library's ignored build output is shared.",
+      "Worker threads: a worker thread the script starts is neither redirected to the packed copy nor observed, so what a worker loads is not part of the run's library facts.",
       "Stops stay in the Example's own source; a stop in the library's source or in node_modules is refused. Content scripts do not apply to this profile.",
       'Yarn and Bun repositories are refused (package-manager-unsupported); the Example runs its installed copy.',
     ],
