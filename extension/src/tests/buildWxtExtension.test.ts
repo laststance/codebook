@@ -204,6 +204,38 @@ test('refuses a project where WXT is not installed before any process starts', a
   assert.equal(refusesBeforeSpawn.spawned.length, 0)
 })
 
+// protects=a WXT hoisted to the repository's node_modules whose exports hide ./package.json (as the real wxt package does) is found and its version read; fails_when=it is refused as wxt-not-installed (require.resolve('wxt/package.json') throws ERR_PACKAGE_PATH_NOT_EXPORTED); no_claim=that the found WXT builds (fake spawner)
+test('finds a hoisted WXT whose exports hide its package.json and starts the build', async () => {
+  // Arrange
+  const project = createProject(null)
+  const hoisted = join(project.repositoryRoot, 'node_modules', 'wxt')
+  mkdirSync(hoisted, { recursive: true })
+  writeFileSync(
+    join(hoisted, 'package.json'),
+    JSON.stringify({
+      name: 'wxt',
+      version: '0.21.4',
+      exports: { '.': { default: './dist/index.mjs' } },
+    }),
+  )
+  const spawning = createFakeSpawner({
+    onSpawn: (control) => {
+      writeSuccessfulBuild(project.privateFolder)
+      control.exit({ code: 0, signal: null })
+    },
+  })
+  // Act
+  const result = await buildWxtExtension({
+    ...project,
+    node: NODE_24,
+    signal: new AbortController().signal,
+    spawner: spawning.spawner,
+  })
+  // Assert
+  assert.equal(spawning.spawned.length, 1)
+  assert.equal(result.kind, 'built')
+})
+
 for (const version of ['0.20.9', '0.22.0', '0.21.0-beta.1']) {
   // protects=only a 0.21.x release builds, so an older, newer or prerelease WXT is refused with its version; fails_when=a neighbouring minor or a prerelease is built; no_claim=that 0.21.x builds (the native check)
   test(`refuses WXT ${version} as an unsupported version before any process starts`, async () => {
