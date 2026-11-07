@@ -1854,7 +1854,7 @@ test('the Format workflow checks formatting with a pinned Bun running bun fmt', 
   assert.equal(manifest.scripts.format, 'cd .. && bun fmt')
 })
 
-// Value: protects=the split of the Fallow workflow: each check (measured health, dupes, dead-code, architecture) runs in a job of its own, so the 10 to 12 minutes of the measured health run never delay the one-minute static checks and a failed check never hides another; fails_when=two checks share a job again, a check's job runs another script (the health job a separate build again, which checkHealth.mjs already runs itself), or a job lacks the shared prepare action; why_new=Cycle 0062 task 19; Cycle 0094 task 9 (Discussion 185) dropped the health job's redundant Build step; Cycle 0094 task 11 added the shard and merge jobs of the sharded measured health run; seam=the text of .github/workflows/fallow.yml; no_claim=that the jobs start without queueing behind the plan's 20 concurrent jobs (CI measures that)
+// Value: protects=the split of the Fallow workflow: each check (measured health, dupes, dead-code, architecture) runs in a job of its own, so the 10 to 12 minutes of the measured health run never delay the one-minute static checks and a failed check never hides another; fails_when=two checks share a job again, a check's job runs another script (the health job a separate build again, which checkHealth.mjs already runs itself), or a job lacks the shared prepare action; why_new=Cycle 0062 task 19; Cycle 0094 task 9 (Discussion 185) dropped the health job's redundant Build step; Cycle 0094 task 11 replaced the single measured run with the shard and merge jobs of the sharded run (decision D16); seam=the text of .github/workflows/fallow.yml; no_claim=that the jobs start without queueing behind the plan's 20 concurrent jobs (CI measures that)
 test('the Fallow workflow runs measured health, dupes, dead-code and architecture each in a job of its own', async () => {
   // Arrange
   const workflow = await repositoryText('.github/workflows/fallow.yml')
@@ -1881,7 +1881,6 @@ test('the Fallow workflow runs measured health, dupes, dead-code and architectur
 
   // Assert
   assert.deepEqual(Object.keys(jobs), [
-    'health',
     'health-shard',
     'health-merge',
     'dupes',
@@ -1889,16 +1888,21 @@ test('the Fallow workflow runs measured health, dupes, dead-code and architectur
     'architecture',
     'analyses',
   ])
-  assert.deepEqual(scriptsOf(jobs.health), ['health'])
-  // Every command of the health job, so a build written another way (`pnpm -C extension build`, `node …`) shows too; checkHealth.mjs builds itself (health.test.mjs: a type error refuses health before any test runs). The single run keeps its coverage map for the equivalence run (Cycle 0094 task 11).
+  // Every command of the two health jobs, so a build written another way (`pnpm -C extension build`, `node …`) shows too; checkHealth.mjs builds itself (health.test.mjs: a type error refuses health before any test runs).
   assert.deepEqual(
-    [...jobs.health.matchAll(/^ +run: (.+)$/gm)].map((match) => match[1]),
+    [...jobs['health-shard'].matchAll(/^ +run: (.+)$/gm)].map(
+      (match) => match[1],
+    ),
     [
-      'pnpm --dir extension health --keep-coverage "$RUNNER_TEMP/health-single/coverage-final.json"',
+      'pnpm --dir extension health --shard ${{ matrix.shard }}/3 --out "$RUNNER_TEMP/health-shard"',
     ],
   )
-  assert.deepEqual(scriptsOf(jobs['health-shard']), ['health'])
-  assert.deepEqual(scriptsOf(jobs['health-merge']), ['health'])
+  assert.deepEqual(
+    [...jobs['health-merge'].matchAll(/^ +run: (.+)$/gm)].map(
+      (match) => match[1],
+    ),
+    ['pnpm --dir extension health --merge "$RUNNER_TEMP/health-shards"'],
+  )
   assert.deepEqual(scriptsOf(jobs.dupes), ['dupes'])
   assert.deepEqual(scriptsOf(jobs['dead-code']), ['dead-code'])
   assert.deepEqual(scriptsOf(jobs.architecture), ['architecture'])
@@ -1906,8 +1910,8 @@ test('the Fallow workflow runs measured health, dupes, dead-code and architectur
     assert.match(job, /uses: \.\/\.github\/actions\/prepare\n/)
 })
 
-// Value: protects=the sharded measured health run (Cycle 0094 task 11): three shard jobs each run one share of the test files and upload their dumps, one merge job downloads every shard result and the single run's coverage map and compares them; fails_when=the shard matrix and the shard total in the command differ, a shard job uploads under another name than the merge downloads, the single job stops uploading its coverage map (the equivalence run then has nothing to compare), the merge runs without `--compare`, or an artifact action is pinned by a tag instead of a full commit; why_new=Cycle 0094 task 11 (Discussion 185 step 2, eng review R7); seam=the text of .github/workflows/fallow.yml; no_claim=that GitHub runs the matrix or that the two coverage maps are equal (the merge job's own exit shows that)
-test('the Fallow workflow measures health in three shards, merges them and compares the merge with the single run, with artifact actions pinned to commits', async () => {
+// Value: protects=the sharded measured health run (Cycle 0094 task 11, decision D16): three shard jobs each run one share of the test files and upload their dumps, one merge job downloads every shard result and scores health, also after a failed shard; fails_when=the shard matrix and the shard total in the command differ, a shard job uploads under another name than the merge downloads, the merge is skipped after a failed shard (a skipped job reads as passing), or an artifact action is pinned by a tag instead of a full commit; why_new=Cycle 0094 task 11 (Discussion 185 step 2, eng review R7); seam=the text of .github/workflows/fallow.yml; no_claim=that GitHub runs the matrix or that the two coverage maps are equal (the merge job's own exit shows that)
+test('the Fallow workflow measures health in three shards and merges them into one score, with artifact actions pinned to commits', async () => {
   // Arrange
   const workflow = await repositoryText('.github/workflows/fallow.yml')
 
@@ -1931,27 +1935,23 @@ test('the Fallow workflow measures health in three shards, merges them and compa
     /name: health-shard-\$\{\{ matrix\.shard \}\}\n/,
   )
   assert.match(withoutComments, /pattern: health-shard-\*\n/)
-  assert.match(
-    withoutComments,
-    /health --keep-coverage "\$RUNNER_TEMP\/health-single\/coverage-final\.json"\n/,
-  )
-  assert.match(withoutComments, /name: health-single\n/)
-  assert.match(withoutComments, /needs: \[health, health-shard\]\n/)
   // A skipped merge job counts as passing for a required check, so it must run after a failed shard and refuse there itself.
   assert.match(
     withoutComments,
-    /needs: \[health, health-shard\]\n {4}if: \$\{\{ !cancelled\(\) \}\}\n/,
+    /needs: \[health-shard\]\n {4}if: \$\{\{ !cancelled\(\) \}\}\n/,
   )
   assert.match(
     withoutComments,
-    /health --merge "\$RUNNER_TEMP\/health-shards" --compare "\$RUNNER_TEMP\/health-single\/coverage-final\.json"\n/,
+    /run: pnpm --dir extension health --merge "\$RUNNER_TEMP\/health-shards"\n/,
+  )
+  assert.doesNotMatch(
+    withoutComments,
+    /--compare|--keep-coverage|health-single/,
   )
   assert.deepEqual(
     usedActions.filter((action) => action.includes('-artifact@')).toSorted(),
     [
       'actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2',
-      'actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2',
-      'actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2',
       'actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2',
     ],
   )
