@@ -131,6 +131,24 @@ test('the react-scripts library sample parses with the live configuration schema
   assert.equal(parsed.success, true)
 })
 
+// Value: protects=the skill's Create React App paragraph lets a library run stop in the declared library's checked-out source, as the README says; fails_when=the paragraph limits stops to the app's own source again, so a chat avoids a supported library stop; no_claim=how a chat follows it
+test('the skill allows a react-scripts library run to stop in the library source', async () => {
+  // Arrange
+  const skill = await readPackaged('skills/codebook/SKILL.md')
+  const paragraph =
+    skill
+      .split('\n')
+      .find((line) => line.startsWith('**A Create React App app')) ?? ''
+  // Act / Assert
+  assert.ok(
+    paragraph.includes(
+      "when the run declares `library` (API 1.35 or later), in that library's checked-out source too",
+    ),
+    paragraph,
+  )
+  assert.equal(paragraph.includes("in the app's own source only"), false)
+})
+
 // Value: protects=the bundled skill, the README and AGENTS.md carry the bundler library route; fails_when=a sentence leaves one of them; no_claim=how a chat follows it
 test('the skill, README and AGENTS.md document the react-scripts library route', async () => {
   // Arrange

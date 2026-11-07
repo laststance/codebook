@@ -2347,7 +2347,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const pageCdp = this.participants.browser.cdp
     // A page that was never attached has nothing to confirm: no script of it was observed, so the observation cannot be complete.
     if (!pageCdp) {
-      await route.finalize(false)
+      await this.finalizeLibraryRoute(route, false)
       return []
     }
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -2377,8 +2377,27 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     ])
     didBoundWin = outcome === 'bound'
     clearTimeout(timer)
-    await route.finalize(outcome === 'closed')
+    await this.finalizeLibraryRoute(route, outcome === 'closed')
     return failures
+  }
+
+  /**
+   * Finalizes the library observation without letting a failure stop the cleanup.
+   * Why it exists: {@link finalizeLibrary} runs first in {@link cleanupOwned}; a rejected finalization would skip stopping the server, the browser and the debugger. Called by {@link finalizeLibrary} on both of its paths.
+   * @param route - The run's library route.
+   * @param isPageClosed - Whether the owned page closed within the close bound.
+   * @example await this.finalizeLibraryRoute(route, true)
+   */
+  private async finalizeLibraryRoute(
+    route: LibraryRunRoute,
+    isPageClosed: boolean,
+  ): Promise<void> {
+    try {
+      await route.finalize(isPageClosed)
+    } catch (error) {
+      // The observation stays unclaimed (never complete); the cleanup goes on.
+      this.evidence.record('library.finalize-failed', { cause: String(error) })
+    }
   }
 
   /**

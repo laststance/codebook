@@ -484,3 +484,24 @@ test('finalizes the route once when a retried Stop calls finalize again', async 
     1,
   )
 })
+
+// protects=a report that fails to read at the end (a failed read or close) never makes finalize reject, so the run's cleanup still stops the server, the browser and the debugger, and the observation stays unclaimed; fails_when=finalize lets the settle error escape; no_claim=the run's own cleanup order (its finalize call has a guard of its own)
+test('finalize resolves and leaves the observation unreadable when the report cannot be read at the end', async (context) => {
+  // Arrange
+  const run = await stage(context)
+  await appendFile(run.reportPath, '{"wrapped":true}\n')
+  run.route.observeParsedScript(bundleScript())
+  const attribution = (
+    run.route as unknown as { attribution: { settle(): Promise<void> } }
+  ).attribution
+  attribution.settle = async () => {
+    throw new Error('close failed')
+  }
+  // Act
+  await run.route.finalize(true)
+  // Assert
+  assert.equal(run.route.view().observation, 'unreadable')
+  assert.deepEqual(unreadableEntries(run.journal)[0]?.detail, {
+    cause: 'report-read-failed: close failed',
+  })
+})

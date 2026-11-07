@@ -353,9 +353,16 @@ export class ReactScriptsLibraryRoute implements LibraryRunRoute {
   }
 
   private async finalizeOnce(isPageClosed: boolean): Promise<void> {
-    await this.attribution.settle()
-    for (const script of this.attribution.takeDeferred())
-      this.core.observeScript(script)
+    try {
+      await this.attribution.settle()
+      for (const script of this.attribution.takeDeferred())
+        this.core.observeScript(script)
+    } catch (error) {
+      // A report that cannot be read at the end (a failed read or close) leaves the observation unclaimed; finalization must still resolve so the server, the browser and the debugger stop.
+      this.core.markUnreadable(
+        `report-read-failed: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
     const cause = this.attribution.reader.unreadableCause
     // A report that is only missing says nothing yet (the run may have ended before the first compile); every other fault cannot be trusted.
     if (
