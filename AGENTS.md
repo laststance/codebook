@@ -137,9 +137,9 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 - Premise/final behavior → `/office-hours` or `/plan-ceo-review` (owner decision).
 - Lasting API, MCP or integration change → `/plan-devex-review` (capability, error, lifecycle contract).
 - Flow, layout, hierarchy, interaction → `/plan-design-review` (UX and state decisions).
-- Architecture, concurrency, storage, meaningful code → `/autoplan`'s engineering phase alone after UX/API amendments, no owner request needed for that phase (bounded implementation and test plan; gstack 1.98 removed `/plan-eng-review`, owner 2026-11-08, Discussion 250).
+- Architecture, concurrency, storage, meaningful code → `/autoplan`'s engineering phase alone after UX/API amendments, no owner request needed (bounded implementation and test plan).
 - Combined review on owner request → `/autoplan` (CEO → conditional Design → conditional DX → Eng).
-- Unexplained failure → bounded experiment recorded in cycle Issue (question, separating observation, budget; [Working loop](#working-loop)); gstack 1.98 removed `/investigate` (Discussion 250).
+- Unexplained failure → bounded experiment recorded in cycle Issue (question, separating observation, budget).
 - Working browser/webview flow → `/qa` or `/qa-only` (observed behavior, fixes).
 - Implemented UI → `/design-review` (real visual and interaction evidence).
 - Ready diff → `/review` (revision-bound findings, coverage limits).
