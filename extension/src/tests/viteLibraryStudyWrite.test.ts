@@ -205,8 +205,9 @@ test('a library run refused before the route had facts is saved with pending fac
   // Arrange / Act
   const study = await savedLibraryStudy(context, 'refused')
   // Assert
-  const facts = study && 'library' in study ? study.library : undefined
-  assert.equal(study?.version, VITE_LIBRARY_STUDY_VERSION)
+  assert.ok(study, 'the refused run saved a study')
+  const facts = 'library' in study ? study.library : undefined
+  assert.equal(study.version, 16)
   assert.deepEqual(facts, {
     package: 'packages/widgets',
     packageRoot: 'packages/widgets',
