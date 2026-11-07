@@ -320,7 +320,6 @@ export class CapturedSourceReturn {
               : 'The editor focus changed while the captured source was returned, and Codebook could not bring your latest choice back to the front. Choose it again, then choose Restore Study workspace layout.',
           )
         }
-        /** A learner's own change of focus during the return wins. The return itself takes no keyboard, so any change of the place since its start is the learner's. */
         /** Whether the Study pane's own tab is in front of the active group after a press in a pane: the press puts the keyboard there as part of the request, and the editor can report that after the return began (native C72-1r: VS Code 1.144.0 reports the Study pane's group after the webview's message). */
         const isPressFocusOnStudyPane = (
           tab: vscode.Tab | undefined,
@@ -329,6 +328,7 @@ export class CapturedSourceReturn {
           tab !== undefined &&
           this.host.isCodebookPaneInput(tab.input, 'codebook.studyContext') &&
           this.host.isOwnPaneOrSourceTab(tab)
+        /** A learner's own change of focus during the return wins. The return itself takes no keyboard, so any change of the place since its start is the learner's. */
         const assertLearnerKept = (): void => {
           const place = keyboardPlace()
           if (place === expectedPlace) return

@@ -70,8 +70,12 @@ export async function loadModule<Module>(
       if (!sameContextExports.has(file)) {
         const sibling = { exports: {} }
         // The sibling runs as a function of this context, with its own module object and its own relative requires. compileFunction, as Node's own CommonJS loader does, adds no wrapper text, so V8's coverage offsets match the file and its source map (a wrapper on line 1 shifted every offset and c8 lost the sibling's function records).
+        const source = sameContextSources.get(name)
+        // A spelling missing from the map would compile an empty module silently.
+        if (source === undefined)
+          throw new Error(`loadModule: no source read for sibling ${name}`)
         const evaluate = compileFunction(
-          sameContextSources.get(name) ?? '',
+          source,
           ['module', 'exports', 'require', '__dirname', '__filename'],
           { filename: file, parsingContext: context },
         )

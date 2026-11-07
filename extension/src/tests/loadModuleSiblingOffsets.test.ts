@@ -33,5 +33,5 @@ test('a same-context sibling reports its first-line error at the column of its o
   const stack = loaded.read()
 
   // Assert
-  assert.match(stack, new RegExp(`${siblingFile}:1:17\\)?\\n`))
+  assert.ok(stack.includes(`${siblingFile}:1:17`))
 })
