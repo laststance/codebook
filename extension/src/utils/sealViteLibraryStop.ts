@@ -104,9 +104,13 @@ export async function sealViteLibraryStop(request: ViteLibrarySealRequest) {
     .then(async (selected) => {
       // The map rewrite leaves a packed `src/` path where the checked-out text differs, so no map names the checked-out file; the packed copy's file with other text is the stale build.
       if (!request.packed || !isUnmappedForNoMap(selected)) return selected
+      // Both sides of the relative path are real: a symlinked repository or library folder would otherwise start the result with `..`.
+      const checkedOutFolder = await realpath(
+        join(request.repositoryRoot, library.folder),
+      )
       const packedFile = join(
         library.realFolder,
-        relative(join(request.repositoryRoot, library.folder), realPath),
+        relative(checkedOutFolder, realPath),
       )
       const again = await select({ ...stopFile, realPath: packedFile })
       return again.kind === 'refused' &&

@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,6 +17,7 @@ import type { RepositoryOperation } from '../repositoryConfigSchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { createViteLibraryModuleSource } from '../utils/createViteLibraryModuleSource'
+import { detectPackedLibraryStop } from '../utils/detectPackedLibraryStop'
 import { sealViteLibraryStop } from '../utils/sealViteLibraryStop'
 import type { ViteLibraryRouteDependencies } from '../viteLibraryRoute'
 
@@ -245,9 +253,27 @@ function packedServedModule(sourcesContent: string): string {
 
 // protects=D11 stale for an edited file: when the packed map still names the packed src path because the checked-out text differs, the seal reads library-build-stale, not a missing map; fails_when=the refusal reads library-build-unmapped no-map or loses the packed sentence; no_claim=the launcher's rewrite itself (viteLibraryRedirect tests)
 test('seals an edited checked-out file as library-build-stale when the packed map keeps its own src path', async (context) => {
+  await expectEditedFileStale(context, false)
+})
+
+// protects=D11 stale through a symlinked repository root: the relative path to the packed copy is taken from real paths, so the retry still finds the packed file; fails_when=the retry misses and the refusal reads library-build-unmapped no-map; no_claim=symlinked library folders inside the repository (detection refuses those)
+test('seals an edited file as library-build-stale when the repository is opened through a symlink', async (context) => {
+  await expectEditedFileStale(context, true)
+})
+
+/** Runs the edited-file seal and asserts the stale refusal; `viaSymlink` opens the repository through a link to its real folder. */
+async function expectEditedFileStale(
+  context: TestContext,
+  viaSymlink: boolean,
+): Promise<void> {
   // Arrange
   const root = await realpath(await mkdtemp(join(tmpdir(), 'packed-seal-')))
   context.after(() => removeTestFolder(root))
+  const linkedRoot = `${root}-link`
+  if (viaSymlink) {
+    await symlink(root, linkedRoot)
+    context.after(() => rm(linkedRoot, { force: true }))
+  }
   await mkdir(join(root, 'packages/core/src'), { recursive: true })
   await mkdir(join(root, 'examples/app'), { recursive: true })
   await writeFile(join(root, 'packages/core/src/a.ts'), SEAL_TEXT)
@@ -292,7 +318,7 @@ test('seals an edited checked-out file as library-build-stale when the packed ma
     packageRootRelative: 'examples/app',
     library,
     packed: { revision: REVISION },
-    repositoryRoot: root,
+    repositoryRoot: viaSymlink ? linkedRoot : root,
     source: {
       path: 'packages/core/src/a.ts',
       line: 1,
@@ -319,4 +345,20 @@ test('seals an edited checked-out file as library-build-stale when the packed ma
     String(Reflect.get(Object(failure), 'message')),
     /edited after the build/,
   )
+}
+
+// protects=an aborted run stops at detection instead of being treated as a stop outside the packed library; fails_when=detectPackedLibraryStop swallows the abort and resolves undefined; no_claim=cancellation mid-way through the realpath calls
+test('rejects with the abort reason when the run is cancelled before detecting a packed library stop', async () => {
+  // Arrange
+  const controller = new AbortController()
+  controller.abort(new Error('run cancelled'))
+  // Act
+  const outcome = detectPackedLibraryStop(
+    '/repo',
+    'packages/core',
+    'packages/core/src/a.ts',
+    controller.signal,
+  )
+  // Assert
+  await assert.rejects(outcome, /run cancelled/)
 })

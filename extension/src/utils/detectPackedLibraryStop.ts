@@ -15,6 +15,7 @@ const NODE_MODULES_SEGMENT = 'node_modules'
  * @param declaredPackageRoot - The declared `library.packageRoot`, repository-relative.
  * @param stopPath - The declared stop file, repository-relative.
  * @param signal - The run's cancellation.
+ * @throws The signal's abort reason when `signal` is already aborted.
  * @returns The library with the declared folder and its real path; the name is the declared folder until the route knows the package name. `undefined` when the file is not in the library's own source.
  * @example
  * await detectPackedLibraryStop('/repo', 'packages/toolkit', 'packages/toolkit/src/createSlice.ts') // => { name: 'packages/toolkit', folder: 'packages/toolkit', realFolder: '/repo/packages/toolkit' }
@@ -28,8 +29,9 @@ export async function detectPackedLibraryStop(
   // A path that is absolute or climbs is no repository path.
   if (isAbsolute(stopPath) || normalize(stopPath).split(sep)[0] === '..')
     return undefined
+  // An abort propagates: swallowing it would send the run down the workspace-library path.
+  signal?.throwIfAborted()
   try {
-    signal?.throwIfAborted()
     const root = await realpath(repositoryRoot)
     const realLibrary = await realpath(resolve(root, declaredPackageRoot))
     const realFile = await realpath(resolve(root, stopPath))

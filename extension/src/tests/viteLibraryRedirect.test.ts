@@ -217,6 +217,39 @@ test('returns nothing for files it does not own or maps it cannot read', () => {
   assert.deepEqual(results, [null, null, null, null, null])
 })
 
+// protects=Vite's non-JavaScript query loads (?raw, ?worker, ?url, ?inline) of a packed file stay with Vite while cache markers (?v, ?t, ?import) are still rewritten; fails_when=a ?raw or ?worker request gets JavaScript back, or a ?v= request loses the rewrite; no_claim=Vite's own handling of those queries
+test('leaves ?raw and ?worker loads of a packed module to Vite and still rewrites ?v= and ?import', () => {
+  // Arrange
+  const plugin = pluginOver({
+    [MODULE]: 'export const a = 1\n',
+    [`${MODULE}.map`]: JSON.stringify({
+      version: 3,
+      sources: ['../src/createSlice.ts'],
+      sourcesContent: ['const slice = 1\n'],
+      mappings: 'AAAA',
+    }),
+    [`${LIBRARY}/src/createSlice.ts`]: 'const slice = 1\n',
+  })
+  // Act
+  const results = [
+    `${MODULE}?raw`,
+    `${MODULE}?worker`,
+    `${MODULE}?url`,
+    `${MODULE}?inline`,
+    `${MODULE}?v=abc`,
+    `${MODULE}?import&t=1`,
+  ].map((id) => plugin.load(id)?.code ?? null)
+  // Assert
+  assert.deepEqual(results, [
+    null,
+    null,
+    null,
+    null,
+    'export const a = 1\n',
+    'export const a = 1\n',
+  ])
+})
+
 // protects=an alias (string or regular expression) that rewrites the package or a subpath is reported, and an unrelated alias is not; fails_when=a package alias slips through to the build, or an unrelated alias blocks the run; no_claim=a regular expression that matches only deeper subpaths than the samples
 test('reports the aliases that match the package or a subpath of it', () => {
   // Arrange

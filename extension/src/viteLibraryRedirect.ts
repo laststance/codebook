@@ -15,6 +15,24 @@ const MAPPED_MODULE_PATTERN = /\.(?:m?js|cjs)$/
 /** The trailing `sourceMappingURL` comment of a built module. */
 const SOURCE_MAP_COMMENT_PATTERN = /\n?\/\/[#@] sourceMappingURL=[^\n]*\s*$/
 
+/** The query markers Vite adds to a module it still loads as JavaScript (`?v=` optimizer hash, `?t=` HMR timestamp, `?import`). */
+const CACHE_MARKER_KEYS: ReadonlySet<string> = new Set(['v', 't', 'import'])
+
+/**
+ * Tells whether a module id's query holds only Vite's cache/import markers, so the module is still plain JavaScript.
+ *
+ * Called by the `load` hook of {@link createLibraryRedirectPlugin}.
+ * @param query - The id's text after the first `?`.
+ * @returns `true` when every key is `v`, `t` or `import`.
+ * @example
+ * isCacheMarkerQuery('v=abc&import') // => true
+ */
+function isCacheMarkerQuery(query: string): boolean {
+  return [...new URLSearchParams(query).keys()].every((key) =>
+    CACHE_MARKER_KEYS.has(key),
+  )
+}
+
 /** Where an import made in the libraries' world is resolved from. */
 export type LibraryImportRoute = 'library' | 'peer' | 'dependency' | 'untouched'
 
@@ -345,8 +363,10 @@ export function createLibraryRedirectPlugin(
       })
     },
     load(id) {
-      const file = id.split('?')[0] ?? id
+      const [file = id, query] = id.split('?', 2)
       if (
+        // `?raw`, `?url`, `?worker`, `?inline` and the like are Vite's to load: only no query or its cache/import markers are rewritten here.
+        (query !== undefined && !isCacheMarkerQuery(query)) ||
         !MAPPED_MODULE_PATTERN.test(file) ||
         !isInsideFolder(options.packedRoot, file)
       )
