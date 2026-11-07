@@ -45,6 +45,8 @@ export type FakeOwnedChromeBehaviour = {
   browserProduct?: string
   /** Pages the extension opens itself once it is installed (an install handler's tab), by url; `Target.closeTarget` closes them. */
   extensionOwnPages?: string[]
+  /** A page opened with `Target.createTarget` stays listed for this many `Target.getTargets` looks after `Target.closeTarget`, and a popup that `Extensions.triggerAction` opens meanwhile is dismissed, as Chrome 157 does. */
+  closingPageListedForLooks?: number
   /** How long the fake takes to answer a command: one sent with a shorter timeout fails as `timed out`, as a real Chrome's answer arrives too late for it. Unset, every timeout is met. */
   answerLatencyMs?: number
   /** The first this many `ServiceWorker.startWorker` commands answer success and start nothing, as Chrome does when the registration has no active version yet. */
@@ -117,6 +119,8 @@ export function fakeOwnedChrome(
   let targetCount = 0
   let installed = false
   const closedTargets = new Set<string>()
+  // Pages made by `Target.createTarget`: the looks left before a closed one leaves the list (Infinity while open).
+  const createdPages = new Map<string, { url: string; looksLeft: number }>()
 
   const answer = (command: RecordedCommand): Record<string, unknown> => {
     const { method, params, sessionId } = command
@@ -135,11 +139,20 @@ export function fakeOwnedChrome(
         sessions.set(session, targetId)
         return { sessionId: session }
       }
-      case 'Target.createTarget':
-        return { targetId: `created-${++targetCount}-${String(params.url)}` }
-      case 'Target.closeTarget':
+      case 'Target.createTarget': {
+        const targetId = `created-${++targetCount}-${String(params.url)}`
+        createdPages.set(targetId, {
+          url: String(params.url),
+          looksLeft: Number.POSITIVE_INFINITY,
+        })
+        return { targetId }
+      }
+      case 'Target.closeTarget': {
         closedTargets.add(String(params.targetId))
+        const page = createdPages.get(String(params.targetId))
+        if (page) page.looksLeft = behaviour.closingPageListedForLooks ?? 0
         return { success: true }
+      }
       case 'Extensions.loadUnpacked':
         if (behaviour.loadRejection !== undefined)
           throw new FlatCdpCommandError(
@@ -169,7 +182,10 @@ export function fakeOwnedChrome(
         // Chrome answers the keys of every object sorted.
         return { data: sortedKeys(behaviour.storedData ?? storage) }
       case 'Extensions.triggerAction':
-        popupOpen = behaviour.popupOpens
+        // Chrome 157 dismisses a popup that opens while a closed page is still listed.
+        popupOpen =
+          behaviour.popupOpens &&
+          ![...createdPages.values()].some(({ looksLeft }) => looksLeft > 0)
         if (behaviour.workerStartsWithPopup) workerRunning = true
         return {}
       default:
@@ -191,8 +207,16 @@ export function fakeOwnedChrome(
   const listTargets = (params: Record<string, unknown>) => {
     if (Array.isArray(params.filter))
       return [{ targetId: 'tab-1', type: 'tab', url: 'about:blank' }]
+    const closingPages = [...createdPages.entries()]
+      .filter(([, { looksLeft }]) => looksLeft > 0)
+      .map(([targetId, { url }]) => ({ targetId, type: 'page', url }))
+    // Each look moves a closing page one step toward leaving the list.
+    for (const page of createdPages.values())
+      if (Number.isFinite(page.looksLeft) && page.looksLeft > 0)
+        page.looksLeft -= 1
     const targets = [
       { targetId: 'page-1', type: 'page', url: 'about:blank' },
+      ...closingPages,
       // The extension's own pages are listed before a popup, as tabs opened earlier are.
       ...(installed
         ? (behaviour.extensionOwnPages ?? [])

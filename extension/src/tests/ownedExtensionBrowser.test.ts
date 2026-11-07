@@ -284,6 +284,21 @@ test('launch fails with SEED_NOT_APPLIED naming the key whose stored value diffe
   assert.equal(chrome.closed(), true)
 })
 
+// Value: protects=the Chrome 157 popup dismissal: a popup opened while the storage host page is still closing vanishes about 100 ms later; fails_when=the launch triggers the action before Chrome has dropped the closed host page from its target list; no_claim=real Chrome (chromeExtensionRealChrome.test.ts)
+test('launch opens the popup only after the closed storage host page has left the target list', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const chrome = fakeOwnedChrome(healthy({ closingPageListedForLooks: 3 }))
+  // Act
+  const browser = await launchOwnedExtensionBrowser(
+    launchOptions(root),
+    chrome.dependencies,
+  )
+  // Assert
+  assert.equal(browser.surfaceTargetId, 'popup-1')
+  await browser.close()
+})
+
 // Value: protects=TZ4; fails_when=a popup that never opens does not end the launch with POPUP_NOT_OPENED; no_claim=the 5 s bound's duration (the fake has no clock)
 test('launch fails with POPUP_NOT_OPENED when the action opens no popup', async (context) => {
   // Arrange

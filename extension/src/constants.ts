@@ -3008,6 +3008,11 @@ export const EXTENSION_WORKER_START_RESEND_MS = 1_000
 export const EXTENSION_CDP_COMMAND_TIMEOUT_MS = 10_000
 /** After `ServiceWorker.startWorker`, the popup opens only once the worker has had this long to apply the extension's own state (task 0). */
 export const EXTENSION_POPUP_WORKER_SETTLE_MS = 1_500
+/**
+ * After the storage host page is closed, the launch waits at most this long for its target to leave the target list before it opens the popup.
+ * Why: Chrome 157 dismisses a popup that opens while the host page (the active tab) is still closing, so the popup vanished about 100 ms after it appeared (Cycle 0096 probe: 0 of 3 popups survived without the wait, 3 of 3 with it).
+ */
+export const EXTENSION_HOST_PAGE_CLOSE_BOUND_MS = 3_000
 /** Marks a profile folder whose browser Codebook spawned itself; only such a folder's live browser is stopped by the orphan sweep (ER18). */
 export const OWNED_BROWSER_MARKER_FILE = 'codebook-owned-browser'
 /** The owned launch treats the extension's workers as stopped after none has been listed for this long; Chrome starts a new extension's worker shortly after `loadUnpacked` answers. */
