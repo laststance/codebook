@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { StudyError } from '../errors'
@@ -42,8 +42,8 @@ async function put(path: string, text = 'export {}\n'): Promise<string> {
   return path
 }
 
-/** A staged run: the repository, the Example, the private folder and a route over fake build seams. */
-async function stage(
+/** A staged run before `plan`: the repository, the Example, the private folder and a route over fake build seams, for a test that drives `plan` and `prepare` itself. */
+async function buildRoute(
   context: TestContext,
   overrides: Partial<ViteLibraryRouteDependencies> = {},
 ) {
@@ -104,10 +104,26 @@ async function stage(
     record: (type, detail) => journal.push({ type, detail }),
     dependencies,
   })
-  const controller = new AbortController()
-  const options = await route.plan(controller.signal)
-  await route.prepare(controller.signal)
-  return { root, appRoot, privateFolder, route, journal, disposed, options }
+  return {
+    root,
+    appRoot,
+    privateFolder,
+    route,
+    journal,
+    disposed,
+    controller: new AbortController(),
+  }
+}
+
+/** A staged run after `plan` and `prepare`. */
+async function stage(
+  context: TestContext,
+  overrides: Partial<ViteLibraryRouteDependencies> = {},
+) {
+  const run = await buildRoute(context, overrides)
+  const options = await run.route.plan(run.controller.signal)
+  await run.route.prepare(run.controller.signal)
+  return { ...run, options }
 }
 
 /** The URL the page announces for a file the dev server serves by absolute path. */
@@ -313,6 +329,8 @@ test('ignores scripts parsed after the observation was finalized', async (contex
   // Arrange
   const run = await stage(context)
   const packed = await put(join(run.options.packedRoot, 'dist', 'index.mjs'))
+  const appFile = await put(join(run.appRoot, 'src', 'main.tsx'))
+  run.route.observeScript(fsUrl(appFile), isOwned)
   run.route.finalize(true)
   // Act
   run.route.observeScript(fsUrl(packed), isOwned)
@@ -478,4 +496,230 @@ test('matches a package copy by whole path segments', () => {
     isInPackageCopy('/a/src/@acme/widgets/x.js', '@acme/widgets'),
     false,
   )
+})
+
+// protects=a build that finished but whose page never opened (listen failure, a stop before the page) finalizes pending, with no loaded fields, never "not loaded"; fails_when=finalize marks complete with loaded false for a page nobody observed; no_claim=none beyond protects
+test('makes no not-loaded claim when no page was ever observed', async (context) => {
+  // Arrange
+  const run = await stage(context)
+  // Act
+  run.route.finalize(true)
+  // Assert
+  const view = run.route.view()
+  assert.equal(view.observation, 'pending')
+  assert.equal('loaded' in view, false)
+  assert.equal('publishedCopyLoaded' in view, false)
+})
+
+// protects=a page that opened (an app script of the run's origin parsed) but did not close within the bound reads incomplete even with nothing of the package parsed; fails_when=an observed page that stayed open reads complete or pending; no_claim=none beyond protects
+test('reads incomplete when an observed page stayed open', async (context) => {
+  // Arrange
+  const run = await stage(context)
+  const appFile = await put(join(run.appRoot, 'src', 'main.tsx'))
+  run.route.observeScript(fsUrl(appFile), isOwned)
+  // Act
+  run.route.finalize(false)
+  // Assert
+  assert.equal(run.route.view().observation, 'incomplete')
+})
+
+// protects=a failed anchor write leaves the route unprepared: the facts claim no prepared library and the finalization observes nothing; fails_when=prepared is set before the anchor is written; no_claim=the anchor file's content
+test('claims no prepared library when the anchor write failed', async (context) => {
+  // Arrange
+  const run = await buildRoute(context, {
+    writeAnchor: async () => {
+      throw new Error('anchor write failed')
+    },
+  })
+  await run.route.plan(run.controller.signal)
+  // Act
+  await run.route.prepare(run.controller.signal).catch(() => undefined)
+  run.route.finalize(true)
+  // Assert
+  const view = run.route.view()
+  assert.equal(view.prepared, false)
+  assert.equal(view.observation, 'pending')
+  assert.equal(
+    run.journal.some((entry) => entry.type === 'library.observed'),
+    false,
+  )
+})
+
+// protects=one stale optimizer entry (its source or chunk gone) does not make the whole observation unreadable, and the matching entry is still judged; fails_when=a missing entry turns the observation unreadable; no_claim=none beyond protects
+test('skips a stale optimizer entry and still judges the matching chunk', async (context) => {
+  // Arrange
+  const run = await stage(context)
+  const source = await put(
+    join(run.appRoot, 'node_modules', '@acme', 'widgets', 'dist', 'index.mjs'),
+  )
+  const deps = join(run.privateFolder, 'vite-cache', 'deps')
+  const chunk = await put(join(deps, 'acme_widgets.js'))
+  await put(
+    join(deps, '_metadata.json'),
+    JSON.stringify({
+      optimized: {
+        gone: { src: join(run.appRoot, 'missing.js'), file: 'gone.js' },
+        '@acme/widgets': { src: source, file: 'acme_widgets.js' },
+      },
+    }),
+  )
+  const appFile = await put(join(run.appRoot, 'src', 'main.tsx'))
+  // Act
+  run.route.observeScript(fsUrl(appFile), isOwned)
+  run.route.observeScript(fsUrl(chunk), isOwned)
+  run.route.finalize(true)
+  // Assert
+  const view = run.route.view()
+  assert.equal(view.observation, 'complete')
+  assert.equal(view.publishedCopyPath, source)
+})
+
+// protects=optimizer metadata rewritten while the page runs is read again (new size or time), so a chunk added later is still judged; fails_when=the parsed metadata is cached forever; no_claim=none beyond protects
+test('reads the optimizer metadata again after it changed', async (context) => {
+  // Arrange
+  const run = await stage(context)
+  const source = await put(
+    join(run.appRoot, 'node_modules', '@acme', 'widgets', 'dist', 'index.mjs'),
+  )
+  const deps = join(run.privateFolder, 'vite-cache', 'deps')
+  const react = await put(join(deps, 'react.js'))
+  const widgets = await put(join(deps, 'acme_widgets.js'))
+  const metadata = join(deps, '_metadata.json')
+  await put(metadata, JSON.stringify({ optimized: {} }))
+  run.route.observeScript(fsUrl(react), isOwned)
+  // Act
+  await put(
+    metadata,
+    JSON.stringify({
+      optimized: { '@acme/widgets': { src: source, file: 'acme_widgets.js' } },
+    }),
+  )
+  run.route.observeScript(fsUrl(widgets), isOwned)
+  run.route.finalize(true)
+  // Assert
+  assert.equal(run.route.view().publishedCopyPath, source)
+})
+
+// protects=a learner's decline and a failing dialog read differently: the failure is journaled with its cause and the error says the learner was not asked; fails_when=a dialog error reads as the learner's refusal; no_claim=the editor dialog
+test('tells a failing confirmation dialog apart from a decline', async (context) => {
+  // Arrange
+  const run = await buildRoute(context, {
+    confirm: async () => {
+      throw new Error('dialog host unavailable')
+    },
+  })
+  // Act
+  const failure = await run.route.plan(run.controller.signal).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // Assert
+  assert.ok(failure instanceof StudyError)
+  assert.equal(failure.code, 'SCRIPT_NOT_CONFIRMED')
+  assert.equal(failure.details?.confirmation, 'dialog-failed')
+  assert.deepEqual(
+    run.journal.filter((entry) => entry.type === 'library.confirmation-failed'),
+    [
+      {
+        type: 'library.confirmation-failed',
+        detail: { cause: 'dialog host unavailable' },
+      },
+    ],
+  )
+})
+
+// protects=a refusal during the confirmation leaves no confirming phase on the run resource; fails_when=the phase stays confirming after the learner declined; no_claim=none beyond protects
+test('leaves no confirming phase after a decline', async (context) => {
+  // Arrange
+  const run = await buildRoute(context, { confirm: async () => false })
+  // Act
+  await run.route.plan(run.controller.signal).catch(() => undefined)
+  // Assert
+  assert.equal(run.route.currentPhase(), undefined)
+})
+
+// protects=files are compared with the real packed folder the build returned, so a private folder reached through a link still counts its packed module; fails_when=the planned (unresolved) path is compared with real-path script files; no_claim=none beyond protects
+test('counts a packed module when the planned private folder is a link', async (context) => {
+  // Arrange
+  const base = await realpath(await mkdtemp(join(tmpdir(), 'codebook-link-')))
+  context.after(() => removeTestFolder(base))
+  const realFolder = join(base, 'real')
+  const linkedFolder = join(base, 'linked')
+  await mkdir(realFolder, { recursive: true })
+  await symlink(realFolder, linkedFolder)
+  const realPacked = join(realFolder, 'node_modules', '@acme', 'widgets')
+  const run = await buildRoute(context, {
+    allocatePrivateFolder: async () => linkedFolder,
+    prepareCore: async () => ({
+      facts: FACTS,
+      packedRoot: realPacked,
+      peers: [],
+      imports: undefined,
+      libraryRoot: base,
+      privateFolder: realFolder,
+      dispose: async () => ({ cleanup: 'removed' }),
+      failLink: async (sentence) => {
+        throw new Error(sentence)
+      },
+    }),
+  })
+  await run.route.plan(run.controller.signal)
+  await run.route.prepare(run.controller.signal)
+  const packed = await put(join(realPacked, 'dist', 'index.mjs'))
+  // Act
+  run.route.observeScript(fsUrl(packed), isOwned)
+  run.route.finalize(true)
+  // Assert
+  assert.equal(run.route.view().loaded, true)
+})
+
+// protects=optimizer metadata that names chunk and source relative to the deps folder (Vite 8, the real P05 Example) is resolved against that folder, not the process folder; fails_when=a relative src is read from the working folder and the observation turns unreadable; no_claim=none beyond protects
+test('resolves relative optimizer metadata paths against the deps folder', async (context) => {
+  // Arrange
+  const run = await stage(context)
+  const source = await put(
+    join(run.appRoot, 'node_modules', '@acme', 'widgets', 'dist', 'index.mjs'),
+  )
+  const deps = join(run.privateFolder, 'vite-cache', 'deps')
+  const chunk = await put(join(deps, 'acme_widgets.js'))
+  await put(
+    join(deps, '_metadata.json'),
+    JSON.stringify({
+      optimized: {
+        '@acme/widgets': {
+          src: relative(deps, source),
+          file: 'acme_widgets.js',
+        },
+      },
+    }),
+  )
+  // Act
+  run.route.observeScript(fsUrl(chunk), isOwned)
+  run.route.finalize(true)
+  // Assert
+  const view = run.route.view()
+  assert.equal(view.observation, 'complete')
+  assert.equal(view.publishedCopyPath, source)
+})
+
+// protects=a run that was already stopped shows the learner no confirmation dialog; fails_when=the dialog is asked for an aborted run; no_claim=the editor dialog
+test('asks no confirmation when the run was already stopped', async (context) => {
+  // Arrange
+  let asked = 0
+  const run = await buildRoute(context, {
+    confirm: async () => {
+      asked += 1
+      return true
+    },
+  })
+  run.controller.abort(new Error('stopped'))
+  // Act
+  const failure = await run.route.plan(run.controller.signal).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // Assert
+  assert.ok(failure instanceof Error)
+  assert.equal(failure.message, 'stopped')
+  assert.equal(asked, 0)
 })

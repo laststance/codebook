@@ -42,7 +42,11 @@ async function startLibraryRun(
   context: TestContext,
   options: {
     behavior: StubViteBehavior
-    prepareLibrary: (port: number) => Promise<void>
+    prepareLibrary: (
+      port: number,
+      signal?: AbortSignal,
+      app?: DevelopmentApp,
+    ) => Promise<void>
     factsTimeoutMs?: number
   },
 ) {
@@ -94,9 +98,9 @@ async function startLibraryRun(
       peers: ['react'],
       privateFolder,
     },
-    prepareLibrary: async () => {
+    prepareLibrary: async (signal) => {
       prepareCalls.push('prepare')
-      await options.prepareLibrary(options.behavior.port)
+      await options.prepareLibrary(options.behavior.port, signal, app)
     },
   }
   const workspaceInfo = await assessViteWorkspace(
@@ -223,4 +227,61 @@ test('a failed build ends with its own error and the server never listens', asyn
   assert.ok('error' in run.outcome)
   assert.equal(run.outcome.error, failure)
   assert.equal(await isListening(port), false)
+})
+
+/** Ends the launcher process the way a crash does, and waits until the handle reads it as gone. */
+async function killLauncher(app: DevelopmentApp | undefined): Promise<void> {
+  assert.ok(app?.pid)
+  process.kill(app.pid, 'SIGKILL')
+  const deadline = Date.now() + 5_000
+  while (app.isRunning() && Date.now() < deadline)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+}
+
+// protects=a launcher that exits during a long library build ends the start with VITE_LAUNCHER_FAILED and cancels the build; fails_when=nothing watches the launcher, so the build runs on and the start ends only at the listen; no_claim=the build itself (a stub callback)
+test('a launcher that exits during the build ends the start and cancels the build', async (context) => {
+  // Arrange
+  const port = await freePort()
+  let buildWasCancelled = false
+  // Act
+  const run = await startLibraryRun(context, {
+    behavior: { port },
+    prepareLibrary: async (_port, signal, app) => {
+      await killLauncher(app)
+      // A build that is never cancelled would run on; this one gives up after 5 s so a missing watcher fails instead of hanging.
+      await new Promise<void>((resolve) => {
+        const giveUp = setTimeout(resolve, 5_000)
+        signal?.addEventListener('abort', () => {
+          buildWasCancelled = true
+          clearTimeout(giveUp)
+          resolve()
+        })
+      })
+    },
+  })
+  // Assert
+  assert.ok('error' in run.outcome)
+  const error = run.outcome.error
+  assert.ok(error instanceof StudyError)
+  assert.equal(error.code, 'VITE_LAUNCHER_FAILED')
+  assert.match(error.message, /exited while the library was being built/)
+  assert.equal(buildWasCancelled, true)
+})
+
+// protects=a launcher that is gone when the listen is sent reads as VITE_LAUNCHER_FAILED, not a raw send error; fails_when=the send's own Error escapes; no_claim=none beyond protects
+test('a launcher gone before the listen ends with a typed launcher failure', async (context) => {
+  // Arrange
+  const port = await freePort()
+  // Act
+  const run = await startLibraryRun(context, {
+    behavior: { port },
+    prepareLibrary: async (_port, _signal, app) => {
+      await killLauncher(app)
+    },
+  })
+  // Assert
+  assert.ok('error' in run.outcome)
+  const error = run.outcome.error
+  assert.ok(error instanceof StudyError)
+  assert.equal(error.code, 'VITE_LAUNCHER_FAILED')
 })

@@ -374,6 +374,8 @@ export async function configuredRuntimeHarness(
     entryPath?: string
     /** Makes the stand-in browser's first `close` fail, as a close that could not confirm Chrome's exit does; the second succeeds. */
     closeFailsOnce?: boolean
+    /** Makes the stand-in browser's first `close` wait for this promise and then fail, as a close that outlasts the close bound before it fails; later closes succeed. */
+    firstCloseFailsAfter?: Promise<void>
     /** The path the stand-in page lands on after each `Page.navigate` of a saved-session run (default: the path asked for). */
     navigationLandsOn?: string
     /** Makes the stand-in server's App verdict (`confirmAppEntry`) record its answer and then never settle until the run is cancelled, as a redirected root whose second request does not answer. */
@@ -2118,6 +2120,10 @@ export async function configuredRuntimeHarness(
           }
           async close(): Promise<void> {
             // A close that cannot confirm Chrome's exit throws once, as the real one does for a failed process listing.
+            if (options.firstCloseFailsAfter && closeAttempts++ === 0) {
+              await options.firstCloseFailsAfter
+              throw new Error('The page close failed late')
+            }
             if (options.closeFailsOnce && closeAttempts++ === 0)
               throw new Error(
                 'The saved-session Chrome exit could not be confirmed',

@@ -3,8 +3,9 @@ import { access, mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
+import { setTimeout } from 'node:timers/promises'
 
-import { REPOSITORY_SETUP_TIMEOUT_MS } from '../constants'
+import { ACTIVE_TIMEOUT_MS, REPOSITORY_SETUP_TIMEOUT_MS } from '../constants'
 import { StudyError } from '../errors'
 import type { PreparedLibraryCore } from '../libraryPackage'
 import type { RepositoryOperation } from '../repositoryConfigSchemas'
@@ -109,8 +110,10 @@ async function libraryDependencies(
 async function libraryHarness(
   context: TestContext,
   library: Awaited<ReturnType<typeof libraryDependencies>>,
+  extra: { firstCloseFailsAfter?: Promise<void> } = {},
 ) {
   return configuredRuntimeHarness(context, undefined, [], {
+    ...extra,
     adapter: 'vite-dev',
     packageRoot: PACKAGE_ROOT,
     packageApp: { decoyRoot: true },
@@ -346,4 +349,56 @@ test('a nested Vite run without library has no library facts', async (context) =
   const view = harness.run.view()
   assert.equal('library' in view, false)
   assert.equal('libraryPhase' in view, false)
+})
+
+// protects=a refusal of the build or the learner is not followed by a setup-timeout failure that overwrites the real error; fails_when=the setup timer is re-armed after a failing step and expires later; no_claim=none beyond protects
+test('a declined confirmation is not overwritten by a later setup timeout', async (context) => {
+  // Arrange
+  const library = await libraryDependencies(context, {
+    confirm: async () => false,
+  })
+  const harness = await libraryHarness(context, library)
+  const failure = await harness.run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  assert.ok(failure instanceof StudyError)
+  // Act
+  harness.advance(REPOSITORY_SETUP_TIMEOUT_MS + 5_000)
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    harness.run.view().failures.filter((text) => /setup|timed out/i.test(text))
+      .length,
+    0,
+  )
+})
+
+// protects=a page close that outlasts the close bound and then fails is journaled as a late failure; fails_when=the late rejection is dropped without a trace; no_claim=a real browser close
+test('journals a page close that fails after the close bound', async (context) => {
+  // Arrange
+  let failClose: () => void = () => undefined
+  const hold = new Promise<void>((resolve) => {
+    failClose = resolve
+  })
+  const library = await libraryDependencies(context)
+  const harness = await libraryHarness(context, library, {
+    firstCloseFailsAfter: hold,
+  })
+  await harness.run.prepare()
+  harness.announceScript('a1', `${ORIGIN}/@vite/client`)
+  // Act
+  const stopping = harness.run.stop()
+  // Real time lets the cleanup reach the close; the run's own clock then passes the bound.
+  await setTimeout(50)
+  harness.advance(ACTIVE_TIMEOUT_MS + 1_000)
+  failClose()
+  await stopping
+  // Assert
+  const late = harness.run
+    .view()
+    .events.filter((event) => event.type === 'library.page-close-failed-late')
+    .map((event) => JSON.parse(JSON.stringify(event.detail)))
+  assert.deepEqual(late, [{ cause: 'Error: The page close failed late' }])
+  assert.equal(harness.run.view().library?.observation, 'incomplete')
 })

@@ -1,7 +1,7 @@
-import { readFileSync, realpathSync } from 'node:fs'
+import { readFileSync, realpathSync, statSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, sep } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 
 import {
   LIBRARY_RUN_FOLDER_PREFIX,
@@ -32,6 +32,9 @@ const OPTIMIZER_DEPS_FOLDER_NAME = 'deps'
 
 /** The optimizer's metadata file inside {@link OPTIMIZER_DEPS_FOLDER_NAME}. */
 const OPTIMIZER_METADATA_FILE_NAME = '_metadata.json'
+
+/** One entry of the optimizer metadata: the chunk's file and the source it was bundled from. */
+type OptimizerEntry = { chunkPath: string; source: string }
 
 /** The parts of the checked-out library's `package.json` the redirect needs. */
 type LibraryManifestParts = {
@@ -143,7 +146,15 @@ export class ViteLibraryRoute {
   private observation: LibraryRunView['observation'] = 'pending'
   private unreadableCause?: string
   private finalized = false
+  /** Whether the page announced any script of the run's own origin, i.e. a page actually opened and was observed. */
+  private pageObserved = false
   private readonly packedFiles = new Set<string>()
+  /** The parsed optimizer metadata, valid while the file's modification time and size stay. */
+  private metadataCache?: {
+    mtimeMs: number
+    size: number
+    entries: OptimizerEntry[]
+  }
   private publishedCopyPath?: string
   /** The real file of each parsed URL already judged, so repeated announcements cost one look. */
   private readonly judgedUrls = new Map<string, string | undefined>()
@@ -195,8 +206,12 @@ export class ViteLibraryRoute {
       dependencies.readManifest ?? readLibraryManifestParts
     )(supported.libraryRoot)
     this.phase = 'confirming'
-    await this.askLearner(signal, confirmTimeoutMs)
-    this.phase = undefined
+    try {
+      await this.askLearner(signal, confirmTimeoutMs)
+    } finally {
+      // A refusal, a stop or a failing dialog must not leave the run resource reading "confirming".
+      this.phase = undefined
+    }
     const privateFolder = await (
       dependencies.allocatePrivateFolder ?? allocateTemporaryFolder
     )()
@@ -223,11 +238,14 @@ export class ViteLibraryRoute {
     signal: AbortSignal,
     timeoutMs: number,
   ): Promise<void> {
+    // A run that was stopped already gets no dialog.
+    signal.throwIfAborted()
     const waiting = new AbortController()
     const stopWaiting = (): void => waiting.abort()
     signal.addEventListener('abort', stopWaiting, { once: true })
     const timer = setTimeout(stopWaiting, timeoutMs)
     let confirmed = false
+    let dialogFailure: unknown
     try {
       confirmed = await this.input.dependencies
         .confirm(
@@ -240,7 +258,11 @@ export class ViteLibraryRoute {
           },
           waiting.signal,
         )
-        .catch(() => false)
+        .catch((error: unknown) => {
+          // A dialog that failed is no decision of the learner: the cause is kept apart from a decline.
+          dialogFailure = error
+          return false
+        })
     } finally {
       clearTimeout(timer)
       signal.removeEventListener('abort', stopWaiting)
@@ -249,6 +271,21 @@ export class ViteLibraryRoute {
     }
     // A stop that cut the wait short is the stop's own error, not the learner's refusal.
     signal.throwIfAborted()
+    if (!confirmed && dialogFailure !== undefined) {
+      const cause =
+        dialogFailure instanceof Error
+          ? dialogFailure.message
+          : String(dialogFailure)
+      this.input.record('library.confirmation-failed', { cause })
+      throw new StudyError(
+        'SCRIPT_NOT_CONFIRMED',
+        `The confirmation dialog failed (${cause}), so the learner was not asked and nothing was built or started.`,
+        undefined,
+        undefined,
+        undefined,
+        { sideEffects: 'none', confirmation: 'dialog-failed' },
+      )
+    }
     if (!confirmed)
       throw new StudyError(
         'SCRIPT_NOT_CONFIRMED',
@@ -283,8 +320,11 @@ export class ViteLibraryRoute {
         },
         { node, signal },
       )
-      this.prepared = core
       await (this.input.dependencies.writeAnchor ?? writeLibraryAnchor)(core)
+      // Set only once the anchor is written: a failed preparation never serves nor observes.
+      this.prepared = core
+      // The real packed folder, the one real-path script files are compared with.
+      this.packedRoot = core.packedRoot
     } catch (error) {
       const reported =
         error instanceof StudyError ? error.details?.cleanup : undefined
@@ -350,6 +390,7 @@ export class ViteLibraryRoute {
     try {
       const parsed = new URL(url)
       if (isOwnedOrigin(parsed.origin)) {
+        this.pageObserved = true
         const pathname = decodeURIComponent(parsed.pathname)
         const candidate = pathname.startsWith('/@fs/')
           ? pathname.slice('/@fs'.length)
@@ -384,24 +425,23 @@ export class ViteLibraryRoute {
   }
 
   /**
-   * Reads the optimizer's metadata to learn whether a chunk is the library's installed copy; metadata that cannot be read makes the observation `unreadable` (the cause is journaled), never a claim.
+   * Reads the optimizer's metadata to learn whether a chunk is the library's installed copy; metadata that cannot be read or parsed makes the observation `unreadable` (the cause is journaled), never a claim.
+   * An entry whose source vanished or whose chunk is another file is skipped: a stale entry says nothing about this chunk.
    */
   private judgeOptimizerChunk(file: string): void {
     const deps = this.depsFolder()
     const name = this.packageName
     if (!deps || !name) return
     try {
-      const metadata: unknown = JSON.parse(
-        readFileSync(join(deps, OPTIMIZER_METADATA_FILE_NAME), 'utf8'),
-      )
-      const optimized = Object(Reflect.get(Object(metadata), 'optimized'))
-      for (const entry of Object.values<unknown>(optimized)) {
-        const chunkFile = Reflect.get(Object(entry), 'file')
-        const source = Reflect.get(Object(entry), 'src')
-        if (typeof chunkFile !== 'string' || typeof source !== 'string')
+      for (const entry of this.optimizerEntries(deps)) {
+        // Plain path comparison first: only the matching entry costs a real-path look.
+        if (entry.chunkPath !== file) continue
+        let realSource: string
+        try {
+          realSource = realpathSync(entry.source)
+        } catch {
           continue
-        if (realpathSync(join(deps, chunkFile)) !== file) continue
-        const realSource = realpathSync(source)
+        }
         if (isInPackageCopy(realSource, name))
           this.publishedCopyPath ??= realSource
       }
@@ -416,6 +456,33 @@ export class ViteLibraryRoute {
   }
 
   /**
+   * The optimizer metadata's entries, parsed once per file version (modification time and size).
+   * @throws When the metadata file cannot be read or parsed.
+   */
+  private optimizerEntries(deps: string): OptimizerEntry[] {
+    const metadataPath = join(deps, OPTIMIZER_METADATA_FILE_NAME)
+    const { mtimeMs, size } = statSync(metadataPath)
+    const cached = this.metadataCache
+    if (cached && cached.mtimeMs === mtimeMs && cached.size === size)
+      return cached.entries
+    const metadata: unknown = JSON.parse(readFileSync(metadataPath, 'utf8'))
+    const optimized = Object(Reflect.get(Object(metadata), 'optimized'))
+    const entries: OptimizerEntry[] = []
+    for (const entry of Object.values<unknown>(optimized)) {
+      const chunkFile = Reflect.get(Object(entry), 'file')
+      const source = Reflect.get(Object(entry), 'src')
+      if (typeof chunkFile === 'string' && typeof source === 'string')
+        // Vite 8 writes `file` and `src` relative to the deps folder (an absolute path stays as it is).
+        entries.push({
+          chunkPath: resolve(deps, chunkFile),
+          source: resolve(deps, source),
+        })
+    }
+    this.metadataCache = { mtimeMs, size, entries }
+    return entries
+  }
+
+  /**
    * Seam 4, finalization: marks the observation after the page was closed (`complete`) or could not be confirmed closed (`incomplete`), and journals `library.observed`.
    * Called by the run before it stops the server, so a script parsed up to the close is counted and none after.
    * @param isPageClosed - Whether the owned page closed within the close bound.
@@ -426,7 +493,8 @@ export class ViteLibraryRoute {
     this.finalized = true
     // A library that was never built was never served: nothing to observe.
     if (!this.prepared) return
-    if (this.observation !== 'unreadable')
+    // A page that never opened (listen failure, a stop before the page) leaves the observation pending: "not loaded" is never claimed from nothing.
+    if (this.observation !== 'unreadable' && this.pageObserved)
       this.observation = isPageClosed ? 'complete' : 'incomplete'
     this.input.record('library.observed', {
       observation: this.observation,

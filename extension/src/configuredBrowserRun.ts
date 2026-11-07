@@ -205,6 +205,7 @@ import {
 } from './utils/assertDevelopmentWorkspace'
 import { assertFrameAtBoundPosition } from './utils/assertFrameAtBoundPosition'
 import { assertSavedSessionOrigin } from './utils/assertSavedSessionOrigin'
+import { assertViteLibraryNeedsPackageRoot } from './utils/assertViteLibraryNeedsPackageRoot'
 import { refuseViteMisroute } from './utils/assessViteWorkspace'
 import { blankCommentsAndTemplates } from './utils/blankCommentsAndTemplates'
 import { boundColumnOfInstance } from './utils/boundColumnOfInstance'
@@ -1777,6 +1778,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
             this.abort.signal,
           )
     if (packed) {
+      // Registering here, before `setPackedRoute` names the packed folder, is safe: the seal runs only after the server started, which is after the route is planned and the packed route is set.
       this.viteLibraries.registerPacked(stop.source, packed)
       return true
     }
@@ -2072,7 +2074,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         : undefined
     if (declared === undefined) return undefined
     const dependencies = this.options.viteLibrary
-    if (!dependencies || !this.vitePackage || this.vitePackage.isRoot)
+    // A packageRoot that resolves to the repository root is a configuration error, not a missing editor feature.
+    if (this.vitePackage?.isRoot)
+      assertViteLibraryNeedsPackageRoot({
+        version: 3,
+        adapter: 'vite-dev',
+        library: {},
+      })
+    if (!dependencies || !this.vitePackage)
       throw new StudyError(
         'PREREQUISITE_MISSING',
         'The library route is unavailable in this editor.',
@@ -2106,13 +2115,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /**
    * Seam 2 of the Vite library route: builds and packs the library while the server exists but does not listen.
    * Called by the Vite launcher start between the facts and the listen; the setup budget does not run during the build, which the library's own timeout bounds.
+   * @param launcherSignal - Ends when the launcher exited during the build; the build is cancelled with the run's own stop.
    * @throws `LIBRARY_BUILD_UNSUPPORTED` or `LIBRARY_BUILD_FAILED` from the build.
    * @example await this.buildViteLibrary()
    */
-  private async buildViteLibrary(): Promise<void> {
+  private async buildViteLibrary(launcherSignal?: AbortSignal): Promise<void> {
     const route = this.libraryRoute
     if (!route) return
-    await this.withSetupBudgetPaused(() => route.prepare(this.abort.signal))
+    const signal = launcherSignal
+      ? AbortSignal.any([this.abort.signal, launcherSignal])
+      : this.abort.signal
+    await this.withSetupBudgetPaused(() => route.prepare(signal))
   }
 
   /**
@@ -2127,11 +2140,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): Promise<Result> {
     clearTimeout(this.progressTimer)
     const startedAt = Date.now()
+    let didSucceed = false
     try {
-      return await work()
+      const result = await work()
+      didSucceed = true
+      return result
     } finally {
       this.preparationDeadlineAt += Date.now() - startedAt
-      if (!this.cleaning)
+      // A step that threw (decline, unsupported, build failure, stop) is not followed by a timer: a setup timeout must not overwrite the real error.
+      if (didSucceed && !this.cleaning)
         this.progressDeadline(
           Math.max(1, this.preparationDeadlineAt - Date.now()),
           () => this.expireSetupBudget(this.preparationBudgetMs),
@@ -2165,16 +2182,23 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       timer = setTimeout(() => resolve('bound'), ACTIVE_TIMEOUT_MS)
     })
     const failures: string[] = []
+    let didBoundWin = false
     const outcome = await Promise.race([
       this.browser.close().then(
         () => 'closed' as const,
         (error: unknown) => {
-          failures.push(String(error))
+          // A close that fails after the bound already won is journaled; the owned browser close step of the cleanup closes again and reports its own failure.
+          if (didBoundWin)
+            this.evidence.record('library.page-close-failed-late', {
+              cause: String(error),
+            })
+          else failures.push(String(error))
           return 'failed' as const
         },
       ),
       bound,
     ])
+    didBoundWin = outcome === 'bound'
     clearTimeout(timer)
     route.finalize(outcome === 'closed')
     return failures
@@ -2281,7 +2305,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       ...(viteLibrary
         ? {
             viteLibrary,
-            prepareLibrary: (): Promise<void> => this.buildViteLibrary(),
+            prepareLibrary: (signal): Promise<void> =>
+              this.buildViteLibrary(signal),
           }
         : {}),
       ...(hasPagesFolder ? { outputMask: maskNextServerOutput } : {}),

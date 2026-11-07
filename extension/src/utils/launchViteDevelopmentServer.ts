@@ -193,26 +193,81 @@ function refuseBlockedLibrary(
   throw blocked
 }
 
+/** How often the build watches the launcher process for an early exit. */
+const LAUNCHER_WATCH_INTERVAL_MS = 100
+
 /**
- * Builds and packs the library while the server exists but does not listen.
+ * Builds and packs the library while the server exists but does not listen, and ends the build when the launcher dies meanwhile.
  *
- * Why it exists: the run keeps its setup deadline off for the build, which LIBRARY_BUILD_TIMEOUT_MS bounds, and a failed build must end the start with its own typed error. Called just before the listen command.
+ * Why it exists: the run keeps its setup deadline off for the build, which LIBRARY_BUILD_TIMEOUT_MS bounds, and a failed build must end the start with its own typed error. Nothing else watches the launcher during that wait, so a launcher that exits mid-build would otherwise surface only at the listen as a raw send error. Called just before the listen command.
  * @param request - The run's start request; a request without `prepareLibrary` builds nothing.
  * @param app - The launcher, told not to listen when the build fails.
- * @throws What the build raised (`LIBRARY_BUILD_UNSUPPORTED` or `LIBRARY_BUILD_FAILED`).
- * @example await buildLibraryBeforeListen(request, app)
+ * @param mask - Masks env values and secret shapes in a sentence.
+ * @throws What the build raised (`LIBRARY_BUILD_UNSUPPORTED` or `LIBRARY_BUILD_FAILED`); `VITE_LAUNCHER_FAILED` when the launcher exited during the build (the build is cancelled first).
+ * @example await buildLibraryBeforeListen(request, app, mask)
  */
 async function buildLibraryBeforeListen(
   request: DevelopmentServerStart,
   app: DevelopmentApp,
+  mask: (text: string) => string,
 ): Promise<void> {
   if (!request.viteLibrary || !request.prepareLibrary) return
+  const launcherGone = new AbortController()
+  let watcher: ReturnType<typeof setInterval> | undefined
+  const launcherExit = new Promise<never>((_resolve, reject) => {
+    watcher = setInterval(() => {
+      // A stopped run closes the launcher itself: its own stop error is the message, not a launcher failure.
+      if (app.isRunning() || request.signal.aborted) return
+      clearInterval(watcher)
+      const { exitCode, signal } = app.exitStatus()
+      // Cancels the build first, then settles the race with the typed error.
+      launcherGone.abort()
+      reject(
+        viteRefusal(
+          'VITE_LAUNCHER_FAILED',
+          mask(
+            `The Vite launcher exited while the library was being built (${exitCode ?? signal ?? 'no exit status'}): ${app.outputTail()}`,
+          ),
+        ),
+      )
+    }, LAUNCHER_WATCH_INTERVAL_MS)
+  })
   try {
-    await request.prepareLibrary()
+    await Promise.race([
+      request.prepareLibrary(
+        AbortSignal.any([request.signal, launcherGone.signal]),
+      ),
+      launcherExit,
+    ])
   } catch (error) {
     // The server never listens after a failed build; the typed build error is the message that matters.
     refuseLaunch(app)
     throw error
+  } finally {
+    clearInterval(watcher)
+  }
+}
+
+/**
+ * Tells the launcher to listen, with a typed error when the launcher is gone.
+ *
+ * Why it exists: `app.send` throws a raw error on a disconnected channel; a launcher that exited between the build and the listen must read as `VITE_LAUNCHER_FAILED`. Called by {@link launchViteDevelopmentServer} right before it waits for the listening report.
+ * @param app - The launcher.
+ * @param mask - Masks env values and secret shapes in a sentence.
+ * @throws `VITE_LAUNCHER_FAILED` when the message could not be sent.
+ * @example sendListen(app, mask)
+ */
+function sendListen(app: DevelopmentApp, mask: (text: string) => string): void {
+  try {
+    app.send({ type: VITE_LAUNCHER_MESSAGES.listen })
+  } catch (cause) {
+    const detail = cause instanceof Error ? cause.message : String(cause)
+    throw viteRefusal(
+      'VITE_LAUNCHER_FAILED',
+      mask(
+        `The Vite launcher could not be told to listen (${detail}): ${app.outputTail()}`,
+      ),
+    )
   }
 }
 
@@ -409,10 +464,10 @@ export async function launchViteDevelopmentServer(
   }
   request.alive()
   app.declarePort(facts.port)
-  await buildLibraryBeforeListen(request, app)
+  await buildLibraryBeforeListen(request, app, mask)
   request.alive()
   request.onStep(VITE_SETUP_STEPS.startingVite)
-  app.send({ type: VITE_LAUNCHER_MESSAGES.listen })
+  sendListen(app, mask)
   const listening = await receive(REPOSITORY_SETUP_TIMEOUT_MS)
   if (listening.type === VITE_LAUNCHER_MESSAGES.failed) {
     maskedValues.push(...listening.envValues)
