@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -10,6 +10,7 @@ import { NodeTestHistoryStore } from '../nodeTestHistoryStore'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const SOURCE_TEXT = 'const nextTheme = "dark";\n'
 
@@ -21,7 +22,7 @@ const SOURCE_TEXT = 'const nextTheme = "dark";\n'
  */
 async function sealedPassingHistory(context: TestContext) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-citations-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const header = nodeTestHistoryHeader('e'.repeat(64))
   const store = new NodeTestHistoryStore(directory, header.workspaceKey)
   const writer = await store.start(header)

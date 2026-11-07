@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { discoverWxtProjects } from '../utils/discoverWxtProjects'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /**
  * Makes an empty repository folder by its real path, removed when the test ends.
@@ -15,7 +17,7 @@ async function repository(context: TestContext): Promise<string> {
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wxt-projects-')),
   )
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   return root
 }
 

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
@@ -10,6 +10,7 @@ import { sha256 } from '../runtimeSupport/utils/sha256'
 import { checkNodeTestFiles } from '../utils/checkNodeTestFiles'
 
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const SOURCE_TEXT = 'export const nextRun = schedule(job, 5_000)\n'
 const TEST_TEXT = 'test("runs a delayed job after its timer", () => {})\n'
@@ -44,7 +45,7 @@ async function schedulerRepository(): Promise<{
   return {
     root,
     configuration,
-    cleanup: (): Promise<void> => rm(root, { recursive: true, force: true }),
+    cleanup: (): Promise<void> => removeTestFolder(root),
   }
 }
 

@@ -39,6 +39,7 @@ import {
 } from './utils/idOfNoProcess'
 import { loadModule } from './utils/loadModule'
 import { realProcessStart } from './utils/realProcessStart'
+import { removeTestFolder } from './utils/removeTestFolder'
 import { startOfKilledWindow } from './utils/startOfKilledWindow'
 
 // Every write of these tests names this process's own start, which the product reads once, keeps, and keeps as failed for a minute; on Windows that read is a PowerShell that starts cold. It is made here first, with the tests' own bound, and names its query when it fails.
@@ -51,7 +52,7 @@ async function storageDirectory(context: TestContext): Promise<string> {
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-storage-lock-')),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   return directory
 }
 
@@ -1914,6 +1915,7 @@ async function putInTheLocksPlace(
   lockPath: string,
   kind: 'empty file' | 'folder' | 'oversized file' | 'link',
 ): Promise<void> {
+  // not cleanup: deletes a path of the fixture so the code under test meets it missing
   await rm(lockPath, { recursive: true, force: true })
   if (kind === 'empty file') await writeFile(lockPath, '')
   if (kind === 'folder') await mkdir(lockPath)

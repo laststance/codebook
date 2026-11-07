@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
@@ -30,6 +30,7 @@ import { validateRecordingContext } from '../utils/validateRecordingContext'
 import { captureBrowserOnlyOperationsStudy } from './utils/captureBrowserOnlyOperationsStudy'
 import { createOperationsStudy } from './utils/createOperationsStudy'
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** The study 0.2.72.0 (commit 2f5de949) wrote for the run of {@link captureBrowserOnlyOperationsStudy}. */
 const GOLDEN_PATH = resolve(
@@ -197,7 +198,7 @@ test('STUDY_STORAGE_FORMATS, READABLE_STUDY_VERSION and the study schema agree',
 test('a run saved at its first pause, saved again after a later pause, restarted and reopened stays format 8', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-format-8-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const laterCheckpoint = createOperationsStudy()
   const firstPause = laterCheckpoint.observations[0]!
   // The first checkpoint: operations 1 and 2 sent, the stop after operation 2 paused, nothing after it reached.
@@ -498,7 +499,7 @@ test('a format 7 study with a server-action stop saved by 0.2.72.0 still opens a
     await readFile(SERVER_STOP_GOLDEN_PATH, 'utf8'),
   )
   const directory = await mkdtemp(join(tmpdir(), 'codebook-format-7-server-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const library = new LearningLibrary(directory, golden.workspaceKey)
   await library.saveStudy(golden)
   // Act

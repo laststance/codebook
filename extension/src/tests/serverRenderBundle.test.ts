@@ -1,12 +1,5 @@
 import assert from 'node:assert/strict'
-import {
-  mkdtemp,
-  mkdir,
-  readFile,
-  realpath,
-  rm,
-  writeFile,
-} from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -14,6 +7,8 @@ import { test, type TestContext } from 'node:test'
 import { StudyError } from '../errors'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { readDevelopmentBundle } from '../utils/readDevelopmentBundle'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** The real `(rsc)` modules cut from the spike's chunks of two Next versions (Issue 179, version 2.1 comment). */
 const FIXTURES = join(__dirname, '../../src/tests/fixtures/next-rsc')
@@ -75,7 +70,7 @@ async function routeChunkWorkspace(
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-rsc-seal-')),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const write = async (path: string, text: string): Promise<void> => {
     await mkdir(dirname(join(directory, path)), { recursive: true })
     await writeFile(join(directory, path), text)

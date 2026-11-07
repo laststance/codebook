@@ -31,6 +31,7 @@ import {
 import { loadDropSecondNameWhoseLinkIsRefused } from './utils/loadDropSecondNameWhoseLinkIsRefused'
 import { loadModule } from './utils/loadModule'
 import { loadOpenWithoutFollowing } from './utils/loadOpenWithoutFollowing'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** What a caller words a refused link back with; the tests of the moves that need no such sentence hand it too. */
 const sentenceOfARefusedLinkBack = (code: string): string =>
@@ -106,7 +107,7 @@ test('a moved file gets its own path back where nothing stands there and loses i
       },
     )
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })
 
@@ -154,7 +155,7 @@ test('a second name is removed only of the file that also stands at its own path
       },
     )
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })
 
@@ -200,7 +201,7 @@ test('a moved file that the file system refuses to link back stays under its sec
       },
     )
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })
 
@@ -364,7 +365,7 @@ test('a file that is created under the second name after the first file was dele
       },
     )
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })
 
@@ -372,7 +373,7 @@ test('a file that is created under the second name after the first file was dele
 test('a link to a file is not a second name of that file: the name is not opened through the link, and the link stays', async (context) => {
   // Arrange
   const folder = await mkdtemp(join(tmpdir(), 'codebook-second-name-'))
-  context.after(() => rm(folder, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(folder))
   const filePath = join(folder, 'a-file'),
     linkPath = join(folder, 'a-link-to-it')
   await writeFile(filePath, 'bytes')
@@ -549,7 +550,7 @@ test('a second name of a file is not removed while this user cannot open one of 
       },
     )
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })
 
@@ -588,7 +589,7 @@ test('a file that takes the second name while Codebook closes the two files it c
       },
     )
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })
 
@@ -648,7 +649,7 @@ test('where the system refuses to remove a name of an open file, the second name
       },
     )
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })
 
@@ -656,7 +657,7 @@ test('where the system refuses to remove a name of an open file, the second name
 test('on this system the second name of one file is removed in one of the two orders the rule knows, and the run says which: with both files still open, or after both were closed', async (context) => {
   // Arrange: a file with two names, and the rule over the real files with its removals and closes written down.
   const folder = await mkdtemp(join(tmpdir(), 'codebook-second-name-'))
-  context.after(() => rm(folder, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(folder))
   const filePath = join(folder, 'a-file'),
     linkedPath = join(folder, 'its-second-name')
   await writeFile(filePath, 'bytes')

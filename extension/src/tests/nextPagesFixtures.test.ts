@@ -5,7 +5,6 @@ import {
   mkdtemp,
   readFile,
   realpath,
-  rm,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -17,6 +16,8 @@ import { z } from 'zod'
 import { findNextPagesSource } from '../utils/findNextPagesSource'
 import { readNextRouteManifests } from '../utils/readNextRouteManifests'
 import { resolveNextPagesRoute } from '../utils/resolveNextPagesRoute'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 // The measured fixtures: what a Next 16.4.3 dev server (`next dev --webpack`) wrote for two TanStack/query c9c00015 Pages examples after one GET of / (Cycle 0066 task 32); each folder's pages-files.json says how it was measured.
 const FIXTURES = join(__dirname, '../../src/tests/fixtures/next-pages')
@@ -31,7 +32,7 @@ async function workspaceWithFolders(
   const workspace = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-measured-pages-')),
   )
-  context.after(() => rm(workspace, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(workspace))
   for (const folder of folders)
     await mkdir(join(workspace, folder), { recursive: true })
   return workspace

@@ -1135,6 +1135,7 @@ test('an evidence event recorded after a removed run’s evidence directory left
   try {
     const evidence = stopped.harness.runtimes[0]!.evidence
     await evidence.flush()
+    // not cleanup: the evidence folder is removed by hand so later writes of the code under test fail
     await rm(evidence.directory, { recursive: true, force: true })
     stopped.service.excludeHistory(stopped.record)
     // Act

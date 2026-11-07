@@ -25,6 +25,7 @@ import {
 } from '../utils/planNodeTestExecution'
 import { prepareNodeTestLaunch } from '../utils/prepareNodeTestLaunch'
 
+import { removeTestFolder } from './utils/removeTestFolder'
 import { ROOT_MODE_EXECUTION_PLAN } from './utils/rootModeExecutionPlan'
 
 /**
@@ -183,9 +184,8 @@ test('a cited Vitest 5 test runs only its file with a literal anchored title pat
       'the report folder is private to this user',
     )
   } finally {
-    await rm(root, { recursive: true, force: true })
-    if (reportDirectory)
-      await rm(reportDirectory, { recursive: true, force: true })
+    await removeTestFolder(root)
+    if (reportDirectory) await removeTestFolder(reportDirectory)
   }
 })
 
@@ -231,9 +231,8 @@ test('a cited Vitest 4 test joins its title path with the single space Vitest 4 
       '--testNamePattern=^subscription nested subscribes once$',
     )
   } finally {
-    await rm(root, { recursive: true, force: true })
-    if (reportDirectory)
-      await rm(reportDirectory, { recursive: true, force: true })
+    await removeTestFolder(root)
+    if (reportDirectory) await removeTestFolder(reportDirectory)
   }
 })
 
@@ -281,9 +280,8 @@ test('a test title that looks like a Vitest option stays inside the anchored nam
     )
     assert.equal(launch.args.includes('--config=evil.config.ts'), false)
   } finally {
-    await rm(root, { recursive: true, force: true })
-    if (reportDirectory)
-      await rm(reportDirectory, { recursive: true, force: true })
+    await removeTestFolder(root)
+    if (reportDirectory) await removeTestFolder(reportDirectory)
   }
 })
 
@@ -345,9 +343,8 @@ test('other test files that contain the cited path are excluded and Vitest must 
       excludes.map((exclude) => `--exclude=${exclude}`),
     )
   } finally {
-    await rm(root, { recursive: true, force: true })
-    if (reportDirectory)
-      await rm(reportDirectory, { recursive: true, force: true })
+    await removeTestFolder(root)
+    if (reportDirectory) await removeTestFolder(reportDirectory)
   }
 })
 
@@ -427,7 +424,7 @@ test('a Vitest selection that cannot run the cited file exactly once is refused 
       /65 other test files/,
     )
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await removeTestFolder(root)
   }
 })
 
@@ -476,7 +473,7 @@ test('a retired testName or a missing test identity is refused before any Vitest
     )
     assert.equal(vitest.requests.length, 0)
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await removeTestFolder(root)
   }
 })
 
@@ -518,7 +515,7 @@ test('a repository whose Vitest is older than 4 at the launch is refused before 
     )
     assert.equal(vitest.requests.length, 0)
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await removeTestFolder(root)
   }
 })
 
@@ -607,8 +604,8 @@ test('a changed source or a symlink escaping the repository cannot start a Node 
       'no Vitest process starts for an unverified repository',
     )
   } finally {
-    await rm(root, { recursive: true, force: true })
-    await rm(outside, { recursive: true, force: true })
+    await removeTestFolder(root)
+    await removeTestFolder(outside)
   }
 })
 
@@ -679,8 +676,8 @@ for (const scenario of [
       assert.equal(refusal.message, scenario.refusal)
       assert.equal(vitest.requests.length, 0)
     } finally {
-      await rm(root, { recursive: true, force: true })
-      await rm(outside, { recursive: true, force: true })
+      await removeTestFolder(root)
+      await removeTestFolder(outside)
     }
   })
 
@@ -764,8 +761,7 @@ test('a Node test seals every declared source stop before acquiring a process', 
       /declared stop 2 cites src\/target\.ts with SHA-256 0{64}/,
     )
   } finally {
-    await rm(root, { recursive: true, force: true })
-    if (reportDirectory)
-      await rm(reportDirectory, { recursive: true, force: true })
+    await removeTestFolder(root)
+    if (reportDirectory) await removeTestFolder(reportDirectory)
   }
 })

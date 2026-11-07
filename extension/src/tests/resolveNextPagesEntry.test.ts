@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -11,6 +11,8 @@ import {
   type NextPagesEntryFacts,
 } from '../utils/resolveNextPagesEntry'
 
+import { removeTestFolder } from './utils/removeTestFolder'
+
 /**
  * Creates a temporary Next project with the given files (each a small stand-in, never application code).
  * @returns The workspace root.
@@ -20,7 +22,7 @@ async function projectWith(
   files: readonly string[],
 ): Promise<string> {
   const workspace = await mkdtemp(join(tmpdir(), 'codebook-pages-entry-'))
-  context.after(() => rm(workspace, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(workspace))
   for (const file of files) {
     await mkdir(dirname(join(workspace, file)), { recursive: true })
     await writeFile(

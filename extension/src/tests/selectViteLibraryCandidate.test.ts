@@ -1,12 +1,5 @@
 import assert from 'node:assert/strict'
-import {
-  mkdir,
-  mkdtemp,
-  realpath,
-  rm,
-  symlink,
-  writeFile,
-} from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -17,6 +10,8 @@ import {
   type ViteLibrarySelection,
 } from '../utils/selectViteLibraryCandidate'
 import type { ViteLibraryModules } from '../utils/viteLibraryModules'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const OWNED_ORIGIN = 'http://127.0.0.1:4321'
 const APP_ROOT = '/repo/examples/app'
@@ -321,7 +316,7 @@ test('reports the first decision-table row that holds when several rows hold', a
 /** Writes a real library file below a temp repository reached through a symlinked folder. */
 async function linkedLibrary(context: TestContext) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'vite-library-')))
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   await mkdir(join(root, 'packages/core/src'), { recursive: true })
   await mkdir(join(root, 'packages/core/build/modern'), { recursive: true })
   await writeFile(join(root, 'packages/core/src/a.ts'), TEXT)

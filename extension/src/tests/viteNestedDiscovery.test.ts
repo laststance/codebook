@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -16,6 +16,7 @@ import {
 } from '../utils/viteWorkspaceMessages'
 
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const executeFile = promisify(execFile)
 const SIGNAL = new AbortController().signal
@@ -29,7 +30,7 @@ async function makeRepository(context: TestContext): Promise<string> {
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-vite-discovery-')),
   )
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   await executeFile('git', ['init', '--quiet', root])
   return root
 }
@@ -194,7 +195,7 @@ test('outside a Git repository the Vite list is empty and truncated as git-faile
   const folder = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-vite-nogit-')),
   )
-  context.after(() => rm(folder, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(folder))
   // Act
   const scan = await scanVitePackages(folder, async (app) => app.packageRoot)
   // Assert

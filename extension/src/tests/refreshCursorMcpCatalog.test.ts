@@ -47,11 +47,12 @@ import { idleChild } from './utils/idleChild'
 import { loadModule } from './utils/loadModule'
 import { loadOpenWithoutFollowing } from './utils/loadOpenWithoutFollowing'
 import { realProcessStart } from './utils/realProcessStart'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 test('Cursor MCP discovery refresh preserves the bytes of an existing user config', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const configPath = join(directory, 'mcp.json')
   const original = '{"mcpServers":{"existing":{"command":"existing-tool"}}}\n'
   await writeFile(configPath, original)
@@ -71,7 +72,7 @@ test('Cursor MCP discovery refresh preserves the bytes of an existing user confi
 test('Cursor MCP discovery refresh creates a private empty config for a first-time user', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const configPath = join(directory, 'mcp.json')
   // Act
   await refreshCursorMcpCatalog(join(directory, 'storage'), directory)
@@ -86,7 +87,7 @@ test('Cursor MCP discovery refresh creates a private empty config for a first-ti
 test('an earlier Cursor removal cannot retire the empty catalog refreshed by a newer setup', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const storageRoot = join(directory, 'storage'),
     configPath = join(directory, 'mcp.json')
   const firstRefresh = await refreshCursorMcpCatalog(storageRoot, directory)
@@ -120,7 +121,7 @@ test('an earlier Cursor removal cannot retire the empty catalog refreshed by a n
 test('Cursor MCP setup recovers ownership after an interrupted atomic config publication', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const storageRoot = join(directory, 'storage'),
     receiptDirectory = join(storageRoot, 'cursor-mcp-catalog')
   await mkdir(receiptDirectory, { recursive: true })
@@ -168,7 +169,7 @@ test('Cursor MCP setup recovers ownership after an interrupted atomic config pub
 test('Cursor MCP removal retires a config published before its ownership receipt was saved', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const storageRoot = join(directory, 'storage'),
     receiptDirectory = join(storageRoot, 'cursor-mcp-catalog')
   await mkdir(receiptDirectory, { recursive: true })
@@ -212,7 +213,7 @@ test('Cursor MCP removal retires a config published before its ownership receipt
 test('Cursor MCP setup waits for another window to release its brief catalog write', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const storageRoot = join(directory, 'storage'),
     lockDirectory = join(storageRoot, 'cursor-mcp-catalog')
   await mkdir(lockDirectory, { recursive: true })
@@ -233,7 +234,7 @@ test('Cursor MCP setup waits for another window to release its brief catalog wri
 test('Cursor MCP setup preserves an interrupted catalog lock after bounded retries', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const storageRoot = join(directory, 'storage'),
     lockDirectory = join(storageRoot, 'cursor-mcp-catalog')
   await mkdir(lockDirectory, { recursive: true })
@@ -252,7 +253,7 @@ test('Cursor MCP setup preserves an interrupted catalog lock after bounded retri
 test('a window that finds the Cursor MCP catalog locked asks for the lock again up to twenty times, each after a pause that a random draw makes between 50 and 149 ms long, so that windows that restart together do not ask in step', async (context) => {
   // Arrange: a lock another window keeps, random fractions of the test's, and pauses that are counted, not waited.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const storageRoot = join(directory, 'storage'),
     lockDirectory = join(storageRoot, 'cursor-mcp-catalog')
   await mkdir(lockDirectory, { recursive: true })
@@ -305,7 +306,7 @@ test('a window that finds the Cursor MCP catalog locked asks for the lock again 
 test('Cursor MCP setup still creates the config when the windows that restart with it keep the catalog lock for 400 ms', async (context) => {
   // Arrange: another window's lock that is released after 400 ms.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const storageRoot = join(directory, 'storage'),
     lockDirectory = join(storageRoot, 'cursor-mcp-catalog')
   await mkdir(lockDirectory, { recursive: true })
@@ -337,7 +338,7 @@ test('Cursor MCP setup still creates the config when the windows that restart wi
 test('a Cursor MCP setup that finds the catalog locked by another live window through all twenty retries reads that window’s start once', async (context) => {
   // Arrange: a running process holds the catalog's lock, recorded with its real start; the pauses are counted, not waited, and each query of a process start is counted by the process it asks about.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const storageRoot = join(directory, 'storage'),
     lockDirectory = join(storageRoot, 'cursor-mcp-catalog')
   await mkdir(lockDirectory, { recursive: true })
@@ -412,7 +413,7 @@ test('a Cursor MCP setup that finds the catalog locked by another live window th
 test('a Cursor MCP setup takes over the catalog lock of a window that was killed after its first try and creates the config', async (context) => {
   // Arrange: a running process holds the catalog's lock, recorded with its real start, and is killed at the first pause; each query of a process start is counted by the process it asks about.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const storageRoot = join(directory, 'storage'),
     lockDirectory = join(storageRoot, 'cursor-mcp-catalog')
   await mkdir(lockDirectory, { recursive: true })
@@ -500,7 +501,7 @@ test('a Cursor MCP setup takes over the catalog lock of a window that was killed
 test('a Cursor MCP setup that finds the catalog locked by another live window whose start cannot be read asks for that start once through all twenty retries', async (context) => {
   // Arrange: a running process holds the catalog's lock, recorded with its real start; every read of a process start fails and is counted by the process it asks about; the pauses are counted, not waited.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const storageRoot = join(directory, 'storage'),
     lockDirectory = join(storageRoot, 'cursor-mcp-catalog')
   await mkdir(lockDirectory, { recursive: true })
@@ -574,7 +575,7 @@ test('a Cursor MCP setup that finds the catalog locked by another live window wh
 test('Cursor MCP discovery refresh refuses redirected config files', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const originalPath = join(directory, 'original.json')
   await writeFile(originalPath, '{"mcpServers":{"existing":{}}}\n')
   if (!(await createLinkIfAllowed(originalPath, join(directory, 'mcp.json'))))
@@ -593,7 +594,7 @@ test('Cursor MCP discovery refresh refuses redirected config files', async (cont
 test('Cursor MCP discovery refresh refuses redirected config directories', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const actual = join(directory, 'actual')
   await mkdir(actual)
   const alias = join(directory, 'alias')
@@ -609,7 +610,7 @@ test('Cursor MCP discovery refresh refuses redirected config directories', async
 test('Cursor setup reports an existing empty MCP config without claiming discovery is ready', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const configPath = join(directory, 'mcp.json')
   await writeFile(configPath, '')
   // Act / Assert
@@ -623,7 +624,7 @@ test('Cursor setup reports an existing empty MCP config without claiming discove
 test('removing the managed Cursor skill retires only its unchanged empty MCP catalog config', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const storageRoot = join(directory, 'storage'),
     configPath = join(directory, 'mcp.json')
   await refreshCursorMcpCatalog(storageRoot, directory)
@@ -648,7 +649,7 @@ test('removing the managed Cursor skill retires only its unchanged empty MCP cat
 test('removing a managed Cursor MCP catalog waits for a brief competing setup write', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const storageRoot = join(directory, 'storage'),
     configPath = join(directory, 'mcp.json')
   await refreshCursorMcpCatalog(storageRoot, directory)
@@ -668,7 +669,7 @@ test('removing a managed Cursor MCP catalog waits for a brief competing setup wr
 test('removing a managed Cursor MCP catalog preserves an interrupted writer lock and its owned config', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const storageRoot = join(directory, 'storage'),
     configPath = join(directory, 'mcp.json')
   await refreshCursorMcpCatalog(storageRoot, directory)
@@ -687,7 +688,7 @@ test('removing a managed Cursor MCP catalog preserves an interrupted writer lock
 test('removing a managed Cursor MCP catalog still recognizes its unchanged file after volume device drift', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const storageRoot = join(directory, 'storage'),
     configPath = join(directory, 'mcp.json')
   await refreshCursorMcpCatalog(storageRoot, directory)
@@ -707,7 +708,7 @@ test('removing a managed Cursor MCP catalog still recognizes its unchanged file 
 test('removing the managed Cursor skill leaves a pre-existing MCP catalog config intact', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const storageRoot = join(directory, 'storage'),
     configPath = join(directory, 'mcp.json')
   const original = '{"mcpServers":{"user":{"command":"node"}}}\n'
@@ -723,7 +724,7 @@ test('removing the managed Cursor skill leaves a pre-existing MCP catalog config
 test('removing the managed Cursor skill preserves a Codebook-created MCP catalog config after user edits', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const storageRoot = join(directory, 'storage'),
     configPath = join(directory, 'mcp.json')
   await refreshCursorMcpCatalog(storageRoot, directory)
@@ -739,7 +740,7 @@ test('removing the managed Cursor skill preserves a Codebook-created MCP catalog
 test('removing the managed Cursor skill preserves a replacement MCP catalog config with identical bytes', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const storageRoot = join(directory, 'storage'),
     configPath = join(directory, 'mcp.json')
   await refreshCursorMcpCatalog(storageRoot, directory)
@@ -757,7 +758,7 @@ test('removing the managed Cursor skill preserves a replacement MCP catalog conf
 test('restoring chat setup creates a new owned empty catalog after explicit removal', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const storageRoot = join(directory, 'storage'),
     configPath = join(directory, 'mcp.json')
   await refreshCursorMcpCatalog(storageRoot, directory)
@@ -779,7 +780,7 @@ test('restoring chat setup creates a new owned empty catalog after explicit remo
 test('removing the managed Cursor skill completes a previously interrupted empty catalog retirement', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const storageRoot = join(directory, 'storage'),
     configPath = join(directory, 'mcp.json')
   await refreshCursorMcpCatalog(storageRoot, directory)
@@ -815,7 +816,7 @@ test('removing the managed Cursor skill completes a previously interrupted empty
 test('restoring chat setup first resolves an interrupted catalog retirement', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const storageRoot = join(directory, 'storage'),
     configPath = join(directory, 'mcp.json')
   await refreshCursorMcpCatalog(storageRoot, directory)
@@ -860,7 +861,7 @@ async function answerOrRefusalOf(calling: Promise<unknown>): Promise<string> {
 test('a link at Cursor’s settings folder is refused by the setup’s refresh and by both steps of the removal with a sentence that names the folder, says what to do and names the command that was run: after the learner puts the folder in the link’s place, the refresh creates the config and the removal retires it', async (context) => {
   // Arrange: Cursor's settings folder is kept elsewhere and a link stands in its place (a junction on Windows, which every user may create).
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const storageRoot = join(directory, 'storage'),
     cursorPath = join(directory, 'home', '.cursor'),
     keptCursorPath = join(directory, 'home', 'dotfiles-cursor')
@@ -933,7 +934,7 @@ test('a link at Cursor’s settings folder is refused by the setup’s refresh a
 test('after the learner removes a link at Cursor’s settings folder, or renames a file that stands there as its refusal says, a removal run again has nothing to retire, and a setup run again makes the folder and its refresh creates the config', async (context) => {
   // Arrange: an installed extension, one home whose ~/.cursor is a link (a junction on Windows, which every user may create) and one where a note of the learner stands at that path.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const extensionPath = join(directory, 'extension')
   await mkdir(join(extensionPath, 'skills', 'codebook'), { recursive: true })
   await writeFile(
@@ -1028,7 +1029,7 @@ test('after the learner removes a link at Cursor’s settings folder, or renames
 test('a refresh and a removal of the Cursor MCP config that find no Cursor settings folder say that nothing stands at that path and name the command to run again, not the file system’s text: the setup run again creates the config, and the removal run again has nothing to retire', async (context) => {
   // Arrange: an installed extension and a home without ~/.cursor.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const extensionPath = join(directory, 'extension'),
     storageRoot = join(directory, 'storage'),
     homeRoot = join(directory, 'home'),
@@ -1087,7 +1088,7 @@ test('a refresh and a removal of the Cursor MCP config that find no Cursor setti
 test('a link at ~/.cursor/mcp.json is refused by the refresh with a sentence that names the config, says that the link and its file are the learner’s and names the setup: after the learner puts the file in the link’s place, the refresh keeps its bytes; after the learner removes the link, the refresh creates an empty config; a removal is not refused by the link', async (context) => {
   // Arrange: two Cursor folders whose config is kept elsewhere behind a link.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const homeThatPutsTheFileInPlace = join(directory, 'puts-in-place'),
     homeThatRemovesTheLink = join(directory, 'removes-the-link')
   for (const home of [homeThatPutsTheFileInPlace, homeThatRemovesTheLink]) {
@@ -1173,7 +1174,7 @@ test('a link at ~/.cursor/mcp.json is refused by the refresh with a sentence tha
 test('a folder at ~/.cursor/mcp.json is refused by the refresh as the learner’s own, to rename or to move, with the config’s path and the setup: after the learner renames it, the refresh creates the config and the folder is unchanged', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const storageRoot = join(directory, 'storage'),
     configPath = join(directory, 'mcp.json')
   await mkdir(configPath)
@@ -1206,7 +1207,7 @@ test('a folder at ~/.cursor/mcp.json is refused by the refresh as the learner’
 test('an empty ~/.cursor/mcp.json is refused by the refresh with a sentence that names the file as the learner’s and the setup as the command to run again: after the learner writes a config without servers into it, the refresh keeps those bytes; after the learner deletes it, the refresh creates the config', async (context) => {
   // Arrange: two Cursor folders with an empty config.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const cursorThatWrites = join(directory, 'writes'),
     cursorThatDeletes = join(directory, 'deletes')
   for (const cursorDirectory of [cursorThatWrites, cursorThatDeletes]) {
@@ -1274,7 +1275,7 @@ test('an empty ~/.cursor/mcp.json is refused by the refresh with a sentence that
 test('a ~/.cursor/mcp.json this user may not read is refused by the refresh with a sentence that names the file, the system’s code and the setup: after the learner allows reading, the refresh keeps its bytes', async (context) => {
   // Arrange: a config without any right.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const storageRoot = join(directory, 'storage'),
     configPath = join(directory, 'mcp.json')
   await writeFile(configPath, '{"mcpServers":{"existing":{}}}\n')
@@ -1310,7 +1311,7 @@ test('a ~/.cursor/mcp.json this user may not read is refused by the refresh with
 test('a ~/.cursor/mcp.json that the system does not open for another reason than a missing right or a program that holds it ends the refresh with the system’s own text, as it is, and the refresh run again, once the file opens, keeps its bytes', async (context) => {
   // Arrange: a learner's config, and a catalog whose first open of it the system refuses with EMFILE.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const storageRoot = join(directory, 'storage'),
     configPath = join(directory, 'mcp.json')
   await writeFile(configPath, '{"mcpServers":{"existing":{}}}\n')
@@ -1406,7 +1407,7 @@ async function loadCatalogOverHeldFiles(
 test('a record or the config of the Cursor MCP catalog that this user cannot open at that moment is answered by the refresh and by the removal with the file’s path, the system’s code, the step and the command that was run, at a record, at the ownership check, at the config’s open and at its open for writing: the config is never answered as not Codebook’s, nothing is changed, and the run after the program let go finishes', async (context) => {
   // Arrange: four catalogs. The first three hold Codebook's own config and receipt; the fourth a config of the learner.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const catalogOf = async (
     name: string,
     isOwned: boolean,

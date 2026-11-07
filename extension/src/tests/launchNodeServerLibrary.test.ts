@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, realpath, rm } from 'node:fs/promises'
+import { mkdtemp, realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { launchNodeServer } from '../utils/launchNodeServer'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 // protects=the library's resolve hook is imported after the tsx loader and before the entry, and the journal names it without its private path; fails_when=the hook comes before tsx, is dropped, or its private folder reaches the journal; no_claim=that node loads the hook (the libraryPackage tests run real node against it)
 test('the library hook is imported after the tsx loader and journaled without its private path', async (context) => {
@@ -12,7 +14,7 @@ test('the library hook is imported after the tsx loader and journaled without it
   const workspace = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-launch-library-')),
   )
-  context.after(() => rm(workspace, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(workspace))
   const journal: { type: string; detail: unknown }[] = []
 
   // Act

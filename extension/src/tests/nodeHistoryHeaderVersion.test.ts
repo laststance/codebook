@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { before, test } from 'node:test'
@@ -19,6 +19,7 @@ import {
 } from './utils/nodeServerHistoryFixture'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 import { realProcessStart } from './utils/realProcessStart'
+import { removeTestFolder } from './utils/removeTestFolder'
 import { writeServerHistory } from './utils/sealedServerHistory'
 
 before(async () => {
@@ -64,7 +65,7 @@ async function folderBytes(folder: string): Promise<Record<string, string>> {
 test('a new test replay writes header version 2 with a version 1 seal and reads back sealed', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-header-v2-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const header = nodeTestHistoryHeader(WORKSPACE_KEY)
   const store = new NodeTestHistoryStore(directory, WORKSPACE_KEY)
   const writer = await store.start(header)
@@ -92,7 +93,7 @@ test('a new test replay writes header version 2 with a version 1 seal and reads 
 test('an earlier Codebook that reads only header version 1 does not list a test replay saved with header 2 and leaves its files untouched', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-header-earlier-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const header = nodeTestHistoryHeader(WORKSPACE_KEY)
   const writer = await new NodeTestHistoryStore(directory, WORKSPACE_KEY).start(
     header,
@@ -177,7 +178,7 @@ test('an earlier Codebook that reads only server header version 1 does not list 
 test('a node-test history saved with header version 1 still lists and reads sealed', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-header-v1-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const header = nodeTestHistoryHeader(WORKSPACE_KEY)
   const writer = await new NodeTestHistoryStore(directory, WORKSPACE_KEY).start(
     header,

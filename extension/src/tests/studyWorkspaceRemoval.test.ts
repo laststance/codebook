@@ -1305,6 +1305,7 @@ test('a study whose recording folder could not be looked at after the Trash reje
     harness.beforeTrashMoves(async (path) => {
       if (path !== recordingFolder) return
       await rename(path, join(harness.directory, 'moved-recording'))
+      // not cleanup: the injected remover stands in for the learner removing the study files by hand
       await rm(recordingsRoot, { recursive: true })
       await symlink('recordings.v2', recordingsRoot)
     })
@@ -2112,6 +2113,7 @@ test('a removal the Trash refuses at the first file of a study the ledger names 
     const library = await harness.reader.learningStorage(),
       directory = harness.reader.inspect().libraryDirectory!
     await chooseStudy(harness, harness.studyId)
+    // not cleanup: the removal simulates the learner or a second window removing study files the code under test must notice
     await rm(join(directory, 'recordings.v2', harness.studyId), {
       recursive: true,
     })
@@ -4050,12 +4052,14 @@ test('a removal that moved no file and cannot write the ledger back says that no
   try {
     const directory = harness.reader.inspect().libraryDirectory!
     await chooseStudy(harness, harness.studyId)
+    // not cleanup: the removal simulates the learner or a second window removing study files the code under test must notice
     await rm(join(directory, 'recordings.v2', harness.studyId), {
       recursive: true,
     })
     const ledgerPath = join(directory, 'progress.repository.v4.json')
     harness.answerWarningDialogs(async ([confirm]) => confirm)
     harness.beforeTrashMoves(async () => {
+      // not cleanup: the injected remover stands in for the learner removing the study files by hand
       await rm(ledgerPath, { recursive: true })
       await mkdir(join(ledgerPath, 'blocked'), { recursive: true })
     })
@@ -4923,6 +4927,7 @@ test('after the listed files of a study were removed by hand, a refresh lists th
     await requestRemoval(harness, earlier.id, 1)
     const answer = structuredClone(harness.reader.inspect().view!.studyRemoval)
     const refusalLineBefore = harness.reader.inspect().view!.runRefusal
+    // not cleanup: the removal simulates the learner or a second window removing study files the code under test must notice
     for (const path of answer?.files ?? []) await rm(path, { recursive: true })
     await harness.reader.action('retry')
     const refusalLineAfterRefresh = harness.reader.inspect().view!.runRefusal
@@ -4987,6 +4992,7 @@ test('in a window without a Trash, after two of a study’s three listed files w
       harness.reader.inspect().view!.studyFiles,
     )
     // Act: the learner removes the first two listed paths and presses Retry storage / refresh; the pane, whose open disclosure is named no files any more, asks again.
+    // not cleanup: the removal simulates the learner or a second window removing study files the code under test must notice
     await rm(evidenceDirectory, { recursive: true })
     await rm(catalogFile)
     await harness.reader.action('retry')
@@ -6351,6 +6357,7 @@ async function removeStudyFilesByHand(
   const directory = harness.reader.inspect().libraryDirectory!
   await rm(join(directory, `${studyId}.study.v6.json`))
   await rm(join(directory, `${studyId}.study.meta.v6.json`))
+  // not cleanup: the injected remover stands in for the learner removing the study files by hand
   await rm(join(directory, 'recordings.v2', studyId), {
     recursive: true,
   })
@@ -7420,12 +7427,14 @@ test('after a removal that moved nothing and could not write the ledger back, th
   try {
     const directory = harness.reader.inspect().libraryDirectory!
     await chooseStudy(harness, harness.studyId)
+    // not cleanup: the removal simulates the learner or a second window removing study files the code under test must notice
     await rm(join(directory, 'recordings.v2', harness.studyId), {
       recursive: true,
     })
     const ledgerPath = join(directory, 'progress.repository.v4.json')
     harness.answerWarningDialogs(async ([confirm]) => confirm)
     harness.beforeTrashMoves(async () => {
+      // not cleanup: the injected remover stands in for the learner removing the study files by hand
       await rm(ledgerPath, { recursive: true })
       await mkdir(join(ledgerPath, 'blocked'), { recursive: true })
     })
@@ -9636,6 +9645,7 @@ test('a stopped and saved run whose study another window deletes with its record
       harness.studyId,
       async (path) => {
         movedByTheOtherWindow.push(relative(directory, path))
+        // not cleanup: the injected remover stands in for the learner removing the study files by hand
         await rm(path, { recursive: true })
       },
     )
@@ -9758,6 +9768,7 @@ test('a study whose save failed and that another window then deletes with its re
       directory,
       library.workspaceKey,
     ).removeStudy(harness.studyId, async (path) => {
+      // not cleanup: the injected remover stands in for the learner removing the study files by hand
       await rm(path, { recursive: true })
     })
 
@@ -9941,6 +9952,7 @@ test('the line “History not saved: …” of a study whose capture failed stay
       directory,
       library.workspaceKey,
     ).removeStudy(harness.studyId, async (path) => {
+      // not cleanup: the injected remover stands in for the learner removing the study files by hand
       await rm(path, { recursive: true })
     })
 
@@ -10222,6 +10234,7 @@ test('the line “History not saved: …” of a study whose capture failed goes
       harness.reader.inspect().libraryDirectory!,
       library.workspaceKey,
     ).removeStudy(studyId, async (path) => {
+      // not cleanup: the injected remover stands in for the learner removing the study files by hand
       await rm(path, { recursive: true })
     })
     makeCaptureWork()
@@ -10355,6 +10368,7 @@ test('the line “History not saved: …” of a study whose capture failed and 
       harness.reader.inspect().libraryDirectory!,
       library.workspaceKey,
     ).removeStudy(studyId, async (path) => {
+      // not cleanup: the injected remover stands in for the learner removing the study files by hand
       await rm(path, { recursive: true })
     })
     makeCaptureWork()
@@ -10451,6 +10465,7 @@ test('a study whose save failed and that another window then deletes with its re
       directory,
       library.workspaceKey,
     ).removeStudy(harness.studyId, async (path) => {
+      // not cleanup: the injected remover stands in for the learner removing the study files by hand
       await rm(path, { recursive: true })
     })
 

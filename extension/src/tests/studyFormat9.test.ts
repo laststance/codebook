@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
@@ -22,6 +22,7 @@ import {
 import { captureBrowserOnlyOperationsStudy } from './utils/captureBrowserOnlyOperationsStudy'
 import { capturePagesServerStudy } from './utils/capturePagesServerStudy'
 import { createOperationsStudy } from './utils/createOperationsStudy'
+import { removeTestFolder } from './utils/removeTestFolder'
 import { savedStudyFileWithoutRunIds } from './utils/savedStudyFileWithoutRunIds'
 
 const FIXTURES = resolve(__dirname, '../../src/tests/fixtures')
@@ -68,7 +69,7 @@ async function browserOnlyStudy(): Promise<ConfiguredStudy> {
 test('a format 9 study of browser-only stops is saved as .study.v9.json, reopens and follows the format 7 rules', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-format-9-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const study = sealedWithPackageRoot(await browserOnlyStudy(), 9, 'apps/web')
   const library = new LearningLibrary(directory, study.workspaceKey)
   // Act

@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { modifiedAtMsOf } from '../utils/modifiedAtMsOf'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 // Value: protects=the age of a Wiki update marker and the stamp a publication identity is kept under, which are read from a status with exact numbers since the inode number must be exact; fails_when=the time is cut to whole milliseconds, or converted from nanoseconds in one step, which loses up to 128 ns of today's dates; why_new=Cycle 0046 row 79: the reader of Wiki metadata reads its status as bigint; seam=none
 test('the modification time of a status read with exact numbers is given in milliseconds with the nanoseconds as its fraction', () => {
@@ -33,6 +35,6 @@ test('the modification time of a file written just now is the same number a stat
     // Assert
     assert.equal(fromExactNumbers, (await stat(filePath)).mtimeMs)
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })

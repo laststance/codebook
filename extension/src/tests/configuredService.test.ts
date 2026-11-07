@@ -1026,6 +1026,7 @@ test('a run whose saved study was removed while it ran ends at the maintenance t
     failRuntime(reason)
   }
   await runtime.evidence.flush()
+  // not cleanup: the evidence folder is removed by hand so later writes of the code under test fail
   await rm(runtime.evidence.directory, { recursive: true, force: true })
   service.excludeHistory(record, 'archive-removed')
   runtime.evidence.record('late.event')
@@ -1103,6 +1104,7 @@ test('a run whose saved study was removed while it ran keeps a release failure t
   await record.preparation
   const runtime = runtimes[0]!
   await runtime.evidence.flush()
+  // not cleanup: the evidence folder is removed by hand so later writes of the code under test fail
   await rm(runtime.evidence.directory, { recursive: true, force: true })
   service.excludeHistory(record, 'archive-removed')
   runtime.evidence.record('late.event')
@@ -1179,6 +1181,7 @@ test('a run whose saved study was found removed after its evidence write failed 
   await record.preparation
   const runtime = runtimes[0]!
   await runtime.evidence.flush()
+  // not cleanup: the evidence folder is removed by hand so later writes of the code under test fail
   await rm(runtime.evidence.directory, { recursive: true, force: true })
   runtime.evidence.record('late.event')
   await runtime.evidence.flush().catch(() => undefined)
@@ -1266,6 +1269,7 @@ test('a completed run whose release failed after its saved study was removed by 
   runtime.action('click', 'repository-click')
   observeResult(runtime)
   await runtime.evidence.flush()
+  // not cleanup: the evidence folder is removed by hand so later writes of the code under test fail
   await rm(runtime.evidence.directory, { recursive: true, force: true })
   runtime.evidence.record('late.event')
   service.maintain()
@@ -1342,6 +1346,7 @@ test("a removed study's kept run failure is served by no resource: its events an
   await record.preparation
   const runtime = runtimes[0]!
   await runtime.evidence.flush()
+  // not cleanup: the evidence folder is removed by hand so later writes of the code under test fail
   await rm(runtime.evidence.directory, { recursive: true, force: true })
   runtime.evidence.record('late.event')
   await runtime.evidence.flush().catch(() => undefined)
@@ -1414,6 +1419,7 @@ test("a run that failed itself on a removed study's evidence write and was stopp
   await record.preparation
   const runtime = runtimes[0]!
   await runtime.evidence.flush()
+  // not cleanup: the evidence folder is removed by hand so later writes of the code under test fail
   await rm(runtime.evidence.directory, { recursive: true, force: true })
   await runtime.evidence.save('snapshot.json', {}).catch((error: unknown) => {
     runtime.failures.push(String(error))
@@ -1467,6 +1473,7 @@ test('a run whose study was removed during its preparation and found removed aft
     runtime.prepare = async () => {
       const controlled = runtimes[0]!
       await controlled.evidence.initialize()
+      // not cleanup: the evidence folder is removed by hand so later writes of the code under test fail
       await rm(controlled.evidence.directory, { recursive: true, force: true })
       await controlled.evidence
         .save('snapshot.json', {})
@@ -1561,6 +1568,7 @@ test('a run whose study was found removed while its preparation was failing name
     runtime.prepare = async () => {
       const controlled = runtimes[0]!
       await controlled.evidence.initialize()
+      // not cleanup: the evidence folder is removed by hand so later writes of the code under test fail
       await rm(controlled.evidence.directory, { recursive: true, force: true })
       await controlled.evidence
         .save('snapshot.json', {})

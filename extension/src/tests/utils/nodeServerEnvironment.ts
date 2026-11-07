@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { TestContext } from 'node:test'
@@ -6,6 +6,7 @@ import type { TestContext } from 'node:test'
 import type * as EnvironmentModule from '../../environment'
 
 import { loadModule } from './loadModule'
+import { removeTestFolder } from './removeTestFolder'
 
 /**
  * Creates the real environment over a temporary trusted workspace with a fake editor, whose node-server machine check answers the given gaps, so a test reads what `prerequisites()` and the confirmation hook do without a real `lsof` or `ps`.
@@ -32,7 +33,7 @@ export async function createEnvironmentWith(
   },
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-server-env-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   await writeFile(
     join(directory, 'product.json'),
     JSON.stringify({ version: '1.140.0', commit: 'fixture' }),

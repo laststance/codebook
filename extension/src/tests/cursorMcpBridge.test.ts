@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -14,6 +14,7 @@ import { SESSION_IDLE_TIMEOUT_MS } from '../constants'
 import { startServer } from '../server'
 
 import { createHarness } from './helpers'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 test('Cursor stdio bridge exposes the current authenticated Codebook instance without a credential in its command', async (context) => {
   // Arrange
@@ -24,7 +25,7 @@ test('Cursor stdio bridge exposes the current authenticated Codebook instance wi
   context.after(async () => {
     await endpoint.close()
     await harness.close()
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   })
   const descriptorPath = join(directory, 'current.connection.json')
   await writeFile(descriptorPath, JSON.stringify(endpoint.descriptor), {
@@ -94,7 +95,7 @@ test('closing Cursor MCP bridges releases server session slots before the next s
   context.after(async () => {
     await endpoint.close()
     await harness.close()
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   })
   const descriptorPath = join(directory, 'current.connection.json')
   await writeFile(descriptorPath, JSON.stringify(endpoint.descriptor), {
@@ -135,7 +136,7 @@ test('a malformed private descriptor cannot leak credential fragments through Cu
   const directory = await mkdtemp(
     join(tmpdir(), 'codebook-cursor-bridge-secret-'),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const descriptorPath = join(directory, 'broken.connection.json'),
     secretMarker = 'PRIVATE_TOKEN_FRAGMENT'
   await writeFile(

@@ -4,7 +4,6 @@ import {
   mkdir,
   mkdtemp,
   realpath,
-  rm,
   symlink,
   writeFile,
 } from 'node:fs/promises'
@@ -17,6 +16,8 @@ import type { RootClaimListing } from '../utils/listVitestForRootClaim'
 import type { ListVitestTestFilesRequest } from '../utils/listVitestTestFiles'
 import { planNodeTestExecution } from '../utils/planNodeTestExecution'
 
+import { removeTestFolder } from './utils/removeTestFolder'
+
 /**
  * Makes an empty repository folder by its real path, removed when the test ends.
  * @param context - The test, which removes the folder when it ends.
@@ -27,7 +28,7 @@ async function repository(context: TestContext): Promise<string> {
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-vitest-root-')),
   )
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   return root
 }
 

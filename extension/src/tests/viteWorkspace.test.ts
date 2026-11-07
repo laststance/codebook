@@ -30,6 +30,7 @@ import {
 } from '../viteRefusals'
 
 import { createViteRepository } from './utils/createViteRepository'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const SIGNAL = new AbortController().signal
 
@@ -126,6 +127,7 @@ test('refuses Yarn Plug-n-Play without node_modules naming the missing resolutio
   // Arrange
   const repository = await createViteRepository(context)
   await writeFile(join(repository.root, '.pnp.cjs'), '')
+  // not cleanup: deletes a path of the fixture so the code under test meets it missing
   await rm(join(repository.root, 'node_modules'), { recursive: true })
   // Act
   const error = await refusalOf(
@@ -139,6 +141,7 @@ test('refuses Yarn Plug-n-Play without node_modules naming the missing resolutio
 test('vite-dev on a Next workspace without vite is told to use next-dev-webpack', async (context) => {
   // Arrange
   const repository = await createViteRepository(context)
+  // not cleanup: deletes a path of the fixture so the code under test meets it missing
   await rm(join(repository.root, 'node_modules/vite'), { recursive: true })
   await mkdir(join(repository.root, 'node_modules/next/dist/bin'), {
     recursive: true,
@@ -424,7 +427,8 @@ test('a cacheDir under a node_modules symlinked outside the package root is unsu
   // Arrange
   const repository = await createViteRepository(context)
   const outside = await realpath(await mkdtemp(join(tmpdir(), 'codebook-out-')))
-  context.after(() => rm(outside, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(outside))
+  // not cleanup: deletes a path of the fixture so the code under test meets it missing
   await rm(join(repository.root, 'node_modules'), {
     recursive: true,
     force: true,
@@ -467,7 +471,7 @@ test('a workspace opened through a symlinked path accepts the real-path root Vit
   const linkParent = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-link-')),
   )
-  context.after(() => rm(linkParent, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(linkParent))
   const symlinkedRoot = join(linkParent, 'opened-through-link')
   await symlink(repository.root, symlinkedRoot)
   // Act

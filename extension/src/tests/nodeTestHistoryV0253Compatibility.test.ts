@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
-import { cp, mkdtemp, rm } from 'node:fs/promises'
+import { cp, mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { NodeTestHistoryStore } from '../nodeTestHistoryStore'
 import { sha256 } from '../runtimeSupport/utils/sha256'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const FIXTURE_FOLDER = '../../src/tests/fixtures/node-test-history-v0.2.53.0'
 const STUDY_ID =
@@ -20,7 +22,7 @@ async function openFixtureStore(context: {
   after: (cleanup: () => Promise<void>) => void
 }): Promise<NodeTestHistoryStore> {
   const learningDirectory = await mkdtemp(join(tmpdir(), 'codebook-fixture-'))
-  context.after(() => rm(learningDirectory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(learningDirectory))
   await cp(
     join(__dirname, FIXTURE_FOLDER, 'node-tests.v1'),
     join(learningDirectory, 'node-tests.v1'),

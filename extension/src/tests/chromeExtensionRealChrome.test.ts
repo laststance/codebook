@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdtemp, readdir, realpath, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readdir, realpath, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -34,6 +34,8 @@ import { listProcesses } from '../runtimeSupport/utils/listProcesses'
 import { readChromeExecutableVersion } from '../runtimeSupport/utils/readChromeExecutableVersion'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { resolveChromeExecutable } from '../utils/resolveChromeExecutable'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const TEST_TIMEOUT_MS = 60_000
 /** How long a started worker may take to be listed; the coverage run of the whole suite once needed more than a second. */
@@ -138,12 +140,12 @@ async function launch(
     run,
   }).catch(async (error: unknown) => {
     // A launch that throws returns no browser to close after the test: the temporary folder goes now, so a failed or starved launch leaves nothing behind.
-    await rm(root, { recursive: true, force: true })
+    await removeTestFolder(root)
     throw error
   })
   context.after(async () => {
     await browser.close()
-    await rm(root, { recursive: true, force: true })
+    await removeTestFolder(root)
   })
   return { browser, root }
 }
@@ -403,7 +405,7 @@ test(
     const root = await realpath(
       await mkdtemp(join(tmpdir(), 'codebook-real-chrome-')),
     )
-    context.after(() => rm(root, { recursive: true, force: true }))
+    context.after(() => removeTestFolder(root))
     const run = await runOf(FIXTURE, { extensionId: 'a'.repeat(32) })
     // Act
     const failure = await launchOwnedExtensionBrowser({
@@ -437,7 +439,7 @@ test(
     const root = await realpath(
       await mkdtemp(join(tmpdir(), 'codebook-real-chrome-')),
     )
-    context.after(() => rm(root, { recursive: true, force: true }))
+    context.after(() => removeTestFolder(root))
     const run = await runOf(FIXTURE, { extensionId: 'a'.repeat(32) })
     // Act
     const failure = await launch(context, chrome, run, root).then(

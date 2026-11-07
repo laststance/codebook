@@ -13,6 +13,7 @@ import { citationLearningState } from '../utils/citationLearningState'
 
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 for (const version of [1, 2, 3, 4])
   test(`retired version ${version} choices cannot block repository learning and their original bytes survive writes`, async (context) => {
@@ -121,7 +122,7 @@ async function progressHarness(context: TestContext) {
   const directory = await mkdtemp(
     join(tmpdir(), 'codebook-configured-progress-'),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const study = createConfiguredStudy(),
     library = new LearningLibrary(directory, study.workspaceKey)
   const legacy = progressV3Schema.parse({

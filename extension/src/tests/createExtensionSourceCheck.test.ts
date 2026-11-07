@@ -1,18 +1,20 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { createExtensionSourceCheck } from '../utils/createExtensionSourceCheck'
 
+import { removeTestFolder } from './utils/removeTestFolder'
+
 /** Makes a workspace with one pinned file and the check over it. */
 async function pinnedFile(context: {
   after: (hook: () => Promise<void>) => void
 }) {
   const workspace = await mkdtemp(join(tmpdir(), 'codebook-source-check-'))
-  context.after(() => rm(workspace, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(workspace))
   const path = join(workspace, 'popup.js')
   await writeFile(path, 'let a = 1\n')
   const pinnedHashes = {

@@ -1,13 +1,6 @@
 import assert from 'node:assert/strict'
 import * as fileSystem from 'node:fs/promises'
-import {
-  mkdir,
-  mkdtemp,
-  realpath,
-  rm,
-  symlink,
-  writeFile,
-} from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -16,13 +9,14 @@ import type * as FindNextSourceWithOtherExtensionModule from '../utils/findNextS
 import { findNextSourceWithOtherExtension } from '../utils/findNextSourceWithOtherExtension'
 
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** Creates an empty temporary workspace that the test removes afterwards. @example const workspace = await temporaryWorkspace(context) */
 async function temporaryWorkspace(context: TestContext): Promise<string> {
   const workspace = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-other-extension-')),
   )
-  context.after(() => rm(workspace, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(workspace))
   return workspace
 }
 

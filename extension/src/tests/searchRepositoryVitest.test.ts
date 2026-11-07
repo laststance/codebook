@@ -4,7 +4,6 @@ import fsPromises, {
   mkdir,
   mkdtemp,
   realpath,
-  rm,
   symlink,
   writeFile,
 } from 'node:fs/promises'
@@ -13,6 +12,8 @@ import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { searchRepositoryVitest } from '../utils/searchRepositoryVitest'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /**
  * Makes an empty repository folder by its real path, removed when the test ends.
@@ -24,7 +25,7 @@ async function repository(context: TestContext): Promise<string> {
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-vitest-search-')),
   )
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   return root
 }
 

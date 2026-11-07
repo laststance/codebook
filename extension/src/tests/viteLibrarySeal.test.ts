@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -17,6 +17,8 @@ import {
   viteLibraryFailureText,
   viteLibraryRefusal,
 } from '../viteLibraryRefusals'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const TEXT = 'export const a = 1\nexport const b = 2\n'
 
@@ -63,7 +65,7 @@ async function stage(
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   context.after(async () => {
     server.close()
-    await rm(root, { recursive: true, force: true })
+    await removeTestFolder(root)
   })
   const address = server.address()
   const origin = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`

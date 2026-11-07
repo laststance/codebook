@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -16,6 +16,7 @@ import { serverRenderAttributionOf } from '../utils/serverRenderAttributionOf'
 
 import { createOperationsStudy } from './utils/createOperationsStudy'
 import { serviceHostedEntryRun } from './utils/entryRenderService'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** A workspace key in the shape a saved study carries. */
 const WORKSPACE_KEY = 'a'.repeat(64)
@@ -301,7 +302,7 @@ test('a run with an entry-render stop and an operation without a stop is saved a
   })
   await waitUntil(() => state().state === 'completed', 'the completed run')
   const directory = await mkdtemp(join(tmpdir(), 'codebook-entry-op-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   // Act
   const saved = await captureStudy(
     service,

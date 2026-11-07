@@ -1871,6 +1871,7 @@ test('Remove Managed Cursor Skill waits for the Cursor skill step it ended and r
 // Value: protects=Cycle 0056 pass 3 RT3-C, a Cursor skill step that does not settle within the grace; fails_when=the skill is removed anyway (and re-created by the late deploy) or the learner is not told why nothing was removed; no_claim=a deploy that settles in time (test above); seam=a deploy that never settles and the grace shortened to 300 ms
 test('Remove Managed Cursor Skill tells the learner and removes nothing while a Cursor skill step is still running after the grace', async (context) => {
   // Arrange
+  let finishDeploy = (): void => {}
   const project = await openProjectWithoutWiki({
     cursor: true,
     constants: { WIKI_CURSOR_TERMINATION_GRACE_MS: 300 },
@@ -1878,30 +1879,39 @@ test('Remove Managed Cursor Skill tells the learner and removes nothing while a 
       verify: async () => {
         throw new Error('The managed Cursor skill is missing.')
       },
-      deploy: () => new Promise<void>(() => {}),
+      deploy: () =>
+        new Promise<void>((resolveDeploy) => {
+          finishDeploy = resolveDeploy
+        }),
     },
   })
   context.after(() => project.close())
-  void project.runCommand(GENERATE_COMMAND).catch(() => undefined)
-  await waitUntil(
-    () => project.skillCalls.includes('deploy'),
-    'the deploy',
-    6_000,
-  )
+  const generating = project.runCommand(GENERATE_COMMAND).catch(() => undefined)
+  try {
+    await waitUntil(
+      () => project.skillCalls.includes('deploy'),
+      'the deploy',
+      6_000,
+    )
 
-  // Act
-  await project.runCommand('codebook.removeManagedCursorSkill')
+    // Act
+    await project.runCommand('codebook.removeManagedCursorSkill')
 
-  // Assert
-  assert.deepEqual(
-    { skillCalls: project.skillCalls, warnings: project.warnings },
-    {
-      skillCalls: ['verify', 'deploy'],
-      warnings: [
-        'Codebook did not remove the managed Cursor skill: a Cursor skill step of this window is still running and could write the skill again. Reload the window (Developer: Reload Window) to end it, then run Codebook: Remove Managed Cursor Skill again.',
-      ],
-    },
-  )
+    // Assert
+    assert.deepEqual(
+      { skillCalls: project.skillCalls, warnings: project.warnings },
+      {
+        skillCalls: ['verify', 'deploy'],
+        warnings: [
+          'Codebook did not remove the managed Cursor skill: a Cursor skill step of this window is still running and could write the skill again. Reload the window (Developer: Reload Window) to end it, then run Codebook: Remove Managed Cursor Skill again.',
+        ],
+      },
+    )
+  } finally {
+    // Cleanup: the step this test left running ends before the folder is removed, so it cannot write into it.
+    finishDeploy()
+    await generating
+  }
 })
 
 // Value: protects=Cycle 0056 pass 3 (the fixer's residual race of RT3-C), a Generate pressed while Remove Managed Cursor Skill runs; fails_when=the new start verifies and deploys the skill the removal is taking away, or starts an agent, or leaves its marker; no_claim=a step that was already running when the removal began (tests above); seam=the removal held inside its skill removal

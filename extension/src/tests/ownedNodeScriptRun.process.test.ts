@@ -1,12 +1,5 @@
 import assert from 'node:assert/strict'
-import {
-  mkdir,
-  mkdtemp,
-  readFile,
-  realpath,
-  rm,
-  writeFile,
-} from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -21,6 +14,7 @@ import { sha256 } from '../runtimeSupport/utils/sha256'
 import { isProcessGroupGone } from '../utils/isProcessGroupGone'
 
 import { realNodeServerDependencies } from './utils/realNodeServerDependencies'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** One declared stop of a fixture script: a repository file and the text of the line to stop on. */
 type FixtureStop = {
@@ -63,7 +57,7 @@ async function fixtureScriptRun(
   const workspace = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-node-script-run-')),
   )
-  t.after(() => rm(workspace, { recursive: true, force: true }))
+  t.after(() => removeTestFolder(workspace))
   for (const [path, text] of Object.entries(files)) {
     await mkdir(dirname(join(workspace, path)), { recursive: true })
     await writeFile(join(workspace, path), text)

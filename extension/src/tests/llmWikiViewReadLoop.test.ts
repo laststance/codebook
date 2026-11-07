@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, rm, symlink, realpath } from 'node:fs/promises'
+import { mkdtemp, mkdir, symlink, realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -20,6 +20,7 @@ import type { WikiUpdateStatus } from '../utils/wikiUpdateRun'
 
 import { defer } from './utils/defer'
 import { createFakeLlmWikiEditor } from './utils/fakeLlmWikiEditor'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 type ReadyFacts = Extract<LlmWikiViewFacts, { kind: 'ready' }>
 
@@ -755,7 +756,7 @@ test('a missing .codebook inside the project is watched from the project root', 
 test('an event spelled with the real path of a symlinked project still refreshes the view', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-view-link-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const realProject = join(await realpath(directory), 'real')
   const linkedProject = join(directory, 'linked')
   await mkdir(join(realProject, '.codebook', 'wiki'), { recursive: true })

@@ -203,6 +203,7 @@ test('a history resource whose history is removed while it is read is refused as
   )
   const read = store.read.bind(store)
   store.read = async (id) => {
+    // not cleanup: the store is made to find its history folder removed in the middle of a read
     await rm(historyFolder, { recursive: true, force: true })
     return read(id)
   }
@@ -241,6 +242,7 @@ test('a history’s learning-material resource whose history is removed while it
   )
   const readLearningMaterial = store.readLearningMaterial.bind(store)
   store.readLearningMaterial = async (id) => {
+    // not cleanup: the store is made to find its history folder removed in the middle of a read
     await rm(historyFolder, { recursive: true, force: true })
     return readLearningMaterial(id)
   }
@@ -279,6 +281,7 @@ test('a history page whose history is removed while its summary is read is refus
   )
   const summarize = store.summarize.bind(store)
   store.summarize = async (...input) => {
+    // not cleanup: the store is made to find its history folder removed in the middle of a read
     await rm(historyFolder, { recursive: true, force: true })
     return summarize(...input)
   }
@@ -318,6 +321,7 @@ test('a history page whose history is removed right after its summary was read i
   const summarize = store.summarize.bind(store)
   store.summarize = async (...input) => {
     const summary = await summarize(...input)
+    // not cleanup: the store is made to find its history folder removed in the middle of a read
     await rm(historyFolder, { recursive: true, force: true })
     return summary
   }
@@ -377,6 +381,7 @@ test('a history’s learning-material resource whose history is removed right af
   const readLearningMaterial = store.readLearningMaterial.bind(store)
   store.readLearningMaterial = async (id) => {
     const material = await readLearningMaterial(id)
+    // not cleanup: the store is made to find its history folder removed in the middle of a read
     await rm(historyFolder, { recursive: true, force: true })
     return material
   }
@@ -416,6 +421,7 @@ test('a history’s events resource whose history is removed right after its jou
   const read = store.read.bind(store)
   store.read = async (id) => {
     const history = await read(id)
+    // not cleanup: the store is made to find its history folder removed in the middle of a read
     await rm(historyFolder, { recursive: true, force: true })
     return history
   }

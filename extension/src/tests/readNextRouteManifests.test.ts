@@ -1,12 +1,5 @@
 import assert from 'node:assert/strict'
-import {
-  copyFile,
-  mkdir,
-  mkdtemp,
-  realpath,
-  rm,
-  writeFile,
-} from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -15,6 +8,7 @@ import type * as ReadNextRouteManifestsModule from '../utils/readNextRouteManife
 import { readNextRouteManifests } from '../utils/readNextRouteManifests'
 
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const ROUTES = '.next/dev/routes-manifest.json'
 const APP = '.next/dev/server/app-paths-manifest.json'
@@ -29,7 +23,7 @@ async function workspaceWithFolders(
   const workspace = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-route-manifests-')),
   )
-  context.after(() => rm(workspace, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(workspace))
   for (const folder of folders)
     await mkdir(join(workspace, folder), { recursive: true })
   return workspace

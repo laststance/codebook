@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
@@ -17,6 +17,7 @@ import { WikiUpdateTimeoutError } from '../utils/wikiUpdateTimeoutError'
 
 import { endProcesses, readProcessIdFiles } from './utils/endProcessesAfter'
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** Installs a stand-in `cursor-agent` in a private home and makes it the one the run finds, until `restore()`. */
 async function installAgent(agentScript: string): Promise<{
@@ -52,7 +53,7 @@ async function installAgent(agentScript: string): Promise<{
         assert.deepEqual(survivors, [], 'the stand-in agent outlived the test')
       } finally {
         // The folder goes even when the pid files cannot be read.
-        await rm(privateHome, { recursive: true, force: true })
+        await removeTestFolder(privateHome)
       }
     },
   }
@@ -135,7 +136,7 @@ process.stdin.on('end', () => {
   } finally {
     if (previousHome === undefined) delete process.env.HOME
     else process.env.HOME = previousHome
-    await rm(privateHome, { recursive: true, force: true })
+    await removeTestFolder(privateHome)
   }
 })
 
@@ -200,7 +201,7 @@ process.stdin.on('end', () => process.exit(3));
   } finally {
     if (previousHome === undefined) delete process.env.HOME
     else process.env.HOME = previousHome
-    await rm(privateHome, { recursive: true, force: true })
+    await removeTestFolder(privateHome)
   }
 })
 
@@ -238,7 +239,7 @@ setInterval(() => {}, 1000);
   } finally {
     if (previousHome === undefined) delete process.env.HOME
     else process.env.HOME = previousHome
-    await rm(privateHome, { recursive: true, force: true })
+    await removeTestFolder(privateHome)
   }
 })
 
@@ -287,7 +288,7 @@ setInterval(() => {}, 1000);
     } finally {
       if (previousHome === undefined) delete process.env.HOME
       else process.env.HOME = previousHome
-      await rm(privateHome, { recursive: true, force: true })
+      await removeTestFolder(privateHome)
     }
   },
 )

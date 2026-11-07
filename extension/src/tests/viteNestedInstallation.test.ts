@@ -14,12 +14,14 @@ import { test, type TestContext } from 'node:test'
 import { readViteWorkspaceGaps } from '../utils/readViteWorkspaceGaps'
 import { resolveViteInstallation } from '../utils/resolveViteInstallation'
 
+import { removeTestFolder } from './utils/removeTestFolder'
+
 /** Makes a temporary folder (real path) that is removed when the test ends. */
 async function makeFolder(context: TestContext): Promise<string> {
   const folder = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-vite-d7-')),
   )
-  context.after(() => rm(folder, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(folder))
   return folder
 }
 

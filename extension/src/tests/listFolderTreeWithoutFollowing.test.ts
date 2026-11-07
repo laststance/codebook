@@ -1,12 +1,5 @@
 import assert from 'node:assert/strict'
-import {
-  mkdir,
-  mkdtemp,
-  realpath,
-  rm,
-  symlink,
-  writeFile,
-} from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, relative, resolve, sep } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -17,6 +10,7 @@ import { listFolderTreeWithoutFollowing } from '../utils/listFolderTreeWithoutFo
 
 import { fileSystemWhoseLinksResistRemoval } from './utils/fileSystemWhoseLinksResistRemoval'
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /**
  * Makes a temporary folder that is removed with the test, holding a folder `elsewhere` with two files: what a link of a test leads to.
@@ -24,7 +18,7 @@ import { loadModule } from './utils/loadModule'
  */
 async function folderWithFilesElsewhere(context: TestContext): Promise<string> {
   const folder = await realpath(await mkdtemp(join(tmpdir(), 'codebook-list-')))
-  context.after(() => rm(folder, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(folder))
   await mkdir(join(folder, 'elsewhere', 'photos'), { recursive: true })
   await writeFile(join(folder, 'elsewhere', 'notes.txt'), 'kept')
   await writeFile(join(folder, 'elsewhere', 'photos', 'holiday.txt'), 'kept')

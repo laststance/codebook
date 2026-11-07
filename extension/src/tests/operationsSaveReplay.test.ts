@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -24,6 +24,7 @@ import {
   createOperationsStudy,
   OPERATION_TIMES_MS,
 } from './utils/createOperationsStudy'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** Reads the `operations` records of a decoded study as `<index>:<state>` words. @example statesOf(study) // => ['1:done', '2:done'] */
 function statesOf(study: ConfiguredStudy): string[] {
@@ -323,7 +324,7 @@ test('the saved operation records take their time from the dispatch receipt of t
 test('a four-operation study with a server stop is saved as .study.v8.json and reopens with four operations', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-operations-study-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const study = createOperationsStudy()
   const library = new LearningLibrary(directory, study.workspaceKey)
   // Act
@@ -346,7 +347,7 @@ test('a four-operation study with a server stop is saved as .study.v8.json and r
 test('a study saved in a format one above the readable one is listed, refused with its reason and kept untouched', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-future-study-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const study = createOperationsStudy()
   const library = new LearningLibrary(directory, study.workspaceKey)
   const futurePath = join(directory, `${study.id}.study.v16.json`)
@@ -373,7 +374,7 @@ test('a study saved in a format one above the readable one is listed, refused wi
 test('a saved study whose operation carries an unknown future field is refused with a reason and does not break the listing', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-unknown-field-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const study = createOperationsStudy()
   const library = new LearningLibrary(directory, study.workspaceKey)
   await library.saveStudy(study)

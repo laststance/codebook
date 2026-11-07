@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import { mkdir, mkdtemp, realpath, rm, symlink } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { homeRootNames, privateRootNames } from '../utils/privateRootNames'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 // Value: protects=a symlinked workspace staying hidden in causes; fails_when=only the reported path is returned for a link, so the real path a message names stays visible; why_new=causeRoots named the reported paths only (F58); seam=real file system; no_claim=Windows junctions
 test('a symlinked folder gives both its reported and its real path, and a missing one only its own', async (context) => {
@@ -13,7 +15,7 @@ test('a symlinked folder gives both its reported and its real path, and a missin
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-roots-')),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   await mkdir(join(directory, 'real'))
   await symlink(join(directory, 'real'), join(directory, 'link'))
 

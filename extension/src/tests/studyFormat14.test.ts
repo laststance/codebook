@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { mkdtemp, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
@@ -23,6 +23,7 @@ import { validateConfiguredStudyEvidence } from '../utils/validateConfiguredStud
 
 import { createOperationsStudy } from './utils/createOperationsStudy'
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 type Observation = ConfiguredStudy['observations'][number]
 
@@ -178,7 +179,7 @@ test('studyFormatOfEvidence gives 14 for an API-route observation and keeps 8, 9
 test('a study with an API-route pause is saved as .study.v14.json, reopens with its request, moment and label and is listed as v14', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-format-14-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const study = routeStudy(14, ['api'])
   const library = new LearningLibrary(directory, study.workspaceKey)
   // Act
@@ -231,7 +232,7 @@ test('a run saved at format 8, 9 or 12 moves to format 14 at the checkpoint that
   const results: unknown[] = []
   for (const { from, earlierKinds, packageRoot, hasEntryStop } of cases) {
     const directory = await mkdtemp(join(tmpdir(), 'codebook-format-14-'))
-    context.after(() => rm(directory, { recursive: true, force: true }))
+    context.after(() => removeTestFolder(directory))
     const later = routeStudy(
       14,
       [...earlierKinds, 'api'],

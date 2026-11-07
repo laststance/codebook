@@ -19,6 +19,7 @@ import type { NodeTestConfiguration } from '../nodeTestConfigSchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const SOURCE_TEXT = 'export const nextRun = schedule(job, 5_000)\n'
 const TEST_TEXT = 'test("runs a delayed job after its timer", () => {})\n'
@@ -41,7 +42,7 @@ async function environmentWithRepository(
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-environment-node-test-')),
   )
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   await writeFile(
     join(root, 'product.json'),
     JSON.stringify({ version: '1.140.0', commit: 'fixture' }),
@@ -234,7 +235,7 @@ test('a start refused for an unreadable or outside Vitest is planned once the le
   const outside = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-environment-outside-vitest-')),
   )
-  context.after(() => rm(outside, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(outside))
   const packageFile = join(root, 'node_modules', 'vitest', 'package.json')
   const check = () =>
     run.environment.checkNodeTestFiles!(

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import fsPromises, { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import fsPromises, { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -7,12 +7,13 @@ import { test, type TestContext } from 'node:test'
 import { evidenceInUseElsewhere } from '../utils/evidenceInUseElsewhere'
 
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
+import { removeTestFolder } from './utils/removeTestFolder'
 import { startOfKilledWindow } from './utils/startOfKilledWindow'
 
 /** Creates an agent storage with one other instance's run evidence, so a test only adds or leaves out that instance's connection descriptor. @example const agent = await agentStorage(context) */
 async function agentStorage(context: TestContext) {
   const root = await mkdtemp(join(tmpdir(), 'codebook-evidence-in-use-'))
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   const evidenceDirectory = join(root, 'other-instance', 'run')
   await mkdir(evidenceDirectory, { recursive: true })
   return {

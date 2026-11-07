@@ -1,17 +1,19 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { hasNextAppPageSource } from '../utils/hasNextAppPageSource'
 
+import { removeTestFolder } from './utils/removeTestFolder'
+
 /** Creates a temporary workspace with an empty root `app` folder, which the test removes afterwards. @example const workspace = await workspaceWithAppFolder(context) */
 async function workspaceWithAppFolder(context: TestContext): Promise<string> {
   const workspace = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-app-page-source-')),
   )
-  context.after(() => rm(workspace, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(workspace))
   await mkdir(join(workspace, 'app'))
   return workspace
 }

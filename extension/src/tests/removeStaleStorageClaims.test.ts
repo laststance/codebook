@@ -4,7 +4,6 @@ import {
   mkdtemp,
   readdir,
   realpath,
-  rm,
   symlink,
   utimes,
   writeFile,
@@ -28,13 +27,14 @@ import type * as removalModule from '../utils/removeWithoutFollowing'
 import { fileSystemWhoseLinksResistRemoval } from './utils/fileSystemWhoseLinksResistRemoval'
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** Creates an empty storage directory that is removed with the test, and returns its canonical path. @example const directory = await storageDirectory(context) */
 async function storageDirectory(context: TestContext): Promise<string> {
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-stale-claims-')),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   return directory
 }
 

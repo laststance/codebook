@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -20,6 +20,7 @@ import {
   OWNED_IDS,
   STOP_FILE,
 } from './utils/nodeServerEditorHarness'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** The two declared stops of every test here: lines 14 and 20 of one file. */
 const TWO_STOPS = [
@@ -469,7 +470,7 @@ test('capturing an owned pause returns its facts and source hash, and resuming c
     )
   } finally {
     await debug.release()
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -536,7 +537,7 @@ test('a stop whose captured string holds the run secret across the snapshot cut 
     assert.equal(saved.includes('hunter'), false)
   } finally {
     await debug.release()
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 

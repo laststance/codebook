@@ -45,6 +45,7 @@ import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { idleChild } from './utils/idleChild'
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 import { rewriteWriterRecord } from './utils/rewriteWriterRecord'
 
 // The editor's id of this machine, which stays the same when the host name follows the network; every record this file's windows write names it.
@@ -59,7 +60,7 @@ before(() => {
  */
 async function recordingStorage(context: TestContext) {
   const root = await mkdtemp(join(tmpdir(), 'codebook-recording-writer-'))
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   const directory = join(root, 'learning')
   const workspaceKey = createConfiguredStudy().workspaceKey
   return {
@@ -1124,6 +1125,7 @@ test('an unsealed recording whose header calls its writer gone and whose folder 
     },
   })
   const foldersOfRecords = join(storage.directory, 'recording-owners')
+  // not cleanup: the removal simulates the learner or a second window removing study files the code under test must notice
   await rm(foldersOfRecords, { recursive: true })
   await writeFile(foldersOfRecords, 'not a folder')
 
@@ -1191,6 +1193,7 @@ test('a valid writer record behind a link at the place of the folder of writer r
       recording: { folder: 'recordings.v2', createdAt },
     }),
   )
+  // not cleanup: the removal simulates the learner or a second window removing study files the code under test must notice
   await rm(join(storage.directory, 'recording-owners'), { recursive: true })
   await symlink(
     elsewhere,
@@ -1390,6 +1393,7 @@ test('the record of a recording’s writer goes with a removal of its study, and
     pid: ID_OF_NO_PROCESS,
   })
   const removedByHand = await startRecording(storage)
+  // not cleanup: the removal simulates the learner or a second window removing study files the code under test must notice
   await rm(removedByHand.folder, { recursive: true })
   const moved: string[] = []
 
@@ -1398,6 +1402,7 @@ test('the record of a recording’s writer goes with a removal of its study, and
     removed.studyId,
     async (path) => {
       moved.push(path)
+      // not cleanup: the injected remover stands in for the learner removing the study files by hand
       await rm(path, { recursive: true })
     },
   )
@@ -1855,6 +1860,7 @@ test('a link at the place of the folder of writer records is never followed: a r
       join(elsewhere, `${recording.studyId}.json`),
       'A file of the learner.',
     )
+  // not cleanup: the removal simulates the learner or a second window removing study files the code under test must notice
   await rm(join(storage.directory, 'recording-owners'), { recursive: true })
   await symlink(
     elsewhere,
@@ -1865,6 +1871,7 @@ test('a link at the place of the folder of writer records is never followed: a r
   // Act
   const removal = await storage.library.removeStudy(
     removed.studyId,
+    // not cleanup: the injected remover stands in for the learner removing the study files by hand
     async (path) => rm(path, { recursive: true }),
   )
   await sealed.writer.finish(1)

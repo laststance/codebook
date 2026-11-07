@@ -44,6 +44,7 @@ import { loadDropSecondNameWhoseLinkIsRefused } from './utils/loadDropSecondName
 import { loadModule } from './utils/loadModule'
 import { loadOpenWithoutFollowing } from './utils/loadOpenWithoutFollowing'
 import { loadSecondNameRulesOverHeldFiles } from './utils/loadSecondNameRulesOverHeldFiles'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const INITIAL_SKILL =
   '---\nname: codebook\ndescription: Explain a current study.\nmetadata:\n  version: "1.0.0"\n---\n\nUse codebook_status first.\n'
@@ -55,7 +56,7 @@ async function fixture(context: {
   after: (callback: () => Promise<void>) => void
 }) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-skill-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const extensionPath = join(directory, 'extension'),
     storageRoot = join(directory, 'storage'),
     homeRoot = join(directory, 'home')
@@ -873,6 +874,7 @@ test('a window of the previous extension that reconnects after the newer install
     paths.storageRoot,
     paths.homeRoot,
   )
+  // not cleanup: deletes the skill or extension folder to simulate the learner or an install replacing it
   await rm(newerExtension, { recursive: true })
 
   // Act
@@ -931,6 +933,7 @@ test('a newer window’s skill whose receipt records no publisher path is left a
   const { publisherPath: _publisherPath, ...receiptWithoutPublisher } =
     JSON.parse(await readFile(receiptPath, 'utf8'))
   await writeFile(receiptPath, JSON.stringify(receiptWithoutPublisher))
+  // not cleanup: deletes the skill or extension folder to simulate the learner or an install replacing it
   await rm(newerExtension, { recursive: true })
 
   // Act
@@ -1869,6 +1872,7 @@ test('a folder at the managed Cursor skill’s path is refused by setup and by r
     ),
   }
   // The setup's sentence is followed to the letter.
+  // not cleanup: deletes the skill or extension folder to simulate the learner or an install replacing it
   await rm(paths.targetPath, { recursive: true })
   const setupAfterTheFolderWasDeleted = await statusOrRefusalOf(
     deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
@@ -1922,6 +1926,7 @@ test('an ownership receipt of the Cursor skill that is a link is not read: setup
   }
   const skillAfterTheRefusals = await readFile(paths.targetPath, 'utf8')
   await rm(receiptPath)
+  // not cleanup: deletes the skill or extension folder to simulate the learner or an install replacing it
   await rm(join(paths.homeRoot, '.cursor', 'skills', 'codebook'), {
     recursive: true,
   })
@@ -2900,6 +2905,7 @@ test('a removal whose skill folder the learner deleted finishes: the receipt rec
     paths.storageRoot,
     paths.homeRoot,
   )
+  // not cleanup: deletes the skill or extension folder to simulate the learner or an install replacing it
   await rm(join(paths.homeRoot, '.cursor', 'skills', 'codebook'), {
     recursive: true,
   })
@@ -2995,6 +3001,7 @@ test('a Cursor skill receipt that was edited by hand is refused by setup, reconn
   const setupAfterTheReceiptAloneWasDeleted = await statusOrRefusalOf(
     deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
   )
+  // not cleanup: deletes the skill or extension folder to simulate the learner or an install replacing it
   await rm(join(paths.homeRoot, '.cursor', 'skills', 'codebook'), {
     recursive: true,
   })
@@ -3066,6 +3073,7 @@ test('a setup record and a removal record of the Cursor skill that were edited b
       deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
     )
     await rm(recordPath)
+    // not cleanup: deletes the skill or extension folder to simulate the learner or an install replacing it
     await rm(join(paths.homeRoot, '.cursor', 'skills', 'codebook'), {
       recursive: true,
     })
@@ -4846,7 +4854,9 @@ test('a reconnect whose skill folder, or whose whole Cursor folder, is gone says
       'codebook',
     ),
     cursorPath = join(homeWithoutCursorFolder.homeRoot, '.cursor')
+  // not cleanup: deletes the skill or extension folder to simulate the learner or an install replacing it
   await rm(skillFolderPath, { recursive: true })
+  // not cleanup: deletes the skill or extension folder to simulate the learner or an install replacing it
   await rm(cursorPath, { recursive: true })
 
   // Act
@@ -4927,7 +4937,7 @@ test('a skill folder that is taken away while a removal runs is answered with th
         if (path === skillFolderPath) {
           looksAtTheSkillFolder += 1
           if (looksAtTheSkillFolder === 2)
-            await rm(skillFolderPath, { recursive: true })
+            await removeTestFolder(skillFolderPath)
         }
         return look
       },
@@ -5298,6 +5308,7 @@ test('a folder where the bundled skill or the Wiki publisher of the installation
   }
   // The sentences are followed to the letter: installing the VSIX again replaces the extension's folder with the packaged files.
   for (const paths of [withFolderAtSkill, withFolderAtPublisher]) {
+    // not cleanup: deletes the skill or extension folder to simulate the learner or an install replacing it
     await rm(paths.extensionPath, { recursive: true })
     await mkdir(join(paths.extensionPath, 'skills', 'codebook'), {
       recursive: true,
@@ -5366,6 +5377,7 @@ test('a link where the bundled skill of the installation should be is refused by
     deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
   )
   // The sentence is followed to the letter: installing the VSIX again replaces the extension's folder with the packaged files.
+  // not cleanup: deletes the skill or extension folder to simulate the learner or an install replacing it
   await rm(paths.extensionPath, { recursive: true })
   await mkdir(join(paths.extensionPath, 'skills', 'codebook'), {
     recursive: true,
@@ -5946,6 +5958,7 @@ test('an installation whose bundled skill or Wiki publisher is missing, or whose
   }
   // The sentences are followed to the letter: installing the VSIX again replaces the extension's folder with the packaged files.
   for (const paths of [withoutSkill, withInvalidSkill, withoutPublisher]) {
+    // not cleanup: deletes the skill or extension folder to simulate the learner or an install replacing it
     await rm(paths.extensionPath, { recursive: true })
     await mkdir(join(paths.extensionPath, 'skills', 'codebook'), {
       recursive: true,

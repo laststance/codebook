@@ -5,12 +5,13 @@ import {
   readdir,
   readFile,
   realpath,
-  rm,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+
+import { removeTestFolder } from './removeTestFolder'
 
 /** The two entry points of the shipped publisher (`skills/codebook/publish-wiki.mjs`) the fixture drives. */
 type WikiPublisher = {
@@ -106,8 +107,7 @@ export async function publishedWikiFixture(
   )
   const outputDirectory = join(projectRoot, outputSetting)
   const sourceText = 'export const value = 1;\n'
-  const cleanup = (): Promise<void> =>
-    rm(projectRoot, { recursive: true, force: true })
+  const cleanup = (): Promise<void> => removeTestFolder(projectRoot)
   const prepare = async (stageDirectory?: string): Promise<string> =>
     (
       await publisher.prepareWikiStage({

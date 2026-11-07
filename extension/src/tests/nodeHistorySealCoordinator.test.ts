@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import fsPromises, { mkdtemp, readdir, rm } from 'node:fs/promises'
+import fsPromises, { mkdtemp, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { before, test, type TestContext } from 'node:test'
@@ -15,6 +15,7 @@ import {
 } from './utils/nodeServerHistoryFixture'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 import { realProcessStart } from './utils/realProcessStart'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 before(async () => {
   await realProcessStart(process.pid)
@@ -23,7 +24,7 @@ before(async () => {
 /** Starts a test history and returns its writer, store and folder. */
 async function startTestHistory(context: TestContext) {
   const learningDirectory = await mkdtemp(join(tmpdir(), 'codebook-seal-'))
-  context.after(() => rm(learningDirectory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(learningDirectory))
   const store = new NodeTestHistoryStore(
     learningDirectory,
     sha256('node-history-test-workspace'),

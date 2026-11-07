@@ -4,7 +4,6 @@ import {
   mkdtemp,
   readFile,
   realpath,
-  rm,
   symlink,
   writeFile,
 } from 'node:fs/promises'
@@ -16,12 +15,14 @@ import { z } from 'zod'
 
 import { findNextPagesSource } from '../utils/findNextPagesSource'
 
+import { removeTestFolder } from './utils/removeTestFolder'
+
 /** Creates an empty temporary workspace that the test removes afterwards. @example const workspace = await temporaryWorkspace(context) */
 async function temporaryWorkspace(context: TestContext): Promise<string> {
   const workspace = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-pages-source-')),
   )
-  context.after(() => rm(workspace, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(workspace))
   return workspace
 }
 

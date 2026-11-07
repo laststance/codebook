@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { isNpmPackageName } from '../utils/isNpmPackageName'
 import { readInstalledPackageManifest } from '../utils/readInstalledPackageManifest'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 // protects=real npm names (scoped, 214-character, dotted) are accepted so a legitimate library is not refused; fails_when=the length bound drops to 213 or the scope form stops matching; no_claim=names npm would reject for reserved words
 // Value: protects=isNpmPackageName length and scope boundaries; fails_when=the 214 bound or scope form changes; why_new=libraryPackageNameShape.test.ts covers refused shapes, not the accepted boundary; seam=none; no_claim=reserved names
@@ -31,7 +33,7 @@ test('finds a dependency hoisted above the library folder and reports its versio
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'installed-manifest-')),
   )
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   const installed = join(root, 'node_modules', '@scope', 'dep')
   await mkdir(installed, { recursive: true })
   await writeFile(

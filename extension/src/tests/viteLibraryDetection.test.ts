@@ -1,12 +1,5 @@
 import assert from 'node:assert/strict'
-import {
-  mkdir,
-  mkdtemp,
-  realpath,
-  rm,
-  symlink,
-  writeFile,
-} from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -17,6 +10,7 @@ import { resolveVitePackage } from '../utils/resolveVitePackage'
 
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
 import { NESTED_VITE_LIBRARY_SOURCE_PATH } from './utils/nestedViteWorkspace'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** Writes a file, creating its folders. */
 async function put(path: string, text: string): Promise<void> {
@@ -27,7 +21,7 @@ async function put(path: string, text: string): Promise<void> {
 /** Stages app -> react-lib -> core (a chain of workspace links) and an unlinked `other`, with a nested Vite app. */
 async function stageChain(context: TestContext) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'vite-chain-')))
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   await put(
     join(root, 'examples/app/package.json'),
     JSON.stringify({ name: 'app', devDependencies: { vite: '^8.3.5' } }),

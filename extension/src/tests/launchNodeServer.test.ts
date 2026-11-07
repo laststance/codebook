@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
-import { copyFile, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { get } from 'node:http'
 import { connect, createServer } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -17,6 +17,8 @@ import { isProcessGroupGone } from '../utils/isProcessGroupGone'
 import { launchNodeServer } from '../utils/launchNodeServer'
 import { resolveNodeServerLaunch } from '../utils/resolveNodeServerLaunch'
 import { signalProcessGroup } from '../utils/signalProcessGroup'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** The test-only HTTP server as compiled beside this test; it never ships. */
 const FIXTURE_SERVER = join(__dirname, 'fixtures/node-server/server.js')
@@ -46,7 +48,7 @@ async function fixtureRepository(
   const workspace = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-node-server-')),
   )
-  t.after(() => rm(workspace, { recursive: true, force: true }))
+  t.after(() => removeTestFolder(workspace))
   await copyFile(FIXTURE_SERVER, join(workspace, 'server.cjs'))
   await writeFile(
     join(workspace, 'fixture-server.json'),

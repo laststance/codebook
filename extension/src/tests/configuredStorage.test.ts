@@ -11,6 +11,7 @@ import { atomicPrivateWrite } from '../utils/atomicPrivateWrite'
 
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 test('retired archives cannot prevent retry from repairing a current repository checkpoint', async (context) => {
   // Arrange
@@ -42,7 +43,7 @@ async function storageHarness(context: TestContext) {
   const directory = await mkdtemp(
     join(tmpdir(), 'codebook-configured-storage-'),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const study = createConfiguredStudy(),
     library = new LearningLibrary(directory, study.workspaceKey)
   return {

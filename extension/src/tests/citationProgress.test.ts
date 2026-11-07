@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -9,6 +9,8 @@ import { LearningLibrary } from '../learningLibrary'
 import { learningState } from '../studyModel'
 import { citationContext } from '../utils/citationContext'
 import { citationLearningState } from '../utils/citationLearningState'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const workspaceKey = '1'.repeat(64),
   sourceHash = '2'.repeat(64)
@@ -29,7 +31,7 @@ const at = '2026-09-19T10:00:00.000Z'
 test('article understanding survives prose and citation ordering but changed paths, ranges and citation sets need a new decision', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-context-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const library = new LearningLibrary(directory, workspaceKey),
     item = 'repository/architecture/storage'
   const intent = {
@@ -81,7 +83,7 @@ test('article understanding survives prose and citation ordering but changed pat
 test('runtime primary-hash understanding never acknowledges additional article citations and article decisions do not check runtime', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-context-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const library = new LearningLibrary(directory, workspaceKey),
     item = 'repository/interface/theme'
   await library.decide({
@@ -123,7 +125,7 @@ test('runtime primary-hash understanding never acknowledges additional article c
 test('unchecking and identical intent retries affect only the original complete citation context', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-context-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const library = new LearningLibrary(directory, workspaceKey),
     item = 'repository/book/node'
   const first = {
@@ -161,7 +163,7 @@ test('unchecking and identical intent retries affect only the original complete 
 test('corrupt, unknown or untyped v3 progress never falls back to readable v2 choices', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-context-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const legacy = {
     version: 2,
     workspaceKey,

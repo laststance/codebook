@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
 import { Dirent } from 'node:fs'
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { fileSystemWhoseLinksResistRemoval } from './utils/fileSystemWhoseLinksResistRemoval'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /**
  * Describes a listing for the stand-in's options regression test, sorting names and entries because the file system chooses their order.
@@ -71,6 +72,6 @@ test('a listing through the file system whose links resist removal answers what 
       },
     )
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })

@@ -4,7 +4,6 @@ import {
   mkdir,
   writeFile,
   chmod,
-  rm,
   symlink,
   realpath,
 } from 'node:fs/promises'
@@ -13,6 +12,8 @@ import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 
 import { readHostInstallation } from '../runtimeSupport/utils/readHostInstallation'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 test('an alternate editor bundle records its own version and commit, including when the binary is a symlink', async () => {
   // Arrange
@@ -59,6 +60,6 @@ test('an alternate editor bundle records its own version and commit, including w
       /CLI version\/commit differs from the selected binary/,
     )
   } finally {
-    await rm(directory, { recursive: true })
+    await removeTestFolder(directory)
   }
 })

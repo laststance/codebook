@@ -12,6 +12,7 @@ import { profileProcesses } from '../runtimeSupport/utils/profileProcesses'
 import { windowsCommandLineArguments } from '../runtimeSupport/utils/windowsCommandLineArguments'
 
 import { endProcessesAfter } from './utils/endProcessesAfter'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** How long the scan of the command with 40,000 possible terminators may take. On the development host (16 CPUs, Node 24.21.0; median of 20 runs in a worker, as the test runs it) the scan takes 2.5 ms, and 3.8 ms under c8; the scan that read every reading's growing prefix again, which row 1053 replaced, took 1,600 ms with or without c8. The bound is over 100 times the one and a quarter of the other, so a slower host or coverage does not reach it while that regression does on this host already. */
 const PROFILE_SCAN_BOUND_MS = 400
@@ -24,7 +25,7 @@ test('a POSIX command with 40,000 possible terminators is matched in under 400 m
   const profile = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-profile-linear-')),
   )
-  context.after(() => rm(profile, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(profile))
   const worker = new Worker(
     `const { parentPort, workerData } = require('node:worker_threads')
 const { profileProcesses } = require(workerData.module)
@@ -81,7 +82,7 @@ test('each possible POSIX terminator uses its latest profile switch, even inside
   const parent = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-profile-readings-')),
   )
-  context.after(() => rm(parent, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(parent))
   const profile = join(parent, 'owned -- profile ')
   await mkdir(profile)
   const listing = [
@@ -126,7 +127,7 @@ test('profile switches keep Chrome’s exact whitespace sets on Linux and Window
   const profile = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-profile-whitespace-')),
   )
-  context.after(() => rm(profile, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(profile))
   const characters = [
     '\t',
     '\n',
@@ -243,7 +244,7 @@ test('a symlinked profile observes its canonical process and excludes a prefix-s
     unrelated.kill()
     await exited
     await rm(alias)
-    await rm(directory, { recursive: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -253,7 +254,7 @@ test('on Windows a profile whose path holds a space is matched in both quoted fo
   const parent = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook profile ')),
   )
-  context.after(() => rm(parent, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(parent))
   const profile = join(parent, 'codebook-browser-x')
   await mkdir(profile)
   const chrome = '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"'
@@ -366,7 +367,7 @@ test('on Windows a profile switch written in another case or with another of Chr
   const parent = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-profile-switch-')),
   )
-  context.after(() => rm(parent, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(parent))
   const profile = join(parent, 'codebook-browser-x')
   await mkdir(profile)
   const listing = [
@@ -393,7 +394,7 @@ test('on Windows a later profile switch without a value clears an earlier folder
   const profile = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-profile-empty-')),
   )
-  context.after(() => rm(profile, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(profile))
   const listing = [
     {
       pid: 41,
@@ -433,7 +434,7 @@ test('on Windows a profile named in another case, with forward slashes or with a
   const parent = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-profile-case-')),
   )
-  context.after(() => rm(parent, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(parent))
   const profile = join(parent, 'codebook-browser-x')
   await mkdir(profile)
   const chrome = '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"'
@@ -472,7 +473,7 @@ test('of several profile switches the last one decides, on Linux and on Windows'
   const parent = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-profile-last-')),
   )
-  context.after(() => rm(parent, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(parent))
   const profile = join(parent, 'codebook-browser-x')
   await mkdir(profile)
   const listing = [
@@ -513,7 +514,7 @@ test('the profile switch before a switch terminator decides on Linux and on Wind
   const parent = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-profile-terminator-')),
   )
-  context.after(() => rm(parent, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(parent))
   const profile = join(parent, 'codebook-browser-x')
   await mkdir(profile)
   const listing = [
@@ -551,7 +552,7 @@ test('on Windows a profile switch or a terminator with white space at its ends i
   const parent = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-profile-trim-')),
   )
-  context.after(() => rm(parent, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(parent))
   const profile = join(parent, 'codebook-browser-x')
   await mkdir(profile)
   const listing = [
@@ -580,7 +581,7 @@ test('on Windows no switch after --single-argument counts, as Chrome reads it, w
   const parent = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-profile-single-argument-')),
   )
-  context.after(() => rm(parent, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(parent))
   const profile = join(parent, 'codebook-browser-x')
   await mkdir(profile)
   const other = join(parent, 'other')
@@ -626,7 +627,7 @@ test(
     const parent = await realpath(
       await mkdtemp(join(tmpdir(), 'codebook-profile-exact-')),
     )
-    context.after(() => rm(parent, { recursive: true, force: true }))
+    context.after(() => removeTestFolder(parent))
     const before = join(parent, 'codebook-browser-before')
     const after = join(parent, 'codebook-browser-after')
     await mkdir(before)
@@ -667,7 +668,7 @@ test('on Linux a process whose exact arguments cannot be trusted or read is matc
   const parent = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-profile-exact-rules-')),
   )
-  context.after(() => rm(parent, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(parent))
   const profile = join(parent, 'codebook-browser-x')
   await mkdir(profile)
   const listing = [
@@ -712,7 +713,7 @@ test('a macOS ps line naming a profile below "Application Support" matches that 
   const parent = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-profile-spaced-')),
   )
-  context.after(() => rm(parent, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(parent))
   const profile = join(
     parent,
     'Application Support',

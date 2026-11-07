@@ -38,6 +38,7 @@ import {
 } from './utils/isFileIdExactAsANumber'
 import { loadModule } from './utils/loadModule'
 import { loadOpenWithoutFollowing } from './utils/loadOpenWithoutFollowing'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** The open flags of a system whose open cannot refuse a link: Windows defines neither `O_NOFOLLOW` nor `O_NONBLOCK`. */
 const OPEN_FLAGS_WITHOUT_NOFOLLOW = { O_RDONLY: flagsOfThisSystem.O_RDONLY }
@@ -94,7 +95,7 @@ async function catalogFolders(context: TestContext): Promise<{
   const cursorDirectory = await mkdtemp(
     join(tmpdir(), 'codebook-cursor-mcp-identity-'),
   )
-  context.after(() => rm(cursorDirectory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(cursorDirectory))
   const storageRoot = join(cursorDirectory, 'storage')
   return {
     cursorDirectory,
@@ -482,7 +483,7 @@ test(
         (writer) => writer.close(),
         () => undefined,
       )
-      await rm(cursorDirectory, { recursive: true, force: true })
+      await removeTestFolder(cursorDirectory)
     })
     const catalog = await loadCatalog({})
 

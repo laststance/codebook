@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { TestContext } from 'node:test'
@@ -13,6 +13,8 @@ import { createExtensionStorageDescriptor } from '../../chromeExtensionStorageDe
 import { NodeHistoryStore } from '../../nodeTestHistoryStore'
 import type { ReplayDebugSnapshot } from '../../replayDebugSchemas'
 import { sha256 } from '../../runtimeSupport/utils/sha256'
+
+import { removeTestFolder } from './removeTestFolder'
 
 /** The workspace key every extension history test uses. */
 export const EXTENSION_WORKSPACE_KEY = sha256(
@@ -162,7 +164,7 @@ export async function openExtensionStore(
   const learningDirectory = await mkdtemp(
     join(tmpdir(), 'codebook-extension-history-'),
   )
-  context.after(() => rm(learningDirectory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(learningDirectory))
   const store = new NodeHistoryStore(
     createExtensionStorageDescriptor({
       ...(now ? { now } : {}),

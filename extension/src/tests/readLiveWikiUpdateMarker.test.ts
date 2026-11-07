@@ -1,12 +1,5 @@
 import assert from 'node:assert/strict'
-import {
-  mkdir,
-  mkdtemp,
-  realpath,
-  rm,
-  utimes,
-  writeFile,
-} from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -21,6 +14,7 @@ import type * as readerModule from '../utils/readWikiRegularFile'
 
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const MINUTE_MS = 60_000
 
@@ -45,7 +39,7 @@ async function wikiWithMarkerFile(
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-marker-look-')),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const outputDirectory = join(directory, 'wiki')
   const markerPath = `${outputDirectory}.update-run.json`
   await mkdir(outputDirectory)
@@ -108,8 +102,8 @@ test('a run marker whose process id still answers stops counting as a running up
     // Assert
     assert.deepEqual(markers, [{ kind: 'unowned' }, { kind: 'unowned' }])
   } finally {
-    await rm(vsCodePast.directory, { recursive: true, force: true })
-    await rm(cursorPast.directory, { recursive: true, force: true })
+    await removeTestFolder(vsCodePast.directory)
+    await removeTestFolder(cursorPast.directory)
   }
 })
 
@@ -179,8 +173,8 @@ test('a run marker of another window still counts inside its host’s longest ru
       },
     })
   } finally {
-    await rm(running.directory, { recursive: true, force: true })
-    await rm(reserved.directory, { recursive: true, force: true })
+    await removeTestFolder(running.directory)
+    await removeTestFolder(reserved.directory)
   }
 })
 

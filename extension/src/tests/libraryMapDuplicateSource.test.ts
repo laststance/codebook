@@ -1,12 +1,5 @@
 import assert from 'node:assert/strict'
-import {
-  mkdir,
-  mkdtemp,
-  realpath,
-  rm,
-  symlink,
-  writeFile,
-} from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, test } from 'node:test'
@@ -19,6 +12,8 @@ import {
   type LibraryAppFolder,
   type LibraryPackage,
 } from '../utils/libraryBuildStop'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const SOURCE = [
   'export function a(x: number) {',
@@ -33,9 +28,7 @@ const APP_ROOT = 'examples/app'
 
 const roots: string[] = []
 after(async () => {
-  await Promise.all(
-    roots.map((root) => rm(root, { recursive: true, force: true })),
-  )
+  await Promise.all(roots.map((root) => removeTestFolder(root)))
 })
 
 /**

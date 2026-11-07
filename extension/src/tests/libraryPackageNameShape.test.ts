@@ -1,12 +1,5 @@
 import assert from 'node:assert/strict'
-import {
-  mkdir,
-  mkdtemp,
-  realpath,
-  rm,
-  symlink,
-  writeFile,
-} from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -15,13 +8,15 @@ import { assertLibraryRouteSupported } from '../utils/assertLibraryRouteSupporte
 import { describeLibraryBuild } from '../utils/describeLibraryBuild'
 import { readLibraryPackageName } from '../utils/readLibraryPackageName'
 
+import { removeTestFolder } from './utils/removeTestFolder'
+
 /** Makes a repository with `packages/toolkit/package.json` holding the given name; removed when the test ends. */
 async function repositoryWithLibraryName(
   context: { after: (cleanup: () => Promise<void>) => void },
   name: string,
 ): Promise<string> {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'library-name-')))
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   await mkdir(join(root, 'packages', 'toolkit'), { recursive: true })
   await writeFile(
     join(root, 'packages', 'toolkit', 'package.json'),
@@ -106,7 +101,7 @@ test('does not read a package.json that a link places outside the repository', a
   // Arrange
   const root = await repositoryWithLibraryName(context, 'inside')
   const outside = await realpath(await mkdtemp(join(tmpdir(), 'library-out-')))
-  context.after(() => rm(outside, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(outside))
   await writeFile(join(outside, 'package.json'), '{"name":"leaked-name"}')
   await symlink(outside, join(root, 'packages', 'linked'), 'dir')
   // Act

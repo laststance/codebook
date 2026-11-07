@@ -53,6 +53,7 @@ import { fileSystemWhoseLinksResistRemoval } from './utils/fileSystemWhoseLinksR
 import { idleChild } from './utils/idleChild'
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 import { requireOwnPidNamespace } from './utils/requireOwnPidNamespace'
 
 /** Answers the start of this test process as the fixed window {@link AS_THIS_WINDOW} records it; the start of any other process cannot be read. */
@@ -184,7 +185,7 @@ test('a reservation that cannot be written leaves the run’s marker, and the en
     )
     assert.deepEqual(await readdir(wiki.directory), ['wiki'])
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -230,7 +231,7 @@ test('the marker file a second window may be reading is not rewritten when it be
       'wiki.update-run.json',
     ])
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -309,7 +310,7 @@ test('of two windows that start on a killed editor’s marker at the same moment
       'wiki.update-run.json',
     ])
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -417,7 +418,7 @@ test('of three windows that start on a killed editor’s marker at the same mome
       'wiki.update-run.json',
     ])
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -464,7 +465,7 @@ test('a window that starts at the moment a stopped watch’s reservation is remo
     assert.equal(otherWindow, 'refused while another window changes the marker')
     assert.deepEqual(await readdir(wiki.directory), ['wiki'])
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -514,7 +515,7 @@ test('a watch that ends after another window took its outlasted marker over leav
       'wiki.update-run.json',
     ])
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -555,7 +556,7 @@ test('a claim on the marker that a killed window left a moment ago does not keep
       'wiki.update-run.json',
     ])
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -590,7 +591,7 @@ test('a claim on the marker whose window was killed a moment ago does not keep a
       'wiki.update-run.json',
     ])
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -686,7 +687,7 @@ test('a second window never finds a marker file without content while the first 
       'wiki.update-run.json',
     ])
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -751,7 +752,7 @@ test('on a file system without hard links the marker is still created with its w
       'wiki.update-run.json',
     ])
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -790,7 +791,7 @@ test('a window that meets a marker file without content written less than 2 s ag
     assert.equal(markerAfterTheRefusal, '')
     assert.equal(startAfter2000Ms, 'holds the claim')
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -905,7 +906,7 @@ test('a window that finds no marker under its claim removes nothing: the marker 
       'wiki.update-run.json',
     ])
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -967,7 +968,7 @@ test('the claim on the marker, a file in the learner’s project folder, names i
         ',"windowId":"window-a","host":"vscode","startedAtMs":1790000000000,"machineKey":"f9c8c7ddcf3d5f56","hostKey":"d195d36bd79da7df","boot":{"id":"boot-1"},"processStart":"linux@4026531836:16362446"}',
     )
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -1018,7 +1019,7 @@ test('a claim on the marker without a process start, as 0.2.29.0 writes it, keep
       'wiki.update-run.json',
     ])
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -1061,7 +1062,7 @@ test('a claim on the marker that a running window of this machine has held for t
       'killed-editor',
     )
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -1106,7 +1107,7 @@ test('a claim on the marker that a window of another machine left more than 60 s
       'wiki.update-run.json',
     ])
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -1219,7 +1220,7 @@ test('a claim on the marker that a window of another machine placed 30 s ago by 
       },
     )
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -1284,7 +1285,7 @@ test('a claim on the marker that a window of another machine placed 30 s ago by 
       },
     )
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -1341,7 +1342,7 @@ test('a claim on the marker that a window of another machine left 90 s ago by a 
       },
     )
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -1422,7 +1423,7 @@ test('a claim on the marker that a window of another machine placed 150 s ago by
       },
     )
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -1495,7 +1496,7 @@ test('a claim on the marker that a window of another machine left 150 s ago by t
       },
     )
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -1571,7 +1572,7 @@ test('a claim on the marker that a window of another machine placed 150 s ago by
       },
     )
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -1622,7 +1623,7 @@ test('a marker of another computer with the same host name, another editor machi
       'wiki.update-run.json',
     ])
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -1705,7 +1706,7 @@ test('a window that was suspended under its claim at the end of its run, while a
       'wiki.update-run.json',
     ])
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -1791,7 +1792,7 @@ test('a window that was suspended under its claim at the end of its watch, while
       'wiki.update-run.json',
     ])
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -1871,7 +1872,7 @@ test('a window that was suspended under its claim in the middle of its start, wh
       'wiki.update-run.json',
     ])
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -1899,6 +1900,7 @@ test('the end of a run waits for another window’s claim on the marker and remo
       setTimeout: async (waitMs: number) => {
         waitsMs.push(waitMs)
         if (waitsMs.length === 3)
+          // not cleanup: a stand-in file system removes the path while the code under test works on it
           await rm(`${wiki.markerPath}.takeover`, { recursive: true })
       },
     },
@@ -1924,7 +1926,7 @@ test('the end of a run waits for another window’s claim on the marker and remo
     assert.deepEqual(waitsMs, [25, 25, 25])
     assert.deepEqual(await readdir(wiki.directory), ['wiki'])
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -1977,7 +1979,7 @@ test('the end of a run that never gets the claim on the marker gives up after tw
       'held-by-another-window',
     ])
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -2009,6 +2011,7 @@ test('the end of a run says that its marker stayed while another window held the
     const markerAfterTheFirstEnd = JSON.parse(
       await readFile(wiki.markerPath, 'utf8'),
     ).windowId
+    // not cleanup: deletes a Wiki folder or claim to simulate the learner or another window; the code under test must notice
     await rm(`${wiki.markerPath}.takeover`, { recursive: true })
     const secondEnd = await claim.release()
 
@@ -2019,7 +2022,7 @@ test('the end of a run says that its marker stayed while another window held the
     )
     assert.deepEqual(await readdir(wiki.directory), ['wiki'])
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -2051,6 +2054,7 @@ test('the end of a stopped watch says that its reservation was not written while
     const markerAfterTheFirstEnd = JSON.parse(
       await readFile(wiki.markerPath, 'utf8'),
     ).watchEndedAtMs
+    // not cleanup: deletes a Wiki folder or claim to simulate the learner or another window; the code under test must notice
     await rm(`${wiki.markerPath}.takeover`, { recursive: true })
     const secondEnd = await claim.reserve(1_790_000_060_000)
 
@@ -2068,7 +2072,7 @@ test('the end of a stopped watch says that its reservation was not written while
       watchEndedAtMs: 1_790_000_060_000,
     })
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -2119,7 +2123,7 @@ test('the end of a run whose outlasted marker another window took over says that
       },
     )
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -2180,7 +2184,7 @@ test('the end of a run whose marker could not be read at that moment says that i
     )
     assert.deepEqual(await readdir(wiki.directory), ['wiki'])
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -2262,7 +2266,7 @@ test('the end of a stopped watch whose marker could not be read at that moment s
       'wiki.update-run.json',
     ])
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -2291,7 +2295,7 @@ test('the end of a run whose marker file is gone says that nothing of this run i
     assert.equal(ended, true)
     assert.deepEqual(await readdir(wiki.directory), ['wiki'])
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -2320,7 +2324,7 @@ test('the end of a stopped watch whose marker file is gone says that nothing of 
     assert.equal(ended, true)
     assert.deepEqual(await readdir(wiki.directory), ['wiki'])
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -2355,7 +2359,7 @@ test('the end of a run whose marker path came to hold a folder says at once that
       { ended: true, isFolderAtTheMarkerPath: true },
     )
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -2388,7 +2392,7 @@ test('the end of a run whose marker path came to hold a file larger than any mar
       { ended: true, sizeAtTheMarkerPath: 67_108_865 },
     )
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -2430,7 +2434,7 @@ test('the end of a stopped watch whose marker path came to hold a folder says at
       },
     )
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -2471,7 +2475,7 @@ test('the end of a stopped watch whose marker path came to hold a file larger th
       },
     )
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -2559,7 +2563,7 @@ test('a start in a second window whose open of the running window’s marker fai
       },
     )
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -2620,7 +2624,7 @@ test('the end of a run whose marker could neither be read nor looked at says tha
     )
     assert.deepEqual(await readdir(wiki.directory), ['wiki'])
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -2694,7 +2698,7 @@ test('the end of a run whose marker the system refused to remove once reports th
     )
     assert.deepEqual(await readdir(wiki.directory), ['wiki'])
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -2734,7 +2738,7 @@ test('a claim folder that a window prepared beside the marker and never put into
       'wiki.update-run.json',
     ])
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -2743,7 +2747,7 @@ test('the twenty attempts of a run’s end read the start of the running window 
   // Arrange: a window that runs, and a claim held by a real running process of this machine, recorded with its real start. The window is this test process with its real identity, which judges the holder's claim only where it names its pid namespace (Cycle 0046 row 195).
   requireOwnPidNamespace()
   const wiki = await createWikiFolder()
-  context.after(() => rm(wiki.directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(wiki.directory))
   const holder = await idleChild(context)
   const holderPid = holder.pid
   assert.ok(holderPid, 'the holder runs')
@@ -2840,7 +2844,7 @@ test('the prepared marker file a killed window left beside the marker is removed
     // Assert
     assert.deepEqual(await readdir(wiki.directory), ['wiki'])
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -2899,7 +2903,7 @@ test('the prepared marker file a killed window of another machine left beside th
       },
     )
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -2964,7 +2968,7 @@ test('the reservation a window wrote beside the marker and could not move over i
     assert.equal(leftBesideTheMarker, 1)
     assert.deepEqual(await readdir(wiki.directory), ['wiki'])
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -3028,7 +3032,7 @@ test(
       )
     } finally {
       process.umask(previousMask)
-      await rm(wiki.directory, { recursive: true, force: true })
+      await removeTestFolder(wiki.directory)
     }
   },
 )
@@ -3067,7 +3071,7 @@ test(
       assert.deepEqual(modesOfTheClaim, { folder: 0o700, file: 0o600 })
     } finally {
       process.umask(previousMask)
-      await rm(storage.directory, { recursive: true, force: true })
+      await removeTestFolder(storage.directory)
     }
   },
 )
@@ -3103,7 +3107,7 @@ test('a link at the marker’s path does not refuse every start: once it is olde
     assert.equal(await readFile(target, 'utf8'), 'kept')
     assert.equal((await lstat(wiki.markerPath)).isFile(), true)
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -3121,7 +3125,7 @@ async function createClonedProject(context: TestContext): Promise<{
   const temporaryFolder = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-claim-link-')),
   )
-  context.after(() => rm(temporaryFolder, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(temporaryFolder))
   const project = join(temporaryFolder, 'project')
   const besideTheProject = join(temporaryFolder, 'beside-the-project')
   const outputDirectory = join(project, '.codebook', 'wiki')
@@ -3442,7 +3446,7 @@ test(
         },
       )
     } finally {
-      await rm(wiki.directory, { recursive: true, force: true })
+      await removeTestFolder(wiki.directory)
     }
   },
 )
@@ -3535,7 +3539,7 @@ test('a folder with content at the marker’s path does not refuse every start: 
       },
     )
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -3608,7 +3612,7 @@ test('a file at the claim folder’s path does not keep the claim from being tak
       { besideTheWikiAfterTheFirstRun: ['wiki'], nextStart: 'holds the claim' },
     )
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -3696,7 +3700,7 @@ test('a window whose claim on the marker could not be removed at the end of one 
       },
     )
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -3925,7 +3929,7 @@ test('a reservation taken over by a Cursor claim is written back as the VS Code 
       reservation,
     )
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })
 
@@ -3981,6 +3985,6 @@ test('a reservation taken over and written back is the original owner’s text, 
       { isWrittenBackTextTheOwners: true, markerLeft: false },
     )
   } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
+    await removeTestFolder(wiki.directory)
   }
 })

@@ -1,19 +1,14 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import {
-  access,
-  chmod,
-  mkdtemp,
-  readFile,
-  rm,
-  writeFile,
-} from 'node:fs/promises'
+import { access, chmod, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { gitEnvironmentWithoutInherited } from '../utils/gitEnvironmentWithoutInherited'
 import { readRepositoryRevision } from '../utils/readRepositoryRevision'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** Writes a stand-in `git` script that logs its arguments and the lock setting, then runs `body`. */
 async function fakeGit(directory: string, body: string): Promise<string> {
@@ -45,7 +40,7 @@ test('a revision read that Git answers too slowly returns an unknown dirty revis
     // gstack-timing-ok: the bound is the contract (the fake Git sleeps 5 s; the read must give up at its own 150 ms bound, not wait for Git)
     assert.ok(Date.now() - startedAt < 3_000)
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -70,7 +65,7 @@ test('the revision read runs Git without optional locks', async () => {
       '0 -c core.fsmonitor=false --no-optional-locks status --porcelain --untracked-files=no',
     ])
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -118,6 +113,6 @@ test('the revision read does not start the repository fsmonitor hook and still r
     assert.deepEqual(revision, { revision: commit, dirty: false })
     await assert.rejects(access(marker))
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })

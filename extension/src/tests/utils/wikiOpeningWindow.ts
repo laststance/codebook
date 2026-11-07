@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm } from 'node:fs/promises'
+import { mkdtemp, realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -11,6 +11,7 @@ import type {
 import { keepLocalAddress, parseFakeUri } from './fakeEditorAddresses'
 import { createFakeFileWatching, FakeRelativePattern } from './fakeFileWatching'
 import { loadModule } from './loadModule'
+import { removeTestFolder } from './removeTestFolder'
 import { writeMinimalWiki } from './writeMinimalWiki'
 
 /** A step of opening or asking that a test can keep open: the start of a reader, the editor's answer to which chat models it has, or the learner's choice among them. */
@@ -81,7 +82,7 @@ export async function openWikiOpeningWindow(
     return await activateWindowOn(projectRoot, options)
   } catch (error) {
     // A fixture that failed hands no `close` to its caller, so it removes its own temporary project.
-    await rm(projectDirectory, { recursive: true, force: true })
+    await removeTestFolder(projectDirectory)
     throw error
   }
 }
@@ -277,7 +278,7 @@ async function activateWindowOn(
       try {
         await boundary.deactivate()
       } finally {
-        await rm(projectRoot, { recursive: true, force: true })
+        await removeTestFolder(projectRoot)
       }
     },
   }

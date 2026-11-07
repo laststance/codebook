@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
@@ -8,6 +8,7 @@ import { test } from 'node:test'
 import type * as AnswerDeepWikiQuestionModule from '../utils/answerDeepWikiQuestion'
 
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 test('Wiki question cites only lines from unchanged repository source', async () => {
   // Arrange
@@ -58,7 +59,7 @@ test('Wiki question cites only lines from unchanged repository source', async ()
     )
     assert.equal(answer.sourceChanged, false)
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -96,7 +97,7 @@ test('Wiki question refuses changed source rather than presenting stale model co
     )
     assert.equal(calls, 0)
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -169,7 +170,7 @@ test('Japanese Wiki question routes to a relevant English source before answerin
     assert.match(prompts[1]!, /createInvoice/)
     assert.equal(answer.citations[0]?.path, 'invoice.ts')
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -239,7 +240,7 @@ test('a large Wiki index keeps the source-routing request within the Cursor prom
     )
     assert.equal(answer.citations[0]?.path, 'module-437.ts')
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -311,7 +312,7 @@ test('Wiki question still cites verified source when optional model routing is m
     assert.equal(answer.citations[0]?.line, 2)
     assert.equal(answer.citations[1]?.line, 2)
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -382,7 +383,7 @@ test('application database questions include the runtime client instead of only 
     assert.equal(answer.citations[0]?.path, 'db/index.ts')
     assert.equal(answer.citations[0]?.line, 4)
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -451,7 +452,7 @@ test('natural database question reaches the runtime driver without naming a sour
     assert.equal(answer.citations[0]?.path, 'db/index.ts')
     assert.equal(answer.citations[0]?.line, 4)
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -514,7 +515,7 @@ test('Wiki explains a later invoice update guard after routing to a long source 
     assert.equal(answer.citations[0]?.path, 'actions.ts')
     assert.equal(answer.citations[0]?.line, 104)
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -590,6 +591,6 @@ test('Cursor browser question shows only answers citing unchanged excerpt lines'
       /^cursor:\/\/laststance\.codebook\/source\?/,
     )
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })

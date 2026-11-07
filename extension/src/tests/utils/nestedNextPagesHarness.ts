@@ -1,11 +1,4 @@
-import {
-  copyFile,
-  mkdir,
-  mkdtemp,
-  realpath,
-  rm,
-  writeFile,
-} from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { TestContext } from 'node:test'
@@ -23,6 +16,7 @@ import {
   pagesEvalModule,
   writePagesServerBuild,
 } from './nextPagesBuildHarness'
+import { removeTestFolder } from './removeTestFolder'
 
 /** The package folder every nested fixture uses, relative to the repository. */
 export const NESTED_APP_FOLDER = 'examples/app'
@@ -82,7 +76,7 @@ export async function nestedPagesRepository(context: TestContext) {
   const repository = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-nested-pages-')),
   )
-  context.after(() => rm(repository, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(repository))
   const packageRoot = join(repository, NESTED_APP_FOLDER)
   /** Writes one app's browser and server build, with the sources named below `workspace`. */
   const writeBuild = async (

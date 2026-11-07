@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, test } from 'node:test'
@@ -18,12 +18,11 @@ import {
   LIBRARY_SOURCE_PATH,
   libraryFixture,
 } from './utils/libraryBuildHarness'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const roots: string[] = []
 after(async () => {
-  await Promise.all(
-    roots.map((root) => rm(root, { recursive: true, force: true })),
-  )
+  await Promise.all(roots.map((root) => removeTestFolder(root)))
 })
 
 /** A map read that never answers and ends only when the discovery's signal aborts, so only a deadline can end it. */

@@ -7,7 +7,6 @@ import {
   readdir,
   readFile,
   rename,
-  rm,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -22,6 +21,7 @@ import {
   LINK_NOT_ALLOWED,
 } from './utils/createLinkIfAllowed'
 import { loadOpenWithoutFollowing } from './utils/loadOpenWithoutFollowing'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** The open flags of a system whose open cannot refuse a link: Windows defines neither `O_NOFOLLOW` nor `O_NONBLOCK`. Handed to the opener, it takes the way it takes on Windows on every system. */
 const OPEN_FLAGS_WITHOUT_NOFOLLOW = { O_RDONLY: flagsOfThisSystem.O_RDONLY }
@@ -66,7 +66,7 @@ test('a link at a path is refused with ELOOP where the system’s open cannot re
     // Assert
     assert.equal(outcome, 'refused with ELOOP')
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })
 
@@ -95,7 +95,7 @@ test(
       // Assert
       assert.equal(outcome, 'refused with ELOOP')
     } finally {
-      await rm(folder, { recursive: true, force: true })
+      await removeTestFolder(folder)
     }
   },
 )
@@ -115,7 +115,7 @@ test('a regular file is opened and read where the system’s open cannot refuse 
     // Assert
     assert.equal(outcome, 'opened and read: {"a":"12"}')
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })
 
@@ -149,7 +149,7 @@ test('a path that another file takes between the look at it and its open is refu
     // Assert
     assert.equal(outcome, 'refused with EREPLACED')
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })
 
@@ -168,7 +168,7 @@ test('a folder at a path is refused with ENOTREG before anything is opened where
     // Assert
     assert.equal(outcome, 'refused with ENOTREG')
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })
 
@@ -194,7 +194,7 @@ test('a path that holds nothing is reported as missing, with ENOENT, with the sy
       whereTheOpenCannotRefuseALink: 'refused with ENOENT',
     })
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })
 
@@ -247,6 +247,6 @@ test('a file opened with write access can be written through, with the system’
       entriesOfTheFolder: ['first.json', 'second.json'],
     })
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })

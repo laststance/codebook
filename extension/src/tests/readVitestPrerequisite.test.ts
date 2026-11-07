@@ -1,17 +1,12 @@
 import assert from 'node:assert/strict'
-import {
-  mkdir,
-  mkdtemp,
-  realpath,
-  rm,
-  symlink,
-  writeFile,
-} from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { readVitestPrerequisite } from '../utils/readVitestPrerequisite'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** Makes an empty repository folder, removed by the returned cleanup. */
 async function repository(): Promise<{
@@ -23,7 +18,7 @@ async function repository(): Promise<{
   )
   return {
     root,
-    cleanup: (): Promise<void> => rm(root, { recursive: true, force: true }),
+    cleanup: (): Promise<void> => removeTestFolder(root),
   }
 }
 

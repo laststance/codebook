@@ -1,13 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import {
-  chmod,
-  mkdir,
-  mkdtemp,
-  realpath,
-  rm,
-  writeFile,
-} from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -19,6 +12,8 @@ import { describeRepositoryPackageManager } from '../utils/describeRepositoryPac
 import { isTrackedFileBuildFailure } from '../utils/isTrackedFileBuildFailure'
 import { readRepositoryOrigin } from '../utils/readRepositoryOrigin'
 
+import { removeTestFolder } from './utils/removeTestFolder'
+
 const run = promisify(execFile)
 
 /** Makes a folder removed when the test ends. */
@@ -27,7 +22,7 @@ async function temporaryFolder(
   prefix: string,
 ): Promise<string> {
   const folder = await realpath(await mkdtemp(join(tmpdir(), prefix)))
-  context.after(() => rm(folder, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(folder))
   return folder
 }
 

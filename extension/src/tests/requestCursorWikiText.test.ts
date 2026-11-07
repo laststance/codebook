@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -13,6 +13,7 @@ import {
 import type * as RequestCursorWikiTextModule from '../utils/requestCursorWikiText'
 
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 test('Cursor Wiki provider accepts only a successful bounded CLI response', () => {
   // Arrange
@@ -85,7 +86,7 @@ test('a failed Cursor Agent response leaves the browser without a fabricated Wik
   } finally {
     if (previousHome === undefined) delete process.env.HOME
     else process.env.HOME = previousHome
-    await rm(fakeHome, { recursive: true, force: true })
+    await removeTestFolder(fakeHome)
   }
 })
 
@@ -112,7 +113,7 @@ test('excess Cursor Agent output terminates the isolated Wiki request', async ()
   } finally {
     if (previousHome === undefined) delete process.env.HOME
     else process.env.HOME = previousHome
-    await rm(fakeHome, { recursive: true, force: true })
+    await removeTestFolder(fakeHome)
   }
 })
 
@@ -178,7 +179,7 @@ async function installHangingCursorAgent() {
   const restore = async (): Promise<void> => {
     if (previousHome === undefined) delete process.env.HOME
     else process.env.HOME = previousHome
-    await rm(fakeHome, { recursive: true, force: true })
+    await removeTestFolder(fakeHome)
   }
   return { startedMarker, restore }
 }
@@ -254,7 +255,7 @@ test('a missing Cursor Agent CLI reports the prerequisite without starting Wiki 
     else process.env.HOME = previousHome
     if (previousPath === undefined) delete process.env.PATH
     else process.env.PATH = previousPath
-    await rm(fakeHome, { recursive: true, force: true })
+    await removeTestFolder(fakeHome)
   }
 })
 
@@ -297,6 +298,6 @@ test('a stalled Cursor Agent request times out and leaves no Wiki workspace', as
   } finally {
     if (previousHome === undefined) delete process.env.HOME
     else process.env.HOME = previousHome
-    await rm(fakeHome, { recursive: true, force: true })
+    await removeTestFolder(fakeHome)
   }
 })

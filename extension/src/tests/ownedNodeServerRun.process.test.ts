@@ -4,7 +4,6 @@ import {
   mkdtemp,
   readFile,
   realpath,
-  rm,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -25,6 +24,7 @@ import {
   realNodeServerDependencies,
   untilView,
 } from './utils/realNodeServerDependencies'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** The test-only HTTP server as compiled beside this test; it never ships. */
 const FIXTURE_SERVER = join(__dirname, 'fixtures/node-server/server.js')
@@ -43,7 +43,7 @@ async function fixtureRun(
   const workspace = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-node-server-run-')),
   )
-  t.after(() => rm(workspace, { recursive: true, force: true }))
+  t.after(() => removeTestFolder(workspace))
   const port = await freeLoopbackPort()
   await copyFile(FIXTURE_SERVER, join(workspace, 'server.cjs'))
   await writeFile(

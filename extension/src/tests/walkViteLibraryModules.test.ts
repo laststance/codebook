@@ -1,12 +1,5 @@
 import assert from 'node:assert/strict'
-import {
-  mkdir,
-  mkdtemp,
-  realpath,
-  rm,
-  symlink,
-  writeFile,
-} from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -15,6 +8,8 @@ import {
   walkViteLibraryModules,
   type ViteWalkEnvironment,
 } from '../utils/walkViteLibraryModules'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** One module of a scripted graph. */
 type ScriptedModule = {
@@ -315,7 +310,7 @@ test('does not list a module of a sibling folder that shares the library folder 
 test('lists a module whose file is a symlink into the library folder', async (context) => {
   // Arrange
   const root = await realpath(await mkdtemp(join(tmpdir(), 'codebook-walk-')))
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   await mkdir(join(root, 'lib'), { recursive: true })
   await mkdir(join(root, 'app/node_modules'), { recursive: true })
   await writeFile(join(root, 'lib/index.js'), 'export {}')
@@ -514,7 +509,7 @@ test('lists one module once when URLs differ only by t, v and import parameters'
 test('does not follow a cache-folder module when cacheDir is a symlink to the real folder', async (context) => {
   // Arrange
   const root = await realpath(await mkdtemp(join(tmpdir(), 'codebook-walk-')))
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   await mkdir(join(root, 'realCache/deps'), { recursive: true })
   await writeFile(join(root, 'realCache/deps/chunk.js'), 'export {}')
   await symlink(join(root, 'realCache'), join(root, 'cacheLink'))

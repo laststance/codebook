@@ -36,6 +36,7 @@ import { systemErrorCode } from '../utils/systemErrorCode'
 
 import { endProcessesAfter } from './utils/endProcessesAfter'
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const RUN_CHROME = 'Google Chrome 154.0.1.2'
 
@@ -44,7 +45,7 @@ async function workspace(
   context: TestContext,
 ): Promise<{ storage: string; repository: string; hash: string }> {
   const base = await realpath(await mkdtemp(join(tmpdir(), 'codebook-saved-')))
-  context.after(() => rm(base, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(base))
   const storage = join(base, 'Application Support', 'globalStorage')
   const repository = join(base, 'repo-app')
   await mkdir(storage, { recursive: true })
@@ -905,6 +906,7 @@ test('a run or a setup that fails on the saved folder names neither the folder n
   const { storage, repository, hash } = await workspace(context)
   await finishSetup(storeOf(storage, 'window-a'), repository)
   const folder = join(storage, 'sign-in-profiles', hash)
+  // not cleanup: deletes a path of the fixture so the code under test meets it missing
   await rm(join(folder, 'Default'), { recursive: true, force: true })
   await writeFile(join(folder, 'Default'), 'a file where Chrome needs a folder')
   const store = storeOf(storage, 'window-b')

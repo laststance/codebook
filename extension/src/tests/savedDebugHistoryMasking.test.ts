@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { before, test, type TestContext } from 'node:test'
@@ -35,6 +35,7 @@ import {
 } from './utils/nodeServerHistoryFixture'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 import { realProcessStart } from './utils/realProcessStart'
+import { removeTestFolder } from './utils/removeTestFolder'
 import { chromeExtensionConfigurationOf } from './utils/startFakeChromeExtensionRun'
 
 before(async () => {
@@ -583,7 +584,7 @@ async function saveWebStudy(
   study: ReturnType<typeof createConfiguredStudy>,
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-web-study-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const library = new LearningLibrary(directory, study.workspaceKey)
   const store = new RecordingStore(directory, study.workspaceKey)
   await library.saveStudy(study)

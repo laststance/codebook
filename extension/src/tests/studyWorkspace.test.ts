@@ -73,6 +73,7 @@ test('an unreadable Node history folder is reported while the saved-study reader
       'learning',
       harness.service.nodeHistoryStore!.workspaceKey,
     )
+    // not cleanup: deletes a path of the fixture so the code under test meets it missing
     await rm(join(learningDirectory, 'node-tests.v1'), {
       recursive: true,
       force: true,

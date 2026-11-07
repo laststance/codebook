@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -20,13 +20,14 @@ import {
   pagesEvalModule,
   serverChunk,
 } from './utils/nextPagesBuildHarness'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** Creates an empty temporary workspace that the test removes afterwards. @example await emptyWorkspace(context) */
 async function emptyWorkspace(context: TestContext): Promise<string> {
   const workspace = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-server-only-')),
   )
-  context.after(() => rm(workspace, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(workspace))
   return workspace
 }
 

@@ -6,7 +6,6 @@ import {
   mkdir,
   mkdtemp,
   realpath,
-  rm,
   symlink,
   unlink,
   writeFile,
@@ -31,6 +30,7 @@ import {
 } from '../utils/scanNextPackages'
 
 import { createHarness } from './helpers'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const executeFile = promisify(execFile)
 const SIGNAL = new AbortController().signal
@@ -44,7 +44,7 @@ async function makeRepository(context: TestContext): Promise<string> {
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-discovery-')),
   )
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   await executeFile('git', ['init', '--quiet', root])
   return root
 }
@@ -324,7 +324,7 @@ test('discovery reports git-failed when Git cannot list the files', async (conte
   const outside = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-nogit-')),
   )
-  context.after(() => rm(outside, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(outside))
   const root = await makeRepository(context)
   await trackedApp(root, 'apps/web')
   // Act
@@ -384,7 +384,7 @@ test('a root without Next points to packages and says why an empty list is incom
   const withApps = await makeRepository(context)
   await trackedApp(withApps, 'apps/web')
   const noGit = await realpath(await mkdtemp(join(tmpdir(), 'codebook-nogit-')))
-  context.after(() => rm(noGit, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(noGit))
   // Act
   const pointed = await readStatusAdapterReadiness(
     withApps,
@@ -764,7 +764,7 @@ test('rootIsApp is read when Git cannot place the opened folder', async (context
   const folder = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-nogit-')),
   )
-  context.after(() => rm(folder, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(folder))
   await put(folder, 'package.json', NEXT_MANIFEST)
   await put(folder, 'app/page.tsx')
   // Act

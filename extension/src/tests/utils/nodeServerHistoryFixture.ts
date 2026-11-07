@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { TestContext } from 'node:test'
@@ -13,6 +13,7 @@ import { sha256 } from '../../runtimeSupport/utils/sha256'
 import { maskNodeServerConfiguration } from '../../utils/maskNodeServerConfiguration'
 
 import { createConfiguredStudy } from './createConfiguredStudy'
+import { removeTestFolder } from './removeTestFolder'
 
 /** The workspace key every server history test uses. */
 export const SERVER_WORKSPACE_KEY = sha256('node-server-history-test-workspace')
@@ -42,7 +43,7 @@ export async function openServerRepository(
     options.learningDirectory ??
     (await mkdtemp(join(tmpdir(), 'codebook-server-')))
   if (!options.learningDirectory)
-    context.after(() => rm(learningDirectory, { recursive: true, force: true }))
+    context.after(() => removeTestFolder(learningDirectory))
   const repository = new NodeHistoryRepository(
     learningDirectory,
     options.workspaceKey ?? SERVER_WORKSPACE_KEY,

@@ -20,6 +20,7 @@ import type * as ReadWikiRegularFileModule from '../utils/readWikiRegularFile'
 import { fileSystemWithLargeFileIds } from './utils/fileSystemWithLargeFileIds'
 import { loadModule } from './utils/loadModule'
 import { loadOpenWithoutFollowing } from './utils/loadOpenWithoutFollowing'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const MANIFEST_TEXT = '{"schemaVersion":1,"pages":[]}'
 
@@ -62,7 +63,7 @@ test('a manifest edited in place after an identity was read has no publication i
     )
     assert.equal(afterTheEdit, undefined)
   } finally {
-    await rm(wiki.outputDirectory, { recursive: true, force: true })
+    await removeTestFolder(wiki.outputDirectory)
   }
 })
 
@@ -86,7 +87,7 @@ test('a manifest a checkout puts back with the same bytes as a new file keeps th
     assert.equal(typeof published, 'string')
     assert.equal(afterTheCheckout, published)
   } finally {
-    await rm(wiki.outputDirectory, { recursive: true, force: true })
+    await removeTestFolder(wiki.outputDirectory)
   }
 })
 
@@ -106,7 +107,7 @@ test('a folder whose receipt was removed after an identity was read has no publi
     assert.equal(typeof published, 'string')
     assert.equal(withoutReceipt, undefined)
   } finally {
-    await rm(wiki.outputDirectory, { recursive: true, force: true })
+    await removeTestFolder(wiki.outputDirectory)
   }
 })
 
@@ -151,7 +152,7 @@ test('the publication identity names a file id above 2^53 exactly, so a receipt 
       ],
     )
   } finally {
-    await rm(wiki.outputDirectory, { recursive: true, force: true })
+    await removeTestFolder(wiki.outputDirectory)
   }
 })
 
@@ -199,6 +200,6 @@ test('the publication identity of files whose ids are above 2^53 is read once an
       },
     )
   } finally {
-    await rm(wiki.outputDirectory, { recursive: true, force: true })
+    await removeTestFolder(wiki.outputDirectory)
   }
 })

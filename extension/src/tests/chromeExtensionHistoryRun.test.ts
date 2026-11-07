@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -22,6 +22,7 @@ import {
   type HarnessBehaviour,
 } from './utils/chromeExtensionRunHarness'
 import { openServerRepository } from './utils/nodeServerHistoryFixture'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** A `beginHistory` that starts a real history on a real repository and keeps the recorder. */
 async function recordingOver(
@@ -184,7 +185,7 @@ test('a run records through a writer that never finishes and shows exactly what 
   const directory = await mkdtemp(
     join(tmpdir(), 'codebook-extension-run-stalled-'),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const header = parseExtensionHistoryHeader({
     ...extensionHistoryHeader(EXTENSION_WORKSPACE_KEY),
     formatVersion: 1,

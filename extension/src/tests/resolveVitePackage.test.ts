@@ -4,7 +4,6 @@ import {
   mkdir,
   mkdtemp,
   realpath,
-  rm,
   symlink,
   writeFile,
 } from 'node:fs/promises'
@@ -18,12 +17,14 @@ import { selectedVitePackageStartPrerequisites } from '../utils/repositoryBrowse
 import { resolveVitePackage } from '../utils/resolveVitePackage'
 import { viteOutsidePackageRefusal } from '../viteRefusals'
 
+import { removeTestFolder } from './utils/removeTestFolder'
+
 /** Makes a temporary repository (real path) that is removed when the test ends. */
 async function makeRepository(context: TestContext): Promise<string> {
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-vitepkg-')),
   )
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   return root
 }
 

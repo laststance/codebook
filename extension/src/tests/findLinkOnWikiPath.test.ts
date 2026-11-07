@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -10,6 +10,7 @@ import {
   createLinkIfAllowed,
   LINK_NOT_ALLOWED,
 } from './utils/createLinkIfAllowed'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 // Value: protects=the rule the publisher and the reader share that inside the project only a folder of the project's own leads to the Wiki folder; fails_when=the look without following (lstat) is dropped from the walk, so a .codebook link to another folder of the same project passes, because its real path stays in the project; why_new=second /ship testing specialist TEST4; seam=none; no_claim=links that leave the project, which the real-path check refuses and the reader's and the update start's tests cover
 test("a .codebook link to another folder of the same project is named as the link on the Wiki folder's path", async (context) => {
@@ -34,7 +35,7 @@ test("a .codebook link to another folder of the same project is named as the lin
     // Assert
     assert.equal(found, join(project, '.codebook'))
   } finally {
-    await rm(project, { recursive: true, force: true })
+    await removeTestFolder(project)
   }
 })
 
@@ -54,6 +55,6 @@ test("a .codebook file is named as what stands on the Wiki folder's path where a
     // Assert
     assert.equal(found, join(project, '.codebook'))
   } finally {
-    await rm(project, { recursive: true, force: true })
+    await removeTestFolder(project)
   }
 })

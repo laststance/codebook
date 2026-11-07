@@ -54,6 +54,7 @@ import { fileSystemWhoseLinksResistRemoval } from './utils/fileSystemWhoseLinksR
 import { fileSystemWhoseRealPathFails } from './utils/fileSystemWhoseRealPathFails'
 import { loadModule } from './utils/loadModule'
 import { readerAnswersInChildProcess } from './utils/readerAnswersInChildProcess'
+import { removeTestFolder } from './utils/removeTestFolder'
 import { within } from './utils/within'
 import { writeMinimalWiki } from './utils/writeMinimalWiki'
 
@@ -163,7 +164,7 @@ test('generated Wiki reader serves published pages and answers an explicit same-
     assert.match(clientScript, /outside text inputs/)
   } finally {
     await reader.close()
-    await rm(projectDirectory, { recursive: true, force: true })
+    await removeTestFolder(projectDirectory)
   }
 })
 
@@ -199,7 +200,7 @@ test('generated Wiki reader refuses a published symlink escaping its output dire
     assert.doesNotMatch(await response.text(), /private/)
   } finally {
     await reader.close()
-    await rm(projectDirectory, { recursive: true, force: true })
+    await removeTestFolder(projectDirectory)
   }
 })
 
@@ -229,7 +230,7 @@ test('generated Wiki reader refuses malformed source identities rather than show
       /invalid or duplicate included source identities/,
     )
   } finally {
-    await rm(projectDirectory, { recursive: true, force: true })
+    await removeTestFolder(projectDirectory)
   }
 })
 
@@ -312,7 +313,7 @@ test('the same published Wiki opens source and update links in the active editor
     )
   } finally {
     await Promise.all([cursorReader.close(), codeReader.close()])
-    await rm(projectDirectory, { recursive: true, force: true })
+    await removeTestFolder(projectDirectory)
   }
 })
 
@@ -355,7 +356,7 @@ test('a local page without this reader’s private path token cannot read the ge
     assert.doesNotMatch(await rootPage.text(), /Private architecture notes/)
   } finally {
     await reader.close()
-    await rm(projectDirectory, { recursive: true, force: true })
+    await removeTestFolder(projectDirectory)
   }
 })
 
@@ -404,7 +405,7 @@ test('a failed editor-model answer reaches the browser reader as an error instea
     })
   } finally {
     await reader.close()
-    await rm(projectDirectory, { recursive: true, force: true })
+    await removeTestFolder(projectDirectory)
   }
 })
 
@@ -454,7 +455,7 @@ async function serveWikiThatAnswers(): Promise<{
     },
     async close(): Promise<void> {
       await reader.close()
-      await rm(projectRoot, { recursive: true, force: true })
+      await removeTestFolder(projectRoot)
     },
   }
 }
@@ -634,7 +635,7 @@ test('a request whose Host header is neither the reader’s own nor the forwarde
     assert.doesNotMatch(String(answers.rebound.body), /<body>Wiki<\/body>/)
   } finally {
     await reader.close()
-    await rm(projectRoot, { recursive: true, force: true })
+    await removeTestFolder(projectRoot)
   }
 })
 
@@ -701,7 +702,7 @@ test('closing the reader while a question is in flight stops the question and en
     // Also when the close did not end: the tab's request is given up, so nothing keeps the test file open.
     browserTab.abort()
     await asking
-    await rm(projectRoot, { recursive: true, force: true })
+    await removeTestFolder(projectRoot)
   }
 })
 
@@ -711,7 +712,7 @@ test('a question whose tab goes while the reader reads the manifest is not sent 
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-gone-question-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory } = await writeMinimalWiki(projectRoot)
   let isReaderStarted = false
   let noteManifestReadAsked: (asked: 'asked') => void = () => undefined
@@ -800,7 +801,7 @@ test('a question whose character of two bytes is split between two parts of its 
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-split-question-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory } = await writeMinimalWiki(projectRoot)
   const questionsAsked: string[] = []
   const reader = await startDeepWikiReader(
@@ -858,7 +859,7 @@ test('a question whose answer is longer than one part of an answer reaches the b
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-long-answer-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory } = await writeMinimalWiki(projectRoot)
   const longAnswer = 'The source confirms it. '.repeat(4_000)
   const reader = await startDeepWikiReader(
@@ -901,7 +902,7 @@ test('a question of another origin, a question too long, a blank question and a 
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-refused-questions-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory } = await writeMinimalWiki(projectRoot)
   let isReaderStarted = false
   let manifestReadsAfterTheStart = 0
@@ -1009,7 +1010,7 @@ test(
         (writer) => writer.close(),
         () => undefined,
       )
-      await rm(projectRoot, { recursive: true, force: true })
+      await removeTestFolder(projectRoot)
     })
     const { outputDirectory, manifestPath } =
       await writeMinimalWiki(projectRoot)
@@ -1040,7 +1041,7 @@ test('the reader’s manifest read does not follow a link to a regular manifest 
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-link-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   const filesOfTheManifestInPlace = [
     ...(await readDeepWikiManifest(outputDirectory, projectRoot)).files,
@@ -1075,7 +1076,7 @@ test('the reader refuses a Wiki whose `.codebook` folder in the project is a lin
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-linked-parent-')),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const projectRoot = join(directory, 'project')
   await mkdir(projectRoot)
   const { outputDirectory } = await writeMinimalWiki(projectRoot)
@@ -1115,7 +1116,7 @@ test('the reader refuses a Wiki whose folder `.codebook/wiki` in the project is 
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-linked-folder-')),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const projectRoot = join(directory, 'project')
   await mkdir(projectRoot)
   const { outputDirectory } = await writeMinimalWiki(projectRoot)
@@ -1148,7 +1149,7 @@ test('the reader’s look refuses a Wiki folder, and a folder above it, that lst
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-wrong-look-')),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const wrongLook = fileSystemWhoseLinksResistRemoval({
     lstatOfALink: 'a directory',
   })
@@ -1208,7 +1209,7 @@ for (const code of ['EACCES', 'EINVAL'] as const)
     const projectRoot = await realpath(
       await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-unnamed-real-path-')),
     )
-    context.after(() => rm(projectRoot, { recursive: true, force: true }))
+    context.after(() => removeTestFolder(projectRoot))
     const { outputDirectory } = await writeMinimalWiki(projectRoot)
     const walk = await loadModule<typeof linkWalkModule>(
       resolve(__dirname, '../utils/findLinkOnWikiPath.js'),
@@ -1247,7 +1248,7 @@ test('every page the reader serves lets only script files of its own origin and 
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-policy-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const outputDirectory = join(projectRoot, '.codebook', 'wiki')
   await mkdir(join(outputDirectory, 'assets'), { recursive: true })
   await writeFile(
@@ -1316,7 +1317,7 @@ test('a page built to make the HTML parser slow is answered within about the dea
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-slow-page-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   await writeFile(
     join(outputDirectory, 'slow.html'),
@@ -1385,7 +1386,7 @@ test('a page whose worker fails is answered with status 503 and a sentence for t
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-failed-worker-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   await writeFile(
     join(outputDirectory, 'hosts.html'),
@@ -1404,7 +1405,7 @@ test('a page whose worker fails is answered with status 503 and a sentence for t
   const workerFolder = await mkdtemp(
     join(tmpdir(), 'codebook-wiki-page-worker-'),
   )
-  context.after(() => rm(workerFolder, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(workerFolder))
   await writeFile(
     join(workerFolder, 'wikiPageWorker.js'),
     "throw new Error('the page worker failed')",
@@ -1455,7 +1456,7 @@ test('a page within the file limit that needs more memory than a page worker may
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-dense-page-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   await writeFile(
     join(outputDirectory, 'dense.html'),
@@ -1526,7 +1527,7 @@ test('a page file larger than the reader prepares is answered with 503 and a sen
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-large-page-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   await writeFile(
     join(outputDirectory, 'index.html'),
@@ -1628,7 +1629,7 @@ test('a page file of 3 MB, far larger than any generated page, is refused as too
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-3mb-page-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   await writeFile(
     join(outputDirectory, 'large.html'),
@@ -1699,7 +1700,7 @@ test('while six pages are in hand, a further page is refused at once with 503 an
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-pages-in-hand-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   await writeFile(
     join(outputDirectory, 'later.html'),
@@ -1824,7 +1825,7 @@ test('while six pages are in hand, a further page is refused with a page typed a
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-busy-refusal-type-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   await writeFile(
     join(outputDirectory, 'later.html'),
@@ -1906,7 +1907,7 @@ test('pages that their worker refuses and pages whose open fails give their plac
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-places-given-back-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   await writeFile(
     join(outputDirectory, 'later.html'),
@@ -2001,7 +2002,7 @@ test('while six pages are in hand, a further page request is refused at once wit
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-metadata-in-hand-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   await writeFile(
     join(outputDirectory, 'later.html'),
@@ -2147,7 +2148,7 @@ test('a window whose forward goes to another host gets a 403 that says the reade
     })
   } finally {
     await reader.close()
-    await rm(projectRoot, { recursive: true, force: true })
+    await removeTestFolder(projectRoot)
   }
 })
 
@@ -2358,7 +2359,7 @@ test('a page whose browser does not read it keeps its place until its connection
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-unread-page-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   await writeFile(
     join(outputDirectory, 'later.html'),
@@ -2426,7 +2427,7 @@ test('pages whose browser goes while the reader opens them keep their places unt
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-gone-pages-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   await writeFile(
     join(outputDirectory, 'later.html'),
@@ -2682,7 +2683,7 @@ test('a page whose browser goes while the reader reads the manifest for it gets 
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-gone-at-manifest-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory } = await writeMinimalWiki(projectRoot)
   const held = await loadReaderHoldingAPageRead('the manifest')
   const reader = await held.startDeepWikiReader(
@@ -2726,7 +2727,7 @@ test('a page whose browser goes while the reader looks at its file gets nothing 
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-gone-at-look-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory } = await writeMinimalWiki(projectRoot)
   const held = await loadReaderHoldingAPageRead('the page’s look')
   const reader = await held.startDeepWikiReader(
@@ -2770,7 +2771,7 @@ test('a page whose browser goes while the reader reads the publication identity 
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-gone-at-identity-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory } = await writeMinimalWiki(projectRoot)
   const held = await loadReaderHoldingAPageRead('the publication identity')
   const reader = await held.startDeepWikiReader(
@@ -2814,7 +2815,7 @@ test('a page whose browser stops reading is ended at the send limit and gives it
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-stalled-page-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   await writeFile(
     join(outputDirectory, 'later.html'),
@@ -2987,7 +2988,7 @@ test('a page whose tab goes while it is prepared gives its place back once the r
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-gone-refused-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   await writeFile(
     join(outputDirectory, 'later.html'),
@@ -3067,7 +3068,7 @@ test('a refusal page whose browser stops reading is ended at the send limit and 
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-stalled-refusal-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   await writeFile(
     join(outputDirectory, 'later.html'),
@@ -3145,7 +3146,7 @@ test('a busy refusal whose connection closes before it is received gives no plac
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-gone-busy-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   await writeFile(
     join(outputDirectory, 'later.html'),
@@ -3248,7 +3249,7 @@ test('a busy refusal whose browser stops reading is ended at the send limit and 
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-stalled-busy-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   await writeFile(
     join(outputDirectory, 'later.html'),
@@ -3356,7 +3357,7 @@ test('an image of the Wiki whose browser stops reading is ended at the send limi
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-stalled-asset-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   await writeFile(
     join(outputDirectory, 'diagram.png'),
@@ -3418,7 +3419,7 @@ test('an image of the Wiki whose browser stops reading but keeps sending bytes i
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-sending-client-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   await writeFile(
     join(outputDirectory, 'diagram.png'),
@@ -3476,7 +3477,7 @@ test('an image of the Wiki that its browser reads slowly but steadily is receive
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-slow-asset-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   const imageBytes = Buffer.alloc(16_777_216, 'diagram ')
   await writeFile(join(outputDirectory, 'diagram.png'), imageBytes)
@@ -3532,7 +3533,7 @@ test('a page that its browser reads slowly but steadily is received whole, thoug
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-slow-page-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory } = await writeMinimalWiki(projectRoot)
   const onePlace = await loadReaderWithOnePlaceAndALargeFirstPage({
     WIKI_RESPONSE_SEND_LIMIT_MS: 1_000,
@@ -3671,7 +3672,7 @@ test('an image of the Wiki whose browser stops reading has its file closed well 
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-closed-asset-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   await writeFile(
     join(outputDirectory, 'diagram.png'),
@@ -3723,7 +3724,7 @@ test('an image of the Wiki that another file replaced while its browser waited i
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-replaced-asset-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   const imagePath = join(outputDirectory, 'diagram.png')
   await writeFile(imagePath, Buffer.alloc(16_777_216, 'diagram '))
@@ -3786,7 +3787,7 @@ test('an image of the Wiki whose browser goes before it has received the image h
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-gone-asset-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   await writeFile(
     join(outputDirectory, 'diagram.png'),
@@ -3855,7 +3856,7 @@ test('a part of a Wiki image whose file is still being opened when its browser g
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-held-part-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   await writeFile(
     join(outputDirectory, 'diagram.png'),
@@ -3925,7 +3926,7 @@ test('a page file that grows past the limit after the reader looked at its size 
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-growing-page-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   await writeFile(
     join(outputDirectory, 'later.html'),
@@ -4030,7 +4031,7 @@ test('a page file of exactly the reader’s limit is read and served', async (co
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-limit-page-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory } = await writeMinimalWiki(projectRoot)
   await writeFile(
     join(outputDirectory, 'index.html'),
@@ -4108,7 +4109,7 @@ test(
         (writer) => writer.close(),
         () => undefined,
       )
-      await rm(projectRoot, { recursive: true, force: true })
+      await removeTestFolder(projectRoot)
     })
     await writeFile(
       manifestPath,
@@ -4152,7 +4153,7 @@ test('a Wiki page asked for as an image, media, a style sheet, a font, a track, 
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-destination-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory } = await writeMinimalWiki(projectRoot)
   let preparedPageCount = 0
   const countingWorker: typeof wikiPageWorkerModule = {
@@ -4234,7 +4235,7 @@ test('the reader’s own script, a style sheet and an image of the Wiki are serv
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-subresource-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   await writeFile(join(outputDirectory, 'wiki.css'), 'body { margin: 0; }')
   await writeFile(join(outputDirectory, 'diagram.png'), 'PNG bytes')
@@ -4289,7 +4290,7 @@ test('a style sheet, an image and a font asked for at once cost one manifest rea
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-shared-manifest-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   await writeFile(join(outputDirectory, 'wiki.css'), 'body { margin: 0; }')
   await writeFile(join(outputDirectory, 'diagram.png'), 'PNG bytes')
@@ -4402,7 +4403,7 @@ test('six pages asked for at once cost one manifest read between them and are al
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-shared-pages-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory } = await writeMinimalWiki(projectRoot)
   let isReaderStarted = false
   let manifestReadsAfterTheStart = 0
@@ -4470,7 +4471,7 @@ test('a style sheet that an update adds after the reader has served a file of th
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-added-asset-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   await writeFile(join(outputDirectory, 'wiki.css'), 'body { margin: 0; }')
   const reader = await startDeepWikiReader(
@@ -4523,7 +4524,7 @@ test('a shared manifest read that fails answers every file of the Wiki that join
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-failed-shared-read-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   await writeFile(join(outputDirectory, 'wiki.css'), 'body { margin: 0; }')
   await writeFile(join(outputDirectory, 'diagram.png'), 'PNG bytes')
@@ -4624,7 +4625,7 @@ test('an asset of the Wiki is sent byte for byte from its opened file in parts, 
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-streamed-asset-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   const imagePath = join(outputDirectory, 'diagram.png')
   const imageBytes = Buffer.alloc(300_000, 'diagram ')
@@ -4721,7 +4722,7 @@ test('an image of the Wiki that shrinks after the reader looked at its size is s
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-shrunk-asset-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   const imagePath = join(outputDirectory, 'diagram.png')
   const imageBytes = Buffer.alloc(300_000, 'diagram ')
@@ -4792,7 +4793,7 @@ test('an empty style sheet of the Wiki is served as an empty answer with status 
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-empty-asset-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   await writeFile(join(outputDirectory, 'notes.css'), '')
   await writeFile(
@@ -4860,7 +4861,7 @@ test(
         (writer) => writer.close(),
         () => undefined,
       )
-      await rm(projectRoot, { recursive: true, force: true })
+      await removeTestFolder(projectRoot)
     })
     await writeFile(
       manifestPath,
@@ -4913,7 +4914,7 @@ test(
     const projectRoot = await realpath(
       await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-swap-after-look-')),
     )
-    context.after(() => rm(projectRoot, { recursive: true, force: true }))
+    context.after(() => removeTestFolder(projectRoot))
     const { outputDirectory, manifestPath } =
       await writeMinimalWiki(projectRoot)
     await writeFile(join(outputDirectory, 'notes.css'), 'p { color: red; }')
@@ -4999,7 +5000,7 @@ test(
     const projectRoot = await realpath(
       await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-swaps-give-back-')),
     )
-    context.after(() => rm(projectRoot, { recursive: true, force: true }))
+    context.after(() => removeTestFolder(projectRoot))
     const { outputDirectory, manifestPath } =
       await writeMinimalWiki(projectRoot)
     const swappedPage = join(outputDirectory, 'swapped.html')
@@ -5024,6 +5025,7 @@ test(
         const isSwapped = basename(String(parameters[0])) === 'swapped.html'
         // Each look finds the page as a regular file, and a folder takes its path right after.
         if (isSwapped) {
+          // not cleanup: deletes a Wiki folder or claim to simulate the learner or another window; the code under test must notice
           await rm(parameters[0], { recursive: true, force: true })
           await writeFile(parameters[0], '<!doctype html><body>Swapped</body>')
         }
@@ -5086,7 +5088,7 @@ test('a page whose browser tab goes while the page is prepared has its preparati
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-page-abort-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory } = await writeMinimalWiki(projectRoot)
   let preparationSignal: AbortSignal | undefined
   let notePreparationStarted = (): void => {}
@@ -5144,7 +5146,7 @@ test('a page whose browser tab goes while the reader reads its file has its prep
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-read-abort-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory } = await writeMinimalWiki(projectRoot)
   let noteReadAsked = (): void => {}
   const readAsked = new Promise<void>((resolveAsked) => {
@@ -5227,7 +5229,7 @@ test('a script file of the Wiki folder is served as plain text, a page that poin
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-script-file-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const outputDirectory = join(projectRoot, '.codebook', 'wiki')
   await mkdir(join(outputDirectory, 'assets'), { recursive: true })
   await writeFile(
@@ -5347,7 +5349,7 @@ test('the reader’s policy names the hash of the one script the shell of this b
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-shells-')),
   )
-  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(projectRoot))
   const { outputDirectory } = await writeMinimalWiki(projectRoot)
   const reader = await startDeepWikiReader(
     outputDirectory,

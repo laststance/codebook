@@ -6,7 +6,6 @@ import {
   mkdtemp,
   readFile,
   realpath,
-  rm,
   stat,
   symlink,
   writeFile,
@@ -23,6 +22,7 @@ import type {
 } from '../utils/listVitestTestFiles'
 
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 // Value: protects=a native trial whose root listing could not be released releasing it before the trial ends, as a run's stop releases it, and still failing with the plan's refusal; fails_when=the trial drops the listing's retry, so a listing process may outlive the trial with nobody to end it; why_new=Cycle 0053 /ship review pass 4 (the native bootstrap was the only owner without the retry); seam=the editor, the file checks, the plan and the root listing are stand-ins, the trial's own code and its report are real; no_claim=the real release (listVitestTestFiles tests)
 test('a native trial releases a root listing that was not released before it ends with the refusal', async (context) => {
@@ -30,7 +30,7 @@ test('a native trial releases a root listing that was not released before it end
   const folder = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-native-trial-')),
   )
-  context.after(() => rm(folder, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(folder))
   const configuration: NodeTestConfiguration = {
     version: 1,
     adapter: 'vitest-node',
@@ -168,7 +168,7 @@ async function loadTrial(
   const folder = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-native-trial-')),
   )
-  context.after(() => rm(folder, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(folder))
   const configuration: NodeTestConfiguration = {
     version: 1,
     adapter: 'vitest-node',

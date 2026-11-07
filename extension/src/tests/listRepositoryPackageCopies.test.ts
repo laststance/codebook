@@ -1,17 +1,12 @@
 import assert from 'node:assert/strict'
-import {
-  mkdir,
-  mkdtemp,
-  realpath,
-  rm,
-  symlink,
-  writeFile,
-} from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { listRepositoryPackageCopies } from '../utils/listRepositoryPackageCopies'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const ORIGIN = 'https://github.com/acme/tool.git'
 
@@ -69,7 +64,7 @@ test('lists an npm copy installed in the Example that names the opened repositor
       },
     ])
   } finally {
-    await rm(repositoryRoot, { recursive: true, force: true })
+    await removeTestFolder(repositoryRoot)
   }
 })
 
@@ -108,7 +103,7 @@ test('lists a pnpm store copy reached through a link', async () => {
       },
     ])
   } finally {
-    await rm(repositoryRoot, { recursive: true, force: true })
+    await removeTestFolder(repositoryRoot)
   }
 })
 
@@ -134,7 +129,7 @@ test('does not list a workspace link to the source package folder', async () => 
     // Assert
     assert.deepEqual(copies, [])
   } finally {
-    await rm(repositoryRoot, { recursive: true, force: true })
+    await removeTestFolder(repositoryRoot)
   }
 })
 
@@ -161,7 +156,7 @@ test('does not list a copy that names another repository or none', async () => {
     // Assert
     assert.deepEqual(copies, [])
   } finally {
-    await rm(repositoryRoot, { recursive: true, force: true })
+    await removeTestFolder(repositoryRoot)
   }
 })
 
@@ -206,7 +201,7 @@ test('matches the repository field in each URL form against the origin', async (
     // Assert
     assert.deepEqual(withoutOrigin, [])
   } finally {
-    await rm(repositoryRoot, { recursive: true, force: true })
+    await removeTestFolder(repositoryRoot)
   }
 })
 
@@ -253,7 +248,7 @@ test('stops scanning dependencies at the cap and at an aborted signal', async ()
     )
     assert.deepEqual(stopped, [])
   } finally {
-    await rm(repositoryRoot, { recursive: true, force: true })
+    await removeTestFolder(repositoryRoot)
   }
 })
 
@@ -283,6 +278,6 @@ test('ignores a dependency whose name climbs out of node_modules to another inst
     // Assert
     assert.deepEqual(copies, [])
   } finally {
-    await rm(repositoryRoot, { recursive: true, force: true })
+    await removeTestFolder(repositoryRoot)
   }
 })

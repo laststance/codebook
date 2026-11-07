@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { TestContext } from 'node:test'
@@ -7,6 +7,8 @@ import {
   chromeExtensionConfigSchema,
   type ChromeExtensionConfiguration,
 } from '../../chromeExtensionConfigSchemas'
+
+import { removeTestFolder } from './removeTestFolder'
 
 /** A Manifest V3 manifest declaring a popup and a classic service worker, the baseline of every chrome-extension test. */
 export const BASELINE_MANIFEST = {
@@ -93,7 +95,7 @@ export async function createRepositoryFixture(
   const repositoryRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-ext-fixture-')),
   )
-  context.after(() => rm(repositoryRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(repositoryRoot))
   await writeFixtureFiles(repositoryRoot, files)
   return repositoryRoot
 }

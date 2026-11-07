@@ -3,7 +3,6 @@ import {
   mkdir,
   mkdtemp,
   rename,
-  rm,
   symlink,
   utimes,
   writeFile,
@@ -18,6 +17,7 @@ import { readWikiWatchStamp } from '../utils/readWikiWatchStamp'
 import { fileSystemWithLargeFileIds } from './utils/fileSystemWithLargeFileIds'
 import { loadModule } from './utils/loadModule'
 import { publishedWikiFixture } from './utils/publishedWikiFixture'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** A file write right after another can land in the same tick of the file system's clock; the pause keeps the two apart. */
 const afterAClockTick = (): Promise<void> =>
@@ -156,7 +156,7 @@ test('the stamp names a file id above 2^53 exactly, so a manifest written anew w
       ],
     )
   } finally {
-    await rm(project, { recursive: true, force: true })
+    await removeTestFolder(project)
   }
 })
 
@@ -176,6 +176,6 @@ test('the stamp of a Wiki folder whose own path holds a link counts no folder of
     // Assert: no manifest ("-"), no folder counted and no folder time ("0:0"); through the link the folders would be 3.
     assert.equal(stamp, 'wiki=-/0:0')
   } finally {
-    await rm(project, { recursive: true, force: true })
+    await removeTestFolder(project)
   }
 })

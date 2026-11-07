@@ -1,12 +1,5 @@
 import assert from 'node:assert/strict'
-import {
-  mkdir,
-  mkdtemp,
-  realpath,
-  rm,
-  symlink,
-  writeFile,
-} from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -19,6 +12,8 @@ import { createBundleVerifier } from '../utils/createBundleVerifier'
 import { isViteScriptOfModule } from '../utils/isViteScriptOfModule'
 import { readViteServedModule } from '../utils/readViteServedModule'
 import { viteModuleUrl } from '../utils/viteModuleUrl'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const SOURCE = 'export const theme = "dark"\n'
 
@@ -47,7 +42,7 @@ async function startFixture(
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   context.after(async () => {
     server.close()
-    await rm(root, { recursive: true, force: true })
+    await removeTestFolder(root)
   })
   const address = server.address()
   const port = typeof address === 'object' && address ? address.port : 0
@@ -304,7 +299,7 @@ test('refuses a body over the JavaScript byte limit', async (context) => {
 test('maps stop files to served addresses with encoding, case and Windows-style input', async (context) => {
   // Arrange
   const root = await realpath(await mkdtemp(join(tmpdir(), 'codebook-url-')))
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   const names = [
     'src/my file.tsx',
     'src/a#b.ts',
@@ -339,8 +334,8 @@ test('refuses stop files outside the root, in node_modules or of a framework ext
   const root = await realpath(await mkdtemp(join(tmpdir(), 'codebook-url-')))
   const outside = await realpath(await mkdtemp(join(tmpdir(), 'codebook-out-')))
   context.after(async () => {
-    await rm(root, { recursive: true, force: true })
-    await rm(outside, { recursive: true, force: true })
+    await removeTestFolder(root)
+    await removeTestFolder(outside)
   })
   await mkdir(join(root, 'node_modules/pkg'), { recursive: true })
   await writeFile(join(root, 'node_modules/pkg/index.js'), '')

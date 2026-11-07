@@ -18,6 +18,7 @@ import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** A store in a temporary learning directory holding `count` sealed histories of one output each. */
 async function storeWithSealedHistories(count: number) {
@@ -41,8 +42,7 @@ async function storeWithSealedHistories(count: number) {
     directory,
     store,
     studyIds,
-    cleanup: (): Promise<void> =>
-      rm(directory, { recursive: true, force: true }),
+    cleanup: (): Promise<void> => removeTestFolder(directory),
   }
 }
 
@@ -189,7 +189,7 @@ test('a list reads at most four new histories at a time', async (context) => {
 /** A directory for a store, with the workspace key the fixture headers use, removed when the test ends. */
 async function emptyStore(context: TestContext, capacity?: () => number) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-history-summary-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const workspaceKey = 'c'.repeat(64)
   return {
     directory,
@@ -424,6 +424,7 @@ test('a sealed history whose folder was removed answers no summary and leaves th
   })
   await writer.finish('partial', 'The learner stopped this run.')
   const beforeRemoval = await store.list()
+  // not cleanup: deletes a path the code under test must find missing
   await rm(join(directory, NODE_TEST_HISTORY_DIRECTORY, sealed.studyId), {
     recursive: true,
   })
@@ -585,7 +586,7 @@ test('two overlapping summaries of a growing recording leave it recording with n
 test('a listed history stays listed when a refresh fails to read its journal and header with too many open files, and is read again at the next', async (context) => {
   // Arrange
   const { directory, store, studyIds } = await storeWithSealedHistories(1)
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const studyId = studyIds[0]!
   const headerPath = join(
     directory,
@@ -626,7 +627,7 @@ test('a listed history stays listed when a refresh fails to read its journal and
 test('a history whose header was corrupted or removed after the last list is no longer listed as verified', async (context) => {
   // Arrange
   const { directory, store, studyIds } = await storeWithSealedHistories(2)
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const [corrupted, removed] = studyIds as [string, string]
   const firstList = await store.list()
   const headerOf = (studyId: string) =>
@@ -652,7 +653,7 @@ test('a history whose header was corrupted or removed after the last list is no 
 test('a journal read that fails with a busy file is read again at the next list instead of staying unavailable', async (context) => {
   // Arrange
   const { directory, store } = await storeWithSealedHistories(1)
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   context.mock.method(
     store,
     'read',
@@ -678,7 +679,7 @@ test('a journal read that fails with a busy file is read again at the next list 
 test('a learning material read that fails with too many open files is read again at the next list', async (context) => {
   // Arrange
   const { directory, store, studyIds } = await storeWithSealedHistories(1)
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   await store.saveLearningMaterial(studyIds[0]!, 0, {
     question: 'What did the scheduler print?',
     title: 'Scheduler output',
@@ -728,7 +729,7 @@ test('a learning material read that fails with too many open files is read again
 test('an unavailable history’s reason names no storage path', async (context) => {
   // Arrange
   const { directory, store } = await storeWithSealedHistories(1)
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   context.mock.method(store, 'read', async () => {
     throw new Error(
       `EACCES: permission denied, open '${directory}/node-tests.v1/x/events.jsonl'`,
@@ -868,6 +869,7 @@ test('a history whose folder was removed is forgotten by the next list and the o
     await storeWithSealedHistories(2)
   try {
     await store.list()
+    // not cleanup: deletes a path the code under test must find missing
     await rm(join(directory, NODE_TEST_HISTORY_DIRECTORY, studyIds[0]!), {
       recursive: true,
     })

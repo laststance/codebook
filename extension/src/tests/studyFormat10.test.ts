@@ -25,6 +25,7 @@ import {
 
 import { captureBrowserOnlyOperationsStudy } from './utils/captureBrowserOnlyOperationsStudy'
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 import { replaySavedServerStop } from './utils/replaySavedServerStop'
 import { savedStudyFileWithoutRunIds } from './utils/savedStudyFileWithoutRunIds'
 
@@ -69,7 +70,7 @@ async function resealedBrowserStudy(
 test('a format 10 study of a nested Vite app is saved as .study.v10.json and reopens with its package folder', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-format-10-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const study = await resealedBrowserStudy('vite-dev', 10, NESTED_VITE_FOLDER)
   const library = new LearningLibrary(directory, study.workspaceKey)
   // Act
@@ -253,7 +254,7 @@ test('storage names and schema keep format 10 and read nothing above format 15',
 test('a format 10 study replays its recorded browser stop after the app folder is removed', async (context) => {
   // Arrange
   const appFolder = await mkdtemp(join(tmpdir(), 'codebook-vite-app-'))
-  context.after(() => rm(appFolder, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(appFolder))
   await mkdir(join(appFolder, 'src'), { recursive: true })
   const sealed = await resealedBrowserStudy('vite-dev', 10, NESTED_VITE_FOLDER)
   const [paused, ...later] = sealed.observations
@@ -288,6 +289,7 @@ test('a format 10 study replays its recorded browser stop after the app folder i
     ],
   }
   const replayedBefore = await replaySavedServerStop(context, study, 'browser')
+  // not cleanup: deletes a path the code under test must find missing
   await rm(appFolder, { recursive: true, force: true })
   // Act
   const replayedAfter = await replaySavedServerStop(context, study, 'browser')

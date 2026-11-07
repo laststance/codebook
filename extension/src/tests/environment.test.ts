@@ -28,6 +28,7 @@ import { sha256 } from '../runtimeSupport/utils/sha256'
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { createCrossRuntimeStudy } from './utils/createCrossRuntimeStudy'
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const execFileAsync = promisify(execFile)
 
@@ -63,7 +64,7 @@ test('untrusted, remote and virtual workspaces reject execution before creating 
 test('a trusted file workspace opened in WSL is accepted and its prerequisites answer ready', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-wsl-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   await writeFile(
     join(directory, 'product.json'),
     JSON.stringify({ version: '1.140.0', commit: 'fixture' }),
@@ -131,7 +132,7 @@ test('a trusted file workspace opened in WSL is accepted and its prerequisites a
 test('a workspace whose root Vitest is older than 4 makes the node-test profile name it before any start', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-vitest-status-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   await writeFile(
     join(directory, 'product.json'),
     JSON.stringify({ version: '1.140.0', commit: 'fixture' }),
@@ -241,7 +242,7 @@ async function createNodeTestEnvironment(
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-node-env-')),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   await writeFile(
     join(directory, 'product.json'),
     JSON.stringify({ version: '1.140.0', commit: 'fixture' }),
@@ -500,7 +501,7 @@ for (const scenario of [
   test(`on Linux with codebook.chromeExecutable unset, ${scenario.name}`, async (context) => {
     // Arrange
     const directory = await mkdtemp(join(tmpdir(), 'codebook-linux-chrome-'))
-    context.after(() => rm(directory, { recursive: true, force: true }))
+    context.after(() => removeTestFolder(directory))
     await writeFile(
       join(directory, 'product.json'),
       JSON.stringify({ version: '1.140.0', commit: 'fixture' }),
@@ -604,7 +605,7 @@ for (const scenario of [
  */
 async function linuxEnvironmentWithUnsetChrome(context: TestContext) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-chrome-lookup-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   await writeFile(
     join(directory, 'product.json'),
     JSON.stringify({ version: '1.140.0', commit: 'fixture' }),
@@ -752,7 +753,7 @@ test('after the Chrome found on PATH is uninstalled and Chromium installed, the 
 test('the configured environment routes only owned DAP responses and reveals immutable Study source without a demo or raw-tab fallback', async (context) => {
   // Arrange: constructor/host effects are controlled; the environment bridge and prerequisite decisions are real.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-environment-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   await writeFile(
     join(directory, 'product.json'),
     JSON.stringify({ version: '3.21.13', commit: 'fixture' }),
@@ -1065,7 +1066,7 @@ test('the configured environment routes only owned DAP responses and reveals imm
 test('a released configured run is dropped when the next one is created, so the debugger sessions of a finished run are no longer routed', async (context) => {
   // Arrange: constructor and host effects are controlled; the environment's run map and prerequisite decisions are real.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-environment-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   await writeFile(
     join(directory, 'product.json'),
     JSON.stringify({ version: '3.21.13', commit: 'fixture' }),
@@ -1247,7 +1248,7 @@ test('missing Node Chrome and debugger prerequisites identify configuration keys
     )
     environment.dispose()
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -1255,7 +1256,7 @@ test('missing Node Chrome and debugger prerequisites identify configuration keys
 test('saved session setup refuses while a Codebook run is live and returns node, chrome and adapters after it is released', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-setup-inputs-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   await writeFile(
     join(directory, 'product.json'),
     JSON.stringify({ version: '3.21.13', commit: 'fixture' }),
@@ -1365,7 +1366,7 @@ test('saved session setup refuses while a Codebook run is live and returns node,
 test('saved session setup returns the missing Node and Chrome settings when they are not configured', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-setup-missing-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   await writeFile(
     join(directory, 'product.json'),
     JSON.stringify({ version: '1.138.0', commit: 'fixture' }),
@@ -1413,7 +1414,7 @@ test('a listed Vite app reads not ready with the shared Chrome gap', async (cont
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-vite-status-')),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   await writeFile(
     join(directory, 'product.json'),
     JSON.stringify({ version: '1.140.0', commit: 'fixture' }),

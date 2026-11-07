@@ -23,6 +23,7 @@ import {
   pngOf,
   WORKER_SOURCE_TEXT,
 } from './utils/chromeExtensionHistoryFixture'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const PAGE_PAUSE: ExtensionHistoryPause = {
   pauseId: 'run:1:page:1',
@@ -238,7 +239,7 @@ test('a writer whose appends fail is reported once and no recorder call throws',
     }
   }
   const directory = await mkdtemp(join(tmpdir(), 'codebook-extension-failing-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const header = parseExtensionHistoryHeader({
     ...extensionHistoryHeader(EXTENSION_WORKSPACE_KEY),
     formatVersion: 1,
@@ -276,7 +277,7 @@ test('recorder calls return at once while the writer never finishes an append', 
     }
   }
   const directory = await mkdtemp(join(tmpdir(), 'codebook-extension-stalled-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const header = parseExtensionHistoryHeader({
     ...extensionHistoryHeader(EXTENSION_WORKSPACE_KEY),
     formatVersion: 1,
@@ -349,6 +350,7 @@ test('a recorder names no missing part while it writes and names the surface end
   const surfaceLost = await recorderOver(context)
   const failing = await recorderOver(context)
   // A history folder that disappeared under the writer makes its next append fail on the disk.
+  // not cleanup: deletes a path the code under test must find missing
   await rm(failing.recorder.writer.historyDirectory, {
     recursive: true,
     force: true,
@@ -379,7 +381,7 @@ test('a recorder names no missing part while it writes and names the surface end
 test('a stalled summary read does not hold the seal past its bound and the sealed history keeps an unread summary', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-extension-summary-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const header = parseExtensionHistoryHeader({
     ...extensionHistoryHeader(EXTENSION_WORKSPACE_KEY),
     formatVersion: 1,

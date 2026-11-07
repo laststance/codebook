@@ -17,6 +17,7 @@ import {
 import { resolveNextPagesEntry } from '../utils/resolveNextPagesEntry'
 
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** The nested Next app of every case, below the repository root. */
 const PACKAGE = 'examples/app'
@@ -41,7 +42,7 @@ async function repositoryWithDecoyRoot(context: TestContext) {
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-nested-pages-')),
   )
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   // The decoy: the root app lists "/" as pages/decoy.js and has an App folder and a Pages folder of its own.
   await put(root, 'pages/decoy.tsx')
   await put(root, 'pages/index.tsx')
@@ -167,6 +168,7 @@ test('the API-route refusal of a root package keeps the path as read', async (co
   )
   await put(root, 'pages/api/hello.ts')
   // A root app with an App folder would make the poll wait for the App manifest.
+  // not cleanup: deletes a path of the fixture so the code under test meets it missing
   await rm(join(root, 'app'), { recursive: true })
   const manifests = await readNextRouteManifests({
     workspace: root,

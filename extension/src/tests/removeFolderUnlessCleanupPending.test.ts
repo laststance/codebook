@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { access, mkdtemp, realpath, rm } from 'node:fs/promises'
+import { access, mkdtemp, realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -8,6 +8,8 @@ import { StudyError } from '../errors'
 import { LibraryPackageCancelled } from '../libraryPackage'
 import { createLibraryBuildError } from '../utils/createLibraryBuildError'
 import { removeFolderUnlessCleanupPending } from '../utils/removeFolderUnlessCleanupPending'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** Makes an empty private folder. */
 async function makeFolder(): Promise<string> {
@@ -47,8 +49,8 @@ test('leaves the folder when the build reported its removal pending', async () =
     assert.equal(await exists(stopped), true)
     assert.equal(await exists(failed), true)
   } finally {
-    await rm(stopped, { recursive: true, force: true })
-    await rm(failed, { recursive: true, force: true })
+    await removeTestFolder(stopped)
+    await removeTestFolder(failed)
   }
 })
 
