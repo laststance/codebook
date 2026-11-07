@@ -46,6 +46,7 @@ async function startLibraryRun(
       port: number,
       signal?: AbortSignal,
       app?: DevelopmentApp,
+      controller?: AbortController,
     ) => Promise<void>
     factsTimeoutMs?: number
   },
@@ -100,7 +101,12 @@ async function startLibraryRun(
     },
     prepareLibrary: async (signal) => {
       prepareCalls.push('prepare')
-      await options.prepareLibrary(options.behavior.port, signal, app)
+      await options.prepareLibrary(
+        options.behavior.port,
+        signal,
+        app,
+        controller,
+      )
     },
   }
   const workspaceInfo = await assessViteWorkspace(
@@ -118,7 +124,7 @@ async function startLibraryRun(
     (started) => ({ started }),
     (error: unknown) => ({ error }),
   )
-  return { outcome, prepareCalls }
+  return { outcome, prepareCalls, controller }
 }
 
 // protects=an alias of the package in the resolved config refuses LIBRARY_BUILD_UNSUPPORTED library-aliased with sideEffects none, names the config entries, and never builds nor listens; fails_when=the build starts, the server listens, or the reason/side effect differs; no_claim=real Vite alias resolution (a stub Vite echoes the config the blockers are read from)
@@ -285,4 +291,26 @@ test('a launcher gone before the listen ends with a typed launcher failure', asy
   const error = run.outcome.error
   assert.ok(error instanceof StudyError)
   assert.equal(error.code, 'VITE_LAUNCHER_FAILED')
+})
+
+// Value: protects=a run stopped while its library builds ends with the stop, even when the launcher dies with it; fails_when=the watcher reports VITE_LAUNCHER_FAILED for a launcher the stop itself closed; why_new=the launcher-exit tests never stop the run, so the abort guard was untested; seam=none; no_claim=the build cancellation (the test above)
+test('a stop during the build is not reported as a launcher failure', async (context) => {
+  // Arrange
+  const port = await freePort()
+  // Act
+  const run = await startLibraryRun(context, {
+    behavior: { port },
+    prepareLibrary: async (_port, _signal, app, controller) => {
+      // The run is stopped and its launcher goes with it.
+      controller?.abort(new Error('run stopped'))
+      await killLauncher(app)
+      // The build ends after the launcher watcher has looked more than once.
+      await new Promise((resolve) => setTimeout(resolve, 400))
+    },
+  })
+  // Assert
+  assert.ok('error' in run.outcome)
+  const error = run.outcome.error
+  assert.equal(error instanceof StudyError, false)
+  assert.equal((error as Error).message, 'run stopped')
 })

@@ -402,3 +402,33 @@ test('journals a page close that fails after the close bound', async (context) =
   assert.deepEqual(late, [{ cause: 'Error: The page close failed late' }])
   assert.equal(harness.run.view().library?.observation, 'incomplete')
 })
+
+// Value: protects=an editor that offers no library route refuses the declared library before any server starts; fails_when=the run starts the Example on its installed copy, or the refusal loses PREREQUISITE_MISSING or its sideEffects none; why_new=no run test covered the PREREQUISITE_MISSING branch of planViteLibrary; seam=none; no_claim=the wording of the sentence beyond naming the library route
+test('a library run in an editor without the library route is refused before any server starts', async (context) => {
+  // Arrange
+  const library = await libraryDependencies(context)
+  const harness = await configuredRuntimeHarness(context, undefined, [], {
+    adapter: 'vite-dev',
+    packageRoot: PACKAGE_ROOT,
+    packageApp: { decoyRoot: true },
+    operations: { operations: [CLICK], stopOperations: [1] },
+    libraryRoute: {
+      declared: 'packages/widgets',
+      // The editor passes no library dependencies, as a build of the host without the route does.
+      dependencies: undefined as unknown as ViteLibraryRouteDependencies,
+    },
+  })
+  // Act
+  const failure = await harness.run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  await harness.run.stop()
+  // Assert
+  assert.ok(failure instanceof StudyError)
+  assert.equal(failure.code, 'PREREQUISITE_MISSING')
+  assert.match(failure.message, /library route is unavailable/)
+  assert.equal(failure.details?.sideEffects, 'none')
+  assert.deepEqual(harness.viteRequests.started, [])
+  assert.deepEqual(library.calls, [])
+})
