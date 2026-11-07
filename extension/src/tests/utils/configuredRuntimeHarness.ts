@@ -374,6 +374,8 @@ export async function configuredRuntimeHarness(
     entryPath?: string
     /** Makes the stand-in browser's first `close` fail, as a close that could not confirm Chrome's exit does; the second succeeds. */
     closeFailsOnce?: boolean
+    /** Makes the stand-in owned application's first `close` fail, as a server whose stop could not be confirmed; the second succeeds. */
+    applicationCloseFailsOnce?: boolean
     /** Makes the stand-in page's first `Page.close` wait for this promise and then fail, as a page close that outlasts the close bound before it fails; later closes succeed. */
     firstCloseFailsAfter?: Promise<void>
     /** With `firstCloseFailsAfter`: called when the stand-in page's first `Page.close` starts, so a test waits for the close itself instead of for real time. */
@@ -825,6 +827,7 @@ export async function configuredRuntimeHarness(
   /** The timeout each `Page.navigate` request asked for (`undefined`: the channel's own default). */
   const navigateTimeouts: (number | undefined)[] = []
   let closeAttempts = 0
+  let applicationCloseAttempts = 0
   let pageCloseAttempts = 0
   let debuggersHaveStopped: () => void = () => undefined
   const debuggersStopped = new Promise<void>((resolve) => {
@@ -2058,6 +2061,9 @@ export async function configuredRuntimeHarness(
     outputTail: () => options.nextPages?.outputTail ?? '',
     ...serverParticipant?.application,
     close: async (): Promise<void> => {
+      // A server whose stop failed once is still running, as the run must assume.
+      if (options.applicationCloseFailsOnce && applicationCloseAttempts++ === 0)
+        throw new Error('The owned server did not confirm its exit')
       releases.push('application')
     },
   }

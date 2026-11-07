@@ -262,8 +262,8 @@ export class ViteLibraryRoute {
   }
 
   /** Removes the private folder; see {@link LibraryRoute.dispose}. @example await route.dispose() */
-  dispose(): Promise<void> {
-    return this.core.dispose()
+  dispose(options?: { serverStopped?: boolean }): Promise<void> {
+    return this.core.dispose(options)
   }
 
   /** The library facts the run resource states. */

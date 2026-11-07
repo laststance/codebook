@@ -115,6 +115,7 @@ async function libraryHarness(
     pageStaysAfterClose?: boolean
     pageCloseEndsSession?: boolean
     browserCloseWaitsForDebuggerStop?: boolean
+    applicationCloseFailsOnce?: boolean
   } = {},
 ) {
   return configuredRuntimeHarness(context, undefined, [], {
@@ -323,6 +324,33 @@ test('a page that stays after an acknowledged close leaves the observation incom
   await stopping
   // Assert
   assert.equal(harness.run.view().library?.observation, 'incomplete')
+})
+
+// protects=a server whose stop failed may still run on the packed copy and its caches, so the private folder stays and the facts read pending until the retried Stop removes it; fails_when=the folder is removed while the owned application stop failed; no_claim=a real server process (the stand-in application rejects its first close)
+test('a failed server stop keeps the private folder until the retried Stop removes it', async (context) => {
+  // Arrange
+  const library = await libraryDependencies(context)
+  const harness = await libraryHarness(context, library, {
+    applicationCloseFailsOnce: true,
+  })
+  await harness.run.prepare()
+  // Act
+  const firstStop = await harness.run.stop().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  const folderAfterFailedStop = await access(library.privateFolder).then(
+    () => 'exists',
+    () => 'missing',
+  )
+  const factsAfterFailedStop = harness.run.view().library?.cleanup
+  await harness.run.stop()
+  // Assert
+  assert.notEqual(firstStop, undefined)
+  assert.equal(folderAfterFailedStop, 'exists')
+  assert.equal(factsAfterFailedStop, 'pending')
+  assert.equal(harness.run.view().library?.cleanup, 'removed')
+  await assert.rejects(access(library.privateFolder))
 })
 
 // protects=a declined confirmation ends the run with SCRIPT_NOT_CONFIRMED, starts no server and builds nothing; fails_when=the server starts or the build runs after a no; no_claim=the editor dialog

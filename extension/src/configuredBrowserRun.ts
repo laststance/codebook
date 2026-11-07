@@ -16051,6 +16051,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       ])),
     )
     failures.push(...(await this.stopKnownDebuggers()))
+    // Whether the owned application stop succeeded: a server that may still run keeps the library's private folder.
+    let didServerStop = true
     failures.push(
       ...(await settleCleanup([
         {
@@ -16059,7 +16061,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         },
         {
           description: 'owned application stop',
-          release: () => this.app?.close(),
+          release: async (): Promise<void> => {
+            didServerStop = false
+            await this.app?.close()
+            didServerStop = true
+          },
         },
         {
           description: 'protocol activities settle',
@@ -16088,8 +16094,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         },
       ])),
     )
-    // The private folder goes last, after the server that used it stopped.
-    await this.libraryRoute?.dispose()
+    // The private folder goes last, after the server that used it stopped; a failed stop keeps it for the retried Stop.
+    await this.libraryRoute?.dispose({ serverStopped: didServerStop })
     failures.push(...libraryFailures)
     this.failures.push(...failures)
     this.resourcesReleased = failures.length === 0

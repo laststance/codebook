@@ -561,12 +561,18 @@ export class LibraryRoute {
 
   /**
    * Removes the private folder; safe to call again.
-   * Called by the run after the server stopped.
+   * Called by the run after the server stopped, or with `serverStopped: false` when the owned application stop failed: the server may still run on the packed copy and its caches, so the folder stays and the facts read `cleanup: 'pending'` until a retried Stop removes it.
+   * @param options.serverStopped - Whether the owned application stop succeeded; defaults to `true`.
    * @returns Resolves when the folder was removed or its removal is pending; never rejects.
    * @example await core.dispose()
    */
-  async dispose(): Promise<void> {
+  async dispose(options: { serverStopped?: boolean } = {}): Promise<void> {
     if (this.cleanup === 'removed') return
+    // A server that may still run keeps its folder; before the folder was allocated there is nothing to keep.
+    if (options.serverStopped === false) {
+      if (this.privateFolder) this.cleanup = 'pending'
+      return
+    }
     try {
       if (this.prepared) this.cleanup = (await this.prepared.dispose()).cleanup
       else if (this.privateFolder) {
