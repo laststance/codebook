@@ -17,6 +17,8 @@ const OPERATION_ACTION = 'repository-operation'
 const SERVER_STOP_SCREENSHOT = 1
 const UNAVAILABLE_SENTENCE =
   'The paused page drew no image of this stop within 3 s; the stop keeps its source and values, and the run goes on and ends partial.'
+const SERVER_UNAVAILABLE_SENTENCE =
+  'The page drew no image while the server was paused at this stop within 3 s; the stop keeps its source and values, and the run goes on and ends partial.'
 const ENABLED_STOP = [
   { path: 'enabled', mode: 'value', required: true },
 ] as const
@@ -140,8 +142,8 @@ test('a result image that times out still fails the run', async (context) => {
   assert.equal(view.snapshotCaptures?.[stop.id]?.status, 'captured')
 })
 
-// protects=only a browser stop's image may be missing: a Pages server stop's image that times out (the page is not paused then) still fails the run with the client's timeout; fails_when=the server stop's timeout is taken for an unavailable stop image and the run goes on; no_claim=a real Next server or Chrome (the stand-in page leaves the server stop's screenshot unanswered)
-test('a server stop image that times out still fails the run', async (context) => {
+// protects=decision D3 (Cycle 0095, C94-L3): a server stop whose page draws no image within the 3 s bound keeps its committed source and values, its image reads failed with the server-stop sentence, and the run goes on instead of ending; fails_when=the timeout ends the run ("CDP Page.captureScreenshot timed out"), the snapshot or its values are lost, or the capture lacks the unavailable sentence; why_changed=this test pinned the old rule that a server stop's image timeout fails the run, which ended 2 of 2 Cursor runs on 2026-11-07; no_claim=a real Next server or Cursor's page (the stand-in page leaves the server stop's screenshot unanswered)
+test('a server stop whose page draws no image in time keeps its committed values and the run goes on', async (context) => {
   // Arrange
   const harness = await pagesServerRun(context, {
     timedOutScreenshots: [SERVER_STOP_SCREENSHOT],
@@ -154,20 +156,24 @@ test('a server stop image that times out still fails the run', async (context) =
       fixture: 'get-server-side-props-before-await',
     }),
   )
-  await waitUntil(
-    () => harness.run.view().failures.length > 0,
-    'the run failed',
+  const stop = await waitUntil(
+    () => harness.run.view().participants.server?.snapshot,
+    'the server stop committed',
   )
-  await prepared.catch(() => undefined)
   // Assert
   const view = harness.run.view()
-  assert.match(
-    view.failures.join('; '),
-    /CDP Page\.captureScreenshot timed out/,
-  )
-  assert.equal(view.captures['paused-server']?.status, 'failed')
+  assert.deepEqual(plain(view.failures), [])
+  assert.equal(stop.source?.line, PAGES_SERVER_RETURN_LINE)
+  assert.deepEqual(plain(view.captures['paused-server']), {
+    status: 'failed',
+    error: SERVER_UNAVAILABLE_SENTENCE,
+  })
   assert.deepEqual(
-    view.events.filter((event) => event.type === 'capture.unavailable'),
-    [],
+    view.events
+      .filter((event) => event.type === 'capture.unavailable')
+      .map((event) => Reflect.get(Object(event.detail), 'phase')),
+    ['paused-server'],
   )
+  await harness.run.stop()
+  await prepared.catch(() => undefined)
 })

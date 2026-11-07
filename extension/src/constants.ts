@@ -2499,6 +2499,9 @@ export const VALUE_SHAPE_SUMMARY_LIMIT_CHARS = 300
 /** The error a stop's capture reads when the paused page drew no image within {@link CAPTURE_TIMEOUT_MS}: the stop keeps its source and values, and the run goes on and ends partial (native C79-2: a stop that pauses right after the previous stop's continue, in the same render). */
 export const STOP_IMAGE_UNAVAILABLE_TEXT = `The paused page drew no image of this stop within ${CAPTURE_TIMEOUT_MS / 1000} s; the stop keeps its source and values, and the run goes on and ends partial.`
 
+/** The capture state of a server stop whose page drew no image within {@link CAPTURE_TIMEOUT_MS}: the page is not paused then, but Cursor's page has been seen to draw nothing while the server is paused (Cycle 0095, C94-L3). The stop keeps its source and values, and the run goes on and ends partial (decision D3). */
+export const SERVER_STOP_IMAGE_UNAVAILABLE_TEXT = `The page drew no image while the server was paused at this stop within ${CAPTURE_TIMEOUT_MS / 1000} s; the stop keeps its source and values, and the run goes on and ends partial.`
+
 /** The capture state of a pause that happened while Codebook prepared the run, before any page could be drawn (the readiness request, or a warm-up load whose viewport is not attached yet): no image is taken and none is borrowed from a later frame (Cycle 0086, R11). */
 export const STOP_IMAGE_APPLICATION_NOT_YET_AVAILABLE_TEXT =
   'The application is not available yet: this pause happened while Codebook prepared the run, before the page could be drawn. The stop keeps its source and values, and no image is taken or borrowed from a later frame.'

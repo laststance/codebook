@@ -67,6 +67,7 @@ import {
   REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT,
   SECRET_FRAME_SOURCE_URL,
   STOP_IMAGE_APPLICATION_NOT_YET_AVAILABLE_TEXT,
+  SERVER_STOP_IMAGE_UNAVAILABLE_TEXT,
   STOP_IMAGE_UNAVAILABLE_TEXT,
   REPOSITORY_SETUP_TIMEOUT_MS,
   REPOSITORY_SOURCE_LIMIT_BYTES,
@@ -14147,7 +14148,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Seals actual configured values and renderer pixels only while the exact source-bound pause remains current, called by {@link onEvent} for an accepted debugger stop.
    * When the observation is committed it publishes, in one synchronous step, the snapshot, the status `paused-<participant>` and the ready snapshot that offers the continuation; until then the run's status is the one before the stop, so a read of the run never finds a paused state without its observation.
    * @param pause - The identity the pause gate gave the accepted stop.
-   * @throws The failure that ends the run when the pause changed, its binding or frame is refused, or the evidence cannot be saved; a failed image or required inspection is thrown after the snapshot was committed, so its facts stay readable. A browser stop's image the paused page drew nothing for in time is not thrown: the stop commits and stays paused, its capture reads `failed` with {@link STOP_IMAGE_UNAVAILABLE_TEXT}, and the run goes on ({@link screenshotOrUnavailable}).
+   * @throws The failure that ends the run when the pause changed, its binding or frame is refused, or the evidence cannot be saved; a failed image or required inspection is thrown after the snapshot was committed, so its facts stay readable. A stop's image the page drew nothing for in time is not thrown: the stop commits and stays paused, its capture reads `failed` with {@link STOP_IMAGE_UNAVAILABLE_TEXT} (a server stop's with {@link SERVER_STOP_IMAGE_UNAVAILABLE_TEXT}), and the run goes on ({@link screenshotOrUnavailable}).
    * @example
    * ```ts
    * this.track(this.inspect(pause))
@@ -15142,10 +15143,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       const data = await this.screenshotOrUnavailable(phase)
       current()
       if (data === undefined) {
-        // The paused page drew no image in time: the stop keeps its source and values, the recording keeps a gap, and the run goes on and ends partial.
+        // The page drew no image of the stop in time: the stop keeps its source and values, the recording keeps a gap, and the run goes on and ends partial.
         this.captures[phase] = {
           status: 'failed',
-          error: STOP_IMAGE_UNAVAILABLE_TEXT,
+          error:
+            phase === 'paused-server'
+              ? SERVER_STOP_IMAGE_UNAVAILABLE_TEXT
+              : STOP_IMAGE_UNAVAILABLE_TEXT,
         }
         this.evidence.record('capture.unavailable', {
           phase,
@@ -15200,12 +15204,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
   }
   /**
-   * Requests the page's image for a capture, and tells a browser stop's image the paused page did not deliver in time apart from every other failure.
-   * Why it exists: a browser stop that pauses right after the previous stop's continue, in the same task (`QueryCache.build`, then `Query.fetch`, in one render in native C79-2), can leave the paused page unable to answer `Page.captureScreenshot` within {@link CAPTURE_TIMEOUT_MS}, while the stop's source and values were already read. Such an image becomes unavailable and the run goes on. Any other failure still fails the run, and so does a timeout of any other image: a server stop's (the page is not paused then) or one that belongs to no stop (`before`, `after`). Called by {@link capture}.
+   * Requests the page's image for a capture, and tells a stop's image the page did not deliver in time apart from every other failure.
+   * Why it exists: a browser stop that pauses right after the previous stop's continue, in the same task (`QueryCache.build`, then `Query.fetch`, in one render in native C79-2), can leave the paused page unable to answer `Page.captureScreenshot` within {@link CAPTURE_TIMEOUT_MS}, while the stop's source and values were already read; and Cursor's page has been seen to draw nothing while the server is paused at a server stop (Cycle 0095, C94-L3). Such a stop image becomes unavailable and the run goes on (decision D3). Any other failure still fails the run, and so does a timeout of an image that belongs to no stop (`before`, `after`). Called by {@link capture}.
    * @param phase - The capture phase the image is for.
-   * @returns The screenshot's base64 PNG data, or `undefined` for a browser stop's image the page did not deliver within the bound.
+   * @returns The screenshot's base64 PNG data, or `undefined` for a stop's image the page did not deliver within the bound.
    * @throws Every other failure of the request, unchanged.
-   * @example await this.screenshotOrUnavailable('paused-browser') // => undefined when the paused page drew nothing within 3 s
+   * @example await this.screenshotOrUnavailable('paused-server') // => undefined when the page drew nothing within 3 s while the server was paused
    */
   private async screenshotOrUnavailable(
     phase: (typeof CONFIGURED_CAPTURE_PHASES)[number] | 'paused-server',
@@ -15218,8 +15222,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       )
       return result.data
     } catch (error) {
-      // Only a browser stop's image may be missing: the paused page cannot draw it, and the stop's source and values were read before it.
-      if (phase === 'paused-browser' && error instanceof CdpRequestTimeoutError)
+      // Only a stop's image may be missing: its source and values were read before it, so a page that drew nothing in time costs the image, not the stop.
+      if (
+        (phase === 'paused-browser' || phase === 'paused-server') &&
+        error instanceof CdpRequestTimeoutError
+      )
         return undefined
       throw error
     }
