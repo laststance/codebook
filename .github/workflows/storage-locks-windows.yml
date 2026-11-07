@@ -85,6 +85,7 @@ on:
       - extension/src/tests/utils/loadOpenWithoutFollowing.ts
       - extension/src/tests/utils/realProcessStart.ts
       - extension/src/tests/utils/removeAsNodeOnWindows.ts
+      - extension/src/tests/utils/removeTestFolder.ts
       - extension/src/tests/utils/requireOwnPidNamespace.ts
       - extension/src/tests/utils/savedSessionEditorStubs.ts
       - extension/src/tests/utils/standInForPs.ts

@@ -8,7 +8,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 
 import { removeTestFolder } from './utils/removeTestFolder'
 
-// Value: protects=the cleanup of a test folder under a loaded suite, where a writer (a frame writer, a step left running) still creates files in the folder while it is removed: the removal ends with the folder gone instead of an ENOTEMPTY failure of an unchanged test; fails_when=the helper removes the folder with one bare recursive rm that rejects while the writer is still filling it, or leaves the folder behind; no_claim=does not prove the first attempt hit ENOTEMPTY (the writer may stop before it does)
+// Value: protects=the cleanup of a test folder under a loaded suite, where a writer (a frame writer, a step left running) still creates files in the folder while it is removed: the removal ends with the folder gone instead of an ENOTEMPTY failure of an unchanged test; fails_when=the helper rejects or leaves the folder behind while a writer is still adding files; no_claim=it does not catch a helper that drops its retries: a bare recursive rm usually finishes between two writes on a fast machine, so the first attempt need not hit ENOTEMPTY; the next test pins the retry options
 test('removes a test folder a writer is still filling', async () => {
   // Arrange
   const folder = await mkdtemp(join(tmpdir(), 'codebook-remove-test-folder-'))

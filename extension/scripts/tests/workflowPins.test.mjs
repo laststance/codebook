@@ -871,6 +871,7 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
     'extension/src/tests/utils/loadOpenWithoutFollowing.ts',
     'extension/src/tests/utils/realProcessStart.ts',
     'extension/src/tests/utils/removeAsNodeOnWindows.ts',
+    'extension/src/tests/utils/removeTestFolder.ts',
     'extension/src/tests/utils/requireOwnPidNamespace.ts',
     'extension/src/tests/utils/savedSessionEditorStubs.ts',
     'extension/src/tests/utils/standInForPs.ts',
@@ -1887,6 +1888,11 @@ test('the Fallow workflow runs measured health, dupes, dead-code and architectur
     'analyses',
   ])
   assert.deepEqual(scriptsOf(jobs.health), ['health'])
+  // Every command of the health job, so a build written another way (`pnpm -C extension build`, `node …`) shows too; checkHealth.mjs builds itself (health.test.mjs: a type error refuses health before any test runs).
+  assert.deepEqual(
+    [...jobs.health.matchAll(/^ +run: (.+)$/gm)].map((match) => match[1]),
+    ['pnpm --dir extension health'],
+  )
   assert.deepEqual(scriptsOf(jobs.dupes), ['dupes'])
   assert.deepEqual(scriptsOf(jobs['dead-code']), ['dead-code'])
   assert.deepEqual(scriptsOf(jobs.architecture), ['architecture'])
