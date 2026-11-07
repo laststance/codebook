@@ -1212,7 +1212,7 @@ test('a paused server binding under another adapter id than its registration nev
   assert.equal(harness.run.view().snapshots.length, 0)
 })
 
-// Value: protects=a server stop the adapter verified still pauses when the editor answers nothing for its breakpoint at the pause, as VS Code 1.145.2 does right after the first stop that follows a re-registration; fails_when=the run ends with "Pending server breakpoint did not bind to the captured source"; why_new=Cycle 0095 C94-L1 (probe: undefined at +302 ms, the binding at +628 ms; Codebook read once at +1.0 s); seam=the fake editor answers getDebugProtocolBreakpoint with nothing while the adapter's reply verified the breakpoint
+// Value: protects=a server stop the adapter verified still pauses when the editor answers nothing for its breakpoint at the pause, as VS Code 1.145.2 does right after the first stop that follows a re-registration; fails_when=the run ends with "Pending server breakpoint did not bind to the captured source"; why_new=Cycle 0095 C94-L1 (probe: undefined at +302 ms, the binding at +628 ms; Codebook read once at +1.0 s); seam=the fake editor answers getDebugProtocolBreakpoint with nothing while the adapter's reply verified the breakpoint; no_claim=VS Code 1.145.2's own answer timing (the fake editor stands in; native AC 1 batch)
 test('a server stop the adapter verified pauses with its values when the editor answers nothing for its breakpoint at the pause', async (context) => {
   // Arrange: the adapter's registration reply verifies the breakpoint, as js-debug's did in the native run (`breakpoint.registered` status bound).
   const harness = await nativeParticipantsHarness(context, ['server'])
@@ -1236,7 +1236,7 @@ test('a server stop the adapter verified pauses with its values when the editor 
   assert.equal(detail.adapter.column, 1)
 })
 
-// Value: protects=a breakpoint the learner removed from the editor is not bound from the adapter's last report, so the run still refuses truthfully; fails_when=the adapter's stale acknowledgement stands in and the stop publishes facts; why_new=Cycle 0095 C94-L1 negative case of the adapter stand-in; seam=the fake editor drops the breakpoint and answers nothing at the pause
+// Value: protects=a breakpoint the learner removed from the editor is not bound from the adapter's last report, so the run still refuses truthfully; fails_when=the adapter's stale acknowledgement stands in and the stop publishes facts; why_new=Cycle 0095 C94-L1 negative case of the adapter stand-in; seam=the fake editor drops the breakpoint and answers nothing at the pause; no_claim=none beyond protects
 test('a server stop whose breakpoint the learner removed from the editor still fails as not bound and publishes nothing', async (context) => {
   // Arrange: the adapter verified the breakpoint, so only the removal can refuse it.
   const harness = await nativeParticipantsHarness(context, ['server'])
@@ -1264,7 +1264,7 @@ test('a server stop whose breakpoint the learner removed from the editor still f
   assert.equal(harness.run.view().snapshots.length, 0)
 })
 
-// Value: protects=the adapter stand-in never binds a place the adapter withdrew: news that calls the owned breakpoint unverified (a reloaded script) leaves nothing to stand in for an editor that answers nothing; fails_when=the earlier verified place stands in and the stop publishes facts; why_new=Cycle 0095 review (OCR lens A, Medium) of the C94-L1 stand-in; seam=the test sends the adapter's unverified news and the fake editor answers nothing at the pause
+// Value: protects=the adapter stand-in never binds a place the adapter withdrew: news that calls the owned breakpoint unverified (a reloaded script) leaves nothing to stand in for an editor that answers nothing; fails_when=the earlier verified place stands in and the stop publishes facts; why_new=Cycle 0095 review (OCR lens A, Medium) of the C94-L1 stand-in; seam=the test sends the adapter's unverified news and the fake editor answers nothing at the pause; no_claim=js-debug's real script reload (the test's event stands in)
 test('a server stop whose breakpoint the adapter later called unverified fails as not bound when the editor answers nothing', async (context) => {
   // Arrange
   const harness = await nativeParticipantsHarness(context, ['server'])
@@ -1300,6 +1300,53 @@ test('a server stop whose breakpoint the adapter later called unverified fails a
     'Error: Pending server breakpoint did not bind to the captured source',
   )
   assert.equal(harness.run.view().snapshots.length, 0)
+})
+
+// Value: protects=a breakpoint the adapter verified again after calling it unverified (a reloaded script) binds from the adapter's news when the editor answers nothing at the pause; fails_when=the stand-in stays withdrawn after the new verified news, so the run ends with "Pending server breakpoint did not bind to the captured source"; why_new=Cycle 0095 Step 7 audit: the unverified-news test never sends verified news afterwards; seam=the test sends the adapter's unverified then verified news and the fake editor answers nothing at the pause; no_claim=js-debug's real script reload (the test's events stand in)
+test('a server stop whose breakpoint the adapter verified again after calling it unverified pauses with its values when the editor answers nothing', async (context) => {
+  // Arrange
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  harness.acknowledgeRegistrationsAt(1, 1)
+  await harness.run.prepare()
+  const registration = journalEntries(harness, 'breakpoint.registered')[0]
+  harness.run.onEvent(harness.sessions.server, {
+    type: 'event',
+    seq: 9_101,
+    event: 'breakpoint',
+    body: {
+      reason: 'changed',
+      breakpoint: { id: registration.breakpointId, verified: false },
+    },
+  })
+  harness.run.onEvent(harness.sessions.server, {
+    type: 'event',
+    seq: 9_102,
+    event: 'breakpoint',
+    body: {
+      reason: 'changed',
+      breakpoint: {
+        id: registration.breakpointId,
+        verified: true,
+        line: 1,
+        column: 1,
+      },
+    },
+  })
+  harness.forgetBindingInEditor('kept')
+  // Act
+  harness.run.action('once', 'repository-click')
+  const server = await pauseReady(harness, 'server')
+  // Assert
+  assert.equal(server.source.line, 1)
+  assert.equal(server.values['value:mode'], 'display')
+  assert.equal(harness.run.view().failures.length, 0)
+  const receipt = harness.run
+    .view()
+    .events.find((event) => event.type === 'breakpoint.pause-binding')
+  const detail = JSON.parse(JSON.stringify(receipt?.detail))
+  assert.equal(detail.returned, 'absent')
+  assert.equal(detail.takenFrom, 'adapter')
+  assert.equal(detail.adapter.line, 1)
 })
 
 test('a stack refresh that reports the bound position keeps the captured pause of a stop whose column moved', async (context) => {
