@@ -91,7 +91,10 @@ test('creates the server with the redirect plugin, a private cache, the optimize
   // Act
   const message = await factsOf(context, { port }, library)
   const inline: unknown = JSON.parse(
-    await readFile(join(message.root, 'inline-config.json'), 'utf8'),
+    await readFile(
+      join(message.root, 'node_modules/vite/inline-config.json'),
+      'utf8',
+    ),
   )
   // Assert
   assert.deepEqual(inline, {
@@ -134,7 +137,10 @@ test('adds no library setting to the server of a run without library', async (co
   // Act
   const message = await factsOf(context, { port }, undefined)
   const inline: unknown = JSON.parse(
-    await readFile(join(message.root, 'inline-config.json'), 'utf8'),
+    await readFile(
+      join(message.root, 'node_modules/vite/inline-config.json'),
+      'utf8',
+    ),
   )
   // Assert
   assert.deepEqual(inline, { pluginNames: [], pluginEnforce: [] })
