@@ -100,11 +100,15 @@ type Fixture = {
 }
 
 /** Writes the whole fixture tree and the generated preload; nothing is committed, all of it lives in a temporary folder. */
-function createFixture(isBroken = false): Fixture {
+function createFixture(
+  isBroken = false,
+  libraryContainsExample = false,
+): Fixture {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'codebook-rs-preload-')))
   temporaryRoots.push(root)
-  const appRoot = join(root, 'app')
-  const libraryRoot = join(root, 'lib-repo')
+  // The P03 shape: the library root is the repository root and the Example lives below it.
+  const appRoot = join(root, libraryContainsExample ? 'examples/app' : 'app')
+  const libraryRoot = libraryContainsExample ? root : join(root, 'lib-repo')
   const privateFolder = join(root, 'private')
   const packedRoot = join(privateFolder, 'node_modules/lib')
   const outDir = join(root, 'out')
@@ -419,4 +423,50 @@ test('a configuration the patch cannot handle writes an error line, no wrapped l
   assert.equal(result.stdout.trim(), '{"plugins":2}')
   const lines = readReportLines(fixture.reportPath)
   assert.deepEqual(lines, [{ error: 'resolve is not readable' }])
+})
+
+test('report resources keep the packed files but none of the Example or its dependencies when the library root contains the Example', async () => {
+  // Arrange
+  const fixture = createFixture(false, true)
+
+  // Act
+  await runWithPreload(fixture)
+
+  // Assert
+  const compilation = readReportLines(fixture.reportPath)[1] as {
+    assets: { resources: string[] }[]
+  }
+  const resources = compilation.assets[0]?.resources ?? []
+  assert.ok(resources.includes(join(fixture.packedRoot, 'index.js')))
+  assert.deepEqual(
+    resources.filter(
+      (file) =>
+        file.startsWith(fixture.appRoot) ||
+        file.startsWith(join(fixture.libraryRoot, 'node_modules')),
+    ),
+    [],
+  )
+})
+
+test('a failure while describing a later compilation writes a reportError line, never an error line', async () => {
+  // Arrange
+  const fixture = createFixture()
+  const failing = join(fixture.root, 'failing-runner.js')
+  writeAt(
+    failing,
+    `const config = require(${JSON.stringify(fixture.factoryPath)})('development')
+const reporter = config.plugins[config.plugins.length - 1]
+reporter.apply({ hooks: { emit: { tap: (name, callback) => callback({ chunks: [], get hash() { throw new Error('hash failed') } }) } } })`,
+  )
+
+  // Act
+  await run(process.execPath, ['--require', fixture.preloadPath, failing], {
+    cwd: fixture.root,
+  })
+
+  // Assert
+  assert.deepEqual(readReportLines(fixture.reportPath), [
+    { wrapped: true },
+    { reportError: 'hash failed' },
+  ])
 })

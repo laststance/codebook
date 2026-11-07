@@ -24,7 +24,7 @@ export type ReactScriptsLibraryPreloadConfiguration = {
  * The body of the preload of the react-scripts library route, a CommonJS file run with `node --require`.
  *
  * It expects `CONFIG` ({@link ReactScriptsLibraryPreloadConfiguration}) to be defined above it, which {@link buildReactScriptsLibraryPreloadSource} does.
- * It is inert at load: it only replaces `Module._load`, writing and creating nothing, because forked children inherit it through `process.execArgv`. Only when react-scripts' `config/webpack.config.js` factory is required does it wrap the factory once; the wrapped factory patches the configuration it returns and writes `{"wrapped":true}`, or, when anything throws, undoes every change, writes `{"error":"<message>"}` and returns the configuration unpatched.
+ * It is inert at load: it only replaces `Module._load`, writing and creating nothing, because forked children inherit it through `process.execArgv`. Only when react-scripts' `config/webpack.config.js` factory is required does it wrap the factory once; the wrapped factory patches the configuration it returns and writes `{"wrapped":true}`, or, when anything throws, undoes every change, writes `{"error":"<message>"}` and returns the configuration unpatched. A failure while describing a later compilation writes `{"reportError":"<message>"}` instead, which does not mean the patch was not applied.
  * The patch: a resolver plugin that sends the package name to the packed copy and resolves imports from inside the packed copy like the packed package would (peers from the Example, other bare imports from the library); caches moved into the private folder; source-map names of byte-equal packed sources pointing at the checked-out file; a reporter plugin writing, at `emit`, one line per compilation with the SHA-256 of each emitted script and the real paths of the library-looking modules of its chunks.
  */
 const REACT_SCRIPTS_PRELOAD_BODY = `
@@ -145,9 +145,13 @@ const wrapDevtoolTemplate = (original) => {
   }
 }
 
+// Keeps the report line small when the library root contains the Example: the Example's own files and every dependency folder are left out, any copy of the library stays.
+const hasNodeModulesSegment = (file) => slashed(file).split('/').includes('node_modules')
 const isLibraryResource = (file) => {
-  if (file.startsWith(packedPrefix) || isInside(CONFIG.libraryRoot, file)) return true
-  return slashed(file).includes('/node_modules/' + CONFIG.packageName + '/')
+  if (file.startsWith(packedPrefix)) return true
+  if (slashed(file).includes('/node_modules/' + CONFIG.packageName + '/')) return true
+  if (!isInside(CONFIG.libraryRoot, file) || isInside(CONFIG.exampleRoot, file)) return false
+  return !hasNodeModulesSegment(path.relative(CONFIG.libraryRoot, file))
 }
 const resourcesOfModule = (module) => {
   const files = []
@@ -191,7 +195,7 @@ const reportCompilation = (compilation) => {
     if (Buffer.byteLength(text) + 1 > CONFIG.lineLimitBytes) {
       writeLine({ compilationHash: line.compilationHash, publicPath: line.publicPath, truncated: true })
     } else writeLine(line)
-  } catch (error) { writeLine({ error: String(error && error.message || error) }) }
+  } catch (error) { writeLine({ reportError: String(error && error.message || error) }) }
 }
 const createReporterPlugin = () => ({
   apply(compiler) {

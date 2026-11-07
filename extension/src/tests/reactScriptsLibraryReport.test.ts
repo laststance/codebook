@@ -204,3 +204,76 @@ test('a rebuild appends a line and the parsed bundle of either compilation still
   assert.equal(first.kind, 'matched')
   assert.equal(second.kind, 'matched')
 })
+
+test('a reportError line is kept apart from errorCause so a later compilation failure does not read as an unapplied patch', () => {
+  // Arrange
+  const reader = new ReactScriptsReportReader()
+
+  // Act
+  reader.append(
+    Buffer.from('{"wrapped":true}\n{"reportError":"hash failed"}\n'),
+  )
+
+  // Assert
+  assert.equal(reader.wrapped, true)
+  assert.equal(reader.errorCause, undefined)
+  assert.equal(reader.reportErrorCause, 'hash failed')
+  assert.equal(reader.unreadableCause, undefined)
+})
+
+test('an empty or auto public path never makes a script unmatched-owned', () => {
+  // Arrange
+  const reader = new ReactScriptsReportReader()
+  const line = (publicPath: string) =>
+    `${JSON.stringify({ compilationHash: 'c1', publicPath, assets: [] })}\n`
+
+  // Act
+  reader.append(Buffer.from(line('') + line('auto')))
+
+  // Assert
+  assert.equal(
+    reader.match('http://h/static/js/other.js', HASH_A).kind,
+    'not-owned',
+  )
+})
+
+test('a script whose URL percent-encodes a space matches the asset named with the space', () => {
+  // Arrange
+  const reader = new ReactScriptsReportReader()
+  reader.append(Buffer.from(compilationLine(HASH_A, 'static/js/my bundle.js')))
+
+  // Act
+  const verdict = reader.match('http://h/static/js/my%20bundle.js', HASH_A)
+
+  // Assert
+  assert.equal(verdict.kind, 'matched')
+})
+
+test('a script URL with a malformed percent escape matches nothing but stays owned', () => {
+  // Arrange
+  const reader = new ReactScriptsReportReader()
+  reader.append(Buffer.from(compilationLine(HASH_A)))
+
+  // Act
+  const verdict = reader.match('http://h/static/js/%E0%A4%A.js', HASH_A)
+
+  // Assert
+  assert.equal(verdict.kind, 'unmatched-owned')
+})
+
+test('an inline script reported with the document URL is ignored while a js script under the public path with no asset stays unmatched', () => {
+  // Arrange
+  const reader = new ReactScriptsReportReader()
+  reader.append(Buffer.from(compilationLine(HASH_A)))
+
+  // Act
+  const inline = reader.match('http://localhost:3000/?x=1', HASH_B)
+  const missing = reader.match(
+    'http://localhost:3000/static/js/other.js',
+    HASH_B,
+  )
+
+  // Assert
+  assert.equal(inline.kind, 'not-owned')
+  assert.equal(missing.kind, 'unmatched-owned')
+})

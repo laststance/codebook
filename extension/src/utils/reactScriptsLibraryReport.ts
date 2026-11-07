@@ -18,6 +18,9 @@ type ReactScriptsWrappedLine = { wrapped: true }
 /** The preload could not patch the configuration; it ran unpatched. */
 type ReactScriptsErrorLine = { error: string }
 
+/** The preload patched the configuration but failed to describe a later compilation; the patch itself is in place. */
+type ReactScriptsReportErrorLine = { reportError: string }
+
 /** One compilation: written at webpack's `emit`, before the assets are served. */
 type ReactScriptsCompilationLine = {
   compilationHash: string
@@ -36,6 +39,7 @@ type ReactScriptsTruncatedLine = {
 type ReactScriptsReportLine =
   | ReactScriptsWrappedLine
   | ReactScriptsErrorLine
+  | ReactScriptsReportErrorLine
   | ReactScriptsCompilationLine
   | ReactScriptsTruncatedLine
 
@@ -102,6 +106,9 @@ function parseReactScriptsReportLine(
   if (!isRecord(parsed)) return undefined
   if (parsed.wrapped === true) return { wrapped: true }
   if (typeof parsed.error === 'string') return { error: parsed.error }
+  if (typeof parsed.reportError === 'string') {
+    return { reportError: parsed.reportError }
+  }
   const { compilationHash, publicPath, assets } = parsed
   if (typeof compilationHash !== 'string') return undefined
   if (parsed.truncated === true) {
@@ -116,13 +123,45 @@ function parseReactScriptsReportLine(
   return { compilationHash, publicPath, assets: valid }
 }
 
-/** The path part of a script URL or public path, without query or fragment. */
+/** The path part of a script URL or public path, without query or fragment; percent escapes are kept. */
 function pathOf(urlOrPath: string): string {
   try {
     return new URL(urlOrPath).pathname
   } catch {
     return urlOrPath.split(/[?#]/, 1).join('')
   }
+}
+
+/**
+ * Decodes the percent escapes of a path so it can be compared with a raw asset name.
+ *
+ * Used by {@link ReactScriptsReportReader.match}: `new URL(...).pathname` of `/a b.js` is `/a%20b.js`, while the report names the asset `a b.js`.
+ * @param path - A path as {@link pathOf} returns it.
+ * @returns The decoded path, or `undefined` when an escape is malformed (such a path matches nothing).
+ * @example
+ * decodePath('/static/a%20b.js') // => '/static/a b.js'
+ * decodePath('/static/%E0%A4%A') // => undefined
+ */
+function decodePath(path: string): string | undefined {
+  try {
+    return decodeURI(path)
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Tells whether a report line's public path can say which scripts the preload owns.
+ *
+ * An empty public path would claim every script and webpack's `'auto'` is no URL prefix, so neither may classify scripts.
+ * @param publicPath - The `publicPath` of a report line.
+ * @returns True when the path may be used for ownership and URL matching.
+ * @example
+ * isUsablePublicPath('/') // => true
+ * isUsablePublicPath('auto') // => false
+ */
+function isUsablePublicPath(publicPath: string): boolean {
+  return publicPath !== '' && publicPath !== 'auto'
 }
 
 /**
@@ -141,6 +180,7 @@ export class ReactScriptsReportReader {
   private readonly publicPaths = new Set<string>()
   private wrappedSeen = false
   private errorMessage: string | undefined
+  private reportErrorMessage: string | undefined
   private unreadable: ReactScriptsReportUnreadableCause | undefined
   private truncatedCount = 0
 
@@ -163,6 +203,11 @@ export class ReactScriptsReportReader {
     return this.errorMessage
   }
 
+  /** The message of the first `reportError` line (a later compilation could not be described), or `undefined`; unlike {@link errorCause} it does not mean the patch was not applied. */
+  get reportErrorCause(): string | undefined {
+    return this.reportErrorMessage
+  }
+
   /** Why the report cannot be trusted, or `undefined` while it reads cleanly. */
   get unreadableCause(): ReactScriptsReportUnreadableCause | undefined {
     return this.unreadable
@@ -180,8 +225,14 @@ export class ReactScriptsReportReader {
 
   /**
    * Reads what was appended to the report file since the last call.
+   *
+   * Called by the react-scripts library route before it judges a script and at the end of the run; it never throws and marks the report unreadable instead.
    * @param reportPath - The report file.
    * @param isRequired - When true, a missing file is `unreadable` (`report-missing`); otherwise it just has no lines yet.
+   * @returns Nothing; the facts are read through the getters and {@link match}.
+   * @example
+   * reader.refresh('/p/report.jsonl', true)
+   * reader.wrapped // => true once the preload wrapped the factory
    */
   refresh(reportPath: string, isRequired = false): void {
     if (this.unreadable !== undefined) return
@@ -209,7 +260,16 @@ export class ReactScriptsReportReader {
     if (chunk) this.append(chunk)
   }
 
-  /** Reads `length` bytes from the current offset, or marks the report unreadable. */
+  /**
+   * Reads `length` bytes from the current offset.
+   *
+   * Runs inside {@link refresh} when the file grew; a read failure marks the report `report-unreadable`.
+   * @param reportPath - The report file.
+   * @param length - How many bytes were appended since the last read.
+   * @returns The bytes read, or `undefined` after a failure.
+   * @example
+   * const chunk = this.readRange('/p/report.jsonl', 120)
+   */
   private readRange(reportPath: string, length: number): Buffer | undefined {
     const buffer = Buffer.alloc(length)
     let descriptor: number | undefined
@@ -238,7 +298,13 @@ export class ReactScriptsReportReader {
 
   /**
    * Feeds appended bytes: complete lines are parsed, a trailing line without a newline stays pending.
+   *
+   * Called by {@link refresh} with the bytes it read, and directly by tests.
    * @param chunk - The bytes appended to the report.
+   * @returns Nothing; lines are recorded and the pending tail is kept.
+   * @example
+   * reader.append(Buffer.from('{"wrapped":true}\n'))
+   * reader.wrapped // => true
    */
   append(chunk: Buffer): void {
     this.offset += chunk.length
@@ -255,10 +321,26 @@ export class ReactScriptsReportReader {
     this.pending = Buffer.from(rest)
   }
 
+  /**
+   * Records why the report cannot be trusted; the first cause wins.
+   *
+   * Called by {@link acceptLine} and {@link append} when a line is too long or malformed.
+   * @param cause - The reason to record.
+   * @example
+   * this.markUnreadable('malformed-line')
+   */
   private markUnreadable(cause: ReactScriptsReportUnreadableCause): void {
     this.unreadable ??= cause
   }
 
+  /**
+   * Checks the size of one complete line, parses it and records it.
+   *
+   * Called by {@link append} for every line up to a newline; blank lines are skipped.
+   * @param bytes - The line without its newline.
+   * @example
+   * this.acceptLine(Buffer.from('{"wrapped":true}'))
+   */
   private acceptLine(bytes: Buffer): void {
     if (bytes.length > this.lineLimitBytes) {
       this.markUnreadable('line-too-long')
@@ -274,21 +356,45 @@ export class ReactScriptsReportReader {
     this.record(line)
   }
 
+  /**
+   * Applies one parsed line to the reader's facts.
+   *
+   * Called by {@link acceptLine}; public paths that are empty or `'auto'` are not remembered, so they never make a script owned.
+   * @param line - The typed line.
+   * @example
+   * this.record({ wrapped: true })
+   */
   private record(line: ReactScriptsReportLine): void {
     if ('wrapped' in line) {
       this.wrappedSeen = true
     } else if ('error' in line) {
       this.errorMessage ??= line.error
+    } else if ('reportError' in line) {
+      this.reportErrorMessage ??= line.reportError
     } else if ('truncated' in line) {
       this.truncatedCount += 1
-      if (line.publicPath !== undefined) this.publicPaths.add(line.publicPath)
+      if (line.publicPath !== undefined)
+        this.rememberPublicPath(line.publicPath)
     } else {
-      this.publicPaths.add(line.publicPath)
+      this.rememberPublicPath(line.publicPath)
       for (const asset of line.assets) this.addToIndex(line.publicPath, asset)
     }
   }
 
-  /** Adds an asset to the index; a repeated name under the same public path (a rebuild) replaces the older entry of the same hash. */
+  /** Remembers a public path for the owned-script check unless it is unusable (see {@link isUsablePublicPath}). */
+  private rememberPublicPath(publicPath: string): void {
+    if (isUsablePublicPath(publicPath)) this.publicPaths.add(publicPath)
+  }
+
+  /**
+   * Adds an asset to the index; a repeated name under the same public path (a rebuild) replaces the older entry of the same hash.
+   *
+   * Called by {@link record} for every asset of a compilation line.
+   * @param publicPath - The public path of the compilation.
+   * @param asset - The emitted asset.
+   * @example
+   * this.addToIndex('/', { name: 'static/js/bundle.js', sha256: 'ab…', resources: [] })
+   */
   private addToIndex(publicPath: string, asset: ReactScriptsReportAsset): void {
     const entries = this.index.get(asset.sha256) ?? []
     const kept = entries.filter(
@@ -301,23 +407,30 @@ export class ReactScriptsReportReader {
   /**
    * Judges one script the page parsed.
    *
-   * A script matches only when its URL path equals an asset's `publicPath + name` and the asset's SHA-256 equals the script's hash; there is no fallback by name. A script under a known public path that matches nothing (including every script of a truncated compilation, and any script given no hash) is `unmatched-owned`.
+   * A script matches only when its URL path equals an asset's `publicPath + name` and the asset's SHA-256 equals the script's hash; there is no fallback by name. A script under a known public path whose path ends in `.js` and that matches nothing (including every script of a truncated compilation, and any script given no hash) is `unmatched-owned`.
    * @param url - The script URL (query and fragment are ignored).
    * @param hash - The SHA-256 the debugger reports for the script, or `undefined` when it reported none.
    * @example
    * reader.match('http://localhost:3000/static/js/bundle.js?x=1', 'ab12…') // => { kind: 'matched', asset: { … } }
    */
   match(url: string, hash: string | undefined): ReactScriptsScriptMatch {
-    const urlPath = pathOf(url)
-    if (hash) {
+    const rawPath = pathOf(url)
+    // A malformed escape decodes to nothing: it can still be owned but never matches an asset.
+    const urlPath = decodePath(rawPath)
+    if (hash && urlPath !== undefined) {
       const candidates = this.index.get(hash.toLowerCase()) ?? []
       const found = candidates.find(
-        (entry) => pathOf(entry.publicPath) + entry.name === urlPath,
+        (entry) =>
+          (decodePath(pathOf(entry.publicPath)) ?? '\0') + entry.name ===
+          urlPath,
       )
       if (found) return { kind: 'matched', asset: found }
     }
+    // The preload reports only `.js` assets: an inline script (reported with the document URL) is none of its business.
+    if (!(urlPath ?? rawPath).endsWith('.js')) return { kind: 'not-owned' }
     for (const publicPath of this.publicPaths) {
-      if (urlPath.startsWith(pathOf(publicPath))) {
+      const prefix = decodePath(pathOf(publicPath))
+      if (prefix !== undefined && (urlPath ?? rawPath).startsWith(prefix)) {
         return { kind: 'unmatched-owned' }
       }
     }
