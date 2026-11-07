@@ -380,7 +380,7 @@ const operationsConfigurationShape = z.strictObject({
     .describe(
       'next-dev-webpack, vite-dev, react-scripts-dev and expo-web-dev: the app\'s folder, relative to the opened repository root (for example "examples/react/nextjs" or "examples/react/basic"). Omit it, or declare ".", for an app at the repository root. Stop files and book citations stay repository-relative and must lie inside this folder.',
     ),
-  // vite-dev only (MCP API 1.34), together with a nested packageRoot: other adapters refuse the key as unknown in validateOperations, and the service refuses a root run with the reason library-needs-package-root.
+  // vite-dev (MCP API 1.34) and react-scripts-dev (1.35), together with a nested packageRoot: other adapters refuse the key as unknown in validateOperations, and the service refuses a root run with the reason library-needs-package-root.
   library: libraryDeclarationSchema.optional(),
 })
 
@@ -433,10 +433,11 @@ function validateOperations(
   configuration: z.infer<typeof operationsConfigurationShape>,
   context: z.RefinementCtx,
 ): void {
-  // Only a vite-dev configuration declares `library`; every other adapter refuses it exactly as an unknown key of the strict shape.
+  // Only a vite-dev or react-scripts-dev configuration declares `library`; every other adapter refuses it exactly as an unknown key of the strict shape.
   if (
     configuration.library !== undefined &&
-    configuration.adapter !== 'vite-dev'
+    configuration.adapter !== 'vite-dev' &&
+    configuration.adapter !== 'react-scripts-dev'
   )
     context.addIssue({
       code: 'unrecognized_keys',
@@ -719,13 +720,38 @@ export const retainedRepositoryConfigSchema = liveRepositoryConfigSchema
     (configuration) => configuration.adapter !== 'expo-web-dev',
     'Only a study of format 15 keeps an expo-web-dev configuration.',
   )
-  // A `vite-dev` run that declares `library` is saved as format 16 only (Cycle 0096).
+  // A run that declares `library` is saved as format 16 (`vite-dev`) or 17 (`react-scripts-dev`) only.
   .refine(
     // An explicit `library: undefined` declares nothing, so it stays the older format.
     (configuration) =>
       !('library' in configuration) || configuration.library === undefined,
-    'Only a study of format 16 keeps a library.',
+    'Only a study of format 16 or 17 keeps a library.',
   )
+/**
+ * Says whether a retained configuration declares no library (an explicit `library: undefined` declares nothing).
+ * Called by the refinements of the retained variants that predate the library formats.
+ * @param configuration - A parsed version 3 configuration.
+ * @returns `true` when `library` is absent or undefined.
+ * @example declaresNoLibrary({ library: undefined }) // => true
+ */
+function declaresNoLibrary(configuration: { library?: unknown }): boolean {
+  return !('library' in configuration) || configuration.library === undefined
+}
+
+/**
+ * Runs the inspection and operation rules every retained version 3 variant shares.
+ * Called as the `superRefine` of the format 10 and format 11 variants.
+ * @param configuration - A parsed version 3 configuration.
+ * @param context - The refinement context that receives the issues.
+ * @example validateRetainedStudyConfiguration(configuration, context) // adds issues for a broken inspection
+ */
+function validateRetainedStudyConfiguration(
+  configuration: z.infer<typeof operationsConfigurationShape>,
+  context: z.RefinementCtx,
+): void {
+  validateInspections(configuration, context)
+  validateOperations(configuration, context)
+}
 /**
  * The configuration a format 9 study retains: the version 3 `next-dev-webpack` shape with a required `packageRoot` other than `"."`.
  * Read by {@link studyConfigurationSchema}; a run whose package root is `"."` saves the formats 7 or 8 it always did, without the field.
@@ -755,16 +781,9 @@ const vitePackageRootRepositoryConfigSchema = operationsConfigurationShape
       'A format 10 study names a package folder other than ".".',
     ),
   })
-  .superRefine((configuration, context) => {
-    validateInspections(configuration, context)
-    validateOperations(configuration, context)
-  })
-  // A run that declares `library` is saved as format 16 only.
-  .refine(
-    (configuration) =>
-      !('library' in configuration) || configuration.library === undefined,
-    'Only a study of format 16 keeps a library.',
-  )
+  .superRefine(validateRetainedStudyConfiguration)
+  // A run that declares `library` is saved as format 16 (`vite-dev`) or 17 (`react-scripts-dev`) only.
+  .refine(declaresNoLibrary, 'Only a study of format 16 or 17 keeps a library.')
 /**
  * The configuration a format 16 study retains: the version 3 `vite-dev` shape with a required `packageRoot` other than `"."` and a required `library` declaration (API 1.34).
  * Why it exists: an older Codebook refuses `library` under `vite-dev` as an unknown key, so a run that declares it takes its own format and is listed there as saved by a newer Codebook. Validated like the format 10 variant (inspections, operations).
@@ -790,6 +809,19 @@ const viteLibraryRepositoryConfigSchema = operationsConfigurationShape
  */
 const reactScriptsRepositoryConfigSchema = operationsConfigurationShape
   .extend({ adapter: z.literal('react-scripts-dev') })
+  .superRefine(validateRetainedStudyConfiguration)
+  // A run that declares `library` is saved as format 17 only.
+  .refine(declaresNoLibrary, 'Only a study of format 17 keeps a library.')
+/**
+ * The configuration a format 17 study retains: the version 3 `react-scripts-dev` shape with a required `library` declaration (API 1.35).
+ * Why it exists: an older Codebook refuses `library` under `react-scripts-dev` as an unknown key, so a run that declares it takes its own format and is listed there as saved by a newer Codebook. Validated like the format 11 variant (inspections, operations).
+ * Read by {@link studyConfigurationSchema}; no earlier format accepts a `library` under this adapter.
+ */
+const reactScriptsLibraryRepositoryConfigSchema = operationsConfigurationShape
+  .extend({
+    adapter: z.literal('react-scripts-dev'),
+    library: libraryDeclarationSchema,
+  })
   .superRefine((configuration, context) => {
     validateInspections(configuration, context)
     validateOperations(configuration, context)
@@ -805,13 +837,14 @@ const expoWebRepositoryConfigSchema = operationsConfigurationShape
     validateInspections(configuration, context)
     validateOperations(configuration, context)
   })
-/** Every configuration a saved study can hold: the retained union of formats 3 to 8, the format 9 package-root variant (Next), the format 10 package-root variant (Vite), the format 11 variant (react-scripts), the format 15 variant (Expo web) or the format 16 variant (Vite with a library). */
+/** Every configuration a saved study can hold: the retained union of formats 3 to 8, the format 9 package-root variant (Next), the format 10 package-root variant (Vite), the format 11 variant (react-scripts), the format 15 variant (Expo web), the format 16 variant (Vite with a library) or the format 17 variant (react-scripts with a library). */
 export const studyConfigurationSchema = z.union([
   retainedRepositoryConfigSchema,
   packageRootRepositoryConfigSchema,
   vitePackageRootRepositoryConfigSchema,
   viteLibraryRepositoryConfigSchema,
   reactScriptsRepositoryConfigSchema,
+  reactScriptsLibraryRepositoryConfigSchema,
   expoWebRepositoryConfigSchema,
 ])
 export type RepositoryConfiguration = z.infer<typeof repositoryConfigSchema>

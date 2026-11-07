@@ -49,9 +49,9 @@ test('refuses library as an unknown key on versions 1 and 2 and on other adapter
     library: { packageRoot: 'packages/widgets' },
   }
   const nextAdapter = { ...sample(), adapter: 'next-dev-webpack' }
-  const reactScripts = { ...sample(), adapter: 'react-scripts-dev' }
+  const expoWeb = { ...sample(), adapter: 'expo-web-dev' }
   // Act
-  const results = [versionOne, nextAdapter, reactScripts].map((candidate) =>
+  const results = [versionOne, nextAdapter, expoWeb].map((candidate) =>
     liveRepositoryConfigSchema.safeParse(candidate),
   )
   // Assert
@@ -64,6 +64,20 @@ test('refuses library as an unknown key on versions 1 and 2 and on other adapter
       result.error?.message ?? '',
       /"message": "Unrecognized key: \\"library\\""/,
     )
+})
+
+// protects=a version 3 react-scripts-dev configuration may declare library.packageRoot (API 1.35) and keeps it, while the retained schema of formats 3 to 8 still refuses it; fails_when=the field is refused for react-scripts-dev, stripped, or accepted by the retained schema; no_claim=that the library exists
+test('accepts library on a version 3 react-scripts-dev configuration', () => {
+  // Arrange
+  const configuration = { ...sample(), adapter: 'react-scripts-dev' }
+  // Act
+  const parsed = liveRepositoryConfigSchema.parse(configuration)
+  const retained = retainedRepositoryConfigSchema.safeParse(configuration)
+  // Assert
+  assert.deepEqual('library' in parsed ? parsed.library : undefined, {
+    packageRoot: 'packages/widgets',
+  })
+  assert.equal(retained.success, false)
 })
 
 // protects=a library on a root Vite run (packageRoot absent or ".") is refused as INVALID_CONFIGURATION with the field, the reason and a message that names the fix, before anything starts; fails_when=the refusal lacks details.reason, the field or the way out, or fires with a nested packageRoot; no_claim=the service wiring (the start tests cover the call)

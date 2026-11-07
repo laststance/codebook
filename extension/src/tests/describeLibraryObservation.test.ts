@@ -94,3 +94,35 @@ test('says built but not loaded when a complete observation found nothing of the
   )
   assert.equal(page, 'Built @acme/widgets 2.14.0, but not served to this page.')
 })
+
+// protects=reachedThrough appends the declared relation to the correspondence sentence only, and the count adds "and N more"; fails_when=the suffix is missing, appears on a non-claim sentence, or the extra count is not stated; no_claim=an observed importer
+test('appends the declared dependencies to the correspondence sentence only', () => {
+  // Arrange
+  const through = {
+    reachedThrough: ['@acme/a', '@acme/b'],
+    reachedThroughCount: 2,
+  }
+  // Act
+  const listed = describeLibraryObservation({ ...BUILT, ...through }, 'page')
+  const withMore = describeLibraryObservation(
+    { ...BUILT, reachedThrough: ['@acme/a'], reachedThroughCount: 4 },
+    'page',
+  )
+  const notLoaded = describeLibraryObservation(
+    { ...BUILT, ...through, loaded: false },
+    'page',
+  )
+  // Assert
+  assert.equal(
+    listed,
+    'Ran on the checked-out @acme/widgets 2.14.0 built from 7114787 (packed by pnpm), declared by @acme/a, @acme/b in this Example',
+  )
+  assert.equal(
+    withMore,
+    'Ran on the checked-out @acme/widgets 2.14.0 built from 7114787 (packed by pnpm), declared by @acme/a and 3 more in this Example',
+  )
+  assert.equal(
+    notLoaded,
+    'Built @acme/widgets 2.14.0, but not served to this page.',
+  )
+})

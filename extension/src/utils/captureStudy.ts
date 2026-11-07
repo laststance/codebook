@@ -2,6 +2,7 @@ import { configuredObservationSchema } from '../configuredStudySchemas'
 import {
   REPOSITORY_BROWSER_ACTION,
   REPOSITORY_BROWSER_PROFILE,
+  REACT_SCRIPTS_LIBRARY_STUDY_VERSION,
   VITE_LIBRARY_STUDY_VERSION,
 } from '../constants'
 import { EvidenceIntegrityError, StudyError } from '../errors'
@@ -25,7 +26,7 @@ import {
 
 /**
  * The facts of a declared library that no run ever prepared: `package` holds the declared folder until a name is known.
- * Called by {@link captureStudy} when a format 16 study is saved without runtime library facts.
+ * Called by {@link captureStudy} when a format 16 or 17 study is saved without runtime library facts.
  * @param configuration - The sealed configuration of the study.
  * @returns The pending facts, or `undefined` when the configuration declares no library.
  * @example pendingLibraryFacts(configuration) // => { package: 'packages/widgets', packageRoot: 'packages/widgets', prepared: false, observation: 'pending' }
@@ -256,9 +257,10 @@ export async function captureStudy(
           runtime.expoVersion
             ? { expoVersion: runtime.expoVersion }
             : {}),
-          // A Vite library study (format 16) keeps the library facts as they stand at this checkpoint; no other study carries them.
+          // A Vite or react-scripts library study (format 16 or 17) keeps the library facts as they stand at this checkpoint; no other study carries them.
           // A run that ended before the library route existed (a refusal in package resolution, admission, source preparation or workspace checks) has no facts yet: it saves the pending facts of the declared folder, so the preparation failure stays representable.
-          ...(studyVersion === VITE_LIBRARY_STUDY_VERSION
+          ...(studyVersion === VITE_LIBRARY_STUDY_VERSION ||
+          studyVersion === REACT_SCRIPTS_LIBRARY_STUDY_VERSION
             ? {
                 library:
                   (runtime?.profile === REPOSITORY_BROWSER_PROFILE

@@ -5,6 +5,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 /**
  * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ * 1.35 is additive: a version 3 `react-scripts-dev` configuration may declare `library: { packageRoot }` (the same shape as `node-script`'s since 1.33 and `vite-dev`'s since 1.34), for a Create React App Example below the repository root; such a study is saved as format 17 ({@link REACT_SCRIPTS_LIBRARY_STUDY_VERSION}). The library facts may also carry `reachedThrough` and `reachedThroughCount` when the Example reaches the library through an installed direct dependency instead of listing it.
  * 1.34 is additive: a version 3 `vite-dev` configuration with a nested `packageRoot` may declare `library: { packageRoot }` (the same shape as `node-script`'s since 1.33); Codebook builds and packs the checked-out library with the repository's package manager and the Example's imports of that package are served from the packed copy by an inline Vite plugin, so the Example runs on the checked-out library and not on its installed copy. The run resource's library facts reuse the `node-script` vocabulary (`package`, `packageRoot`, `prepared`, `version`, `revision`, `dirty`, `packageManager`, `buildMs`, `packMs`, `tarballSha256`, `installedVersion`, `observation`, `loaded`, `loadCount`, `publishedCopyLoaded`, `publishedCopyPath`, `cleanup`), where `loaded` means a module of the packed copy was served to the page. `LIBRARY_BUILD_UNSUPPORTED` gains `details.reason` `library-optimize-include`, `library-aliased` and `library-dedupe` (a Vite run only; nothing was built or started), and `INVALID_CONFIGURATION` gains `details.reason` `library-needs-package-root` for a `library` without a nested `packageRoot`. A `vite-dev` run that declares `library` is saved as study format 16 (`.study.v16.json`). An older Codebook refuses `library` under `vite-dev` as an unknown key and lists a format 16 study as saved by a newer Codebook. Live feature: a Vite library run needs a Codebook that serves this API.
  * 1.33 is additive: a `node-script` configuration may declare an optional `library: { packageRoot }` naming the opened repository's own library package; Codebook then builds it with the repository's package manager (pnpm or npm), packs it into the run's private folder and resolves the Example's imports of that package to the packed build, so the Example runs on the checked-out library and not on its installed copy. The refusals gain two codes, each with `details.reason`: `LIBRARY_BUILD_UNSUPPORTED` (nothing started) and `LIBRARY_BUILD_FAILED` (the build or pack started and the script did not). A run without `library` lists `repositoryPackageCopies` in its run resource: each direct dependency of the Example installed from outside the repository's source with `correspondence: "unverified"`. A Script replay of a run with `library` is recorded with history header format 2.
  * 1.32 is additive: the `chrome-extension` profile accepts a second adapter, `wxt-build`, for a WXT 0.21 project. `extensionRoot` names the project folder and each stop's `path` is a source file under it. Codebook builds the project with the repository's own WXT and source maps into the run's private folder, loads that build as an unpacked extension and resolves each stop through the build's source maps. The refusals are `EXTENSION_BUILD_UNSUPPORTED` and `EXTENSION_BUILD_FAILED`; an Extension replay of such a run is recorded with history header format 2.
@@ -36,7 +37,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.9 is additive: a node-server run is saved as a Server replay. `codebook_explain_node_history` accepts a server history's material (steps citing the request, a stop, output, the response or the request failure), the server run resource gains `nodeServer.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing` and `captureMissing`, `nextActions` offers `save-node-learning`, and `codebook://help/node-server` has a save section.
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
-export const API_VERSION = '1.34'
+export const API_VERSION = '1.35'
 
 /** The API that first accepts the `expo-web-dev` adapter in a version 3 configuration (skill 1.0.79). */
 export const EXPO_WEB_MINIMUM_API = '1.30'
@@ -152,6 +153,20 @@ export const LIBRARY_UNPACK_ENTRY_LIMIT_COUNT = 100_000
 /** The most bytes of the observation file a library run reads; a larger file reads `incomplete` (API 1.33). */
 export const LIBRARY_OBSERVATION_LIMIT_BYTES = 16 * 1024 * 1024
 
+/** The most bytes of a react-scripts library run's compilation report that Codebook reads; a larger report reads `unreadable` (Cycle 0097). */
+export const REACT_SCRIPTS_LIBRARY_REPORT_LIMIT_BYTES = 32 * 1024 * 1024
+
+/** The most bytes one line of a react-scripts library run's compilation report may have; the generated preload writes a `truncated` line instead of a longer one, and the reader treats a longer line as `unreadable`. */
+export const REACT_SCRIPTS_LIBRARY_REPORT_LINE_LIMIT_BYTES = 1024 * 1024
+
+/** How long the run waits at its end for a trailing, still unterminated line of a react-scripts library run's compilation report before it judges the scripts it has (Cycle 0097). */
+export const REACT_SCRIPTS_LIBRARY_REPORT_SETTLE_MS = 2000
+
+/** The file names of a react-scripts library run's private folder: the generated preload, the compilation report it appends to, and the folder its caches go to (Cycle 0097). */
+export const REACT_SCRIPTS_LIBRARY_PRELOAD_FILE_NAME = 'preload.cjs'
+export const REACT_SCRIPTS_LIBRARY_REPORT_FILE_NAME = 'report.jsonl'
+export const REACT_SCRIPTS_LIBRARY_CACHE_FOLDER_NAME = 'cache'
+
 /** The most project sources a `STOP_FILE_NOT_LOADED` refusal of a `wxt-build` run lists in `details.contextSources`. */
 export const EXTENSION_CONTEXT_SOURCES_LIMIT = 20
 
@@ -218,6 +233,8 @@ export const NODE_SCRIPT_MINIMUM_EXTENSION_VERSION = '0.2.84'
 
 /** The API that first accepts the `react-scripts-dev` adapter in a version 3 configuration (skill 1.0.74). */
 export const REACT_SCRIPTS_MINIMUM_API = '1.25'
+/** The API that first accepts `library.packageRoot` in a nested version 3 `react-scripts-dev` configuration. */
+export const REACT_SCRIPTS_LIBRARY_MINIMUM_API = '1.35'
 
 /**
  * The selection rule for a react-scripts (Create React App) question, shared word for word by the repository-browser help (`startHere`, `reactScriptsQuickStart`) and the MCP initial instructions; the bundled skill paraphrases it (root only with `rootIsApp`, else the ready `packages` entry with its `packageRoot`, a hoisted install never the root, a truncated list declared from the repository's files) and a test pins those key phrases in the skill.
@@ -242,7 +259,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.98'
+export const EXTENSION_VERSION = '0.2.99'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -1586,6 +1603,8 @@ export const NODE_SCRIPT_LIBRARY_OBSERVATIONS = [
 export const NODE_SCRIPT_LIBRARY_PATH_LIMIT_CHARS = 2_048
 /** The most characters of a library's package name a `library.prepared` event keeps (the npm name limit). */
 export const NODE_SCRIPT_LIBRARY_PACKAGE_LIMIT_CHARS = 214
+/** The most package names the Example's declared relation to the library lists in `reachedThrough` (API 1.35, D14); a larger number is stated by `reachedThroughCount` only. */
+export const LIBRARY_REACHED_THROUGH_LIMIT_PACKAGES = 16
 /** The most characters of a library version (built or installed) a `library.prepared` event keeps. */
 export const NODE_SCRIPT_LIBRARY_VERSION_LIMIT_CHARS = 256
 /** The most characters of a library's repository revision a `library.prepared` event keeps. */
@@ -2018,8 +2037,10 @@ export const API_ROUTE_STUDY_VERSION = 14
 export const EXPO_WEB_STUDY_VERSION = 15
 /** The format of a study saved from a version 3 `vite-dev` configuration that declares `library: { packageRoot }` (API 1.34): format 10 rules for its evidence plus the run's library facts, whose fields depend on the state of the preparation and the observation. A `vite-dev` run without `library` keeps its earlier format; the suffix `.study.v16.json` makes Codebook 0.2.97 and older list such a study as saved by a newer Codebook, never as unreadable. */
 export const VITE_LIBRARY_STUDY_VERSION = 16
+/** The format of a study saved from a version 3 `react-scripts-dev` configuration that declares `library: { packageRoot }` (API 1.35): format 11 rules for its evidence plus the run's library facts, with the same state rules as format 16. A `react-scripts-dev` run without `library` keeps format 11; the suffix `.study.v17.json` makes Codebook 0.2.98 and older list such a study as saved by a newer Codebook, never as unreadable. */
+export const REACT_SCRIPTS_LIBRARY_STUDY_VERSION = 17
 /** The highest study format this Codebook reads; a saved study above it is listed as saved by a newer Codebook. */
-export const READABLE_STUDY_VERSION = VITE_LIBRARY_STUDY_VERSION
+export const READABLE_STUDY_VERSION = REACT_SCRIPTS_LIBRARY_STUDY_VERSION
 /** The replay's operation marks closer than this many pixels stack vertically instead of overlapping. */
 export const OPERATION_MARK_STACK_PX = 24
 /** Below this webview width in pixels the operation marks show their numbers only. */
@@ -2031,6 +2052,12 @@ export const CONFIGURED_STUDY_METADATA_SUFFIX = '.study.meta.v3.json'
 // Highest existing version owns a logical study, including when its bytes are corrupt.
 // A change of the saved study format that an older Codebook cannot read takes the next format number and its own `.study.v<n>.json` suffix in this table; an older Codebook then lists such a study as saved by a newer one and keeps it, instead of failing on its schema.
 export const STUDY_STORAGE_FORMATS = [
+  {
+    version: REACT_SCRIPTS_LIBRARY_STUDY_VERSION,
+    format: 'v17',
+    archiveSuffix: '.study.v17.json',
+    metadataSuffix: '.study.meta.v17.json',
+  },
   {
     version: VITE_LIBRARY_STUDY_VERSION,
     format: 'v16',

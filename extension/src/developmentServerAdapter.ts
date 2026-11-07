@@ -20,6 +20,7 @@ import type {
   ResolvedPackage,
 } from './utils/resolveNextPackage'
 import type { ResolvedVitePackage } from './utils/resolveVitePackage'
+import type { ReactScriptsLibraryStopInput } from './utils/sealReactScriptsLibraryStop'
 import type { ViteLibraryModuleSource } from './utils/selectViteLibraryCandidate'
 import type { ViteLibraryModules } from './utils/viteLibraryModules'
 import type { ViteLauncherLibraryOptions } from './viteLauncherProtocol'
@@ -46,6 +47,8 @@ export type DevelopmentServerStart = {
   expoWebPackage?: ResolvedPackage
   /** The checked-out library a Vite run serves from its packed copy (the library route): the owned launcher redirects the app's imports of it, and the run's private Vite cache (`<privateFolder>/vite-cache`) passes the settings check. Absent for every other run. */
   viteLibrary?: ViteLauncherLibraryOptions
+  /** A `react-scripts-dev` run that declares `library` (API 1.35): the generated preload the owned `start.js` runs with `node --require`, written into the run's private folder before the server starts. Absent for every other run. */
+  reactScriptsLibrary?: { preloadPath: string }
   /** A library run only: builds and packs the checked-out library into the run's private folder and writes the anchor file. The Vite launcher calls it between the facts and the listen, after the blockers were found absent; it throws the build's own `LIBRARY_BUILD_*` error. The optional signal ends when the launcher exits during the build, so the build is cancelled. */
   prepareLibrary?: (signal?: AbortSignal) => Promise<void>
   /** The configured entry path of the run (`/` when none): an `expo-web-dev` run asks Metro's entry page there to find the bundle. */
@@ -75,6 +78,14 @@ export type DevelopmentServerStart = {
   outputMask?: (text: string) => string
 }
 
+/** What a react-scripts library stop is sealed through: the library (its package name, real checked-out folder and repository-relative folder), its real packed copy and the Example's folder, which a refusal names. */
+export type ReactScriptsLibraryStopSeal = ReactScriptsLibraryStopInput & {
+  /** The checked-out library's real folder; the stop is read below it. */
+  libraryRoot: string
+  /** The library's repository-relative folder (`"."` for the repository root). */
+  libraryRootRelative: string
+}
+
 /** What {@link DevelopmentServerAdapter.readBundle} needs to seal one declared stop. */
 export type DevelopmentBundleRequest = {
   /** The opened repository's root (stop files and recorded sources are relative to it). */
@@ -87,6 +98,8 @@ export type DevelopmentBundleRequest = {
   reactScriptsPackage?: ResolvedPackage
   /** The Expo app an `expo-web-dev` run resolved: the seal reads the stop in the app folder under the stop's package-relative path. Absent for every other run. */
   expoWebPackage?: ResolvedPackage
+  /** Set for a browser stop of a react-scripts library run whose file lies in the checked-out library outside the app: the stop is sealed through the packed build ({@link sealReactScriptsLibraryStop}) instead of being refused as outside the app. Absent for every other stop. */
+  reactScriptsLibraryStop?: ReactScriptsLibraryStopSeal
   source: RepositoryConfiguration['source']
   /** The last line of the stop's citation, up to which a stop declared on a line with no mapped position is requested at the first mapped position after it ({@link resolveArmedPlace}); a Pages server stop's seal checks that line's client mapping too ({@link sealPagesServerStop}). */
   citationEndLine: number

@@ -82,6 +82,7 @@ fs.writeFileSync(path.join(appRoot, 'fake-server.pid'), String(process.pid))
 // A worker in the same process group, as react-scripts' own child processes are.
 const worker = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
 fs.writeFileSync(path.join(appRoot, 'fake-worker.pid'), String(worker.pid))
+fs.writeFileSync(path.join(appRoot, 'fake-exec-argv.json'), JSON.stringify(process.execArgv))
 fs.writeFileSync(path.join(appRoot, 'fake-env.json'), JSON.stringify({ HOST: host, PORT: process.env.PORT, BROWSER: process.env.BROWSER, CI: process.env.CI, TOKEN: process.env.API_TOKEN }))
 if (mode === 'port-conflict-after-exit') {
   // The line comes from a child after this process has exited, as buffered output can.

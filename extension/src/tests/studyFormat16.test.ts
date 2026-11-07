@@ -5,11 +5,7 @@ import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 
 import type { ConfiguredStudy } from '../configuredStudySchemas'
-import {
-  READABLE_STUDY_VERSION,
-  STUDY_STORAGE_FORMATS,
-  VITE_LIBRARY_STUDY_VERSION,
-} from '../constants'
+import { STUDY_STORAGE_FORMATS, VITE_LIBRARY_STUDY_VERSION } from '../constants'
 import { LearningLibrary } from '../learningLibrary'
 import type { LibraryRunFacts } from '../libraryRunFactsSchema'
 import { sha256 } from '../runtimeSupport/utils/sha256'
@@ -107,10 +103,10 @@ test('Codebook 0.2.97 lists a .study.v16.json archive as saved by a newer Codebo
   assert.equal(sidecar, undefined)
 })
 
-// protects=this Codebook reads format 16, stores it as .study.v16.json beside its metadata at the top of the table and refuses format 17 as a newer Codebook's; fails_when=the storage row is missing or not first, the readable limit stays 15, or 17 is read; no_claim=the library round trip of a run
-test('format 16 is a stored and readable format and format 17 is refused as saved by a newer Codebook', () => {
+// protects=the second storage format row is format 16 with the v16 archive and metadata suffixes, and format 16 is an operations format that passes the readable check; fails_when=that row is missing, moves from index 1 or changes its suffixes, or format 16 stops being an operations or readable format; no_claim=the order against format 17 or the library round trip of a run
+test('storage format row 1 is format 16 with its v16 suffixes and format 16 is readable', () => {
   // Arrange / Act
-  const row = STUDY_STORAGE_FORMATS[0]
+  const row = STUDY_STORAGE_FORMATS[1]
   // Assert
   assert.deepEqual(row, {
     version: 16,
@@ -118,13 +114,8 @@ test('format 16 is a stored and readable format and format 17 is refused as save
     archiveSuffix: '.study.v16.json',
     metadataSuffix: '.study.meta.v16.json',
   })
-  assert.equal(READABLE_STUDY_VERSION, 16)
   assert.equal(isOperationsStudyFormat(16), true)
   assert.doesNotThrow(() => assertReadableStudyFormat({ version: 16 }))
-  assert.throws(
-    () => assertReadableStudyFormat({ version: 17 }),
-    /saved in format 17 by a newer Codebook; this Codebook reads formats up to 16/,
-  )
 })
 
 // protects=a nested vite-dev run that declares library takes format 16 while the same run without library keeps format 10; fails_when=a library run falls back to 10, which an older Codebook would read as unreadable instead of newer, or a run without library moves to 16; no_claim=a live run

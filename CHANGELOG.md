@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.99.0] - 2026-11-08 (development candidate)
+
+Cycle 0097 ([Issue #253](https://github.com/laststance/codebook/issues/253)), a feature cycle. **A library's Create React App Example now runs on the checked-out library.** When an Example of a library repository reaches the library only through its installed dependencies, as `reduxjs/redux`'s `examples/counter` reaches `redux` through `@reduxjs/toolkit` and `react-redux`, the learner used to read one release while the published copy ran. Codebook now builds and packs the checked-out library, has the Example's own react-scripts serve the packed copy, and says which copy the page actually loaded.
+
+### Added
+- **react-scripts library route (MCP API 1.35):** a Create React App Example below the repository root may declare `library: { packageRoot }` (`"."` when the library is the repository root). After the editor's confirmation, Codebook builds and packs the library with the repository's own package manager, and the Example's own react-scripts serves the packed copy instead of the copy in the Example's `node_modules`.
+- **Declared through an installed dependency:** on this route the library may be listed by the installed manifest of one of the Example's direct dependencies instead of the Example's own `package.json`. The run then reports `reachedThrough`, and the correspondence sentence says the library is declared by those dependencies in this Example, not that they import it.
+- **Which copy ran:** the run resource reports the same `library` facts as a Vite run.
+- **Stops in the library's own source:** a stop in the checked-out library (for example `src/createStore.ts`) is sealed against the served bundle's source map; it is refused with `library-build-stale`, `library-not-in-build` or `library-build-unmapped` before the browser opens, or ends the run with `library-build-changed` when the bundle changes during it.
+- **Study format 17:** a saved react-scripts library run keeps its library facts; Codebook 0.2.98 and older list it as saved by a newer Codebook.
+- **Refusals:** a library neither the Example nor one of its direct dependencies lists (`not-a-dependency`), `library` on a react-scripts app at the repository root (`library-needs-package-root`), and a first compile that does not take the redirect (`library-redirect-not-applied`, after the library was built and packed).
+
+### Changed
+- **Development target (AGENTS.md):** the library react-scripts Example on the checked-out library is trialled on the pinned P03 clone's `examples/counter`.
+
 ## [0.2.98.0] - 2026-11-08 (development candidate)
 
 Cycle 0096 ([Issue #249](https://github.com/laststance/codebook/issues/249)), a feature cycle. **A library's Vite Example now runs on the checked-out library.** When an Example of a library repository installs the library's published package, as `@reduxjs/toolkit`'s `examples/publish-ci/vite` does, the learner used to read one release while another ran. Codebook now builds and packs the checked-out library, serves it to the Example's own Vite, and says which copy the page actually loaded.

@@ -93,6 +93,7 @@ import type {
   DevelopmentServerAdapterName,
   DevelopmentServerStart,
   LibraryStopSealInput,
+  ReactScriptsLibraryStopSeal,
 } from './developmentServerAdapter'
 import {
   SAVED_SESSION_INITIAL_STORAGE_RECOVERY,
@@ -106,6 +107,7 @@ import {
   expoWebSetupDeadlineRefusal,
   expoWebSetupDeadlineText,
 } from './expoWebRefusals'
+import type { LibraryRunRoute, LibraryScript } from './libraryRoute'
 import {
   NEXT_PAGES_FAILURE_VARIANT,
   libraryBuildChangedFailure,
@@ -132,7 +134,11 @@ import {
   type verifiedPlaceSchema,
 } from './ownedRepositoryBreakpoint'
 import { REACT_SCRIPTS_DEV_ADAPTER } from './reactScriptsDevAdapter'
+import { ReactScriptsLibraryRoute } from './reactScriptsLibraryRoute'
 import {
+  reactScriptsLibraryBuildChangedFailure,
+  reactScriptsLibraryFailureText,
+  reactScriptsLibraryNeedsPackageRootRefusal,
   reactScriptsNodeModulesRefusal,
   reactScriptsOutsidePackageRefusal,
   reactScriptsSetupDeadlineRefusal,
@@ -205,6 +211,7 @@ import {
   type DevelopmentLockIdentity,
 } from './utils/assertDevelopmentWorkspace'
 import { assertFrameAtBoundPosition } from './utils/assertFrameAtBoundPosition'
+import { assertReactScriptsLibraryPortFree } from './utils/assertReactScriptsLibraryPortFree'
 import { assertSavedSessionOrigin } from './utils/assertSavedSessionOrigin'
 import { assertViteLibraryNeedsPackageRoot } from './utils/assertViteLibraryNeedsPackageRoot'
 import { refuseViteMisroute } from './utils/assessViteWorkspace'
@@ -273,6 +280,7 @@ import {
   requiredInspectionFailureMessage,
 } from './utils/inspectConfiguredValues'
 import { isAnnouncedScriptOf } from './utils/isAnnouncedScriptOf'
+import { isAtOrInsideFolder } from './utils/isAtOrInsideFolder'
 import { isBlankOrCommentLine } from './utils/isBlankOrCommentLine'
 import { isBrowserOnEntryRoute } from './utils/isBrowserOnEntryRoute'
 import { isDebugTargetSession } from './utils/isDebugTargetSession'
@@ -1311,7 +1319,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /** The Expo SDK version the CLI reported, for an `expo-web-dev` run. */
   private expoVersion?: string
   /** The run side of the Vite library route, for a nested `vite-dev` run that declares `library` (decision D12). */
-  private libraryRoute?: ViteLibraryRoute
+  private libraryRoute?: LibraryRunRoute
+  /** The react-scripts library route, kept beside {@link libraryRoute} for the readiness check only it has. */
+  private reactScriptsLibraryRoute?: ReactScriptsLibraryRoute
   /** Whether the browser participant's debug session has ended; js-debug ends it once the page target is closed. */
   private hasBrowserSessionEnded = false
   /** Settles the library finalization's wait for the browser participant's session to end, while it waits. */
@@ -1581,9 +1591,121 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @example this.reactScriptsPackage = await this.resolveReactScriptsPackageOfRun()
    */
   private resolveReactScriptsPackageOfRun(): Promise<ResolvedPackage> {
-    return this.resolveAppPackageOfRun(resolveReactScriptsPackage, {
-      outside: reactScriptsOutsidePackageRefusal,
-      nodeModules: reactScriptsNodeModulesRefusal,
+    return this.resolveAppPackageOfRun(
+      resolveReactScriptsPackage,
+      {
+        outside: reactScriptsOutsidePackageRefusal,
+        nodeModules: reactScriptsNodeModulesRefusal,
+      },
+      // A browser stop in the declared library of a library run is sealed through the packed build (decision D3), not refused as outside the app; a path written inside the app folder that leaves it through a link stays refused here.
+      async (stop) =>
+        stop.participant === 'browser' &&
+        !this.isWrittenInsideDeclaredApp(stop.source.path) &&
+        this.isReactScriptsLibraryStopPath(stop.source.path),
+    )
+  }
+
+  /**
+   * The declared library folder of a version 3 `react-scripts-dev` run that declares `library`.
+   * @returns The repository-relative folder (`"."` for the repository root); `undefined` for every other run.
+   * @example this.reactScriptsLibraryFolder() // => '.'
+   */
+  private reactScriptsLibraryFolder(): string | undefined {
+    const { configuration } = this.definition
+    return configuration.version === OPERATIONS_CONFIG_VERSION &&
+      configuration.adapter === 'react-scripts-dev'
+      ? configuration.library?.packageRoot
+      : undefined
+  }
+
+  /**
+   * Tells whether a stop path is written inside the run's declared app folder, whatever its real path is.
+   * Called by {@link resolveReactScriptsPackageOfRun}: a path written inside the app that reaches outside it through a link is not a library stop, so it keeps the refusal before any process starts.
+   * @param repositoryPath - The stop's repository-relative path.
+   * @returns `true` when the path lies lexically inside a nested declared `packageRoot`; `false` for a root app and every other path.
+   * @example this.isWrittenInsideDeclaredApp('examples/counter/src/App.js') // => true for packageRoot "examples/counter"
+   */
+  private isWrittenInsideDeclaredApp(repositoryPath: string): boolean {
+    const { configuration } = this.definition
+    const declared =
+      'packageRoot' in configuration ? configuration.packageRoot : undefined
+    // An absent or "." packageRoot is a root app, which a library run refuses before it reaches a stop.
+    if (declared === undefined || declared === '.') return false
+    return isAtOrInsideFolder(
+      join(this.options.workspace, declared),
+      join(this.options.workspace, repositoryPath),
+    )
+  }
+
+  /**
+   * Tells whether a declared stop file lies in the declared library folder of a react-scripts library run.
+   * Called before the start (a library stop is not refused as outside the app) and when a stop is sealed or its module changed (a library stop takes the library seal and wording).
+   * @param repositoryPath - The stop's repository-relative path.
+   * @returns `true` inside the declared library folder; `false` for every other path and every run without a react-scripts library.
+   * @example this.isReactScriptsLibraryStopPath('src/createStore.ts') // => true for library "."
+   */
+  private isReactScriptsLibraryStopPath(repositoryPath: string): boolean {
+    const folder = this.reactScriptsLibraryFolder()
+    if (folder === undefined) return false
+    return isAtOrInsideFolder(
+      join(this.options.workspace, folder),
+      join(this.options.workspace, repositoryPath),
+    )
+  }
+
+  /**
+   * Gives the library seal input of a browser stop that lies in the checked-out library outside the app of a react-scripts library run.
+   * Called by {@link sealDeclaredStop} (the stop takes the library seal) and {@link reactScriptsLibraryChanged} (a change at a pause takes the library wording).
+   * @param stop - The declared stop.
+   * @returns `{ reactScriptsLibraryStop }` for such a stop once the library was prepared; an empty object for every other stop.
+   * @example this.reactScriptsLibraryStopRequest(stop) // => { reactScriptsLibraryStop: { packageName: 'redux', … } }
+   */
+  private reactScriptsLibraryStopRequest(stop: {
+    participant: string
+    source: { path: string }
+  }): { reactScriptsLibraryStop?: ReactScriptsLibraryStopSeal } {
+    const packed = this.reactScriptsLibraryRoute?.packedLibrary()
+    const app = this.reactScriptsPackage
+    const folder = this.reactScriptsLibraryFolder()
+    if (
+      !packed ||
+      !app ||
+      folder === undefined ||
+      stop.participant !== 'browser'
+    )
+      return {}
+    // A stop inside the app keeps the app seal, even when the app lies inside the library folder.
+    if (app.toPackageRelative(stop.source.path) !== undefined) return {}
+    if (!this.isReactScriptsLibraryStopPath(stop.source.path)) return {}
+    return {
+      reactScriptsLibraryStop: {
+        packageName: packed.packageName,
+        libraryRoot: packed.libraryRoot,
+        libraryRootRelative: folder,
+        packedRoot: packed.packedRoot,
+        examplePackageRoot: app.packageRootRelative,
+      },
+    }
+  }
+
+  /**
+   * Words a library stop's module that changed after the seal in a react-scripts library run (`library-build-changed`).
+   * Called by {@link assertExecutedModuleSealed}, {@link changedLibraryOrError} and {@link changedAfterSealingText}.
+   * @param stop - The paused or re-parsed stop.
+   * @returns The failure for a library stop; `undefined` for every other stop.
+   * @example this.reactScriptsLibraryChanged(stop) // RUNTIME_FAILED library-build-changed for a library stop
+   */
+  private reactScriptsLibraryChanged(stop: {
+    participant: string
+    source: { path: string }
+  }): StudyError | undefined {
+    const library =
+      this.reactScriptsLibraryStopRequest(stop).reactScriptsLibraryStop
+    if (!library) return undefined
+    return reactScriptsLibraryBuildChangedFailure({
+      packageRoot: library.examplePackageRoot,
+      library: library.packageName,
+      file: stop.source.path,
     })
   }
 
@@ -1608,13 +1730,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       ) => StudyError
       nodeModules: (files: readonly string[]) => StudyError
     },
+    isHandled?: Parameters<ConfiguredBrowserRun['stopFilesOutside']>[1],
   ): Promise<ResolvedPackage> {
     const configuration = this.definition.configuration
     const declared =
       'packageRoot' in configuration ? configuration.packageRoot : undefined
     const resolved = await resolve(this.options.workspace, declared)
-    // A library stop is out of scope for these adapters (decision D4): every stop outside the app is refused.
-    const outside = await this.stopFilesOutside(resolved)
+    // Every stop outside the app is refused, except one the caller handles (a react-scripts library run's library stop).
+    const outside = await this.stopFilesOutside(resolved, isHandled)
     if (outside.length)
       throw refusals.outside(resolved.packageRootRelative, outside)
     // A published package in the app's node_modules is not the checked-out library: refused here, before the server starts.
@@ -1907,6 +2030,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const viteLibrary = this.viteLibraries.libraryOf(stop.source)
     return (
       this.nextLibraryChanged(stop) ??
+      this.reactScriptsLibraryChanged(stop) ??
       (viteLibrary ? this.viteLibraryChanged(stop, viteLibrary) : error)
     )
   }
@@ -2064,31 +2188,41 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Seam 1 of the Vite library route: creates the route for a nested `vite-dev` run that declares `library`, checks it, asks the learner and fixes the private folder.
-   * Called by {@link prepareOwned} before the server starts; the setup budget does not run while the learner decides.
-   * @returns The launcher's library options, or `undefined` for a run without `library`.
+   * Seam 1 of the library route: creates the route for a nested `vite-dev` or `react-scripts-dev` run that declares `library`, checks it, asks the learner and fixes the private folder.
+   * For react-scripts the library is also built, packed and given its preload here (there is no resolved-config blocker to read first), so the start receives the preload path.
+   * Called by {@link prepareOwned} before the server starts; the setup budget does not run while the learner decides or the build runs.
+   * @returns The Vite launcher's library options, or the react-scripts preload; an empty object for a run without `library`.
    * @throws `PREREQUISITE_MISSING` when the editor offers no library route; `LIBRARY_BUILD_UNSUPPORTED` or `SCRIPT_NOT_CONFIRMED` from the route.
-   * @example const viteLibrary = await this.planViteLibrary()
+   * @example const { viteLibrary, reactScriptsLibrary } = await this.planLibrary()
    */
-  private async planViteLibrary(): Promise<
-    ViteLauncherLibraryOptions | undefined
-  > {
+  private async planLibrary(): Promise<{
+    viteLibrary?: ViteLauncherLibraryOptions
+    reactScriptsLibrary?: { preloadPath: string }
+  }> {
     const { configuration } = this.definition
+    const isReactScripts =
+      configuration.version === OPERATIONS_CONFIG_VERSION &&
+      configuration.adapter === 'react-scripts-dev'
     const declared =
       configuration.version === OPERATIONS_CONFIG_VERSION &&
-      configuration.adapter === 'vite-dev'
+      (configuration.adapter === 'vite-dev' || isReactScripts)
         ? configuration.library?.packageRoot
         : undefined
-    if (declared === undefined) return undefined
+    if (declared === undefined) return {}
     const dependencies = this.options.viteLibrary
+    const appPackage = isReactScripts
+      ? this.reactScriptsPackage
+      : this.vitePackage
     // A packageRoot that resolves to the repository root is a configuration error, not a missing editor feature.
-    if (this.vitePackage?.isRoot)
+    if (appPackage?.isRoot) {
+      if (isReactScripts) throw reactScriptsLibraryNeedsPackageRootRefusal()
       assertViteLibraryNeedsPackageRoot({
         version: 3,
         adapter: 'vite-dev',
         library: {},
       })
-    if (!dependencies || !this.vitePackage)
+    }
+    if (!dependencies || !appPackage)
       throw new StudyError(
         'PREREQUISITE_MISSING',
         'The library route is unavailable in this editor.',
@@ -2097,16 +2231,19 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         undefined,
         { sideEffects: 'none' },
       )
-    this.libraryRoute = new ViteLibraryRoute({
+    const input = {
       runId: this.id,
       declared,
       workspace: this.options.workspace,
-      appRoot: this.vitePackage.packageRoot,
-      appRootRelative: this.vitePackage.packageRootRelative,
-      record: (type, detail) => this.evidence.record(type, detail),
+      appRoot: appPackage.packageRoot,
+      appRootRelative: appPackage.packageRootRelative,
+      record: (type: string, detail?: unknown) =>
+        this.evidence.record(type, detail),
       dependencies,
-    })
-    const route = this.libraryRoute
+    }
+    if (isReactScripts) return this.planReactScriptsLibrary(input)
+    const route = new ViteLibraryRoute(input)
+    this.libraryRoute = route
     const options = await this.withSetupBudgetPaused(() =>
       route.plan(this.abort.signal),
     )
@@ -2116,7 +2253,35 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       packedFolder: options.packedRoot,
       revision: () => route.view().revision,
     })
-    return options
+    return { viteLibrary: options }
+  }
+
+  /**
+   * Plans, builds and packs the react-scripts library route and gives the start its preload.
+   * Called by {@link planLibrary}; neither the confirmation nor the build counts against the setup budget.
+   * @param input - What the route is built from.
+   * @returns `{ reactScriptsLibrary: { preloadPath } }`.
+   * @example const { reactScriptsLibrary } = await this.planReactScriptsLibrary(input)
+   */
+  private async planReactScriptsLibrary(
+    input: ConstructorParameters<typeof ReactScriptsLibraryRoute>[0],
+  ): Promise<{ reactScriptsLibrary: { preloadPath: string } }> {
+    // A busy declared port refuses before the learner's confirmation and the build, so the refusal's `sideEffects: none` is true.
+    if (this.reactScriptsPackage)
+      await assertReactScriptsLibraryPortFree(
+        this.reactScriptsPackage,
+        (declared, refuse) =>
+          assertDevelopmentPortFree(declared, {
+            signal: this.abort.signal,
+            ...(refuse ? { refuse } : {}),
+          }),
+      )
+    const route = new ReactScriptsLibraryRoute(input)
+    this.libraryRoute = route
+    this.reactScriptsLibraryRoute = route
+    await this.withSetupBudgetPaused(() => route.plan(this.abort.signal))
+    await this.withSetupBudgetPaused(() => route.prepare(this.abort.signal))
+    return { reactScriptsLibrary: { preloadPath: route.preloadPath() } }
   }
 
   /**
@@ -2137,7 +2302,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Runs one step during which the setup deadline does not run, then gives the time it took back to the budget, as a held preparation pause does.
-   * Called by {@link planViteLibrary} (the learner's answer) and {@link buildViteLibrary} (the build).
+   * Called by {@link planLibrary} (the learner's answer) and {@link buildViteLibrary} (the build).
    * @param work - The step.
    * @returns What the step returned.
    * @example await this.withSetupBudgetPaused(() => route.prepare(signal))
@@ -2164,31 +2329,36 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Seam 3 of the Vite library route: forwards one script URL the page's debugger announced.
+   * Seam 3 of the library route: forwards one script the page's debugger announced.
    * Called by the browser participant's `Debugger.scriptParsed` handler.
-   * @param url - The announced script URL.
-   * @example this.observeLibraryScript('http://localhost:4321/src/main.tsx')
+   * @param event - The announced script's id, URL and content hash.
+   * @example this.observeLibraryScript({ scriptId: '7', url: 'http://localhost:4321/src/main.tsx' })
    */
-  private observeLibraryScript(url: string): void {
+  private observeLibraryScript(
+    event: Pick<LibraryScript, 'scriptId' | 'url' | 'hash'>,
+  ): void {
     if (!this.libraryRoute || !this.origin) return
     const owned = loopbackOriginsOf(this.origin, this.ownsIpv6Loopback)
-    this.libraryRoute.observeScript(url, (origin) => owned.includes(origin))
+    this.libraryRoute.observeParsedScript({
+      ...event,
+      isOwnedOrigin: (origin) => owned.includes(origin),
+    })
   }
 
   /**
-   * Seam 4 of the Vite library route: closes the owned page itself within the close bound and confirms it is gone, then finalizes the observation, so a script parsed up to the close is counted.
+   * Seam 4 of the library route: closes the owned page itself within the close bound and confirms it is gone, then finalizes the observation, so a script parsed up to the close is counted.
    * The browser process is not waited for: a managed Chrome exits only when the debugger session stops, which comes later; the owned browser close step of {@link cleanupOwned} does the full close.
    * Called first by {@link cleanupOwned}; the server stops and the private folder goes after it.
    * @returns The failures of the page close (empty when it closed).
-   * @example const failures = await this.finalizeViteLibrary()
+   * @example const failures = await this.finalizeLibrary()
    */
-  private async finalizeViteLibrary(): Promise<string[]> {
+  private async finalizeLibrary(): Promise<string[]> {
     const route = this.libraryRoute
     if (!route) return []
     const pageCdp = this.participants.browser.cdp
     // A page that was never attached has nothing to confirm: no script of it was observed, so the observation cannot be complete.
     if (!pageCdp) {
-      route.finalize(false)
+      await this.finalizeLibraryRoute(route, false)
       return []
     }
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -2218,8 +2388,27 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     ])
     didBoundWin = outcome === 'bound'
     clearTimeout(timer)
-    route.finalize(outcome === 'closed')
+    await this.finalizeLibraryRoute(route, outcome === 'closed')
     return failures
+  }
+
+  /**
+   * Finalizes the library observation without letting a failure stop the cleanup.
+   * Why it exists: {@link finalizeLibrary} runs first in {@link cleanupOwned}; a rejected finalization would skip stopping the server, the browser and the debugger. Called by {@link finalizeLibrary} on both of its paths.
+   * @param route - The run's library route.
+   * @param isPageClosed - Whether the owned page closed within the close bound.
+   * @example await this.finalizeLibraryRoute(route, true)
+   */
+  private async finalizeLibraryRoute(
+    route: LibraryRunRoute,
+    isPageClosed: boolean,
+  ): Promise<void> {
+    try {
+      await route.finalize(isPageClosed)
+    } catch (error) {
+      // The observation stays unclaimed (never complete); the cleanup goes on.
+      this.evidence.record('library.finalize-failed', { cause: String(error) })
+    }
   }
 
   /**
@@ -2317,7 +2506,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (hasPagesFolder) await this.refuseLexicalPagesServerStops()
     this.nextSetupStep = NEXT_SETUP_STEPS.startingNext
     // Seam 1 of the Vite library route: checks, learner confirmation and the private folder, before any server exists.
-    const viteLibrary = await this.planViteLibrary()
+    const { viteLibrary, reactScriptsLibrary } = await this.planLibrary()
     // The app runs on the port the project declares (its auth origin points there); a busy port refuses the start instead of moving the app.
     const started = await adapter.start({
       ...(viteLibrary
@@ -2327,6 +2516,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
               this.buildViteLibrary(signal),
           }
         : {}),
+      ...(reactScriptsLibrary ? { reactScriptsLibrary } : {}),
       ...(hasPagesFolder ? { outputMask: maskNextServerOutput } : {}),
       workspace: this.packageRoot,
       ...this.resolvedPackageFields(),
@@ -2372,6 +2562,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.setupStep = firstBundleStep
       await this.waitForServerSettledWithinBudget(adapter)
       this.alive()
+      // A react-scripts library run is refused here when the preload did not wrap the configuration (decision D13): the page would run the installed copy.
+      this.reactScriptsLibraryRoute?.assertRedirectApplied()
     }
     this.origin = browserOriginOf(ownedOrigin)
     // `localhost` may resolve to ::1: Codebook owns that endpoint for the whole run, or the host has none (D66).
@@ -6202,6 +6394,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       workspace: this.options.workspace,
       ...this.resolvedPackageFields(),
       ...this.viteLibraryRequest(stop, adapter, ownedOrigin, generation),
+      ...this.reactScriptsLibraryStopRequest(stop),
       ...(freeze && this.nextPackage
         ? { library: this.librarySealInput(freeze, this.nextPackage) }
         : {}),
@@ -7737,6 +7930,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       // A library module that changed after the seal (a rebuild, a hot update) is a changed build, not a generic mismatch.
       const nextLibraryChange = this.nextLibraryChanged(stop)
       if (nextLibraryChange) throw nextLibraryChange
+      const reactScriptsLibraryChange = this.reactScriptsLibraryChanged(stop)
+      if (reactScriptsLibraryChange) throw reactScriptsLibraryChange
       const library = this.viteLibraries.libraryOf(stop.source)
       if (library) throw this.viteLibraryChanged(stop, library)
       throw new Error(
@@ -7756,6 +7951,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private changedAfterSealingText(stop: PreparedStop): string {
     const nextLibraryText = libraryFailureText(this.nextLibraryChanged(stop))
     if (nextLibraryText) return nextLibraryText
+    const reactScriptsLibraryText = reactScriptsLibraryFailureText(
+      this.reactScriptsLibraryChanged(stop),
+    )
+    if (reactScriptsLibraryText) return reactScriptsLibraryText
     const library = this.viteLibraries.libraryOf(stop.source)
     const libraryText =
       library && viteLibraryFailureText(this.viteLibraryChanged(stop, library))
@@ -10581,7 +10780,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       // The journal lists only the first scripts; a pause in a later one still needs its URL.
       participant.scriptUrls.set(event.scriptId, event.url)
       // Seam 3 of the Vite library route: only what the page parsed counts as served.
-      if (name === 'browser') this.observeLibraryScript(event.url)
+      if (name === 'browser')
+        this.observeLibraryScript({
+          scriptId: event.scriptId,
+          url: event.url,
+          hash: event.hash,
+        })
       // The Pages renderer's text is read when it is announced (again), so the first hit finds it cached.
       if (
         name === 'server' &&
@@ -15979,7 +16183,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.abort.abort()
     await historyEnded
     // Seam 4 of the Vite library route: the page closes and the observation is finalized before the server stops.
-    const libraryFailures = await this.finalizeViteLibrary()
+    const libraryFailures = await this.finalizeLibrary()
     this.forgetCausalSessions()
     this.scriptAnnouncements.clear()
     if (this.transientBrowserPause) {
@@ -16051,6 +16255,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       ])),
     )
     failures.push(...(await this.stopKnownDebuggers()))
+    // Whether the owned application stop succeeded: a server that may still run keeps the library's private folder.
+    let didServerStop = true
     failures.push(
       ...(await settleCleanup([
         {
@@ -16059,7 +16265,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         },
         {
           description: 'owned application stop',
-          release: () => this.app?.close(),
+          release: async (): Promise<void> => {
+            didServerStop = false
+            await this.app?.close()
+            didServerStop = true
+          },
         },
         {
           description: 'protocol activities settle',
@@ -16088,8 +16298,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         },
       ])),
     )
-    // The private folder goes last, after the server that used it stopped.
-    await this.libraryRoute?.dispose()
+    // The private folder goes last, after the server that used it stopped; a failed stop keeps it for the retried Stop.
+    await this.libraryRoute?.dispose({ serverStopped: didServerStop })
     failures.push(...libraryFailures)
     this.failures.push(...failures)
     this.resourcesReleased = failures.length === 0
@@ -16228,6 +16438,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           this.fail(
             viteLibraryFailureText(error) ??
               libraryFailureText(error) ??
+              reactScriptsLibraryFailureText(error) ??
               String(error),
           )
       })

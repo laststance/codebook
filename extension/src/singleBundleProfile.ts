@@ -77,3 +77,23 @@ export type SingleBundleProfile = Readonly<{
     ownedOrigin: string,
   ) => URL | undefined
 }>
+
+/** Why the served map cannot tie a library stop to the checked-out file. */
+export type SingleBundleLibraryUnmappedCause =
+  'no-sources-content' | 'content-differs'
+
+/**
+ * How {@link sealSingleBundleStop} seals a stop in a checked-out library that the Example's bundle holds through a packed copy.
+ *
+ * Why it exists: the library route's served map names a packed module by the checked-out file when the bytes were equal, otherwise by its packed path, and its refusals are the library vocabulary instead of `SOURCE_CHANGED`. The shared seal stays one implementation and takes this route as an optional argument. Built by {@link sealReactScriptsLibraryStop}.
+ */
+export type SingleBundleLibraryRoute = Readonly<{
+  /** The real path of the packed copy (`<private>/node_modules/<name>`); the stop file lies below it at its package-relative path. */
+  packedRoot: string
+  /** The checked-out file differs from its packed copy: the library was edited after the build. */
+  buildStale: () => StudyError
+  /** No `sources` entry of the served map names the checked-out file or its packed copy. */
+  notInBuild: () => StudyError
+  /** The entry has no `sourcesContent`, or text that differs from the checked-out file. */
+  buildUnmapped: (cause: SingleBundleLibraryUnmappedCause) => StudyError
+}>
