@@ -295,7 +295,7 @@ export function isReadableStudyFormatOfConfiguration(
   if (configuration.adapter === 'react-scripts-dev') return false
   // An expo-web-dev configuration is readable as format 15 only.
   if (configuration.adapter === 'expo-web-dev') return false
-  // A configuration that declares `library` is readable as format 16 only (the equality above), never through the older fallbacks.
+  // A configuration that declares `library` is readable as format 16 or 17 only (the equality above), never through the older fallbacks.
   if (
     configuration.adapter === 'vite-dev' &&
     configuration.library !== undefined

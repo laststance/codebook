@@ -24110,7 +24110,7 @@ export class StudyWorkspace {
  * Gives the message field of a saved Vite library run's replay line.
  * Called by the Study workspace's message for the selected study.
  * @param study - The selected study.
- * @returns `{ libraryLine }` for a format 16 study that built its library; an empty object otherwise.
+ * @returns `{ libraryLine }` for a format 16 or 17 study that built its library; an empty object otherwise.
  * @example libraryLineFieldOf(formatSixteenStudy) // => { libraryLine: 'Ran on the checked-out @acme/widgets 1.2.0 built from 7114787 (packed by pnpm)' }
  */
 function libraryLineFieldOf(study: {

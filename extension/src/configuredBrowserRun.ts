@@ -1596,9 +1596,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         outside: reactScriptsOutsidePackageRefusal,
         nodeModules: reactScriptsNodeModulesRefusal,
       },
-      // A browser stop in the declared library of a library run is sealed through the packed build (decision D3), not refused as outside the app.
+      // A browser stop in the declared library of a library run is sealed through the packed build (decision D3), not refused as outside the app; a path written inside the app folder that leaves it through a link stays refused here.
       async (stop) =>
         stop.participant === 'browser' &&
+        !this.isWrittenInsideDeclaredApp(stop.source.path) &&
         this.isReactScriptsLibraryStopPath(stop.source.path),
     )
   }
@@ -1614,6 +1615,25 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       configuration.adapter === 'react-scripts-dev'
       ? configuration.library?.packageRoot
       : undefined
+  }
+
+  /**
+   * Tells whether a stop path is written inside the run's declared app folder, whatever its real path is.
+   * Called by {@link resolveReactScriptsPackageOfRun}: a path written inside the app that reaches outside it through a link is not a library stop, so it keeps the refusal before any process starts.
+   * @param repositoryPath - The stop's repository-relative path.
+   * @returns `true` when the path lies lexically inside a nested declared `packageRoot`; `false` for a root app and every other path.
+   * @example this.isWrittenInsideDeclaredApp('examples/counter/src/App.js') // => true for packageRoot "examples/counter"
+   */
+  private isWrittenInsideDeclaredApp(repositoryPath: string): boolean {
+    const { configuration } = this.definition
+    const declared =
+      'packageRoot' in configuration ? configuration.packageRoot : undefined
+    // An absent or "." packageRoot is a root app, which a library run refuses before it reaches a stop.
+    if (declared === undefined || declared === '.') return false
+    return isAtOrInsideFolder(
+      join(this.options.workspace, declared),
+      join(this.options.workspace, repositoryPath),
+    )
   }
 
   /**

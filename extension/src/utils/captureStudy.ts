@@ -26,7 +26,7 @@ import {
 
 /**
  * The facts of a declared library that no run ever prepared: `package` holds the declared folder until a name is known.
- * Called by {@link captureStudy} when a format 16 study is saved without runtime library facts.
+ * Called by {@link captureStudy} when a format 16 or 17 study is saved without runtime library facts.
  * @param configuration - The sealed configuration of the study.
  * @returns The pending facts, or `undefined` when the configuration declares no library.
  * @example pendingLibraryFacts(configuration) // => { package: 'packages/widgets', packageRoot: 'packages/widgets', prepared: false, observation: 'pending' }

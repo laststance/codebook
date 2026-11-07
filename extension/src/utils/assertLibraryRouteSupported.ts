@@ -260,7 +260,8 @@ async function readSupportedManifest(
     const dependents = isTransitiveAllowed
       ? await installedDependentsOf(
           inputs.examplePackageRoot,
-          [...new Set(exampleNames)],
+          // Only a plain package name may build a node_modules path; a key such as "../x" would read a manifest outside node_modules.
+          [...new Set(exampleNames)].filter(isNpmPackageName),
           library.name,
         )
       : []

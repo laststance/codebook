@@ -78,7 +78,6 @@ export type DevelopmentServerStart = {
   outputMask?: (text: string) => string
 }
 
-/** What {@link DevelopmentServerAdapter.readBundle} needs to seal one declared stop. */
 /** What a react-scripts library stop is sealed through: the library (its package name, real checked-out folder and repository-relative folder), its real packed copy and the Example's folder, which a refusal names. */
 export type ReactScriptsLibraryStopSeal = ReactScriptsLibraryStopInput & {
   /** The checked-out library's real folder; the stop is read below it. */
@@ -87,6 +86,7 @@ export type ReactScriptsLibraryStopSeal = ReactScriptsLibraryStopInput & {
   libraryRootRelative: string
 }
 
+/** What {@link DevelopmentServerAdapter.readBundle} needs to seal one declared stop. */
 export type DevelopmentBundleRequest = {
   /** The opened repository's root (stop files and recorded sources are relative to it). */
   workspace: string

@@ -61,7 +61,7 @@ const REACT_SCRIPTS_LIBRARY_STOP_ROWS: Record<
 > = {
   'library-build-stale': {
     code: 'REACT_SCRIPTS_SEAL_FAILED',
-    meaning: `A stop lies in the library's checked-out source and the source map of the served bundle carries source text that differs from the checked-out file: the library was edited after this run's build. ${REACT_SCRIPTS_LIBRARY_STOP_SIDE_EFFECTS}`,
+    meaning: `A stop lies in the library's checked-out source and the checked-out file differs from its packed copy, the source this run's build compiled: the library was edited after the build. (A served source map whose text differs from the file is library-build-unmapped, cause content-differs.) ${REACT_SCRIPTS_LIBRARY_STOP_SIDE_EFFECTS}`,
     fix: 'Tell the learner the file changed after the build; start the run again so it builds the current source. Do not run the build yourself.',
   },
   'library-not-in-build': {

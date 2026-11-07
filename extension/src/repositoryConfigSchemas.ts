@@ -720,12 +720,12 @@ export const retainedRepositoryConfigSchema = liveRepositoryConfigSchema
     (configuration) => configuration.adapter !== 'expo-web-dev',
     'Only a study of format 15 keeps an expo-web-dev configuration.',
   )
-  // A `vite-dev` run that declares `library` is saved as format 16 only (Cycle 0096).
+  // A run that declares `library` is saved as format 16 (`vite-dev`) or 17 (`react-scripts-dev`) only.
   .refine(
     // An explicit `library: undefined` declares nothing, so it stays the older format.
     (configuration) =>
       !('library' in configuration) || configuration.library === undefined,
-    'Only a study of format 16 keeps a library.',
+    'Only a study of format 16 or 17 keeps a library.',
   )
 /**
  * Says whether a retained configuration declares no library (an explicit `library: undefined` declares nothing).
@@ -782,8 +782,8 @@ const vitePackageRootRepositoryConfigSchema = operationsConfigurationShape
     ),
   })
   .superRefine(validateRetainedStudyConfiguration)
-  // A run that declares `library` is saved as format 16 only.
-  .refine(declaresNoLibrary, 'Only a study of format 16 keeps a library.')
+  // A run that declares `library` is saved as format 16 (`vite-dev`) or 17 (`react-scripts-dev`) only.
+  .refine(declaresNoLibrary, 'Only a study of format 16 or 17 keeps a library.')
 /**
  * The configuration a format 16 study retains: the version 3 `vite-dev` shape with a required `packageRoot` other than `"."` and a required `library` declaration (API 1.34).
  * Why it exists: an older Codebook refuses `library` under `vite-dev` as an unknown key, so a run that declares it takes its own format and is listed there as saved by a newer Codebook. Validated like the format 10 variant (inspections, operations).
@@ -837,7 +837,7 @@ const expoWebRepositoryConfigSchema = operationsConfigurationShape
     validateInspections(configuration, context)
     validateOperations(configuration, context)
   })
-/** Every configuration a saved study can hold: the retained union of formats 3 to 8, the format 9 package-root variant (Next), the format 10 package-root variant (Vite), the format 11 variant (react-scripts), the format 15 variant (Expo web) the format 16 variant (Vite with a library) or the format 17 variant (react-scripts with a library). */
+/** Every configuration a saved study can hold: the retained union of formats 3 to 8, the format 9 package-root variant (Next), the format 10 package-root variant (Vite), the format 11 variant (react-scripts), the format 15 variant (Expo web), the format 16 variant (Vite with a library) or the format 17 variant (react-scripts with a library). */
 export const studyConfigurationSchema = z.union([
   retainedRepositoryConfigSchema,
   packageRootRepositoryConfigSchema,

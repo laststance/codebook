@@ -229,6 +229,23 @@ test('refuses with a sentence naming both checks when no dependency declares the
   )
 })
 
+// protects=a dependency key that is not a plain package name never builds a node_modules path, so a manifest outside node_modules cannot establish the relation; fails_when=listed names reach readInstalledPackageManifest unvalidated; no_claim=symlinks of real package folders (followed on purpose)
+test('ignores a listed dependency key that is not a package name', async () => {
+  // Arrange
+  const fixture = createLibraryFixture({ exampleDependsOnLibrary: false })
+  listDependencies(fixture, ['../escape'])
+  const escaped = join(fixture.examplePackageRoot, 'escape')
+  mkdirSync(escaped, { recursive: true })
+  writeFileSync(
+    join(escaped, 'package.json'),
+    JSON.stringify({ name: 'escape', dependencies: { lib: '1.0.0' } }),
+  )
+  // Act
+  const refusal = await refusalOf(check(fixture, 'direct-or-installed'))
+  // Assert
+  assert.equal(refusal?.details.reason, 'not-a-dependency')
+})
+
 // protects=the second validation inside prepareLibraryCore accepts the transitive shape with the option and carries the relation into the facts; fails_when=the core drops the option and refuses a Example the first check accepted; no_claim=a real package manager build (the spawner is a fake)
 test('the build core accepts a transitive Example with the option and reports reachedThrough in its facts', async () => {
   // Arrange
