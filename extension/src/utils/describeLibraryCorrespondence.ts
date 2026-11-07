@@ -3,8 +3,7 @@ import type {
   NodeScriptHistoryHeader,
 } from '../nodeScriptHistorySchemas'
 
-/** How many characters of the revision the line shows, as a short Git revision does by default. */
-const SHORT_REVISION_CHARS = 7
+import { describeLibraryObservation } from './describeLibraryObservation'
 
 /**
  * Words the line a Script replay shows under its title for a run that declared a library: whether the script ran on the checked-out library, read from the journal's `library.prepared` and `library.observed` entries.
@@ -26,18 +25,16 @@ export function describeLibraryCorrespondence(
   // A run that stopped before its pack recorded nothing to state.
   if (!prepared) return undefined
   const observed = entries.find((entry) => entry.type === 'library.observed')
-  const built = `${prepared.package} ${prepared.version}`
-  // No complete observation: the line must not read a missing or damaged file as "not loaded".
-  if (observed?.observation !== 'complete')
-    return 'What the script loaded was not fully observed.'
-  const revision = prepared.revision.slice(0, SHORT_REVISION_CHARS)
-  const dirty = prepared.dirty ? ' (uncommitted changes)' : ''
-  const otherCopy = observed.otherCopyPath ?? 'an unknown path'
-  // Another copy is named before "not loaded": a script that loaded only another copy did not load the built one, and saying just that would hide the copy it ran on.
-  if (observed.otherCopyLoaded)
-    return observed.loaded
-      ? `Built ${built} from ${revision}${dirty}, but the script also loaded another copy at ${otherCopy}.`
-      : `Built ${built} from ${revision}${dirty}, but the script did not load it; it loaded another copy at ${otherCopy}.`
-  if (!observed.loaded) return `Built ${built}, but not loaded by this script.`
-  return `Ran on the checked-out ${built} built from ${revision}${dirty} (packed by ${prepared.packageManager})`
+  return describeLibraryObservation({
+    package: prepared.package,
+    version: prepared.version,
+    revision: prepared.revision,
+    dirty: prepared.dirty,
+    packageManager: prepared.packageManager,
+    // A journal with no `library.observed` entry reads as not fully observed, like an incomplete one.
+    observation: observed?.observation ?? 'incomplete',
+    loaded: observed?.loaded,
+    publishedCopyLoaded: observed?.otherCopyLoaded,
+    publishedCopyPath: observed?.otherCopyPath,
+  })
 }

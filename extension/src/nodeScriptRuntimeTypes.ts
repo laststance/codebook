@@ -31,10 +31,10 @@ export type NodeScriptEndView = NodeScriptEnd & {
 }
 
 /**
- * What the run resource says about the library a run declared: the declared identity, the build facts once built and packed, what the script was seen to load once it ended, and what became of the private folder.
+ * What the run resource says about the library a run declared, for a `node-script` run and a `vite-dev` library run alike (one vocabulary, API 1.34): the declared identity, the build facts once built and packed, what the script was seen to load once it ended, and what became of the private folder.
  * `loaded`, `loadCount` and `publishedCopyLoaded` are absent until the observation is read (`observation: 'pending'`); an `incomplete` or `unreadable` observation never reads as "not loaded" (its counts are lower bounds).
  */
-export type NodeScriptLibraryView = {
+export type LibraryRunView = {
   /** The library's package name; the declared folder until the name is known. */
   package: string
   /** The declared `library.packageRoot`. */
@@ -87,7 +87,7 @@ export type NodeScriptView = {
   /** Set once the run ended: how, which stops it reached and its output tail. */
   end?: NodeScriptEndView
   /** The declared library's facts and observation; only a run with `library` has it. */
-  library?: NodeScriptLibraryView
+  library?: LibraryRunView
   /** A run without `library`: the installed copies of the opened repository's own packages that the Example runs, with correspondence `unverified`. Absent when none were found or the repository has no `origin` remote. */
   repositoryPackageCopies?: RepositoryPackageCopy[]
 }

@@ -67,6 +67,7 @@ export interface StudyCatalogEntry {
     | 'v12'
     | 'v13'
     | 'v14'
+    | 'v16'
     | 'v15'
     | 'node-test-history'
     | 'newer'

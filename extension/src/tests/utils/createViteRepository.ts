@@ -65,6 +65,9 @@ import { readFileSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 export const version = '8.3.5'
+export function searchForWorkspaceRoot(current) {
+  return current
+}
 export function loadEnv(mode, directory, prefix) {
   // Like Vite: the env files first, then every process.env entry with the prefix wins (an empty prefix matches all of them).
   let fileValues = {}
@@ -108,7 +111,7 @@ export async function createServer(inline) {
   const config = {
     root,
     base: '/',
-    cacheDir: join(cwd, 'node_modules/.vite'),
+    cacheDir: inline.cacheDir ?? join(cwd, 'node_modules/.vite'),
     mode: inline.mode ?? 'development',
     appType: 'spa',
     configFile: join(cwd, 'vite.config.ts'),
@@ -116,6 +119,15 @@ export async function createServer(inline) {
     ...behavior.config,
     server: { port, host: inline.server.host, ...behavior.server },
   }
+  // The inline settings the launcher passed, for a test to read (plugins are reported by name).
+  // Written inside the stub package folder so no file appears in the app's own folders.
+  await writeFile(new URL('./inline-config.json', import.meta.url), JSON.stringify({
+    pluginNames: (inline.plugins ?? []).map((plugin) => plugin.name),
+    pluginEnforce: (inline.plugins ?? []).map((plugin) => plugin.enforce),
+    cacheDir: inline.cacheDir,
+    optimizeDeps: inline.optimizeDeps,
+    fsAllow: inline.server.fs?.allow,
+  }))
   let http
   let optimizer
   const transformed = new Set()

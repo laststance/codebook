@@ -103,7 +103,7 @@ const importsOfPacked = () => {
   }
   return packedImports
 }
-// Picks the entry of an imports map for a specifier: an exact key, else the single-star key with the longest prefix. Returns the target and the matched part.
+// Picks the entry of an imports map for a specifier: an exact key, else the single-star key Node ranks first (longest prefix, then longest whole key). Returns the target and the matched part.
 const matchImportsKey = (imports, specifier) => {
   if (Object.hasOwn(imports, specifier) && !specifier.includes('*')) return { target: imports[specifier], matched: '' }
   let best
@@ -113,7 +113,7 @@ const matchImportsKey = (imports, specifier) => {
     const prefix = key.slice(0, star)
     const suffix = key.slice(star + 1)
     if (specifier.length < key.length || !specifier.startsWith(prefix) || !specifier.endsWith(suffix)) continue
-    if (best === undefined || prefix.length > best.prefixLength) best = { prefixLength: prefix.length, target: imports[key], matched: specifier.slice(prefix.length, specifier.length - suffix.length) }
+    if (best === undefined || prefix.length > best.prefixLength || (prefix.length === best.prefixLength && key.length > best.keyLength)) best = { prefixLength: prefix.length, keyLength: key.length, target: imports[key], matched: specifier.slice(prefix.length, specifier.length - suffix.length) }
   }
   return best
 }

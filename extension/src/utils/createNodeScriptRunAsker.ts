@@ -1,6 +1,7 @@
 import { NODE_SERVER_MODAL_RUN_ID_CHARS } from '../constants'
 import type { NodeScriptRunQuestion } from '../ownedNodeScriptRun'
 
+import { askRunConfirmation } from './askRunConfirmation'
 import type { ShowModalQuestion } from './askToSendStateChangingRequest'
 
 /** The label of the dialog's one button; the editor adds Cancel itself. */
@@ -22,41 +23,25 @@ export function createNodeScriptRunAsker(
   show: ShowModalQuestion,
   notifyEnded: (shortRunId: string) => void,
 ) {
-  return async (
+  return (
     question: NodeScriptRunQuestion,
     signal: AbortSignal,
   ): Promise<boolean> => {
-    if (signal.aborted) return false
     const shortRunId = question.runId.slice(0, NODE_SERVER_MODAL_RUN_ID_CHARS)
     // A run with `library` builds before it runs: the build executes the project's own scripts, so the learner is told here, before anything builds.
     const libraryNotice = question.library
       ? ` Before it, Codebook builds ${question.library.package} with ${question.library.packageManager} run build in ${question.library.packageRoot} and packs it; the build runs the project's own build scripts and rewrites its ignored build output.`
       : ''
-    let waiting = true
-    const answered = Promise.resolve(
-      show(
-        `Run ${question.entry} once?`,
-        `Codebook will run the repository's script ${question.entry} (package folder ${question.packageRoot}) once, under the debugger, for run ${shortRunId}.${libraryNotice} The script does whatever it does: it may change files, databases or remote services. Run it only if that is safe here. If this question stays after Codebook gave up waiting, Cancel it: an answer to it starts nothing.`,
-        RUN_SCRIPT_LABEL,
-      ),
-    ).then((choice) => {
-      const accepted = choice === RUN_SCRIPT_LABEL
-      // A dialog whose run stopped waiting still gets its answer; it only says the run is over.
-      if (!waiting && accepted) notifyEnded(shortRunId)
-      return accepted && waiting
-    })
-    let onAbort = (): void => undefined
-    const aborted = new Promise<false>((resolve) => {
-      onAbort = (): void => {
-        waiting = false
-        resolve(false)
-      }
-      signal.addEventListener('abort', onAbort, { once: true })
-    })
-    try {
-      return await Promise.race([answered, aborted])
-    } finally {
-      signal.removeEventListener('abort', onAbort)
-    }
+    return askRunConfirmation(
+      show,
+      notifyEnded,
+      {
+        title: `Run ${question.entry} once?`,
+        detail: `Codebook will run the repository's script ${question.entry} (package folder ${question.packageRoot}) once, under the debugger, for run ${shortRunId}.${libraryNotice} The script does whatever it does: it may change files, databases or remote services. Run it only if that is safe here. If this question stays after Codebook gave up waiting, Cancel it: an answer to it starts nothing.`,
+        label: RUN_SCRIPT_LABEL,
+        shortRunId,
+      },
+      signal,
+    )
   }
 }

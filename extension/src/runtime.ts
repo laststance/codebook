@@ -39,7 +39,10 @@ import type { DevelopmentServerAdapterName } from './developmentServerAdapter'
 import type { ErrorCode, StudyError } from './errors'
 import type { NodeScriptConfiguration } from './nodeScriptConfigSchemas'
 import type { NodeScriptHistorySink } from './nodeScriptHistorySink'
-import type { NodeScriptRuntime } from './nodeScriptRuntimeTypes'
+import type {
+  LibraryRunView,
+  NodeScriptRuntime,
+} from './nodeScriptRuntimeTypes'
 import type { NodeServerConfiguration } from './nodeServerConfigSchemas'
 import type { NodeServerHistorySink } from './nodeServerHistorySink'
 import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
@@ -557,6 +560,10 @@ export type ConfiguredRuntimeView = {
   viteVersion?: string
   /** The Expo SDK version an `expo-web-dev` run started, read from the resolved `expo/package.json`. */
   expoVersion?: string
+  /** A `vite-dev` run that declared `library`: the library facts in the node-script vocabulary (API 1.34), with the observation `pending` until the run ends. */
+  library?: LibraryRunView
+  /** Set while a library run waits for the learner (`confirming`) or builds (`building`); absent once the server starts. */
+  libraryPhase?: 'confirming' | 'building'
   /** The route a Next run in a workspace with a Pages folder resolved its entry path to, once known: the router that serves it, the manifest key, and for a Pages route its workspace-relative source. Absent for a Vite run and a Next run in a workspace without a Pages folder. */
   nextRoute?: { router: 'app' | 'pages'; route: string; source?: string }
   /** The `next` package version of a Pages run that declares server stops, once read. */

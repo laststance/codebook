@@ -59,6 +59,9 @@ const productionClock: BuildClock = {
 /** The name of the hook file inside the run's private folder. */
 const HOOK_FILE_NAME = 'library-hook.mjs'
 
+/** The name of the anchor file the Vite redirect resolves from, inside the run's private folder. */
+export const LIBRARY_ANCHOR_FILE_NAME = 'codebook-anchor.js'
+
 /** The name of the observation file inside the run's private folder. */
 const OBSERVATION_FILE_NAME = 'library-observation.jsonl'
 
@@ -138,6 +141,16 @@ type StepFailure = {
   details: Record<string, unknown>
 }
 
+/** What the unpacked tarball tells: its digest and the parts of its `package.json` the redirect needs. */
+type PackedManifest = {
+  tarballSha256: string
+  version: string
+  /** The names in the packed `peerDependencies`. */
+  peers: string[]
+  /** The packed `package.json` `imports` map (`#` package imports), or `undefined` when it has none. */
+  imports: Record<string, unknown> | undefined
+}
+
 /** What the build and pack steps produced. */
 type StepsResult = {
   failure?: StepFailure
@@ -145,7 +158,7 @@ type StepsResult = {
   endings: BuildProcessEnd[]
   buildMs: number
   packMs: number
-  packed?: { tarballSha256: string; version: string; peers: string[] }
+  packed?: PackedManifest
 }
 
 /** Everything the steps share. */
@@ -286,13 +299,37 @@ function isFileMissing(error: unknown): boolean {
   return error instanceof Error && Reflect.get(error, 'code') === 'ENOENT'
 }
 
+/** One top-level field of a parsed `package.json`, or `undefined` when the manifest is not an object. */
+function manifestField(manifest: unknown, field: string): unknown {
+  return typeof manifest === 'object' && manifest !== null
+    ? Reflect.get(manifest, field)
+    : undefined
+}
+
+/** The names in a packed `peerDependencies` value; none for anything that is not an object. */
+function packedPeerNames(peerValue: unknown): string[] {
+  return typeof peerValue === 'object' && peerValue !== null
+    ? Object.keys(peerValue)
+    : []
+}
+
+/** The packed `imports` map; a non-object or an array is not a valid map and reads as none. */
+function packedImportsMap(
+  importsValue: unknown,
+): Record<string, unknown> | undefined {
+  if (
+    typeof importsValue !== 'object' ||
+    importsValue === null ||
+    Array.isArray(importsValue)
+  )
+    return undefined
+  return Object.fromEntries(Object.entries(importsValue))
+}
+
 /** Finds the one tarball, unpacks it into `node_modules/<name>` and reads its manifest. */
 async function unpackTarball(
   context: RouteContext,
-): Promise<
-  | { failure: StepFailure }
-  | { tarballSha256: string; version: string; peers: string[] }
-> {
+): Promise<{ failure: StepFailure } | PackedManifest> {
   const { privateFolder } = context.roots
   let tarballs: string[]
   try {
@@ -348,14 +385,8 @@ async function unpackTarball(
       ),
     }
   }
-  const name: unknown =
-    typeof manifest === 'object' && manifest !== null
-      ? Reflect.get(manifest, 'name')
-      : undefined
-  const version: unknown =
-    typeof manifest === 'object' && manifest !== null
-      ? Reflect.get(manifest, 'version')
-      : undefined
+  const name = manifestField(manifest, 'name')
+  const version = manifestField(manifest, 'version')
   if (name !== context.library.name || typeof version !== 'string')
     return {
       failure: packStepFailure(
@@ -364,19 +395,13 @@ async function unpackTarball(
         `The packed package.json names ${String(name)} ${String(version)}, not ${context.library.name} with a version.`,
       ),
     }
-  const peerValue: unknown =
-    typeof manifest === 'object' && manifest !== null
-      ? Reflect.get(manifest, 'peerDependencies')
-      : undefined
   return {
     tarballSha256: createHash('sha256')
       .update(await readFile(tarballPath))
       .digest('hex'),
     version,
-    peers:
-      typeof peerValue === 'object' && peerValue !== null
-        ? Object.keys(peerValue)
-        : [],
+    peers: packedPeerNames(manifestField(manifest, 'peerDependencies')),
+    imports: packedImportsMap(manifestField(manifest, 'imports')),
   }
 }
 
@@ -579,20 +604,17 @@ async function abandonPrivateFolder(
 
 /** Writes the hook and the empty observation file; returns the hook's `--import` argument list. */
 async function writeHook(
-  context: RouteContext,
-  packed: NonNullable<StepsResult['packed']>,
+  prepared: PreparedLibraryCore,
   exampleRoot: string,
 ): Promise<string[]> {
-  const { privateFolder } = context.roots
+  const { privateFolder } = prepared
   const configuration: LibraryHookConfiguration = {
-    packageName: context.library.name,
-    packedRoot: await realpath(
-      join(privateFolder, 'node_modules', context.library.name),
-    ),
+    packageName: prepared.facts.package,
+    packedRoot: prepared.packedRoot,
     privateFolder,
     exampleRoot,
-    libraryRoot: context.library.libraryRoot,
-    peers: packed.peers,
+    libraryRoot: prepared.libraryRoot,
+    peers: prepared.peers,
     observationFile: join(privateFolder, OBSERVATION_FILE_NAME),
     observationLimitBytes: LIBRARY_OBSERVATION_LIMIT_BYTES,
   }
@@ -604,28 +626,48 @@ async function writeHook(
   return ['--import', pathToFileURL(hookFile).href]
 }
 
+/** What {@link prepareLibraryCore} hands to a runtime-specific step (the Node hook or the Vite redirect). */
+export type PreparedLibraryCore = {
+  /** The correspondence facts of the built and packed library. */
+  facts: LibraryPackageFacts
+  /** The real path of the unpacked packed package, `<private>/node_modules/<name>`. */
+  packedRoot: string
+  /** The names in the packed `peerDependencies`; the Example supplies these, never the library's install. */
+  peers: string[]
+  /** The packed `package.json` `imports` map, or `undefined` when it has none. */
+  imports: Record<string, unknown> | undefined
+  /** The library package folder (real path), whose installed `node_modules` supplies the library's other dependencies. */
+  libraryRoot: string
+  /** The run's private folder (real path). */
+  privateFolder: string
+  /** Removes the private folder, waiting at most `boundMs` (default {@link LIBRARY_CLEANUP_BOUND_MS}); `pending` while the removal continues in the background. */
+  dispose(boundMs?: number): Promise<LibraryCleanup>
+  /** Ends the preparation as a `LIBRARY_BUILD_FAILED` `pack-error` with step `link` after a runtime-specific step failed; the private folder is removed first. `details` adds fields beside the step (the Vite route adds `sideEffects`). */
+  failLink(
+    sentence: string,
+    details?: Readonly<Record<string, unknown>>,
+  ): Promise<never>
+}
+
 /**
- * Builds the checked-out library with the repository's package manager, packs it into the run's private folder and prepares the Node resolve hook, so a `node-script` run's Example loads the packed checked-out build instead of its installed copy.
+ * Builds the checked-out library with the repository's package manager, packs it into the run's private folder and unpacks it to `<private>/node_modules/<name>`: the part of the library route both runtimes share.
  *
  * Order: the checks (nothing starts when one fails); the source snapshot of the whole repository and HEAD; `<pm> run build` in the library folder; a script-free pack into the private folder, unpacked into `node_modules/<name>`; then, on every ending, the process trees confirmed ended and the snapshot and HEAD compared. Precedence: `tracked-file-changed`, `tracked-files-unverified`, `source-changed`, `timeout`, `pack-error`, `build-error`.
- * Called by the owned `node-script` run before it spawns the script.
- * @param configuration - The `node-script` configuration; its `library.packageRoot` names the library folder.
+ * Called by {@link prepareLibraryPackage} (the `node-script` route, which adds the resolve hook) and by the Vite library route (which adds the anchor file and the redirect plugin). Its input is the declared folder and the roots, not a runtime configuration.
+ * @param declared - The declared `library.packageRoot`, relative to the repository root.
  * @param roots - The repository, the Example's folder and the run's private folder.
  * @param dependencies - The external Node, the stop signal and test seams.
- * @returns The `--import` arguments, the correspondence facts, the observation reader and the disposer.
+ * @returns The packed root, the packed manifest facts, the correspondence facts and the disposer.
  * @throws `StudyError` `LIBRARY_BUILD_UNSUPPORTED` (nothing started) or `LIBRARY_BUILD_FAILED` (`details.cleanup` says whether the private folder is `removed` or `pending`); {@link LibraryPackageCancelled} when the stop ended the build and the sources are verified unchanged.
  * @example
- * const library = await prepareLibraryPackage(configuration, roots, { node, signal })
- * // => { nodeArguments: ['--import', 'file:///tmp/run/library-hook.mjs'], facts: { package: '@reduxjs/toolkit', version: '2.14.0', … }, … }
+ * const prepared = await prepareLibraryCore('packages/toolkit', roots, { node, signal })
+ * // => { packedRoot: '/tmp/run/node_modules/@reduxjs/toolkit', peers: ['react', 'react-redux'], facts: { package: '@reduxjs/toolkit', … }, … }
  */
-export async function prepareLibraryPackage(
-  configuration: Pick<NodeScriptConfiguration, 'library'>,
+export async function prepareLibraryCore(
+  declared: string,
   roots: LibraryPackageRoots,
   dependencies: LibraryPackageDependencies,
-): Promise<LibraryPackage> {
-  const declared = configuration.library?.packageRoot
-  if (declared === undefined)
-    throw new Error('prepareLibraryPackage needs configuration.library.')
+): Promise<PreparedLibraryCore> {
   const clock = dependencies.clock ?? productionClock
   const baseSpawner = dependencies.spawner ?? createBuildSpawner
   const hostEnvironment = dependencies.hostEnvironment ?? process.env
@@ -715,15 +757,14 @@ export async function prepareLibraryPackage(
     throw new LibraryPackageCancelled(
       await abandonPrivateFolder(privateFolder, processes, cleanupBoundMs),
     )
-  const nodeArguments = await writeHook(
-    context,
-    steps.packed,
-    roots.examplePackageRoot,
+  const packed = steps.packed
+  const packedRoot = await realpath(
+    join(privateFolder, 'node_modules', library.name),
   ).catch((error: unknown) =>
     fail(
       'pack-error',
-      `The resolve hook could not be prepared: ${error instanceof Error ? error.message : String(error)}`,
-      { step: 'link' satisfies (typeof LIBRARY_PACK_ERROR_STEPS)[number] },
+      `The packed folder could not be resolved: ${describeError(error)}`,
+      { step: 'unpack' satisfies (typeof LIBRARY_PACK_ERROR_STEPS)[number] },
     ),
   )
   const installed = await readInstalledPackageManifest(
@@ -732,10 +773,9 @@ export async function prepareLibraryPackage(
   )
   let removal: Promise<boolean> | undefined
   return {
-    nodeArguments,
     facts: {
       package: library.name,
-      version: steps.packed.version,
+      version: packed.version,
       packageRoot: declared,
       revision: before.revision,
       dirty: before.dirty,
@@ -745,16 +785,92 @@ export async function prepareLibraryPackage(
       },
       buildMs: steps.buildMs,
       packMs: steps.packMs,
-      tarballSha256: steps.packed.tarballSha256,
+      tarballSha256: packed.tarballSha256,
       installedVersion: installed?.version ?? null,
     },
-    finishObservation: () =>
-      readLibraryObservation(join(privateFolder, OBSERVATION_FILE_NAME)),
+    packedRoot,
+    peers: packed.peers,
+    imports: packed.imports,
+    libraryRoot: library.libraryRoot,
+    privateFolder,
     dispose(boundMs = cleanupBoundMs) {
       removal ??= removeFolder(privateFolder)
       return awaitRemoval(removal, boundMs).then((cleanup) => ({ cleanup }))
     },
+    failLink: (sentence, details = {}) =>
+      fail('pack-error', sentence, {
+        ...details,
+        step: 'link' satisfies (typeof LIBRARY_PACK_ERROR_STEPS)[number],
+      }),
   }
+}
+
+/**
+ * Builds the checked-out library with the repository's package manager, packs it into the run's private folder and prepares the Node resolve hook, so a `node-script` run's Example loads the packed checked-out build instead of its installed copy.
+ *
+ * The shared build-and-pack core is {@link prepareLibraryCore}; this adds the Node hook and the observation file.
+ * Called by the owned `node-script` run before it spawns the script.
+ * @param configuration - The `node-script` configuration; its `library.packageRoot` names the library folder.
+ * @param roots - The repository, the Example's folder and the run's private folder.
+ * @param dependencies - The external Node, the stop signal and test seams.
+ * @returns The `--import` arguments, the correspondence facts, the observation reader and the disposer.
+ * @throws `StudyError` `LIBRARY_BUILD_UNSUPPORTED` (nothing started) or `LIBRARY_BUILD_FAILED` (`details.cleanup` says whether the private folder is `removed` or `pending`); {@link LibraryPackageCancelled} when the stop ended the build and the sources are verified unchanged.
+ * @example
+ * const library = await prepareLibraryPackage(configuration, roots, { node, signal })
+ * // => { nodeArguments: ['--import', 'file:///tmp/run/library-hook.mjs'], facts: { package: '@reduxjs/toolkit', version: '2.14.0', … }, … }
+ */
+export async function prepareLibraryPackage(
+  configuration: Pick<NodeScriptConfiguration, 'library'>,
+  roots: LibraryPackageRoots,
+  dependencies: LibraryPackageDependencies,
+): Promise<LibraryPackage> {
+  const declared = configuration.library?.packageRoot
+  if (declared === undefined)
+    throw new Error('prepareLibraryPackage needs configuration.library.')
+  const prepared = await prepareLibraryCore(declared, roots, dependencies)
+  const nodeArguments = await writeHook(
+    prepared,
+    roots.examplePackageRoot,
+  ).catch((error: unknown) =>
+    prepared.failLink(
+      `The resolve hook could not be prepared: ${describeError(error)}`,
+    ),
+  )
+  return {
+    nodeArguments,
+    facts: prepared.facts,
+    finishObservation: () =>
+      readLibraryObservation(
+        join(prepared.privateFolder, OBSERVATION_FILE_NAME),
+      ),
+    dispose: prepared.dispose,
+  }
+}
+
+/**
+ * Writes the anchor file `<private>/codebook-anchor.js` that the Vite redirect resolves from: Vite resolves an import from the project root when the importer file does not exist, so the redirect needs a real file inside the private folder.
+ * Called by the Vite library route after {@link prepareLibraryCore}.
+ * @param prepared - The prepared library; its private folder receives the file.
+ * @returns The absolute path of the anchor file.
+ * @throws `StudyError` `LIBRARY_BUILD_FAILED` with `details.reason` `pack-error` and `details.step` `link` when the file cannot be written; the private folder is removed first.
+ * @example
+ * const anchor = await writeLibraryAnchor(prepared) // => '/tmp/run/codebook-anchor.js'
+ */
+export async function writeLibraryAnchor(
+  prepared: PreparedLibraryCore,
+): Promise<string> {
+  const anchorFile = join(prepared.privateFolder, LIBRARY_ANCHOR_FILE_NAME)
+  try {
+    await writeFile(
+      anchorFile,
+      '// Codebook anchor: the importer path the packed library is resolved from.\nexport {}\n',
+    )
+  } catch (error) {
+    return prepared.failLink(
+      `The resolve anchor could not be written: ${describeError(error)}`,
+    )
+  }
+  return anchorFile
 }
 
 /** Takes the snapshot of the whole repository, HEAD and the library folder's dirty state, before the build. */

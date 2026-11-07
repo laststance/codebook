@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.2.98.0] - 2026-11-08 (development candidate)
+
+Cycle 0096 ([Issue #249](https://github.com/laststance/codebook/issues/249)), a feature cycle. **A library's Vite Example now runs on the checked-out library.** When an Example of a library repository installs the library's published package, as `@reduxjs/toolkit`'s `examples/publish-ci/vite` does, the learner used to read one release while another ran. Codebook now builds and packs the checked-out library, serves it to the Example's own Vite, and says which copy the page actually loaded.
+
+### Added
+- **Vite library route (MCP API 1.34):** a nested version 3 `vite-dev` run may declare `library: { packageRoot }`. After the editor's confirmation, Codebook builds the checked-out library with the repository's own package manager, packs it into the run's private folder and starts the Example's own Vite with one inline plugin that serves every import of the library and its subpaths from the packed copy. Peer dependencies such as `react` come from the Example, so the page keeps one React; other dependencies come from the library's own install. The run uses a private Vite cache, so the Example's folder and its `node_modules` are not written.
+- **Which copy ran, from the page itself:** the run counts the scripts the page's debugger parsed. The run and the saved replay say "Ran on the checked-out `<name> <version>` built from `<revision>` (packed by `<package manager>`)" only when a module of the packed copy was parsed, no other copy was, and the page was confirmed closed before the observation ended. Otherwise they say the page also loaded another copy (an installed file, a pre-bundled chunk of it, or the checked-out library folder reached through a link), that the library was built but not served, or that what the page loaded was not fully observed.
+- **Stops in the library's own source:** a stop in the checked-out library (for example `packages/toolkit/src/createReducer.ts`) pauses with native Variables when the fresh build's source map carries the same text as the checked-out file; the map, inline or named by its `sourceMappingURL` comment, is rewritten to the checked-out files only where the text is byte-equal. A file edited after the build is refused as stale.
+- **Study format 16:** a saved library run keeps its library facts and its correspondence sentence; an older Codebook lists the study as saved by a newer one.
+- **Refused before anything is built:** a library the Example does not depend on, an app `alias`, `optimizeDeps.include` or `resolve.dedupe` entry of the library (reasons `library-aliased`, `library-optimize-include`, `library-dedupe`), and `library` on a run without a nested `packageRoot`. A pack whose `peerDependencies` or `imports` differ from the checked-out `package.json` is refused after the pack.
+
+### Fixed
+- **Chrome extension popup in Chrome 157:** the popup a Chrome extension run opens no longer closes about 100 ms after it appears. Chrome 157 keeps a closed page listed for a moment, and opening the popup inside that moment dismissed it; the launch now waits until the page is gone.
+
+### Changed
+- **Agent skill map (AGENTS.md):** the engineering plan review runs as `/autoplan`'s engineering phase alone, and an unexplained failure becomes a bounded experiment recorded in the cycle Issue.
+- **Development target (AGENTS.md):** the library Vite Example on the checked-out library is trialled on the pinned P05 clone's `examples/publish-ci/vite`.
+
 ## [0.2.97.0] - 2026-11-07 (development candidate)
 
 Cycle 0095 ([Issue #247](https://github.com/laststance/codebook/issues/247)), a bug-fix cycle. **Live server stops in a Next.js app no longer end the run for reasons outside the code being explained.** Cycle 0094's native check found runtime defects that ended a learner's live run after the server had already paused; this version fixes the two that were product defects (the third run had lost its database, so its refusal was correct) and a third that this cycle's own native check found in Cursor.

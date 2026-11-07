@@ -137,9 +137,9 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 - Premise/final behavior → `/office-hours` or `/plan-ceo-review` (owner decision).
 - Lasting API, MCP or integration change → `/plan-devex-review` (capability, error, lifecycle contract).
 - Flow, layout, hierarchy, interaction → `/plan-design-review` (UX and state decisions).
-- Architecture, concurrency, storage, meaningful code → `/plan-eng-review` after UX/API amendments (bounded implementation and test plan).
+- Architecture, concurrency, storage, meaningful code → `/autoplan`'s engineering phase alone after UX/API amendments, no owner request needed (bounded implementation and test plan).
 - Combined review on owner request → `/autoplan` (CEO → conditional Design → conditional DX → Eng).
-- Unexplained failure → `/investigate` (root cause, new hypothesis).
+- Unexplained failure → bounded experiment recorded in cycle Issue (question, separating observation, budget).
 - Working browser/webview flow → `/qa` or `/qa-only` (observed behavior, fixes).
 - Implemented UI → `/design-review` (real visual and interaction evidence).
 - Ready diff → `/review` (revision-bound findings, coverage limits).
@@ -249,6 +249,7 @@ No decision log; delivery chain and ship limit: [Delivery](#delivery).
 - Exception (Cycle 0088 decision D2, Issue #228; owner may revoke): Pages API routes (`pages/api/**`), which `nextjs-dashboard` lacks, trialled on same pinned P02 clone's Pages Router Examples with `src/pages/api` (`auto-refetching-nextjs-pages-router`, `pagination-nextjs-pages-router`, `load-more-infinite-scroll-nextjs-pages-router`, `infinite-query-with-max-pages-nextjs-pages-router`).
 - Exception (Cycle 0089 decision D2, Issue #230; owner may revoke): Expo web app served by Metro, which `nextjs-dashboard` lacks, trialled on same pinned P08 clone's `apps/app` (`/Users/lume/qa/c57/switch-time`, revision recorded in cycle Issue).
 - Exception (Cycle 0092 decision D2, Issue #237; owner may revoke): WXT-bundled Chrome extension, which `nextjs-dashboard` lacks, trialled on same pinned P07 clone's `browser-extension` (`/Users/lume/qa/c67/P07-nsx`, revision recorded in cycle Issue).
+- Exception (owner may revoke): library Vite Example run on the checked-out library (pack route), which `nextjs-dashboard` lacks, trialled on same pinned P05 clone's `examples/publish-ci/vite` (`/Users/lume/qa/c84/redux-toolkit`, revision recorded in cycle Issue).
 - Never easier repo, never tenth acceptance target. Recheck revision, settings, dirty state; tell owner before occupying desktop; record unsupported behavior and missing setup. Docs-only work needs no native launch.
 - All development results, exceptions included, = development evidence only: no nine-project credit, no final row filled; fixture results likewise. Final acceptance freezes own targets and candidate; Stage 1 starts only when prerequisites hold.
 - Use real opened repos; isolated inputs verify mechanisms only, never as bundled demos or practical trials. Retired local trial resources removed; old records in Git = no current proof.

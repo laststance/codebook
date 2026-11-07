@@ -5,7 +5,7 @@ import { test } from 'node:test'
 
 import {
   LIBRARY_BUILD_FAILED_REASONS,
-  LIBRARY_BUILD_UNSUPPORTED_REASONS,
+  NODE_SCRIPT_LIBRARY_UNSUPPORTED_REASONS,
   LIBRARY_PACK_ERROR_STEPS,
 } from '../constants'
 import { nodeScriptConfigSchema } from '../nodeScriptConfigSchemas'
@@ -41,6 +41,7 @@ test('the library help sample parses with the live node-script schema', () => {
   assert.equal(/redux|toolkit/i.test(JSON.stringify(sample)), false)
 })
 
+// pregate-literal: API_VERSION=1.33 the node-script library route's minimum API, which stays 1.33 after the current API moved on
 // protects=the help's library section states when to use it, the confirmation, the build and pack with what they write, the building phase, the observation states, the refusals, every limit and the API 1.33 gate; fails_when=any of those leaves the section or a refusal reason is not listed; no_claim=the behavior itself, which the library tests cover
 test('the library help section states the route, its observation states, refusals and limits', () => {
   // Arrange
@@ -48,6 +49,7 @@ test('the library help section states the route, its observation states, refusal
   const text = JSON.stringify(library)
   // Act / Assert
   for (const phrase of [
+    // pregate-literal: API_VERSION=1.33 the node-script library route's minimum API, not the current API
     'codebook_status reports API 1.33 or later',
     'depends on that library by a published version',
     'repositoryPackageCopies',
@@ -77,7 +79,7 @@ test('the library help section states the route, its observation states, refusal
       library.refusals.unsupportedNothingStarted,
       /details\.reason one of ([a-z, -]+):/,
     ),
-    [...LIBRARY_BUILD_UNSUPPORTED_REASONS],
+    [...NODE_SCRIPT_LIBRARY_UNSUPPORTED_REASONS],
   )
   assert.deepEqual(
     listAfter(
@@ -93,7 +95,7 @@ test('the library help section states the route, its observation states, refusal
       codeWhen('LIBRARY_BUILD_UNSUPPORTED'),
       /details\.reason is one of ([a-z, -]+);/,
     ),
-    [...LIBRARY_BUILD_UNSUPPORTED_REASONS],
+    [...NODE_SCRIPT_LIBRARY_UNSUPPORTED_REASONS],
   )
   assert.deepEqual(
     listAfter(
@@ -127,7 +129,9 @@ test('the help and the README state that the installed-copy disclosure needs a m
   }
 })
 
+// pregate-literal: API_VERSION=1.33 the node-script library route's minimum API in the bundled skill, not the current API
 // protects=the bundled skill 1.0.82 tells the chat to declare library.packageRoot behind the API 1.33 gate, to say the build runs the project's own scripts, and to call a copy without library unverified; fails_when=a sentence or the version leaves the skill or a project name enters it; no_claim=how a chat follows it
+// pregate-literal: API_VERSION=1.33 the node-script library route's minimum API named in the test title, not the current API
 test('the bundled skill 1.0.82 routes a library Example to library.packageRoot behind the API 1.33 gate', async () => {
   // Arrange
   const skill = await readPackaged('skills/codebook/SKILL.md')

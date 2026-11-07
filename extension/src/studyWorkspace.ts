@@ -288,6 +288,7 @@ import { describeNodeTestReplay } from './utils/describeNodeTestReplay'
 import { describeOperationStatus } from './utils/describeOperationStatus'
 import { describePaneIdentity } from './utils/describePaneIdentity'
 import { describeStudy } from './utils/describeStudy'
+import { describeStudyLibraryLine } from './utils/describeStudyLibraryLine'
 import { editorAreaWidthPx } from './utils/editorAreaWidthPx'
 import { editorInputState } from './utils/editorInputState'
 import { editorLayoutGroupCount } from './utils/editorLayoutGroupCount'
@@ -11237,6 +11238,8 @@ export class StudyWorkspace {
         links: browserReplay ? [] : study.links,
         historyOutcome,
         studyOutcome,
+        // A Node (Script) or test replay shows its own library line elsewhere; the previously selected Vite study's line must not stay under its title.
+        ...(selectedNodeHistory ? {} : libraryLineFieldOf(study)),
         recordingSave: selectedState
           ? {
               status: selectedState.recording.status,
@@ -24101,4 +24104,18 @@ export class StudyWorkspace {
     if (kind === 'presentation') this.clearReadyReplayWarning()
     this.publish()
   }
+}
+
+/**
+ * Gives the message field of a saved Vite library run's replay line.
+ * Called by the Study workspace's message for the selected study.
+ * @param study - The selected study.
+ * @returns `{ libraryLine }` for a format 16 study that built its library; an empty object otherwise.
+ * @example libraryLineFieldOf(formatSixteenStudy) // => { libraryLine: 'Ran on the checked-out @acme/widgets 1.2.0 built from 7114787 (packed by pnpm)' }
+ */
+function libraryLineFieldOf(study: {
+  library?: Parameters<typeof describeStudyLibraryLine>[0]
+}): { libraryLine?: string } {
+  const libraryLine = describeStudyLibraryLine(study.library)
+  return libraryLine === undefined ? {} : { libraryLine }
 }

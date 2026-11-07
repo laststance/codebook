@@ -5,7 +5,7 @@ import {
   CONFIGURED_OBSERVATION_LIMIT,
   LIBRARY_BUILD_FAILED_REASONS,
   LIBRARY_BUILD_TIMEOUT_MS,
-  LIBRARY_BUILD_UNSUPPORTED_REASONS,
+  NODE_SCRIPT_LIBRARY_UNSUPPORTED_REASONS,
   LIBRARY_PACK_ERROR_STEPS,
   MILLISECONDS_PER_SECOND,
   NODE_SCRIPT_LIBRARY_MINIMUM_API,
@@ -111,7 +111,7 @@ const NODE_SCRIPT_CODES: readonly { code: ErrorCode; when: string }[] = [
   },
   {
     code: 'LIBRARY_BUILD_UNSUPPORTED',
-    when: `start (with library): the library route is refused before any process starts; details.reason is one of ${LIBRARY_BUILD_UNSUPPORTED_REASONS.join(', ')}; nothing started`,
+    when: `start (with library): the library route is refused before any process starts; details.reason is one of ${NODE_SCRIPT_LIBRARY_UNSUPPORTED_REASONS.join(', ')}; nothing started`,
   },
   {
     code: 'LIBRARY_BUILD_FAILED',
@@ -176,7 +176,7 @@ function nodeScriptLibraryHelp() {
       'incomplete or unreadable observation: say what the script loaded was not fully observed, never "not loaded".',
     ],
     refusals: {
-      unsupportedNothingStarted: `LIBRARY_BUILD_UNSUPPORTED, details.reason one of ${LIBRARY_BUILD_UNSUPPORTED_REASONS.join(', ')}: follow codebook://help/node-script#LIBRARY_BUILD_UNSUPPORTED; fix the field, install, or point the setting at a Node 24.`,
+      unsupportedNothingStarted: `LIBRARY_BUILD_UNSUPPORTED, details.reason one of ${NODE_SCRIPT_LIBRARY_UNSUPPORTED_REASONS.join(', ')}: follow codebook://help/node-script#LIBRARY_BUILD_UNSUPPORTED; fix the field, install, or point the setting at a Node 24.`,
       failedAfterStart: `LIBRARY_BUILD_FAILED, details.reason one of ${LIBRARY_BUILD_FAILED_REASONS.join(', ')}: follow codebook://help/node-script#LIBRARY_BUILD_FAILED. Retry a build-error or timeout once at most; never retry tracked-file-changed or tracked-files-unverified, and tell the learner to inspect git diff or git status. pack-error details.step is one of ${LIBRARY_PACK_ERROR_STEPS.join(', ')}. A refusal or failure carries details.command, details.packageManager and details.nodeVersion when they are known.`,
     },
     limits: [

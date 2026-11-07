@@ -122,6 +122,7 @@ import {
   nextSetupDeadlineVariantOf,
   type NextRouterState,
 } from './nextRefusals'
+import type { LibraryRunView } from './nodeScriptRuntimeTypes'
 import type { OperationConfirmationFact } from './operationsConfirmationTypes'
 import {
   OwnedBreakpointMovedError,
@@ -182,6 +183,7 @@ import {
 } from './runtimeSupport/secretFrameGate'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { CdpRequestTimeoutError } from './runtimeSupport/utils/cdpRequestTimeoutError'
+import { closePageUntilGone } from './runtimeSupport/utils/closePageUntilGone'
 import { describeWithheldImage } from './runtimeSupport/utils/describeWithheldImage'
 import { isStopCausedByCodebook } from './runtimeSupport/utils/isStopCausedByCodebook'
 import { settleCleanup } from './runtimeSupport/utils/settleCleanup'
@@ -204,6 +206,7 @@ import {
 } from './utils/assertDevelopmentWorkspace'
 import { assertFrameAtBoundPosition } from './utils/assertFrameAtBoundPosition'
 import { assertSavedSessionOrigin } from './utils/assertSavedSessionOrigin'
+import { assertViteLibraryNeedsPackageRoot } from './utils/assertViteLibraryNeedsPackageRoot'
 import { refuseViteMisroute } from './utils/assessViteWorkspace'
 import { blankCommentsAndTemplates } from './utils/blankCommentsAndTemplates'
 import { boundColumnOfInstance } from './utils/boundColumnOfInstance'
@@ -257,6 +260,7 @@ import {
   describeRenderRunMessage,
   type RenderRunMessageInput,
 } from './utils/describeRenderRunMessage'
+import { detectPackedLibraryStop } from './utils/detectPackedLibraryStop'
 import { elapsedMsSince } from './utils/elapsedMsSince'
 import { entryRoutePatternOf } from './utils/entryRoutePatternOf'
 import { bundleOfEvaluatedModule } from './utils/extractDevelopmentModule'
@@ -446,11 +450,17 @@ import {
   type UnannouncedPausePlace,
 } from './utils/withUnannouncedPauses'
 import { VITE_DEV_ADAPTER } from './viteDevAdapter'
+import type { ViteLauncherLibraryOptions } from './viteLauncherProtocol'
 import {
   viteLibraryBuildChangedFailure,
   viteLibraryFailureText,
   viteLibraryRefusal,
 } from './viteLibraryRefusals'
+import {
+  ViteLibraryRoute,
+  type ViteLibraryPhase,
+  type ViteLibraryRouteDependencies,
+} from './viteLibraryRoute'
 import {
   viteRefusal,
   viteReloadText,
@@ -660,6 +670,8 @@ interface ConfiguredBrowserOptions {
   savedSession?: SavedSessionRunPort
   /** Called once per run refused with `SIGN_IN_REQUIRED`, so the editor shows its notice. */
   onSignInRequired?(notice: { reason: SignInRequiredReason }): void
+  /** The learner's confirmation and the build seams of a `vite-dev` run that declares `library`; a run with `library` and none of this is refused. */
+  viteLibrary?: ViteLibraryRouteDependencies
 }
 /** The state of the entry-load phase ({@link ConfiguredBrowserRun.loadEntryWithRenderStops}). */
 type EntryLoadState = {
@@ -1298,6 +1310,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private viteVersion?: string
   /** The Expo SDK version the CLI reported, for an `expo-web-dev` run. */
   private expoVersion?: string
+  /** The run side of the Vite library route, for a nested `vite-dev` run that declares `library` (decision D12). */
+  private libraryRoute?: ViteLibraryRoute
+  /** Whether the browser participant's debug session has ended; js-debug ends it once the page target is closed. */
+  private hasBrowserSessionEnded = false
+  /** Settles the library finalization's wait for the browser participant's session to end, while it waits. */
+  private browserSessionEnded?: () => void
   /** The Next setup step reached; a Pages run's setup deadline names it ({@link setupDeadlineText}). The Vite step stays in {@link setupStep}. */
   private nextSetupStep: NextSetupStep = NEXT_SETUP_STEPS.validatingProject
   /** The Pages route of a Next run on the Pages path, with the run's one discovery cache; set once the entry path resolved as a Pages route. The setup-deadline text, the seal and the Pages-only checks read it; every other run leaves it unset. */
@@ -1750,6 +1768,27 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.definition.configuration.version !== OPERATIONS_CONFIG_VERSION
     )
       return false
+    // A run that declares `library` pauses in the checked-out library's source on the run's packed copy: the stop is sealed through the same library route with the packed folder as the walk folder.
+    const declared =
+      this.definition.configuration.adapter === 'vite-dev'
+        ? this.definition.configuration.library?.packageRoot
+        : undefined
+    const packed =
+      declared === undefined
+        ? undefined
+        : await detectPackedLibraryStop(
+            this.options.workspace,
+            declared,
+            stop.source.path,
+            this.abort.signal,
+          )
+    if (packed) {
+      // Registering here, before `setPackedRoute` names the packed folder, is safe: the seal runs only after the server started, which is after the route is planned and the packed route is set.
+      this.viteLibraries.registerPacked(stop.source, packed)
+      return true
+    }
+    // One library per run: with `library` declared, a stop in any other workspace library stays an `outside-package` stop.
+    if (declared !== undefined) return false
     const library = await detectLibraryPackage(
       this.options.workspace,
       vitePackage,
@@ -1781,9 +1820,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const library = this.viteLibraries.libraryOf(stop.source)
     if (!library || !adapter.walkLibraryModules) return {}
     const walk = adapter.walkLibraryModules
+    const packed = this.viteLibraries.packedFactsOf(stop.source)
     return {
       viteLibrary: {
         library,
+        ...(packed ? { packed } : {}),
         moduleSource: this.viteLibraries.moduleSourceFor(
           generation,
           library,
@@ -1814,11 +1855,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     stop: PreparedStop,
     library: NonNullable<ReturnType<ViteLibraryRegistry['libraryOf']>>,
   ): StudyError {
-    return viteLibraryBuildChangedFailure({
-      packageRoot: this.vitePackage?.packageRootRelative ?? '.',
-      library: library.name,
-      file: stop.source.path,
-    })
+    const packed = this.viteLibraries.packedFactsOf(stop.source)
+    return viteLibraryBuildChangedFailure(
+      {
+        packageRoot: this.vitePackage?.packageRootRelative ?? '.',
+        library: library.name,
+        file: stop.source.path,
+      },
+      packed,
+    )
   }
 
   /**
@@ -2018,6 +2063,180 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     return true
   }
 
+  /**
+   * Seam 1 of the Vite library route: creates the route for a nested `vite-dev` run that declares `library`, checks it, asks the learner and fixes the private folder.
+   * Called by {@link prepareOwned} before the server starts; the setup budget does not run while the learner decides.
+   * @returns The launcher's library options, or `undefined` for a run without `library`.
+   * @throws `PREREQUISITE_MISSING` when the editor offers no library route; `LIBRARY_BUILD_UNSUPPORTED` or `SCRIPT_NOT_CONFIRMED` from the route.
+   * @example const viteLibrary = await this.planViteLibrary()
+   */
+  private async planViteLibrary(): Promise<
+    ViteLauncherLibraryOptions | undefined
+  > {
+    const { configuration } = this.definition
+    const declared =
+      configuration.version === OPERATIONS_CONFIG_VERSION &&
+      configuration.adapter === 'vite-dev'
+        ? configuration.library?.packageRoot
+        : undefined
+    if (declared === undefined) return undefined
+    const dependencies = this.options.viteLibrary
+    // A packageRoot that resolves to the repository root is a configuration error, not a missing editor feature.
+    if (this.vitePackage?.isRoot)
+      assertViteLibraryNeedsPackageRoot({
+        version: 3,
+        adapter: 'vite-dev',
+        library: {},
+      })
+    if (!dependencies || !this.vitePackage)
+      throw new StudyError(
+        'PREREQUISITE_MISSING',
+        'The library route is unavailable in this editor.',
+        undefined,
+        undefined,
+        undefined,
+        { sideEffects: 'none' },
+      )
+    this.libraryRoute = new ViteLibraryRoute({
+      runId: this.id,
+      declared,
+      workspace: this.options.workspace,
+      appRoot: this.vitePackage.packageRoot,
+      appRootRelative: this.vitePackage.packageRootRelative,
+      record: (type, detail) => this.evidence.record(type, detail),
+      dependencies,
+    })
+    const route = this.libraryRoute
+    const options = await this.withSetupBudgetPaused(() =>
+      route.plan(this.abort.signal),
+    )
+    // Stops in the checked-out library are sealed against the packed copy, whose real folder the walk looks at.
+    this.viteLibraries.setPackedRoute({
+      name: options.packageName,
+      packedFolder: options.packedRoot,
+      revision: () => route.view().revision,
+    })
+    return options
+  }
+
+  /**
+   * Seam 2 of the Vite library route: builds and packs the library while the server exists but does not listen.
+   * Called by the Vite launcher start between the facts and the listen; the setup budget does not run during the build, which the library's own timeout bounds.
+   * @param launcherSignal - Ends when the launcher exited during the build; the build is cancelled with the run's own stop.
+   * @throws `LIBRARY_BUILD_UNSUPPORTED` or `LIBRARY_BUILD_FAILED` from the build.
+   * @example await this.buildViteLibrary()
+   */
+  private async buildViteLibrary(launcherSignal?: AbortSignal): Promise<void> {
+    const route = this.libraryRoute
+    if (!route) return
+    const signal = launcherSignal
+      ? AbortSignal.any([this.abort.signal, launcherSignal])
+      : this.abort.signal
+    await this.withSetupBudgetPaused(() => route.prepare(signal))
+  }
+
+  /**
+   * Runs one step during which the setup deadline does not run, then gives the time it took back to the budget, as a held preparation pause does.
+   * Called by {@link planViteLibrary} (the learner's answer) and {@link buildViteLibrary} (the build).
+   * @param work - The step.
+   * @returns What the step returned.
+   * @example await this.withSetupBudgetPaused(() => route.prepare(signal))
+   */
+  private async withSetupBudgetPaused<Result>(
+    work: () => Promise<Result>,
+  ): Promise<Result> {
+    clearTimeout(this.progressTimer)
+    const startedAt = Date.now()
+    let didSucceed = false
+    try {
+      const result = await work()
+      didSucceed = true
+      return result
+    } finally {
+      this.preparationDeadlineAt += Date.now() - startedAt
+      // A step that threw (decline, unsupported, build failure, stop) is not followed by a timer: a setup timeout must not overwrite the real error.
+      if (didSucceed && !this.cleaning)
+        this.progressDeadline(
+          Math.max(1, this.preparationDeadlineAt - Date.now()),
+          () => this.expireSetupBudget(this.preparationBudgetMs),
+        )
+    }
+  }
+
+  /**
+   * Seam 3 of the Vite library route: forwards one script URL the page's debugger announced.
+   * Called by the browser participant's `Debugger.scriptParsed` handler.
+   * @param url - The announced script URL.
+   * @example this.observeLibraryScript('http://localhost:4321/src/main.tsx')
+   */
+  private observeLibraryScript(url: string): void {
+    if (!this.libraryRoute || !this.origin) return
+    const owned = loopbackOriginsOf(this.origin, this.ownsIpv6Loopback)
+    this.libraryRoute.observeScript(url, (origin) => owned.includes(origin))
+  }
+
+  /**
+   * Seam 4 of the Vite library route: closes the owned page itself within the close bound and confirms it is gone, then finalizes the observation, so a script parsed up to the close is counted.
+   * The browser process is not waited for: a managed Chrome exits only when the debugger session stops, which comes later; the owned browser close step of {@link cleanupOwned} does the full close.
+   * Called first by {@link cleanupOwned}; the server stops and the private folder goes after it.
+   * @returns The failures of the page close (empty when it closed).
+   * @example const failures = await this.finalizeViteLibrary()
+   */
+  private async finalizeViteLibrary(): Promise<string[]> {
+    const route = this.libraryRoute
+    if (!route) return []
+    const pageCdp = this.participants.browser.cdp
+    // A page that was never attached has nothing to confirm: no script of it was observed, so the observation cannot be complete.
+    if (!pageCdp) {
+      route.finalize(false)
+      return []
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const bound = new Promise<'bound'>((resolve) => {
+      timer = setTimeout(() => resolve('bound'), ACTIVE_TIMEOUT_MS)
+    })
+    const failures: string[] = []
+    let didBoundWin = false
+    const sessionEnded = new Promise<void>((resolve) => {
+      if (this.hasBrowserSessionEnded) resolve()
+      else this.browserSessionEnded = resolve
+    })
+    const outcome = await Promise.race([
+      closePageUntilGone(pageCdp, sessionEnded).then(
+        () => 'closed' as const,
+        (error: unknown) => {
+          // A close that fails after the bound already won is journaled; the owned browser close step of the cleanup closes the browser and reports its own failure.
+          if (didBoundWin)
+            this.evidence.record('library.page-close-failed-late', {
+              cause: String(error),
+            })
+          else failures.push(String(error))
+          return 'failed' as const
+        },
+      ),
+      bound,
+    ])
+    didBoundWin = outcome === 'bound'
+    clearTimeout(timer)
+    route.finalize(outcome === 'closed')
+    return failures
+  }
+
+  /**
+   * Gives the run view's library fields: the facts in the node-script vocabulary and, before the server listens, the phase the learner and the chat can read.
+   * @returns `{ library, libraryPhase }` for a library run; an empty object otherwise.
+   * @example this.libraryView() // => { library: { package: '@acme/widgets', prepared: false, observation: 'pending', … }, libraryPhase: 'building' }
+   */
+  private libraryView(): {
+    library?: LibraryRunView
+    libraryPhase?: ViteLibraryPhase
+  } {
+    const route = this.libraryRoute
+    if (!route) return {}
+    const phase = route.currentPhase()
+    return { library: route.view(), ...(phase ? { libraryPhase: phase } : {}) }
+  }
+
   /** Retains one preparation barrier for service cancellation and final cleanup. @example await run.prepare() */
   prepare(): Promise<void> {
     return (this.preparation ??= this.prepareOwned())
@@ -2097,8 +2316,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     // A server stop in `_document` is refused before any process starts; an API-route stop was collected by collectRouteHandlerStops and is armed just before its operation.
     if (hasPagesFolder) await this.refuseLexicalPagesServerStops()
     this.nextSetupStep = NEXT_SETUP_STEPS.startingNext
+    // Seam 1 of the Vite library route: checks, learner confirmation and the private folder, before any server exists.
+    const viteLibrary = await this.planViteLibrary()
     // The app runs on the port the project declares (its auth origin points there); a busy port refuses the start instead of moving the app.
     const started = await adapter.start({
+      ...(viteLibrary
+        ? {
+            viteLibrary,
+            prepareLibrary: (signal): Promise<void> =>
+              this.buildViteLibrary(signal),
+          }
+        : {}),
       ...(hasPagesFolder ? { outputMask: maskNextServerOutput } : {}),
       workspace: this.packageRoot,
       ...this.resolvedPackageFields(),
@@ -7552,12 +7780,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): void {
     const library = this.viteLibraries.libraryOf(stop.source)
     if (!library || stop.script || !beforeOperation) return
+    const packed = this.viteLibraries.packedFactsOf(stop.source)
     throw viteLibraryRefusal({
       reason: 'library-build-unmapped',
       cause: 'lazy-import',
       packageRoot: this.vitePackage?.packageRootRelative ?? '.',
       library: library.name,
       file: stop.source.path,
+      ...(packed ? { packed } : {}),
     })
   }
 
@@ -10350,6 +10580,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       if (event.url === SECRET_FRAME_SOURCE_URL) return
       // The journal lists only the first scripts; a pause in a later one still needs its URL.
       participant.scriptUrls.set(event.scriptId, event.url)
+      // Seam 3 of the Vite library route: only what the page parsed counts as served.
+      if (name === 'browser') this.observeLibraryScript(event.url)
       // The Pages renderer's text is read when it is announced (again), so the first hit finds it cached.
       if (
         name === 'server' &&
@@ -13526,6 +13758,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   terminated(session: vscode.DebugSession): void {
     this.activeSessions.delete(session.id)
     this.evidence.record('session.terminated', { sessionId: session.id })
+    // js-debug ends the page's session once its target is closed: the library finalization counts that as the page being gone.
+    if (this.participantName(session) === 'browser') {
+      this.hasBrowserSessionEnded = true
+      this.browserSessionEnded?.()
+    }
     if (!this.cleaning && this.participantName(session))
       this.fail('Selected debugger terminated')
   }
@@ -15477,6 +15714,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       applicationPortSource: this.portSource,
       viteVersion: this.viteVersion,
       expoVersion: this.expoVersion,
+      ...this.libraryView(),
       nextRoute: this.nextRoute,
       ...this.pagesServerView(),
       ...(this.readiness.view()
@@ -15740,6 +15978,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.cleaning = true
     this.abort.abort()
     await historyEnded
+    // Seam 4 of the Vite library route: the page closes and the observation is finalized before the server stops.
+    const libraryFailures = await this.finalizeViteLibrary()
     this.forgetCausalSessions()
     this.scriptAnnouncements.clear()
     if (this.transientBrowserPause) {
@@ -15848,6 +16088,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         },
       ])),
     )
+    // The private folder goes last, after the server that used it stopped.
+    await this.libraryRoute?.dispose()
+    failures.push(...libraryFailures)
     this.failures.push(...failures)
     this.resourcesReleased = failures.length === 0
     this.cleaned = this.resourcesReleased

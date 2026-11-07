@@ -5,6 +5,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 /**
  * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ * 1.34 is additive: a version 3 `vite-dev` configuration with a nested `packageRoot` may declare `library: { packageRoot }` (the same shape as `node-script`'s since 1.33); Codebook builds and packs the checked-out library with the repository's package manager and the Example's imports of that package are served from the packed copy by an inline Vite plugin, so the Example runs on the checked-out library and not on its installed copy. The run resource's library facts reuse the `node-script` vocabulary (`package`, `packageRoot`, `prepared`, `version`, `revision`, `dirty`, `packageManager`, `buildMs`, `packMs`, `tarballSha256`, `installedVersion`, `observation`, `loaded`, `loadCount`, `publishedCopyLoaded`, `publishedCopyPath`, `cleanup`), where `loaded` means a module of the packed copy was served to the page. `LIBRARY_BUILD_UNSUPPORTED` gains `details.reason` `library-optimize-include`, `library-aliased` and `library-dedupe` (a Vite run only; nothing was built or started), and `INVALID_CONFIGURATION` gains `details.reason` `library-needs-package-root` for a `library` without a nested `packageRoot`. A `vite-dev` run that declares `library` is saved as study format 16 (`.study.v16.json`). An older Codebook refuses `library` under `vite-dev` as an unknown key and lists a format 16 study as saved by a newer Codebook. Live feature: a Vite library run needs a Codebook that serves this API.
  * 1.33 is additive: a `node-script` configuration may declare an optional `library: { packageRoot }` naming the opened repository's own library package; Codebook then builds it with the repository's package manager (pnpm or npm), packs it into the run's private folder and resolves the Example's imports of that package to the packed build, so the Example runs on the checked-out library and not on its installed copy. The refusals gain two codes, each with `details.reason`: `LIBRARY_BUILD_UNSUPPORTED` (nothing started) and `LIBRARY_BUILD_FAILED` (the build or pack started and the script did not). A run without `library` lists `repositoryPackageCopies` in its run resource: each direct dependency of the Example installed from outside the repository's source with `correspondence: "unverified"`. A Script replay of a run with `library` is recorded with history header format 2.
  * 1.32 is additive: the `chrome-extension` profile accepts a second adapter, `wxt-build`, for a WXT 0.21 project. `extensionRoot` names the project folder and each stop's `path` is a source file under it. Codebook builds the project with the repository's own WXT and source maps into the run's private folder, loads that build as an unpacked extension and resolves each stop through the build's source maps. The refusals are `EXTENSION_BUILD_UNSUPPORTED` and `EXTENSION_BUILD_FAILED`; an Extension replay of such a run is recorded with history header format 2.
  * 1.31 is additive: a `node-server` configuration may declare an optional `signIn` object `{ path, fields, secretField, secret: "ask-learner" }`; Codebook asks the learner for the password in its own masked box, signs in with one POST, keeps the session cookie in memory only and sends the declared request with it. An older Codebook refuses the field as INVALID_CONFIGURATION.
@@ -35,7 +36,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.9 is additive: a node-server run is saved as a Server replay. `codebook_explain_node_history` accepts a server history's material (steps citing the request, a stop, output, the response or the request failure), the server run resource gains `nodeServer.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing` and `captureMissing`, `nextActions` offers `save-node-learning`, and `codebook://help/node-server` has a save section.
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
-export const API_VERSION = '1.33'
+export const API_VERSION = '1.34'
 
 /** The API that first accepts the `expo-web-dev` adapter in a version 3 configuration (skill 1.0.79). */
 export const EXPO_WEB_MINIMUM_API = '1.30'
@@ -55,8 +56,8 @@ export const EXTENSION_BUILD_TIMEOUT_MS = 120_000
 /** The longest a `node-script` run lets the library build and pack take together before their process tree is ended (API 1.33). */
 export const LIBRARY_BUILD_TIMEOUT_MS = 180_000
 
-/** The `details.reason` values of `LIBRARY_BUILD_UNSUPPORTED`: the library route refused before any process started. One source for the error recovery, the help and the tests. */
-export const LIBRARY_BUILD_UNSUPPORTED_REASONS = [
+/** The `details.reason` values of `LIBRARY_BUILD_UNSUPPORTED` that a `node-script` library run raises: the library route refused before any process started. */
+export const NODE_SCRIPT_LIBRARY_UNSUPPORTED_REASONS = [
   'outside-repository',
   'not-a-package',
   'not-a-dependency',
@@ -68,6 +69,19 @@ export const LIBRARY_BUILD_UNSUPPORTED_REASONS = [
   'library-not-installed',
   'peer-not-installed',
   'node-version',
+] as const
+
+/** The `details.reason` values of `LIBRARY_BUILD_UNSUPPORTED` that only a `vite-dev` library run raises (API 1.34): the app's resolved Vite config would defeat the redirect to the packed copy, found before anything is built. A `node-script` run never raises them. */
+export const VITE_LIBRARY_UNSUPPORTED_REASONS = [
+  'library-optimize-include',
+  'library-aliased',
+  'library-dedupe',
+] as const
+
+/** The `details.reason` values of `LIBRARY_BUILD_UNSUPPORTED`: the library route refused before any process started. One source for the error recovery, the help and the tests; the `node-script` help lists {@link NODE_SCRIPT_LIBRARY_UNSUPPORTED_REASONS} and the Vite help adds {@link VITE_LIBRARY_UNSUPPORTED_REASONS}. */
+export const LIBRARY_BUILD_UNSUPPORTED_REASONS = [
+  ...NODE_SCRIPT_LIBRARY_UNSUPPORTED_REASONS,
+  ...VITE_LIBRARY_UNSUPPORTED_REASONS,
 ] as const
 
 /** The `details.reason` values of `LIBRARY_BUILD_FAILED`: the build or pack started and the script did not. One source for the error recovery, the help and the tests. */
@@ -197,6 +211,8 @@ export const VITE_APP_SELECTION_RULE =
 export const NODE_SCRIPT_MINIMUM_API = '1.26'
 /** The API that first accepts `library.packageRoot` in a `node-script` configuration (skill 1.0.82). */
 export const NODE_SCRIPT_LIBRARY_MINIMUM_API = '1.33'
+/** The API that first accepts `library.packageRoot` in a nested version 3 `vite-dev` configuration. */
+export const VITE_LIBRARY_MINIMUM_API = '1.34'
 /** The first extension version that offers the node-script profile, for the profile entry of `codebook_status` (API 1.26, skill 1.0.75). */
 export const NODE_SCRIPT_MINIMUM_EXTENSION_VERSION = '0.2.84'
 
@@ -226,7 +242,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.97'
+export const EXTENSION_VERSION = '0.2.98'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -1278,6 +1294,8 @@ export const UPDATE_WIKI_ACTION = 'Update LLM Wiki'
 export const OPEN_WIKI_IN_BROWSER_ACTION = 'Open in Browser'
 /** How many characters of a commit hash the generation line of the LLM Wiki view's Wiki row shows. */
 export const WIKI_SHORT_REVISION_CHARS = 7
+/** How many characters of the revision a run's library line shows, as a short Git revision does by default. */
+export const LIBRARY_SHORT_REVISION_CHARS = 7
 /** VS Code's command that reveals the chat a request would go to (the chat focused last when it can be shown, the Chat view otherwise) and makes it the chat focused last; with a query it sends the query as a request into that chat and, with `blockOnResponse`, returns when the response completes or waits for a confirmation. Without one it only reveals the chat: the LLM Wiki view's Open Chat action runs it, so a chat that waits for an approval, or never started the skill, is one click away. */
 export const OPEN_CHAT_COMMAND = 'workbench.action.chat.open'
 /** The editor's own command that opens settings, with a setting's id as its argument. */
@@ -1998,8 +2016,10 @@ export const ROUTE_HANDLER_STUDY_VERSION = 13
 export const API_ROUTE_STUDY_VERSION = 14
 /** The format of a study saved from a version 3 `expo-web-dev` configuration, whether its `packageRoot` is absent, `"."` or a nested folder: its evidence follows the same format 7 rules as the other browser-only formats, derived from the configuration by {@link evidenceFormatOfStudy}, and it may carry `expoVersion`. An `expo-web-dev` configuration is readable only as this format; the suffix `.study.v15.json` makes Codebook 0.2.88 and older list such a study as saved by a newer Codebook, never as unreadable. */
 export const EXPO_WEB_STUDY_VERSION = 15
+/** The format of a study saved from a version 3 `vite-dev` configuration that declares `library: { packageRoot }` (API 1.34): format 10 rules for its evidence plus the run's library facts, whose fields depend on the state of the preparation and the observation. A `vite-dev` run without `library` keeps its earlier format; the suffix `.study.v16.json` makes Codebook 0.2.97 and older list such a study as saved by a newer Codebook, never as unreadable. */
+export const VITE_LIBRARY_STUDY_VERSION = 16
 /** The highest study format this Codebook reads; a saved study above it is listed as saved by a newer Codebook. */
-export const READABLE_STUDY_VERSION = EXPO_WEB_STUDY_VERSION
+export const READABLE_STUDY_VERSION = VITE_LIBRARY_STUDY_VERSION
 /** The replay's operation marks closer than this many pixels stack vertically instead of overlapping. */
 export const OPERATION_MARK_STACK_PX = 24
 /** Below this webview width in pixels the operation marks show their numbers only. */
@@ -2011,6 +2031,12 @@ export const CONFIGURED_STUDY_METADATA_SUFFIX = '.study.meta.v3.json'
 // Highest existing version owns a logical study, including when its bytes are corrupt.
 // A change of the saved study format that an older Codebook cannot read takes the next format number and its own `.study.v<n>.json` suffix in this table; an older Codebook then lists such a study as saved by a newer one and keeps it, instead of failing on its schema.
 export const STUDY_STORAGE_FORMATS = [
+  {
+    version: VITE_LIBRARY_STUDY_VERSION,
+    format: 'v16',
+    archiveSuffix: '.study.v16.json',
+    metadataSuffix: '.study.meta.v16.json',
+  },
   {
     version: EXPO_WEB_STUDY_VERSION,
     format: 'v15',
@@ -2985,6 +3011,11 @@ export const EXTENSION_WORKER_START_RESEND_MS = 1_000
 export const EXTENSION_CDP_COMMAND_TIMEOUT_MS = 10_000
 /** After `ServiceWorker.startWorker`, the popup opens only once the worker has had this long to apply the extension's own state (task 0). */
 export const EXTENSION_POPUP_WORKER_SETTLE_MS = 1_500
+/**
+ * After the storage host page is closed, the launch waits at most this long for its target to leave the target list before it opens the popup.
+ * Why: Chrome 157 dismisses a popup that opens while the host page (the active tab) is still closing, so the popup vanished about 100 ms after it appeared (Cycle 0096 probe: 0 of 3 popups survived without the wait, 3 of 3 with it).
+ */
+export const EXTENSION_HOST_PAGE_CLOSE_BOUND_MS = 3_000
 /** Marks a profile folder whose browser Codebook spawned itself; only such a folder's live browser is stopped by the orphan sweep (ER18). */
 export const OWNED_BROWSER_MARKER_FILE = 'codebook-owned-browser'
 /** The owned launch treats the extension's workers as stopped after none has been listed for this long; Chrome starts a new extension's worker shortly after `loadUnpacked` answers. */
@@ -3354,6 +3385,9 @@ export const NEXT_WEBPACK_COMPATIBILITY_SENTENCE =
 
 /** The most reloads before the inputs the run tolerates (a dependency optimizer reloads once or twice). */
 export const VITE_PAGE_GENERATION_LIMIT = 4
+
+/** The folder inside a library run's private folder that holds Vite's cache, so the Example's `node_modules/.vite` is never rewritten. */
+export const VITE_LIBRARY_CACHE_FOLDER_NAME = 'vite-cache'
 
 /** The message types of the IPC channel between the extension and the owned Vite launcher. */
 export const VITE_LAUNCHER_MESSAGES = {

@@ -1,4 +1,5 @@
-import { relative } from 'node:path'
+import { realpath } from 'node:fs/promises'
+import { join, relative } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import {
@@ -7,6 +8,7 @@ import {
   VITE_ERROR_LINE_LIMIT_CHARS,
   VITE_ERROR_LINE_WITHHELD_SENTENCE,
   VITE_LAUNCHER_MESSAGES,
+  VITE_LIBRARY_CACHE_FOLDER_NAME,
   VITE_DEFAULT_ENV_PREFIX,
   VITE_MASKED_VALUE_MIN_CHARS,
   VITE_MODE_ENV_NAMES,
@@ -14,6 +16,7 @@ import {
 import { findViteConfigFileName } from './utils/findViteConfigFileName'
 import { hasOwnHmrListener } from './utils/hasOwnHmrListener'
 import { isViteLauncherCommand } from './utils/isViteLauncherCommand'
+import { isViteLauncherLibraryOptions } from './utils/isViteLauncherLibraryOptions'
 import { maskKnownValues } from './utils/maskKnownValues'
 import {
   waitForViteOptimizerIdle,
@@ -25,11 +28,16 @@ import {
 } from './utils/walkViteLibraryModules'
 import type {
   ViteLauncherCommand,
+  ViteLauncherLibraryOptions,
   ViteLauncherOptions,
   ViteLibraryModulesCommand,
   ViteLauncherPhase,
   ViteLauncherReport,
 } from './viteLauncherProtocol'
+import {
+  createLibraryRedirectPlugin,
+  readLibraryBlockers,
+} from './viteLibraryRedirect'
 
 /** The part of a Vite dev server the launcher uses. */
 type ViteServer = {
@@ -71,6 +79,40 @@ type ViteModule = {
     envDir: string,
     prefixes: string,
   ): Record<string, string>
+  searchForWorkspaceRoot(current: string): string
+}
+
+/**
+ * Builds the inline settings that make the dev server serve a packed library: the redirect plugin, a private cache, no pre-bundling of the package and file access to the private folder.
+ *
+ * Why it exists: a library run joins these to the inline config without touching the Example's files. Called by {@link run} when the launcher options declare `library`.
+ * Nothing here reads the packed folder, which may still be empty: the build happens between the facts and the listen.
+ *
+ * @param vite - The app's Vite module (for `searchForWorkspaceRoot`).
+ * @param library - The validated library options.
+ * @param root - The package root.
+ * @returns Inline config fields to spread into `createServer`'s config, plus the `server.fs.allow` list to merge into its `server` field.
+ * @example
+ * await libraryInlineSettings(vite, library, '/repo/examples/app') // => { plugins: [...], cacheDir: '/tmp/run/vite-cache', optimizeDeps: { exclude: ['lib'] }, fsAllow: [...] }
+ */
+async function libraryInlineSettings(
+  vite: ViteModule,
+  library: ViteLauncherLibraryOptions,
+  root: string,
+): Promise<{
+  plugins: unknown[]
+  cacheDir: string
+  optimizeDeps: { exclude: string[] }
+  fsAllow: string[]
+}> {
+  // An explicit `allow` replaces Vite's default, so the workspace root stays in it; /tmp is /private/tmp on macOS, so the real path is allowed.
+  const privateReal = await realpath(library.privateFolder)
+  return {
+    plugins: [createLibraryRedirectPlugin({ ...library, exampleRoot: root })],
+    cacheDir: join(privateReal, VITE_LIBRARY_CACHE_FOLDER_NAME),
+    optimizeDeps: { exclude: [library.packageName] },
+    fsAllow: [vite.searchForWorkspaceRoot(root), privateReal],
+  }
 }
 
 /**
@@ -255,6 +297,44 @@ async function answerOptimizerIdle(
 }
 
 /**
+ * Creates the dev server the way Vite's CLI `dev` does, plus the library route's inline settings when the options declare `library`.
+ *
+ * Why it exists: keeps {@link run} small and holds the one place the inline config is built. Called by {@link run} once Vite is imported.
+ * No inline `root`: an inline root would win over a project config's own `root`, hiding it from the settings policy; the launcher's working directory is the package root.
+ *
+ * @param vite - The app's Vite module.
+ * @param options - The launcher's options.
+ * @returns The created, not yet listening, server.
+ * @throws When the `library` option is malformed (before any server exists).
+ * @example
+ * const server = await createLaunchServer(vite, options)
+ */
+async function createLaunchServer(
+  vite: ViteModule,
+  options: ViteLauncherOptions,
+): Promise<ViteServer> {
+  const { library } = options
+  if (library !== undefined && !isViteLauncherLibraryOptions(library))
+    throw new Error('The launcher was given malformed library options.')
+  const { fsAllow, ...libraryConfig } = library
+    ? await libraryInlineSettings(vite, library, options.root)
+    : { fsAllow: undefined }
+  return vite.createServer({
+    mode: options.mode,
+    configFile: options.configFile,
+    clearScreen: false,
+    ...libraryConfig,
+    server: {
+      host: VITE_LOOPBACK_HOST,
+      ...(options.port === undefined ? {} : { port: options.port }),
+      strictPort: true,
+      open: false,
+      ...(fsAllow === undefined ? {} : { fs: { allow: fsAllow } }),
+    },
+  })
+}
+
+/**
  * The owned Vite launcher: runs inside the app's package root under the run's Node, imports the app's own Vite, creates its dev server exactly as Vite's CLI `dev` does, reports the facts of the resolved config over IPC, listens only when the extension says so, and prints the URLs for the readiness check.
  *
  * Why it exists: the config is evaluated once, and the policy is judged on the config the server really uses. Spawned by {@link launchViteDevelopmentServer} with a Node IPC channel; this module runs on load and is never imported by the extension.
@@ -297,18 +377,8 @@ async function run(): Promise<void> {
       envValues: loadedEnvValues(vite, options, launchEnvironment),
     })
     phase = 'config'
-    // No inline `root`: an inline root would win over a project config's own `root`, hiding it from the settings policy; the launcher's working directory is the package root.
-    server = await vite.createServer({
-      mode: options.mode,
-      configFile: options.configFile,
-      clearScreen: false,
-      server: {
-        host: VITE_LOOPBACK_HOST,
-        ...(options.port === undefined ? {} : { port: options.port }),
-        strictPort: true,
-        open: false,
-      },
-    })
+    server = await createLaunchServer(vite, options)
+    const { library } = options
     const config = server.config
     configFile = config.configFile
       ? relative(options.root, config.configFile)
@@ -318,6 +388,9 @@ async function run(): Promise<void> {
     const factsSent = send({
       type: VITE_LAUNCHER_MESSAGES.facts,
       envValues,
+      ...(library
+        ? { libraryBlockers: readLibraryBlockers(config, library.packageName) }
+        : {}),
       facts: {
         viteVersion: vite.version,
         root: config.root,

@@ -23,7 +23,7 @@ import type { NodeScriptHistorySink } from './nodeScriptHistorySink'
 import type {
   NodeScriptConfirmation,
   NodeScriptEndView,
-  NodeScriptLibraryView,
+  LibraryRunView,
   NodeScriptPrepareLimits,
   NodeScriptRuntime,
   NodeScriptState,
@@ -132,9 +132,7 @@ export type NodeScriptRunInput = {
  * @returns The view fields for a prepared library.
  * @example libraryFactsView(facts).version // => '2.14.0'
  */
-function libraryFactsView(
-  facts: LibraryPackageFacts,
-): Partial<NodeScriptLibraryView> {
+function libraryFactsView(facts: LibraryPackageFacts): Partial<LibraryRunView> {
   return {
     version: facts.version,
     revision: facts.revision,
@@ -155,7 +153,7 @@ function libraryFactsView(
  */
 function libraryObservationView(
   seen: LibraryObservation | undefined,
-): Pick<NodeScriptLibraryView, 'observation'> & Partial<NodeScriptLibraryView> {
+): Pick<LibraryRunView, 'observation'> & Partial<LibraryRunView> {
   if (!seen) return { observation: 'pending' }
   const isComplete = seen.observation === 'complete'
   return {
@@ -393,7 +391,7 @@ class OwnedNodeScriptRun implements NodeScriptRuntime {
    * @returns The library view, or `undefined` for a run without `library`.
    * @example this.libraryView()?.observation // => 'pending' while the script runs
    */
-  private libraryView(): NodeScriptLibraryView | undefined {
+  private libraryView(): LibraryRunView | undefined {
     const declared = this.input.configuration.library
     if (!declared) return undefined
     const facts = this.preparedReported ? this.libraryPackage?.facts : undefined

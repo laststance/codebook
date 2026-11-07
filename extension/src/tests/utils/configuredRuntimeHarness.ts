@@ -59,6 +59,7 @@ import {
 import { NEXT_PAGES_STATE_EXPRESSION } from '../../utils/readNextPagesState'
 import { readPagesDevelopmentBundle } from '../../utils/readPagesDevelopmentBundle'
 import * as viteDevAdapter from '../../viteDevAdapter'
+import type { ViteLibraryRouteDependencies } from '../../viteLibraryRoute'
 
 import {
   answerBreakLocationRequest,
@@ -231,6 +232,11 @@ export async function configuredRuntimeHarness(
     ipv6Loopback?: 'owned' | 'absent' | 'held'
     /** Runs the configuration on the Vite adapter: its stand-in starts the stub server, serves the sealed module at its owned address and loads the entry page once. */
     adapter?: 'vite-dev'
+    /** A nested Vite run that declares `library` (API 1.34): the declared folder and the route's seams (confirmation, checks, build, private folder), which a test fakes. The stand-in start then runs the build between the facts and the listen, as the real launcher start does. */
+    libraryRoute?: {
+      declared: string
+      dependencies: ViteLibraryRouteDependencies
+    }
     /** Makes the Vite stand-in refuse to seal with this sentence, as a missing served module does. */
     sealFailure?: string
     /** Makes the stand-in seal (the Vite served-module read, or the Next `.next/dev` read) never finish, as a server that stops answering does while a stop is sealed. */
@@ -303,6 +309,8 @@ export async function configuredRuntimeHarness(
       lazy?: boolean
       /** Leaves the app's `node_modules` link to the library out, so the app does not reach it. */
       unlinked?: boolean
+      /** Makes the stand-in launcher's walk list the library module twice (two served addresses with the same text), as a page that loads two copies of the file does. */
+      listTwice?: boolean
     }
     /** Variations of the nested app declared by `packageRoot`. */
     packageApp?: {
@@ -366,6 +374,16 @@ export async function configuredRuntimeHarness(
     entryPath?: string
     /** Makes the stand-in browser's first `close` fail, as a close that could not confirm Chrome's exit does; the second succeeds. */
     closeFailsOnce?: boolean
+    /** Makes the stand-in page's first `Page.close` wait for this promise and then fail, as a page close that outlasts the close bound before it fails; later closes succeed. */
+    firstCloseFailsAfter?: Promise<void>
+    /** With `firstCloseFailsAfter`: called when the stand-in page's first `Page.close` starts, so a test waits for the close itself instead of for real time. */
+    onFirstCloseStarted?: () => void
+    /** Makes the stand-in page acknowledge `Page.close` but never report it detached, as a target Chrome keeps listed past the close bound. */
+    pageStaysAfterClose?: boolean
+    /** Makes the stand-in page acknowledge `Page.close`, report no detach and end the browser participant's debug session a turn later, as js-debug 1.140 does in a native run. */
+    pageCloseEndsSession?: boolean
+    /** Makes the stand-in browser's `close` settle only after the run stopped its debuggers, as a managed Chrome does: it exits only when the debugger session stops. */
+    browserCloseWaitsForDebuggerStop?: boolean
     /** The path the stand-in page lands on after each `Page.navigate` of a saved-session run (default: the path asked for). */
     navigationLandsOn?: string
     /** Makes the stand-in server's App verdict (`confirmAppEntry`) record its answer and then never settle until the run is cancelled, as a redirected root whose second request does not answer. */
@@ -531,7 +549,13 @@ export async function configuredRuntimeHarness(
     throw new Error('A nested Next app needs a version 3 configuration')
   const configuration = (
     packageRootDeclared
-      ? { ...unnestedConfiguration, packageRoot: packageRootDeclared }
+      ? {
+          ...unnestedConfiguration,
+          packageRoot: packageRootDeclared,
+          ...(options.libraryRoute
+            ? { library: { packageRoot: options.libraryRoute.declared } }
+            : {}),
+        }
       : unnestedConfiguration
   ) as typeof unnestedConfiguration
   // Each of these changes makes the frozen intent hash stale.
@@ -548,6 +572,7 @@ export async function configuredRuntimeHarness(
     options.initialInputs ||
     options.inspections ||
     options.participant ||
+    options.libraryRoute ||
     options.operations
   )
     reference.configurationHash = sha256(JSON.stringify(configuration))
@@ -713,7 +738,7 @@ export async function configuredRuntimeHarness(
   // What the Vite stand-in received, so a nested Vite run proves the app folder reached the workspace check, the start and the seal.
   const viteRequests: {
     assertedWorkspace: { workspace: string; packageRoot?: string }[]
-    started: { workspace: string; packageRoot?: string }[]
+    started: { workspace: string; packageRoot?: string; library?: unknown }[]
     sealed: { workspace: string; packageRoot?: string; sourcePath: string }[]
   } = { assertedWorkspace: [], started: [], sealed: [] }
   const releases: string[] = [],
@@ -800,6 +825,11 @@ export async function configuredRuntimeHarness(
   /** The timeout each `Page.navigate` request asked for (`undefined`: the channel's own default). */
   const navigateTimeouts: (number | undefined)[] = []
   let closeAttempts = 0
+  let pageCloseAttempts = 0
+  let debuggersHaveStopped: () => void = () => undefined
+  const debuggersStopped = new Promise<void>((resolve) => {
+    debuggersHaveStopped = resolve
+  })
   const serverOrigin =
     viteLibrary?.server.origin ??
     options.serverOrigin ??
@@ -1357,6 +1387,21 @@ export async function configuredRuntimeHarness(
       timeout?: number,
     ) {
       if (method.startsWith('Input.')) inputRequests.push(method)
+      // The page close the Vite library route asks for: acknowledged, then the page is detached (unless it stays listed).
+      if (method === 'Page.close') {
+        if (options.firstCloseFailsAfter && pageCloseAttempts++ === 0) {
+          options.onFirstCloseStarted?.()
+          await options.firstCloseFailsAfter
+          throw new Error('The page close failed late')
+        }
+        releases.push('page')
+        // js-debug reports no detach on its page proxy: it ends the page's debug session instead.
+        if (options.pageCloseEndsSession)
+          setImmediate(() => run.terminated(selected))
+        else if (!options.pageStaysAfterClose)
+          listeners.get('Inspector.detached')?.({ reason: 'target_closed' })
+        return {}
+      }
       if (method === 'Runtime.evaluate')
         evaluatedExpressions.push(parameters?.expression ?? '')
       // After the input, the after conditions answer the failure a test chose, and every read of them is counted.
@@ -1839,6 +1884,7 @@ export async function configuredRuntimeHarness(
       },
       stopDebugging: async (): Promise<void> => {
         releases.push('debugger')
+        debuggersHaveStopped()
         run.terminated(root)
         run.terminated(selected)
         if (serverParticipant) {
@@ -2102,6 +2148,8 @@ export async function configuredRuntimeHarness(
             releases.push('acquisitions')
           }
           async close(): Promise<void> {
+            // A managed Chrome exits only when the debugger session stops, so its close cannot settle before that.
+            if (options.browserCloseWaitsForDebuggerStop) await debuggersStopped
             // A close that cannot confirm Chrome's exit throws once, as the real one does for a failed process listing.
             if (options.closeFailsOnce && closeAttempts++ === 0)
               throw new Error(
@@ -2263,13 +2311,23 @@ export async function configuredRuntimeHarness(
           start: async (request: {
             workspace: string
             vitePackage?: { packageRoot: string }
+            viteLibrary?: unknown
+            prepareLibrary?: () => Promise<void>
             onApp(app: typeof fakeApplication): void
             onStep(step: string): void
           }) => {
             viteRequests.started.push({
               workspace: request.workspace,
               packageRoot: request.vitePackage?.packageRoot,
+              ...(request.viteLibrary === undefined
+                ? {}
+                : { library: request.viteLibrary }),
             })
+            // The real start builds the library between the facts and the listen.
+            if (request.viteLibrary) {
+              request.onApp(fakeApplication)
+              await request.prepareLibrary?.()
+            }
             request.onStep('starting Vite')
             setupSteps.push('starting Vite')
             request.onApp(fakeApplication)
@@ -2295,7 +2353,14 @@ export async function configuredRuntimeHarness(
             libraryWalks.push(request)
             return {
               modules: viteLibrary
-                ? [`${viteLibrary.moduleRoute}?v=${libraryVersion}`]
+                ? [
+                    `${viteLibrary.moduleRoute}?v=${libraryVersion}`,
+                    ...(options.viteLibrary?.listTwice
+                      ? [
+                          `${viteLibrary.moduleRoute}?v=${libraryVersion}&copy=2`,
+                        ]
+                      : []),
+                  ]
                 : [],
               optimizedLibrary: false,
             }
@@ -2417,6 +2482,9 @@ export async function configuredRuntimeHarness(
     assertWorkspace() {},
     savedSession: savedSessionPort,
     onSignInRequired: ({ reason }) => signInNotices.push(reason),
+    ...(options.libraryRoute
+      ? { viteLibrary: options.libraryRoute.dependencies }
+      : {}),
     revealSource: async () => {
       releases.push('captured source')
     },

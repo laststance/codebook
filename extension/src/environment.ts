@@ -61,6 +61,7 @@ import { createMemoryOrphanStore } from './utils/createMemoryOrphanStore'
 import { createNodeScriptRunAsker } from './utils/createNodeScriptRunAsker'
 import { createNodeServerRunUtilities } from './utils/createNodeServerRunUtilities'
 import { createSavedSessionOperationsAsker } from './utils/createSavedSessionOperationsAsker'
+import { createViteLibraryRunAsker } from './utils/createViteLibraryRunAsker'
 import { declaredStopOfSnapshot } from './utils/declaredStopOfSnapshot'
 import { describeOperationsConfirmationNotice } from './utils/describeOperationsConfirmationNotice'
 import { describeRepositoryPackageManager } from './utils/describeRepositoryPackageManager'
@@ -388,6 +389,21 @@ export async function createEnvironment(
         `Codebook did not run the script: run ${shortRunId} already ended before the question was answered. Ask the chat to start a new run if you still want it.`,
       ),
   )
+  // One asker for the window's life: a Vite library run asks before it builds anything.
+  const confirmViteLibraryRun = createViteLibraryRunAsker(
+    (message, detail, ...items) =>
+      vscode.window.showWarningMessage(
+        message,
+        { modal: true, detail },
+        ...items,
+      ),
+    (shortRunId) =>
+      void showPlainNotice(
+        vscode.window,
+        'information',
+        `Codebook did not build or run the Example: run ${shortRunId} already ended before the question was answered. Ask the chat to start a new run if you still want it.`,
+      ),
+  )
   // Each ask of the saved-session operations question is its own native modal (ENG-6).
   const confirmSavedSessionOperations = createSavedSessionOperationsAsker(
     (message, detail, ...items) =>
@@ -643,6 +659,10 @@ export async function createEnvironment(
         // Only a version 3 run reads the store; the run decides, and versions 1 and 2 never call it.
         savedSession: savedSessionPortOf(context.savedSessions, workspace),
         onSignInRequired: ({ reason }) => context.showSignInRequired?.(reason),
+        viteLibrary: {
+          confirm: confirmViteLibraryRun,
+          resolveNode: () => resolveExternalNode(prerequisites.nodeExecutable!),
+        },
         revealSource: async (snapshot) => {
           // A render may pause its stops out of declared order, so the snapshot's declared stop is looked up by its declaredIndex.
           const stop = declaredStopOfSnapshot(

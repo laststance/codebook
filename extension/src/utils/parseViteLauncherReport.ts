@@ -30,6 +30,13 @@ const reportSchema = z.discriminatedUnion('type', [
     type: z.literal(VITE_LAUNCHER_MESSAGES.facts),
     facts: factsSchema,
     envValues: z.array(z.string()),
+    libraryBlockers: z
+      .object({
+        aliased: z.array(z.string()),
+        optimizeInclude: z.array(z.string()),
+        deduped: z.array(z.string()),
+      })
+      .optional(),
   }),
   z.object({
     type: z.literal(VITE_LAUNCHER_MESSAGES.failed),

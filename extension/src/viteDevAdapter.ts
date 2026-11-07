@@ -74,6 +74,9 @@ export const VITE_DEV_ADAPTER: DevelopmentServerAdapter = {
         appRoot: vitePackage.packageRoot,
         packageRootRelative: vitePackage.packageRootRelative,
         library: request.viteLibrary.library,
+        ...(request.viteLibrary.packed
+          ? { packed: request.viteLibrary.packed }
+          : {}),
         repositoryRoot: vitePackage.repositoryRoot,
         source: request.source,
         citationEndLine: request.citationEndLine,

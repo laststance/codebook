@@ -78,6 +78,8 @@ export interface StudyViewMessage {
     | 'finalOutcome'
     | 'links'
   > & {
+    /** The sentence a saved Vite library run shows under the title ({@link describeStudyLibraryLine}); absent for every other study. */
+    libraryLine?: string
     historyOutcome: string
     studyOutcome: string
     recordingSave?: Pick<
@@ -227,7 +229,7 @@ export function studyHtml(kind: 'context' | 'moments'): string {
   const learningSummaryButton = `<button id="show-learning-summary" type="button" data-action="focus-context" title="${STUDY_UI_OPTIONS.showLearningSummary}" aria-label="${STUDY_UI_OPTIONS.showLearningSummary}">${STUDY_UI_OPTIONS.learningSummaryButton}</button>`
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; img-src data:;"><style nonce="${nonce}">${STUDY_STYLES}</style></head><body class="${markupOnlyIn(kind, 'moments', 'moments-only')}">
 <p id="bootstrap-status" class="status" role="status" aria-live="polite">Loading study…</p><main id="study-content" hidden inert>
-<header class="learning-header"><p id="reader-kind" class="muted">Codebook study</p><h1 id="title" tabindex="-1" data-focus-fallback>Codebook study</h1><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">Keyboard shortcuts <kbd>?</kbd></button></header>
+<header class="learning-header"><p id="reader-kind" class="muted">Codebook study</p><h1 id="title" tabindex="-1" data-focus-fallback>Codebook study</h1><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">Keyboard shortcuts <kbd>?</kbd></button></header><p id="study-library-line" class="muted"></p>
 <details id="reader-options" open ${markupOnlyIn(kind, 'moments', 'hidden')}><summary>Study view and pane controls</summary><header class="presentation-header"><nav class="row study-read-tools" aria-label="Study pane reading"><button data-action="read-app" aria-label="Read application">App</button><button data-action="read-source" aria-label="Read captured source">Source</button><button data-action="read-context" aria-label="Read explanation">Explanation</button><button data-presentation="restore">Restore</button></nav><details id="presentation-options"><summary>View options</summary><p id="presentation-caption" class="muted mode-caption"></p><div class="row presentation-tools"><button data-action="enlarge-app">Enlarge application</button><button data-action="enlarge-context">Enlarge explanation</button><button data-presentation="save-preference" hidden>Save preference</button></div></details></header></details><p id="presentation-status" class="presentation-status" role="status" aria-live="polite"></p>
 <button data-action="return-wiki" hidden>← Return to Wiki</button><button data-action="open-article" hidden>Open article</button><div class="live-strip"><div id="runtime" role="status" aria-live="polite"></div><div class="row"><button data-action="return-current">Return to current pause</button><button class="primary" data-action="continue">Continue inspected pause</button><button data-action="stop">Stop</button></div><small class="muted" id="deadline"></small></div>
 <p id="errors" class="error" role="status" aria-live="polite"></p><button data-action="retry" hidden>Retry storage / refresh</button>
@@ -4632,6 +4634,8 @@ function studyClient(
     text('title', heading)
     // The heading is clamped to two lines in a narrow replay; its tooltip keeps the whole title for the pointer.
     element('title').title = heading
+    // A saved Vite library run says under its title whether the page ran on the checked-out library.
+    text('study-library-line', message.study?.libraryLine ?? '')
     const selectedProfile = message.profiles.find(
         (profile) => profile.id === model.selection.profile,
       ),

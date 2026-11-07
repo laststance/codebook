@@ -16,6 +16,7 @@ import {
   EXTENSION_BROWSER_POLL_MS,
   EXTENSION_BROWSER_START_BOUND_MS,
   EXTENSION_CDP_COMMAND_TIMEOUT_MS,
+  EXTENSION_HOST_PAGE_CLOSE_BOUND_MS,
   EXTENSION_OPEN_BOUND_MS,
   EXTENSION_POLL_COMMAND_MIN_TIMEOUT_MS,
   EXTENSION_POPUP_WORKER_SETTLE_MS,
@@ -549,9 +550,43 @@ async function seedStorage(
         `The seeded storage was not applied: ${differing}.`,
       )
   } finally {
-    await session.cdp
-      .request('Target.closeTarget', { targetId: host.targetId })
-      .catch(() => undefined)
+    await closeStorageHostPage(session, host.targetId)
+  }
+}
+
+/**
+ * Closes the storage host page and waits until Chrome no longer lists it, so the popup the launch opens next is not opened while the page is still closing.
+ * Chrome 157 dismisses a popup that opens during that close (the popup vanished about 100 ms after it appeared), so {@link openPopup} must start only after the page is gone. A close or a look that fails ends the wait: the bound and the later steps judge the launch, not this cleanup.
+ * @param session - The launch's connection and ids.
+ * @param targetId - The host page opened by {@link openStorageHostPage}.
+ * @example await closeStorageHostPage(session, 'T7') // => resolves once Target.getTargets no longer lists T7, or after 3 s
+ */
+async function closeStorageHostPage(
+  session: Session,
+  targetId: string,
+): Promise<void> {
+  const closed = await session.cdp
+    .request('Target.closeTarget', { targetId })
+    .then(
+      () => true,
+      () => false,
+    )
+  if (!closed) return
+  const budget = new PollBudget(EXTENSION_HOST_PAGE_CLOSE_BOUND_MS)
+  // Look at the target list, pause; the last look comes after the last pause.
+  for (;;) {
+    const isListed = await requestWithin(
+      session.cdp,
+      budget,
+      'Target.getTargets',
+      {},
+    ).then(
+      (answer) =>
+        readCdpTargets(answer).some((target) => target.targetId === targetId),
+      () => false,
+    )
+    if (!isListed || budget.isSpent()) return
+    await budget.pause(session.dependencies.sleep, EXTENSION_BROWSER_POLL_MS)
   }
 }
 

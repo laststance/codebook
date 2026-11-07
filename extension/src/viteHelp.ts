@@ -1,12 +1,19 @@
 import {
+  LIBRARY_BUILD_FAILED_REASONS,
+  LIBRARY_BUILD_TIMEOUT_MS,
+  LIBRARY_PACK_ERROR_STEPS,
   MILLISECONDS_PER_SECOND,
   NEXT_PACKAGE_DISCOVERY_APP_LIMIT,
   NEXT_PACKAGE_DISCOVERY_MANIFEST_LIMIT,
   NEXT_PACKAGE_DISCOVERY_MAX_DEPTH,
+  NODE_SCRIPT_LIBRARY_UNSUPPORTED_REASONS,
   REPOSITORY_GIT_TIMEOUT_MS,
   REPOSITORY_SETUP_TIMEOUT_MS,
   VITE_APP_SELECTION_RULE,
+  VITE_LIBRARY_MINIMUM_API,
   VITE_LIBRARY_STOP_MINIMUM_API,
+  VITE_LIBRARY_STUDY_VERSION,
+  VITE_LIBRARY_UNSUPPORTED_REASONS,
   VITE_PACKAGE_ROOT_MINIMUM_API,
   VITE_PACKAGE_ROOT_MINIMUM_EXTENSION,
   VITE_STOP_EXTENSIONS,
@@ -99,6 +106,79 @@ export const VITE_NESTED_CONFIGURATION = {
 } as const
 
 /**
+ * A complete version 3 configuration for a browser stop in a Vite Example below the repository root that runs on the repository's own library: the Example's folder is `packageRoot`, the library package's folder is `library.packageRoot`, and `source.path` is repository-relative and lies in the Example.
+ * Served as `viteLibrary.sample` and parsed by a test with {@link liveRepositoryConfigSchema}. Every value is a neutral placeholder, not any project's folder or file: replace the folders with the Example and the library package the question is about, the book identity and the hash with the values the earlier steps returned.
+ */
+export const VITE_LIBRARY_CONFIGURATION = {
+  version: 3,
+  adapter: 'vite-dev',
+  packageRoot: 'examples/widgets-vite',
+  library: { packageRoot: 'packages/widgets' },
+  book: {
+    bookId: 'my-article',
+    revision: 1,
+    nodeId: 'my-node',
+    anchorIndex: 0,
+  },
+  source: {
+    path: 'examples/widgets-vite/src/features/counter/counter.ts',
+    hash: '0000000000000000000000000000000000000000000000000000000000000000',
+    line: 20,
+    column: 5,
+  },
+  participant: 'browser',
+  afterOperation: 1,
+  entryPath: '/',
+  before: [{ kind: 'visible', selector: '[data-testid="add-button"]' }],
+  after: [
+    {
+      kind: 'text',
+      selector: '[data-testid="total-value"]',
+      equals: '1',
+    },
+  ],
+  operations: [
+    {
+      kind: 'click',
+      title: 'Click the add button',
+      selector: '[data-testid="add-button"]',
+    },
+  ],
+  inspections: [{ path: 'total', mode: 'value', required: true }],
+} as const
+
+/**
+ * The refusals of a `vite-dev` library run, keyed by `details.reason`: the three reasons that are new with API 1.34. The reasons the route shares with the `node-script` library route keep their rows in `codebook://help/node-script`.
+ * Why it exists: one anchor per reason lets a chat that meets a refusal read its fix without the long sections; {@link viteLibraryHelp} serves the rows in this record's order.
+ */
+const VITE_LIBRARY_REFUSALS = {
+  'library-needs-package-root': {
+    code: 'INVALID_CONFIGURATION',
+    meaning:
+      'library was declared without a nested packageRoot (absent or "."): the library route redirects an Example below the repository root. details.field is configuration.library. Nothing started (details.sideEffects none).',
+    fix: "Declare the Example's folder as packageRoot (the folder that holds its package.json) next to library, or drop library to run the Example on its installed copy.",
+  },
+  'library-optimize-include': {
+    code: 'LIBRARY_BUILD_UNSUPPORTED',
+    meaning:
+      'The Vite config named in details.configFile lists the library package, or a subpath of it, in optimizeDeps.include: Vite would pre-bundle the installed copy and the packed build would never be served. Found in the resolved config before the build: nothing was built or started (details.sideEffects none).',
+    fix: "Ask the learner to remove that entry from optimizeDeps.include in the config file details.configFile names, or start again without library. Never edit the learner's config yourself.",
+  },
+  'library-aliased': {
+    code: 'LIBRARY_BUILD_UNSUPPORTED',
+    meaning:
+      "The Vite config named in details.configFile has a resolve.alias (a string or a regular expression) that matches the library package or a subpath of it: the Example's imports would bypass the packed build. Found in the resolved config before the build: nothing was built or started (details.sideEffects none).",
+    fix: 'Ask the learner to remove that alias from the config file details.configFile names, or start again without library.',
+  },
+  'library-dedupe': {
+    code: 'LIBRARY_BUILD_UNSUPPORTED',
+    meaning:
+      'The Vite config named in details.configFile lists the library package, or a subpath of it, in resolve.dedupe (or in environments.client.resolve.dedupe): Vite resolves a deduped package from the project root whatever the importer, so the page would get the installed copy and not the packed build. Found in the resolved config before the build: nothing was built or started (details.sideEffects none). Other packages in resolve.dedupe are fine.',
+    fix: "Ask the learner to remove the library package from resolve.dedupe in the config file details.configFile names, or start again without library. Never edit the learner's config yourself.",
+  },
+} as const
+
+/**
  * The refusals of a `packageRoot` run of a Vite app, keyed by `details.reason`: the five reasons the Next app shares (same code, same fix), then the Vite-only `not-a-vite-app` and `outside-package` (under `VITE_SEAL_FAILED`).
  * Reuses {@link PACKAGE_ROOT_REFUSALS} for the shared rows so the two adapters cannot drift; the anchor of a reason is `codebook://help/repository-browser#<reason>` for both adapters.
  */
@@ -169,7 +249,7 @@ const VITE_LIBRARY_ROWS: Record<
 function viteLibraryRefusals() {
   return Object.fromEntries(
     LIBRARY_STOP_REASONS.flatMap((reason) =>
-      // library-place-ambiguous never occurs under vite-dev (D14); every other reason must have a row, which the table's key type enforces
+      // library-place-ambiguous never occurs under vite-dev (a vite-dev run declares at most one library, so its place is never ambiguous); every other reason must have a row, which the table's key type enforces
       reason === 'library-place-ambiguous'
         ? []
         : [
@@ -238,6 +318,66 @@ function vitePackageRoot() {
       "The app's own environment files are read and their values are masked, as for a root app. A Vite config temp file left in the app's own node_modules/.vite-temp or beside its config is removed; one in a shared ancestor node_modules/.vite-temp is never touched.",
       'One run at a time per window: a root run beside a nested run is refused with BUSY.',
     ],
+  }
+}
+
+/**
+ * Builds the `viteLibrary` key of `codebook://help/repository-browser`: when to declare `library.packageRoot` under `vite-dev`, what the build and pack run and write, the observation states, the refusals with their recovery, the limits, the study format and one complete sample with generic names.
+ *
+ * Why it exists: a Vite Example inside a library repository usually installs the library by a published version, so the Example runs a different release than the source the learner reads; a chat needs the route, its disclosure and its limits before it declares a run. Mirrors the `library` section of `codebook://help/node-script` so a chat reads one vocabulary for both runtimes. Called by {@link viteHelp}; it names no repository and copies no project's answer or stop lines.
+ *
+ * @returns The JSON-serializable section.
+ * @example
+ * viteLibraryHelp().sample.library.packageRoot // => 'packages/widgets'
+ */
+function viteLibraryHelp() {
+  return {
+    anchor: packageRootAnchor('viteLibrary'),
+    requires: `codebook_status reports API ${VITE_LIBRARY_MINIMUM_API} or later (compare the number after the dot as a whole number). An older Codebook refuses library under vite-dev as an unknown key: tell the learner to update Codebook and do not run the Example by another route.`,
+    whenToUse:
+      "The Vite Example lives below the root of a library repository and its package.json depends on that library by a published version, so its own node_modules holds an installed copy, not the checked-out source. Declare library.packageRoot (the library package's folder, relative to the repository root; never the Example's own folder or a folder inside it) together with the Example's nested packageRoot, and the Example runs on the checked-out library. Without library the Example runs the installed copy: say so to the learner and never call that copy the checked-out library.",
+    whatRuns: [
+      "The learner's editor confirmation comes first and names the build and pack, because the build runs the project's own build scripts. A declined confirmation starts nothing.",
+      "The repository's package manager (the root package.json packageManager field, else pnpm or npm by the lockfile at the root) runs the library's own build script in library.packageRoot with the external Node 24 or later first on PATH, then packs the library into the run's private folder with lifecycle scripts off.",
+      "Codebook then starts the Example's own Vite with one inline plugin and a private optimizer cache inside the run's private folder, so every import of the library package (and its subpaths) is served from the packed copy. Peer dependencies of the library (such as react) come from the Example, so the page keeps one copy; the library's other dependencies come from the library's own install.",
+      "It writes the library's ignored build output (its own build folder, as the project's CI does) and the run's private folder, which the run removes when it ends. No tracked file, nothing in the Example's folder and nothing in the Example's own node_modules changes.",
+      `The build and pack together are bounded at ${LIBRARY_BUILD_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s. Codebook never installs packages.`,
+    ],
+    phase:
+      'The run reads confirming, then building (the status bar says Building <name> for the Example…), then running. codebook_start answers its receipt at once; follow the run resource.',
+    facts:
+      'The run resource carries library: { package, version, packageRoot, revision, dirty, packageManager, buildMs, packMs, tarballSha256, installedVersion, prepared, observation, loaded, loadCount, publishedCopyLoaded, publishedCopyPath, cleanup }, the same shape as a node-script run. For a Vite run loaded means a module of the packed copy was served to the page (the page parsed it), loadCount counts the distinct packed files, and publishedCopyLoaded means the page was also served another copy (a file in any node_modules/<package> folder, or a pre-bundled chunk naming the package). The saved replay shows the same correspondence line under its title.',
+    observationStates: [
+      'prepared: the library was built and packed. It alone proves nothing about what the page was served.',
+      'loaded true, publishedCopyLoaded false, observation complete: a module of the packed copy was served and no other copy was. Say "ran on the checked-out library" only then.',
+      'loaded false with a complete observation: built but not served to this page; the page never imported the package.',
+      'publishedCopyLoaded true: the page was also served another copy (publishedCopyPath names the first); say which copy ran and make no correspondence claim.',
+      'pending, incomplete or unreadable observation: say what the page loaded was not fully observed, never "not loaded". The observation is complete only after the page closed and every module it parsed was collected.',
+    ],
+    refusals: {
+      ...Object.fromEntries(
+        Object.entries(VITE_LIBRARY_REFUSALS).map(([reason, entry]) => [
+          reason,
+          { anchor: packageRootAnchor(reason), ...entry },
+        ]),
+      ),
+      unsupportedNothingStarted: `LIBRARY_BUILD_UNSUPPORTED, details.reason one of ${[...NODE_SCRIPT_LIBRARY_UNSUPPORTED_REASONS, ...VITE_LIBRARY_UNSUPPORTED_REASONS].join(', ')}: nothing was built or started; the reasons shared with node-script are explained at codebook://help/node-script#LIBRARY_BUILD_UNSUPPORTED.`,
+      failedAfterStart: `LIBRARY_BUILD_FAILED, details.reason one of ${LIBRARY_BUILD_FAILED_REASONS.join(', ')}: follow codebook://help/node-script#LIBRARY_BUILD_FAILED. Retry a build-error or timeout once at most; never retry tracked-file-changed or tracked-files-unverified. pack-error details.step is one of ${LIBRARY_PACK_ERROR_STEPS.join(', ')}.`,
+      librarySourceStops:
+        "A browser stop in the library's checked-out source (a file below library.packageRoot, never in node_modules) is sealed against the served packed module's source map, which names the checked-out file where its sourcesContent equals that file, and pauses there. It is refused before the browser opens with the API 1.21 VITE_SEAL_FAILED reasons (library-build-stale when the file was edited after this run's build, library-build-unmapped with details.cause, library-not-in-build), in sentences that name the packed build and its revision. For these details.sideEffects is partial: Codebook built and packed the library and wrote its ignored build output, the private folder was removed, no browser opened and no input was sent. library-build-changed is different: it is raised during the run, after the page loaded, as RUNTIME_FAILED with details.sideEffects unknown. A stop outside both the Example and the declared library stays outside-package.",
+    },
+    limits: [
+      "Versions can differ from a fresh install: the library's dependencies come from its own install (the repository lockfile), not from the Example's. A dependency can resolve to another version than a fresh install of the packed tarball would.",
+      "A peer imported by one of the library's own dependencies resolves from the library's install, not the Example's, so two copies of a peer can load when the installs differ.",
+      'An app plugin with enforce: "pre" that resolves the package itself can take the import before the redirect; this is not refused before the build, and the run then reports another copy as loaded (publishedCopyLoaded).',
+      "The library's own dependencies are pre-bundled by Vite, so a stop in them is refused; stops stay in the Example's own source and in the library's checked-out source.",
+      "The run uses its own optimizer cache inside the private folder, so the first start re-optimizes the Example's dependencies (a few seconds); the Example's node_modules/.vite is not rewritten.",
+      'One library per run; browser stops only (no server or SSR participants, no worker code).',
+      'Ignored inputs: the build reads and writes what the project ignores; Codebook compares tracked and untracked-not-ignored files only.',
+      'Yarn and Bun repositories are refused (package-manager-unsupported); the Example runs its installed copy.',
+    ],
+    studies: `A vite-dev run that declares library is saved as study format ${VITE_LIBRARY_STUDY_VERSION} (.study.v${VITE_LIBRARY_STUDY_VERSION}.json) with its retained configuration and the library facts; a run without library keeps the format it takes today. An older Codebook lists a format ${VITE_LIBRARY_STUDY_VERSION} study as saved by a newer Codebook; update Codebook to open it. The replay reads only the saved facts and recorded evidence, never the packed files.`,
+    sample: VITE_LIBRARY_CONFIGURATION,
   }
 }
 
@@ -311,5 +451,6 @@ export function viteHelp() {
       ]),
     ),
     vitePackageRoot: vitePackageRoot(),
+    viteLibrary: viteLibraryHelp(),
   }
 }
