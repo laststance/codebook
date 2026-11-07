@@ -3,7 +3,10 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { workspaceHarness } from './studyWorkspaceHarness'
+import {
+  recordedReaderHarness,
+  workspaceHarness,
+} from './studyWorkspaceHarness'
 import {
   fileNameOf,
   findCoveringRun,
@@ -350,6 +353,7 @@ interface StubGroup {
 /** A fake host of groups and tabs only: the operation the interposer sees is the test calling a wrapped listener. */
 function stubFake(
   groups: StubGroup[],
+  layoutHolder?: { current: unknown },
 ): HostOrderFake<StubGroup, StubTab, never> {
   return {
     groups: () => groups,
@@ -373,7 +377,13 @@ function stubFake(
     textEditorName: () => '',
     textEditorColumn: () => undefined,
     selectionChange: () => undefined,
-    editorLayout: () => ({ orientation: 0, groups: [{}] }),
+    editorLayout: () =>
+      layoutHolder ? layoutHolder.current : { orientation: 0, groups: [{}] },
+    ...(layoutHolder && {
+      applyLayout(recorded: unknown): void {
+        layoutHolder.current = recorded
+      },
+    }),
   }
 }
 
@@ -984,6 +994,122 @@ test('the fake layout follows the layout the host recorded after a delivered eve
 
   // Assert
   assert.deepEqual(layout, { orientation: 1 })
+})
+
+// Value: protects=the workspace's own layout command in a window replay: a layout the host recorded before it answered that command is the old state and must not be put back over it; the host's later answer is applied; fails_when=the recorded layout equal to the one the command replaced is applied after the command (the fake reverts to the old layout and the reader never reads its own back: Cursor 3.29.9 open-study, "The editor could not reserve separate Codebook panes"), or the host's different later layout is skipped; why_new=Cycle 0094 task 12 (Cursor chat-closed open-study); seam=HostOrderInterposer with-operation delivery, applyLayout; no_claim=a host that answers with the same layout it had (nothing to apply), the after-operation mode
+test('a layout recorded before the host answered the workspace layout command is not applied over it, and the answer is', async () => {
+  // Arrange
+  const oldLayout = { orientation: 1, groups: [{ size: 678 }] }
+  const commandLayout = { orientation: 0, groups: [{ size: 2 }, { size: 1 }] }
+  const hostAnswer = { orientation: 0, groups: [{ size: 938 }, { size: 768 }] }
+  const trace = parseHostTrace(
+    traceText([
+      tabsChangedEvent(1, 0, 'a.ts'),
+      snapshotEvent(2, 1, COLUMN_ONE_ACTIVE(['a.ts'], 'a.ts')),
+      { seq: 3, tMs: 2, kind: 'editorLayout', data: oldLayout },
+      {
+        seq: 4,
+        tMs: 30,
+        kind: 'groupsChanged',
+        data: { opened: [], closed: [], changed: [{ groupIndex: 0 }] },
+      },
+      snapshotEvent(5, 31, COLUMN_ONE_ACTIVE(['a.ts'], 'a.ts')),
+      { seq: 6, tMs: 32, kind: 'editorLayout', data: hostAnswer },
+    ]),
+  )
+  const groups: StubGroup[] = [{ viewColumn: 1, tabs: [{ label: 'a.ts' }] }]
+  const layoutHolder = { current: structuredClone(oldLayout) as unknown }
+  const interposer = new HostOrderInterposer(
+    trace,
+    stubFake(groups, layoutHolder),
+    'with-operation',
+  )
+  const listener = interposer.wrap(
+    'tabsChanged',
+    (_event: unknown) => undefined,
+  )
+  interposer.bypass(false)
+
+  // Act: the workspace sets its own layout, and the editor tells it about the tab change in the same burst.
+  layoutHolder.current = commandLayout
+  listener({ opened: [], closed: [], changed: [groups[0]!.tabs[0]!] })
+  await interposer.settled()
+  const layoutAfterBurst = layoutHolder.current
+  await interposer.deliverTrailing()
+
+  // Assert
+  assert.deepEqual(layoutAfterBurst, commandLayout)
+  assert.deepEqual(layoutHolder.current, hostAnswer)
+})
+
+// Value: protects=a window replay naming a tab the first replayed operation closes: the tabs the setup built are remembered when the replay is switched on, so the trace can still name them once the fake has closed them; fails_when=a tab closed by the first burst, before any burst remembered it, makes the replay fail with trace-mapping-failed (Cursor 3.29.9 recording, the Study tab); why_new=Cycle 0094 task 12 (recorded harness windows); seam=HostOrderInterposer.bypass, rememberObjects; no_claim=groups, which the trace names by column
+test('a tab the first replayed operation closes can still be named by the trace', async () => {
+  // Arrange
+  const trace = parseHostTrace(
+    traceText([
+      tabsChangedEvent(1, 0, 'a.ts'),
+      snapshotEvent(2, 1, COLUMN_ONE_ACTIVE(['a.ts'], 'a.ts')),
+      {
+        seq: 3,
+        tMs: 5,
+        kind: 'tabsChanged',
+        data: {
+          opened: [],
+          closed: [{ groupIndex: 0, label: 'b.ts', inputKind: 'text' }],
+          changed: [],
+        },
+      },
+      snapshotEvent(4, 6, COLUMN_ONE_ACTIVE(['a.ts'], 'a.ts')),
+    ]),
+  )
+  const groups: StubGroup[] = [
+    { viewColumn: 1, tabs: [{ label: 'a.ts' }, { label: 'b.ts' }] },
+  ]
+  const interposer = new HostOrderInterposer(
+    trace,
+    stubFake(groups),
+    'with-operation',
+  )
+  const heard: string[] = []
+  const listener = interposer.wrap('tabsChanged', (event: unknown) =>
+    heard.push(JSON.stringify(event === undefined ? 0 : 1)),
+  )
+  interposer.bypass(true)
+  interposer.bypass(false)
+
+  // Act: the operation closes b.ts, then tells its listeners about a.ts only.
+  const closedTab = groups[0]!.tabs.pop()!
+  listener({ opened: [], closed: [], changed: [groups[0]!.tabs[0]!] })
+  await interposer.deliverTrailing()
+
+  // Assert
+  assert.equal(closedTab.label, 'b.ts')
+  assert.equal(heard.length, 2)
+  assert.equal(interposer.result().unmatchedModelBursts, 0)
+})
+
+// Value: protects=a window test building its recorded start state with a saved recording: the recorded harness forwards the host-order options and its setup (recording, attach, stop) consumes no trace event; fails_when=the recorded harness ignores hostOrder (no interposer), or the setup's tab and group events are matched against the trace or counted as unmatched; why_new=Cycle 0094 task 12 (VS Code and Cursor recording and reload windows); seam=recordedReaderHarness hostOrderOptions, workspaceHarness hostOrderStartBypassed; no_claim=the replay after the bypass is turned off, which the window tests cover
+test('a recorded harness built over a trace consumes no trace event while its recording is set up', async () => {
+  // Arrange
+  const trace = parseHostTrace(
+    traceText([snapshotEvent(1, 0, []), tabsChangedEvent(2, 5, 'a.ts')]),
+  )
+
+  // Act
+  const harness = await recordedReaderHarness(false, false, 1, undefined, {
+    hostOrder: trace,
+    hostOrderDelivery: 'with-operation',
+    startBypassed: true,
+  })
+  await harness.reader.open()
+  await harness.hostOrder!.settled()
+  const result = harness.hostOrder!.result()
+  await harness.close()
+
+  // Assert
+  assert.equal(result.unmatchedModelBursts, 0)
+  // The trace's one event stays unconsumed: the setup took none.
+  assert.equal(result.unreachedTraceBursts, 1)
 })
 
 // Value: protects=a sanitized trace's selection or active-editor event on Codebook's captured source being matched to the fake's editor; fails_when=a document URI of the form `scheme:Name` (no slash, as the recorder writes a virtual document) names the whole URI, so the event never finds the fake's `Captured-index.ts` editor and a replay stops with trace-mapping-failed; why_new=Cycle 0094 task 12 (VS Code 1.145.2 window replays); seam=fileNameOf; no_claim=any other URI shape than the three asserted

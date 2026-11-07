@@ -127,7 +127,7 @@ afterEach(() => {
 /**
  * Keeps native presentation inert while exercising actual checkpoints, source watching and durable decisions.
  * @param remoteName - `vscode.env.remoteName` of the fake window, for the editor and the service alike; `wsl` models a WSL remote window, which has no Trash.
- * @param options - `hostOrder`: a parsed host trace; the fake editor then delivers its five listener events in the trace's order and timing (see {@link HostOrderInterposer}) and the harness exposes the interposer as `hostOrder`. Without it nothing changes. `hostOrderDelivery`: the interposer's delivery mode; `'with-operation'` delivers a matched burst before the fake operation's promise resolves (a window replay, see `hostTraceWindow`).
+ * @param options - `hostOrder`: a parsed host trace; the fake editor then delivers its five listener events in the trace's order and timing (see {@link HostOrderInterposer}) and the harness exposes the interposer as `hostOrder`. Without it nothing changes. `hostOrderDelivery`: the interposer's delivery mode; `'with-operation'` delivers a matched burst before the fake operation's promise resolves (a window replay, see `hostTraceWindow`). `hostOrderStartBypassed`: the interposer is bypassed from its creation, so the attach consumes no trace event.
  * @example const reader = await workspaceHarness()
  * @example const readerInWsl = await workspaceHarness(true, false, 'wsl')
  */
@@ -138,6 +138,8 @@ export async function workspaceHarness(
   options: {
     hostOrder?: ParsedHostTrace
     hostOrderDelivery?: 'after-operation' | 'with-operation'
+    /** Starts the `hostOrder` interposer bypassed, before the reader attaches, so no setup call is matched against the trace (default off). */
+    hostOrderStartBypassed?: boolean
   } = {},
 ) {
   // The ledger is shared by the module's every reader: a verdict of an earlier test's stop must not decide this one's.
@@ -633,6 +635,8 @@ export async function workspaceHarness(
         options.hostOrderDelivery,
       )
     : undefined
+  // A setup that runs while the reader attaches must not consume trace events.
+  if (options.hostOrderStartBypassed) hostOrder?.bypass(true)
   let primaryNotificationOrder: 'together' | 'editor first' | 'group first' =
     'together'
   let partialFocusEditor: { value: SourceEditor | undefined } | undefined
@@ -8854,7 +8858,9 @@ export async function saveOneStopNodeHistory(store: NodeTestHistoryStore) {
  * @param capturedApplication - Also retain a real paused-browser PNG checkpoint.
  * @param recordedDebugger - Attach captured native debugger state to the recorded stop, paused from 100 ms until its 900 ms continuation (recording ends at 1,000 ms), so replay presents it through the historical debugger.
  * @param duringStop - Runs once the stop committed at 100 ms and before the run continues (900 ms) or stops (200 ms without `recordedDebugger`), so a test can save an explanation at a recorded time inside the stop by setting the clock first.
+ * @param hostOrderOptions - See {@link workspaceHarness}'s `hostOrder` options; `startBypassed` keeps the replay bypassed from the harness's creation.
  * @example const harness = await recordedReaderHarness(true, true)
+ * @example const harness = await recordedReaderHarness(false, false, 1, undefined, { hostOrder: window.trace, hostOrderDelivery: 'with-operation', startBypassed: true })
  */
 export async function recordedReaderHarness(
   capturedApplication = false,
@@ -8864,8 +8870,17 @@ export async function recordedReaderHarness(
   duringStop?: (
     stopped: Awaited<ReturnType<typeof workspaceHarness>>,
   ) => Promise<void>,
+  hostOrderOptions: {
+    hostOrder?: ParsedHostTrace
+    hostOrderDelivery?: 'after-operation' | 'with-operation'
+    startBypassed?: boolean
+  } = {},
 ) {
-  const harness = await workspaceHarness(true, true),
+  const harness = await workspaceHarness(true, true, undefined, {
+      hostOrder: hostOrderOptions.hostOrder,
+      hostOrderDelivery: hostOrderOptions.hostOrderDelivery,
+      hostOrderStartBypassed: hostOrderOptions.startBypassed,
+    }),
     service = harness.service
   service.environment.build.sourceHash = sha256('recorded-build')
   const png = Buffer.from(

@@ -14,7 +14,10 @@ import { test } from 'node:test'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { citationContext } from '../utils/citationContext'
 
-import { workspaceHarness } from './studyWorkspaceHarness'
+import {
+  recordedReaderHarness,
+  workspaceHarness,
+} from './studyWorkspaceHarness'
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import {
   hostTraceWindow,
@@ -51,6 +54,18 @@ const ARRANGE_REFUSAL =
 /** Parses the committed take. */
 const takeTrace = (): ParsedHostTrace =>
   parseHostTrace(readFileSync(VSCODE_TRACE, 'utf8'))
+
+/**
+ * Parses the committed take for a window over the harness's saved recording, whose source is `src/theme.ts`: the take's captured source `Captured-index.ts` is named `Captured-theme.ts` as the recorded study's slot is. Only that file name changes; the groups, tabs, orders and timing are the take's.
+ * @returns The take with the recorded study's captured-source name.
+ */
+const recordedStudyTakeTrace = (): ParsedHostTrace =>
+  parseHostTrace(
+    readFileSync(VSCODE_TRACE, 'utf8').replaceAll(
+      'Captured-index.ts',
+      'Captured-theme.ts',
+    ),
+  )
 
 /**
  * Builds the configured study with its cited source renamed to the take's `db/index.ts`, so the captured source tab reads `Captured-index.ts` as in the native take.
@@ -125,6 +140,36 @@ async function buildStudyAtArrange(harness: Harness) {
   const study = await saveStudy(harness)
   await openSavedStudy(harness, study.id)
   return { studyId: study.id, indexDraft }
+}
+
+/**
+ * Makes the harness over one window of the take with a saved recording (Recorded application and captured source), with the replay in the `with-operation` delivery and bypassed from the start so the recording's own setup consumes no trace event.
+ * @param window - The window to replay.
+ * @returns The recorded harness, its replay bypassed and its Study not yet open.
+ */
+async function recordedHarnessForWindow(window: HostTraceWindow) {
+  const harness = await recordedReaderHarness(false, false, 1, undefined, {
+    hostOrder: window.trace,
+    hostOrderDelivery: 'with-operation',
+    startBypassed: true,
+  })
+  // The recording's own setup closed the reader; the take starts with the learner's one group.
+  await harness.reader.close()
+  return harness
+}
+
+/**
+ * Builds the take's Study at the `arrange` mark over the saved recording's study.
+ * @param harness - A recorded harness whose replay is bypassed.
+ * @returns The learner's `index.ts` tab handle, whose `focus` brings it to the front.
+ */
+async function buildRecordedStudyAtArrange(
+  harness: Awaited<ReturnType<typeof recordedHarnessForWindow>>,
+) {
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  const indexDraft = harness.focusMutableDraft('index.ts', 1)
+  await openSavedStudy(harness, harness.studyId)
+  return { indexDraft }
 }
 
 /**
@@ -256,19 +301,23 @@ test('the Study pane Restore after Arrange leaves index.ts in front and the Stud
   }
 })
 
-// Value: protects=the Study pane's Recording in VS Code 1.145.2: the Study pane closes, the Application moves to a group of its own at column 1 and the learner's group keeps index.ts with the captured source slot; fails_when=the start state differs from the take's at the recording mark, the recording is refused or times out, the end state differs from the take's, or a burst or trace event stays unaligned; why_new=Cycle 0094 task 12 (VS Code take, window 4); seam=workspaceHarness hostOrder (with-operation), the reader's openRecording; no_claim=Cursor, the recording's own content, timing beyond the 2 s gap cap
+// Value: protects=the Study pane's Recording in VS Code 1.145.2: the Study pane closes, the Application moves to a group of its own at column 1 and the learner's group keeps index.ts with the captured source slot; fails_when=the start state differs from the take's at the recording mark, the recording is refused or times out, the end state differs from the take's, or a burst or trace event stays unaligned; why_new=Cycle 0094 task 12 (VS Code take, window 4); seam=recordedReaderHarness with hostOrder (with-operation, started bypassed), the reader's openRecording; no_claim=Cursor, the recording's own content, timing beyond the 2 s gap cap
 test(
   'the Study pane Recording closes the Study pane, moves the Application to its own group and opens the recorded source slot',
   {
-    todo: 'first divergence: seq 114 groupsChanged (all three groups changed, the first event of the recording): the retained study the harness saves has no recording, so openRecording runs no editor operation and the fake reports nothing; deliverTrailing then fails at seq 122 (the Study group closing, a group the fake never had). A recorded study needs recordedReaderHarness, which builds its own harness without the hostOrder option and starts its replay un-bypassed',
+    todo: "first divergence: the start state is built (recordedReaderHarness, bypassed from its creation) and the first burst matches seq 114, but the second burst, the fake's new group for the Application at column 1, delivers seq 116 to 118 while the fake already holds the captured source at column 3: seq 118 (activeTextEditor) names the captured source at column 2, where the take had not yet inserted the Application's group (the host focused the captured source's group and closed the Study group at seq 120 to 122 before it moved the Application), so the replay fails with trace-mapping-failed (the fake never had that editor at that column)",
   },
   async () => {
     // Arrange
-    const window = hostTraceWindow(takeTrace(), 'recording', 'reload-window')
-    const harness = await harnessForWindow(window)
+    const window = hostTraceWindow(
+      recordedStudyTakeTrace(),
+      'recording',
+      'reload-window',
+    )
+    const harness = await recordedHarnessForWindow(window)
     const replay = harness.hostOrder!
     try {
-      const { studyId, indexDraft } = await buildStudyAtArrange(harness)
+      const { indexDraft } = await buildRecordedStudyAtArrange(harness)
       // The state the Restore left in the take: index.ts in front, the Study group holding the keyboard.
       indexDraft.focus()
       harness.activateEditorGroup(3)
@@ -276,7 +325,9 @@ test(
       assertStartState(harness, startSnapshot(window), 'recording')
 
       // Act
-      await harness.reader.openRecording(studyId)
+      await harness.reader.openRecording(harness.studyId)
+      // The recording opens its panes on the playback controller's own turns.
+      await harness.controller.settle()
       await replay.settled()
       await replay.deliverTrailing()
       const result = replay.windowResult({ dropTabLabels: FIXTURE_ONLY_TABS })
@@ -320,42 +371,49 @@ function reloadWindowTrace(trace: ParsedHostTrace): {
   }
 }
 
-// Value: protects=Developer: Reload Window with the Study open in VS Code 1.145.2: after the reload the Study panes do not come back and the Study's editor groups stay empty beside index.ts (the take ends with an empty first group and index.ts in the second); fails_when=the start state differs from the take's at the reload-window mark, the segment after the reload is matched against the one before, the end state differs from the take's last snapshot, or an event stays unaligned; why_new=Cycle 0094 task 12 (VS Code take, window 5, two segments); seam=workspaceHarness hostOrder, HostOrderInterposer.runSegments, leaveEmptyGroup for the groups the reload leaves; no_claim=the unrecorded 3.7 s of the reload itself, Cursor, that the reader after the reload offers Open Study Workspace again (the take stops there)
-test(
-  'Reload Window with the Study open leaves the Study panes closed and the first group empty beside index.ts',
-  {
-    todo: 'start state cannot be built with the harness helpers: the take stands in the recording state (Recorded application in column 1, index.ts and Captured-source.mts in column 2), which needs a saved recording; the retained study the harness saves reaches only the Study layout, so the start-state assertion fails first',
-  },
-  async () => {
-    // Arrange
-    const cut = reloadWindowTrace(takeTrace())
-    const harness = await workspaceHarness(false, false, undefined, {
-      hostOrder: cut.trace,
-      hostOrderDelivery: 'with-operation',
-    })
-    const replay = harness.hostOrder!
-    replay.bypass(true)
-    try {
-      await buildStudyAtArrange(harness)
-      replay.bypass(false)
-      assertStartState(harness, cut.start, 'reload-window')
+// Value: protects=Developer: Reload Window with the Study open in VS Code 1.145.2: after the reload the Study panes do not come back and the Study's editor groups stay empty beside index.ts (the take ends with an empty first group and index.ts in the second); fails_when=the start state differs from the take's at the reload-window mark, the segment after the reload is matched against the one before, the end state differs from the take's last snapshot, or an event stays unaligned; why_new=Cycle 0094 task 12 (VS Code take, window 5, two segments); seam=recordedReaderHarness hostOrder (started bypassed), openRecording, HostOrderInterposer.runSegments, leaveEmptyGroup and the close of the captured source for what the reload leaves; no_claim=the unrecorded 3.7 s of the reload itself, that the host's own post-reload reports (2 events) are produced by the fake, Cursor, that the reader after the reload offers Open Study Workspace again (the take stops there)
+test('Reload Window with the Study open leaves the Study panes closed and the first group empty beside index.ts', async () => {
+  // Arrange
+  const cut = reloadWindowTrace(recordedStudyTakeTrace())
+  const harness = await recordedReaderHarness(false, false, 1, undefined, {
+    hostOrder: cut.trace,
+    hostOrderDelivery: 'with-operation',
+    startBypassed: true,
+  })
+  const replay = harness.hostOrder!
+  try {
+    await harness.reader.close()
+    // The take's state at the mark: the recording open (Recorded application in column 1, index.ts and the captured source in column 2).
+    await buildRecordedStudyAtArrange(harness)
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    // The take left the captured source's group active; the fake's Recording leaves the Application's.
+    harness.activateEditorGroup(2)
+    replay.bypass(false)
+    assertStartState(harness, cut.start, 'reload-window')
 
-      // Act
-      const counts = await replay.runSegments(
-        [async (): Promise<void> => {}, async (): Promise<void> => {}],
-        async (): Promise<void> => {
-          // The reload empties the Study's groups and keeps no pane.
-          harness.leaveEmptyGroup(1)
-        },
-      )
-      const result = replay.windowResult({ dropTabLabels: FIXTURE_ONLY_TABS })
+    // Act
+    await replay.runSegments(
+      [async (): Promise<void> => {}, async (): Promise<void> => {}],
+      async (): Promise<void> => {
+        // The reload empties the Application's group and keeps no pane; the captured source, a virtual document no serializer restores, is not reopened.
+        harness.leaveEmptyGroup(1)
+        const capturedTabs = harness.groups
+          .flatMap((group) => group.tabs)
+          .filter((tab) => tab.label.startsWith('Captured-'))
+        await harness.editor.window.tabGroups.close(capturedTabs, true)
+      },
+    )
+    // The host's own reports after the reload are unsolicited: the fake delivers those no burst reached.
+    await replay.deliverTrailing()
+    const result = replay.windowResult({ dropTabLabels: FIXTURE_ONLY_TABS })
 
-      // Assert
-      assert.deepEqual(result.fakeState, result.traceState)
-      assert.equal(counts.unmatchedModelBursts, 0)
-      assert.equal(counts.unreachedTraceBursts, 0)
-    } finally {
-      await harness.close()
-    }
-  },
-)
+    // Assert
+    assert.deepEqual(result.fakeState, result.traceState)
+    // The reload step runs before the second segment begins, so the one burst of the fake's own emptied groups and closed captured source matches no event of the first segment (which holds none after the mark).
+    assert.equal(result.unmatchedModelBursts, 1)
+    assert.equal(result.unreachedTraceBursts, 2)
+  } finally {
+    await harness.close()
+  }
+})

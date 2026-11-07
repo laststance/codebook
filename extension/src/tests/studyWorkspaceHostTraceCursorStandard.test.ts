@@ -15,7 +15,11 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { openRetainedStudy, workspaceHarness } from './studyWorkspaceHarness'
+import {
+  openRetainedStudy,
+  recordedReaderHarness,
+  workspaceHarness,
+} from './studyWorkspaceHarness'
 import {
   hostTraceWindow,
   parseHostTrace,
@@ -32,6 +36,11 @@ const CHAT_OPEN_TAKE = 'cursor-reload-chat-open-cursor-3.29.9.jsonl'
 /** What the harness's fixture adds that the native takes did not have: the article source tab and the Repository Wiki tab of the first groups. Dropped from both sides. */
 const FIXTURE_ONLY_TABS = ['article-source.ts', 'codebook · Repository Wiki']
 
+/** The captured-source file name of the retained study the harness opens ({@link openRetainedStudy}). */
+const RETAINED_CAPTURED_NAME = 'Captured-overview.mts'
+/** The captured-source file name of the saved recording's study ({@link recordedReaderHarness}). */
+const RECORDED_CAPTURED_NAME = 'Captured-theme.ts'
+
 /** The refusal every Arrange and Restore of the chat-closed take answered with. */
 const PENDING_REFUSAL =
   'A presentation change or reader close is pending. Read its state before another control.'
@@ -41,13 +50,20 @@ const PENDING_REFUSAL =
  * @param fileName - The fixture's file name.
  * @param startLabel - The mark the window starts at.
  * @param endLabel - The mark that ends it, or `undefined` for the take's end.
+ * @param capturedName - The file name the harness study's captured source slot has, replacing the take's `Captured-cards.tsx` (the retained study's slot is `Captured-overview.mts`, the saved recording's `Captured-theme.ts`); only that file name changes. `undefined` keeps the take's.
  * @returns The window.
- * @example takeWindow(CHAT_CLOSED_TAKE, 'arrange', 'restore')
+ * @example takeWindow(
+      CHAT_CLOSED_TAKE,
+      'arrange',
+      'restore',
+      RETAINED_CAPTURED_NAME,
+    )
  */
 function takeWindow(
   fileName: string,
   startLabel: string,
   endLabel?: string,
+  capturedName?: string,
 ): HostTraceWindow {
   const text = readFileSync(
     join(
@@ -62,7 +78,15 @@ function takeWindow(
     ),
     'utf8',
   )
-  return hostTraceWindow(parseHostTrace(text), startLabel, endLabel)
+  return hostTraceWindow(
+    parseHostTrace(
+      capturedName === undefined
+        ? text
+        : text.replaceAll('Captured-cards.tsx', capturedName),
+    ),
+    startLabel,
+    endLabel,
+  )
 }
 
 /**
@@ -102,37 +126,103 @@ async function arrangedStudyHarness(window: HostTraceWindow) {
   return harness
 }
 
-// Value: protects=Open Study Workspace and the first Arrange after it on the order Cursor 3.29.9 reported them with the Agent chat closed (the open-study window, which holds the take's first Arrange); fails_when=the harness start state differs from the take at the open-study mark, Open or Arrange is refused or times out where the take opened, the final role-normalized groups, active group or layout differ from the take's at the arrange mark, or a burst or trace event is left unaligned; why_new=Cycle 0094 task 12 (D11 windowed replay of the part 2 takes); seam=workspaceHarness hostOrder with-operation delivery, useNativeLayout, addSeparateEditorPart, the reader's open and arrange; no_claim=Cursor's timing beyond the 2 s gap cap, the layout between two events (the fake's layout follows the layout recorded after each delivered event, so a layout read inside a window holds by construction), the pending refusal the take shows after its first Arrange (the harness leaves nothing pending)
+/**
+ * Builds the Study workspace of {@link arrangedStudyHarness} over a saved recording, so the Study pane's Recording has a recording to open; the recording's own setup runs while the replay is bypassed from the harness's creation.
+ * @param window - The window to replay.
+ * @returns The recorded harness with the replay switched on again.
+ */
+async function recordedArrangedStudyHarness(window: HostTraceWindow) {
+  const harness = await recordedReaderHarness(false, false, 1, undefined, {
+    hostOrder: window.trace,
+    hostOrderDelivery: 'with-operation',
+    startBypassed: true,
+  })
+  // The recording's own setup closed the reader; the take starts with the learner's one group and the chat part closed.
+  await harness.reader.close()
+  harness.useNativeLayout({ orientation: 1, groups: [{ size: 678 }] })
+  harness.addSeparateEditorPart()
+  harness.leaveEmptyGroup(2)
+  await harness.reader.open()
+  harness.receive({
+    type: 'history',
+    revision: harness.reader.inspect().view!.revision,
+    studyId: harness.studyId,
+  })
+  // The reader selects the study on the next turns of its own queue.
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  await harness.editor.commands.executeCommand('vscode.setEditorLayout', {
+    orientation: 0,
+    groups: [
+      { size: 220, groups: [{ size: 608 }, { size: 70 }] },
+      { size: 1486 },
+    ],
+  })
+  return harness
+}
+
+// Value: protects=Open Study Workspace and the first Arrange after it on the order Cursor 3.29.9 reported them with the Agent chat closed (the open-study window): the entry reserves its panes although the host's layout report recorded before its own answer arrives after the reader's layout command, and the groups, active group and layout end as the take's at the arrange mark; fails_when=the harness start state differs from the take at the open-study mark, the replay applies the stale recorded layout over the reader's layout command (the fake reverts to one group and Open throws "The editor could not reserve separate Codebook panes"), or the final role-normalized groups, active group or layout differ from the take's; why_new=Cycle 0094 task 12 (D11 windowed replay of the part 2 takes; the recorded layout no longer overrides the product's own layout command); seam=workspaceHarness hostOrder with-operation delivery, useNativeLayout, addSeparateEditorPart, the reader's open and arrange; no_claim=the refusal text of the first Arrange (the take showed the pending refusal, the fake answers with another sentence: the todo test below), Cursor's timing beyond the 2 s gap cap, the layout between two events (the fake's layout follows the layout recorded after each delivered event, so a layout read inside a window holds by construction)
+test('Open Study Workspace and the first Arrange end in the groups and layout of the Cursor 3.29.9 take with the Agent chat closed', async () => {
+  // Arrange: the take's state at its open-study mark, built with harness helpers while the replay is bypassed.
+  const window = takeWindow(
+    CHAT_CLOSED_TAKE,
+    'open-study',
+    'arrange',
+    RETAINED_CAPTURED_NAME,
+  )
+  const harness = await chatClosedHarness(window)
+  const replay = harness.hostOrder!
+  try {
+    replay.bypass(false)
+    const options = { dropTabLabels: FIXTURE_ONLY_TABS }
+    assert.deepEqual(
+      replay.roleNormalizedState(options),
+      roleNormalize(startSnapshot(window), options),
+      'the harness state at the window start must equal the take at its open-study mark (fixture drift, not a product failure)',
+    )
+
+    // Act
+    await harness.reader.open()
+    await harness.reader.action('arrange')
+    await replay.settled()
+    await replay.deliverTrailing()
+    const result = replay.windowResult(options)
+
+    // Assert
+    assert.deepEqual(result.fakeState, result.traceState)
+    // Two model bursts find no covering run and five trace events (the host's own later reports) reach no burst.
+    assert.equal(result.unmatchedModelBursts, 2)
+    assert.equal(result.unreachedTraceBursts, 5)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the pending refusal the take's first Arrange showed on Cursor 3.29.9 with the Agent chat closed; fails_when=the fake's first Arrange after Open is refused with another sentence than "A presentation change or reader close is pending. Read its state before another control."; why_new=Cycle 0094 task 12 (D11 windowed replay of the part 2 takes); seam=workspaceHarness hostOrder with-operation delivery, the reader's open and arrange; no_claim=the groups and layout (the test above), Cursor's timing
 test(
-  'Open Study Workspace and the first Arrange replay in the order Cursor 3.29.9 reported them with the Agent chat closed',
+  'the first Arrange of the chat-closed take is refused as pending',
   {
-    todo: 'first divergence: seq 14 (groupsChanged opened groups 2 and 3, 7823 ms) carries the layout recorded before the host reported its own (seq 18: 938/339/339 beside 768), the single group of 678 px of seq 12; it is applied after the setEditorLayout the reader issued, so the fake reverts to one group, the reader never reads its layout back, and open throws "The editor could not reserve separate Codebook panes" after 5 s with no later burst',
+    todo: 'first divergence: the window now replays to the take\'s groups and layout (the test above), but the first Arrange is refused with "Native pane, group or focus changed while presentation waited; the learner arrangement was preserved." where the take showed "A presentation change or reader close is pending. Read its state before another control." (layoutConfirmed false in both)',
   },
   async () => {
-    // Arrange: the take's state at its open-study mark, built with harness helpers while the replay is bypassed.
-    const window = takeWindow(CHAT_CLOSED_TAKE, 'open-study', 'arrange')
+    // Arrange
+    const window = takeWindow(
+      CHAT_CLOSED_TAKE,
+      'open-study',
+      'arrange',
+      RETAINED_CAPTURED_NAME,
+    )
     const harness = await chatClosedHarness(window)
     const replay = harness.hostOrder!
     try {
       replay.bypass(false)
-      const options = { dropTabLabels: FIXTURE_ONLY_TABS }
-      assert.deepEqual(
-        replay.roleNormalizedState(options),
-        roleNormalize(startSnapshot(window), options),
-        'the harness state at the window start must equal the take at its open-study mark (fixture drift, not a product failure)',
-      )
 
       // Act
       await harness.reader.open()
       await harness.reader.action('arrange')
       await replay.settled()
       await replay.deliverTrailing()
-      const result = replay.windowResult(options)
 
       // Assert
-      assert.deepEqual(result.fakeState, result.traceState)
-      assert.equal(result.unmatchedModelBursts, 0)
-      assert.equal(result.unreachedTraceBursts, 0)
       assert.equal(harness.reader.presentationState().reason, PENDING_REFUSAL)
     } finally {
       await harness.close()
@@ -144,11 +234,16 @@ test(
 test(
   'the marked Arrange of the chat-closed take is refused as pending and ends in the recorded window',
   {
-    todo: 'first divergence: the start state equals the take at the arrange mark, but the take answered "A presentation change or reader close is pending" (left by the open-study window\'s Arrange, which does not replay) while the fake confirms the layout (layoutConfirmed true, reason undefined). The final role-normalized state equals the take\'s; the counts reached are 4 unmatched model bursts and 2 unreached trace events',
+    todo: 'first divergence: the start state equals the take at the arrange mark, but the take answered "A presentation change or reader close is pending" (left by the open-study window\'s Arrange, whose replay refuses with another sentence, see the todo above) while the fake confirms the layout (layoutConfirmed true, reason undefined). The final role-normalized state equals the take\'s; the counts reached are 4 unmatched model bursts and 2 unreached trace events',
   },
   async () => {
     // Arrange
-    const window = takeWindow(CHAT_CLOSED_TAKE, 'arrange', 'restore')
+    const window = takeWindow(
+      CHAT_CLOSED_TAKE,
+      'arrange',
+      'restore',
+      RETAINED_CAPTURED_NAME,
+    )
     const harness = await arrangedStudyHarness(window)
     const replay = harness.hostOrder!
     try {
@@ -180,11 +275,16 @@ test(
 test(
   'the marked Restore of the chat-closed take is refused as pending and ends in the recorded window',
   {
-    todo: 'first divergence: as in the arrange window, the take answered "A presentation change or reader close is pending" and the fake answers with no refusal, because the pending change the take carried came from the open-study window\'s Arrange, which does not replay (layoutConfirmed true, reason undefined, 4 unmatched model bursts, 2 unreached trace events)',
+    todo: 'first divergence: as in the arrange window, the take answered "A presentation change or reader close is pending" and the fake answers with no refusal, because the pending change the take carried came from the open-study window\'s Arrange, which the fake refuses with another sentence (layoutConfirmed true, reason undefined, 4 unmatched model bursts, 2 unreached trace events)',
   },
   async () => {
     // Arrange
-    const window = takeWindow(CHAT_CLOSED_TAKE, 'restore', 'recording')
+    const window = takeWindow(
+      CHAT_CLOSED_TAKE,
+      'restore',
+      'recording',
+      RETAINED_CAPTURED_NAME,
+    )
     const harness = await arrangedStudyHarness(window)
     const replay = harness.hostOrder!
     try {
@@ -216,14 +316,20 @@ test(
 test(
   'Open Recording closes the Study and shows the Recorded application beside the captured source in the order Cursor 3.29.9 reported it',
   {
-    todo: 'first divergence: the start state is not buildable with a recording. recordedReaderHarness, the helper that saves one, takes no hostOrder option, and the retained study of openRetainedStudy has none: openRecording is refused with "No saved recording is available for this study" before any burst (0 unmatched, 24 unreached; the first trace event, seq 84 at 116281 ms, is not reached)',
+    todo: 'first divergence: the start state is built (recordedReaderHarness, bypassed from its creation) and equals the take at the recording mark; the replay then fails at seq 92 (groupsChanged closed an unplaced group, groupIndex -1): after seq 90 closed the Study tab Cursor removed the emptied Study group, while the fake keeps an empty unlocked group (the harness modelling gap of the VS Code open-study window), so the trace names a group the fake never closed (trace-mapping-failed)',
   },
   async () => {
     // Arrange
-    const window = takeWindow(CHAT_CLOSED_TAKE, 'recording', 'reload-window')
-    const harness = await arrangedStudyHarness(window)
+    const window = takeWindow(
+      CHAT_CLOSED_TAKE,
+      'recording',
+      'reload-window',
+      RECORDED_CAPTURED_NAME,
+    )
+    const harness = await recordedArrangedStudyHarness(window)
     const replay = harness.hostOrder!
     try {
+      replay.bypass(false)
       const options = { dropTabLabels: FIXTURE_ONLY_TABS }
       assert.deepEqual(
         replay.roleNormalizedState(options),
@@ -232,9 +338,9 @@ test(
       )
 
       // Act
-      await harness.reader.openRecording(
-        harness.reader.inspect().view!.model.selection.studyId!,
-      )
+      await harness.reader.openRecording(harness.studyId)
+      // The recording opens its panes on the playback controller's own turns.
+      await harness.controller.settle()
       await replay.settled()
       await replay.deliverTrailing()
       const result = replay.windowResult(options)
@@ -253,14 +359,28 @@ test(
 test(
   'after Reload Window with the Agent chat closed the Study panes do not come back and the groups stay empty',
   {
-    todo: 'first divergence: the start state is not buildable. It holds the Recorded application beside two captured-source tabs (Open Recording), which the harness cannot produce under hostOrder (see the recording window); the window itself holds no event, because the reload event ends the segment',
+    todo: "first divergence: the start state differs from the take at the reload-window mark in one tab. The take keeps the Study's captured source (Captured-cards.tsx) open beside the new Captured-source.mts, two captured-source tabs in the first group; the fake's Open Recording replaces the Study's slot, so its group holds one (recordedReaderHarness builds the Recorded application, the layout and the active group as the take has them). The window itself holds no event, because the reload event ends the segment",
   },
   async () => {
     // Arrange
-    const window = takeWindow(CHAT_CLOSED_TAKE, 'reload-window')
-    const harness = await arrangedStudyHarness(window)
+    const window = takeWindow(
+      CHAT_CLOSED_TAKE,
+      'reload-window',
+      undefined,
+      RECORDED_CAPTURED_NAME,
+    )
+    const harness = await recordedArrangedStudyHarness(window)
     const replay = harness.hostOrder!
     try {
+      // The take's state at the mark: the Recording open beside the captured source.
+      await harness.reader.openRecording(harness.studyId)
+      await harness.controller.settle()
+      // The take's two columns stand at 339 px each at the mark.
+      harness.changeEditorLayout({
+        orientation: 1,
+        groups: [{ size: 339 }, { size: 339 }],
+      })
+      replay.bypass(false)
       const options = { dropTabLabels: FIXTURE_ONLY_TABS }
       assert.deepEqual(
         replay.roleNormalizedState(options),

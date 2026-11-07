@@ -940,6 +940,10 @@ export class HostOrderInterposer<
   private failure: unknown
   private disposed = false
   private bypassed = false
+  /** The fake's editor layout (as JSON) when the last delivery ended or the replay was switched on; a different layout at the next burst's end was set by the workspace's own layout command. */
+  private deliveredLayoutKey: string | undefined
+  /** The layout (as JSON) the workspace's own layout command replaced in the burst being delivered: a recorded layout equal to it was recorded before the host answered that command and must not be applied over it. `undefined` when no command ran. */
+  private staleLayoutKey: string | undefined
   private readonly registered = new Map<
     HostListenerKind,
     Set<(...args: never[]) => void>
@@ -1018,6 +1022,11 @@ export class HostOrderInterposer<
    */
   bypass(active: boolean): void {
     this.bypassed = active
+    // Switching the replay on: the tabs and groups the setup built are the ones the trace may name later, even after the first replayed operation closes them.
+    if (!active) {
+      this.rememberObjects()
+      this.deliveredLayoutKey = JSON.stringify(this.fake.editorLayout())
+    }
   }
 
   /** Stops every pending delivery; the harness calls it when it closes. */
@@ -1205,6 +1214,7 @@ export class HostOrderInterposer<
     this.burstScheduled = false
     const buffered = this.burst.splice(0)
     if (buffered.length === 0 || this.disposed) return
+    this.noteLayoutCommand()
     // Objects the burst's payloads name stay reachable by identity.
     for (const entry of buffered) this.rememberPayload(entry)
     const events = this.trace.segments[this.segmentIndex]?.events ?? []
@@ -1263,9 +1273,32 @@ export class HostOrderInterposer<
     this.applyRecordedLayout(event)
   }
 
-  /** Lets the fake's layout follow what the host settled on after an event. */
+  /**
+   * Notes, for the `with-operation` delivery, whether the workspace changed the fake's layout since the last delivery ended (its own `vscode.setEditorLayout`), and which layout that replaced.
+   *
+   * A host answers such a command with its own layout a few events later; the layouts recorded before that answer are the old state and would put the old layout back over the command's.
+   */
+  private noteLayoutCommand(): void {
+    if (this.mode !== 'with-operation') return
+    const now = JSON.stringify(this.fake.editorLayout())
+    this.staleLayoutKey =
+      this.deliveredLayoutKey !== undefined && now !== this.deliveredLayoutKey
+        ? this.deliveredLayoutKey
+        : undefined
+  }
+
+  /**
+   * Lets the fake's layout follow what the host settled on after an event.
+   *
+   * While a layout command of the workspace is waiting for the host's answer ({@link HostOrderInterposer.noteLayoutCommand}), a recorded layout equal to the one the command replaced is skipped; the first different one is the host's answer and is applied.
+   */
   private applyRecordedLayout(event: HostTraceEvent): void {
-    if (event.layout !== undefined) this.fake.applyLayout?.(event.layout)
+    if (event.layout === undefined) return
+    if (this.staleLayoutKey !== undefined) {
+      if (JSON.stringify(event.layout) === this.staleLayoutKey) return
+      this.staleLayoutKey = undefined
+    }
+    this.fake.applyLayout?.(event.layout)
   }
 
   /** After a run the flags follow its last snapshot. */
@@ -1286,6 +1319,7 @@ export class HostOrderInterposer<
     } catch (error) {
       this.failure = error
     }
+    this.deliveredLayoutKey = JSON.stringify(this.fake.editorLayout())
   }
 
   /**
