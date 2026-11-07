@@ -506,3 +506,77 @@ test('finalize resolves and leaves the observation unreadable when the report ca
     cause: 'report-read-failed: close failed',
   })
 })
+
+// Value: protects=the run seals a library stop through the packed library only after the preload was written, and the route hands out exactly the real names the seal needs (D3); fails_when=packedLibrary answers before prepare, is not set after the preload was written, or loses the package name, library folder or packed folder; why_new=the seal and the adapter tests feed a hand-made library stop, so nothing checks the route produces that input; seam=none; no_claim=the run's own stop request (private wiring of ConfiguredBrowserRun)
+test('hands out the packed library for a library stop only once the preload was written', async (context) => {
+  // Arrange
+  const run = await buildRoute(context)
+  await run.route.plan(run.controller.signal)
+  const beforePrepare = run.route.packedLibrary()
+  // Act
+  await run.route.prepare(run.controller.signal)
+  // Assert
+  assert.equal(beforePrepare, undefined)
+  assert.deepEqual(run.route.packedLibrary(), {
+    packageName: 'redux',
+    libraryRoot: run.libraryRoot,
+    packedRoot: run.packedRoot,
+  })
+})
+
+// Value: protects=a failed server stop keeps the private folder of a react-scripts library run (the server may still run on the packed copy and the webpack caches) until the retried Stop removes it; fails_when=the route drops the serverStopped option and removes the folder while the server may run; why_new=the retained-folder test runs the Vite route only, and the react-scripts route has its own dispose forwarding; seam=none; no_claim=a real server process
+test('keeps the private folder while the server stop failed and removes it on the retried Stop', async (context) => {
+  // Arrange
+  const run = await stage(context)
+  // Act
+  await run.route.dispose({ serverStopped: false })
+  const afterFailedStop = {
+    cleanup: run.route.view().cleanup,
+    folder: await stat(run.privateFolder).then(
+      () => 'exists',
+      () => 'missing',
+    ),
+  }
+  await run.route.dispose()
+  // Assert
+  assert.deepEqual(afterFailedStop, { cleanup: 'pending', folder: 'exists' })
+  assert.equal(run.route.view().cleanup, 'removed')
+  await assert.rejects(stat(run.privateFolder))
+})
+
+// Value: protects=a preload that cannot be written ends the build as a partial link failure and leaves no preload or packed library for a stop to be sealed through; fails_when=the write error escapes unwrapped, the failure is not reported as sideEffects partial, or the route still announces a preload; why_new=every route test writes the preload successfully; seam=none; no_claim=the real removal of the private folder by failLink
+test('refuses with a partial link failure when the preload cannot be written', async (context) => {
+  // Arrange
+  const failLinks: { sentence: string; sideEffects: unknown }[] = []
+  const run = await buildRoute(context, {
+    prepareCore: async () => ({
+      facts: FACTS,
+      packedRoot: join(await realpath(tmpdir()), 'unused-packed'),
+      peers: [],
+      imports: undefined,
+      libraryRoot: tmpdir(),
+      privateFolder: join(tmpdir(), 'codebook-rs-missing-private-folder'),
+      dispose: async () => ({ cleanup: 'removed' as const }),
+      failLink: async (sentence, options) => {
+        failLinks.push({ sentence, sideEffects: options?.sideEffects })
+        throw new Error('link failed')
+      },
+    }),
+  })
+  await run.route.plan(run.controller.signal)
+  // Act
+  const error = await run.route.prepare(run.controller.signal).then(
+    () => undefined,
+    (thrown: unknown) => thrown,
+  )
+  // Assert
+  assert.equal(error instanceof Error ? error.message : error, 'link failed')
+  assert.equal(failLinks.length, 1)
+  assert.match(
+    failLinks[0]?.sentence ?? '',
+    /^The react-scripts preload could not be written: /,
+  )
+  assert.equal(failLinks[0]?.sideEffects, 'partial')
+  assert.equal(run.route.packedLibrary(), undefined)
+  assert.throws(() => run.route.preloadPath(), /prepare must run/)
+})
