@@ -5,6 +5,7 @@ import {
   VITE_LIBRARY_STUDY_VERSION,
 } from '../constants'
 import { EvidenceIntegrityError, StudyError } from '../errors'
+import type { LibraryRunFacts } from '../libraryRunFactsSchema'
 import { readResource } from '../resources'
 import type { RetainedStudy } from '../retainedStudySchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
@@ -21,6 +22,28 @@ import {
   studyFormatOfEvidence,
   usesServerRenderEvidence,
 } from './studyFormatOfConfiguration'
+
+/**
+ * The facts of a declared library that no run ever prepared: `package` holds the declared folder until a name is known.
+ * Called by {@link captureStudy} when a format 16 study is saved without runtime library facts.
+ * @param configuration - The sealed configuration of the study.
+ * @returns The pending facts, or `undefined` when the configuration declares no library.
+ * @example pendingLibraryFacts(configuration) // => { package: 'packages/widgets', packageRoot: 'packages/widgets', prepared: false, observation: 'pending' }
+ */
+function pendingLibraryFacts(
+  configuration: unknown,
+): LibraryRunFacts | undefined {
+  const packageRoot = (
+    configuration as { library?: { packageRoot?: string } } | undefined
+  )?.library?.packageRoot
+  if (packageRoot === undefined) return undefined
+  return {
+    package: packageRoot,
+    packageRoot,
+    prepared: false,
+    observation: 'pending',
+  }
+}
 
 /** Copies only committed canonical evidence for {@link StudyWorkspace}; a changed read is discarded. @example await captureStudy(service, record, workspaceKey) */
 export async function captureStudy(
@@ -234,10 +257,14 @@ export async function captureStudy(
             ? { expoVersion: runtime.expoVersion }
             : {}),
           // A Vite library study (format 16) keeps the library facts as they stand at this checkpoint; no other study carries them.
-          ...(studyVersion === VITE_LIBRARY_STUDY_VERSION &&
-          runtime?.profile === REPOSITORY_BROWSER_PROFILE &&
-          runtime.library
-            ? { library: runtime.library }
+          // A run that ended before the library route existed (a refusal in package resolution, admission, source preparation or workspace checks) has no facts yet: it saves the pending facts of the declared folder, so the preparation failure stays representable.
+          ...(studyVersion === VITE_LIBRARY_STUDY_VERSION
+            ? {
+                library:
+                  (runtime?.profile === REPOSITORY_BROWSER_PROFILE
+                    ? runtime.library
+                    : undefined) ?? pendingLibraryFacts(canonicalConfiguration),
+              }
             : {}),
           // A format 8 study says the first execution of the page was not observed.
           ...(usesServerRenderEvidence({

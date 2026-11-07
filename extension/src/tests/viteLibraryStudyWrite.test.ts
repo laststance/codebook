@@ -11,6 +11,7 @@ import { RepositoryBookStore } from '../repositoryBook'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { StudyService } from '../service'
 import { captureStudy } from '../utils/captureStudy'
+import { decodeConfiguredStudy } from '../utils/decodeConfiguredStudy'
 import { describeStudyLibraryLine } from '../utils/describeStudyLibraryLine'
 
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
@@ -21,7 +22,7 @@ const ORIGIN = 'http://localhost:4321'
 /** Runs a nested library run through the service to its first stop and stops it, returning the captured study. */
 async function savedLibraryStudy(
   context: TestContext,
-  announce: 'packed' | 'none',
+  announce: 'packed' | 'none' | 'refused',
 ) {
   let service: StudyService | undefined, books: RepositoryBookStore | undefined
   context.after(async () => {
@@ -49,19 +50,24 @@ async function savedLibraryStudy(
           executable: process.execPath,
           version: '24.0.0',
         }),
-        assertSupported: async () => ({
-          libraryRoot: join(privateFolder, 'library'),
-          relativeRoot: 'packages/widgets',
-          name: '@acme/widgets',
-          version: '1.2.0',
-          peers: [],
-          packageManager: {
-            ok: true,
-            name: 'pnpm',
-            version: '10.0.0',
-            executable: '/bin/pnpm',
-          },
-        }),
+        assertSupported: async () => {
+          // A refusal in package resolution: the run ends before the library route has any facts.
+          if (announce === 'refused')
+            throw new Error('refused before the route')
+          return {
+            libraryRoot: join(privateFolder, 'library'),
+            relativeRoot: 'packages/widgets',
+            name: '@acme/widgets',
+            version: '1.2.0',
+            peers: [],
+            packageManager: {
+              ok: true,
+              name: 'pnpm',
+              version: '10.0.0',
+              executable: '/bin/pnpm',
+            },
+          }
+        },
         readManifest: async () => ({ peers: [] }),
         allocatePrivateFolder: async () => privateFolder,
         prepareCore: async () => ({
@@ -142,7 +148,14 @@ async function savedLibraryStudy(
     configuration: harness.definition.configuration,
   })
   const record = service.record(receipt)
-  await record.preparation
+  // A refused route ends the preparation; the study is captured as that failure stands.
+  await record.preparation?.catch(() => undefined)
+  if (announce === 'refused') {
+    // The run ended before the route existed, so its view carries no library facts.
+    const viewWithRoute = harness.run.view.bind(harness.run)
+    harness.run.view = () => ({ ...viewWithRoute(), library: undefined })
+    return captureStudy(service, record, library.workspaceKey)
+  }
   if (announce === 'packed') {
     const file = join(packedRoot, 'dist', 'index.mjs')
     await mkdir(dirname(file), { recursive: true })
@@ -186,6 +199,24 @@ test('a library run that served nothing of the package is saved with loaded fals
     describeStudyLibraryLine(facts),
     'Built @acme/widgets 1.2.0, but not served to this page.',
   )
+})
+
+// protects=a format 16 run that failed in package resolution, before the library route had facts, is still saved with pending facts of the declared folder and no replay line; fails_when=the capture leaves library out, which the reader then rejects as facts and format disagreeing; no_claim=a live refusal's wording
+test('a library run refused before the route had facts is saved with pending facts and no replay line', async (context) => {
+  // Arrange / Act
+  const study = await savedLibraryStudy(context, 'refused')
+  // Assert
+  const facts = study && 'library' in study ? study.library : undefined
+  assert.equal(study?.version, VITE_LIBRARY_STUDY_VERSION)
+  assert.deepEqual(facts, {
+    package: 'packages/widgets',
+    packageRoot: 'packages/widgets',
+    prepared: false,
+    observation: 'pending',
+  })
+  assert.equal(describeStudyLibraryLine(facts), undefined)
+  // The reader accepts the study as written, so it neither throws on save nor reads unreadable.
+  assert.doesNotThrow(() => decodeConfiguredStudy(study, study.workspaceKey))
 })
 
 // protects=the replay line of each observation state: incomplete and unreadable read not fully observed, an unbuilt library has no line; fails_when=an uncertain state reads as a claim or as not loaded; no_claim=none beyond protects

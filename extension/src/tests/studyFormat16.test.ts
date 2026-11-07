@@ -245,3 +245,48 @@ test('refuses a format 16 study whose library facts break the state rules or dis
   ])
   assert.equal(decodes(accepted), true)
 })
+
+// protects=before the package name is known `package` holds the declared folder, which may be up to the path limit, while a prepared library keeps the name limit; fails_when=an early-failure study with a long declared folder fails its own schema, or a prepared name longer than 214 is accepted; no_claim=none beyond protects
+test('an unprepared library may name a declared folder up to 512 characters but a prepared package name stops at 214', async () => {
+  // Arrange
+  const folder = (length: number) => 'p'.repeat(length)
+  const pending = (length: number) => ({
+    package: folder(length),
+    packageRoot: 'packages/widgets',
+    prepared: false,
+    observation: 'pending',
+  })
+  const attempts = await Promise.all([
+    libraryStudy(pending(512)),
+    libraryStudy(pending(513)),
+    libraryStudy({ ...COMPLETE_FACTS, package: folder(214) }),
+    libraryStudy({ ...COMPLETE_FACTS, package: folder(215) }),
+  ])
+  // Act
+  const results = attempts.map(decodes)
+  // Assert
+  assert.deepEqual(results, [true, false, true, false])
+})
+
+// protects=a complete observation claims the correspondence only with a count: loaded is true exactly when loadCount is above zero, and the library must be prepared; fails_when=loaded true with count 0, loaded false with a count, or a complete observation on an unprepared library decodes; no_claim=none beyond protects
+test('refuses a complete observation whose loaded flag disagrees with the load count or whose library is unprepared', async () => {
+  // Arrange
+  const attempts = await Promise.all([
+    libraryStudy({ ...COMPLETE_FACTS, loaded: true, loadCount: 0 }),
+    libraryStudy({ ...COMPLETE_FACTS, loaded: false, loadCount: 3 }),
+    libraryStudy({
+      package: 'packages/widgets',
+      packageRoot: 'packages/widgets',
+      prepared: false,
+      observation: 'complete',
+      loaded: false,
+      loadCount: 0,
+      publishedCopyLoaded: false,
+    }),
+    libraryStudy({ ...COMPLETE_FACTS, loaded: false, loadCount: 0 }),
+  ])
+  // Act
+  const results = attempts.map(decodes)
+  // Assert
+  assert.deepEqual(results, [false, false, false, true])
+})

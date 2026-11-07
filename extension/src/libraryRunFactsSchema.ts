@@ -33,12 +33,18 @@ const COMPLETE_OBSERVATION_FIELDS = [
 type ParsedFacts = {
   prepared: boolean
   observation: 'pending' | 'complete' | 'incomplete' | 'unreadable'
+  package: string
+  loaded?: boolean
+  loadCount?: number
   publishedCopyLoaded?: boolean
   publishedCopyPath?: string
 } & Partial<
   Record<
-    | (typeof PREPARED_FIELDS)[number]
-    | (typeof COMPLETE_OBSERVATION_FIELDS)[number],
+    Exclude<
+      | (typeof PREPARED_FIELDS)[number]
+      | (typeof COMPLETE_OBSERVATION_FIELDS)[number],
+      'loaded' | 'loadCount' | 'publishedCopyLoaded'
+    >,
     unknown
   >
 >
@@ -60,6 +66,58 @@ function addPreparedIssues(facts: ParsedFacts, context: z.RefinementCtx): void {
           ? `${field} is required once the library is prepared.`
           : `${field} exists only once the library is prepared.`,
       })
+}
+
+/**
+ * Adds an issue when `package` is longer than a package name may be although the library was prepared: before the name is known `package` holds the declared folder (up to the path limit), and once prepared it is the real package name.
+ * Called by the {@link libraryRunFactsSchema} refinement.
+ * @param facts - The parsed facts.
+ * @param context - The refinement context that receives the issue.
+ * @example addPackageNameIssue({ package: 'x'.repeat(300), prepared: true, observation: 'pending' }, context) // issue at ['package']
+ */
+function addPackageNameIssue(
+  facts: ParsedFacts,
+  context: z.RefinementCtx,
+): void {
+  if (
+    facts.prepared &&
+    facts.package.length > NODE_SCRIPT_LIBRARY_PACKAGE_LIMIT_CHARS
+  )
+    context.addIssue({
+      code: 'custom',
+      path: ['package'],
+      message: `package is a package name of at most ${NODE_SCRIPT_LIBRARY_PACKAGE_LIMIT_CHARS} characters once the library is prepared.`,
+    })
+}
+
+/**
+ * Adds an issue when a `complete` observation breaks its own rules: the library must be prepared, and `loaded` is true exactly when `loadCount` is above zero, so the study never claims the correspondence without a count.
+ * Called by {@link addObservationIssues}.
+ * @param facts - The parsed facts.
+ * @param context - The refinement context that receives the issues.
+ * @example addCompleteObservationIssues({ prepared: true, observation: 'complete', loaded: true, loadCount: 0 }, context) // issue at ['loaded']
+ */
+function addCompleteObservationIssues(
+  facts: ParsedFacts,
+  context: z.RefinementCtx,
+): void {
+  if (facts.observation !== 'complete') return
+  if (!facts.prepared)
+    context.addIssue({
+      code: 'custom',
+      path: ['observation'],
+      message: 'A complete observation requires a prepared library.',
+    })
+  if (
+    facts.loaded !== undefined &&
+    facts.loadCount !== undefined &&
+    facts.loaded !== facts.loadCount > 0
+  )
+    context.addIssue({
+      code: 'custom',
+      path: ['loaded'],
+      message: 'loaded is true exactly when loadCount is above zero.',
+    })
 }
 
 /**
@@ -90,6 +148,7 @@ function addObservationIssues(
         message: `${field} is absent when the observation is ${facts.observation}.`,
       })
   }
+  addCompleteObservationIssues(facts, context)
   if (
     facts.publishedCopyPath !== undefined &&
     facts.publishedCopyLoaded !== true
@@ -103,14 +162,15 @@ function addObservationIssues(
 
 /**
  * The library facts a saved `vite-dev` study of format 16 keeps (the run resource's library view as it stood at the save).
- * Which fields exist depends on the state, not on a fixed list (D18): `package`, `packageRoot`, `prepared` and `observation` always; the build facts only when `prepared`; `loaded`, `loadCount` and `publishedCopyLoaded` when the observation is `complete`, and as lower bounds when it is `incomplete`, never when it is `pending` or `unreadable`; `publishedCopyPath` only when `publishedCopyLoaded`; `cleanup` once the private folder was released.
+ * Which fields exist depends on the state, not on a fixed list (D18): `package` (the declared folder until the name is known), `packageRoot`, `prepared` and `observation` always; the build facts only when `prepared`; `loaded`, `loadCount` and `publishedCopyLoaded` when the observation is `complete`, and as lower bounds when it is `incomplete`, never when it is `pending` or `unreadable`; `publishedCopyPath` only when `publishedCopyLoaded`; `cleanup` once the private folder was released.
  * Read by {@link configuredStudySchema}; the state rules are checked here so a study that breaks them is listed as unreadable like any malformed study.
  * @example
  * libraryRunFactsSchema.parse({ package: 'widgets', packageRoot: 'packages/widgets', prepared: false, observation: 'pending' })
  */
 export const libraryRunFactsSchema = z
   .strictObject({
-    package: z.string().min(1).max(NODE_SCRIPT_LIBRARY_PACKAGE_LIMIT_CHARS),
+    // Before the package name is known this holds the declared folder, so the bound is the path limit; addPackageNameIssue keeps a prepared name within the name limit.
+    package: z.string().min(1).max(REPOSITORY_PATH_LIMIT_CHARS),
     packageRoot: z.string().min(1).max(REPOSITORY_PATH_LIMIT_CHARS),
     prepared: z.boolean(),
     version: z
@@ -155,6 +215,7 @@ export const libraryRunFactsSchema = z
     cleanup: z.enum(['removed', 'pending']).optional(),
   })
   .superRefine((facts, context) => {
+    addPackageNameIssue(facts, context)
     addPreparedIssues(facts, context)
     addObservationIssues(facts, context)
   })
