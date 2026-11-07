@@ -1312,6 +1312,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private expoVersion?: string
   /** The run side of the Vite library route, for a nested `vite-dev` run that declares `library` (decision D12). */
   private libraryRoute?: ViteLibraryRoute
+  /** Whether the browser participant's debug session has ended; js-debug ends it once the page target is closed. */
+  private hasBrowserSessionEnded = false
+  /** Settles the library finalization's wait for the browser participant's session to end, while it waits. */
+  private browserSessionEnded?: () => void
   /** The Next setup step reached; a Pages run's setup deadline names it ({@link setupDeadlineText}). The Vite step stays in {@link setupStep}. */
   private nextSetupStep: NextSetupStep = NEXT_SETUP_STEPS.validatingProject
   /** The Pages route of a Next run on the Pages path, with the run's one discovery cache; set once the entry path resolved as a Pages route. The setup-deadline text, the seal and the Pages-only checks read it; every other run leaves it unset. */
@@ -2193,8 +2197,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     })
     const failures: string[] = []
     let didBoundWin = false
+    const sessionEnded = new Promise<void>((resolve) => {
+      if (this.hasBrowserSessionEnded) resolve()
+      else this.browserSessionEnded = resolve
+    })
     const outcome = await Promise.race([
-      closePageUntilGone(pageCdp).then(
+      closePageUntilGone(pageCdp, sessionEnded).then(
         () => 'closed' as const,
         (error: unknown) => {
           // A close that fails after the bound already won is journaled; the owned browser close step of the cleanup closes the browser and reports its own failure.
@@ -13750,6 +13758,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   terminated(session: vscode.DebugSession): void {
     this.activeSessions.delete(session.id)
     this.evidence.record('session.terminated', { sessionId: session.id })
+    // js-debug ends the page's session once its target is closed: the library finalization counts that as the page being gone.
+    if (this.participantName(session) === 'browser') {
+      this.hasBrowserSessionEnded = true
+      this.browserSessionEnded?.()
+    }
     if (!this.cleaning && this.participantName(session))
       this.fail('Selected debugger terminated')
   }

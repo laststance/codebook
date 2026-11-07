@@ -23,6 +23,7 @@ import {
 } from './utils/assertLibraryRouteSupported'
 import { canonicalJson } from './utils/canonicalJson'
 import type { ViteLibraryRunQuestion } from './utils/createViteLibraryRunAsker'
+import { isAtOrInsideFolder } from './utils/isAtOrInsideFolder'
 import { isInsideFolder } from './utils/isInsideFolder'
 import { removeFolderUnlessCleanupPending } from './utils/removeFolderUnlessCleanupPending'
 import { removeWithoutFollowing } from './utils/removeWithoutFollowing'
@@ -168,6 +169,8 @@ export class ViteLibraryRoute {
   private packedRoot?: string
   /** The checked-out library's real folder, where a linked install of the library resolves to. */
   private libraryRoot?: string
+  /** The Example's real folder; it may lie inside the library folder (a single-package repository with its examples below the package). */
+  private realAppRoot?: string
   /** The peers and `imports` the redirect was set up with before the pack. */
   private plannedManifest?: LibraryManifestParts
   private prepared?: PreparedLibraryCore
@@ -236,6 +239,8 @@ export class ViteLibraryRoute {
       dependencies.readManifest ?? readLibraryManifestParts
     )(supported.libraryRoot)
     this.libraryRoot = supported.libraryRoot
+    // A missing Example folder fails the run elsewhere; the declared path then stands in.
+    this.realAppRoot = await realpath(input.appRoot).catch(() => input.appRoot)
     this.plannedManifest = manifest
     this.phase = 'confirming'
     try {
@@ -446,14 +451,16 @@ export class ViteLibraryRoute {
   }
 
   /**
-   * Tells whether a real file belongs to a copy of the library other than the packed one: a `node_modules/<package>` folder, or the checked-out library folder itself (where a workspace or `npm link` install resolves to).
+   * Tells whether a real file belongs to a copy of the library other than the packed one: a `node_modules/<package>` folder, or the checked-out library folder itself (where a workspace or `npm link` install resolves to), outside the Example's own folder.
    * Source-map sources are never parsed scripts, so a library-source stop does not reach here. The library's own `node_modules` (its dependencies) is not a copy of the library.
    */
   private isOtherCopyFile(realFile: string): boolean {
     const name = this.packageName
     if (name && isInPackageCopy(realFile, name)) return true
-    const { libraryRoot } = this
+    const { libraryRoot, realAppRoot } = this
     if (!libraryRoot || !isInsideFolder(libraryRoot, realFile)) return false
+    // An Example below the library folder serves its own files from there: they are the app, not a copy of the library.
+    if (realAppRoot && isAtOrInsideFolder(realAppRoot, realFile)) return false
     return !relative(libraryRoot, realFile).split(sep).includes('node_modules')
   }
 

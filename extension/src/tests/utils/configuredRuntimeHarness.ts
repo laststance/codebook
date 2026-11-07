@@ -380,6 +380,8 @@ export async function configuredRuntimeHarness(
     onFirstCloseStarted?: () => void
     /** Makes the stand-in page acknowledge `Page.close` but never report it detached, as a target Chrome keeps listed past the close bound. */
     pageStaysAfterClose?: boolean
+    /** Makes the stand-in page acknowledge `Page.close`, report no detach and end the browser participant's debug session a turn later, as js-debug 1.140 does in a native run. */
+    pageCloseEndsSession?: boolean
     /** Makes the stand-in browser's `close` settle only after the run stopped its debuggers, as a managed Chrome does: it exits only when the debugger session stops. */
     browserCloseWaitsForDebuggerStop?: boolean
     /** The path the stand-in page lands on after each `Page.navigate` of a saved-session run (default: the path asked for). */
@@ -1393,7 +1395,10 @@ export async function configuredRuntimeHarness(
           throw new Error('The page close failed late')
         }
         releases.push('page')
-        if (!options.pageStaysAfterClose)
+        // js-debug reports no detach on its page proxy: it ends the page's debug session instead.
+        if (options.pageCloseEndsSession)
+          setImmediate(() => run.terminated(selected))
+        else if (!options.pageStaysAfterClose)
           listeners.get('Inspector.detached')?.({ reason: 'target_closed' })
         return {}
       }

@@ -113,6 +113,7 @@ async function libraryHarness(
     firstCloseFailsAfter?: Promise<void>
     onFirstCloseStarted?: () => void
     pageStaysAfterClose?: boolean
+    pageCloseEndsSession?: boolean
     browserCloseWaitsForDebuggerStop?: boolean
   } = {},
 ) {
@@ -276,6 +277,32 @@ test(
       ),
       ['page', 'debugger', 'browser'],
     )
+  },
+)
+
+// protects=in a native run js-debug answers the page close and then ends the page's debug session without a detach on its proxy, and the observation still ends complete without waiting for the close bound; fails_when=finalization waits only for a detach or the proxy's end, so the bound wins and every native library run reads incomplete (seen in VS Code 1.145.2 with js-debug 1.140, Cycle 0096 native check); no_claim=a real js-debug: the stand-in ends the session a turn after the close, as the native journal showed (about 100 ms later)
+test(
+  'a page close that js-debug answers by ending the page session still ends the observation complete',
+  { timeout: 15_000 },
+  async (context) => {
+    // Arrange
+    const library = await libraryDependencies(context)
+    const harness = await libraryHarness(context, library, {
+      browserCloseWaitsForDebuggerStop: true,
+      pageCloseEndsSession: true,
+    })
+    await harness.run.prepare()
+    const packed = await put(join(library.packedRoot, 'dist', 'index.mjs'))
+    harness.announceScript('p1', `${ORIGIN}/@fs${packed}?v=1`)
+    await runToCompletion(harness)
+    // Act
+    // The run's manual clock is never advanced: a stop that needed the close bound would not return.
+    await harness.run.stop()
+    // Assert
+    const facts = harness.run.view().library
+    assert.equal(facts?.observation, 'complete')
+    assert.equal(facts?.loaded, true)
+    assert.equal(facts?.loadCount, 1)
   },
 )
 

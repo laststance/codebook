@@ -743,6 +743,71 @@ test('counts a parsed file of the checked-out library folder as another copy', a
   assert.equal(view.publishedCopyPath, linked)
 })
 
+// protects=an Example below the library folder (the library is the repository's root package and its examples sit under it) serves its own files without counting as another copy, while the library's own build there still counts; fails_when=every Example source file below the library folder counts as another copy, so the correspondence is never stated; no_claim=a real single-package repository (the staged folders stand in)
+test('does not count the Example own files below the library folder as another copy', async (context) => {
+  // Arrange: the library folder is the repository root, which holds the Example's folder `app`.
+  let repositoryRoot = ''
+  const run = await stage(context, {
+    assertSupported: async (inputs) => {
+      repositoryRoot = inputs.repositoryRoot
+      return {
+        libraryRoot: inputs.repositoryRoot,
+        relativeRoot: '.',
+        name: '@acme/widgets',
+        version: '1.2.0',
+        peers: ['react'],
+        packageManager: {
+          ok: true,
+          name: 'pnpm',
+          version: '10.0.0',
+          executable: '/bin/pnpm',
+        },
+      }
+    },
+  })
+  const packed = await put(join(run.options.packedRoot, 'dist', 'index.mjs'))
+  const exampleSource = await put(join(run.appRoot, 'src', 'main.tsx'))
+  // Act
+  run.route.observeScript(fsUrl(packed), isOwned)
+  run.route.observeScript(fsUrl(exampleSource), isOwned)
+  run.route.finalize(true)
+  // Assert
+  const view = run.route.view()
+  assert.equal(repositoryRoot, run.root)
+  assert.equal(view.loaded, true)
+  assert.equal(view.publishedCopyLoaded, false)
+})
+
+// protects=with the Example below the library folder, a file of the library's own build outside the Example still counts as another copy; fails_when=excluding the Example's folder also drops the library folder check; no_claim=none beyond protects
+test('still counts the library build below the repository root when the Example lies below it too', async (context) => {
+  // Arrange
+  const run = await stage(context, {
+    assertSupported: async (inputs) => ({
+      libraryRoot: inputs.repositoryRoot,
+      relativeRoot: '.',
+      name: '@acme/widgets',
+      version: '1.2.0',
+      peers: ['react'],
+      packageManager: {
+        ok: true,
+        name: 'pnpm',
+        version: '10.0.0',
+        executable: '/bin/pnpm',
+      },
+    }),
+  })
+  const packed = await put(join(run.options.packedRoot, 'dist', 'index.mjs'))
+  const libraryBuild = await put(join(run.root, 'dist', 'index.mjs'))
+  // Act
+  run.route.observeScript(fsUrl(packed), isOwned)
+  run.route.observeScript(fsUrl(libraryBuild), isOwned)
+  run.route.finalize(true)
+  // Assert
+  const view = run.route.view()
+  assert.equal(view.publishedCopyLoaded, true)
+  assert.equal(view.publishedCopyPath, libraryBuild)
+})
+
 // protects=a dependency installed inside the checked-out library folder is not a copy of the library; fails_when=every file below the library folder counts as another copy; no_claim=none beyond protects
 test('does not count a dependency in the checked-out library node_modules as another copy', async (context) => {
   // Arrange
