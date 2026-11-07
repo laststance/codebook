@@ -5612,6 +5612,8 @@ export async function workspaceHarness(
     },
     './environment': { requireWorkspace: () => harness.directory },
     './runtimeSupport/browserViewport': { BrowserViewport: WorkspaceViewport },
+    // The parts cut out of the reader name the same stand-in from their own folder.
+    '../runtimeSupport/browserViewport': { BrowserViewport: WorkspaceViewport },
     './replayDebugger': { ReplayDebugger: TestReplayDebugger },
   }
   // The slot runs in the reader's own context, as every module shares one realm in the editor: a promise from another realm costs the reader's await extra microtask turns, which would reorder races the reader's tests pin.
@@ -5625,6 +5627,10 @@ export async function workspaceHarness(
       './studyWorkspace/capturedSourceReturn': resolve(
         __dirname,
         '../studyWorkspace/capturedSourceReturn.js',
+      ),
+      './studyWorkspace/replayOpening': resolve(
+        __dirname,
+        '../studyWorkspace/replayOpening.js',
       ),
       './studyWorkspace/presentationState': resolve(
         __dirname,

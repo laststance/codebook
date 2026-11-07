@@ -49,7 +49,6 @@ import {
   NODE_HISTORY_POSITION_DRAIN_MS,
   NODE_HISTORY_SLOT_DEADLINE_MS,
   NODE_HISTORY_TRANSITION_BOUND_MS,
-  OPEN_REPLAY_RESULT_WAIT_MS,
   PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE,
   PAUSE_FOCUS_LOOKBACK_MS,
   EDITOR_FOCUS_PASS_DELAY_MS,
@@ -66,7 +65,6 @@ import {
   RECORDED_APPLICATION_PANE_TITLE,
   RECORDING_WINDOW_FOCUS_WAIT_MS,
   REPLAY_COVERED_LABEL,
-  REPLAY_VIEWPORT_RECEIPT_LIMIT,
   REPOSITORY_SOURCE_SCHEME,
   REPOSITORY_BROWSER_PROFILE,
   REPOSITORY_OPERATION_ACTION,
@@ -102,7 +100,6 @@ import {
   SUMMARY_DISPLACED_OFFER,
   SUMMARY_FOCUS_RELEASE_WAIT_MS,
   SUMMARY_PLACEMENT_ACTION,
-  FOREIGN_PREVIEW_ACTION,
   MOVE_VIEWS_COMMAND,
   LATE_GROUP_ACTIVATION_WAIT_MS,
   OWN_EFFECT_NOISE_WINDOW_MS,
@@ -129,8 +126,7 @@ import {
   PlacementRefusalError,
   UnreportedEditorFocusError,
 } from './errors'
-import { ExtensionReplayFrameCache } from './extensionReplayFrameCache'
-import type { HistoryIndexOf, HistoryTypes } from './historyStorageDescriptor'
+import type { ExtensionReplayFrameCache } from './extensionReplayFrameCache'
 import { learningItemSchema } from './identitySchemas'
 import {
   repositorySelectionSchema,
@@ -186,11 +182,7 @@ import {
   type ReturnCurrentIntent,
 } from './presentationSchemas'
 import { RecordingStore } from './recordingStore'
-import {
-  ReplayDebugger,
-  type ReplayDebuggerChange,
-  type ReplayInspection,
-} from './replayDebugger'
+import { ReplayDebugger, type ReplayDebuggerChange } from './replayDebugger'
 import {
   presentNodeHistoryMoment,
   ReplayDebuggerSlot,
@@ -214,9 +206,7 @@ import { BrowserViewport } from './runtimeSupport/browserViewport'
 import type { ViewportRecordingObserver } from './runtimeSupport/browserViewport'
 import { codebookStopLedger } from './runtimeSupport/codebookStopLedger'
 import {
-  CAPTURE_TIMEOUT_MS,
   KEYBOARD_OWNER_ANSWER_TIMEOUT_MS,
-  VIEWPORT_ACK_TIMEOUT_REASON,
   type Scenario,
 } from './runtimeSupport/constants'
 import { StopKeyboardHandOver } from './runtimeSupport/stopKeyboardHandOver'
@@ -231,7 +221,6 @@ import { isStopKeyboardHandOverDue } from './runtimeSupport/utils/isStopKeyboard
 import { pausedEditorOfStop } from './runtimeSupport/utils/pausedEditorOfStop'
 import { readsExplicitFocusEditorOnBreak } from './runtimeSupport/utils/readsExplicitFocusEditorOnBreak'
 import { sha256 } from './runtimeSupport/utils/sha256'
-import { ViewportAckTimeoutError } from './runtimeSupport/utils/viewportAckTimeoutError'
 import { WaitTimeoutError } from './runtimeSupport/utils/waitTimeoutError'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { explainNodeHistorySchema } from './schemas'
@@ -253,6 +242,12 @@ import { CapturedSourceReturn } from './studyWorkspace/capturedSourceReturn'
 import { createCapturedSourceReturnHost } from './studyWorkspace/capturedSourceReturnHost'
 import { PresentationReceipts } from './studyWorkspace/presentationState'
 import { createPresentationReceiptsHost } from './studyWorkspace/presentationStateHost'
+import { ReplayOpening } from './studyWorkspace/replayOpening'
+import { createReplayOpeningHost } from './studyWorkspace/replayOpeningHost'
+import {
+  type NodeHistoryOpening,
+  recordedFrameLabel,
+} from './studyWorkspace/support'
 import {
   studyHtml,
   type StudyFilesCopied,
@@ -260,7 +255,6 @@ import {
   type StudyViewMessage,
 } from './ui/studyHtml'
 import {
-  adaptExtensionReplay,
   extensionNativeKey,
   type ExtensionReplayPresentation,
 } from './utils/adaptExtensionReplay'
@@ -268,14 +262,6 @@ import type { ServerReplayPresentation } from './utils/adaptServerReplay'
 import { adoptWikiGroupReturn } from './utils/adoptWikiGroupReturn'
 import { awaitDocumentSettled } from './utils/awaitDocumentSettled'
 import { bookObservationHash } from './utils/bookObservationHash'
-import {
-  openingExtensionEvent,
-  restoreExtensionPlayhead,
-} from './utils/buildExtensionReplayModel'
-import {
-  openingServerEvent,
-  restoreServerPlayhead,
-} from './utils/buildServerReplayModel'
 import { canonicalFsPath } from './utils/canonicalFsPath'
 import { capturedAppHtml } from './utils/capturedAppHtml'
 import { capturedSourceDeclaredPath } from './utils/capturedSourceDeclaredPath'
@@ -291,36 +277,21 @@ import {
   describeExtensionEventRow,
   describeExtensionReplayRow,
   describeExtensionThread,
-  NODE_EXTENSION_REPLAY_TEXT,
 } from './utils/describeExtensionReplay'
-import {
-  describeNodeLearningSave,
-  NODE_LEARNING_SAVE_ACTION,
-} from './utils/describeNodeLearningSave'
 import {
   describeNodeRecordedSource,
   NODE_RECORDED_SOURCE_TEXT,
 } from './utils/describeNodeRecordedSource'
-import {
-  describeScriptReplayRow,
-  describeScriptSummaryFailure,
-  NODE_SCRIPT_REPLAY_TEXT,
-} from './utils/describeNodeScriptReplay'
+import { describeScriptReplayRow } from './utils/describeNodeScriptReplay'
 import { describeNodeScriptViewStatus } from './utils/describeNodeScriptViewStatus'
 import {
   describeServerEventRow,
   describeServerReplayRow,
-  describeServerSummaryFailure,
-  NODE_SERVER_REPLAY_TEXT,
 } from './utils/describeNodeServerReplay'
 import { describeNodeTestReplay } from './utils/describeNodeTestReplay'
 import { describeOperationStatus } from './utils/describeOperationStatus'
 import { describePaneIdentity } from './utils/describePaneIdentity'
 import { describeStudy } from './utils/describeStudy'
-import {
-  describeViewportDelivery,
-  type ViewportDeliveryLog,
-} from './utils/describeViewportDelivery'
 import { editorAreaWidthPx } from './utils/editorAreaWidthPx'
 import { editorInputState } from './utils/editorInputState'
 import { editorLayoutGroupCount } from './utils/editorLayoutGroupCount'
@@ -331,13 +302,9 @@ import { emptyFirstGroupObstacle } from './utils/emptyFirstGroupObstacle'
 import { emptyGroupsGoneSince } from './utils/emptyGroupsGoneSince'
 import { evidenceInUseElsewhere } from './utils/evidenceInUseElsewhere'
 import { failedPlacementChecks } from './utils/failedPlacementChecks'
-import { firstVerifiedStopSequence } from './utils/firstVerifiedStopSequence'
 import { focusEditorGroupCommand } from './utils/focusEditorGroupCommand'
 import { focusWebview } from './utils/focusWebview'
-import {
-  foreignPreviewObstacle,
-  parseForeignPreviewObstacle,
-} from './utils/foreignPreviewObstacle'
+import { foreignPreviewObstacle } from './utils/foreignPreviewObstacle'
 import type { CodebookDiagnostic } from './utils/formatCodebookDiagnostic'
 import type { StudyRemovalAvailability } from './utils/fullLibraryMessage'
 import { groupCreatedAtColumn } from './utils/groupCreatedAtColumn'
@@ -373,7 +340,7 @@ import { libraryHasRoom } from './utils/libraryHasRoom'
 import { listsEveryTabGroup } from './utils/listsEveryTabGroup'
 import { maximizedEditorAreaWidthPx } from './utils/maximizedEditorAreaWidthPx'
 import { nextNodeHistoryStepId } from './utils/nextNodeHistoryStepId'
-import { NodeHistoryPlaybackController } from './utils/nodeHistoryPlaybackController'
+import type { NodeHistoryPlaybackController } from './utils/nodeHistoryPlaybackController'
 import { nodeHistoryStepTarget } from './utils/nodeHistoryStepTarget'
 import { nodeRunProfileOf } from './utils/nodeRunReplayWords'
 import { nodeSourceSlotName } from './utils/nodeSourceSlotName'
@@ -391,10 +358,6 @@ import {
   type RefusalTabView,
 } from './utils/placementRefusalReport'
 import { plannedStopLine } from './utils/plannedStopLine'
-import {
-  presentScriptHistory,
-  presentServerHistory,
-} from './utils/presentServerHistory'
 import { projectExtensionHistoryTimeline } from './utils/projectExtensionHistoryTimeline'
 import {
   extensionStepTarget,
@@ -480,7 +443,6 @@ import { unconfirmedWritersInLocalTime } from './utils/unconfirmedWritersInLocal
 import { unmatchedByKey } from './utils/unmatchedByKey'
 import { unreportedEditorFocusObstacle } from './utils/unreportedEditorFocusObstacle'
 import { unsavedHistoryLine } from './utils/unsavedHistoryLine'
-import { untilAborted } from './utils/untilAborted'
 import { withoutEditorLayoutLeaves } from './utils/withoutEditorLayoutLeaves'
 import { withoutErrorName } from './utils/withoutErrorName'
 import { withoutStudy } from './utils/withoutStudy'
@@ -539,17 +501,6 @@ type ExtensionMomentPresentation = {
   momentInput: Pick<NodeHistoryMomentInput, 'extensionThread' | 'partialStop'>
   /** Equal for two moments whose native presentation is the same. */
   nativeKey: string
-}
-
-/** What opening a replay reads: its history (a server replay's in its test-shaped view), the sidecars and the server presentation when it is one; see {@link StudyWorkspace.readNodeHistoryOpening}. */
-type NodeHistoryOpening = {
-  history: NodeTestHistoryIndex
-  learningDecision?: NodeTestHistoryLearningDecision
-  learningMaterial?: NodeLearningMaterialOfHistory
-  savedSequence?: number
-  positionError?: unknown
-  serverReplay?: ServerReplayPresentation
-  extensionReplay?: ExtensionReplayPresentation
 }
 
 /** How one selection of a test replay's moment behaves; see {@link StudyWorkspace.selectNodeHistoryEvent}. */
@@ -828,16 +779,6 @@ function tellKeyboardNoticeOnce(
 }
 
 /**
- * Words the phase line of a recorded frame in the Application pane; called by the playback's frame preview and by {@link StudyWorkspace}'s presentation of a moment, so both name the same time.
- * @param positionMs - The recorded moment in milliseconds.
- * @returns The phase text, for example `Recorded · 1.50 s`.
- * @example recordedFrameLabel(1500) // => 'Recorded · 1.50 s'
- */
-function recordedFrameLabel(positionMs: number): string {
-  return `Recorded · ${(positionMs / MILLISECONDS_PER_SECOND).toFixed(2)} s`
-}
-
-/**
  * Words a hover so the editor, which renders a plain string as Markdown, shows every character of it as text: a recorded path that holds `[text](url)` draws no link (F176).
  * Called for the end-of-line labels of the recorded-source slot and of a browser replay's source, whose paths come from recordings.
  * @param text - The words.
@@ -1055,7 +996,10 @@ export class StudyWorkspace {
   private replayNeedsReveal = false
   /** Why the latest {@link rememberLayout} read failed, so the layout line the learner reads names the cause; `undefined` when it settled. */
   private layoutReceiptFailure?: string
-  private replayDelivery: ViewportDeliveryLog = { receipts: [], omitted: 0 }
+  private readonly replayOpening = new ReplayOpening(
+    createReplayOpeningHost(this),
+  )
+
   /** The replay paint phase in progress, from {@link beginReplayPaint} until its {@link endReplayPaint}. */
   private replayPaint?: { token: object; startedAt: number }
   /** {@link settleOwnedPlayback} waits that re-arm their paint bound whenever a paint phase begins or ends. */
@@ -1162,18 +1106,12 @@ export class StudyWorkspace {
   private nodeHistoryEntryRequest = 0
   /** Aborts when the latest test replay entry's ticket ({@link nodeHistoryEntryRequest}) is superseded by a newer entry, a Return or a Close ({@link supersedeNodeHistoryEntries}), so an entry waiting for the work window's focus ends at once instead of holding the next entry's turn (Cycle 0052 task 40). */
   private nodeHistoryEntryCancellation = new AbortController()
-  /** How many test replay entries ({@link openNodeHistoryFromHost}) are under way, the waiting ones included; the last superseded entry to end leaves the empty summary composition an earlier one built only when none is under way to fill it (Cycle 0052 task 12). */
-  private nodeHistoryEntriesUnderWay = 0
-  /** Settles when the test replay entry in front has entered its composition: entries take turns there, so two entries never run {@link open} at once (one would be refused as busy and leave no replay shown). */
-  private nodeHistoryEntryTurn: Promise<void> = Promise.resolve()
   /** `true` while {@link openNodeHistoryFromHost} enters the summary composition for a test replay that has not begun opening ({@link testReplayHoldsComposition}). */
   private hostOpeningTestReplay = false
   /**
    * The replay a closed reader keeps selected for its next Open Study Workspace while an entry for another replay opens; the Learning summary and the bottom panel receive no message that carries it ({@link publish}). It is released when the last entry in progress ends ({@link openNodeHistoryFromHost}, {@link nodeHistoryEntriesInProgress}) or at {@link close}, and the hold is bound to the retained selection (its open token), so it holds nothing once any history, the same replay included, is adopted.
    */
   private heldBackReplay: { openToken: number | undefined } | undefined
-  /** How many test replay entries ({@link openNodeHistoryFromHost}) have not ended yet, from the turn they wait for to their open's end; the held-back replay is released when the last one ends. */
-  private nodeHistoryEntriesInProgress = 0
   /** The editor's recent group and active text editor changes, for {@link refusePlacement}'s report (F382). */
   private readonly placementEvents = new PlacementEventLog()
   /** The documents this host itself showed with `showTextDocument`, newest last and bounded, so a guard can tell a text editor or tab that Codebook's own step put in front from the learner's pick ({@link isCodebookOwnFocus}, Cycle 0072 native C72-2). */
@@ -1377,8 +1315,6 @@ export class StudyWorkspace {
     'studyId' | 'observationId'
   > & { lifetime: number; selectionRevision: number }
   private repositoryRecordingOpen?: { studyId: string; revision: number }
-  /** The recording open an agent asked for through codebook_playback ({@link markAgentRecordingOpen}), by its study and the playback revision its load runs at; {@link loadPlayback} takes it for that load only (row 613). */
-  private agentRecordingOpen?: { studyId: string; revision: number }
   private pendingHistory?: number
   /** The request number of a Node test history that is still opening; a removal's neighbour and a delete request give way to it like to {@link pendingHistory}. */
   private pendingNodeHistory?: number
@@ -9365,27 +9301,9 @@ export class StudyWorkspace {
     }
   }
 
-  /**
-   * Loads the shown browser replay's recording again (a same-study Reload): the Summary keeps its document, so a failed read can publish its recovery there, and the Reload's mark keeps the replay shown until the recording is active again ({@link loadPlayback}) or a departure supersedes it; a failed load keeps it. Called by the Reload action and by Retry while a Reload's recording has not loaded (Cycle 0052 tasks 18 and 31).
-   * @returns Once the recording's open is accepted; the load itself continues in the playback controller.
-   * @throws When no browser replay is shown, or it names no study; {@link openRecording}'s refusals of a pending presentation change and of a study on its way to the Trash, before anything changes.
-   * @example await this.reloadShownRecording()
-   */
-  private async reloadShownRecording(): Promise<void> {
-    // A Reload whose recording has not loaded (still loading, or failed) retries the recording the replay last asked for.
-    const studyId = this.recordingActive
-      ? this.selection.studyId
-      : (this.playback?.state().studyId ?? this.selection.studyId)
-    if (!this.browserReplayShown() || !studyId)
-      throw new Error('Select a recording first.')
-    // What openRecording would refuse is refused before the replay is left, so a refused Reload changes nothing: a presentation change that began while Retry read the storage keeps the replay and its failure as they were (Cycle 0052 task 39). After these checks openRecording only awaits the reader's finished initialization.
-    this.assertPresentationIdle()
-    this.assertStudyNotMoving(studyId)
-    // The controller keeps a pending load of the same study and would start none: a Reload whose recording has not loaded cancels that load first, so the recording loads again (Cycle 0052 task 35).
-    if (!this.recordingActive) this.playback?.leave()
-    this.leavePlayback(true)
-    this.recordingReloadStudyId = studyId
-    await this.openRecording(studyId)
+  /** Forwards to {@link ReplayOpening.reloadShownRecording}, where this member's body moved (Cycle 0094 task 13). */
+  private reloadShownRecording(): Promise<void> {
+    return this.replayOpening.reloadShownRecording()
   }
 
   /**
@@ -12303,105 +12221,18 @@ export class StudyWorkspace {
     this.learningSaveShown = undefined
   }
 
-  /** Opens a validated local recording through the same revisioned controller used by MCP; no application operation is dispatched. @example await workspace.openRecording(studyId) */
-  async openRecording(
+  /** Forwards to {@link ReplayOpening.openRecording}, where this member's body moved (Cycle 0094 task 13). */
+  openRecording(
     studyId: string,
     signal?: AbortSignal,
-    origin: 'study' | 'repository' = 'study',
+    origin?: 'study' | 'repository',
   ): Promise<void> {
-    this.assertPresentationIdle()
-    signal?.throwIfAborted()
-    const lifetime = this.lifetime
-    await this.initialize()
-    this.assertLifetime(lifetime)
-    signal?.throwIfAborted()
-    const id = studyIdSchema.parse(studyId)
-    // The recording of a study on its way to the Trash moves first; it cannot be opened any more.
-    this.assertStudyNotMoving(id)
-    // Once admitted, browser replay takes over the shared historical debugger; a Node stop still loading its values no longer owns it.
-    this.selectedNodeHistoryRequest++
-    // The cut-off selection no longer clears its requested moment (its token is gone), so the bump gives it back.
-    this.requestedNodeHistorySequence = undefined
-    this.nodeHistoryLeftFor = undefined
-    this.nodeHistoryPlaybackController?.abandon()
-    // The Node stop no longer owns Run and Debug: its hint goes, and Inspect restarts the debugger for it.
-    this.selectedNodeHistoryValuesUninspected = false
-    this.selectedNodeHistoryDebugAvailable = false
-    // A closed reader has no native panes; reload its saved position instead of accepting a loaded-controller no-op.
-    if (!this.opened) this.playback!.leave()
-    const revision = this.playback!.state().revision
-    // Bind chrome preservation to this exact open, including a load queued behind cancelled playback work.
-    this.repositoryRecordingOpen =
-      origin === 'repository'
-        ? { studyId: id, revision: revision + 1 }
-        : undefined
-    this.playback!.command({
-      studyId: id,
-      action: 'open',
-      expectedRevision: revision,
-    })
-    // The open was accepted, so an earlier refused replay control no longer describes the replay.
-    if (this.errors.delete('replay-control')) this.publish()
+    return this.replayOpening.openRecording(studyId, signal, origin)
   }
 
-  /**
-   * Opens a saved recording for the status bar's Open replay entry and tells the learner when its load failed; the command `codebook.openLearningReplay` calls it.
-   *
-   * {@link openRecording} returns once the load is admitted, and a load that fails later leaves its reason only in the playback state,
-   * which no pane shows while the reader could not open (another window keeps the desktop focus). So this waits, bounded by
-   * {@link OPEN_REPLAY_RESULT_WAIT_MS}, for the load to end and shows a failed load's reason as an editor notification, which the
-   * editor keeps on screen until its window has the focus again.
-   *
-   * A study id that names a test replay (a sealed test history, or a test run of this window) takes the other branch: the Study pane opens when it is closed and {@link openNodeHistoryFromHost} opens the replay, with its own refusal during a browser replay and its own failure notification; the bounded wait above belongs to the browser path only.
-   *
-   * @param studyId - The saved study whose recording the entry names, or a test replay's study id.
-   * @returns Once the recording is presented and its study's selection written to the ledger, its load failed and the notification was shown, another recording took its place, or the bound passed (a ledger write still pending then goes on in the background); for a test replay, once it is shown, the learner declined to close a browser replay, or its failure was told.
-   * @throws Whatever {@link openRecording} throws before the load is admitted.
-   * @example await workspace.openLearningReplay(studyId)
-   */
-  async openLearningReplay(studyId: string): Promise<void> {
-    // A test replay opens in its summary composition through its own entry, not through the browser replay's controller (Cycle 0051, DS-A).
-    if (this.isTestReplayStudy(studyId))
-      return this.openNodeHistoryFromHost(studyId)
-    await this.openRecording(studyId)
-    const playback = this.playback!
-    const resultWaitEndsAtMs = performance.now() + OPEN_REPLAY_RESULT_WAIT_MS
-    // A load that outlasts the bound is still running and has nothing to report yet.
-    await playback
-      .settle(undefined, OPEN_REPLAY_RESULT_WAIT_MS)
-      .catch(() => undefined)
-    // A bounded settle leaves the saves out; the selection write that the shown recording started is awaited here, so the command ends with the ledger naming it. It can wait behind this window's queued library writes and another window's storage lock, so it gets only what is left of the same bound, and a failed load's notice never waits longer.
-    await awaitResponse(
-      this.shownRecordingSelectionSaved,
-      'the ledger write of the shown recording',
-      undefined,
-      resultWaitEndsAtMs - performance.now(),
-    ).catch(() => undefined)
-    const state = playback.state()
-    if (
-      state.studyId !== studyId ||
-      state.readiness !== 'failed' ||
-      !state.reason
-    )
-      return
-    // A learner's preview tab that blocks the open is answered with a choice and a retry, not a toast (F158).
-    const answer = await this.resolveForeignPreviewRefusal(state.reason)
-    if (answer === 'retry') return this.openLearningReplay(studyId)
-    // The failure also goes to Output › Codebook, as a test replay's failed open does, so the learner can copy it into a report (Cycle 0052 task 59), also after the keep-open refusal told it (task 81).
-    this.diagnostics?.log({
-      surface: 'open:recording',
-      studyId,
-      profile: REPOSITORY_BROWSER_PROFILE,
-      cause: sanitizeCause(state.reason, this.privateRoots()),
-    })
-    // The keep-open refusal has told the learner already; a second notice would repeat it.
-    if (answer === 'told') return
-    // The controller keeps a failure as its string form, which starts with the error's name.
-    void showPlainNotice(
-      vscode.window,
-      'error',
-      `Codebook could not open the learning replay: ${withoutErrorName(state.reason)}`,
-    )
+  /** Forwards to {@link ReplayOpening.openLearningReplay}, where this member's body moved (Cycle 0094 task 13). */
+  openLearningReplay(studyId: string): Promise<void> {
+    return this.replayOpening.openLearningReplay(studyId)
   }
 
   /**
@@ -12468,130 +12299,6 @@ export class StudyWorkspace {
   }
 
   /**
-   * Answers an Open replay that a learner's preview tab refused with a modal warning that names the file, in both hosts (a toast is cut to one line in Cursor), and carries out the learner's choice; called by {@link openLearningReplay} and {@link openNodeHistoryFromHost} before they tell a failure (F158, D33).
-   * Keep Tab Open pins the tab (it stops being a preview) and Close Tab closes it; each is followed by a retry of the open.
-   * @param cause - The failure's words; only a {@link foreignPreviewObstacle} sentence in it is answered here.
-   * @returns `retry` when the learner chose a way out and the open is to be retried; `told` when Keep Tab Open could not keep a non-text tab and has shown its own notice, so the caller adds none (F394); `unhandled` when the cause is another failure or the dialog was dismissed.
-   * @example if ((await this.resolveForeignPreviewRefusal(cause)) === 'retry') return this.openLearningReplay(studyId)
-   */
-  private async resolveForeignPreviewRefusal(
-    cause: string,
-  ): Promise<'retry' | 'told' | 'unhandled'> {
-    const obstacle = parseForeignPreviewObstacle(cause)
-    if (!obstacle) return 'unhandled'
-    const choice = await vscode.window.showWarningMessage(
-      `Codebook cannot open the replay: "${obstacle.tabName}" is open as a preview tab in editor group ${obstacle.viewColumn}.`,
-      {
-        modal: true,
-        detail: `The replay needs that group, and a preview tab would be replaced. Keep Tab Open keeps "${obstacle.tabName}" as a normal tab; Close Tab closes it. The replay opens again after either.`,
-      },
-      FOREIGN_PREVIEW_ACTION.keepOpen,
-      FOREIGN_PREVIEW_ACTION.close,
-    )
-    if (!choice) return 'unhandled'
-    const group = vscode.window.tabGroups.all.find(
-      (candidate) =>
-        candidate.viewColumn === obstacle.viewColumn &&
-        candidate.tabs.some((tab) =>
-          this.isNamedPreview(tab, obstacle.tabName),
-        ),
-    )
-    const tab = group?.tabs.find((candidate) =>
-      this.isNamedPreview(candidate, obstacle.tabName),
-    )
-    // The tab may be gone by now; the retry then decides.
-    if (!group || !tab) return 'retry'
-    // Only Close Tab closes the learner's tab; Keep Tab Open never does (F363).
-    if (choice === FOREIGN_PREVIEW_ACTION.close) {
-      await vscode.window.tabGroups.close([tab])
-      return 'retry'
-    }
-    if (tab.input instanceof vscode.TabInputText) {
-      await this.showTextDocumentNoted(tab.input.uri, {
-        viewColumn: obstacle.viewColumn,
-        preview: false,
-        preserveFocus: true,
-      })
-      return 'retry'
-    }
-    return this.keepNonTextPreview(group, tab, obstacle.tabName)
-  }
-
-  /**
-   * Tells whether a tab is the preview tab that a foreign-preview refusal names; used by {@link resolveForeignPreviewRefusal} to find the tab again after the dialog.
-   * @param tab - A tab of the refused group.
-   * @param tabName - The name the refusal gave ({@link editorTabName}).
-   * @returns `true` for a preview tab of that name.
-   * @example this.isNamedPreview(tab, 'login-form.tsx') // => true
-   */
-  private isNamedPreview(tab: vscode.Tab, tabName: string): boolean {
-    return tab.isPreview && this.editorTabName(tab) === tabName
-  }
-
-  /**
-   * Keeps a learner's non-text preview tab (an image, a custom editor) open with the editor's own Keep Open command, which acts on the active tab of the focused group; called by {@link resolveForeignPreviewRefusal} for Keep Tab Open.
-   * The extension API cannot pin such a tab, so its group takes the focus and the command runs only when the tab is that group's front tab. Otherwise the tab stays a preview, the open is not retried and the learner is told how to keep it.
-   * @param group - The tab's group.
-   * @param tab - The preview tab.
-   * @param tabName - The tab's name, for the notice.
-   * @returns `retry` when the tab is no longer a preview and the open is to be retried; `told` when it is still one and the learner has been told how to keep it.
-   * @example if ((await this.keepNonTextPreview(group, tab, 'diagram.png')) === 'retry') retry()
-   */
-  private async keepNonTextPreview(
-    group: vscode.TabGroup,
-    tab: vscode.Tab,
-    tabName: string,
-  ): Promise<'retry' | 'told'> {
-    const focusCommand = focusEditorGroupCommand(group.viewColumn)
-    if (focusCommand && group.activeTab === tab) {
-      await this.executeEditorCommand(focusCommand)
-      // The command keeps the tab that is in front of the group the focus moved to; the tab is re-read after it.
-      const focused = vscode.window.tabGroups.activeTabGroup
-      if (focused.viewColumn === group.viewColumn && focused.activeTab === tab)
-        await this.executeEditorCommand('workbench.action.keepEditor')
-    }
-    const stillPreview = vscode.window.tabGroups.all
-      .filter((candidate) => candidate.viewColumn === group.viewColumn)
-      .flatMap((candidate) => candidate.tabs)
-      .some((candidate) => this.isNamedPreview(candidate, tabName))
-    if (!stillPreview) return 'retry'
-    void showPlainNotice(
-      vscode.window,
-      'warning',
-      `Codebook could not keep "${tabName}" open. Double-click its tab to keep it, then choose Open replay again.`,
-    )
-    return 'told'
-  }
-
-  /**
-   * Says whether a study id names a test replay: a test history the last refresh listed, or a node-test run of this window's service; read by {@link openLearningReplay}.
-   * @param studyId - The study id the status item or a command names.
-   * @returns `true` for a test replay.
-   * @example this.isTestReplayStudy(studyId) // => true for a sealed test history
-   */
-  private isTestReplayStudy(studyId: string): boolean {
-    return (
-      this.nodeHistoryCatalog.some((history) => history.studyId === studyId) ||
-      this.nodeServerHistoryCatalog.some(
-        (history) => history.studyId === studyId,
-      ) ||
-      this.nodeScriptHistoryCatalog.some(
-        (history) => history.studyId === studyId,
-      ) ||
-      this.nodeExtensionHistoryCatalog.some(
-        (history) => history.studyId === studyId,
-      ) ||
-      // A node-server or extension run just saved is a replay before the catalog lists it, never an ordinary recording.
-      [
-        NODE_TEST_PROFILE,
-        NODE_SERVER_PROFILE,
-        NODE_SCRIPT_PROFILE,
-        CHROME_EXTENSION_PROFILE,
-      ].some((profile) => this.recordOfStudy(studyId)?.profile === profile)
-    )
-  }
-
-  /**
    * Supersedes every test replay entry under way: a newer entry's ticket replaces theirs, and the cancellation their waits listen to aborts, so one waiting for the work window's focus ends at once (Cycle 0052 tasks 12 and 40). Called by {@link openNodeHistoryFromHost} for each new entry, by the learner's and the agent's Return and by {@link close}.
    * @returns The new ticket, which the caller holds as its entry when it is one.
    * @example const entry = this.supersedeNodeHistoryEntries()
@@ -12604,252 +12311,22 @@ export class StudyWorkspace {
     return ++this.nodeHistoryEntryRequest
   }
 
-  /**
-   * Opens a test replay for the learner's two entries, the status item's Open replay (and Open retained history) and a Saved studies choice: the summary composition is entered first (Cycle 0051, DS-A), then the shared open runs ({@link openNodeHistory}); called by {@link openLearningReplay} and by the reader's `node-history` message.
-   * During a browser replay the learner is told that one replay shows at a time and may close it first (DS10). A failed open raises the load-failure notification with Show details and writes one Output › Codebook entry; a reader the open left in the summary composition with no replay shown goes back to the Study composition, so the Study pane stands open on Saved studies (X4, DS-G).
-   * @param studyId - The test replay's study id.
-   * @param revision - The reader revision a Saved studies choice belongs to, which a newer revision supersedes; omitted for the status item, whose open takes the revision current after the summary composition was entered (and a browser replay closed).
-   * @returns Once the replay is shown, the learner declined to close a browser replay, or the failure was told.
-   * @example await workspace.openNodeHistoryFromHost(studyId)
-   */
-  async openNodeHistoryFromHost(
+  /** Forwards to {@link ReplayOpening.openNodeHistoryFromHost}, where this member's body moved (Cycle 0094 task 13). */
+  openNodeHistoryFromHost(studyId: string, revision?: number): Promise<void> {
+    return this.replayOpening.openNodeHistoryFromHost(studyId, revision)
+  }
+
+  /** Forwards to {@link ReplayOpening.enterSummaryCompositionForReplay}, where this member's body moved (Cycle 0094 task 13). */
+  private enterSummaryCompositionForReplay(
     studyId: string,
-    revision?: number,
+    entry: number,
+    overtaken: AbortSignal,
   ): Promise<void> {
-    const entry = this.supersedeNodeHistoryEntries(),
-      overtaken = this.nodeHistoryEntryCancellation.signal
-    this.nodeHistoryEntriesInProgress++
-    // A control refused while this open is under way is newer than the open and keeps its line.
-    const refusalsBefore = this.controlRefusals
-    try {
-      // Entries take turns entering the composition; a newer entry made meanwhile is the learner's latest choice (EN19).
-      const previousTurn = this.nodeHistoryEntryTurn
-      let releaseTurn!: () => void
-      this.nodeHistoryEntryTurn = new Promise<void>((resolve) => {
-        releaseTurn = resolve
-      })
-      this.nodeHistoryEntriesUnderWay++
-      let entered = false
-      try {
-        await previousTurn
-        entered = await this.enterCompositionForEntry(studyId, entry, overtaken)
-      } finally {
-        this.nodeHistoryEntriesUnderWay--
-        releaseTurn()
-      }
-      if (!entered) {
-        // The last superseded entry to end leaves the summary composition an earlier one built, when no entry is under way to fill it: a Return or a Close superseded them all (Cycle 0052 task 12).
-        if (
-          entry !== this.nodeHistoryEntryRequest &&
-          this.nodeHistoryEntriesUnderWay === 0
-        )
-          await this.leaveEmptySummaryComposition()
-        return
-      }
-      if (entry !== this.nodeHistoryEntryRequest) return
-      const outcome = await this.openNodeHistory(
-        studyId,
-        revision ?? this.revision,
-      )
-      if (outcome.status === 'superseded') {
-        // A superseded open leaves the summary composition it entered when no newer replay stands in it, as a failed open does (Cycle 0052 task 13); an entry still under way fills or leaves that composition itself (task 35).
-        if (this.nodeHistoryEntriesUnderWay === 0)
-          await this.leaveEmptySummaryComposition()
-        return
-      }
-      if (outcome.status !== 'failed') {
-        // A replay that opened is a handled choice: the refusal an earlier open of a test or server replay left as a control line (the retry inside the failed entry is refused too) is stale beside it.
-        if (
-          this.controlRefusals === refusalsBefore &&
-          this.dropChoiceRetiredErrors()
-        )
-          this.publish()
-        // The learner's own replay open, after the replay is shown: the summary moves beside the chat once per profile (F209).
-        await this.moveSummaryBesideChatOnce()
-        return
-      }
-      if (
-        (await this.answerFailedTestReplayOpen(studyId, outcome.error)) ===
-        'retry'
-      )
-        return this.openNodeHistoryFromHost(studyId)
-    } finally {
-      // The closed reader's replay held back for the entries is drawn again, by the next Open Study Workspace if no entry replaced it; a newer entry still in progress keeps the hold, so the views never draw the retained replay while it loads (Cycle 0056 task 32).
-      this.nodeHistoryEntriesInProgress--
-      if (this.nodeHistoryEntriesInProgress === 0 && this.heldBackReplay) {
-        // Republish only when the held selection is still the selected replay; an entry that adopted a history posted it already.
-        const isStillHeld = this.isHeldBackSelection()
-        this.heldBackReplay = undefined
-        if (isStillHeld && this.opened && !this.closing && !this.disposed) {
-          this.lastPublished = undefined
-          // A failing publish is reported and never replaces the entry's own result.
-          try {
-            this.publish()
-          } catch (error) {
-            this.report('control', error)
-          }
-        }
-      }
-    }
-  }
-
-  /**
-   * Brings a test replay entry into the summary composition in its turn: a browser replay is closed first when the learner agrees, and a refused entry is told like a failed open (F382, F384); called by {@link openNodeHistoryFromHost} while the entry holds its turn.
-   * @param studyId - The test replay's study id.
-   * @param entry - The entry's ticket ({@link nodeHistoryEntryRequest}).
-   * @param overtaken - Aborts when a newer entry, a Return or a Close supersedes the ticket ({@link nodeHistoryEntryCancellation}).
-   * @returns `true` when the entry stands in the composition and is still the latest; `false` when a newer entry took over, the browser replay stays open, or the failure was told.
-   * @example if (!(await this.enterCompositionForEntry(studyId, entry, overtaken))) return
-   */
-  private async enterCompositionForEntry(
-    studyId: string,
-    entry: number,
-    overtaken: AbortSignal,
-  ): Promise<boolean> {
-    if (entry !== this.nodeHistoryEntryRequest) return false
-    // The learner's test replay supersedes a saved study that waits for the hidden editor area: the slot tabs that waited with it close now, before its own slot shows, so its tab is never closed as an earlier one's and a failed open leaves none behind (Cycle 0052 task 15).
-    this.studyAwaitingEditorArea = undefined
-    await this.closeSlotTabsAwaitingArea()
-    // A Close, a Return or a newer entry during the slot close owns the reader now: this entry asks nothing more (Cycle 0052 task 35).
-    if (entry !== this.nodeHistoryEntryRequest) return false
-    if (!(await this.closeBrowserReplayForTestReplay(entry, overtaken)))
-      return false
-    if (entry !== this.nodeHistoryEntryRequest) return false
-    try {
-      await this.enterSummaryCompositionForReplay(studyId, entry, overtaken)
-    } catch (error) {
-      // A newer entry answers for the learner now; an entry whose focus wait its supersession aborted ends here quietly too.
-      if (entry !== this.nodeHistoryEntryRequest) return false
-      // A refused entry is told like a failed replay open: one Output › Codebook entry and the notification, never a bare command failure (F382, F384).
-      // A refusal for a main editor that reported no keyboard focus is not followed by a reopen: the reopen would meet the same guard, wait five seconds again and log the same entry a second time (Cycle 0060, N60). The composition is dropped without a measurement instead.
-      if (error instanceof UnreportedEditorFocusError)
-        this.dropEmptySummaryCompositionUnmeasured(error)
-      else await this.leaveEmptySummaryComposition()
-      this.tellTestReplayOpenFailure(
-        studyId,
-        error,
-        sanitizeCause(error, this.privateRoots()),
-      )
-      return false
-    }
-    return entry === this.nodeHistoryEntryRequest
-  }
-
-  /**
-   * Answers a test replay entry made during a browser replay: one replay shows at a time, so the learner is told so and may close the browser replay first (DS10); called by {@link enterCompositionForEntry}.
-   * The notice is not modal: the browser replay it names is closed only while it is still the one shown and the entry is still the latest, so an answer never closes a replay opened after the notice.
-   * The entry stops waiting for the answer once a newer entry, a Return or a Close overtakes it, so an unanswered notice never holds the next entry's turn; the notice stays on screen, and its later answer closes nothing (Cycle 0052 task 11).
-   * @param entry - The entry's ticket ({@link nodeHistoryEntryRequest}).
-   * @param overtaken - Aborts when the ticket is superseded ({@link nodeHistoryEntryCancellation}).
-   * @returns `true` when no browser replay is open, or the learner closed the one named; `false` when it stays open or another replay or entry took over.
-   * @example if (!(await this.closeBrowserReplayForTestReplay(entry, overtaken))) return false
-   */
-  private async closeBrowserReplayForTestReplay(
-    entry: number,
-    overtaken: AbortSignal,
-  ): Promise<boolean> {
-    if (!this.browserReplayShown()) return true
-    const studyId = this.selection.studyId,
-      revision = this.playback?.state().revision
-    const refusal = describeNodeLearningSave({ kind: 'open-refused' })
-    const action = await untilAborted(
-      Promise.resolve(
-        showPlainNotice(
-          vscode.window,
-          'warning',
-          refusal.text,
-          ...(refusal.actions ?? []),
-        ),
-      ),
+    return this.replayOpening.enterSummaryCompositionForReplay(
+      studyId,
+      entry,
       overtaken,
-    ).catch((error: unknown) => {
-      // An overtaken entry stops waiting for its answer; the notice's own failure still reaches the caller.
-      if (overtaken.aborted) return undefined
-      throw error
-    })
-    if (
-      action !== NODE_LEARNING_SAVE_ACTION.closeBrowserReplay ||
-      entry !== this.nodeHistoryEntryRequest ||
-      !this.browserReplayShown() ||
-      this.selection.studyId !== studyId ||
-      this.playback?.state().revision !== revision
     )
-      return false
-    await this.returnCurrentSelection('learner')
-    return !this.browserReplayShown()
-  }
-
-  /**
-   * Answers a test replay open that failed: a learner's preview tab that blocked it gets its choice and a retry (F158), in the composition the open met it in; otherwise the empty summary composition is left and the failure is told once (DS-G), or only recorded when Keep Tab Open has told it already (F407). Called by {@link openNodeHistoryFromHost}.
-   * @param studyId - The test replay's study id.
-   * @param error - What the open threw.
-   * @returns `retry` when the learner chose a way out of a blocking preview; `told` once the failure is answered.
-   * @example if ((await this.answerFailedTestReplayOpen(studyId, outcome.error)) === 'retry') return this.openNodeHistoryFromHost(studyId)
-   */
-  private async answerFailedTestReplayOpen(
-    studyId: string,
-    error: unknown,
-  ): Promise<'retry' | 'told'> {
-    const cause = sanitizeCause(error, this.privateRoots())
-    const answer = await this.resolveForeignPreviewRefusal(cause)
-    if (answer === 'retry') return 'retry'
-    // A failed open shows no replay in the summary composition: the Study composition comes back, with the failure on its line (DS-G). A newer entry still under way keeps that composition for its own replay (Cycle 0052 task 35).
-    if (this.nodeHistoryEntriesUnderWay === 0)
-      await this.leaveEmptySummaryComposition()
-    // The keep-open refusal has told the learner already, so no second notification follows; the refusal is still recorded once in Output › Codebook, where other open refusals are, so a later take can tell why the replay did not open (F407).
-    if (answer === 'told')
-      this.diagnostics?.log({
-        ...this.replayOpenDiagnosticIdentity(studyId),
-        studyId,
-        cause,
-      })
-    else this.tellTestReplayOpenFailure(studyId, error, cause)
-    return 'told'
-  }
-
-  /**
-   * Opens the summary composition for a test replay that is about to open (Cycle 0051, DS-A): a closed reader opens, and the Live composition and the Study composition give way to it, so the Study pane closes and the Learning summary takes the chat's place; called by {@link openNodeHistoryFromHost}.
-   * Only a reader that already stands in the summary composition for a test replay (another test replay was shown) is left as it is; an earlier entry that failed after it left the Live composition is opened again, so the Application, the slot and the debugger never show without a transport (F384).
-   * A closed reader keeps the replay it showed for the next Open Study Workspace ({@link close}); an entry for another replay holds that selection back ({@link heldBackReplay}) before {@link open} publishes, so the Learning summary never draws the closed reader's replay (its title, result and stop) while the chosen one opens, and a refused entry leaves it selected for the next Open Study Workspace (Cycle 0056 task 32). An entry for the same replay keeps it and shows it at once.
-   * @throws What {@link open} throws; the caller tells it.
-   * @param studyId - The test replay's study id.
-   * @param entry - The entry's ticket ({@link nodeHistoryEntryRequest}); an entry a newer one or a Return overtook while it waited for the work window reveals nothing.
-   * @param overtaken - Aborts the waits for the work window and for the Learning summary view, in a standing composition and in {@link open}, when a newer entry, a Return or a Close supersedes the ticket, so the next entry's turn is not held for their bounds (Cycle 0052 tasks 40, 44 and 45).
-   * @throws The abort's reason when the wait is overtaken; the caller ends quietly for a superseded ticket.
-   * @example await this.enterSummaryCompositionForReplay(studyId, entry, overtaken)
-   */
-  private async enterSummaryCompositionForReplay(
-    studyId: string,
-    entry: number,
-    overtaken: AbortSignal,
-  ): Promise<void> {
-    if (
-      this.opened &&
-      this.summaryComposition &&
-      !this.liveComposition &&
-      !this.recordingActive
-    ) {
-      // The composition stands already, but the learner may have hidden the summary and the bottom panel: the entry shows them again, so Open replay never ends with no visible replay (Cycle 0052 task 14). The reveal waits for the work window as open()'s does, and an entry overtaken meanwhile reveals nothing.
-      await this.waitForRecordingWindow(overtaken, this.lifetime)
-      if (entry !== this.nodeHistoryEntryRequest) return
-      // The reveal's wait for the summary view ends too when the entry is overtaken (Cycle 0052 task 45).
-      await this.showLearningSummary(overtaken, true)
-      return
-    }
-    this.hostOpeningTestReplay = true
-    try {
-      // A closed reader still holds the replay it showed for the next Open Study Workspace: while another replay's entry opens, no view draws it, and a refused entry leaves it selected (Cycle 0056 task 32).
-      if (
-        !this.opened &&
-        this.selectedNodeHistory &&
-        this.selectedNodeHistory.header.studyId !== studyId
-      )
-        this.heldBackReplay = { openToken: this.nodeHistoryOpenToken }
-      // The open's waits for the work window end too when a newer entry, a Return or a Close supersedes this one (Cycle 0052 task 44).
-      await this.open(overtaken)
-    } finally {
-      this.hostOpeningTestReplay = false
-    }
   }
 
   /**
@@ -12885,34 +12362,7 @@ export class StudyWorkspace {
     )
   }
 
-  /**
-   * Returns the reader to the composition its selection asks for after a refused entry, without measuring the main editor: the summary composition and the Learning summary's replay document are withdrawn and the Study pane is created again at its destination, so the refusal shows there and the next selection or Open arranges the panes; called by {@link enterCompositionForEntry} for a refusal whose cause (a main editor that reported no keyboard focus) a second measurement would meet again after another wait.
-   * @param refusal - The refusal the entry ended with; its sentence stands on the returned Study pane's control line until the next handled choice.
-   * @returns Nothing; a reader that stands in no empty summary composition is left as it is.
-   * @example this.dropEmptySummaryCompositionUnmeasured(error)
-   */
-  private dropEmptySummaryCompositionUnmeasured(
-    refusal: UnreportedEditorFocusError,
-  ): void {
-    if (!this.standsInEmptySummaryComposition()) return
-    this.forgetUnopenedComposition()
-    // open() disposed the Study pane before its measurement failed: the pane is created again at its destination without a measurement, so the refusal is told there and the reader never stands with no pane (Cycle 0060 final range, CR2-1).
-    this.presentationMode = 'study-workspace'
-    try {
-      this.ensureContext()
-      // The report publishes the pane with the refusal's line.
-      this.report('node-history-control', refusal.message)
-    } catch (error) {
-      this.report('control', error)
-    }
-  }
-
-  /**
-   * Names the Output › Codebook entry's surface and profile for a replay that did not open, from the catalogs, as the failure notification's wording does; called by {@link tellTestReplayOpenFailure} and {@link answerFailedTestReplayOpen}.
-   * @param studyId - The replay's study id.
-   * @returns `open:server-replay` with profile `node-server` for a server replay (listed, or a node-server run of this window not yet listed); `open:extension-replay` with `chrome-extension` for an Extension replay ({@link isExtensionReplay}); `open:test-replay` with `node-test` otherwise.
-   * @example this.replayOpenDiagnosticIdentity(studyId) // => { surface: 'open:server-replay', profile: 'node-server' }
-   */
+  /** Forwards to {@link ReplayOpening.replayOpenDiagnosticIdentity}, where this member's body moved (Cycle 0094 task 13). */
   private replayOpenDiagnosticIdentity(studyId: string): {
     surface:
       | 'open:server-replay'
@@ -12925,254 +12375,17 @@ export class StudyWorkspace {
       | typeof CHROME_EXTENSION_PROFILE
       | typeof NODE_TEST_PROFILE
   } {
-    const isListedTest = this.nodeHistoryCatalog.some(
-      (history) => history.studyId === studyId,
-    )
-    const isServer =
-      !isListedTest &&
-      (this.nodeServerHistoryCatalog.some(
-        (history) => history.studyId === studyId,
-      ) ||
-        this.recordOfStudy(studyId)?.profile === NODE_SERVER_PROFILE)
-    if (isServer)
-      return { surface: 'open:server-replay', profile: NODE_SERVER_PROFILE }
-    // A script replay, listed or just saved by this window, is logged as its own surface, never as a server or test replay.
-    if (
-      !isListedTest &&
-      (this.nodeScriptHistoryCatalog.some(
-        (history) => history.studyId === studyId,
-      ) ||
-        this.recordOfStudy(studyId)?.profile === NODE_SCRIPT_PROFILE)
-    )
-      return { surface: 'open:script-replay', profile: NODE_SCRIPT_PROFILE }
-    // An Extension replay is logged as its own surface, never as a test replay.
-    if (!isListedTest && this.isExtensionReplay(studyId))
-      return {
-        surface: 'open:extension-replay',
-        profile: CHROME_EXTENSION_PROFILE,
-      }
-    return { surface: 'open:test-replay', profile: NODE_TEST_PROFILE }
+    return this.replayOpening.replayOpenDiagnosticIdentity(studyId)
   }
 
-  /** Whether the study is an Extension replay, listed or just saved by this window; worded as one in an open-failure notice. @example this.isExtensionReplay(studyId) // => true */
-  private isExtensionReplay(studyId: string): boolean {
-    return (
-      this.nodeExtensionHistoryCatalog.some(
-        (history) => history.studyId === studyId,
-      ) || this.recordOfStudy(studyId)?.profile === CHROME_EXTENSION_PROFILE
-    )
-  }
-
-  /**
-   * Names a replay that did not open for the failure notification, as Saved studies names it: a test by its file and titles, any other replay by its saved title or question; the study id when no catalog lists it.
-   * @param studyId - The replay's study id.
-   * @returns The name the notification quotes.
-   * @example this.replayOpenFailureTitle(studyId) // => 'Creating an item'
-   */
-  private replayOpenFailureTitle(studyId: string): string {
-    const test = this.nodeHistoryCatalog.find(
-      (history) => history.studyId === studyId,
-    )
-    if (test) return [test.testFile, ...(test.testTitles ?? [])].join(' › ')
-    const titled = [
-      ...this.nodeServerHistoryCatalog,
-      ...this.nodeScriptHistoryCatalog,
-      ...this.nodeExtensionHistoryCatalog,
-    ].find((history) => history.studyId === studyId)
-    return titled ? (titled.title ?? titled.question) : studyId
-  }
-
-  /**
-   * Tells the learner that a test replay did not open: one Output › Codebook entry, written before this returns, and the load-failure notification, whose Show details button opens the channel; called by {@link openNodeHistoryFromHost} and {@link enterCompositionForEntry}.
-   * The notification's answer is never awaited: an error notification stays on screen until the learner answers it, and the entry that raised it holds the next entry's turn, so waiting would leave every later choice with no notice and no Output entry (N55-F4, Cycle 0056 task 17). The answer opens the channel whenever it comes.
-   * @param studyId - The test replay's study id.
-   * @param error - What the open threw.
-   * @param cause - The sanitized cause of that error.
-   * @example this.tellTestReplayOpenFailure(studyId, outcome.error, cause)
-   */
-  private tellTestReplayOpenFailure(
-    studyId: string,
-    error: unknown,
-    cause: string,
-  ): void {
-    const stack = sanitizedStack(error, this.privateRoots())
-    const identity = this.replayOpenDiagnosticIdentity(studyId)
-    this.diagnostics?.log({
-      ...identity,
-      studyId,
-      cause,
-      ...(stack ? { stack } : {}),
-    })
-    const failure = describeNodeLearningSave({
-      kind: 'open-failed',
-      // A server or script replay that cannot open is worded as one, never as a test replay, also before Saved studies lists it.
-      ...(identity.profile === NODE_SERVER_PROFILE ||
-      identity.profile === NODE_SCRIPT_PROFILE
-        ? { profile: identity.profile }
-        : this.isExtensionReplay(studyId)
-          ? { profile: CHROME_EXTENSION_PROFILE }
-          : {}),
-      title: this.replayOpenFailureTitle(studyId),
-      cause,
-    })
-    // The answer is handled whenever it arrives, outside every entry's turn.
-    void Promise.resolve(
-      showPlainNotice(
-        vscode.window,
-        'error',
-        failure.text,
-        ...(failure.actions ?? []),
-      ),
-    ).then(
-      (action) => {
-        if (action === NODE_LEARNING_SAVE_ACTION.showDetails)
-          this.diagnostics?.show()
-      },
-      (error: unknown) => this.report('control', error),
-    )
-  }
-
-  /**
-   * Opens a saved test history in the Study pane, the Application pane and the replay debugger at its saved reader position, or without one on its first stop whose source verifies, or on its first event when none does (DS1); the open the Study pane's `node-history` message and {@link openNodeHistoryFromHost} share.
-   * Each open takes a request token from the same counter as the pane's history requests (EN19), so a host open and a pane open never interleave their writes: a later request supersedes this one.
-   * @param studyId - The test history's study id.
-   * @param revision - The reader revision the open belongs to; a newer revision supersedes it.
-   * @returns `opened`, `superseded` by a newer request, revision or close, or `failed` with the error, which the reader also shows.
-   * @example await this.openNodeHistory(studyId, this.revision) // => { status: 'opened' }
-   */
-  private async openNodeHistory(
+  /** Forwards to {@link ReplayOpening.openNodeHistory}, where this member's body moved (Cycle 0094 task 13). */
+  private openNodeHistory(
     studyId: string,
     revision: number,
   ): Promise<
     { status: 'opened' | 'superseded' } | { status: 'failed'; error: unknown }
   > {
-    const request = ++this.historyRequest
-    this.studyChoices++
-    // A test replay that plays stops before another one opens: a failed open leaves it on its last committed moment with no timer running, and a shown replay never moves behind the opening (DS-A, DS-G).
-    this.nodeHistoryPlaybackController?.pause()
-    try {
-      // The opening marker is set inside the try, so its finally ends it even when the first publish throws.
-      this.pendingNodeHistory = request
-      this.pendingNodeHistoryStudyId = studyId
-      this.loading = true
-      this.publish()
-      await this.replayDebuggers.replaceUnavailable()
-      const opening = await this.readNodeHistoryOpening(
-        studyId,
-        request,
-        revision,
-      )
-      if (!opening) return { status: 'superseded' }
-      const {
-        history,
-        learningDecision,
-        learningMaterial,
-        savedSequence,
-        positionError,
-        serverReplay,
-        extensionReplay,
-      } = opening
-      this.nodeHistoryPlaybackController?.dispose()
-      this.replayDebuggers.current?.invalidate()
-      this.selectedNodeHistoryRequest++
-      // The reading of another replay is not kept: only the shown replay's is.
-      if (this.selectedNodeHistory?.header.studyId !== history.header.studyId)
-        this.nodeOutputReadings.clear()
-      this.selectedNodeHistory = history
-      this.selectedServerReplay = serverReplay
-      this.selectedExtensionReplay = extensionReplay
-      this.extensionShownFrame = undefined
-      this.extensionNativeShown = undefined
-      // The frames of the replay shown before are not kept; the new replay reads its own from its folder, by hash.
-      this.extensionFrames = extensionReplay
-        ? new ExtensionReplayFrameCache(
-            this.nodeHistoryRepository!.extensionHistories.historyDirectory(
-              history.header.studyId,
-            ),
-          )
-        : undefined
-      this.nodeHistoryOpenToken = request
-      // The pending close failure of another replay's withdrawn selection is not this replay's (F365).
-      this.nodeSourceSlotCloseFailure = undefined
-      // Admitting another history permanently retires the prior exact Wiki visit; refused reads leave it intact.
-      this.repositoryObservation = undefined
-      this.selectedNodeHistoryLearningDecision = learningDecision
-      this.selectedNodeHistoryLearningMaterial = learningMaterial
-      this.selectedNodeHistoryPage = 0
-      this.selectedNodeHistorySequence = undefined
-      this.nodeSurfacesSequence = undefined
-      this.requestedNodeHistorySequence = undefined
-      this.nodeHistoryLeftFor = undefined
-      this.selectedNodeHistoryStepId = undefined
-      this.selectedNodeHistoryDebugAvailable = false
-      this.selectedNodeHistoryValuesUninspected = false
-      // A test or server history has no application frames, and an Extension replay's frames load with its first moment: either way the pixels of the prior browser study go at once.
-      this.presentApplication(this.message())
-      // Each opened history gets its own controller; the present callback is bound to this study.
-      this.nodeHistoryPlaybackController = new NodeHistoryPlaybackController({
-        present: async (sequence, isCurrent) => {
-          const selectedHistory = this.selectedNodeHistory
-          if (!selectedHistory || selectedHistory.header.studyId !== studyId)
-            throw new Error(this.replayRefusal('changedDuringPlayback'))
-          await this.requestNodeHistoryEvent(selectedHistory, sequence, {
-            publish: false,
-            alignPlayback: false,
-            isCurrent,
-          })
-        },
-        changed: () => this.publish(),
-        failed: (error) => this.report('control', error),
-        replayKind: () => this.replayKind(),
-      })
-      // The saved reader position, else the first stop whose source verifies, else the first event (DS1).
-      const initialSequence = this.landingSequence(
-        history,
-        savedSequence,
-        serverReplay,
-        extensionReplay,
-      )
-      this.nodeHistoryPlaybackController.open(
-        history.entries.map((entry) => ({
-          sequence: entry.sequence,
-          elapsedMs: entry.elapsedMs,
-        })),
-        initialSequence,
-        // A server recording's timeline ends at its `end` entry, which may come after the last event.
-        serverReplay?.model.endedAtMs,
-      )
-      if (positionError)
-        this.reportTestReplayFailure('history-position', positionError)
-      if (initialSequence !== undefined)
-        await this.requestNodeHistoryEvent(history, initialSequence, {
-          publish: false,
-          alignPlayback: false,
-          keepOpenWithoutDebugger: true,
-        })
-      if (this.historyOpenSuperseded(request, revision))
-        return { status: 'superseded' }
-      this.endNodeHistoryOpening(request)
-      this.loading = false
-      this.publish()
-      return { status: 'opened' }
-    } catch (error) {
-      if (this.historyOpenSuperseded(request, revision))
-        return { status: 'superseded' }
-      this.endNodeHistoryOpening(request)
-      this.loading = false
-      this.reportTestReplayFailure('archive', error)
-      this.publish()
-      return { status: 'failed', error }
-    } finally {
-      const endedHere = this.endNodeHistoryOpening(request)
-      // A request discarded only because the reader's revision changed is still the latest; nothing else ends the loading state it set.
-      if (this.loading && this.isLatestHistoryRequest(request)) {
-        this.loading = false
-        this.publish()
-      } else if (endedHere && !this.closing) {
-        // A render that ended the loading state meanwhile leaves the panes on this open's loading line until they are published again.
-        this.publish()
-      }
-    }
+    return this.replayOpening.openNodeHistory(studyId, revision)
   }
 
   /**
@@ -13190,481 +12403,26 @@ export class StudyWorkspace {
     this.report(kind, wording(sanitizeCause(error, this.privateRoots())))
   }
 
-  /**
-   * Ends a test replay open's own marker, which alone says that a test replay is opening ({@link nodeHistoryViews}): a render that ends the shared loading state meanwhile never ends it; called by {@link openNodeHistory} before its last publish and in its `finally`.
-   * @param request - The open's request token.
-   * @returns `true` when this call ended the open's marker; `false` when a newer open owns it or it was already ended.
-   * @example this.endNodeHistoryOpening(request) // => true
-   */
-  private endNodeHistoryOpening(request: number): boolean {
-    // A newer Node history request owns the marker by then.
-    if (this.pendingNodeHistory !== request) return false
-    this.pendingNodeHistory = undefined
-    this.pendingNodeHistoryStudyId = undefined
-    return true
-  }
-
-  /**
-   * Reads what opening a test history shows besides its journal (the learner's decision, the learning material and the saved reader position), stopping as soon as a newer request, a newer reader revision or the reader's close supersedes the open; called by {@link openNodeHistory}.
-   * A decision or material that cannot be read is reported and left out, and a position that cannot be read is returned as its error, which the open reports once the replay is selected.
-   * @param studyId - The test history's study id.
-   * @param request - The open's request token.
-   * @param revision - The reader revision the open belongs to.
-   * @returns The history with what was read, or `undefined` once the open is superseded.
-   * @throws When the journal itself cannot be read or verified.
-   * @example await this.readNodeHistoryOpening(studyId, request, this.revision) // => { history, learningDecision, learningMaterial, savedSequence, positionError }
-   */
-  private async readNodeHistoryOpening(
+  /** Forwards to {@link ReplayOpening.readNodeHistoryOpening}, where this member's body moved (Cycle 0094 task 13). */
+  private readNodeHistoryOpening(
     studyId: string,
     request: number,
     revision: number,
   ): Promise<NodeHistoryOpening | undefined> {
-    const resolved = this.nodeHistoryRepository?.resolve(studyId)
-    if (resolved?.profile === 'node-server')
-      return this.readServerHistoryOpening(
-        resolved.store,
-        studyId,
-        request,
-        revision,
-        {
-          stillRecording: NODE_SERVER_REPLAY_TEXT.stillRecording,
-          summaryFailure: describeServerSummaryFailure,
-          present: presentServerHistory,
-        },
-      )
-    // A script replay opens through the same path, dressed with the script's words.
-    if (resolved?.profile === 'node-script')
-      return this.readServerHistoryOpening(
-        resolved.store,
-        studyId,
-        request,
-        revision,
-        {
-          stillRecording: NODE_SCRIPT_REPLAY_TEXT.stillRecording,
-          summaryFailure: describeScriptSummaryFailure,
-          present: presentScriptHistory,
-        },
-      )
-    if (resolved?.profile === 'chrome-extension')
-      return this.readExtensionHistoryOpening(
-        resolved.store,
-        studyId,
-        request,
-        revision,
-      )
-    const store = this.nodeHistoryStore!
-    const history = await store.read(studyId)
-    if (this.historyOpenSuperseded(request, revision)) return undefined
-    const sidecars = await this.readOpeningSidecars(
-      store,
-      studyId,
-      request,
-      revision,
-    )
-    return sidecars && { history, ...sidecars }
+    return this.replayOpening.readNodeHistoryOpening(studyId, request, revision)
   }
 
-  /**
-   * Reads a server history for its replay: the journal, the same sidecars a test replay reads, its summary's learning verdict, then the presentation that dresses it in the shared replay path; a history another window is still recording is refused, as it opens only once sealed or interrupted. Called by {@link readNodeHistoryOpening} for a study id the repository resolves to the server store.
-   * A saved reader position on a storage-only entry (a source entry or a send mark) restores the nearest earlier learner event.
-   * @param store - The server store the repository resolved.
-   * @param studyId - The server history's study id.
-   * @param request - The open's request token.
-   * @param revision - The reader revision the open belongs to.
-   * @returns The test-shaped history with the presentation and what was read, or `undefined` once the open is superseded.
-   * @throws When the journal cannot be read or verified, or the history is still being recorded.
-   * @example await this.readServerHistoryOpening(store, studyId, request, this.revision) // => { history, serverReplay, savedSequence }
-   */
-  private async readServerHistoryOpening<
-    Types extends NodeServerHistoryTypes | NodeScriptHistoryTypes,
-  >(
-    store: NodeHistoryStore<Types>,
-    studyId: string,
-    request: number,
-    revision: number,
-    flavor: {
-      stillRecording: string
-      summaryFailure: (cause: string) => string
-      present: (
-        journal: HistoryIndexOf<Types>,
-        summary: Types['Summary'] | undefined,
-      ) => ServerReplayPresentation
-    },
-  ): Promise<NodeHistoryOpening | undefined> {
-    const journal = await this.readOpenableJournal(
-      store,
-      studyId,
-      request,
-      revision,
-      flavor.stillRecording,
-    )
-    if (!journal) return undefined
-    const sidecars = await this.readOpeningSidecars(
-      store,
-      studyId,
-      request,
-      revision,
-    )
-    if (!sidecars) return undefined
-    // A summary that cannot be read leaves the learning verdict unknown: the open says so on the learning line instead of reading as "explanation not saved".
-    const summary = await store.summarize(studyId).catch((error: unknown) => {
-      // A read that another open superseded meanwhile has no replay left to say it about.
-      if (this.historyOpenSuperseded(request, revision)) return undefined
-      this.reportTestReplayFailure(
-        'history-learning',
-        error,
-        flavor.summaryFailure,
-      )
-      return undefined
-    })
-    if (this.historyOpenSuperseded(request, revision)) return undefined
-    const serverReplay = flavor.present(journal, summary)
-    const restored =
-      sidecars.savedSequence === undefined
-        ? undefined
-        : restoreServerPlayhead(serverReplay.model, sidecars.savedSequence)
-    return {
-      history: serverReplay.history,
-      serverReplay,
-      ...sidecars,
-      savedSequence: restored?.sequence,
-    }
-  }
-
-  /**
-   * Reads a history's verified journal for its replay and refuses one another window is still recording, which opens once sealed or interrupted; called by {@link readServerHistoryOpening} and {@link readExtensionHistoryOpening}.
-   * @param store - The store the repository resolved.
-   * @param studyId - The history's study id.
-   * @param request - The open's request token.
-   * @param revision - The reader revision the open belongs to.
-   * @param stillRecording - The profile's sentence for a history still being recorded.
-   * @returns The journal, or `undefined` once the open is superseded.
-   * @throws When the journal cannot be read or verified, or the history is still being recorded.
-   * @example const journal = await this.readOpenableJournal(store, studyId, request, this.revision, NODE_SERVER_REPLAY_TEXT.stillRecording)
-   */
-  private async readOpenableJournal<Types extends HistoryTypes>(
-    store: NodeHistoryStore<Types>,
-    studyId: string,
-    request: number,
-    revision: number,
-    stillRecording: string,
-  ): Promise<HistoryIndexOf<Types> | undefined> {
-    const journal = await store.read(studyId)
-    if (this.historyOpenSuperseded(request, revision)) return undefined
-    if (journal.status === 'recording') throw new Error(stillRecording)
-    return journal
-  }
-
-  /**
-   * Reads a chrome-extension history for its replay: the journal dressed in the shared replay path, the learner's decision and the saved reader position restored to the nearest event at or before it; a history another window is still recording is refused, as it opens once sealed or interrupted. Called by {@link readNodeHistoryOpening} for a study id the repository resolves to the extension store.
-   * The history's saved learning material is read as a server replay's is; a history without material shows its recording alone.
-   * @param store - The extension store the repository resolved.
-   * @param studyId - The history's study id.
-   * @param request - The open's request token.
-   * @param revision - The reader revision the open belongs to.
-   * @returns The test-shaped history with the presentation and what was read, or `undefined` once the open is superseded.
-   * @throws When the journal cannot be read or verified, or the history is still being recorded.
-   * @example await this.readExtensionHistoryOpening(store, studyId, request, this.revision) // => { history, extensionReplay, savedSequence }
-   */
-  private async readExtensionHistoryOpening(
-    store: NodeHistoryStore<ExtensionHistoryTypes>,
-    studyId: string,
-    request: number,
-    revision: number,
-  ): Promise<NodeHistoryOpening | undefined> {
-    const journal = await this.readOpenableJournal(
-      store,
-      studyId,
-      request,
-      revision,
-      NODE_EXTENSION_REPLAY_TEXT.stillRecording,
-    )
-    if (!journal) return undefined
-    // The same sidecars a test or server replay reads: the decision, the saved position and the learning material (a material that cannot be read is reported and left out).
-    const sidecars = await this.readOpeningSidecars(
-      store,
-      studyId,
-      request,
-      revision,
-    )
-    if (!sidecars) return undefined
-    const extensionReplay = adaptExtensionReplay(journal)
-    // A saved sequence that names no timeline event (a capture or a pin) restores the nearest earlier event.
-    const restored =
-      sidecars.savedSequence === undefined
-        ? undefined
-        : restoreExtensionPlayhead(
-            extensionReplay.model,
-            sidecars.savedSequence,
-          )
-    return {
-      history: extensionReplay.history,
-      extensionReplay,
-      ...sidecars,
-      savedSequence: restored?.sequence,
-    }
-  }
-
-  /**
-   * Reads what opening a history shows besides its journal (the learner's decision, the learning material and the saved reader position) from either profile's store, stopping as soon as a newer request, a newer reader revision or the reader's close supersedes the open; called by {@link readNodeHistoryOpening}, {@link readServerHistoryOpening} and {@link readExtensionHistoryOpening}.
-   * A decision or material that cannot be read is reported and left out, and a position that cannot be read is returned as its error, which the open reports once the replay is selected.
-   * @param store - The store that holds the history.
-   * @param studyId - The history's study id.
-   * @param request - The open's request token.
-   * @param revision - The reader revision the open belongs to.
-   * @returns What was read, or `undefined` once the open is superseded.
-   * @example await this.readOpeningSidecars(store, studyId, request, this.revision) // => { learningDecision, learningMaterial, savedSequence, positionError }
-   */
-  private async readOpeningSidecars<
-    Types extends HistoryTypes & { Material: NodeLearningMaterialOfHistory },
-  >(
-    store: NodeHistoryStore<Types>,
-    studyId: string,
-    request: number,
-    revision: number,
-  ): Promise<
-    | {
-        learningDecision?: NodeTestHistoryLearningDecision
-        learningMaterial?: NodeLearningMaterialOfHistory
-        savedSequence?: number
-        positionError?: unknown
-      }
-    | undefined
-  > {
-    const progress = await this.readOpeningProgress(
-      store,
-      studyId,
-      request,
-      revision,
-    )
-    if (!progress) return undefined
-    const learningMaterial = await store
-      .readLearningMaterial(studyId)
-      .catch((error: unknown) => {
-        this.reportTestReplayFailure('history-learning', error)
-        return undefined
-      })
-    if (this.historyOpenSuperseded(request, revision)) return undefined
-    return { ...progress, learningMaterial }
-  }
-
-  /**
-   * Reads the part of an open that every profile shares: the learner's decision and the saved reader position, stopping as soon as a newer request, a newer reader revision or the reader's close supersedes the open; called by {@link readOpeningSidecars} and {@link readExtensionHistoryOpening}.
-   * A decision that cannot be read is reported and left out, and a position that cannot be read is returned as its error, which the open reports once the replay is selected.
-   * @param store - The store that holds the history.
-   * @param studyId - The history's study id.
-   * @param request - The open's request token.
-   * @param revision - The reader revision the open belongs to.
-   * @returns The decision and the position, or `undefined` once the open is superseded.
-   * @example await this.readOpeningProgress(store, studyId, request, this.revision) // => { learningDecision, savedSequence, positionError }
-   */
-  private async readOpeningProgress<Types extends HistoryTypes>(
-    store: NodeHistoryStore<Types>,
-    studyId: string,
-    request: number,
-    revision: number,
-  ): Promise<
-    | {
-        learningDecision?: NodeTestHistoryLearningDecision
-        savedSequence?: number
-        positionError?: unknown
-      }
-    | undefined
-  > {
-    const learningDecision = await store
-      .readLearningDecision(studyId)
-      .catch((error: unknown) => {
-        this.reportTestReplayFailure('progress', error)
-        return undefined
-      })
-    if (this.historyOpenSuperseded(request, revision)) return undefined
-    const position = await store.readReaderPosition(studyId).then(
-      (savedSequence) => ({ savedSequence, positionError: undefined }),
-      (positionError: unknown) => ({ savedSequence: undefined, positionError }),
-    )
-    if (this.historyOpenSuperseded(request, revision)) return undefined
-    return { learningDecision, ...position }
-  }
-
-  /**
-   * Chooses the moment a replay opens at: its saved reader position, else the first stop whose source verifies (a server replay: its first recorded stop, else its request), else its first event (DS1); called by {@link openNodeHistory}.
-   * @param history - The history the replay moves over.
-   * @param savedSequence - The saved position, restored to a learner event for a server replay.
-   * @param serverReplay - The server presentation, when the replay is one.
-   * @returns The journal sequence to select; `undefined` for a history with no event.
-   * @example this.landingSequence(history, undefined, undefined) // => 2 for an output, then a verified stop
-   */
-  private landingSequence(
-    history: NodeTestHistoryIndex,
-    savedSequence: number | undefined,
-    serverReplay: ServerReplayPresentation | undefined,
-    extensionReplay?: ExtensionReplayPresentation,
-  ): number | undefined {
-    if (savedSequence !== undefined) return savedSequence
-    if (serverReplay) return openingServerEvent(serverReplay.model)?.sequence
-    // An Extension replay without a saved position opens on its first recorded stop, else its first event.
-    if (extensionReplay)
-      return openingExtensionEvent(extensionReplay.model)?.sequence
-    return firstVerifiedStopSequence(history) ?? history.entries[0]?.sequence
-  }
-
-  /**
-   * Says whether a test history's open lost its place: a newer history request took the reader, the reader's revision changed, or the reader is closing; read by {@link openNodeHistory} and {@link readNodeHistoryOpening} after each await.
-   * @param request - The open's request token.
-   * @param revision - The reader revision the open belongs to.
-   * @returns `true` when the open must leave the reader as it is.
-   * @example if (this.historyOpenSuperseded(request, revision)) return { status: 'superseded' }
-   */
-  private historyOpenSuperseded(request: number, revision: number): boolean {
-    return !this.isLatestHistoryRequest(request) || revision !== this.revision
-  }
-
-  /**
-   * Marks the recording open an agent is about to ask the playback controller for, so the load it starts enters the reader as the agent's ({@link open} with `forAgent`, row 613); called by {@link StudyService.playback} for codebook_playback's `open`, right before its command.
-   * The mark names the study and the revision the controller gives an accepted open; {@link loadPlayback} takes it for that load only.
-   * @param studyId - The study the agent opens.
-   * @returns The function that forgets the mark again, for an open the controller refused or answered without a load.
-   * @example const forget = workspace.markAgentRecordingOpen(input.studyId)
-   */
+  /** Forwards to {@link ReplayOpening.markAgentRecordingOpen}, where this member's body moved (Cycle 0094 task 13). */
   markAgentRecordingOpen(studyId: string): () => void {
-    const mark = {
-      studyId,
-      revision: (this.playback?.state().revision ?? 0) + 1,
-    }
-    this.agentRecordingOpen = mark
-    return (): void => {
-      if (this.agentRecordingOpen === mark) this.agentRecordingOpen = undefined
-    }
+    return this.replayOpening.markAgentRecordingOpen(studyId)
   }
 
-  /**
-   * Takes the agent's mark of the recording open that started this load, if any; asked once by {@link loadPlayback} before it arranges the reader.
-   * @param studyId - The study whose recording loads.
-   * @returns `true` when an agent asked for this open ({@link markAgentRecordingOpen}); `false` for the learner's own open.
-   * @example const forAgent = this.takeAgentRecordingOpen(studyId)
-   */
-  private takeAgentRecordingOpen(studyId: string): boolean {
-    const mark = this.agentRecordingOpen
-    // A mark for another study or another open belongs to no load of this one.
-    if (
-      mark?.studyId !== studyId ||
-      mark.revision !== this.playback?.state().revision
-    )
-      return false
-    this.agentRecordingOpen = undefined
-    return true
-  }
-
-  /** Loads immutable film/context before arranging its reader, restoring only the separately saved paused position. @example await this.loadPlayback(id, signal) */
-  private async loadPlayback(
+  /** Forwards to {@link ReplayOpening.loadPlayback}, where this member's body moved (Cycle 0094 task 13). */
+  private loadPlayback(
     studyId: string,
     signal: AbortSignal,
   ): Promise<PlaybackData> {
-    // Capture the actual existing holder before I/O or composition changes; later learner choices are preserved by native reveal options too.
-    const preserveRecordingKeyboard = Boolean(
-      vscode.window.state.focused &&
-      this.moments?.visible &&
-      this.momentsReportsKeyboard,
-    )
-    const intent = this.repositoryRecordingOpen
-    const origin =
-      intent?.studyId === studyId &&
-      intent.revision === this.playback!.state().revision
-        ? 'repository'
-        : 'study'
-    if (origin === 'repository') this.repositoryRecordingOpen = undefined
-    const forAgent = this.takeAgentRecordingOpen(studyId)
-    // An agent's open reaches this loader without openRecording; the same study on its way to the Trash is refused here too.
-    this.assertStudyNotMoving(studyId)
-    this.replayLoadAwaitingReady = true
-    await this.replayDebuggers.replaceUnavailable(signal)
-    signal.throwIfAborted()
-    // A recording that loads retires a selected test replay, as choosing a browser study does: the pane then shows the recording's own pages (D20).
-    // Only a selected replay is retired, so a load with none selected adds no wait before the recording becomes active.
-    if (this.selectedNodeHistory) {
-      await this.retireNodeHistorySelection()
-      signal.throwIfAborted()
-    }
-    this.recordingActive = true
-    // A test replay retired for this recording left the summary its placeholder: the recording's loading, failure and retry need the reader's document there (Cycle 0052 task 35).
-    if (this.summaryComposition) {
-      this.giveSummaryItsDocument()
-      this.lastPublished = undefined
-    }
-    // The reloaded recording is active again: a same-study Reload's mark has served its turn.
-    this.recordingReloadStudyId = undefined
-    // A browser replay starting ends any earlier record of tabs to close (F474).
-    this.retiredBrowserReplayTabs = undefined
-    this.pendingHistory = undefined
-    // A study this window still holds (a run of this session) is selected with its own item: paired with the item shown before, every reader update until the recording is read failed with "Selected item belongs to another configured article.", and that line stayed.
-    const heldStudy =
-      studyId === this.activeArchive?.id
-        ? this.activeArchive
-        : this.selectedArchive?.id === studyId
-          ? this.selectedArchive
-          : undefined
-    this.selection = heldStudy
-      ? selectStudy(heldStudy, this.selection)
-      : { ...this.selection, studyId, follow: false }
-    this.showRecordingLoadingOnLiveViewport()
-    const index = await this.recordings!.read(studyId)
-    signal.throwIfAborted()
-    let context: PlaybackData['context'],
-      contextHash: string | undefined,
-      contextReason: string | undefined,
-      preferredPositionMs: number | undefined
-    try {
-      const saved = await this.recordings!.readContext(studyId)
-      context = saved.context
-      contextHash = saved.hash
-    } catch (error) {
-      contextReason = `Recorded source/value context unavailable: ${String(error)}`
-    }
-    signal.throwIfAborted()
-    try {
-      const saved = await this.readSavedArchive(studyId)
-      signal.throwIfAborted()
-      this.selectedArchive = saved
-      if (context && sha256(JSON.stringify(saved)) !== context.studyHash)
-        this.report(
-          'playback-context',
-          new Error(
-            'Saved study changed after this recording context. Reload after its matching context is saved.',
-          ),
-        )
-      else this.errors.delete('playback-context')
-    } catch (error) {
-      this.report('playback-context', error)
-    }
-    signal.throwIfAborted()
-    const definition = context
-      ? { ...context.study, captures: [] }
-      : this.selectedArchive?.id === studyId
-        ? this.selectedArchive
-        : undefined
-    if (definition) this.selection = selectStudy(definition, this.selection)
-    else
-      throw new Error(
-        'Configured recording article context is unavailable. Reload its saved context.',
-      )
-    try {
-      const saved = await this.recordings!.readPreference()
-      if (saved?.studyId === studyId) preferredPositionMs = saved.positionMs
-      this.errors.delete('playback-preference')
-    } catch (error) {
-      this.report('playback-preference', error)
-    }
-    signal.throwIfAborted()
-    // A read that an entry's own reveal restarted (the reader was closed before the recording was read to its end) belongs to that entry, which arranges the recording's panes: opening the reader again from here would be refused by the presentation change that made the entry.
-    if (
-      this.recordingRevealedByEntry !==
-      this.playback!.state().presentationRevision
-    )
-      await this.open(signal, origin, preserveRecordingKeyboard, forAgent)
-    signal.throwIfAborted()
-    await this.ensureReplayViewport(signal)
-    signal.throwIfAborted()
-    return { index, context, contextHash, contextReason, preferredPositionMs }
+    return this.replayOpening.loadPlayback(studyId, signal)
   }
 
   /** Whether the replay reader's panes exist, for {@link PlaybackController}'s reload and control guards and for {@link showSavedStudy} before it asks whether the editor area is hidden: open and not closing. @example this.replayReaderOpen */
@@ -13672,298 +12430,22 @@ export class StudyWorkspace {
     return this.opened && !this.closing
   }
 
-  /**
-   * Shows the loading page on a live run's viewport while a recording loads, releasing the recording renderer that page replaces.
-   *
-   * {@link loadPlayback} calls it before it reads the recording. Without a live viewport nothing is written and the renderer stays;
-   * a renderer that still holds the panel is kept, so a reload needs no new renderer handshake.
-   *
-   * @example this.showRecordingLoadingOnLiveViewport()
-   */
-  private showRecordingLoadingOnLiveViewport(): void {
-    if (!this.viewport) return
-    // A recording renderer still holding the shared panel is kept: a new renderer's handshake would sit on the 2.0 s recovery path. The playback controller clears its frame, except for a reload of the recording on screen.
-    if (this.isRecordingRendererHoldingPanel()) return
-    // The live lease's loading page replaces the shared panel's document, so a recording renderer reused across this reload could never acknowledge a frame.
-    this.dropReplayViewport()
-    try {
-      this.viewport.showHistory(
-        this.applicationHtml({ ...this.message(), loading: true }),
-      )
-    } catch {
-      // A lease whose panel the editor already closed has no document to write; the recording loads into a new panel.
-    }
-  }
-
-  /**
-   * Says whether a recording renderer still holds the shared Application panel; asked by {@link showRecordingLoadingOnLiveViewport} before it would release that renderer for the loading page.
-   * @returns `true` when a recording renderer exists and needs no new reveal; `false` when there is none, or when the one there has to reveal the panel again.
-   * @example this.isRecordingRendererHoldingPanel() // => true at a reload of the recording on screen
-   */
-  private isRecordingRendererHoldingPanel(): boolean {
-    return Boolean(this.replayViewport) && !this.replayNeedsReveal
-  }
-
-  /**
-   * Releases the recording renderer whenever another writer takes over the shared Application panel's document or the recording is left.
-   *
-   * {@link loadPlayback}, {@link presentation}'s new live lease, a failed load, {@link leavePlayback}, {@link close}, the Application panel's
-   * dispose handler and a renderer that never became ready in {@link ensureReplayViewport} call it;
-   * {@link ensureReplayViewport} then constructs a new renderer for the next presentation, which performs its own first reveal.
-   *
-   * @example this.dropReplayViewport()
-   */
+  /** Forwards to {@link ReplayOpening.dropReplayViewport}, where this member's body moved (Cycle 0094 task 13). */
   private dropReplayViewport(): void {
-    this.replayViewport?.close()
-    this.replayViewport = undefined
-    this.replayNeedsReveal = false
+    return this.replayOpening.dropReplayViewport()
   }
 
-  /** Reuses the bounded PNG renderer without CDP, acquiring a fresh lease after replay-panel recreation. @example await this.ensureReplayViewport(signal) */
-  private async ensureReplayViewport(
-    signal: AbortSignal,
-  ): Promise<BrowserViewport> {
-    if (this.replayViewport) {
-      if (this.replayNeedsReveal) {
-        const reused = this.replayViewport
-        await reused.reveal(signal)
-        signal.throwIfAborted()
-        // Only a completed handshake retires the owed reveal; an abandoned one leaves it to the next request.
-        if (this.replayViewport === reused) this.replayNeedsReveal = false
-      }
-      return this.replayViewport
-    }
-    const panel = await this.prepareApplicationGroup(signal)
-    panel.title = RECORDED_APPLICATION_PANE_TITLE
-    const viewport = new BrowserViewport(
-      this.selection.studyId!,
-      (type, detail) => this.recordReplayDelivery(type, detail),
-      () => this.playback?.hide(),
-      'normal',
-      {
-        panel,
-        released() {},
-        assertCanReveal: (current) => this.assertApplicationReveal(current),
-      },
-      undefined,
-      'recording',
-    )
-    this.replayViewport = viewport
-    try {
-      await viewport.reveal(signal)
-      signal.throwIfAborted()
-      return viewport
-    } catch (error) {
-      if (this.replayViewport === viewport) {
-        // An abandoned request leaves the viewport to the newer one that may already be painting through it; the next presentation finishes its handshake.
-        if (signal.aborted) this.replayNeedsReveal = true
-        else this.dropReplayViewport()
-      }
-      throw error
-    }
+  /** Forwards to {@link ReplayOpening.ensureReplayViewport}, where this member's body moved (Cycle 0094 task 13). */
+  private ensureReplayViewport(signal: AbortSignal): Promise<BrowserViewport> {
+    return this.replayOpening.ensureReplayViewport(signal)
   }
 
-  /** Confirms the recorded PNG, captured native source and matching context together before the controller commits a playhead. @example await this.presentPlayback(bundle, signal) */
-  private async presentPlayback(
+  /** Forwards to {@link ReplayOpening.presentPlayback}, where this member's body moved (Cycle 0094 task 13). */
+  private presentPlayback(
     bundle: PlaybackBundle,
     signal: AbortSignal,
   ): Promise<void> {
-    signal.throwIfAborted()
-    // Reading a replay keeps an attached live run's held pause, which would otherwise expire while the learner studies.
-    for (const record of this.service?.records.values() ?? [])
-      record.runtime?.renewPauseHold?.()
-    // Retire the previous native Variables tree before publishing another recorded source or frame.
-    await this.replayDebuggers.current?.retire(
-      bundle.projection.debugger,
-      signal,
-    )
-    signal.throwIfAborted()
-    this.playbackPending = bundle
-    this.playbackPresentingReady = false
-    this.selection = retainedStudySelectionSchema.parse({
-      ...this.selection,
-      studyId: bundle.studyId,
-      itemId: bundle.projection.observation?.itemId ?? this.selection.itemId,
-      follow: false,
-    })
-    const viewport = await this.ensureReplayViewport(signal)
-    signal.throwIfAborted()
-    // Opening the workspace may focus context over a manually moved source group; restore only when its native tab is inactive.
-    await this.renderSelection(
-      true,
-      !this.sourceReady(),
-      signal,
-      undefined,
-      bundle === this.playback?.bundle(),
-    )
-    signal.throwIfAborted()
-    if (!this.sourceReady())
-      throw new Error(
-        'Recorded source has not reached the matching native reader.',
-      )
-    // Keep Application loading until native Run and Debug loads the historical values or its short grace elapses.
-    let inspection: ReplayInspection | undefined
-    if (
-      bundle.context?.study.observations.some(
-        (observation) => observation.debugger,
-      ) ||
-      this.replayDebuggers.current
-    ) {
-      // An owner replaced by an earlier request may still be stopping; this presentation creates the next one only while it is current.
-      await this.replayDebuggers.retired(signal)
-      signal.throwIfAborted()
-      inspection = await this.replayDebuggers.ensure().present(
-        bundle.projection.debugger,
-        bundle.projection.debugger
-          ? `Recorded pause · ${((bundle.projection.observation?.elapsedMs ?? bundle.projection.positionMs) / MILLISECONDS_PER_SECOND).toFixed(2)} s`
-          : 'Not recorded at this moment',
-        signal,
-        this.sourceUri && bundle.projection.observation
-          ? {
-              uri: this.sourceUri.toString(),
-              hash: this.message().model.source.hash,
-            }
-          : undefined,
-      )
-    }
-    // Committing without native values stays truthful only with a visible way to load them in Run and Debug; later ticks of this stop keep it.
-    this.replayUninspectedSnapshot =
-      inspection === 'uninspected' ? bundle.projection.debugger : undefined
-    // From here the moment is painting; settleOwnedPlayback bounds only this phase by PRESENTATION_READY_TIMEOUT_MS.
-    const paint = this.beginReplayPaint()
-    // A superseded frame may still wait behind a native placement hold that ignores cancellation; its paint phase must not count against the newer frame's settle.
-    const endSupersededPaint = (): void => this.endReplayPaint(paint)
-    signal.addEventListener('abort', endSupersededPaint, { once: true })
-    try {
-      if (bundle.image) {
-        const image = bundle.image.toString('base64'),
-          label = recordedFrameLabel(bundle.projection.positionMs)
-        // Earlier reveal/seek receipts must not be attributed to this frame's first attempt.
-        this.replayDelivery = { receipts: [], omitted: 0 }
-        try {
-          await viewport.present(image, label)
-        } catch (error) {
-          if (!(error instanceof ViewportAckTimeoutError)) throw error
-          signal.throwIfAborted()
-          const firstAttempt = this.drainReplayDelivery()
-          // A native pane handoff can lose one paint receipt; re-handshake this read-only renderer before retrying the same frame.
-          try {
-            await viewport.reveal(signal)
-          } catch (revealError) {
-            if (signal.aborted) throw revealError
-            throw new Error(
-              `${VIEWPORT_ACK_TIMEOUT_REASON}; the same-frame retry could not re-handshake the renderer: ${String(revealError)}. First attempt: ${firstAttempt}. Re-handshake: ${this.drainReplayDelivery()}.`,
-            )
-          }
-          signal.throwIfAborted()
-          try {
-            await viewport.present(image, label)
-          } catch (retryError) {
-            if (signal.aborted) throw retryError
-            const retry = this.drainReplayDelivery()
-            // Name both attempts so Recording error details separate a second lost receipt from another retry failure.
-            throw new Error(
-              retryError instanceof ViewportAckTimeoutError
-                ? `${VIEWPORT_ACK_TIMEOUT_REASON} again after one same-frame retry. First attempt: ${firstAttempt}. Retry: ${retry}.`
-                : `${VIEWPORT_ACK_TIMEOUT_REASON}; the same-frame retry then failed: ${String(retryError)}. First attempt: ${firstAttempt}. Retry: ${retry}.`,
-            )
-          }
-        }
-      } else
-        await viewport.presentMissing(
-          bundle.projection.missing ?? 'No recorded application image.',
-          signal,
-        )
-      signal.throwIfAborted()
-      this.playbackPresentingReady = true
-      this.replayApplicationCovered = false
-      this.lastRendered = undefined
-      this.lastPublished = undefined
-      this.publish()
-      const revision = this.revision,
-        presentationRevision = this.playback!.state().presentationRevision
-      await waitUntil(
-        () =>
-          (this.summaryComposition && !this.summaryView?.visible) ||
-          (this.lastRendered?.revision === revision &&
-            this.lastRendered.presentationRevision === presentationRevision &&
-            this.lastRendered.snapshotUri ===
-              bundle.projection.observation?.snapshotUri),
-        'matching recorded context presentation',
-        CAPTURE_TIMEOUT_MS,
-        signal,
-      )
-      signal.throwIfAborted()
-    } finally {
-      signal.removeEventListener('abort', endSupersededPaint)
-      this.endReplayPaint(paint)
-    }
-  }
-
-  /**
-   * Marks the start of a replay frame's paint phase for {@link settleOwnedPlayback}'s paint bound.
-   *
-   * {@link presentPlayback} calls it after native debugger presentation resolved, just before the viewport delivery.
-   *
-   * @returns This phase's token; only {@link endReplayPaint} with the same token ends it, so a superseded presentation that finishes late cannot end a newer phase.
-   * @example const paint = this.beginReplayPaint()
-   */
-  private beginReplayPaint(): object {
-    const paint = {}
-    this.replayPaint = { token: paint, startedAt: performance.now() }
-    for (const watch of [...this.replayPaintWatchers]) watch()
-    return paint
-  }
-
-  /**
-   * Ends the paint phase that {@link beginReplayPaint} started, on every exit of {@link presentPlayback}.
-   * @param paint - Token returned when this phase began.
-   * @example this.endReplayPaint(paint)
-   */
-  private endReplayPaint(paint: object): void {
-    if (this.replayPaint?.token !== paint) return
-    this.replayPaint = undefined
-    for (const watch of [...this.replayPaintWatchers]) watch()
-  }
-
-  /**
-   * Retains the newest replay viewport delivery receipts for {@link presentPlayback}'s failure details.
-   *
-   * Passed as the recording {@link BrowserViewport}'s record callback; it never affects delivery or paint.
-   *
-   * @param type - Receipt name emitted by {@link BrowserViewport} or {@link FrameDelivery}.
-   * @param detail - Receipt detail; only non-image fields are later summarized.
-   *
-   * @example
-   * ```ts
-   * this.recordReplayDelivery('viewport.sent', { id: 3 }) // replayDelivery.receipts ends with that receipt
-   * ```
-   */
-  private recordReplayDelivery(type: string, detail?: unknown): void {
-    this.replayDelivery.receipts.push({ type, detail })
-    // Keep memory bounded; dropped receipts are counted so the summary never implies completeness.
-    if (this.replayDelivery.receipts.length > REPLAY_VIEWPORT_RECEIPT_LIMIT) {
-      this.replayDelivery.receipts.shift()
-      this.replayDelivery.omitted++
-    }
-  }
-
-  /**
-   * Describes the current replay attempt's receipts plus native panel visibility, then starts a fresh attempt log.
-   *
-   * Called by {@link presentPlayback} after a recorded frame's paint receipt, re-handshake or retry fails.
-   *
-   * @returns Summary such as `sent #1; received (hidden, no area); rejected #1: …; panel visible`.
-   *
-   * @example
-   * ```ts
-   * const firstAttempt = this.drainReplayDelivery() // => 'no renderer receipts; panel hidden'
-   * ```
-   */
-  private drainReplayDelivery(): string {
-    const summary = `${describeViewportDelivery(this.replayDelivery)}; panel ${this.app?.visible ? 'visible' : 'hidden'}`
-    this.replayDelivery = { receipts: [], omitted: 0 }
-    return summary
+    return this.replayOpening.presentPlayback(bundle, signal)
   }
 
   /**
