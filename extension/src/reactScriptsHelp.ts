@@ -158,7 +158,7 @@ function reactScriptsLibraryHelp() {
     whatRuns: [
       "The learner's editor confirmation comes first and names the build and pack, because the build runs the project's own build scripts. Tell the learner a build will run and to answer the editor's confirmation; a declined confirmation starts nothing.",
       "The repository's package manager runs the library's own build script in library.packageRoot, then packs the library into the run's private folder with lifecycle scripts off.",
-      "Codebook then starts the Example's own react-scripts with a preload that redirects the Example's imports of the library to the packed copy; the Example's files, its node_modules and its caches stay as they are (caches go to the run's private folder).",
+      "Codebook then starts the Example's own react-scripts with a preload that redirects the Example's imports of the library to the packed copy; the Example's files and its node_modules stay as they are, and react-scripts 5's own caches (webpack, babel-loader, ESLint and the TypeScript checker's build info) go to the run's private folder.",
       `The build and pack together are bounded at ${LIBRARY_BUILD_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s. Codebook never installs packages.`,
     ],
     phase:

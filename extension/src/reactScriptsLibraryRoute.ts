@@ -56,6 +56,8 @@ class ReactScriptsAttribution implements LibraryAttribution {
   /** The scripts that matched nothing while the report ended in a line not yet terminated. */
   private deferred: LibraryScript[] = []
   private isFinal = false
+  /** How many owned `.js` scripts were judged `not-owned` while no usable public path was known: missing evidence, not a verdict. */
+  private unclassifiedScriptCount = 0
 
   constructor(private readonly reportPathOf: () => string | undefined) {}
 
@@ -108,7 +110,12 @@ class ReactScriptsAttribution implements LibraryAttribution {
       this.deferred.push(script)
       return observed({ kind: 'ignore' })
     }
-    if (match.kind === 'not-owned') return observed({ kind: 'ignore' })
+    if (match.kind === 'not-owned') {
+      // Without a usable public path every bundle script reads not-owned; remember it so finalization can tell missing evidence from a foreign script.
+      if (this.reader.isUnclassifiedBundleScript(script.url))
+        this.unclassifiedScriptCount += 1
+      return observed({ kind: 'ignore' })
+    }
     return observed({
       kind: 'unreadable',
       cause:
@@ -116,6 +123,22 @@ class ReactScriptsAttribution implements LibraryAttribution {
           ? 'truncated-compilation'
           : 'script-matches-no-asset',
     })
+  }
+
+  /**
+   * Why the report left parsed scripts unclassified, when it did.
+   * Called by {@link ReactScriptsLibraryRoute.finalize} after the deferred scripts were judged.
+   * @returns A cause when the page parsed a bundle script and the report still holds no usable public path (`report-error: <message>` for a preload error line, `no-usable-public-path` when only unusable paths were written, `no-compilation-report` when no compilation was written); `undefined` otherwise, including a run whose page parsed no such script.
+   * @example attribution.missingEvidenceCause() // => 'no-compilation-report'
+   */
+  missingEvidenceCause(): string | undefined {
+    if (this.unclassifiedScriptCount === 0 || this.reader.hasUsablePublicPath)
+      return undefined
+    const errorMessage = this.reader.reportErrorCause ?? this.reader.errorCause
+    if (errorMessage !== undefined) return `report-error: ${errorMessage}`
+    return this.reader.compilationsRead > 0
+      ? 'no-usable-public-path'
+      : 'no-compilation-report'
   }
 
   /** Classifies the files of a matched asset: a file of the packed folder is packed, a file of another copy is another copy, anything else says nothing. */
@@ -371,6 +394,10 @@ export class ReactScriptsLibraryRoute implements LibraryRunRoute {
       this.core.view().prepared
     )
       this.core.markUnreadable(cause)
+    // A page that parsed bundle scripts the report never described is missing evidence: never claim "not loaded" from it.
+    const missingEvidenceCause = this.attribution.missingEvidenceCause()
+    if (missingEvidenceCause !== undefined && this.core.view().prepared)
+      this.core.markUnreadable(missingEvidenceCause)
     this.core.finalize(isPageClosed)
   }
 

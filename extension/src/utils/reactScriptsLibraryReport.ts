@@ -183,6 +183,7 @@ export class ReactScriptsReportReader {
   private reportErrorMessage: string | undefined
   private unreadable: ReactScriptsReportUnreadableCause | undefined
   private truncatedCount = 0
+  private compilationCount = 0
 
   /**
    * @param wholeLimitBytes - The most bytes of the report that are read.
@@ -216,6 +217,31 @@ export class ReactScriptsReportReader {
   /** How many compilations were written as `truncated`. */
   get truncatedCompilations(): number {
     return this.truncatedCount
+  }
+
+  /** How many compilation lines (complete or truncated) were read, whatever their public path. */
+  get compilationsRead(): number {
+    return this.compilationCount
+  }
+
+  /** Whether a compilation line gave a public path that can classify scripts (see {@link isUsablePublicPath}). */
+  get hasUsablePublicPath(): boolean {
+    return this.publicPaths.size > 0
+  }
+
+  /**
+   * Tells whether a script the page parsed would be a bundle script the reader cannot classify yet, because no usable public path is known.
+   *
+   * Called by the react-scripts library route when {@link match} says `not-owned`: without any usable public path every `.js` script reads `not-owned`, which is missing evidence and no proof that the script is foreign. An inline script (reported with the document URL, no `.js` path) is never a bundle script.
+   * @param url - The script URL.
+   * @returns True when the URL path ends in `.js` and no usable public path is known.
+   * @example
+   * reader.isUnclassifiedBundleScript('http://localhost:3000/static/js/bundle.js') // => true while the report has no usable public path
+   */
+  isUnclassifiedBundleScript(url: string): boolean {
+    if (this.hasUsablePublicPath) return false
+    const rawPath = pathOf(url)
+    return (decodePath(rawPath) ?? rawPath).endsWith('.js')
   }
 
   /** The bytes of a trailing line that has no newline yet. */
@@ -372,10 +398,12 @@ export class ReactScriptsReportReader {
     } else if ('reportError' in line) {
       this.reportErrorMessage ??= line.reportError
     } else if ('truncated' in line) {
+      this.compilationCount += 1
       this.truncatedCount += 1
       if (line.publicPath !== undefined)
         this.rememberPublicPath(line.publicPath)
     } else {
+      this.compilationCount += 1
       this.rememberPublicPath(line.publicPath)
       for (const asset of line.assets) this.addToIndex(line.publicPath, asset)
     }

@@ -25,7 +25,7 @@ export type ReactScriptsLibraryPreloadConfiguration = {
  *
  * It expects `CONFIG` ({@link ReactScriptsLibraryPreloadConfiguration}) to be defined above it, which {@link buildReactScriptsLibraryPreloadSource} does.
  * It is inert at load: it only replaces `Module._load`, writing and creating nothing, because forked children inherit it through `process.execArgv`. Only when react-scripts' `config/webpack.config.js` factory is required does it wrap the factory once; the wrapped factory patches the configuration it returns and writes `{"wrapped":true}`, or, when anything throws, undoes every change, writes `{"error":"<message>"}` and returns the configuration unpatched. A failure while describing a later compilation writes `{"reportError":"<message>"}` instead, which does not mean the patch was not applied.
- * The patch: a resolver plugin that sends the package name to the packed copy and resolves imports from inside the packed copy like the packed package would (peers from the Example, other bare imports from the library); caches moved into the private folder; source-map names of byte-equal packed sources pointing at the checked-out file; a reporter plugin writing, at `emit`, one line per compilation with the SHA-256 of each emitted script and the real paths of the library-looking modules of its chunks.
+ * The patch: a resolver plugin (tapped on the `normal-resolve` step, after query splitting, alias fields and the `imports` field) that sends the package name to the packed copy and resolves imports from inside the packed copy like the packed package would (peers from the Example, other bare imports from the library); caches moved into the private folder; source-map names of byte-equal packed sources pointing at the checked-out file; a reporter plugin writing, at `emit`, one line per compilation with the SHA-256 of each emitted script and the real paths of the library-looking modules of its chunks.
  */
 const REACT_SCRIPTS_PRELOAD_BODY = `
 'use strict'
@@ -63,8 +63,14 @@ const makeChanges = () => {
   }
 }
 
+// Re-enters the pipeline from the start with a fresh request, so no stale description-file data of the original request leaks into the redirected resolve. The query and fragment were split off by the parser and are put back, because the parser at the 'resolve' hook splits them again.
 const redirectRequest = (resolver, request, directory, resolveContext, callback) => {
-  resolver.doResolve(resolver.ensureHook('resolve'), { ...request, path: directory }, 'codebook library', resolveContext, callback)
+  const redirected = {
+    context: request.context,
+    path: directory,
+    request: request.request + (request.query || '') + (request.fragment || ''),
+  }
+  resolver.doResolve(resolver.ensureHook('resolve'), redirected, 'codebook library', resolveContext, callback)
 }
 const directoryFor = (specifier, context) => {
   if (isInside(CONFIG.packedRoot, context)) {
@@ -75,9 +81,10 @@ const directoryFor = (specifier, context) => {
   if (context === ANCHOR) return ''
   return isNamed(specifier, CONFIG.packageName) ? ANCHOR : ''
 }
+// Tapped on 'normal-resolve', the one step every bare request passes after enhanced-resolve (5.x) has parsed it (query and fragment are split off), applied the package's alias fields ('browser' on raw-resolve) and expanded the 'imports' field (which re-enters through internal-resolve or imports-resolve, depending on the version). A request the packed package's alias fields map to a relative path or false never reaches it; one mapped to another bare name or expanded from '#name' arrives here with the path of the packed folder and is redirected like a direct bare import.
 const createResolverPlugin = () => ({
   apply(resolver) {
-    resolver.getHook('resolve').tapAsync(PLUGIN_NAME, (request, resolveContext, callback) => {
+    resolver.ensureHook('normal-resolve').tapAsync(PLUGIN_NAME, (request, resolveContext, callback) => {
       const specifier = request.request
       const context = request.path
       if (typeof specifier !== 'string' || typeof context !== 'string' || !isBare(specifier)) return callback()

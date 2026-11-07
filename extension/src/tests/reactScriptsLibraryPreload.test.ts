@@ -60,7 +60,7 @@ module.exports = function (webpackEnv) {
       new ESLintWebpackPlugin({ cacheLocation: path.join(${JSON.stringify(appRoot)}, 'node_modules/.cache/.eslintcache') }),
       new ForkTsCheckerWebpackPlugin({ typescript: { configOverwrite: { compilerOptions: { tsBuildInfoFile: '/app/node_modules/.cache/tsconfig.tsbuildinfo' } } } }),
     ],
-    resolve: { plugins: [] },
+    resolve: { plugins: [], aliasFields: ['browser'] },
   }
   ${isBroken ? "Object.defineProperty(config, 'resolve', { get() { throw new Error('resolve is not readable') } })" : ''}
   return config
@@ -483,4 +483,128 @@ reporter.apply({ hooks: { emit: { tap: (name, callback) => callback({ chunks: []
     { wrapped: true },
     { reportError: 'hash failed' },
   ])
+})
+
+/** Rewrites the packed and checked-out manifests of a fixture. */
+function writePackedManifest(
+  fixture: Fixture,
+  packed: Record<string, unknown>,
+  checkedOut?: Record<string, unknown>,
+): void {
+  writeAt(
+    join(fixture.packedRoot, 'package.json'),
+    JSON.stringify({ name: 'lib', exports: { '.': './index.js' }, ...packed }),
+  )
+  if (checkedOut)
+    writeAt(
+      join(fixture.libraryRoot, 'package.json'),
+      JSON.stringify({ name: 'lib', ...checkedOut }),
+    )
+}
+
+// Value: protects=imports-field targets of the packed package resolve like direct bare imports; fails_when=#dep is looked up from the packed folder and the build cannot resolve it; no_claim=conditions or nested imports maps.
+test('packed copy imports of #dep and #peer resolve the dependency from the library folder and the peer from the Example', async () => {
+  // Arrange
+  const fixture = createFixture()
+  writeAt(
+    join(fixture.appRoot, 'src/index.js'),
+    "module.exports = require('lib')\n",
+  )
+  writePackedManifest(fixture, {
+    imports: { '#dep': 'dep', '#peer': 'peer' },
+  })
+  writeAt(
+    join(fixture.packedRoot, 'index.js'),
+    "module.exports = [require('#dep'), require('#peer')]\n",
+  )
+
+  // Act
+  const output = await runWithPreload(fixture)
+
+  // Assert
+  const modules = output.modules ?? []
+  assert.deepEqual(output.errors, [])
+  assert.ok(
+    modules.includes(join(fixture.libraryRoot, 'node_modules/dep/index.js')),
+  )
+  assert.ok(
+    modules.includes(join(fixture.appRoot, 'node_modules/peer/index.js')),
+  )
+  assert.equal(
+    modules.includes(join(fixture.appRoot, 'node_modules/dep/index.js')),
+    false,
+  )
+})
+
+// Value: protects=the packed package's browser field maps a bare import to the packed file; fails_when=the import is redirected to the checked-out copy before the alias field applies; no_claim=alias mapped to another bare name.
+test('packed copy loads its own browser-field file for a mapped bare import, never the checked-out copy', async () => {
+  // Arrange
+  const fixture = createFixture()
+  const browserField = { browser: { dep: './browser.js' } }
+  writeAt(
+    join(fixture.appRoot, 'src/index.js'),
+    "module.exports = require('lib')\n",
+  )
+  writePackedManifest(fixture, browserField, browserField)
+  writeAt(
+    join(fixture.packedRoot, 'index.js'),
+    "module.exports = require('dep')\n",
+  )
+  writeAt(
+    join(fixture.packedRoot, 'browser.js'),
+    "module.exports = 'packed-browser'\n",
+  )
+  writeAt(
+    join(fixture.libraryRoot, 'browser.js'),
+    "module.exports = 'checked-out-browser'\n",
+  )
+
+  // Act
+  const output = await runWithPreload(fixture)
+
+  // Assert
+  const modules = output.modules ?? []
+  assert.deepEqual(output.errors, [])
+  assert.ok(modules.includes(join(fixture.packedRoot, 'browser.js')))
+  assert.equal(modules.includes(join(fixture.libraryRoot, 'browser.js')), false)
+  const compilation = readReportLines(fixture.reportPath)[1] as {
+    assets: { resources: string[] }[]
+  }
+  assert.equal(
+    compilation.assets[0]?.resources.includes(
+      join(fixture.libraryRoot, 'browser.js'),
+    ),
+    false,
+  )
+})
+
+// Value: protects=a query on the package name still reaches the packed copy; fails_when=lib?query resolves to the Example's installed copy; no_claim=query forwarded to loaders.
+test('Example import of lib with a query string is served from the packed copy', async () => {
+  // Arrange
+  const fixture = createFixture()
+  writeAt(
+    join(fixture.appRoot, 'src/index.js'),
+    "module.exports = require('lib?query')\n",
+  )
+  // Without an exports map, so the query is the only thing that differs from a plain import.
+  writeAt(
+    join(fixture.packedRoot, 'package.json'),
+    '{"name":"lib","main":"index.js"}',
+  )
+  writeAt(join(fixture.packedRoot, 'index.js'), "module.exports = 'packed'\n")
+
+  // Act
+  const output = await runWithPreload(fixture)
+
+  // Assert
+  const modules = output.modules ?? []
+  assert.deepEqual(output.errors, [])
+  // webpack keeps the query in the module resource
+  assert.ok(modules.includes(join(fixture.packedRoot, 'index.js') + '?query'))
+  assert.equal(
+    modules.some((file) =>
+      file.startsWith(join(fixture.appRoot, 'node_modules/lib')),
+    ),
+    false,
+  )
 })
