@@ -154,10 +154,18 @@
         "count": 11
       },
       "complexity_high": {
-        "count": 9
+        "count": 8
       },
       "complexity_moderate": {
-        "count": 9
+        "count": 8
+      }
+    },
+    "src/studyWorkspace/presentationState.ts": {
+      "complexity_high": {
+        "count": 1
+      },
+      "complexity_moderate": {
+        "count": 1
       }
     },
     "src/ui/repositoryHtml.ts": {
@@ -586,11 +594,6 @@
         "count": 1
       }
     },
-    "src/studyWorkspace.ts\u0000presentationState": {
-      "complexity_high": {
-        "count": 1
-      }
-    },
     "src/studyWorkspace.ts\u0000provideSource": {
       "complexity_moderate": {
         "count": 1
@@ -626,11 +629,6 @@
         "count": 1
       }
     },
-    "src/studyWorkspace.ts\u0000retained": {
-      "complexity_moderate": {
-        "count": 1
-      }
-    },
     "src/studyWorkspace.ts\u0000selectNodeHistoryEvent": {
       "complexity_high": {
         "count": 1
@@ -642,6 +640,16 @@
       }
     },
     "src/studyWorkspace.ts\u0000understand": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "src/studyWorkspace/presentationState.ts\u0000presentationState": {
+      "complexity_high": {
+        "count": 1
+      }
+    },
+    "src/studyWorkspace/presentationState.ts\u0000retained": {
       "complexity_moderate": {
         "count": 1
       }

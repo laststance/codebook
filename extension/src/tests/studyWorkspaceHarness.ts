@@ -5626,6 +5626,10 @@ export async function workspaceHarness(
         __dirname,
         '../studyWorkspace/capturedSourceReturn.js',
       ),
+      './studyWorkspace/presentationState': resolve(
+        __dirname,
+        '../studyWorkspace/presentationState.js',
+      ),
     },
   )
   const repositoryBoundary = await loadModule<typeof RepositoryReaderModule>(

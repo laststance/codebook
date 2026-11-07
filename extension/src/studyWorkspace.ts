@@ -34,8 +34,6 @@ import {
   LEARNER_SIGN_FRESH_MS,
   LEARNER_STARTED_STOP_REASONS,
   LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE,
-  LIVE_EDITOR_GROUP_COUNT,
-  LIVE_EDITOR_LAYOUT,
   CONTROL_RETIRING_MESSAGE_TYPES,
   CURSOR_FOCUS_AGENT_COMMAND,
   MAIN_THREAD_WEBVIEW_PREFIX,
@@ -56,10 +54,8 @@ import {
   PAUSE_FOCUS_LOOKBACK_MS,
   EDITOR_FOCUS_PASS_DELAY_MS,
   STOP_OWN_FOCUS_BOUND_MS,
-  PRESENTATION_PREFERENCE_KEY,
   PAUSED_SOURCE_MOVE_ATTEMPTS,
   PRESENTATION_FOCUS_COMMAND_PROBE_MS,
-  PRESENTATION_PREFERENCE_VERSION,
   APPLICATION_TAB_KEEP_PROBE_MS,
   PLACEMENT_REFUSED_RECOVERY,
   PRESENTATION_READY_TIMEOUT_MS,
@@ -177,7 +173,6 @@ import {
 } from './playbackController'
 import {
   presentationModeSchema,
-  presentationPreferenceSchema,
   presentationPoseSchema,
   presentationPoseRestoredSchema,
   presentationPoseInvalidatedSchema,
@@ -256,6 +251,8 @@ import {
 import { itemSchema, type StudyCatalogEntry } from './studySchemas'
 import { CapturedSourceReturn } from './studyWorkspace/capturedSourceReturn'
 import { createCapturedSourceReturnHost } from './studyWorkspace/capturedSourceReturnHost'
+import { PresentationReceipts } from './studyWorkspace/presentationState'
+import { createPresentationReceiptsHost } from './studyWorkspace/presentationStateHost'
 import {
   studyHtml,
   type StudyFilesCopied,
@@ -282,11 +279,6 @@ import {
 import { canonicalFsPath } from './utils/canonicalFsPath'
 import { capturedAppHtml } from './utils/capturedAppHtml'
 import { capturedSourceDeclaredPath } from './utils/capturedSourceDeclaredPath'
-import {
-  capturedSourceNotShownReason,
-  type CapturedSourceStanding,
-  type CapturedSourceView,
-} from './utils/capturedSourceNotShownReason'
 import { capturedSourceUriPath } from './utils/capturedSourceUriPath'
 import { captureStudy } from './utils/captureStudy'
 import { causeRootsFor } from './utils/causeRootsFor'
@@ -372,10 +364,7 @@ import { isDiffTabOfDocument } from './utils/isDiffTabOfDocument'
 import { isEditorUncoveredByMove } from './utils/isEditorUncoveredByMove'
 import { isLiveSourceViewUri } from './utils/isLiveSourceViewUri'
 import { isNodeSourceSlotPath } from './utils/isNodeSourceSlotPath'
-import {
-  editorLayoutSchema,
-  isProportionalEditorLayout,
-} from './utils/isProportionalEditorLayout'
+import { isProportionalEditorLayout } from './utils/isProportionalEditorLayout'
 import { isSameEditorLayoutShape } from './utils/isSameEditorLayoutShape'
 import { isShownRefusal } from './utils/isShownRefusal'
 import { isWikiGroupBesideTextEditor } from './utils/isWikiGroupBesideTextEditor'
@@ -447,7 +436,6 @@ import {
   type RecordedLeftoverGroup,
   recordedLeftoverGroups,
 } from './utils/recordedLeftoverGroups'
-import { recordingNotShownReason } from './utils/recordingNotShownReason'
 import { replacedTabAddresses } from './utils/replacedTabAddresses'
 import {
   replayNoStep,
@@ -488,11 +476,6 @@ import {
   toApplicationGroupMarker,
 } from './utils/toApplicationGroupMarker'
 import { toPixelEditorLayout } from './utils/toPixelEditorLayout'
-import { unconfirmedCompositionRefusal } from './utils/unconfirmedCompositionRefusal'
-import {
-  type ChangedLayoutPart,
-  unconfirmedLayoutReason,
-} from './utils/unconfirmedLayoutReason'
 import { unconfirmedWritersInLocalTime } from './utils/unconfirmedWritersInLocalTime'
 import { unmatchedByKey } from './utils/unmatchedByKey'
 import { unreportedEditorFocusObstacle } from './utils/unreportedEditorFocusObstacle'
@@ -1338,11 +1321,10 @@ export class StudyWorkspace {
     this.confirmedLayoutReceipt = receipt
     this.recordStudyGroups()
   }
-  /** Which comparison of the layout receipt a status read found changed; it speaks for that receipt only, so a later arrangement retires it. */
-  private changedLayoutPart?: {
-    receipt: NonNullable<StudyWorkspace['layoutReceipt']>
-    part: ChangedLayoutPart
-  }
+  private readonly presentationReceipts = new PresentationReceipts(
+    createPresentationReceiptsHost(this),
+  )
+
   private enlargedLayoutReceipt?: {
     receipt: NonNullable<StudyWorkspace['layoutReceipt']>
     mode: PresentationMode
@@ -1446,9 +1428,6 @@ export class StudyWorkspace {
   private requestedPresentation?: PresentationMode
   private presentationConfirmed = false
   private presentationReason?: string
-  private presentationPreference: PresentationState['preference'] = {
-    status: 'default',
-  }
   /** Greater than 0 while {@link open} arranges the panes of an entry: the placement guards then take the editor's report of another own pane as the active one for no change of the learner's (Cursor 3.27.22 after a reload). */
   private acceptingOwnPaneFocusReports = 0
 
@@ -1520,42 +1499,6 @@ export class StudyWorkspace {
     })
   }
 
-  /**
-   * Writes the Output diagnostic that names every marker which refuses a control, with its owner and age; called by {@link assertPresentationIdle} just before it throws the pending sentence.
-   * @example this.logPendingRefusal()
-   */
-  private logPendingRefusal(): void {
-    const nowMs = performance.now()
-    const describe = (name: string, isSet: boolean, refuses: boolean) => {
-      const since = this.markerSetAt.get(name)
-      return isSet
-        ? `${name}${refuses ? '' : ' (not part of the refusal)'}: set by ${since?.owner ?? 'unknown'} ${since ? Math.round(nowMs - since.atMs) : '?'} ms ago`
-        : undefined
-    }
-    const lines = [
-      describe(
-        'presentationTransition',
-        Boolean(this.presentationTransition),
-        true,
-      ),
-      describe('closing', this.closing, true),
-      describe('returningCurrent', this.returningCurrent !== undefined, true),
-      describe(
-        'presentationOperation',
-        Boolean(this.presentationOperation),
-        false,
-      ),
-      this.busy ? 'busy: set (not part of the refusal)' : undefined,
-      this.refreshing ? 'refreshing: set (not part of the refusal)' : undefined,
-      this.arranging ? 'arranging: set (not part of the refusal)' : undefined,
-    ].filter((line): line is string => line !== undefined)
-    // An owner read from an anonymous stack frame is a file location: each line is sanitized like every other cause before it reaches the Output channel ({@link sanitizeCause} joins lines, so it runs per line to keep one marker a line).
-    const roots = this.privateRoots()
-    this.diagnostics?.log({
-      surface: 'presentation:pending-refused',
-      cause: lines.map((line) => sanitizeCause(line, roots)).join('\n'),
-    })
-  }
   /** Set from the start of a recording load until its first ready position, which retires a replay control's reported failure. */
   private replayLoadAwaitingReady = false
   /** The ledger write {@link saveShownRecordingSelection} started for the recording shown last; the playback controller's position save waits for it, so an unbounded {@link PlaybackController.settle} (tests, {@link PlaybackController.dispose}) ends after it, and {@link openLearningReplay} awaits it after its bounded one. It never rejects. */
@@ -1613,180 +1556,29 @@ export class StudyWorkspace {
     this.rememberInheritedPanes()
   }
 
-  /**
-   * Keeps live explanation in native chat when {@link open} arranges app/source; replay retains its summary.
-   * @returns The confirmed Application layout; the live two-group layout only while no Application pane stands in the grid; `undefined` for an Application pane no confirmed receipt describes, which {@link arrange} refuses.
-   * @example this.studyLayout()
-   */
-  private studyLayout() {
-    if (!this.usesPreparedApplicationLayout())
-      return STUDY_PRESENTATIONS[this.presentationMode].layout
-    // An Application pane without a confirmed receipt stands in a populated grid the live layout does not describe (finding 591).
-    const layoutWithoutReceipt = this.app ? undefined : LIVE_EDITOR_LAYOUT
-    return this.applicationGroup?.layout ?? layoutWithoutReceipt
+  /** Forwards to {@link PresentationReceipts.studyLayout}, where this member's body moved (Cycle 0094 task 13). */
+  private studyLayout(): ReturnType<PresentationReceipts['studyLayout']> {
+    return this.presentationReceipts.studyLayout()
   }
 
-  /** Bounds layout effects to the current feature's main panes, never a separate chat part. @example this.studyGroupCount() // 2 during live explanation */
+  /** Forwards to {@link PresentationReceipts.studyGroupCount}, where this member's body moved (Cycle 0094 task 13). */
   private studyGroupCount(): number {
-    return this.usesPreparedApplicationLayout()
-      ? (this.applicationGroup?.count ?? LIVE_EDITOR_GROUP_COUNT)
-      : STUDY_EDITOR_GROUP_COUNT
+    return this.presentationReceipts.studyGroupCount()
   }
 
-  /**
-   * Keeps original groups beside a prepared App during cold Study entry; {@link studyLayout} and {@link studyGroupCount} share this ownership check.
-   * @returns Whether native preparation still owns the default Study layout, or the active feature already uses that native composition.
-   * @example this.usesPreparedApplicationLayout() // true for an unchanged MCP-first App allocation
-   */
+  /** Forwards to {@link PresentationReceipts.usesPreparedApplicationLayout}, where this member's body moved (Cycle 0094 task 13). */
   private usesPreparedApplicationLayout(): boolean {
-    return (
-      this.liveComposition ||
-      this.summaryComposition ||
-      Boolean(
-        this.presentationMode === 'study-workspace' &&
-        this.applicationGroup &&
-        this.applicationGroup.count >= STUDY_EDITOR_GROUP_COUNT &&
-        !this.applicationGroup.parked &&
-        vscode.window.tabGroups.all.some(
-          (group) =>
-            this.editorGroupIdentities.get(group) ===
-              this.applicationGroup?.identity &&
-            group.viewColumn === this.app?.viewColumn,
-        ),
-      )
-    )
+    return this.presentationReceipts.usesPreparedApplicationLayout()
   }
 
-  /** Projects mode control independently of content/playback revisions; MCP reads never open the reader. @example workspace.presentationState().presentationId */
+  /** Forwards to {@link PresentationReceipts.presentationState}, where this member's body moved (Cycle 0094 task 13). */
   presentationState(): PresentationState {
-    const panes = this.studyPanePositions(),
-      descriptor = STUDY_PRESENTATIONS[this.presentationMode]
-    // A stable receipt may describe a learner collision; only the mode's distinct destinations qualify as confirmed.
-    const matchingColumns =
-      panes.appColumn === descriptor.appColumn &&
-      // A test replay's source is its slot, whose position {@link layoutSourceReady} checks (F402).
-      (this.testReplayHoldsComposition() ||
-        panes.sourceColumn === descriptor.sourceColumn) &&
-      (this.liveComposition || this.summaryComposition
-        ? !panes.context
-        : panes.contextColumn === descriptor.contextColumn)
-    // A selected or opening test replay does no article source work (D32, F390): its own source is the slot it shows at the source position, not the article's captured source (F402).
-    const currentSourceReady = this.layoutSourceReady()
-    const matchingLayoutReceipt = Boolean(
-      this.layoutReceipt?.mode === 'study' &&
-      this.sameStudyPanePositions(this.layoutReceipt.panes),
-    )
-    const layoutConfirmed =
-      this.presentationConfirmed &&
-      currentSourceReady &&
-      matchingColumns &&
-      matchingLayoutReceipt
-    // A successful Restore can still lack one native receipt; expose that missing condition to the next public recovery step.
-    let reason = this.presentationReason
-    if (!reason && this.opened && !this.closing && !layoutConfirmed) {
-      if (!currentSourceReady) {
-        const playback = this.playback?.state()
-        // The reader's own pending recorded presentation is still placing the source: nothing for the learner to recover. A recording whose load failed shows no source until it is opened again. Otherwise the reason says how the source stands (row 695).
-        // A test replay that is only opening has no slot yet: it reads as opening, never as a missing slot (F416).
-        if (this.testReplayIsOpening())
-          reason = 'The recorded source is opening in its native pane.'
-        else if (this.testReplayHoldsComposition())
-          reason =
-            'The recorded source of the test replay is not shown in its pane. Use Focus source to show it again.'
-        else if (playback?.readiness === 'loading')
-          reason = 'The recorded source is opening in its native pane.'
-        else if (this.browserReplayShown() && playback?.readiness === 'failed')
-          reason = recordingNotShownReason(playback.reason)
-        else reason = this.capturedSourceReason()
-      } else if (!matchingColumns)
-        reason =
-          'The application or source pane is no longer in its Study destination. Focus the existing Study or Application pane, then restore its layout. Opening Repository Wiki does not repair Study.'
-      else if (!matchingLayoutReceipt)
-        reason =
-          'The native editor layout receipt no longer matches the Study panes. Focus the existing Study or Application pane, then restore its layout. Opening Repository Wiki does not repair Study.'
-      else
-        reason = unconfirmedLayoutReason(
-          this.changedLayoutPart?.receipt === this.layoutReceipt
-            ? this.changedLayoutPart?.part
-            : undefined,
-        )
-    }
-    // A selected Node journal masks the live application, so agents must not read the reader as following the run.
-    return {
-      presentationId: this.presentationId,
-      presentationControlRevision: this.presentationControlRevision,
-      reader: {
-        contentRevision: this.revision + this.readerSelectionRevision,
-        // A same-study Reload that is loading or failed still shows its browser replay, so an agent returns to the run before it starts another (Cycle 0052 task 18).
-        contentTab: this.browserReplayShown()
-          ? 'recording'
-          : this.selection.tab,
-        followingCurrentRun:
-          this.selection.follow &&
-          !this.browserReplayShown() &&
-          !this.selectedNodeHistory,
-      },
-      mode: this.presentationMode,
-      requestedMode: this.requestedPresentation,
-      state: this.presentationTransition
-        ? 'applying'
-        : this.opened && !this.closing
-          ? 'open'
-          : 'closed',
-      layoutConfirmed,
-      preference: { ...this.presentationPreference },
-      // The reason of an earlier refused change says nothing about a layout that is confirmed now.
-      reason: layoutConfirmed ? undefined : reason,
-      playbackRevision: this.recordingActive
-        ? this.playback?.state().revision
-        : undefined,
-      panes: {
-        appColumn: panes.appColumn,
-        sourceColumn: panes.sourceColumn,
-        contextColumn: panes.contextColumn,
-      },
-    }
+    return this.presentationReceipts.presentationState()
   }
 
-  /** Refreshes native confirmation for MCP reads without adopting a manual layout or changing reader identity. @example await workspace.readPresentationState() */
-  async readPresentationState(): Promise<PresentationState> {
-    const state = this.presentationState(),
-      receipt = this.layoutReceipt
-    if (!state.layoutConfirmed || this.presentationTransition || !receipt)
-      return state
-    const layout = await this.readPassivePresentationLayout()
-    // A hidden editor area (the bottom panel is maximized) reports its groups at their minimum heights: nothing was rearranged, and the editor gives the groups their sizes back with the area.
-    if (isCollapsedEditorLayout(layout)) return this.presentationState()
-    // The first comparison that fails is the one the reason names; a moved pane has its own reason in the state.
-    let changedPart: ChangedLayoutPart | undefined
-    if (layout !== undefined && JSON.stringify(layout) !== receipt.signature)
-      changedPart = 'grid'
-    else if (
-      !this.sameEditorGroups(receipt.groups, vscode.window.tabGroups.all)
-    )
-      changedPart = 'groups'
-    if (
-      !this.presentationTransition &&
-      state.presentationId === this.presentationId &&
-      state.presentationControlRevision === this.presentationControlRevision &&
-      receipt === this.layoutReceipt &&
-      (changedPart || !this.sameStudyPanePositions(receipt.panes))
-    ) {
-      this.presentationConfirmed = false
-      this.changedLayoutPart = changedPart && { receipt, part: changedPart }
-      this.publish()
-    }
-    const current = this.presentationState()
-    if (layout !== undefined) return current
-    // Another editor part (an agent chat) has the keyboard focus and the read must not take it: while no tab or group changed since the last arrangement, its confirmation is answered again, marked as not measured.
-    if (current.layoutConfirmed) return { ...current, layoutMeasured: false }
-    // An unmeasurable active part qualifies this response only; it cannot invalidate or certify the retained main grid.
-    return {
-      ...current,
-      layoutConfirmed: false,
-      reason:
-        'Main editor layout could not be checked without changing focus. Focus a Codebook pane or main text editor and read again.',
-    }
+  /** Forwards to {@link PresentationReceipts.readPresentationState}, where this member's body moved (Cycle 0094 task 13). */
+  readPresentationState(): Promise<PresentationState> {
+    return this.presentationReceipts.readPresentationState()
   }
 
   /**
@@ -1871,59 +1663,27 @@ export class StudyWorkspace {
     return isCurrentRunRememberedWhileClosed(state) ? state : undefined
   }
 
-  /**
-   * Retires a refused replay control shown in the Learning replay panel once a later seek, play or pause was accepted.
-   *
-   * Called by the panel's own playback message and by {@link StudyService.playback} for an agent's control, so the line
-   * does not outlive the refusal whichever route moved the replay.
-   *
-   * @example workspace.replayControlAccepted()
-   */
+  /** Forwards to {@link PresentationReceipts.replayControlAccepted}, where this member's body moved (Cycle 0094 task 13). */
   replayControlAccepted(): void {
-    if (this.errors.delete('replay-control')) this.publish()
+    return this.presentationReceipts.replayControlAccepted()
   }
 
-  /** Rejects competing input/navigation before effects while preserving Stop/Close/read access. @example workspace.assertPresentationIdle() */
+  /** Forwards to {@link PresentationReceipts.assertPresentationIdle}, where this member's body moved (Cycle 0094 task 13). */
   assertPresentationIdle(): void {
-    if (this.presentationTransition || this.returningCurrent || this.closing) {
-      this.logPendingRefusal()
-      throw new StudyError(
-        'PRESENTATION_UNAVAILABLE',
-        'A presentation change or reader close is pending. Read its state before another control.',
-      )
-    }
+    return this.presentationReceipts.assertPresentationIdle()
   }
 
-  /**
-   * Reserves one current reader intent before asynchronous work; all three entry points share its native/storage receipts.
-   * @param input - The requested change with the reader lifetime and control revision it was made for.
-   * @param requester - `'agent'` for the codebook_presentation tool's handler ({@link StudyService.selectPresentation}), whose caller may have the learner typing in a chat view: beside such a view the selection gives the keyboard to no place it cannot prove (row 613). The Study pane's control and the commands are the learner's.
-   * @param fromPane - `true` (the learner's default) for a control the learner pressed in a Study pane or view, whose focus rule the arrangement keeps; `false` for an agent's request and for the learner's Arrange Study Workspace run from the command palette or a shortcut ({@link action}), which no pane's press focused (row 638).
-   * @returns The state after the admitted change.
-   * @example await workspace.changePresentation({presentationId,expectedRevision:0,mode:'study-workspace',action:'select'}, 'agent')
-   */
+  /** Forwards to {@link PresentationReceipts.changePresentation}, where this member's body moved (Cycle 0094 task 13). */
   changePresentation(
     input: PresentationIntent,
-    requester: PresentationRequester = 'learner',
-    fromPane = requester === 'learner',
+    requester?: PresentationRequester,
+    fromPane?: Parameters<PresentationReceipts['changePresentation']>[2],
   ): Promise<PresentationState> {
-    // A Codebook-owned captured source that the learner moved into a group of their own goes back to its Study column first; the placement below cannot move it (more than three groups) or never looks at it (a run's following composition).
-    if (this.restoresDisplacedCapturedSource(input)) {
-      // Registered like every presentation path, so Close waits for the return's native steps and a late show cannot reopen an owned tab after the cleanup.
-      const pending = this.returnDisplacedCapturedSourceThenAdmit(
-        input,
-        requester,
-        fromPane,
-      )
-      this.presentationOperation = pending
-      const release = (): void => {
-        if (this.presentationOperation === pending)
-          this.presentationOperation = undefined
-      }
-      pending.then(release, release)
-      return pending
-    }
-    return this.admitPresentation(input, 'pending', requester, fromPane)
+    return this.presentationReceipts.changePresentation(
+      input,
+      requester,
+      fromPane,
+    )
   }
 
   /** Tells whether a tab shows a captured source document of this workspace's reader; the one definition of ownership for every caller that closes such tabs or counts them as Codebook's own. It is false until {@link initialize} has created the library. @example vscode.window.tabGroups.all.flatMap((group) => group.tabs).filter((tab) => this.ownsCapturedSourceTab(tab)) */
@@ -2966,13 +2726,9 @@ export class StudyWorkspace {
       )
   }
 
-  /**
-   * Confirms the live or recording arrangement when it holds a layout receipt, and then retires the lines of an earlier refusal; called by the composition branch of {@link admitPresentation} after {@link assertPlacedEvidenceUnchanged}.
-   * @example this.confirmCompositionByReceipt() // presentationConfirmed === true after a completed arrangement
-   */
+  /** Forwards to {@link PresentationReceipts.confirmCompositionByReceipt}, where this member's body moved (Cycle 0094 task 13). */
   private confirmCompositionByReceipt(): void {
-    this.presentationConfirmed = Boolean(this.layoutReceipt)
-    if (this.presentationConfirmed) this.retireRefusalLines()
+    return this.presentationReceipts.confirmCompositionByReceipt()
   }
 
   /**
@@ -2985,16 +2741,11 @@ export class StudyWorkspace {
     this.errors.delete('presentation')
   }
 
-  /**
-   * Ends a presentation transition unless a newer one has replaced it; called by the composition branch of {@link admitPresentation} when its arrangement ended, and by {@link selectAfterClosingLeftoverTabs} when its close of the leftover tabs ended, successfully or not.
-   * @param transition - The transition that arrangement or close ran in.
-   * @example this.endPresentationTransition(transition)
-   */
+  /** Forwards to {@link PresentationReceipts.endPresentationTransition}, where this member's body moved (Cycle 0094 task 13). */
   private endPresentationTransition(
     transition: NonNullable<StudyWorkspace['presentationTransition']>,
   ): void {
-    if (this.presentationTransition === transition)
-      this.presentationTransition = undefined
+    return this.presentationReceipts.endPresentationTransition(transition)
   }
 
   /**
@@ -3032,165 +2783,33 @@ export class StudyWorkspace {
     }
   }
 
-  /**
-   * Reads the presentation state after the live or recording panes were arranged again and answers with it only when its layout is confirmed; the last step of the composition branch of {@link admitPresentation}.
-   * @returns The confirmed state.
-   * @throws `PRESENTATION_UNAVAILABLE` with the reason why the layout is not confirmed.
-   * @example return this.confirmedCompositionState()
-   */
+  /** Forwards to {@link PresentationReceipts.confirmedCompositionState}, where this member's body moved (Cycle 0094 task 13). */
   private confirmedCompositionState(): PresentationState {
-    const restored = this.presentationState()
-    // The host can replace a pane wrapper after Arrange; a layout lacking its current receipt is not a successful Restore.
-    if (!restored.layoutConfirmed)
-      throw new StudyError(
-        'PRESENTATION_UNAVAILABLE',
-        unconfirmedCompositionRefusal(this.summaryComposition),
-        this.coveredSourceCause() ?? restored.reason,
-      )
-    return restored
+    return this.presentationReceipts.confirmedCompositionState()
   }
 
-  /**
-   * Answers a selection of the live or recording arrangement that is confirmed already; called by {@link admitPresentation}. The state is read once more as a status read does, without taking the focus.
-   * @param input - The admitted selection.
-   * @param requester - Who asked for it; a repeated request keeps it.
-   * @returns The confirmed state; or, when the read finds the layout changed, what arranging it again answers.
-   * @example
-   * ```ts
-   * if (input.action === 'select' && this.presentationState().layoutConfirmed) return this.confirmCompositionNoop(input, requester)
-   * ```
-   */
+  /** Forwards to {@link PresentationReceipts.confirmCompositionNoop}, where this member's body moved (Cycle 0094 task 13). */
   private confirmCompositionNoop(
     input: PresentationIntent,
     requester: PresentationRequester,
   ): Promise<PresentationState> {
-    const lifetime = this.lifetime
-    const checking: Promise<PresentationState> = this.readPresentationState()
-      .then((state) => {
-        this.assertLifetime(lifetime)
-        if (this.presentationOperation === checking)
-          this.presentationOperation = undefined
-        // The read unconfirms a layout that changed, so the repeated request takes the arranging branch.
-        if (!state.layoutConfirmed)
-          return this.changePresentation(input, requester)
-        this.presentationReason = undefined
-        this.errors.delete('presentation')
-        return { ...state, state: 'open' as const }
-      })
-      .finally(() => {
-        if (this.presentationOperation === checking)
-          this.presentationOperation = undefined
-      })
-    this.presentationOperation = checking
-    return checking
+    return this.presentationReceipts.confirmCompositionNoop(input, requester)
   }
 
-  /** Rechecks actual native geometry before a same-mode no-op, retaining the revision only when no repair is needed; a repair keeps the request's `requester`. @example await this.confirmPresentationNoop(input, 'learner') */
+  /** Forwards to {@link PresentationReceipts.confirmPresentationNoop}, where this member's body moved (Cycle 0094 task 13). */
   private confirmPresentationNoop(
     input: PresentationIntent,
     requester: PresentationRequester,
   ): Promise<PresentationState> {
-    const transition = {
-        id: this.presentationId,
-        cancellation: new AbortController(),
-      },
-      lifetime = this.lifetime
-    this.presentationTransition = transition
-    let checking!: Promise<PresentationState>
-    // eslint-disable-next-line prefer-const -- the async body compares the shared transition against its own promise.
-    checking = (async () => {
-      try {
-        const layout = await this.readPassivePresentationLayout()
-        this.assertLifetime(lifetime)
-        transition.cancellation.signal.throwIfAborted()
-        const receipt = this.layoutReceipt
-        // Another editor part (an agent chat) has the keyboard, so the main grid cannot be measured without taking it: while no tab or group changed since the last arrangement, its confirmation is answered again, marked as not measured, as a status read answers it.
-        if (
-          layout === undefined &&
-          receipt &&
-          this.presentationState().layoutConfirmed &&
-          this.sameEditorGroups(receipt.groups, vscode.window.tabGroups.all) &&
-          this.sameStudyPanePositions(receipt.panes)
-        ) {
-          this.errors.delete('presentation')
-          this.presentationReason = undefined
-          this.requestedPresentation = undefined
-          return {
-            ...this.presentationState(),
-            state: 'open' as const,
-            layoutMeasured: false as const,
-          }
-        }
-        // Once a tab or group changed beside a focused tab of another editor part, nobody can focus the main editor first: the panes are arranged again below, which measures it.
-        if (layout === undefined && !this.retainForeignTabFocus(undefined))
-          throw new StudyError(
-            'PRESENTATION_UNAVAILABLE',
-            'Focus a Codebook pane or main text editor before confirming this presentation; its layout cannot be checked from the current editor part.',
-          )
-        if (
-          this.presentationState().layoutConfirmed &&
-          isProportionalEditorLayout(
-            STUDY_PRESENTATIONS[input.mode].layout,
-            layout,
-          )
-        ) {
-          // A verified selection recovers only presentation diagnostics, preserving unrelated failed controls.
-          this.errors.delete('presentation')
-          this.presentationReason = undefined
-          this.requestedPresentation = undefined
-          return { ...this.presentationState(), state: 'open' as const }
-        }
-        this.presentationTransition = undefined
-        this.presentationConfirmed = false
-        return await this.changePresentation(input, requester)
-      } finally {
-        if (this.presentationTransition === transition) {
-          this.presentationTransition = undefined
-          this.publish()
-        }
-        if (this.presentationOperation === checking)
-          this.presentationOperation = undefined
-      }
-    })()
-    this.presentationOperation = checking
-    return checking
+    return this.presentationReceipts.confirmPresentationNoop(input, requester)
   }
 
-  /** Reconfirms an enlarged Study grid without replacing panes, falling back to normal Restore, for the same `requester`, when geometry changed. @example await this.confirmEnlargedLayout(input, 'learner') */
+  /** Forwards to {@link PresentationReceipts.confirmEnlargedLayout}, where this member's body moved (Cycle 0094 task 13). */
   private confirmEnlargedLayout(
     input: PresentationIntent,
     requester: PresentationRequester,
   ): Promise<PresentationState> {
-    const transition = {
-        id: this.presentationId,
-        cancellation: new AbortController(),
-      },
-      lifetime = this.lifetime
-    this.presentationTransition = transition
-    this.requestedPresentation = input.mode
-    this.presentationReason = undefined
-    let checking!: Promise<PresentationState>
-    // eslint-disable-next-line prefer-const -- the async body compares the shared transition against its own promise.
-    checking = (async () => {
-      try {
-        if (await this.tryConfirmEnlargedLayout(transition))
-          return { ...this.presentationState(), state: 'open' as const }
-        transition.cancellation.signal.throwIfAborted()
-        this.assertLifetime(lifetime)
-        if (this.presentationTransition === transition)
-          this.presentationTransition = undefined
-        return await this.changePresentation(input, requester)
-      } finally {
-        if (this.presentationTransition === transition)
-          this.presentationTransition = undefined
-        if (this.presentationOperation === checking)
-          this.presentationOperation = undefined
-        this.publish()
-      }
-    })()
-    this.presentationOperation = checking
-    this.publish()
-    return checking
+    return this.presentationReceipts.confirmEnlargedLayout(input, requester)
   }
 
   /**
@@ -3458,156 +3077,20 @@ export class StudyWorkspace {
     return pending
   }
 
-  /** Restores the measured grid after Enlarge through an owned main pane, tolerating a late switch between its panels. @example await this.tryConfirmEnlargedLayout(transition) */
-  private async tryConfirmEnlargedLayout(
-    transition: NonNullable<StudyWorkspace['presentationTransition']>,
-  ): Promise<boolean> {
-    const enlarged = this.enlargedLayoutReceipt,
-      receipt = enlarged?.receipt
-    if (
-      !receipt ||
-      receipt !== this.layoutReceipt ||
-      receipt.mode !== 'study'
-    ) {
-      if (this.enlargedLayoutReceipt === enlarged)
-        this.enlargedLayoutReceipt = undefined
-      return false
-    }
-    const lifetime = this.lifetime,
-      id = this.presentationId,
-      controlRevision = this.presentationControlRevision
-    const selection = JSON.stringify(this.selection),
-      bundle = this.recordingActive ? this.playback?.bundle() : undefined
-    const runtimeIdentity = this.assertPresentationAdmission()
-    const retained = () =>
-      this.lifetime === lifetime &&
-      this.presentationId === id &&
-      this.presentationControlRevision === controlRevision &&
-      this.presentationTransition === transition &&
-      !transition.cancellation.signal.aborted &&
-      !this.closing &&
-      vscode.window.state.focused &&
-      this.layoutReceipt === receipt &&
-      this.presentationMode === enlarged?.mode &&
-      JSON.stringify(this.selection) === selection &&
-      (!this.recordingActive || this.playback?.bundle() === bundle) &&
-      this.sameEditorGroups(receipt.groups, vscode.window.tabGroups.all) &&
-      this.sameStudyPanePositions(receipt.panes) &&
-      this.layoutSourceReady() &&
-      Boolean(this.app?.visible && this.contextPanel?.visible) &&
-      this.hasMainEditorFocus(STUDY_EDITOR_GROUP_COUNT)
-    let confirmed = false
-    await this.withLayout(
-      transition.cancellation.signal,
-      async (_layoutLifetime, assertCurrent) => {
-        assertCurrent()
-        if (this.enlargedLayoutReceipt !== enlarged || !retained()) return
-        this.enlargedLayoutReceipt = undefined
-        // A late switch between owned Study and Application changes focus, but leaves the measured main grid intact.
-        const layout = await this.executeEditorCommand<unknown>(
-          'vscode.getEditorLayout',
-        )
-        assertCurrent()
-        if (
-          !retained() ||
-          JSON.stringify(layout) !== enlarged.expandedSignature ||
-          runtimeIdentity !== this.assertPresentationAdmission()
-        )
-          return
-        // Editor-layout reads omit maximization, so reapplying the measured grid must clear it before confirmation.
-        await this.executeEditorCommand(
-          'vscode.setEditorLayout',
-          JSON.parse(receipt.signature),
-        )
-        // The measured layout is the one the Enlarge began from: the sizes kept for a Close are given back with it.
-        this.groupSizesBeforeExpand = undefined
-        assertCurrent()
-        const restoredLayout = await this.executeEditorCommand<unknown>(
-          'vscode.getEditorLayout',
-        )
-        assertCurrent()
-        if (
-          !retained() ||
-          !isProportionalEditorLayout(
-            STUDY_PRESENTATIONS[this.presentationMode].layout,
-            restoredLayout,
-          ) ||
-          runtimeIdentity !== this.assertPresentationAdmission()
-        )
-          return
-        this.presentationControlRevision++
-        this.presentationConfirmed = true
-        this.requestedPresentation = undefined
-        this.presentationReason = undefined
-        this.errors.delete('layout')
-        this.errors.delete('presentation')
-        this.publish()
-        await this.savePresentationPreference(this.presentationMode, id)
-        assertCurrent()
-        confirmed = true
-      },
-    )
-    if (!confirmed && this.enlargedLayoutReceipt === enlarged)
-      this.enlargedLayoutReceipt = undefined
-    return confirmed
-  }
-
-  /** Reads only the mode preference and preserves unknown versions until an explicit learner/agent selection. @example this.readPresentationPreference() */
+  /** Forwards to {@link PresentationReceipts.readPresentationPreference}, where this member's body moved (Cycle 0094 task 13). */
   private readPresentationPreference(): void {
-    try {
-      const stored = this.context.workspaceState.get<unknown>(
-        PRESENTATION_PREFERENCE_KEY,
-      )
-      const parsed = presentationPreferenceSchema.safeParse(stored)
-      this.presentationMode = parsed.success
-        ? parsed.data.mode
-        : 'study-workspace'
-      this.presentationPreference =
-        stored === undefined
-          ? { status: 'default' }
-          : parsed.success
-            ? { status: 'saved', mode: parsed.data.mode }
-            : {
-                status: 'unknown',
-                reason:
-                  'Saved presentation is not recognized. Study workspace is temporary; select a mode explicitly to replace this preference.',
-              }
-    } catch (error) {
-      this.presentationPreference = {
-        status: 'failed',
-        reason: `Presentation preference unavailable: ${String(error)}`,
-      }
-    }
+    return this.presentationReceipts.readPresentationPreference()
   }
 
-  /** Separates successful native placement from its optional durable preference receipt; Close drains accepted writes. @example await this.savePresentationPreference(mode, id) */
-  private async savePresentationPreference(
+  /** Forwards to {@link PresentationReceipts.savePresentationPreference}, where this member's body moved (Cycle 0094 task 13). */
+  private savePresentationPreference(
     mode: PresentationMode,
     presentationId: string,
   ): Promise<void> {
-    this.presentationPreference = { status: 'saving', mode }
-    this.publish()
-    const write = Promise.resolve().then(() =>
-      this.context.workspaceState.update(PRESENTATION_PREFERENCE_KEY, {
-        version: PRESENTATION_PREFERENCE_VERSION,
-        mode,
-      }),
+    return this.presentationReceipts.savePresentationPreference(
+      mode,
+      presentationId,
     )
-    this.presentationWrite = write
-    try {
-      await write
-      if (presentationId === this.presentationId)
-        this.presentationPreference = { status: 'saved', mode }
-    } catch (error) {
-      if (presentationId === this.presentationId)
-        this.presentationPreference = {
-          status: 'failed',
-          mode,
-          reason: `Layout applied; preference not saved: ${String(error)}. Retry Save preference.`,
-        }
-    } finally {
-      if (this.presentationWrite === write) this.presentationWrite = undefined
-    }
   }
 
   /** Admits stable live evidence only; capture, resume reservation and source/navigation work cannot be moved underneath. @example const identity = this.assertPresentationAdmission() */
@@ -6512,33 +5995,11 @@ export class StudyWorkspace {
     }
   }
 
-  /**
-   * Confirms the actual arrangement {@link open} completed for {@link performPresentation}, including a cold default Study retaining its prepared App and original groups.
-   * @param input - The admitted request for the Study workspace.
-   * @returns The state of the arranged live or replay panes, confirmed.
-   * @throws `PRESENTATION_UNAVAILABLE` for another mode, and when the arrangement the open made holds no layout receipt or its source is not shown.
-   * @example
-   * ```ts
-   * if (this.liveComposition || this.summaryComposition) return this.confirmEnteredComposition(input)
-   * ```
-   */
+  /** Forwards to {@link PresentationReceipts.confirmEnteredComposition}, where this member's body moved (Cycle 0094 task 13). */
   private confirmEnteredComposition(
     input: PresentationIntent,
   ): PresentationState {
-    this.assertCompositionAllows(input)
-    this.presentationConfirmed = Boolean(this.layoutReceipt)
-    this.requestedPresentation = undefined
-    const entered = this.presentationState()
-    // The open keeps what it could arrange; without its receipt the answer names the missing condition instead of a confirmed layout.
-    if (!entered.layoutConfirmed)
-      throw new StudyError(
-        'PRESENTATION_UNAVAILABLE',
-        unconfirmedCompositionRefusal(this.summaryComposition),
-        this.coveredSourceCause() ?? entered.reason,
-      )
-    this.errors.delete('layout')
-    this.errors.delete('presentation')
-    return { ...entered, state: 'open' }
+    return this.presentationReceipts.confirmEnteredComposition(input)
   }
 
   /** Captures only the displayed item's bounded reading state for {@link performPresentation}; it owns no runtime controls. @example await this.captureReadingPose(signal) */
@@ -12977,15 +12438,6 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether a test replay is only opening: the host's open or a pane's open is under way, so its recorded-source slot is not committed yet; read by {@link presentationState}, which says "opening" for it and not "not shown" (F416).
-   * @returns `true` between the start of a test replay's open and its end.
-   * @example if (this.testReplayIsOpening()) reason = 'The recorded source is opening in its native pane.'
-   */
-  private testReplayIsOpening(): boolean {
-    return this.hostOpeningTestReplay || this.pendingNodeHistory !== undefined
-  }
-
-  /**
    * Says whether a test replay is selected, opening, or about to open from the host, so that {@link open} arranges the summary composition and not the Live one (Cycle 0051, DS-A); read by {@link open} and by the message and refresh rules that keep a test replay's summary free of live-run content.
    * @returns `true` while a test replay holds the summary composition.
    * @example if (this.testReplayHoldsComposition()) liveComposition = false
@@ -17122,38 +16574,6 @@ export class StudyWorkspace {
     )
   }
 
-  /**
-   * Says whether the source the layout shows is ready: the article's captured source ({@link sourceReady}), or, while a test replay is selected or opening, the replay's own recorded-source slot with its tab in front and its content committed (F402): in any group in the summary composition, as a browser replay's source, else at the source position.
-   * Read by {@link presentationState} for `layoutConfirmed` and by {@link confirmEnlargedLayout} before an Enlarge's Restore confirms, so both apply one rule.
-   * @returns `true` when the source of the current composition is shown.
-   * @example this.layoutSourceReady() // => false while the slot's tab is closed under a selected test replay
-   */
-  private layoutSourceReady(): boolean {
-    if (!this.testReplayHoldsComposition()) return this.sourceReady()
-    const slot = this.nodeSourceSlot,
-      held = this.nodeSourceSlotHeld
-    if (
-      !this.opened ||
-      this.closing ||
-      !slot ||
-      held?.text !== slot.text ||
-      held.address !== slot.uri.toString()
-    )
-      return false
-    const isSlotInFront = (group: vscode.TabGroup): boolean =>
-      group.activeTab?.input instanceof vscode.TabInputText &&
-      group.activeTab.input.uri.toString() === slot.uri.toString()
-    // The summary composition shows the slot as a browser replay shows its captured source, in front of any group: the learner's own groups may hold the source column there (Cycle 0051, DS-A).
-    if (this.summaryComposition)
-      return vscode.window.tabGroups.all.some(isSlotInFront)
-    // The slot shows at the selected mode's source column, as {@link nodeSourceSlotColumn} places it (F424).
-    const column = STUDY_PRESENTATIONS[this.presentationMode].sourceColumn
-    const group = vscode.window.tabGroups.all.find(
-      (candidate) => candidate.viewColumn === column,
-    )
-    return group !== undefined && isSlotInFront(group)
-  }
-
   /** Confirms the selected immutable source reached an active native tab before control or MCP reveal succeeds. @example this.sourceReady() */
   private sourceReady(): boolean {
     return (
@@ -17167,55 +16587,6 @@ export class StudyWorkspace {
           group.activeTab.input.uri.toString() === this.sourceUri?.toString(),
       )
     )
-  }
-
-  /**
-   * Words the reason of a presentation whose captured source is not in front of its pane while no recording is loading or failed, with the control the learner sees where the reason is shown; called by {@link presentationState} (Cycle 0046 row 695).
-   * @returns {@link capturedSourceNotShownReason} of {@link capturedSourceStanding}, for the Learning summary of a recording, the strip of a Live run, or the Study pane.
-   * @example this.capturedSourceReason() // => "The Study is set aside since Return to Wiki, so its captured source is not in front of its native pane. Use View recording in the Repository Wiki, or Reload saved recording, to bring the Study back."
-   */
-  private capturedSourceReason(): string {
-    let view: CapturedSourceView = 'study'
-    if (this.recordingActive) view = 'recording'
-    else if (this.liveComposition) view = 'live'
-    return capturedSourceNotShownReason(this.capturedSourceStanding(), view)
-  }
-
-  /**
-   * Reads how the captured source stands while {@link sourceReady} is false, for {@link capturedSourceReason}: only the reader's own work under way is something to wait for.
-   * @returns
-   * - `placing` while the reader's entry, render, source display, presentation change or arrangement is under way
-   * - `set-aside` after the learner's Return to Wiki gave the article's groups back ({@link settleArticleReturn}) and no Study arrangement followed
-   * - `closed` when no tab of the captured source is open, `covered` when one is open behind another tab
-   * - `not-shown` otherwise: no source was shown for the selection, or the tab in front is not its current display
-   * @example this.capturedSourceStanding() // => 'closed' right after the learner closed the captured source's tab by hand
-   */
-  private capturedSourceStanding(): CapturedSourceStanding {
-    // The reader's own work places the source: waiting brings it.
-    if (
-      this.loading ||
-      this.sourceEntryPending ||
-      this.pendingSourceDisplay !== undefined ||
-      this.presentationTransition !== undefined ||
-      this.arranging !== undefined
-    )
-      return 'placing'
-    // The learner's Return to Wiki left the Study open behind the article's groups (row 567's retention).
-    if (this.repositoryLayoutRestored) return 'set-aside'
-    const uri = this.sourceUri?.toString()
-    // No source was shown for the selection at all.
-    if (uri === undefined) return 'not-shown'
-    const groups = vscode.window.tabGroups.all
-    if (
-      !groups.some((group) =>
-        group.tabs.some((tab) => this.textTabUri(tab) === uri),
-      )
-    )
-      return 'closed'
-    // A tab in front that still fails sourceReady is not the selection's current display.
-    return groups.some((group) => this.textTabUri(group.activeTab) === uri)
-      ? 'not-shown'
-      : 'covered'
   }
 
   /**
@@ -23614,117 +22985,37 @@ export class StudyWorkspace {
     }
   }
 
-  /** Records real pane positions so {@link restoreRepositoryLayout} distinguishes learner moves from its own group contraction. @example this.studyPanePositions().contextColumn */
-  private studyPanePositions() {
-    const sourceGroups = vscode.window.tabGroups.all.filter((group) =>
-      group.tabs.some(
-        (tab) =>
-          tab.input instanceof vscode.TabInputText &&
-          tab.input.uri.toString() === this.sourceUri?.toString(),
-      ),
-    )
-    const identity =
-      this.sourceGroup && this.editorGroupIdentities.get(this.sourceGroup)
-    const sourceGroup =
-      sourceGroups.find(
-        (group) =>
-          group === this.sourceGroup ||
-          (identity && this.editorGroupIdentities.get(group) === identity),
-      ) ??
-      sourceGroups.find(
-        (group) => group === vscode.window.tabGroups.activeTabGroup,
-      ) ??
-      sourceGroups[0]
-    return {
-      app: this.app,
-      appColumn: this.app?.viewColumn,
-      context: this.contextPanel,
-      contextColumn: this.contextPanel?.viewColumn,
-      sourceGroup,
-      sourceColumn: sourceGroup?.viewColumn,
-    }
+  /** Forwards to {@link PresentationReceipts.studyPanePositions}, where this member's body moved (Cycle 0094 task 13). */
+  private studyPanePositions(): ReturnType<
+    PresentationReceipts['studyPanePositions']
+  > {
+    return this.presentationReceipts.studyPanePositions()
   }
 
-  /** Checks owned Study destinations before Restore reuses panes instead of replacing the learner's current reader. @example this.hasStudyPaneColumns() */
+  /** Forwards to {@link PresentationReceipts.hasStudyPaneColumns}, where this member's body moved (Cycle 0094 task 13). */
   private hasStudyPaneColumns(): boolean {
-    const panes = this.studyPanePositions(),
-      descriptor = STUDY_PRESENTATIONS['study-workspace']
-    return Boolean(
-      panes.app &&
-      panes.context &&
-      this.sourceUri &&
-      panes.appColumn === descriptor.appColumn &&
-      panes.sourceColumn === descriptor.sourceColumn &&
-      panes.contextColumn === descriptor.contextColumn,
-    )
+    return this.presentationReceipts.hasStudyPaneColumns()
   }
 
-  /** Accepts a host-clamped Study topology while withholding the proportional layout receipt; cold Open and Restore use this boundary. @example await this.hasRetainedStudyTopology() */
-  private async hasRetainedStudyTopology(
+  /** Forwards to {@link PresentationReceipts.hasRetainedStudyTopology}, where this member's body moved (Cycle 0094 task 13). */
+  private hasRetainedStudyTopology(
     signal?: AbortSignal,
     beforeScopeFocus?: (acquire?: RepositoryFocusTarget) => void,
   ): Promise<boolean> {
-    const grid = await this.readMainEditorGrid(
+    return this.presentationReceipts.hasRetainedStudyTopology(
       signal,
-      () => signal?.throwIfAborted(),
-      undefined,
       beforeScopeFocus,
-    )
-    const parsed = editorLayoutSchema.safeParse(grid.layout),
-      isNativeComposition = this.hasComposition()
-    if (isNativeComposition && this.applicationGroup)
-      return (
-        grid.groups.length === this.applicationGroup.count &&
-        grid.preservesOtherParts(this.applicationGroup.count) &&
-        isProportionalEditorLayout(this.applicationGroup.layout, grid.layout)
-      )
-    if (isNativeComposition)
-      return (
-        grid.groups.length === LIVE_EDITOR_GROUP_COUNT &&
-        grid.preservesOtherParts(LIVE_EDITOR_GROUP_COUNT) &&
-        parsed.success &&
-        parsed.data.orientation === LIVE_EDITOR_LAYOUT.orientation &&
-        parsed.data.groups.length === LIVE_EDITOR_GROUP_COUNT &&
-        parsed.data.groups.every((group) => !group.groups)
-      )
-    return (
-      grid.groups.length === STUDY_EDITOR_GROUP_COUNT &&
-      grid.preservesOtherParts(STUDY_EDITOR_GROUP_COUNT) &&
-      parsed.success &&
-      parsed.data.orientation === HORIZONTAL_EDITOR_ORIENTATION &&
-      parsed.data.groups.length === 2 &&
-      parsed.data.groups[0]?.groups?.length === 2 &&
-      !parsed.data.groups[1]?.groups
     )
   }
 
-  /** Rejects learner pane moves while allowing wrapper resync and the explicit source relocation owned by a reentry receipt. @example this.sameStudyPanePositions(receipt.panes, receipt.sourceTargetColumn) */
+  /** Forwards to {@link PresentationReceipts.sameStudyPanePositions}, where this member's body moved (Cycle 0094 task 13). */
   private sameStudyPanePositions(
     previous: ReturnType<StudyWorkspace['studyPanePositions']>,
     sourceTargetColumn?: vscode.ViewColumn,
   ): boolean {
-    const current = this.studyPanePositions(),
-      sourceIdentity =
-        previous.sourceGroup &&
-        this.editorGroupIdentities.get(previous.sourceGroup)
-    const sourceRetained =
-      previous.sourceColumn === current.sourceColumn &&
-      (previous.sourceGroup === current.sourceGroup ||
-        Boolean(
-          sourceIdentity &&
-          current.sourceGroup &&
-          sourceIdentity ===
-            this.editorGroupIdentities.get(current.sourceGroup),
-        ))
-    const sourceRestored =
-      sourceTargetColumn !== undefined &&
-      current.sourceColumn === sourceTargetColumn
-    return (
-      previous.app === current.app &&
-      previous.appColumn === current.appColumn &&
-      previous.context === current.context &&
-      previous.contextColumn === current.contextColumn &&
-      (sourceRetained || sourceRestored)
+    return this.presentationReceipts.sameStudyPanePositions(
+      previous,
+      sourceTargetColumn,
     )
   }
 
