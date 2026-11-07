@@ -2,6 +2,7 @@ import { configuredObservationSchema } from '../configuredStudySchemas'
 import {
   REPOSITORY_BROWSER_ACTION,
   REPOSITORY_BROWSER_PROFILE,
+  VITE_LIBRARY_STUDY_VERSION,
 } from '../constants'
 import { EvidenceIntegrityError, StudyError } from '../errors'
 import { readResource } from '../resources'
@@ -231,6 +232,12 @@ export async function captureStudy(
           ...(runtime?.profile === REPOSITORY_BROWSER_PROFILE &&
           runtime.expoVersion
             ? { expoVersion: runtime.expoVersion }
+            : {}),
+          // A Vite library study (format 16) keeps the library facts as they stand at this checkpoint; no other study carries them.
+          ...(studyVersion === VITE_LIBRARY_STUDY_VERSION &&
+          runtime?.profile === REPOSITORY_BROWSER_PROFILE &&
+          runtime.library
+            ? { library: runtime.library }
             : {}),
           // A format 8 study says the first execution of the page was not observed.
           ...(usesServerRenderEvidence({
