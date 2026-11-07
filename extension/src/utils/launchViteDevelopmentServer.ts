@@ -17,10 +17,12 @@ import type {
   ViteLauncherOptions,
   ViteLauncherReport,
 } from '../viteLauncherProtocol'
+import type { LibraryBlockers } from '../viteLibraryRedirect'
 import { viteRefusal } from '../viteRefusals'
 
 import { assessViteSettings, type ViteFacts } from './assessViteSettings'
 import type { ViteWorkspace } from './assessViteWorkspace'
+import { createLibraryBuildError } from './createLibraryBuildError'
 import { buildDevelopmentServerEnvironment } from './developmentServerEnvironment'
 import { isPortInUseFailure } from './isPortInUseFailure'
 import { launchDevelopmentServer } from './launchDevelopmentServer'
@@ -87,6 +89,56 @@ function ownedViteCacheDir(
     : undefined
 }
 
+/**
+ * Words the refusal for a library run whose resolved config would defeat the redirect to the packed copy: an alias of the package, or a pre-bundled `optimizeDeps.include` of it.
+ *
+ * Why it exists: the blockers are read from the same resolved config the server uses (decision D9), so the run refuses before anything is built or started. Called by {@link launchViteDevelopmentServer} right after the facts, for a library run only.
+ *
+ * @param blockers - The blockers the launcher reported.
+ * @param packageName - The library's package name.
+ * @param configFile - The config file the settings come from, when there is one.
+ * @param mask - Masks env values and secret shapes in a sentence.
+ * @returns The `LIBRARY_BUILD_UNSUPPORTED` error to throw, or `undefined` when nothing blocks.
+ * @example
+ * const refusal = libraryBlockerRefusal({ aliased: ['@acme/widgets'], optimizeInclude: [] }, '@acme/widgets', 'vite.config.ts', mask)
+ * // refusal.details.reason === 'library-aliased'
+ */
+function libraryBlockerRefusal(
+  blockers: LibraryBlockers | undefined,
+  packageName: string,
+  configFile: string | undefined,
+  mask: (text: string) => string,
+): StudyError | undefined {
+  if (!blockers) return undefined
+  // An alias is reported before an include: either one defeats the redirect, and one fix at a time is clearer.
+  const reason = blockers.aliased.length
+    ? 'library-aliased'
+    : blockers.optimizeInclude.length
+      ? 'library-optimize-include'
+      : undefined
+  if (reason === undefined) return undefined
+  const entries = (
+    reason === 'library-aliased' ? blockers.aliased : blockers.optimizeInclude
+  ).map(mask)
+  const where = configFile ? ` (${mask(configFile)})` : ''
+  const sentence =
+    reason === 'library-aliased'
+      ? `The Vite config${where} aliases ${packageName}: ${entries.join(', ')}. An alias takes the import away from the redirect to the packed checked-out library, so the Example would run another copy. Nothing was built or started.`
+      : `The Vite config${where} pre-bundles ${packageName} through optimizeDeps.include: ${entries.join(', ')}. Pre-bundling pulls the installed copy past the redirect to the packed checked-out library. Nothing was built or started.`
+  return createLibraryBuildError(
+    'LIBRARY_BUILD_UNSUPPORTED',
+    reason,
+    sentence,
+    {
+      field: 'configuration.library',
+      package: packageName,
+      ...(configFile === undefined ? {} : { configFile: mask(configFile) }),
+      entries,
+      sideEffects: 'none',
+    },
+  )
+}
+
 /** Tells a message of the launcher's protocol from anything project code sends over the same IPC channel. */
 function isViteLauncherMessage(message: unknown): boolean {
   if (typeof message !== 'object' || message === null) return false
@@ -107,6 +159,60 @@ function refuseLaunch(app: DevelopmentApp): void {
     app.send({ type: VITE_LAUNCHER_MESSAGES.refuse })
   } catch {
     // The launcher is gone; the coded refusal that follows is the message that matters.
+  }
+}
+
+/**
+ * Refuses a library run whose resolved config would defeat the redirect, before anything is built.
+ *
+ * Why it exists: keeps {@link launchViteDevelopmentServer} within its complexity limits; the blockers come from the config this very server uses (decision D9). Called right after the settings check.
+ * @param request - The run's start request; only a request with `viteLibrary` is judged.
+ * @param app - The launcher, told not to listen when it refuses.
+ * @param blockers - The blockers the launcher reported.
+ * @param configFile - The config file the settings come from, when there is one.
+ * @param mask - Masks env values and secret shapes in a sentence.
+ * @throws `LIBRARY_BUILD_UNSUPPORTED` (`library-aliased` or `library-optimize-include`, `details.sideEffects` `none`).
+ * @example refuseBlockedLibrary(request, app, report.libraryBlockers, 'vite.config.ts', mask)
+ */
+function refuseBlockedLibrary(
+  request: DevelopmentServerStart,
+  app: DevelopmentApp,
+  blockers: LibraryBlockers | undefined,
+  configFile: string | undefined,
+  mask: (text: string) => string,
+): void {
+  if (!request.viteLibrary) return
+  const blocked = libraryBlockerRefusal(
+    blockers,
+    request.viteLibrary.packageName,
+    configFile,
+    mask,
+  )
+  if (!blocked) return
+  refuseLaunch(app)
+  throw blocked
+}
+
+/**
+ * Builds and packs the library while the server exists but does not listen.
+ *
+ * Why it exists: the run keeps its setup deadline off for the build, which LIBRARY_BUILD_TIMEOUT_MS bounds, and a failed build must end the start with its own typed error. Called just before the listen command.
+ * @param request - The run's start request; a request without `prepareLibrary` builds nothing.
+ * @param app - The launcher, told not to listen when the build fails.
+ * @throws What the build raised (`LIBRARY_BUILD_UNSUPPORTED` or `LIBRARY_BUILD_FAILED`).
+ * @example await buildLibraryBeforeListen(request, app)
+ */
+async function buildLibraryBeforeListen(
+  request: DevelopmentServerStart,
+  app: DevelopmentApp,
+): Promise<void> {
+  if (!request.viteLibrary || !request.prepareLibrary) return
+  try {
+    await request.prepareLibrary()
+  } catch (error) {
+    // The server never listens after a failed build; the typed build error is the message that matters.
+    refuseLaunch(app)
+    throw error
   }
 }
 
@@ -281,6 +387,13 @@ export async function launchViteDevelopmentServer(
       ),
     )
   }
+  refuseBlockedLibrary(
+    request,
+    app,
+    first.libraryBlockers,
+    facts.configFile,
+    mask,
+  )
   const declared = {
     port: facts.port,
     source: mask(portSourceOf(facts, script.port)),
@@ -296,6 +409,8 @@ export async function launchViteDevelopmentServer(
   }
   request.alive()
   app.declarePort(facts.port)
+  await buildLibraryBeforeListen(request, app)
+  request.alive()
   request.onStep(VITE_SETUP_STEPS.startingVite)
   app.send({ type: VITE_LAUNCHER_MESSAGES.listen })
   const listening = await receive(REPOSITORY_SETUP_TIMEOUT_MS)
