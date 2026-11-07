@@ -1,9 +1,20 @@
-import { NODE_SCRIPT_EXIT_UNKNOWN_LIMIT_CHARS } from './constants'
+import {
+  NODE_SCRIPT_EXIT_UNKNOWN_LIMIT_CHARS,
+  NODE_SCRIPT_LIBRARY_PACKAGE_LIMIT_CHARS,
+  NODE_SCRIPT_LIBRARY_PATH_LIMIT_CHARS,
+  NODE_SCRIPT_LIBRARY_REVISION_LIMIT_CHARS,
+  NODE_SCRIPT_LIBRARY_VERSION_LIMIT_CHARS,
+  REPOSITORY_PATH_LIMIT_CHARS,
+} from './constants'
 import {
   NodeRunHistorySinkBase,
   type NodeRunHistorySinkInput,
 } from './nodeRunHistorySink'
-import type { NodeScriptEnd } from './nodeScriptHistorySchemas'
+import type {
+  NodeScriptEnd,
+  NodeScriptLibraryObservedEntry,
+  NodeScriptLibraryPreparedEntry,
+} from './nodeScriptHistorySchemas'
 import type { NodeScriptHistoryWriter } from './nodeScriptHistoryWriter'
 import type {
   NodeServerDebuggerPause,
@@ -25,6 +36,16 @@ export interface NodeScriptHistorySink {
     generation: number,
     read: NodeServerDebuggerCapture,
   ): void
+  /** The run built and packed its declared library (format 2 histories only). Reported once, before the script starts. */
+  libraryPrepared(
+    elapsedMs: number,
+    facts: NodeScriptLibraryPreparedFacts,
+  ): void
+  /** The run read what the script loaded. Reported after the process tree ended and before {@link end}; a report after the end is dropped. */
+  libraryObserved(
+    elapsedMs: number,
+    facts: NodeScriptLibraryObservedFacts,
+  ): void
   /** The run ended: how, and which declared stops it reached, never reached or did not observe. Reports after the end are dropped. */
   end(elapsedMs: number, end: NodeScriptEnd): void
   /** The run refused a hit beyond its capture budget. */
@@ -32,6 +53,18 @@ export interface NodeScriptHistorySink {
   /** Queues the output still waiting to be coalesced; the seal coordinator calls it before it seals. */
   flush(): void
 }
+
+/** The facts of a `library.prepared` entry as the run reports them: the entry without its type, sequence and time. */
+export type NodeScriptLibraryPreparedFacts = Omit<
+  NodeScriptLibraryPreparedEntry,
+  'type' | 'sequence' | 'elapsedMs'
+>
+
+/** The facts of a `library.observed` entry as the run reports them: the entry without its type, sequence and time. */
+export type NodeScriptLibraryObservedFacts = Omit<
+  NodeScriptLibraryObservedEntry,
+  'type' | 'sequence' | 'elapsedMs'
+>
 
 /** What {@link NodeScriptHistorySinkImpl} needs from outside. */
 export type NodeScriptHistorySinkInput =
@@ -66,6 +99,58 @@ export class NodeScriptHistorySinkImpl
         generation,
         read,
       )
+    })
+  }
+
+  libraryPrepared(
+    elapsedMs: number,
+    facts: NodeScriptLibraryPreparedFacts,
+  ): void {
+    this.guard(() => {
+      if (this.ended) return
+      const { installedVersion, ...rest } = facts
+      // Every recorded text is hidden of private roots, then cut to its schema bound so one long value never fails the whole history.
+      const text = (value: string, limit: number): string =>
+        cutTextToLength(this.hide(value), limit)
+      return this.input.writer.appendLibraryPrepared({
+        ...rest,
+        package: text(facts.package, NODE_SCRIPT_LIBRARY_PACKAGE_LIMIT_CHARS),
+        version: text(facts.version, NODE_SCRIPT_LIBRARY_VERSION_LIMIT_CHARS),
+        packageRoot: text(facts.packageRoot, REPOSITORY_PATH_LIMIT_CHARS),
+        revision: text(
+          facts.revision,
+          NODE_SCRIPT_LIBRARY_REVISION_LIMIT_CHARS,
+        ),
+        installedVersion:
+          installedVersion === null
+            ? null
+            : text(installedVersion, NODE_SCRIPT_LIBRARY_VERSION_LIMIT_CHARS),
+        elapsedMs: this.structural(elapsedMs),
+      })
+    })
+  }
+
+  libraryObserved(
+    elapsedMs: number,
+    facts: NodeScriptLibraryObservedFacts,
+  ): void {
+    this.guard(() => {
+      // An observation after the end is a late report: dropped, never a fault.
+      if (this.ended) return
+      const { otherCopyPath, ...rest } = facts
+      return this.input.writer.appendLibraryObserved({
+        ...rest,
+        // The other copy's path is hidden of private roots like every recorded text.
+        ...(otherCopyPath === undefined
+          ? {}
+          : {
+              otherCopyPath: cutTextToLength(
+                this.hide(otherCopyPath),
+                NODE_SCRIPT_LIBRARY_PATH_LIMIT_CHARS,
+              ),
+            }),
+        elapsedMs: this.structural(elapsedMs),
+      })
     })
   }
 

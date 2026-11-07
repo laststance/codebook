@@ -2,12 +2,72 @@ import {
   CHROME_EXTENSION_MIN_VERSION,
   EXTENSION_BUILD_TIMEOUT_MS,
   EXTENSION_CONTEXT_SOURCES_LIMIT,
+  LIBRARY_BUILD_FAILED_REASONS,
+  LIBRARY_PACK_ERROR_STEPS,
+  LIBRARY_BUILD_TIMEOUT_MS,
+  LIBRARY_BUILD_UNSUPPORTED_REASONS,
   MILLISECONDS_PER_SECOND,
   MIN_NODE_MAJOR_VERSION,
   STUDY_ARCHIVE_UNAVAILABLE_MESSAGE,
   WXT_SUPPORTED_MAJOR_MINOR,
 } from './constants'
 import { newerStudyFormatMessage } from './utils/newerStudyFormatMessage'
+
+/**
+ * The recovery sentence of each `LIBRARY_BUILD_UNSUPPORTED` reason (nothing started). Typed by {@link LIBRARY_BUILD_UNSUPPORTED_REASONS}, so a new reason cannot ship without its recovery.
+ */
+const LIBRARY_BUILD_UNSUPPORTED_RECOVERY: Record<
+  (typeof LIBRARY_BUILD_UNSUPPORTED_REASONS)[number],
+  string
+> = {
+  'outside-repository':
+    'library.packageRoot is not a folder inside the opened repository (a link that leaves it counts too): point it at the library package folder, relative to the repository root.',
+  'not-a-package':
+    'library.packageRoot holds no package.json with a valid package name: point it at the folder of the library package.',
+  'not-a-dependency':
+    "the Example's package.json does not depend on the library (details.package): name the package the Example imports, or do not declare library.",
+  'inside-example':
+    "library.packageRoot is the Example's packageRoot or lies inside it: name the library package folder, which may be an ancestor of the Example.",
+  'no-build-script':
+    "the library has no build script (details.package): the library route runs the package's own build, so tell the learner this Example cannot run on the checked-out library.",
+  'package-manager-unsupported':
+    "this version builds with pnpm or npm only (details.packageManager names the repository's): tell the learner the Example runs its installed copy, and do not declare library.",
+  'package-manager-unknown':
+    'the repository names no package manager: its root package.json has no packageManager field and has both or neither of pnpm-lock.yaml and package-lock.json. Tell the learner to add the packageManager field or keep one lockfile.',
+  'package-manager-missing':
+    "the repository's package manager was not found on PATH (details.packageManager): ask the learner to install it, then start again.",
+  'library-not-installed':
+    "the library's dependencies are not installed (details.package is the first missing one): ask the learner to run details.installCommand with the repository's package manager, then start again; Codebook never installs packages.",
+  'peer-not-installed':
+    "a peer dependency of the library does not resolve from the Example (details.package): ask the learner to install the Example's dependencies, then start again; Codebook never installs packages.",
+  'node-version': `the library build needs an external Node ${MIN_NODE_MAJOR_VERSION} or later (details.nodeVersion is the version found, or none): ask the learner to install it or to point the setting Codebook uses for the external Node at one.`,
+}
+
+/**
+ * The recovery sentence of each `LIBRARY_BUILD_FAILED` reason (the build or pack started and the script did not). Typed by {@link LIBRARY_BUILD_FAILED_REASONS}.
+ */
+const LIBRARY_BUILD_FAILED_RECOVERY: Record<
+  (typeof LIBRARY_BUILD_FAILED_REASONS)[number],
+  string
+> = {
+  'build-error': `the library's own build ended with an error: explain the masked last lines of the message (often the learner's code or a missing dependency), and start one new run only after the learner fixes the cause; the library's ignored build output may have been rewritten.`,
+  timeout: `the build and pack were stopped after ${LIBRARY_BUILD_TIMEOUT_MS / MILLISECONDS_PER_SECOND} seconds and their processes were ended: retry once, because a first build fills caches, and a second timeout goes to the learner; the library's ignored build output may have been rewritten.`,
+  'pack-error': `the pack failed or left no tarball (details.step is one of ${LIBRARY_PACK_ERROR_STEPS.join(', ')}): name the package manager's last lines for the learner and do not retry.`,
+  'source-changed':
+    "the repository's HEAD moved while the library built (details.revision before and after), so nothing ran: start one new run once the checkout is settled.",
+  'tracked-file-changed':
+    'the build changed the file details.path (a tracked file or an untracked one that is not ignored) and Codebook did not restore it: do not retry; tell the learner, who can inspect git diff or git status for that path and decide.',
+  'tracked-files-unverified':
+    "do not retry: the build's processes may still run, or a file could not be read before or after the build (details.path names it), so the repository's files could not be checked; tell the learner to check git status before any new run.",
+}
+
+/** Joins per-reason recovery sentences into one recovery text, `reason: sentence`, in the order of the reason list. */
+function joinReasonRecovery(
+  reasons: readonly string[],
+  recovery: Record<string, string>,
+): string {
+  return reasons.map((reason) => `${reason}: ${recovery[reason]}`).join(' ')
+}
 
 export const ERROR_RECOVERY = {
   NOT_FOUND:
@@ -165,6 +225,8 @@ export const ERROR_RECOVERY = {
     'Choose an unbundled source file and line (no sourceMappingURL comment, a stop line under 1,000 characters), or explain that part from source: this version explains unbundled extension sources only. Recovery: fix, then one new start. Nothing was launched. See codebook://help/chrome-extension#BUNDLED_EXTENSION_UNSUPPORTED.',
   EXTENSION_BUILD_UNSUPPORTED: `Nothing started: the build did not run and Chrome did not start. Read details.reason and fix that one cause, then start again once. no-wxt-config: point extensionRoot at the folder that holds the WXT config (wxt.config.ts, .mts, .js or .mjs); codebook_status lists wxtProjects. wxt-not-installed: ask the learner to install the project's dependencies with the repository's package manager, then start again; Codebook never installs packages. wxt-version: tell the learner this version builds WXT ${WXT_SUPPORTED_MAJOR_MINOR} only, and name details.version. wxt-dir-tracked: tell the learner that WXT's .wxt folder is tracked by Git, so a build would rewrite tracked files. node-version: ask the learner to install Node ${MIN_NODE_MAJOR_VERSION} or later, or to point the setting Codebook uses for the external Node at one (details.nodeVersion is the version found, or none). stop-outside-project: move the stop into the project's own sources under extensionRoot, outside node_modules; the message names the field. Recovery: fix, then one new start, except wxt-version, wxt-dir-tracked and a missing Node, which the learner resolves first. See codebook://help/chrome-extension#EXTENSION_BUILD_UNSUPPORTED.`,
   EXTENSION_BUILD_FAILED: `The build started and Chrome did not. Read details.reason. build-error: the project's own build failed, so the run cannot continue; explain the masked lines of the message (often the learner's code or a missing dependency) and start one new run only after the learner fixes it; WXT's own .wxt folder may have been regenerated and nothing was loaded; details carries the WXT version, the Node version and the exit code or signal. timeout: the build was stopped after ${EXTENSION_BUILD_TIMEOUT_MS / MILLISECONDS_PER_SECOND} seconds and its processes were ended; side effects are as for build-error; retry once, because a first build fills caches, and a second timeout goes to the learner. tracked-file-changed: the build changed the tracked file details.path and Codebook did not restore it; do not retry; tell the learner, who can inspect git diff for that path and decide. no-output: WXT finished without a Chrome build in the output folder; name the WXT version and start no new run until the project's WXT config is checked. tracked-files-unverified: do not retry; tell the learner that the build's processes may still run, or that a tracked file could not be read before or after the build (details.path names it), so tracked files could not be checked, and that they check git status before any new run. Side effects: partial for tracked-file-changed and tracked-files-unverified; otherwise only WXT's ignored .wxt folder. See codebook://help/chrome-extension#EXTENSION_BUILD_FAILED.`,
+  LIBRARY_BUILD_UNSUPPORTED: `Nothing started: no build or pack ran and the script did not start. Read details.reason and fix that one cause, then start again once. ${joinReasonRecovery(LIBRARY_BUILD_UNSUPPORTED_REASONS, LIBRARY_BUILD_UNSUPPORTED_RECOVERY)} See codebook://help/node-script#LIBRARY_BUILD_UNSUPPORTED.`,
+  LIBRARY_BUILD_FAILED: `The library build or pack started and the script did not. Read details.reason; details.command, details.packageManager and details.nodeVersion, when known, say what ran. ${joinReasonRecovery(LIBRARY_BUILD_FAILED_REASONS, LIBRARY_BUILD_FAILED_RECOVERY)} Side effects: the library's ignored build output; partial for tracked-file-changed and tracked-files-unverified. See codebook://help/node-script#LIBRARY_BUILD_FAILED.`,
   PERMISSIONS_NEED_ACKNOWLEDGEMENT:
     'Tell the learner which declared permissions reach outside the test profile, then start again with exactly those entries in acknowledgedPermissions. Recovery: fix, then one new start. Nothing was launched. See codebook://help/chrome-extension#PERMISSIONS_NEED_ACKNOWLEDGEMENT.',
   EXTENSION_LINK_OUTSIDE:

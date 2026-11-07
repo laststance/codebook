@@ -1,27 +1,23 @@
 import { access, realpath, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { EXTENSION_BUILD_TIMEOUT_MS } from '../constants'
+
 import { assertWxtBuildSupported } from './assertWxtBuildSupported'
-import { buildWxtBuildEnvironment } from './buildWxtBuildEnvironment'
+import { buildProcessEnvironment } from './buildProcessEnvironment'
+import { createBuildSpawner } from './createBuildSpawner'
 import { createExtensionBuildError } from './createExtensionBuildError'
-import { createWxtBuildSpawner } from './createWxtBuildSpawner'
 import { findChangedTrackedFile } from './findChangedTrackedFile'
 import { hashTrackedFiles } from './hashTrackedFiles'
 import { listTrackedFiles } from './listTrackedFiles'
 import { readWxtBuildResultFile } from './readWxtBuildResultFile'
-import { runWxtBuildProcess } from './runWxtBuildProcess'
-import type { WxtBuildProcessEnd } from './runWxtBuildProcess'
+import { runBuildProcess } from './runBuildProcess'
+import type { BuildProcessEnd } from './runBuildProcess'
 import { sleepUntilAborted } from './sleepUntilAborted'
 import { WXT_BUILD_SCRIPT } from './wxtBuildScript'
 import type { WxtBuildInput, WxtBuildResult } from './wxtBuildTypes'
 
-export type {
-  WxtBuildClock,
-  WxtBuildInput,
-  WxtBuildProcess,
-  WxtBuildResult,
-  WxtBuildSpawner,
-} from './wxtBuildTypes'
+export type { WxtBuildInput, WxtBuildResult } from './wxtBuildTypes'
 
 /** The folder WXT writes its Chrome development build to, inside the output folder. */
 const CHROME_DEVELOPMENT_BUILD_FOLDER = 'chrome-mv3-dev'
@@ -44,7 +40,7 @@ function buildFailed(
 
 /** Judges a finished build's own outcome, after the tracked files were found unchanged and the tree ended. */
 async function judgeBuildOutcome(
-  end: WxtBuildProcessEnd,
+  end: BuildProcessEnd,
   resultFile: string,
   outDir: string,
   input: WxtBuildInput,
@@ -101,7 +97,7 @@ export async function buildWxtExtension(
   input: WxtBuildInput,
 ): Promise<WxtBuildResult> {
   const clock = input.clock ?? productionClock
-  const spawner = input.spawner ?? createWxtBuildSpawner
+  const spawner = input.spawner ?? createBuildSpawner
   const wxtVersion = await assertWxtBuildSupported(input)
   const snapshot = await hashTrackedFiles(
     input.repositoryRoot,
@@ -119,7 +115,7 @@ export async function buildWxtExtension(
   const startedAtMs = clock.nowMs()
   // A stop that arrived during the preparation above: no process started, so nothing could have changed.
   if (input.signal.aborted) return { kind: 'cancelled' }
-  const end = await runWxtBuildProcess(
+  const end = await runBuildProcess(
     {
       executable: input.node?.executable ?? '',
       arguments: [
@@ -131,11 +127,12 @@ export async function buildWxtExtension(
         resultFile,
       ],
       cwd: input.projectRoot,
-      environment: buildWxtBuildEnvironment(),
+      environment: buildProcessEnvironment(),
     },
     spawner,
     clock,
     input.signal,
+    EXTENSION_BUILD_TIMEOUT_MS,
   )
   // The comparison runs on every ending, whatever the tree's state: a change is reported first.
   const comparison = await findChangedTrackedFile(

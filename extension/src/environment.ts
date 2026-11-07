@@ -63,6 +63,7 @@ import { createNodeServerRunUtilities } from './utils/createNodeServerRunUtiliti
 import { createSavedSessionOperationsAsker } from './utils/createSavedSessionOperationsAsker'
 import { declaredStopOfSnapshot } from './utils/declaredStopOfSnapshot'
 import { describeOperationsConfirmationNotice } from './utils/describeOperationsConfirmationNotice'
+import { describeRepositoryPackageManager } from './utils/describeRepositoryPackageManager'
 import { listVitestForRootClaim } from './utils/listVitestForRootClaim'
 import {
   MANAGED_RUN_PREPARING_MESSAGE,
@@ -482,6 +483,12 @@ export async function createEnvironment(
             )
           ).version,
       )
+      // The package manager the library route would build with; only a run that declares `library` needs it, so it never changes readiness.
+      // A failed read only omits the status; it must not fail the whole readiness report.
+      const repositoryPackageManager = await describeRepositoryPackageManager(
+        workspace,
+        nodeExecutable,
+      ).catch(() => undefined)
       // A managed run that is preparing or releasing blocks a new start under either adapter.
       const managedRunState = releasingConfiguredRun
         ? [MANAGED_RUN_RELEASING_MESSAGE]
@@ -581,6 +588,7 @@ export async function createEnvironment(
             ready:
               nodeMissing.length === 0 && scriptMachineMissing.length === 0,
             missing: [...nodeMissing, ...scriptMachineMissing],
+            repositoryPackageManager,
           },
           'chrome-extension': (() => {
             // The editor's gaps (a disabled js-debug, a workspace mismatch) count; the Node executable does not.
@@ -801,6 +809,7 @@ export async function createEnvironment(
         traceUri,
         ...(privateRoots ? { privateRoots } : {}),
         dependencies: createProductNodeScriptRunDependencies({
+          workspace,
           node,
           orphanStore,
           confirmRun: confirmNodeScriptRun,

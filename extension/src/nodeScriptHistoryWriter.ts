@@ -1,4 +1,4 @@
-import { NODE_SCRIPT_HISTORY_FORMAT_VERSION } from './constants'
+import { NODE_SCRIPT_HISTORY_SEAL_VERSION } from './constants'
 import { NodeRunHistoryWriter } from './nodeRunHistoryWriter'
 import {
   NodeRunWriterRules,
@@ -10,6 +10,8 @@ import {
   type NodeScriptEndInput,
   type NodeScriptHistoryEntryInput,
   type NodeScriptHistoryHeader,
+  type NodeScriptLibraryObservedEntry,
+  type NodeScriptLibraryPreparedEntry,
 } from './nodeScriptHistorySchemas'
 import type { NodeScriptHistoryTypes } from './nodeScriptHistoryTypes'
 import type { NodeRunEvidenceEntryInput } from './nodeServerHistorySchemas'
@@ -19,7 +21,8 @@ import { acceptNodeScriptEntry } from './utils/nodeServerJournalRules'
 
 /** What differs between the node-script writer's rules and the node-server writer's. */
 const NODE_SCRIPT_RULE_PROFILE: NodeRunRuleProfile<NodeScriptHistoryTypes> = {
-  sealVersion: NODE_SCRIPT_HISTORY_FORMAT_VERSION,
+  // The seal keeps its own version, separate from the header format, so a format 2 header never rejects a seal.
+  sealVersion: NODE_SCRIPT_HISTORY_SEAL_VERSION,
   parseEntry: (value) => nodeScriptHistoryEntrySchema.parse(value),
   parseSeal: (value) => nodeScriptHistorySealSchema.parse(value),
   accept: acceptNodeScriptEntry,
@@ -63,6 +66,34 @@ export class NodeScriptHistoryWriter extends NodeRunHistoryWriter<NodeScriptHist
    */
   appendEntry(input: NodeScriptHistoryEntryInput): Promise<void> {
     return this.appendCounted(input, () => this.append(input))
+  }
+
+  /**
+   * Queues the `library.prepared` entry: what the build and pack made. Written once, after the pack and before the script's own entries; only a format 2 history accepts it.
+   * @param facts - The prepared facts with their time since launch.
+   * @returns Settles when the entry is durable; rejects when the rules or the disk refuse it; settles at once when the writer is already closed by `end`.
+   * @example await writer.appendLibraryPrepared({ elapsedMs: 0, package: '@scope/lib', version: '2.14.0', … })
+   */
+  // Called by the script sink through its writer port, which static analysis cannot trace to this class.
+  // fallow-ignore-next-line unused-class-member
+  appendLibraryPrepared(
+    facts: Omit<NodeScriptLibraryPreparedEntry, 'type' | 'sequence'>,
+  ): Promise<void> {
+    return this.appendEntry({ type: 'library.prepared', ...facts })
+  }
+
+  /**
+   * Queues the `library.observed` entry: what the script loaded. The run appends it after its process tree ended and before {@link appendEnd}, because `end` closes the writer to new appends and an observation offered later is dropped (no failure, nothing written).
+   * @param facts - The observation with its time since launch.
+   * @returns Settles when the entry is durable; rejects when the rules or the disk refuse it; settles at once, writing nothing, when `end` already closed the writer.
+   * @example await writer.appendLibraryObserved({ elapsedMs: 900, loaded: true, loadCount: 3, otherCopyLoaded: false, observation: 'complete' })
+   */
+  // Called by the script sink through its writer port, which static analysis cannot trace to this class.
+  // fallow-ignore-next-line unused-class-member
+  appendLibraryObserved(
+    facts: Omit<NodeScriptLibraryObservedEntry, 'type' | 'sequence'>,
+  ): Promise<void> {
+    return this.appendEntry({ type: 'library.observed', ...facts })
   }
 
   protected override queueEvidence(

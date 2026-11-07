@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -255,6 +255,36 @@ test('the environment reports node-script readiness for a ready machine, a missi
   )
 })
 
+// protects=a root package.json whose packageManager is an object (JSON allows it) or a failing status read leaves node-script ready and every other profile reported; fails_when=prerequisites() throws or node-script turns not ready because of the package manager text; no_claim=that the library route accepts such a repository
+test('a hostile packageManager field or a failing status read never fails the readiness report', async (context) => {
+  // Arrange
+  const hostile = await createEnvironmentWith(context, { gaps: [] })
+  await writeFile(
+    join(hostile.directory, 'package.json'),
+    '{"packageManager":{"toString":null}}',
+  )
+  const failing = await createEnvironmentWith(context, {
+    gaps: [],
+    packageManagerStatusFails: true,
+  })
+  // Act
+  const hostileProfile = (await hostile.environment.prerequisites()).profiles?.[
+    'node-script'
+  ]
+  const failingProfile = (await failing.environment.prerequisites()).profiles?.[
+    'node-script'
+  ]
+  // Assert
+  assert.equal(hostileProfile?.ready, true)
+  assert.deepEqual(hostileProfile?.repositoryPackageManager, {
+    found: false,
+    reason: 'unsupported',
+    packageManager: 'object',
+  })
+  assert.equal(failingProfile?.ready, true)
+  assert.equal(failingProfile?.repositoryPackageManager, undefined)
+})
+
 // protects=the three samples of the node-script help are complete configurations that parse with the live schema once their placeholders are replaced; fails_when=a sample stops parsing, or one loses its shape (ES module entry, CommonJS entry with a stop in a required file, package root below the root); no_claim=that the sample lines run in any repository
 test('the node-script help samples parse with the live schema once their placeholders are replaced', async () => {
   // Arrange
@@ -379,6 +409,8 @@ test('the node-script help has an anchor and recovery for each code, and the new
       'LEARNER_PAUSED',
       'PAUSE_HOLD_EXPIRED',
       'RUNTIME_FAILED',
+      'LIBRARY_BUILD_UNSUPPORTED',
+      'LIBRARY_BUILD_FAILED',
     ].map((code) => [code, `codebook://help/node-script#${code}`]),
   )
   assert.equal(help.codes[0]?.recovery, refused)
@@ -423,7 +455,7 @@ test('API 1.26 is served with a note for the additive node-script profile', asyn
       .split('\n')
       .find((line) => line.startsWith(' * 1.26 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.32')
+  assert.equal(API_VERSION, '1.33')
   assert.equal(NODE_SCRIPT_HISTORY_DIRECTORY, 'node-scripts.v1')
   for (const phrase of [
     '`node-script` profile',
@@ -457,7 +489,7 @@ test('the bundled skill 1.0.78 routes a Node script question to node-script with
   // Arrange
   const skill = await readPackaged('skills/codebook/SKILL.md')
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.81"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.82"\n'))
   for (const phrase of [
     '**Script runs (API 1.26).**',
     'uses the `node-script` profile, only when `codebook_status` lists it and reports API 1.26 or later',
@@ -491,9 +523,9 @@ test('the README documents the Node script run, its confirmation, its end and it
     "At stops the chat declares in the package's own source",
     'A nonzero exit is the script failing, not a Codebook error',
     'saved through `codebook_explain_node_history` as a Script replay',
-    'with **MCP API 1.32**',
+    'with **MCP API 1.33**',
     '`SCRIPT_NOT_CONFIRMED`',
-    "so Cursor's managed skill updates to **1.0.81**",
+    "so Cursor's managed skill updates to **1.0.82**",
   ])
     assert.ok(readme.includes(phrase), phrase)
 })

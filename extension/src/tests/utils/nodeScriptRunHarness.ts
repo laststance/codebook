@@ -20,6 +20,8 @@ import {
 
 /** What a test arranges around a script run beyond the happy path. */
 export type ScriptHarnessOptions = Omit<HarnessOptions, 'history'> & {
+  /** A list the harness pushes its steps onto instead of its own, so a test can read them in order beside the history's and the library's steps. */
+  order?: string[]
   /** How the learner answers: at once yes (default), at once no, or by hand through `harness.answer`. */
   confirm?: 'yes' | 'no' | 'manual'
   /** The asker never reacts to the abort signal, so only the run itself can end the wait. */
@@ -33,10 +35,19 @@ export type ScriptHarnessOptions = Omit<HarnessOptions, 'history'> & {
   /** Replaces the stop resolution. */
   resolveStopsFails?: StudyError
   history?: NodeScriptHistorySink
+  /** Declares a library (`library: { packageRoot }`) on the run's configuration. */
+  library?: { packageRoot: string }
+  /** Replaces the build: receives the run's request. */
+  prepareLibrary?: NodeScriptRunDependencies['prepareLibrary']
+  describeLibrary?: NodeScriptRunDependencies['describeLibrary']
+  listPackageCopies?: NodeScriptRunDependencies['listPackageCopies']
 }
 
 /** The declaration every script run test uses: a script at the repository root with `stopCount` stops in one file. */
-function declaration(stopCount: number): NodeScriptConfiguration {
+function declaration(
+  stopCount: number,
+  library?: { packageRoot: string },
+): NodeScriptConfiguration {
   const hash = 'a'.repeat(64)
   const stop = (index: number) => ({
     path: 'src/routes/users.ts',
@@ -56,6 +67,7 @@ function declaration(stopCount: number): NodeScriptConfiguration {
     packageRoot: '.',
     entry: 'script.mjs',
     loader: 'node',
+    ...(library ? { library } : {}),
     source: stop(0),
     inspections: [{ path: 'user.id', mode: 'value', required: true }],
     additionalStops:
@@ -69,16 +81,23 @@ function declaration(stopCount: number): NodeScriptConfiguration {
   }
 }
 
-/** A history sink that remembers what the run told it. */
-export function fakeScriptHistory() {
+/**
+ * A history sink that remembers what the run told it.
+ * @param order - When given, each call is also pushed here as `history:<call>`, so a test can compare the history's calls with the process and the library's own steps.
+ */
+export function fakeScriptHistory(order?: string[]) {
   const told: Array<{ call: string; detail?: unknown }> = []
+  const tell = (call: string, detail?: unknown): void => {
+    told.push({ call, detail })
+    order?.push(`history:${call}`)
+  }
   const sink: NodeScriptHistorySink = {
-    output: (_elapsed, channel, text) =>
-      told.push({ call: 'output', detail: { channel, text } }),
-    stop: (_elapsed, pause) =>
-      told.push({ call: 'stop', detail: pause.declaredStopIndex }),
-    end: (_elapsed, end) => told.push({ call: 'end', detail: end }),
-    markCaptureBudgetExhausted: () => told.push({ call: 'budget' }),
+    output: (_elapsed, channel, text) => tell('output', { channel, text }),
+    stop: (_elapsed, pause) => tell('stop', pause.declaredStopIndex),
+    libraryPrepared: (_elapsed, facts) => tell('libraryPrepared', facts),
+    libraryObserved: (_elapsed, facts) => tell('libraryObserved', facts),
+    end: (_elapsed, end) => tell('end', end),
+    markCaptureBudgetExhausted: () => tell('budget'),
     flush: () => undefined,
   }
   return { sink, told }
@@ -86,8 +105,8 @@ export function fakeScriptHistory() {
 
 /** Builds a script run against fakes and returns every handle a test needs. */
 export function createScriptHarness(options: ScriptHarnessOptions = {}) {
-  const { history, ...harnessOptions } = options
-  const order: string[] = []
+  const { history, order: sharedOrder, ...harnessOptions } = options
+  const order: string[] = sharedOrder ?? []
   const events: Array<{ type: string; detail: unknown }> = []
   const clock = createManualClock()
   const stopCount = options.stopCount ?? 3
@@ -102,6 +121,7 @@ export function createScriptHarness(options: ScriptHarnessOptions = {}) {
   const signals: Array<[number, string]> = []
   const debuggers: FakeNodeServerDebugger[] = []
   const questions: NodeScriptRunQuestion[] = []
+  const launches: Array<Parameters<NodeScriptRunDependencies['launch']>[0]> = []
   const answers: Array<ReturnType<typeof defer<boolean>>> = []
   let startReads = 0
   let emitOutput: (text: string, channel?: 'stdout' | 'stderr') => void = () =>
@@ -156,8 +176,9 @@ export function createScriptHarness(options: ScriptHarnessOptions = {}) {
         })
       return answer.promise
     },
-    launch: async (_launch, _record, onOutput) => {
+    launch: async (launchRequest, _record, onOutput) => {
       order.push('launch')
+      launches.push(launchRequest)
       emitOutput = (text, channel = 'stdout') =>
         void onOutput?.({ sequence: 1, elapsedMs: 5, channel, text })
       return process
@@ -176,10 +197,24 @@ export function createScriptHarness(options: ScriptHarnessOptions = {}) {
     readListeningPorts: async () => [],
     rememberProcess: async () => undefined,
     forgetProcess: async () => undefined,
+    ...(options.prepareLibrary
+      ? {
+          prepareLibrary: (request) => {
+            order.push('prepareLibrary')
+            return options.prepareLibrary!(request)
+          },
+        }
+      : {}),
+    ...(options.describeLibrary
+      ? { describeLibrary: options.describeLibrary }
+      : {}),
+    ...(options.listPackageCopies
+      ? { listPackageCopies: options.listPackageCopies }
+      : {}),
   }
   const run: NodeScriptRuntime = createOwnedNodeScriptRun({
     workspace: WORKSPACE,
-    configuration: declaration(stopCount),
+    configuration: declaration(stopCount, options.library),
     record: (type, detail) => events.push({ type, detail }),
     citedSources: [],
     runId: options.runId ?? 'script-run-1',
@@ -189,6 +224,8 @@ export function createScriptHarness(options: ScriptHarnessOptions = {}) {
   })
   return {
     run,
+    dependencies,
+    launches,
     order,
     events,
     clock,
@@ -207,6 +244,7 @@ export function createScriptHarness(options: ScriptHarnessOptions = {}) {
     },
     /** The script exits by itself; `pipesClosed` false leaves a descendant holding stdout. */
     exits(fact: NodeServerExit, pipesClosed = true): void {
+      order.push('process:exited')
       exitFact = fact
       exitEvent.resolve(fact)
       if (pipesClosed) base.exitNow(fact)

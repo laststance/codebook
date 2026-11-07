@@ -3,7 +3,12 @@ import { z } from 'zod'
 import {
   ACTIVE_TIMEOUT_MS,
   CONFIGURED_OBSERVATION_LIMIT,
+  LIBRARY_BUILD_FAILED_REASONS,
+  LIBRARY_BUILD_TIMEOUT_MS,
+  LIBRARY_BUILD_UNSUPPORTED_REASONS,
+  LIBRARY_PACK_ERROR_STEPS,
   MILLISECONDS_PER_SECOND,
+  NODE_SCRIPT_LIBRARY_MINIMUM_API,
   NODE_SCRIPT_MINIMUM_API,
   NODE_SCRIPT_MINIMUM_EXTENSION_VERSION,
   NODE_SCRIPT_PROFILE,
@@ -104,6 +109,14 @@ const NODE_SCRIPT_CODES: readonly { code: ErrorCode; when: string }[] = [
     code: 'RUNTIME_FAILED',
     when: 'run: an unexpected failure after the spawn; sideEffects is unknown, so read nodeScript.end and the output to reconcile what the script did',
   },
+  {
+    code: 'LIBRARY_BUILD_UNSUPPORTED',
+    when: `start (with library): the library route is refused before any process starts; details.reason is one of ${LIBRARY_BUILD_UNSUPPORTED_REASONS.join(', ')}; nothing started`,
+  },
+  {
+    code: 'LIBRARY_BUILD_FAILED',
+    when: `run (with library): the library build or pack started and the script did not; details.reason is one of ${LIBRARY_BUILD_FAILED_REASONS.join(', ')}; the library's ignored build output may have been rewritten`,
+  },
 ]
 
 /**
@@ -131,6 +144,62 @@ function nodeScriptSaveHelp() {
         expectedRevision: 0,
       },
     },
+  }
+}
+
+/**
+ * Builds the `library` section of `codebook://help/node-script`: when to declare `library.packageRoot`, what the build and pack run and write, the observation states, the refusals with their recovery, the limits and one complete sample with generic names.
+ * Called by {@link nodeScriptHelp}; it names no repository and copies no project's answer or stop lines.
+ * @returns The JSON-serializable section.
+ * @example nodeScriptLibraryHelp().sample.configuration.library.packageRoot // => 'packages/widgets'
+ */
+function nodeScriptLibraryHelp() {
+  return {
+    requires: `codebook_status reports API ${NODE_SCRIPT_LIBRARY_MINIMUM_API} or later (compare the number after the dot as a whole number).`,
+    whenToUse:
+      "The Example lives inside a library repository and its package.json depends on that library by a published version, so its own node_modules holds an installed copy, not the checked-out source. Declare library.packageRoot (the library package's folder, relative to the repository root; it may be an ancestor of the Example, never the Example's own folder or a folder inside it) and the Example runs on the checked-out library. Without it the Example runs the installed copy, and the run resource lists repositoryPackageCopies: each direct dependency installed from outside the repository's source folder whose package.json repository URL names the opened repository, compared with the origin remote, with correspondence unverified. The disclosure lists nothing without an origin remote or for a fork whose origin differs. Say so to the learner; never call that copy the checked-out library.",
+    whatRuns: [
+      "The learner's editor confirmation comes first and names the build and pack, because the build runs the project's own build scripts. A declined confirmation starts nothing.",
+      "The repository's package manager (the root package.json packageManager field, else pnpm or npm by the lockfile at the root) runs the library's own build script in library.packageRoot with the external Node 24 or later first on PATH, then packs the library into the run's private folder with lifecycle scripts off, and the Example's imports of that package resolve to the packed build.",
+      "It writes the library's ignored build output (its own build folder, as the project's CI does) and the run's private folder, which the run removes when it ends. No tracked file and nothing in the Example's own node_modules changes: tracked files are checked after the build, not restored.",
+      `The build and pack together are bounded at ${secondsOf(LIBRARY_BUILD_TIMEOUT_MS)} s. Codebook never installs packages.`,
+    ],
+    phase:
+      'The run reads confirming, then building (the status bar says Building <name> for the Example…), then running. codebook_start answers its receipt at once; follow the run resource.',
+    facts:
+      'The run resource carries library: { package, version, packageRoot, revision, dirty, packageManager, buildMs, packMs, tarballSha256, prepared, loaded, loadCount, publishedCopyLoaded, cleanup }. The Script replay shows the same correspondence line.',
+    observationStates: [
+      'prepared: the library was built and packed. It alone proves nothing about what the script loaded.',
+      'loaded: a module of the packed copy was loaded (not just resolved) by the script, with loadCount. Say "ran on the checked-out library" only then, with no other copy of the package loaded and a complete observation.',
+      'built but not loaded by this script: the script never loaded the package.',
+      'publishedCopyLoaded true: the Example also loaded its installed copy (the first path is given); say the script also loaded another copy.',
+      'incomplete or unreadable observation: say what the script loaded was not fully observed, never "not loaded".',
+    ],
+    refusals: {
+      unsupportedNothingStarted: `LIBRARY_BUILD_UNSUPPORTED, details.reason one of ${LIBRARY_BUILD_UNSUPPORTED_REASONS.join(', ')}: follow codebook://help/node-script#LIBRARY_BUILD_UNSUPPORTED; fix the field, install, or point the setting at a Node 24.`,
+      failedAfterStart: `LIBRARY_BUILD_FAILED, details.reason one of ${LIBRARY_BUILD_FAILED_REASONS.join(', ')}: follow codebook://help/node-script#LIBRARY_BUILD_FAILED. Retry a build-error or timeout once at most; never retry tracked-file-changed or tracked-files-unverified, and tell the learner to inspect git diff or git status. pack-error details.step is one of ${LIBRARY_PACK_ERROR_STEPS.join(', ')}. A refusal or failure carries details.command, details.packageManager and details.nodeVersion when they are known.`,
+    },
+    limits: [
+      'Ignored inputs: the build reads and writes what the project ignores (generated files, build output); Codebook compares tracked and untracked-not-ignored files only.',
+      'Installed dependencies: the library must already be installed with its package manager; dependency versions come from the repository lockfile, not a fresh install of the packed tarball, so a version can differ (one measured case: a transitive dependency at 5.1.1 against 5.2.0 in a fresh install).',
+      "Overlapping builds: two windows building the same library at once are not prevented in this version; the library's ignored build output is shared.",
+      "Worker threads: a worker thread the script starts is neither redirected to the packed copy nor observed, so what a worker loads is not part of the run's library facts.",
+      'Child processes: a child the script starts that inherits the hook (for example with child_process.fork) is observed too; the observation reads incomplete when any observed process does not end normally or cannot write its record.',
+      "Stops stay in the Example's own source; a stop in the library's source or in node_modules is refused. Content scripts do not apply to this profile.",
+      'Yarn and Bun repositories are refused (package-manager-unsupported); the Example runs its installed copy.',
+    ],
+    sample: nodeSampleStart(NODE_SCRIPT_PROFILE, {
+      packageRoot: 'examples/publish-ci/node',
+      entry: 'check-esm.mjs',
+      library: { packageRoot: 'packages/widgets' },
+      source: {
+        path: 'examples/publish-ci/node/checks.cjs',
+        hash: '<hash from codebook_source of examples/publish-ci/node/checks.cjs>',
+        line: 20,
+        column: 3,
+      },
+      inspections: [{ path: 'result', mode: 'value', required: true }],
+    }),
   }
 }
 
@@ -164,6 +233,7 @@ export function nodeScriptHelp() {
       'Save through codebook_explain_node_history (see save); the learner opens the Script replay from the library.',
     ],
     save: nodeScriptSaveHelp(),
+    library: nodeScriptLibraryHelp(),
     samples: NODE_SCRIPT_HELP_SAMPLES,
     supportedShape: [
       'The entry is a .ts, .mts, .cts, .js, .mjs or .cjs file run by `node`, optionally through the repository\'s own tsx (loader tsx for TypeScript, the default for a TypeScript entry; node for JavaScript). A TypeScript entry with loader node, and an entry beginning with "-", are refused.',

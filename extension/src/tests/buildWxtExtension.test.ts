@@ -18,16 +18,17 @@ import {
   EXTENSION_BUILD_TIMEOUT_MS,
 } from '../constants'
 import { StudyError } from '../errors'
-import { buildWxtExtension } from '../utils/buildWxtExtension'
 import type {
-  WxtBuildClock,
-  WxtBuildProcess,
-  WxtBuildSpawner,
-} from '../utils/buildWxtExtension'
+  BuildClock,
+  BuildProcess,
+  BuildProcessExit,
+  BuildSpawner,
+  BuildSpawnRequest,
+} from '../utils/buildProcessTypes'
+import { buildWxtExtension } from '../utils/buildWxtExtension'
 import { findChangedTrackedFile } from '../utils/findChangedTrackedFile'
 import { hashTrackedFiles } from '../utils/hashTrackedFiles'
-import { runWxtBuildProcess } from '../utils/runWxtBuildProcess'
-import type { WxtBuildExit, WxtBuildSpawnRequest } from '../utils/wxtBuildTypes'
+import { runBuildProcess } from '../utils/runBuildProcess'
 
 /** A lost stop leaves these builds waiting for an exit that never comes; the guard turns that hang into a failure. */
 const LOST_STOP_GUARD_MS = 10_000
@@ -39,7 +40,7 @@ after(() => {
 })
 
 /** A manual clock: delays resolve when `advance` reaches them or their signal aborts. */
-function createFakeClock(): WxtBuildClock & {
+function createFakeClock(): BuildClock & {
   advance(ms: number): Promise<void>
 } {
   let nowMs = 0
@@ -64,9 +65,9 @@ function createFakeClock(): WxtBuildClock & {
 }
 
 type FakeControl = {
-  request: WxtBuildSpawnRequest
+  request: BuildSpawnRequest
   output(text: string, channel?: 'stdout' | 'stderr'): void
-  exit(status: WxtBuildExit): void
+  exit(status: BuildProcessExit): void
 }
 
 /** A fake spawner: `onSpawn` scripts the process; `endsOn` says which signal ends its tree (`never` keeps it alive). */
@@ -74,16 +75,16 @@ function createFakeSpawner(options: {
   onSpawn(control: FakeControl): void
   endsOn?: 'SIGTERM' | 'SIGKILL' | 'never'
 }) {
-  const spawned: WxtBuildSpawnRequest[] = []
+  const spawned: BuildSpawnRequest[] = []
   const signals: string[] = []
   let notifySpawned = (): void => undefined
   const hasSpawned = new Promise<void>((resolve) => (notifySpawned = resolve))
-  const spawner: WxtBuildSpawner = (request) => {
+  const spawner: BuildSpawner = (request) => {
     spawned.push(request)
     let treeIsGone = false
-    let resolveExit = (_status: WxtBuildExit): void => undefined
+    let resolveExit = (_status: BuildProcessExit): void => undefined
     let resolveTree = (): void => undefined
-    const exited = new Promise<WxtBuildExit>(
+    const exited = new Promise<BuildProcessExit>(
       (resolve) => (resolveExit = resolve),
     )
     const treeGone = new Promise<void>((resolve) => (resolveTree = resolve))
@@ -92,7 +93,7 @@ function createFakeSpawner(options: {
       resolveExit({ code: null, signal: 'SIGTERM' })
       resolveTree()
     }
-    const build: WxtBuildProcess = {
+    const build: BuildProcess = {
       exited,
       treeGone,
       isTreeGone: () => treeIsGone,
@@ -829,7 +830,7 @@ test(
     controller.abort()
     const fake = createFakeSpawner({ onSpawn: () => undefined })
     // Act
-    const end = await runWxtBuildProcess(
+    const end = await runBuildProcess(
       {
         executable: '/usr/local/bin/node',
         arguments: [],
@@ -839,6 +840,7 @@ test(
       fake.spawner,
       createFakeClock(),
       controller.signal,
+      EXTENSION_BUILD_TIMEOUT_MS,
     )
     // Assert
     assert.equal(end.ending, 'cancelled')

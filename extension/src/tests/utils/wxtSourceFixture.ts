@@ -8,7 +8,10 @@ import {
   chromeExtensionConfigSchema,
   type ChromeExtensionConfiguration,
 } from '../../chromeExtensionConfigSchemas'
-import type { WxtBuildExit, WxtBuildSpawner } from '../../utils/wxtBuildTypes'
+import type {
+  BuildProcessExit,
+  BuildSpawner,
+} from '../../utils/buildProcessTypes'
 
 import { writeFixtureFiles } from './chromeExtensionFixture'
 
@@ -148,12 +151,12 @@ export function wxtConfiguration(
  */
 export function createSuccessfulBuildSpawner(
   projectRootSpelling: string,
-): WxtBuildSpawner {
+): BuildSpawner {
   return (request) => {
     const [projectArgument, outDir, resultFile] = request.arguments.slice(3)
     const loadRoot = join(outDir ?? '', 'chrome-mv3-dev')
-    let resolveExit = (_status: WxtBuildExit): void => undefined
-    const exited = new Promise<WxtBuildExit>(
+    let resolveExit = (_status: BuildProcessExit): void => undefined
+    const exited = new Promise<BuildProcessExit>(
       (resolve) => (resolveExit = resolve),
     )
     void (async () => {

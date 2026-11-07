@@ -1,4 +1,5 @@
 import {
+  NODE_SCRIPT_HISTORY_LIBRARY_FORMAT_VERSION,
   NODE_SERVER_HISTORY_MAX_STOPS,
   NODE_SERVER_HISTORY_SIGN_IN_HEADER_FORMAT_VERSION,
 } from '../constants'
@@ -32,6 +33,10 @@ export type NodeServerJournalProgress = {
   sources: Set<string>
   hasOutputTruncated: boolean
   hasEnd: boolean
+  /** Whether a format 2 node-script journal holds its one `library.prepared` entry. */
+  hasLibraryPrepared: boolean
+  /** Whether a format 2 node-script journal holds its one `library.observed` entry. */
+  hasLibraryObserved: boolean
   /** Whether a node-script journal holds an observed result: output, or an `end` the run itself reached (exit, signal or limit), as opposed to the `stopped` end a seal derives when the run gave none. */
   hasObservedResult: boolean
 }
@@ -54,6 +59,8 @@ export function newNodeServerJournalProgress(): NodeServerJournalProgress {
     sources: new Set<string>(),
     hasOutputTruncated: false,
     hasEnd: false,
+    hasLibraryPrepared: false,
+    hasLibraryObserved: false,
     hasObservedResult: false,
   }
 }
@@ -104,17 +111,18 @@ export function acceptNodeServerEntry(
 }
 
 /**
- * Applies the node-script journal's ordering rules to the next entry: consecutive sequences, time that never goes back, stops only at declared stops after their `source` exists and within the stop limit, and `end` last. A script has no request, so a stop needs no open window. The writer, the incremental scan and the full read each call it, so all three accept the same journals.
+ * Applies the node-script journal's ordering rules to the next entry: consecutive sequences, time that never goes back, stops only at declared stops after their `source` exists and within the stop limit, `library.prepared` once and before any script entry, `library.observed` once and after it (both only in a format 2 history), and `end` last. A script has no request, so a stop needs no open window. The writer, the incremental scan and the full read each call it, so all three accept the same journals.
  * @param progress - What the entries before this one established; updated only when the entry is accepted.
  * @param entry - The next parsed entry.
- * @param header - The history's header, whose declared stops bound `declaredStopIndex`.
+ * @param header - The history's header, whose declared stops bound `declaredStopIndex` and whose format allows the library entries.
  * @throws When the entry breaks an ordering rule; `progress` is left as it was.
  * @example acceptNodeScriptEntry(progress, stopEntry, header) // progress.stopCount => 1
  */
 export function acceptNodeScriptEntry(
   progress: NodeServerJournalProgress,
   entry: NodeScriptHistoryEntry,
-  header: Pick<NodeScriptHistoryHeader, 'declaredStops'>,
+  header: Pick<NodeScriptHistoryHeader, 'declaredStops'> &
+    Partial<Pick<NodeScriptHistoryHeader, 'formatVersion'>>,
 ): void {
   acceptOrderedEntry(progress, entry, SCRIPT_SUBJECT, () => {
     // The table is keyed by type, so each entry meets exactly its own rule; the lookup is the one place the union is narrowed.
@@ -151,8 +159,9 @@ type EntryOfType<Type extends NodeServerHistoryEntry['type']> = Extract<
   NodeServerHistoryEntry,
   { type: Type }
 >
-type RuleHeader = Pick<NodeServerHistoryHeader, 'declaredStops'> &
-  Partial<Pick<NodeServerHistoryHeader, 'formatVersion'>>
+type RuleHeader = Pick<NodeServerHistoryHeader, 'declaredStops'> & {
+  formatVersion?: number
+}
 
 /** The rule of an `output` entry: nothing follows an output cut. */
 const acceptOutput = (
@@ -292,6 +301,37 @@ const SCRIPT_ENTRY_RULES: {
   source: (progress, entry) => acceptSource(progress, entry, SCRIPT_SUBJECT),
   stop: (progress, entry, header) =>
     acceptCountedStop(progress, entry, header, SCRIPT_SUBJECT),
+  'library.prepared': (progress, _entry, header) => {
+    if (header.formatVersion !== NODE_SCRIPT_HISTORY_LIBRARY_FORMAT_VERSION)
+      throw new Error(
+        'Node script history prepares a library without a format 2 header.',
+      )
+    if (progress.hasLibraryPrepared)
+      throw new Error('Node script history prepares its library twice.')
+    // The build and pack come before the script starts, so nothing of the script precedes them.
+    if (
+      progress.sources.size > 0 ||
+      progress.stopCount > 0 ||
+      progress.hasObservedResult
+    )
+      throw new Error(
+        'Node script history prepares its library after the script began.',
+      )
+    progress.hasLibraryPrepared = true
+  },
+  'library.observed': (progress, _entry, header) => {
+    if (header.formatVersion !== NODE_SCRIPT_HISTORY_LIBRARY_FORMAT_VERSION)
+      throw new Error(
+        'Node script history observes a library without a format 2 header.',
+      )
+    if (!progress.hasLibraryPrepared)
+      throw new Error(
+        'Node script history observes a library it never prepared.',
+      )
+    if (progress.hasLibraryObserved)
+      throw new Error('Node script history observes its library twice.')
+    progress.hasLibraryObserved = true
+  },
   end: (progress, entry) => {
     progress.hasEnd = true
     // A `stopped` end is what a seal derives for a run that gave none; the run's own exit, signal or limit is an observed result.

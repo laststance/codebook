@@ -65,6 +65,7 @@ import {
   EXTENSION_HISTORY_START_BOUND_MS,
   NODE_SERVER_HISTORY_START_BOUND_MS,
   NODE_SERVER_SIGN_IN_SECRET_MIN_CHARS,
+  NODE_SCRIPT_LIBRARY_PACKAGE_LIMIT_CHARS,
 } from './constants'
 import {
   BUSY_AWAITING_CONFIRMATION_RECOVERY,
@@ -163,6 +164,7 @@ import { createChromeExtensionJournal } from './utils/createChromeExtensionJourn
 import { createNodeServerJournal } from './utils/createNodeServerJournal'
 import { cutCauseForDisplay } from './utils/cutCauseForDisplay'
 import { cutTextToFit } from './utils/cutTextToFit'
+import { cutTextToLength } from './utils/cutTextToLength'
 import { declaredOperationsOf } from './utils/declaredOperationsOf'
 import { declaredStopOfSnapshot } from './utils/declaredStopOfSnapshot'
 import { describeBoundPlace, type BoundPlace } from './utils/describeBoundPlace'
@@ -197,6 +199,7 @@ import { historyExclusionState } from './utils/historyExclusionState'
 import { initialStudyRemovalAvailability } from './utils/initialStudyRemovalAvailability'
 import { isPausedAtSnapshot } from './utils/isPausedAtSnapshot'
 import { isStudyRemovalExclusion } from './utils/isStudyRemovalExclusion'
+import { isTrackedFileBuildFailure } from './utils/isTrackedFileBuildFailure'
 import { journaledBindingOfSnapshot } from './utils/journaledBindingOfSnapshot'
 import type { NodeTestOutputEvent } from './utils/launchNodeTest'
 import {
@@ -235,6 +238,7 @@ import {
 } from './utils/projectNodeTestOutcome'
 import { projectPageLoadStatus } from './utils/projectPageLoadStatus'
 import { readerNotFollowingRunRefusal } from './utils/readerNotFollowingRunRefusal'
+import { readLibraryPackageName } from './utils/readLibraryPackageName'
 import type { RepositoryAdapterReadiness } from './utils/readRepositoryAdapterReadiness'
 import { redactExtensionInputs } from './utils/redactExtensionInputs'
 import type { PreparedTextState } from './utils/redactPreparedTexts'
@@ -1457,6 +1461,13 @@ export class StudyService {
     return describeNodeScriptProfile({
       ready: reported.ready && missing.length === 0,
       missing,
+      ...(profilePrerequisites?.[NODE_SCRIPT_PROFILE]?.repositoryPackageManager
+        ? {
+            repositoryPackageManager:
+              profilePrerequisites[NODE_SCRIPT_PROFILE]
+                .repositoryPackageManager,
+          }
+        : {}),
     })
   }
 
@@ -7746,7 +7757,22 @@ export class StudyService {
   private async prepareNodeScript(record: StudyRecord): Promise<void> {
     // Every node-script record is created with its script state.
     if (!isNodeScriptRecord(record)) return
-    await this.prepareNodeRecord(record, () => this.startNodeScriptRun(record))
+    await this.prepareNodeRecord(record, async () => {
+      try {
+        await this.startNodeScriptRun(record)
+      } catch (error) {
+        // D21: a stop that ended the library build with a tracked-file verdict keeps it as the run's final error instead of reading as a plain stop.
+        if (
+          (record.stopping || record.stopped) &&
+          isTrackedFileBuildFailure(error)
+        ) {
+          record.error ??= this.sanitizedError(error)
+          this.logNodeServerFailure(record, record.error)
+          return
+        }
+        throw error
+      }
+    })
   }
 
   /**
@@ -7828,6 +7854,14 @@ export class StudyService {
     const state = record.nodeScript
     if (!state.prepared) return
     const { configuration, descriptor } = state.prepared
+    // A run with `library` declares its identity in the header (format 2); the build's results are journal events.
+    const declaredLibrary = configuration.library
+    const libraryName = declaredLibrary
+      ? await readLibraryPackageName(
+          this.environment.workspace,
+          declaredLibrary.packageRoot,
+        ).catch(() => undefined)
+      : undefined
     const begun = await startNodeScriptHistory({
       ...this.nodeHistoryStartOptions(record, runRoots),
       run: {
@@ -7846,6 +7880,20 @@ export class StudyService {
           path: source.path,
           hash: source.hash,
         })),
+        ...(declaredLibrary
+          ? {
+              library: {
+                // A folder standing in for an unreadable name is cut to the header's package bound, so the strict header still parses.
+                package:
+                  libraryName ??
+                  cutTextToLength(
+                    declaredLibrary.packageRoot,
+                    NODE_SCRIPT_LIBRARY_PACKAGE_LIMIT_CHARS,
+                  ),
+                packageRoot: declaredLibrary.packageRoot,
+              },
+            }
+          : {}),
       },
     })
     if ('recorder' in begun) state.history = begun.recorder

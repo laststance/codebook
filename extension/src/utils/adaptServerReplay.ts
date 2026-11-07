@@ -57,6 +57,10 @@ function sanitizeServerReplayModel(
     ...model,
     events,
     ...(terminal ? { terminal } : {}),
+    // The line names a path the script loaded; the pane prints it, so it loses terminal controls like every recorded text.
+    ...(model.libraryLine === undefined
+      ? {}
+      : { libraryLine: stripTerminalControls(model.libraryLine) }),
   }
 }
 

@@ -104,7 +104,7 @@ test('the bundled skill gates route-handler stops by API 1.28 and afterOperation
   // Arrange
   const skill = await readPackaged('skills', 'codebook', 'SKILL.md')
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.81"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.82"\n'))
   assert.ok(
     skill.includes(
       'A route handler (`route.ts` under `app/`) takes a `participant: "server"` stop only when `codebook_status` reports API 1.28 or later',
@@ -123,7 +123,7 @@ test('the README documents route-handler stops under API 1.28 and no longer list
   // Arrange
   const readme = await readPackaged('README.md')
   // Act / Assert
-  assert.ok(readme.includes('**MCP API 1.32**'))
+  assert.ok(readme.includes('**MCP API 1.33**'))
   assert.ok(
     readme.includes('API 1.28 is additive: it adds route-handler stops'),
   )

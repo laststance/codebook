@@ -3,7 +3,14 @@ import type { TestContext } from 'node:test'
 
 import type { NodeHistoryRepository } from '../../nodeHistoryRepository'
 import type { NodeScriptHistoryRecorder } from '../../nodeScriptHistoryRecorder'
-import type { NodeScriptEnd } from '../../nodeScriptHistorySchemas'
+import type {
+  NodeScriptEnd,
+  NodeScriptHistoryLibrary,
+} from '../../nodeScriptHistorySchemas'
+import type {
+  NodeScriptLibraryObservedFacts,
+  NodeScriptLibraryPreparedFacts,
+} from '../../nodeScriptHistorySink'
 import type { NodeScriptLearningMaterialContent } from '../../nodeScriptLearningSchemas'
 import { sha256 } from '../../runtimeSupport/utils/sha256'
 import { startNodeScriptHistory } from '../../utils/startNodeScriptHistory'
@@ -57,8 +64,16 @@ export type ScriptRunScript = {
   output?: string[]
   /** How the run ended; `undefined` seals the history without the run's own end. */
   end?: NodeScriptEnd
+  /** Hides private roots in every recorded text; defaults to leaving text as is. */
+  hideRoots?: (text: string) => string
   /** Told the capture budget was spent before the end. */
   budgetExhausted?: boolean
+  /** A declared library: its identity makes the history format 2; the sink is told the preparation before the output and the observation before the end, when given. */
+  library?: {
+    identity: NodeScriptHistoryLibrary
+    prepared?: NodeScriptLibraryPreparedFacts
+    observed?: NodeScriptLibraryObservedFacts
+  }
 }
 
 /**
@@ -102,14 +117,17 @@ export async function runScriptHistory(
         }),
       ),
       sourceHashes: [{ path: 'src/handler.ts', hash: sourceHash }],
+      ...(script.library ? { library: script.library.identity } : {}),
     },
-    hideRoots: (text) => text,
+    hideRoots: script.hideRoots ?? ((text) => text),
     describeCause: String,
   })
   if (!('recorder' in begun)) throw new Error(begun.unavailable)
   const { recorder } = begun
   const hitCounts = new Map<number, number>()
   let elapsedMs = 10
+  if (script.library?.prepared)
+    recorder.sink.libraryPrepared(elapsedMs, script.library.prepared)
   for (const text of script.output ?? [])
     recorder.sink.output((elapsedMs += 10), 'stdout', text)
   for (const declaredStopIndex of script.hits) {
@@ -125,6 +143,8 @@ export async function runScriptHistory(
     )
   }
   if (script.budgetExhausted) recorder.sink.markCaptureBudgetExhausted()
+  if (script.library?.observed)
+    recorder.sink.libraryObserved((elapsedMs += 10), script.library.observed)
   if (script.end) recorder.sink.end((elapsedMs += 10), script.end)
   await recorder.seal(undefined, 5_000)
   return { repository, studyId: `${instanceId}_${runId}`, recorder }

@@ -19,6 +19,8 @@ export type ResolvedNodeServerLaunch = {
   packageRoot: string
   entry: string
   loader: NodeServerLoader
+  /** `node-script` with `library` only: the arguments of the library's resolve hook (`['--import', <hook URL>]`), placed after the tsx loader. */
+  libraryArguments?: readonly string[]
 }
 
 /** The one field of a package manifest the loader lookup reads. */

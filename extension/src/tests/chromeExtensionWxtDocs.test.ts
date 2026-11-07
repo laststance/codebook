@@ -79,7 +79,7 @@ test('the help states the wxt-build section and limits the bundled-file rule to 
   )
 })
 
-// protects=the packaged skill is 1.0.81 and tells the chat to declare wxt-build for a WXT project only when codebook_status reports API 1.32 or later, and the README states the wxt-build behaviors the CHANGELOG names (build in the private folder, Node 24, building phase, contextSources, never restored tracked files, history format 2, no content scripts) with the API 1.32 and skill 1.0.81 lines; fails_when=a sentence, the skill version or the API line is missing; no_claim=that the behavior is implemented, which other tests cover
+// protects=the packaged skill is 1.0.82 and tells the chat to declare wxt-build for a WXT project only when codebook_status reports API 1.32 or later, and the README states the wxt-build behaviors the CHANGELOG names (build in the private folder, Node 24, building phase, contextSources, never restored tracked files, history format 2, no content scripts) with the API 1.32 and skill 1.0.82 lines; fails_when=a sentence, the skill version or the API line is missing; no_claim=that the behavior is implemented, which other tests cover
 test('the packaged skill and README state the wxt-build route, its API gate and its limits', async () => {
   // Arrange
   const skill = await readPackaged('skills', 'codebook', 'SKILL.md')
@@ -91,7 +91,7 @@ test('the packaged skill and README state the wxt-build route, its API gate and 
       .find((line) => line.startsWith('- **WXT projects (MCP API 1.32).**')) ??
     ''
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.81"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.82"\n'))
   assert.ok(
     skill.includes(
       'declare `adapter: "wxt-build"` with `extensionRoot` set to that folder and stops in source files under `extensionRoot`, never in `node_modules` (for example in `src/`), only when `codebook_status` reports API 1.32 or later',
@@ -109,11 +109,11 @@ test('the packaged skill and README state the wxt-build route, its API gate and 
     'Content scripts are not included.',
   ])
     assert.ok(bullet.includes(phrase), phrase)
-  assert.ok(readme.includes('with **MCP API 1.32**'))
+  assert.ok(readme.includes('with **MCP API 1.33**'))
   assert.ok(
     readme.includes('API 1.32 is additive: it adds the `wxt-build` adapter'),
   )
-  assert.ok(readme.includes('updates to **1.0.81**'))
+  assert.ok(readme.includes('updates to **1.0.82**'))
 })
 
 // protects=the help, README, STOP_FILE_NOT_LOADED recovery and skill give contextSources the base extensionRoot (the form a stop path takes), say the build runs the project's own code, name both adapters, document the discovery skips and the tracked-files-unverified reason; fails_when=contextSources is called repository-relative again or any of those sentences is dropped; no_claim=the behavior itself, which the build, discovery and resolver tests cover

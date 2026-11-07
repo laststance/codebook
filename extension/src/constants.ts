@@ -5,6 +5,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 /**
  * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ * 1.33 is additive: a `node-script` configuration may declare an optional `library: { packageRoot }` naming the opened repository's own library package; Codebook then builds it with the repository's package manager (pnpm or npm), packs it into the run's private folder and resolves the Example's imports of that package to the packed build, so the Example runs on the checked-out library and not on its installed copy. The refusals gain two codes, each with `details.reason`: `LIBRARY_BUILD_UNSUPPORTED` (nothing started) and `LIBRARY_BUILD_FAILED` (the build or pack started and the script did not). A run without `library` lists `repositoryPackageCopies` in its run resource: each direct dependency of the Example installed from outside the repository's source with `correspondence: "unverified"`. A Script replay of a run with `library` is recorded with history header format 2.
  * 1.32 is additive: the `chrome-extension` profile accepts a second adapter, `wxt-build`, for a WXT 0.21 project. `extensionRoot` names the project folder and each stop's `path` is a source file under it. Codebook builds the project with the repository's own WXT and source maps into the run's private folder, loads that build as an unpacked extension and resolves each stop through the build's source maps. The refusals are `EXTENSION_BUILD_UNSUPPORTED` and `EXTENSION_BUILD_FAILED`; an Extension replay of such a run is recorded with history header format 2.
  * 1.31 is additive: a `node-server` configuration may declare an optional `signIn` object `{ path, fields, secretField, secret: "ask-learner" }`; Codebook asks the learner for the password in its own masked box, signs in with one POST, keeps the session cookie in memory only and sends the declared request with it. An older Codebook refuses the field as INVALID_CONFIGURATION.
  * 1.30 is additive: the `expo-web-dev` adapter of the `repository-browser` profile runs an Expo SDK 57 web app (Metro) at the repository root or below it, in a version 3 configuration only. Codebook starts the app's own `expo start --web` on the port its web script declares (it sets `CI=1`, `BROWSER=none` and `EXPO_NO_TELEMETRY=1`), treats the app as ready when Metro serves the entry bundle and its source map, and pauses at browser stops in the app's own source that the entry bundle includes. The refusals are `EXPO_WEB_UNSUPPORTED`, `EXPO_WEB_LAUNCHER_FAILED`, `EXPO_WEB_PORT_UNAVAILABLE`, `EXPO_WEB_SETUP_DEADLINE` and `EXPO_WEB_SEAL_FAILED`, `codebook_status` gains `profiles[].prerequisites.adapters["expo-web-dev"]`, `codebook://help/repository-browser` gains `expoWebQuickStart`, and a study of an Expo run is saved as format 15 (`.study.v15.json`) with its `expoVersion`.
@@ -34,7 +35,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.9 is additive: a node-server run is saved as a Server replay. `codebook_explain_node_history` accepts a server history's material (steps citing the request, a stop, output, the response or the request failure), the server run resource gains `nodeServer.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing` and `captureMissing`, `nextActions` offers `save-node-learning`, and `codebook://help/node-server` has a save section.
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
-export const API_VERSION = '1.32'
+export const API_VERSION = '1.33'
 
 /** The API that first accepts the `expo-web-dev` adapter in a version 3 configuration (skill 1.0.79). */
 export const EXPO_WEB_MINIMUM_API = '1.30'
@@ -51,11 +52,52 @@ export const CHROME_EXTENSION_ADAPTERS = [
 /** The longest a `wxt-build` run lets the WXT build take before its process tree is ended; the 90 s preparation bound starts only after the build. */
 export const EXTENSION_BUILD_TIMEOUT_MS = 120_000
 
+/** The longest a `node-script` run lets the library build and pack take together before their process tree is ended (API 1.33). */
+export const LIBRARY_BUILD_TIMEOUT_MS = 180_000
+
+/** The `details.reason` values of `LIBRARY_BUILD_UNSUPPORTED`: the library route refused before any process started. One source for the error recovery, the help and the tests. */
+export const LIBRARY_BUILD_UNSUPPORTED_REASONS = [
+  'outside-repository',
+  'not-a-package',
+  'not-a-dependency',
+  'inside-example',
+  'no-build-script',
+  'package-manager-unsupported',
+  'package-manager-unknown',
+  'package-manager-missing',
+  'library-not-installed',
+  'peer-not-installed',
+  'node-version',
+] as const
+
+/** The `details.reason` values of `LIBRARY_BUILD_FAILED`: the build or pack started and the script did not. One source for the error recovery, the help and the tests. */
+export const LIBRARY_BUILD_FAILED_REASONS = [
+  'build-error',
+  'timeout',
+  'pack-error',
+  'source-changed',
+  'tracked-file-changed',
+  'tracked-files-unverified',
+] as const
+
+/** The `details.step` values of a `pack-error`: the pack process itself, the single tarball it leaves, its unpacking, its manifest, and the resolve hook that links the Example's imports to it. One source for the library package, the error recovery, the help and the tests. */
+export const LIBRARY_PACK_ERROR_STEPS = [
+  'build',
+  'pack',
+  'tarball',
+  'unpack',
+  'metadata',
+  'link',
+] as const
+
 /** The only shape of a WXT version a `wxt-build` run quotes from the build's result file (a file the project's code could write); anything else reads as `unknown`. */
 export const WXT_VERSION_PATTERN = /^[0-9A-Za-z.+-]{1,32}$/
 
 /** The name prefix of the private folder a `wxt-build` run builds into, made beside the test Chrome profiles and removed with the run. */
 export const EXTENSION_BUILD_FOLDER_PREFIX = 'codebook-extension-build-'
+
+/** The name prefix of a `node-script` library run's private folder (tarball, unpacked package, hook, observation), made in the system's temporary folder, outside the repository. */
+export const LIBRARY_RUN_FOLDER_PREFIX = 'codebook-library-run-'
 
 /** The largest source map, in bytes, a `wxt-build` run reads; a larger map leaves its chunk's sources unlisted. */
 export const EXTENSION_SOURCE_MAP_LIMIT_BYTES = 32 * 1024 * 1024
@@ -83,6 +125,18 @@ export const EXTENSION_BUILD_OUTPUT_TAIL_CHARS = 65_536
 
 /** How many tracked files a `wxt-build` run hashes at the same time. */
 export const EXTENSION_BUILD_HASH_CONCURRENCY = 32
+
+/** How long the private folder of a library run is waited for when its removal follows a failure or a stop; past it the removal continues in the background and reads `pending` (API 1.33). */
+export const LIBRARY_CLEANUP_BOUND_MS = 10_000
+
+/** The most bytes a library tarball may unpack to; a larger tarball is a `pack-error` with step `unpack` (API 1.33). */
+export const LIBRARY_UNPACK_LIMIT_BYTES = 1024 * 1024 * 1024
+
+/** The most entries a library tarball may hold; more is a `pack-error` with step `unpack` (API 1.33). */
+export const LIBRARY_UNPACK_ENTRY_LIMIT_COUNT = 100_000
+
+/** The most bytes of the observation file a library run reads; a larger file reads `incomplete` (API 1.33). */
+export const LIBRARY_OBSERVATION_LIMIT_BYTES = 16 * 1024 * 1024
 
 /** The most project sources a `STOP_FILE_NOT_LOADED` refusal of a `wxt-build` run lists in `details.contextSources`. */
 export const EXTENSION_CONTEXT_SOURCES_LIMIT = 20
@@ -141,6 +195,8 @@ export const VITE_APP_SELECTION_RULE =
 
 /** The API that first serves the `node-script` profile (skill 1.0.75). */
 export const NODE_SCRIPT_MINIMUM_API = '1.26'
+/** The API that first accepts `library.packageRoot` in a `node-script` configuration (skill 1.0.82). */
+export const NODE_SCRIPT_LIBRARY_MINIMUM_API = '1.33'
 /** The first extension version that offers the node-script profile, for the profile entry of `codebook_status` (API 1.26, skill 1.0.75). */
 export const NODE_SCRIPT_MINIMUM_EXTENSION_VERSION = '0.2.84'
 
@@ -170,7 +226,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.92'
+export const EXTENSION_VERSION = '0.2.93'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -1494,8 +1550,28 @@ export const NODE_SCRIPT_PROFILE = 'node-script'
 export const NODE_SCRIPT_RUN_TIMEOUT_MS = 60_000
 /** The folder of node-script histories beside `node-servers.v1`, so older Codebooks never read it. */
 export const NODE_SCRIPT_HISTORY_DIRECTORY = 'node-scripts.v1'
-/** The `version` of a node-script history's header, seal and every record. */
+/** The `formatVersion` of a node-script history header for a run without `library`: older versions read it. */
 export const NODE_SCRIPT_HISTORY_FORMAT_VERSION = 1
+/** The `formatVersion` of a node-script history header for a run with `library`: it adds the declared `library` identity and allows the `library.prepared` and `library.observed` events. Older versions neither list nor delete such a history. */
+export const NODE_SCRIPT_HISTORY_LIBRARY_FORMAT_VERSION = 2
+/** The `version` of a node-script history's seal, separate from the header format so a header change never rejects existing seals. */
+export const NODE_SCRIPT_HISTORY_SEAL_VERSION = 1
+/** The package managers a `library.prepared` entry names: the ones the library route supports. */
+export const NODE_SCRIPT_LIBRARY_PACKAGE_MANAGERS = ['pnpm', 'npm'] as const
+/** How far a `library.observed` entry can be trusted: `complete` (the observation file ended with its closing line), `incomplete` (it did not) or `unreadable` (it could not be read). Only `complete` may support a negative. */
+export const NODE_SCRIPT_LIBRARY_OBSERVATIONS = [
+  'complete',
+  'incomplete',
+  'unreadable',
+] as const
+/** The most characters of the other copy's path a `library.observed` event keeps. */
+export const NODE_SCRIPT_LIBRARY_PATH_LIMIT_CHARS = 2_048
+/** The most characters of a library's package name a `library.prepared` event keeps (the npm name limit). */
+export const NODE_SCRIPT_LIBRARY_PACKAGE_LIMIT_CHARS = 214
+/** The most characters of a library version (built or installed) a `library.prepared` event keeps. */
+export const NODE_SCRIPT_LIBRARY_VERSION_LIMIT_CHARS = 256
+/** The most characters of a library's repository revision a `library.prepared` event keeps. */
+export const NODE_SCRIPT_LIBRARY_REVISION_LIMIT_CHARS = 1_024
 /** How a script run ended, as the `end` entry of its history records it: it exited by itself, a signal Codebook did not send ended it, `codebook_stop` ended it, or a limit Codebook enforced did. */
 export const NODE_SCRIPT_END_KINDS = [
   'exited',
@@ -1514,6 +1590,8 @@ export const NODE_SCRIPT_END_LIMITS = [
 export const NODE_SCRIPT_LOADERS = ['tsx', 'node'] as const
 /** The most characters of the reason a script's exit code could not be read. */
 export const NODE_SCRIPT_EXIT_UNKNOWN_LIMIT_CHARS = 256
+/** The most direct dependencies of an Example that the installed-copy disclosure reads; the rest are not scanned, so a manifest that lists thousands cannot hold the run before it starts. */
+export const NODE_SCRIPT_PACKAGE_COPY_SCAN_LIMIT_COUNT = 500
 /** The one action a node-server run offers: send its declared request. */
 export const NODE_SERVER_ACTION = 'http-request'
 /** The prefix of the debug session name of a node-server run (`codebook node server <runId>`): the run recognizes only sessions whose root carries its own name. */

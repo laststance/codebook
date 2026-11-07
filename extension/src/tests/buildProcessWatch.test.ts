@@ -5,12 +5,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { buildWxtBuildEnvironment } from '../utils/buildWxtBuildEnvironment'
+import { buildProcessEnvironment } from '../utils/buildProcessEnvironment'
 import { createBuildOutputTail } from '../utils/createBuildOutputTail'
 import { findChangedTrackedFile } from '../utils/findChangedTrackedFile'
 import { hashTrackedFiles } from '../utils/hashTrackedFiles'
-import { observeWxtBuildExit } from '../utils/observeWxtBuildExit'
-import { watchWxtBuildTree } from '../utils/watchWxtBuildTree'
+import { observeBuildExit } from '../utils/observeBuildExit'
+import { watchBuildTree } from '../utils/watchBuildTree'
 
 // protects=a secret, NODE_OPTIONS and ELECTRON_RUN_AS_NODE of the host stay out of the build environment while PATH and the Next-free basics stay in; fails_when=the host environment is copied whole or Next-only settings leak in; no_claim=that WXT builds with this environment (native check)
 test('builds the WXT environment from the allow-list without credentials or Node switches', () => {
@@ -23,7 +23,7 @@ test('builds the WXT environment from the allow-list without credentials or Node
     ELECTRON_RUN_AS_NODE: '1',
   }
   // Act
-  const environment = buildWxtBuildEnvironment(host)
+  const environment = buildProcessEnvironment(host)
   // Assert
   assert.equal(environment.PATH, '/usr/bin')
   assert.equal(environment.HOME, '/home/learner')
@@ -38,7 +38,7 @@ test('builds the WXT environment from the allow-list without credentials or Node
 test('treats a throwing process-group probe as not confirmed gone and stops polling', async () => {
   // Arrange
   let probeCalls = 0
-  const watch = watchWxtBuildTree({
+  const watch = watchBuildTree({
     hasLeaderExited: () => true,
     probe() {
       probeCalls += 1
@@ -59,7 +59,7 @@ test('treats a throwing process-group probe as not confirmed gone and stops poll
 test('settles treeGone once the leader exited and the probe reports the group gone', async () => {
   // Arrange
   const probeAnswers = [false, true]
-  const watch = watchWxtBuildTree({
+  const watch = watchBuildTree({
     hasLeaderExited: () => true,
     probe: () => probeAnswers.shift() ?? true,
     pollMs: 1,
@@ -74,7 +74,7 @@ test('settles treeGone once the leader exited and the probe reports the group go
 test('settles exited shortly after the leader exit although close never arrives', async () => {
   // Arrange
   const child = new EventEmitter()
-  const { exited, hasLeaderExited } = observeWxtBuildExit(child, 5)
+  const { exited, hasLeaderExited } = observeBuildExit(child, 5)
   // Act
   child.emit('exit', 0, null)
   const status = await exited
@@ -87,13 +87,28 @@ test('settles exited shortly after the leader exit although close never arrives'
 test('settles exited on close without waiting for the flush bound', async () => {
   // Arrange
   const child = new EventEmitter()
-  const { exited } = observeWxtBuildExit(child, 3_600_000)
+  const { exited } = observeBuildExit(child, 3_600_000)
   // Act
   child.emit('exit', 2, null)
   child.emit('close', 2, null)
   const status = await exited
   // Assert
   assert.deepEqual(status, { code: 2, signal: null })
+})
+
+// protects=a second error event of the leader process still has a listener, so it never escapes as an unhandled error event; fails_when=the error listener is removed after the first event and the second emit throws; no_claim=real spawn failures
+test('keeps an error listener after the first error event of the leader', async () => {
+  // Arrange
+  const child = new EventEmitter()
+  const { exited } = observeBuildExit(child, 5)
+  child.emit('error', new Error('first'))
+  // Act
+  const listenerCountAfterFirstError = child.listenerCount('error')
+  const emitSecondError = () => child.emit('error', new Error('second'))
+  // Assert
+  assert.equal(listenerCountAfterFirstError, 1)
+  assert.doesNotThrow(emitSecondError)
+  assert.deepEqual(await exited, { code: null, signal: null })
 })
 
 // protects=a build failure quotes only the last twenty non-empty output lines, so a chatty build never floods the refusal; fails_when=the tail keeps every line, keeps blank lines or drops the newest; no_claim=the masking of secrets (the redactor's own tests)

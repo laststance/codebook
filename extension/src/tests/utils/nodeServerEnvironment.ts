@@ -27,6 +27,8 @@ export async function createEnvironmentWith(
     nodeUnavailable?: boolean
     /** The version the fake external Node reports; 24.22.1 by default. */
     externalNodeVersion?: string
+    /** Whether the package manager status read fails, as an unforeseen repository file could make it; it succeeds by default. */
+    packageManagerStatusFails?: boolean
   },
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-server-env-'))
@@ -65,6 +67,15 @@ export async function createEnvironmentWith(
           }
         },
       },
+      ...(options.packageManagerStatusFails
+        ? {
+            './utils/describeRepositoryPackageManager': {
+              describeRepositoryPackageManager: async () => {
+                throw new Error('status read failed')
+              },
+            },
+          }
+        : {}),
       './utils/nodeServerMachineGaps': {
         nodeServerMachineGaps: async () => options.gaps,
       },
@@ -114,5 +125,5 @@ export async function createEnvironmentWith(
     extensionPath: directory,
   })
   context.after(() => environment.dispose())
-  return { environment, questions }
+  return { environment, questions, directory }
 }

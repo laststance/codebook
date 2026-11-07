@@ -1,11 +1,11 @@
 import { EXTENSION_BUILD_KILL_GRACE_MS } from '../constants'
 
-import type { WxtBuildClock, WxtBuildProcess } from './wxtBuildTypes'
+import type { BuildClock, BuildProcess } from './buildProcessTypes'
 
 /** Waits for the tree to be gone, at most the grace; true when it is gone. */
 async function waitForTreeGone(
-  build: WxtBuildProcess,
-  clock: WxtBuildClock,
+  build: BuildProcess,
+  clock: BuildClock,
 ): Promise<boolean> {
   const waited = new AbortController()
   try {
@@ -23,17 +23,17 @@ async function waitForTreeGone(
 }
 
 /**
- * Ends a WXT build's whole process tree: SIGTERM, then SIGKILL after the grace, and reports whether the end was confirmed.
+ * Ends a build's whole process tree: SIGTERM, then SIGKILL after the grace, and reports whether the end was confirmed.
  * Called by {@link buildWxtExtension} on timeout, cancellation, or when a finished build left members behind.
  * @param build - The started build process.
  * @param clock - Provides the grace delays.
  * @returns `true` when no member of the tree is left; `false` when the end could not be confirmed (a signal failed or members remain after SIGKILL).
  * @example
- * const confirmed = await endWxtBuildTree(build, clock) // => true
+ * const confirmed = await endBuildTree(build, clock) // => true
  */
-export async function endWxtBuildTree(
-  build: WxtBuildProcess,
-  clock: WxtBuildClock,
+export async function endBuildTree(
+  build: BuildProcess,
+  clock: BuildClock,
 ): Promise<boolean> {
   for (const signal of ['SIGTERM', 'SIGKILL'] as const) {
     try {

@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.2.93.0] - 2026-11-07 (development candidate)
+
+Cycle 0093 ([Issue #239](https://github.com/laststance/codebook/issues/239)), a feature cycle. **A library's Node Example now runs on the checked-out library.** A learner who opens a library's repository can ask how one of its Examples uses the library, and the run uses the library source they opened. Before, an Example always ran the published copy in its own `node_modules`, which can differ from the checked-out source even at the same version string.
+
+**Run on the checked-out library (MCP API 1.33).**
+- **What the chat declares:** a `node-script` run with `library: { packageRoot }`, the library package's folder in the repository. It may be an ancestor of the Example, never the Example's own folder or one inside it. Stops stay in the Example's own source.
+- **What Codebook does:** the editor's confirmation comes first and names the build. Then the repository's own package manager (pnpm or npm, from the root `packageManager` field or the lockfile) runs the library's own `build` script with an external Node 24 or later. Codebook packs the build into the run's private folder with lifecycle scripts off, and the Example's imports of that package resolve to the packed build. The build rewrites the library's ignored build output, as the project's CI does. No tracked file and nothing in the Example's own `node_modules` changes, and the private folder is removed when the run ends. Codebook never installs packages.
+- **What you see:**
+  - while it builds, the run and the status bar read `Building <name> for the Example…`; the build and pack together are limited to 180 seconds;
+  - the stops pause in the Example's own files, with the packed build in the values the script resolves;
+  - the run resource reports the package, version, revision, uncommitted changes, package manager, build and pack times and tarball SHA-256, and whether the script loaded the packed copy, another copy, or could not be fully observed;
+  - the saved Script replay shows `Ran on the checked-out <name> <version> built from <revision> (packed by <package manager>)`.
+- **When something is wrong:** `LIBRARY_BUILD_UNSUPPORTED` refuses before anything starts, for example when the Example does not depend on the folder's package, the repository's package manager is Yarn or Bun, unknown or missing, or the dependencies are not installed. `LIBRARY_BUILD_FAILED` means the build or pack started and the script did not, for example a build error, the time limit, or a tracked file that changed. Each refusal carries the exact command and a recovery in `codebook://help/node-script`.
+- **Without `library`:** the run resource lists `repositoryPackageCopies`, the Example's installed copies of the repository's own packages, with correspondence `unverified`, and the chat says so.
+- **Saved replays and older versions:** a run with `library` is saved in a newer Script history format. An older Codebook does not list it and keeps its files, and it refuses `library` as `INVALID_CONFIGURATION`. Runs without `library` keep the old format.
+- **The bundled skill (1.0.82)** declares `library` only when `codebook_status` reports API 1.33 or later. Run **Codebook: Set Up AI Chat** after updating, so Cursor's managed skill updates to 1.0.82.
+- **Limits:** dependency versions come from the repository's lockfile, not a fresh install of the tarball; a worker thread the script starts is neither redirected nor observed; two windows building the same library at once are not prevented.
+
+**Release details:** checked in both editors on a development target (P05's `examples/publish-ci/node`, `@reduxjs/toolkit` 2.14.0 at `7114787`, whose Example had 2.12.0 installed; no nine-project credit):
+
+| Check | Host | Question | Observed outcome |
+| --- | --- | --- | --- |
+| C93-1 | VS Code 1.145.2, Copilot Chat (GPT-6.1 Terra) | Which entry points the ESM test loads | A cold build took 10.2 s and the pack 0.7 s. Seven stops paused in `checks.cjs`, and all four entry points resolved into the packed build. The script exited 0 with the observation complete. After a window reload the replay reopened from Saved studies with the correspondence line, the captured source and native Variables |
+| C93-2 | Cursor 3.29.9, Agent (Grok 4.6 High Fast) | How `require()` loads the ESM library | A warm build took 6.4 s and the pack 0.7 s, with the same tarball bytes as C93-1. Six stops paused, and `require.resolve` named the packed build's ESM files. The script exited 0. The replay reopened from Saved studies with the correspondence line and native Variables |
+
+In both checks the clone stayed clean, and the Example's installed copy was byte-equal before and after.
+
 ## [0.2.92.0] - 2026-11-07 (development candidate)
 
 Cycle 0092 ([Issue #237](https://github.com/laststance/codebook/issues/237)), a feature cycle. **A Chrome extension built with WXT now pauses in its own TypeScript source.** A learner can ask how such an extension works, for example what its Options page does with a pasted token, or how its service worker reacts when a tab opens. Before, the `chrome-extension` profile loaded only an unpacked folder with a `manifest.json` and refused a stop in a bundled file, so a WXT project could not run at all.

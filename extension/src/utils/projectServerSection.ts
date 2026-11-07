@@ -53,6 +53,9 @@ export function projectServerSection(
   return {
     status: statusLine(input, stops, answer),
     ...captureReasonLine(model.status, replay.captureReasons),
+    ...(model.libraryLine === undefined
+      ? {}
+      : { libraryLine: model.libraryLine }),
     ...(selected
       ? {
           position:

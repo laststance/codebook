@@ -3,7 +3,7 @@ import type { NodeScriptView } from '../nodeScriptRuntimeTypes'
 import { describeScriptEndHeadline } from './describeNodeScriptEndRegion'
 
 /**
- * Words where a script run stands for the status bar item: waiting for the learner, starting, running, paused at a stop, how it ended, stopping or stopped.
+ * Words where a script run stands for the status bar item: waiting for the learner, building its library, starting, running, paused at a stop, how it ended, stopping or stopped.
  * Called by the workspace when it draws a script run's Save item.
  * @param view - The run's view.
  * @returns A short state phrase, beside which the item shows its learning replay state.
@@ -12,13 +12,16 @@ import { describeScriptEndHeadline } from './describeNodeScriptEndRegion'
 export function describeNodeScriptViewStatus(
   view: Pick<
     NodeScriptView,
-    'state' | 'pause' | 'stops' | 'end' | 'runFailure'
+    'state' | 'pause' | 'stops' | 'end' | 'runFailure' | 'library'
   >,
 ): string {
   if (view.runFailure) return `Failed: ${view.runFailure.code}`
   switch (view.state) {
     case 'confirming':
       return 'Waiting for your confirmation'
+    case 'building':
+      // A run with `library` builds and packs it before the script starts.
+      return `Building ${view.library?.package ?? 'the library'} for the Example…`
     case 'preparing':
       return 'Script starting'
     case 'running':
