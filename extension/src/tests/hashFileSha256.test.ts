@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { constants as flagsOfThisSystem } from 'node:fs'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
@@ -15,6 +15,7 @@ import {
 } from './utils/createLinkIfAllowed'
 import { loadModule } from './utils/loadModule'
 import { loadOpenWithoutFollowing } from './utils/loadOpenWithoutFollowing'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /**
  * Loads the file hash as a system without `O_NOFOLLOW` runs it: its opener gets the open flags Windows defines, so the hash takes the way it takes in a Windows editor on every system.
@@ -66,7 +67,7 @@ test('a file that is a link is not hashed where the system’s open cannot refus
     // Assert
     assert.equal(outcome, 'refused with ELOOP')
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })
 
@@ -87,7 +88,7 @@ test('a regular file is hashed where the system’s open cannot refuse a link, a
       'hashed: 80dab3b2f2faa6281f540e1919e61d24411ee53014f7b0292f2f5f2af134d73b',
     )
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })
 
@@ -108,6 +109,6 @@ test('a file that is a link is not hashed on this system either, whichever way i
     // Assert
     assert.equal(outcome, 'refused with ELOOP')
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })

@@ -6,6 +6,8 @@ import { test } from 'node:test'
 
 import { verifyVitestTestResult } from '../utils/verifyVitestTestResult'
 
+import { removeTestFolder } from './utils/removeTestFolder'
+
 const citedFile = '/repo/app/lib/data.test.ts'
 const citedTitles = [
   'invoice data queries',
@@ -65,7 +67,7 @@ test('a report where exactly the cited test ran confirms the run and gives its s
     // Assert
     assert.equal(status, 'passed')
   } finally {
-    await rm(report.directory, { recursive: true, force: true })
+    await removeTestFolder(report.directory)
   }
 })
 
@@ -95,7 +97,7 @@ test('a cited test that failed its assertions still counts as the cited test run
     // Assert
     assert.equal(status, 'failed')
   } finally {
-    await rm(report.directory, { recursive: true, force: true })
+    await removeTestFolder(report.directory)
   }
 })
 
@@ -190,7 +192,7 @@ test('a run where the cited test was skipped, another test ran or two tests matc
     )
   } finally {
     for (const report of [skipped, different, ambiguous, otherFile])
-      await rm(report.directory, { recursive: true, force: true })
+      await removeTestFolder(report.directory)
   }
 })
 
@@ -223,7 +225,7 @@ test('a missing, malformed or oversized Vitest report fails the run instead of a
     )
   } finally {
     for (const report of [malformed, wrongShape, oversized])
-      await rm(report.directory, { recursive: true, force: true })
+      await removeTestFolder(report.directory)
   }
 })
 
@@ -306,8 +308,8 @@ test('a report naming a contained symlink confirms only the exact cited test fil
       /another test file/,
     )
   } finally {
-    await rm(directory, { recursive: true, force: true })
-    await rm(report.directory, { recursive: true, force: true })
-    await rm(duplicate.directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
+    await removeTestFolder(report.directory)
+    await removeTestFolder(duplicate.directory)
   }
 })

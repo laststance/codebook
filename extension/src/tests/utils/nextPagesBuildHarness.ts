@@ -1,16 +1,11 @@
-import {
-  copyFile,
-  mkdir,
-  mkdtemp,
-  realpath,
-  rm,
-  writeFile,
-} from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { TestContext } from 'node:test'
 
 import { sha256 } from '../../runtimeSupport/utils/sha256'
+
+import { removeTestFolder } from './removeTestFolder'
 
 /** A tiny stand-in page (never application code): lines 1–4 are browser code, line 5 is a data function only the server runs. */
 export const PAGE_SOURCE =
@@ -224,7 +219,7 @@ export async function nextPagesBuild(context: TestContext, packageFolder = '') {
   const repository = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-pages-build-')),
   )
-  context.after(() => rm(repository, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(repository))
   const workspace = join(repository, packageFolder)
   const write = async (path: string, text: string): Promise<void> => {
     await mkdir(dirname(join(workspace, path)), { recursive: true })

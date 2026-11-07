@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { cp, mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
+import { cp, mkdtemp, readdir, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { before, test } from 'node:test'
@@ -9,6 +9,7 @@ import { buildServerReplayModel } from '../utils/buildServerReplayModel'
 
 import { SERVER_WORKSPACE_KEY } from './utils/nodeServerHistoryFixture'
 import { realProcessStart } from './utils/realProcessStart'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 before(async () => {
   await realProcessStart(process.pid)
@@ -27,7 +28,7 @@ async function openFixtureRepository(context: {
   after: (cleanup: () => Promise<void>) => void
 }): Promise<{ repository: NodeHistoryRepository; historyFolder: string }> {
   const learningDirectory = await mkdtemp(join(tmpdir(), 'codebook-fixture-'))
-  context.after(() => rm(learningDirectory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(learningDirectory))
   await cp(
     join(__dirname, FIXTURE_FOLDER, 'node-servers.v1'),
     join(learningDirectory, 'node-servers.v1'),

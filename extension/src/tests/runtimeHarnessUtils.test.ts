@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -21,6 +21,7 @@ import { keptListingFolderOf } from './utils/keptListingFolderOf'
 import { listenTo } from './utils/listenTo'
 import { loadModule } from './utils/loadModule'
 import { publishedWikiFixture } from './utils/publishedWikiFixture'
+import { removeTestFolder } from './utils/removeTestFolder'
 import type * as ServeMinimalWikiModule from './utils/serveMinimalWiki'
 import type * as WikiOpeningWindowModule from './utils/wikiOpeningWindow'
 import { openWikiOpeningWindow } from './utils/wikiOpeningWindow'
@@ -119,7 +120,7 @@ test('a replaced constant the loaded module never reads is refused by name, whil
       'Error: window.js does not read STORAGE_LOCK_UNWRITTEN_GRACE_MS, WIKI_UPDATE_WATCH itself, and the modules it requires keep the real constants, so the replacement changes nothing. Replace a constant window.js reads, or load the module that reads it.',
     )
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -147,7 +148,7 @@ test('an update window asked to replace a constant the extension itself never re
       'Error: extension.js does not read STORAGE_LOCK_UNWRITTEN_GRACE_MS itself, and the modules it requires keep the real constants, so the replacement changes nothing. Replace a constant extension.js reads, or load the module that reads it.',
     )
   } finally {
-    await rm(projectRoot, { recursive: true, force: true })
+    await removeTestFolder(projectRoot)
   }
 })
 
@@ -182,7 +183,7 @@ test('a timer a loaded module armed before the clock was faked is cancelled by i
     assert.equal(fired, false)
   } finally {
     resetFakeClock(context)
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -544,7 +545,7 @@ test('a published Wiki fixture whose first publish is refused removes the tempor
   } finally {
     if (previousTemporaryFolder === undefined) delete process.env.TMPDIR
     else process.env.TMPDIR = previousTemporaryFolder
-    await rm(temporaryFolder, { recursive: true, force: true })
+    await removeTestFolder(temporaryFolder)
   }
 })
 
@@ -575,7 +576,7 @@ test('a Wiki opening window whose extension does not load removes the temporary 
   } finally {
     if (previousTemporaryFolder === undefined) delete process.env.TMPDIR
     else process.env.TMPDIR = previousTemporaryFolder
-    await rm(temporaryFolder, { recursive: true, force: true })
+    await removeTestFolder(temporaryFolder)
   }
 })
 
@@ -634,7 +635,7 @@ test('a served minimal Wiki whose reader fails to close still removes the tempor
   } finally {
     if (previousTemporaryFolder === undefined) delete process.env.TMPDIR
     else process.env.TMPDIR = previousTemporaryFolder
-    await rm(temporaryFolder, { recursive: true, force: true })
+    await removeTestFolder(temporaryFolder)
   }
 })
 
@@ -665,6 +666,6 @@ test('a served minimal Wiki whose reader does not start removes the temporary pr
   } finally {
     if (previousTemporaryFolder === undefined) delete process.env.TMPDIR
     else process.env.TMPDIR = previousTemporaryFolder
-    await rm(temporaryFolder, { recursive: true, force: true })
+    await removeTestFolder(temporaryFolder)
   }
 })

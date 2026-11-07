@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
@@ -21,6 +21,7 @@ import {
 } from '../utils/studyFormatOfConfiguration'
 
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const BROWSER_ONLY_V7_PATH = join(
   resolve(__dirname, '../../src/tests/fixtures'),
@@ -87,7 +88,7 @@ test('studyFormatOfConfiguration gives 11 for a react-scripts-dev run at the roo
 test('a format 11 study of a react-scripts-dev app decodes with the package folder absent, "." or nested and is saved as .study.v11.json', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-format-11-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const studies = await Promise.all(
     [undefined, '.', NESTED_FOLDER].map((packageRoot) =>
       resealedBrowserStudy('react-scripts-dev', 11, packageRoot),

@@ -25,6 +25,7 @@ import { gitExecutablePath } from '../utils/gitExecutablePath'
 
 import { childProcessThatNotesPrograms } from './utils/childProcessThatNotesPrograms'
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 import { repositoryHarness as sourceHarness } from './utils/repositoryHarness'
 
 const executeFile = promisify(execFile)
@@ -613,6 +614,7 @@ test('a project whose Git index is a folder, or a link to a folder, is refused b
   }
   // The recovery is followed to the letter: the prerequisite the message names is fixed, a regular index stands at its path.
   for (const project of [withFolder, withLink]) {
+    // not cleanup: deletes a path of the fixture so the code under test meets it missing
     await rm(join(project.directory, '.git', 'index'), { recursive: true })
     await rename(
       join(project.directory, '.git', 'index-kept-elsewhere'),
@@ -707,7 +709,7 @@ test('source discovery runs no fsmonitor hook that the repository’s own config
   const { directory, sources, track } = await sourceHarness(context)
   await track('src/module.ts')
   const hookFolder = await mkdtemp(join(tmpdir(), 'codebook-source-hook-'))
-  context.after(() => rm(hookFolder, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(hookFolder))
   const hookRan = join(hookFolder, 'fsmonitor-ran')
   const hook = join(hookFolder, 'fsmonitor-hook.sh')
   await writeFile(hook, `#!/bin/sh\necho ran >> '${hookRan}'\n`)
@@ -781,7 +783,7 @@ test('source discovery runs no clean filter, textconv driver or external diff th
   const { directory, sources, track } = await sourceHarness(context)
   await track('src/module.ts')
   const notes = await mkdtemp(join(tmpdir(), 'codebook-source-drivers-'))
-  context.after(() => rm(notes, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(notes))
   const programs: [configKey: string, name: string][] = [
     ['filter.probe.clean', 'clean'],
     ['diff.probe.textconv', 'textconv'],

@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
@@ -14,6 +14,7 @@ import { StudyService } from '../service'
 
 import { ControlledConfiguredRuntime } from './utils/configuredServiceHarness'
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const executeFile = promisify(execFile)
 
@@ -156,7 +157,7 @@ export async function createHarness(
         await service.shutdown()
         await books.dispose()
       } finally {
-        await rm(directory, { recursive: true, force: true })
+        await removeTestFolder(directory)
       }
     },
   }

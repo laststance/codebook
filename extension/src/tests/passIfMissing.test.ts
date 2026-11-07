@@ -1,16 +1,18 @@
 import assert from 'node:assert/strict'
-import { lstat, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { passIfMissing } from '../utils/passIfMissing'
 
+import { removeTestFolder } from './utils/removeTestFolder'
+
 // Value: protects=every look of the Cursor setup, the catalog, the recovery of a moved file and the removal walk that answers a path holding nothing as an answer of its own; fails_when=a missing path ends the look with the system's text ("ENOENT: no such file or directory, lstat …"), or an entry that stands there is answered as missing; why_new=Cycle 0046 /ship review S3: four modules had a helper of their own for this, now one; seam=none, the real file system
 test('a look at a path that holds nothing answers undefined, and a look at an entry answers what stands there', async (context) => {
   // Arrange
   const folder = await mkdtemp(join(tmpdir(), 'codebook-pass-if-missing-'))
-  context.after(() => rm(folder, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(folder))
   await writeFile(join(folder, 'present.txt'), 'x')
 
   // Act

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
@@ -9,6 +9,7 @@ import { promisify } from 'node:util'
 import type * as EnvironmentModule from '../environment'
 
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const execFileAsync = promisify(execFile)
 
@@ -18,7 +19,7 @@ test('a listed react-scripts app reads not ready with the shared Chrome gap', as
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-react-scripts-status-')),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   await writeFile(
     join(directory, 'product.json'),
     JSON.stringify({ version: '1.140.0', commit: 'fixture' }),

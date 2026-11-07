@@ -4,7 +4,6 @@ import {
   mkdir,
   mkdtemp,
   realpath,
-  rm,
   symlink,
   writeFile,
 } from 'node:fs/promises'
@@ -16,6 +15,7 @@ import type * as programFileModule from '../utils/isProgramFile'
 import { isProgramFile } from '../utils/isProgramFile'
 
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 // Value: protects=the Git that Codebook starts on Windows, found on PATH by isProgramFile, which decides there by the file and not by an execute permission Windows does not keep: a regular file counts as a program, and a folder, a junction to a folder and a missing path do not, as Windows' own file system answers them (BF1, /ship adversarial review); fails_when=the Windows branch asks for an execute permission too, so a git.exe without one is not found and Git reads as missing, or a folder or a junction named git.exe is taken for Git; why_new=every test of the Git search and of the ps search gave its own program check, so the real one never ran on Windows; seam=the system the module reads (`process.platform` of its loaded context) over the real file system; no_claim=a link to a regular file, which counts, because the check follows a link as the system starts a program through one (Homebrew's git is a link), and the macOS and Linux branch, which the execute permission decides (the next test)
 test('on Windows a regular file counts as a program without an execute permission, and a folder, a junction to a folder and a missing path do not', async (context) => {
@@ -23,7 +23,7 @@ test('on Windows a regular file counts as a program without an execute permissio
   const folder = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-program-file-')),
   )
-  context.after(() => rm(folder, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(folder))
   const regularFile = join(folder, 'git.exe')
   await writeFile(regularFile, 'a program', { mode: 0o644 })
   const subfolder = join(folder, 'git-folder.exe')
@@ -72,7 +72,7 @@ test(
     const folder = await realpath(
       await mkdtemp(join(tmpdir(), 'codebook-program-file-')),
     )
-    context.after(() => rm(folder, { recursive: true, force: true }))
+    context.after(() => removeTestFolder(folder))
     const runnableFile = join(folder, 'git')
     await writeFile(runnableFile, '#!/bin/sh\n')
     await chmod(runnableFile, 0o755)

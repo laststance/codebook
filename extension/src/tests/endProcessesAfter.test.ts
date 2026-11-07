@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -15,6 +15,7 @@ import {
   readProcess,
   readProcessIdFiles,
 } from './utils/endProcessesAfter'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** Starts a Node process that waits until it is killed, and answers it once it runs. */
 async function startWaitingProcess() {
@@ -369,7 +370,7 @@ test(
   async (context) => {
     // Arrange
     const folder = await mkdtemp(join(tmpdir(), 'pid-files-'))
-    context.after(() => rm(folder, { recursive: true, force: true }))
+    context.after(() => removeTestFolder(folder))
     const unreadable = join(folder, 'unreadable.pid')
     await writeFile(unreadable, '4242\n')
     await chmod(unreadable, 0o000)

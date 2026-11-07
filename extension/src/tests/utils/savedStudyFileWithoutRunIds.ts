@@ -1,10 +1,12 @@
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { TestContext } from 'node:test'
 
 import type { ConfiguredStudy } from '../../configuredStudySchemas'
 import { LearningLibrary } from '../../learningLibrary'
+
+import { removeTestFolder } from './removeTestFolder'
 
 /** A shape a masked value must have before it is replaced by {@link MASK_MARKER}: a wrong type or a missing value fails the byte identity test instead of hiding behind the marker. */
 type MaskShape = 'text' | 'iso-time' | 'duration' | 'sha256' | 'uri'
@@ -106,7 +108,7 @@ export async function savedStudyFileWithoutRunIds(
   study: ConfiguredStudy,
 ): Promise<{ fileName: string; text: string }> {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-saved-bytes-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   await new LearningLibrary(directory, study.workspaceKey).saveStudy(study)
   const archiveName = (await readdir(directory)).find(
     (name) => /\.study\.v\d+\.json$/.test(name) && !name.includes('.meta.'),

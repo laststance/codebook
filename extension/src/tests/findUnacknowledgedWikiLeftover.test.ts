@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -7,6 +7,8 @@ import { test } from 'node:test'
 import { findUnacknowledgedWikiLeftover } from '../utils/findUnacknowledgedWikiLeftover'
 import { formatClockTime } from '../utils/formatClockTime'
 import type { WikiLeftover } from '../utils/isAcknowledgedWikiLeftover'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** The watch bound of the tests: 15 minutes, as the extension passes it. */
 const WATCH_TIMEOUT_MS = 900_000
@@ -86,7 +88,7 @@ test('the refusal for a candidate this window’s stopped watch saw names this w
       reason: `The VS Code chat this window asked at ${clockTime(11, 58)} may still be updating this Wiki (candidate wiki.stage-1, written ${clockTime(12, 8)}); Codebook stopped watching it at ${clockTime(12, 5)} and waits for it until ${clockTime(12, 23)}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
     })
   } finally {
-    await rm(wiki.parent, { recursive: true, force: true })
+    await removeTestFolder(wiki.parent)
   }
 })
 
@@ -163,7 +165,7 @@ test('the leftovers in the way of a start are refused one chat at a time, anothe
     })
     assert.equal(afterTheThirdUpdateAnyway, undefined)
   } finally {
-    await rm(wiki.parent, { recursive: true, force: true })
+    await removeTestFolder(wiki.parent)
   }
 })
 
@@ -204,7 +206,7 @@ test('a refusal that names this window’s stopped chat with a candidate its wat
       reason: `The VS Code chat this window asked at ${clockTime(11, 58)} may still be updating this Wiki (candidate wiki.stage-1, written ${clockTime(12, 8)}); Codebook stopped watching it at ${clockTime(12, 5)} and waits for it until ${clockTime(12, 23)}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
     })
   } finally {
-    await rm(wiki.parent, { recursive: true, force: true })
+    await removeTestFolder(wiki.parent)
   }
 })
 
@@ -241,7 +243,7 @@ test('nothing refuses a start once another window’s stopped watch is past its 
     // Assert
     assert.equal(refusal, undefined)
   } finally {
-    await rm(wiki.parent, { recursive: true, force: true })
+    await removeTestFolder(wiki.parent)
   }
 })
 
@@ -282,7 +284,7 @@ test('this window’s own stopped chat refuses the start up to the watch’s end
     ])
     assert.equal(atTheEnd, undefined)
   } finally {
-    await rm(wiki.parent, { recursive: true, force: true })
+    await removeTestFolder(wiki.parent)
   }
 })
 
@@ -316,7 +318,7 @@ test('a candidate this window’s watch never saw keeps refusing the start after
       reason: `An earlier chat or another editor window appears to be updating this Wiki (candidate wiki.stage-1, written ${clockTime(12, 0)}). Codebook waits for it until ${clockTime(12, 15)}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
     })
   } finally {
-    await rm(wiki.parent, { recursive: true, force: true })
+    await removeTestFolder(wiki.parent)
   }
 })
 
@@ -365,7 +367,7 @@ test('the refusal for another window’s stopped chat names the first whole minu
     )
     assert.equal(atTheNamedMinute, undefined)
   } finally {
-    await rm(wiki.parent, { recursive: true, force: true })
+    await removeTestFolder(wiki.parent)
   }
 })
 
@@ -407,7 +409,7 @@ test('the refusal for this window’s own stopped chat names the first whole min
     )
     assert.equal(atTheNamedMinute, undefined)
   } finally {
-    await rm(wiki.parent, { recursive: true, force: true })
+    await removeTestFolder(wiki.parent)
   }
 })
 
@@ -462,7 +464,7 @@ test('the refusal for a candidate this window’s watch never saw names the firs
     )
     assert.equal(atThatNamedMinute, undefined)
   } finally {
-    await rm(wiki.parent, { recursive: true, force: true })
+    await removeTestFolder(wiki.parent)
   }
 })
 
@@ -511,7 +513,7 @@ test('the refusal for this window’s stopped chat with the candidate its watch 
     )
     assert.equal(atTheNamedMinute, undefined)
   } finally {
-    await rm(wiki.parent, { recursive: true, force: true })
+    await removeTestFolder(wiki.parent)
   }
 })
 
@@ -567,7 +569,7 @@ test('the refusal for this window’s stopped chat with a candidate its watch sa
     })
     assert.equal(atTheNamedTime, undefined)
   } finally {
-    await rm(wiki.parent, { recursive: true, force: true })
+    await removeTestFolder(wiki.parent)
   }
 })
 
@@ -623,7 +625,7 @@ test('the refusal for this window’s stopped chat with a candidate its watch sa
     })
     assert.equal(atTheNamedTime, undefined)
   } finally {
-    await rm(wiki.parent, { recursive: true, force: true })
+    await removeTestFolder(wiki.parent)
   }
 })
 
@@ -683,6 +685,6 @@ test('another window’s and this window’s own stopped generation are waited f
       },
     )
   } finally {
-    await rm(wiki.parent, { recursive: true, force: true })
+    await removeTestFolder(wiki.parent)
   }
 })

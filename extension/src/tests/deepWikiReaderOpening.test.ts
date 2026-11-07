@@ -12,6 +12,7 @@ import {
   createLinkIfAllowed,
   LINK_NOT_ALLOWED,
 } from './utils/createLinkIfAllowed'
+import { removeTestFolder } from './utils/removeTestFolder'
 import { openWikiOpeningWindow } from './utils/wikiOpeningWindow'
 
 test('a source changed outside the editor reaches the open Wiki, which watches the project’s files until it is closed', async () => {
@@ -359,6 +360,7 @@ test('Open LLM Wiki in a project without a Wiki says that no Wiki was found at i
     '.codebook',
     'wiki',
   )
+  // not cleanup: deletes a Wiki folder or claim to simulate the learner or another window; the code under test must notice
   await rm(wikiOfTheFirst, { recursive: true })
   await rm(join(wikiOfTheSecond, 'index.html'))
 
@@ -389,7 +391,7 @@ test('Open LLM Wiki on a Wiki whose `.codebook` folder in the project is a link 
   const outside = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-opening-outside-')),
   )
-  context.after(() => rm(outside, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(outside))
   await rename(
     join(window.projectRoot, '.codebook'),
     join(outside, 'codebook-moved-out'),
@@ -423,7 +425,7 @@ test('Open LLM Wiki on a Wiki whose folder `.codebook/wiki` in the project is it
   const outside = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-opening-outside-')),
   )
-  context.after(() => rm(outside, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(outside))
   const wikiFolder = join(window.projectRoot, '.codebook', 'wiki')
   await rename(wikiFolder, join(outside, 'wiki-moved-out'))
   await symlink(join(outside, 'wiki-moved-out'), wikiFolder, 'junction')

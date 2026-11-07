@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp } from 'node:fs/promises'
 import { request } from 'node:http'
 import { connect as connectSocket } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -25,6 +25,7 @@ import { snapshotSourceHashes } from '../utils/snapshotSourceHashes'
 import { createHarness } from './helpers'
 import { httpStatus } from './utils/httpStatus'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** Connects the actual SDK client rather than emulating JSON-RPC in tests. @example const connected = await connect(endpoint.descriptor) */
 async function connect(descriptor: ConnectionDescriptor) {
@@ -1029,7 +1030,7 @@ test('Node learning material is exposed through MCP with exact workspace history
     await connection.close()
     await endpoint.close()
     await harness.close()
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -1072,7 +1073,7 @@ test('a test replay whose history files are gone is answered through MCP with a 
     await connection.close()
     await endpoint.close()
     await harness.close()
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 

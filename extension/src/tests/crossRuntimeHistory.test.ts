@@ -19,6 +19,7 @@ import { validateRecordingContext } from '../utils/validateRecordingContext'
 
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { createCrossRuntimeStudy } from './utils/createCrossRuntimeStudy'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 test('server and browser first pauses retain distinct sources and native history without colliding', () => {
   // Arrange
@@ -198,7 +199,7 @@ test('new history catalogs and repairs its sidecar without rewriting old browser
   const directory = await mkdtemp(
     join(tmpdir(), 'codebook-cross-runtime-history-'),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const old = createConfiguredStudy(),
     current = createCrossRuntimeStudy()
   current.runId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
@@ -332,7 +333,7 @@ test('cross-runtime films reopen with their own format and cannot be relabeled a
   const directory = await mkdtemp(
     join(tmpdir(), 'codebook-cross-runtime-film-'),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const study = createCrossRuntimeStudy(),
     library = new LearningLibrary(directory, study.workspaceKey)
   await library.saveStudy(study)

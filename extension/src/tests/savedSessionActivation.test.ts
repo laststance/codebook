@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { test } from 'node:test'
@@ -11,6 +11,7 @@ import type { StudyService } from '../service'
 
 import { createHarness } from './helpers'
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 // Value: protects=Cycle 0070 pt2 I1 (the real saved-session store reaches the commands and codebook_status); fails_when=activate wires the commands to no store or another store than the service's, so Remove does not ask about the stored session or codebook_status omits savedSession; no_claim=real editor, Chrome or runs
 test('activation wires the real saved-session store: Remove Saved Session asks about the stored session and codebook_status reports it', async () => {
@@ -131,6 +132,6 @@ test('activation wires the real saved-session store: Remove Saved Session asks a
     assert.deepEqual(notices, [])
   } finally {
     await boundary.deactivate()
-    await rm(base, { recursive: true, force: true })
+    await removeTestFolder(base)
   }
 })

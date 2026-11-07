@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { lstat, mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -13,13 +13,14 @@ import {
 } from '../savedSessionSetup'
 
 import { createManualClock } from './utils/createManualClock'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const START_EPOCH_MS = Date.parse('2026-11-02T12:10:00.000Z')
 
 /** A storage root whose path holds a space (as the editor's `Application Support` does) and a repository folder. */
 async function workspace(context: TestContext) {
   const base = await realpath(await mkdtemp(join(tmpdir(), 'codebook-e2e-')))
-  context.after(() => rm(base, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(base))
   const storage = join(base, 'Application Support', 'globalStorage')
   const repository = join(base, 'repo-shop')
   await mkdir(storage, { recursive: true })

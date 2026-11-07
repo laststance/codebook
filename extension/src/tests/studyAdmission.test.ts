@@ -988,6 +988,7 @@ test('a run whose final evidence write fails after its release freed every resou
   // Arrange: a prepared run whose evidence folder is removed by hand, so every later write of its evidence fails.
   const started = await startRunWithStorage(context, 4, 'nothing')
   const evidenceDirectory = started.record.runtime!.evidence.directory
+  // not cleanup: deletes a path the code under test must find missing
   await rm(evidenceDirectory, { recursive: true, force: true })
 
   // Act: the agent stops the run, then starts the next one.

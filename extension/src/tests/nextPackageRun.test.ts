@@ -29,6 +29,7 @@ import {
   pagesServerRun,
   type PagesServerRunOptions,
 } from './utils/pagesServerRunHarness'
+import { removeTestFolder } from './utils/removeTestFolder'
 import { replaySavedServerStop } from './utils/replaySavedServerStop'
 
 /** The folder of the nested Next app, shaped like P02's `examples/react/nextjs`. */
@@ -83,7 +84,7 @@ async function savedFileNames(
   study: Awaited<ReturnType<typeof capturePagesServerRun>>['study'],
 ): Promise<string[]> {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-nested-save-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   await new LearningLibrary(directory, study.workspaceKey).saveStudy(study)
   return readdir(directory)
 }
@@ -100,6 +101,7 @@ test('a getStaticProps stop of a Pages app below the repository root saves as fo
   // Act
   const files = await savedFileNames(context, study)
   const replayedBefore = await replaySavedServerStop(context, study)
+  // not cleanup: deletes a path the code under test must find missing
   await rm(packageDirectory, { recursive: true, force: true })
   const replayedAfter = await replaySavedServerStop(context, study)
   // Assert

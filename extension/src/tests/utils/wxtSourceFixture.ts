@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import type { TestContext } from 'node:test'
@@ -14,6 +14,7 @@ import type {
 } from '../../utils/buildProcessTypes'
 
 import { writeFixtureFiles } from './chromeExtensionFixture'
+import { removeTestFolder } from './removeTestFolder'
 
 /** The text of the page stop's source. */
 export const OPTIONS_APP_SOURCE = 'const token = 1\nexport const app = token\n'
@@ -98,8 +99,8 @@ export async function createWxtFixture(
     await mkdtemp(join(tmpdir(), 'codebook-wxt-build-out-')),
   )
   context.after(async () => {
-    await rm(repositoryRoot, { recursive: true, force: true })
-    await rm(buildFolder, { recursive: true, force: true })
+    await removeTestFolder(repositoryRoot)
+    await removeTestFolder(buildFolder)
   })
   await writeFixtureFiles(repositoryRoot, {
     'ext/wxt.config.ts': 'export default {}\n',

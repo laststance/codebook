@@ -6,7 +6,6 @@ import {
   open,
   readFile,
   realpath,
-  rm,
   symlink,
   writeFile,
 } from 'node:fs/promises'
@@ -25,6 +24,7 @@ import {
   createLinkIfAllowed,
   LINK_NOT_ALLOWED,
 } from './utils/createLinkIfAllowed'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** The owner record as 0.2.29.0 reads it: its schema, copied from that release (`utils/readRecordedOwner.ts`), which knows neither digests nor a process start. */
 const ownerSchemaOfRelease0229 = z.object({
@@ -44,7 +44,7 @@ async function storageDirectory(context: TestContext): Promise<string> {
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-recorded-owner-')),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   return directory
 }
 
@@ -175,7 +175,7 @@ test(
         (writer) => writer.close(),
         () => undefined,
       )
-      await rm(directory, { recursive: true, force: true })
+      await removeTestFolder(directory)
     })
     const recordPath = join(directory, 'wiki.update-run.json.pending-a-link')
     await symlink(pipePath, recordPath)

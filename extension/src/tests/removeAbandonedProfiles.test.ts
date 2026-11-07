@@ -7,7 +7,6 @@ import {
   mkdtemp,
   readdir,
   realpath,
-  rm,
   stat,
   symlink,
   writeFile,
@@ -31,6 +30,7 @@ import type * as removalModule from '../utils/removeWithoutFollowing'
 import { fileSystemWhoseLinksResistRemoval } from './utils/fileSystemWhoseLinksResistRemoval'
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 import { standInForPs } from './utils/standInForPs'
 import { startOfKilledWindow } from './utils/startOfKilledWindow'
 
@@ -45,7 +45,7 @@ async function profileRoot(context: TestContext): Promise<string> {
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-sweep-root-')),
   )
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   return root
 }
 

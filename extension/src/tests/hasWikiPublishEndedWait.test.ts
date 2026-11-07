@@ -6,6 +6,8 @@ import { test } from 'node:test'
 
 import { hasWikiPublishEndedWait } from '../utils/hasWikiPublishEndedWait'
 
+import { removeTestFolder } from './utils/removeTestFolder'
+
 /** When the watch of the tests ended: 2026-10-03 12:00:00 UTC. */
 const WATCH_ENDED_AT_MS = Date.UTC(2026, 9, 3, 12, 0, 0)
 
@@ -54,7 +56,7 @@ test('the wait for the chat of a stopped watch is over when a site was published
       atTheEnd,
       withoutManifest,
     ])
-      await rm(wiki.parent, { recursive: true, force: true })
+      await removeTestFolder(wiki.parent)
   }
 })
 
@@ -74,6 +76,7 @@ test('a site published after the watch’s end does not end the wait while a can
       wiki.outputDirectory,
       awaited,
     )
+    // not cleanup: deletes a Wiki folder or claim to simulate the learner or another window; the code under test must notice
     await rm(candidateFolder, { recursive: true })
     const afterCandidateIsGone = await hasWikiPublishEndedWait(
       wiki.outputDirectory,
@@ -86,6 +89,6 @@ test('a site published after the watch’s end does not end the wait while a can
       [false, true],
     )
   } finally {
-    await rm(wiki.parent, { recursive: true, force: true })
+    await removeTestFolder(wiki.parent)
   }
 })

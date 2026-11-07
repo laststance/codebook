@@ -31,6 +31,7 @@ import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
 import { removeWithoutFollowing } from '../utils/removeWithoutFollowing'
 
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** Loads the compiled adapter with controlled non-cancellable editor calls for cleanup regressions; the adapter's lazy import of its viewport module is answered by the same `require` as its other modules, so a managed launch can get a stand-in. @example await loadHostBrowser(editorStub) */
 async function loadHostBrowser(
@@ -119,7 +120,7 @@ async function managedBrowser(
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-profile-root-')),
   )
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   const events: { type: string; detail: unknown }[] = [],
     processProbes: string[] = [],
     refusedRealpaths: string[] = []
@@ -518,7 +519,7 @@ test('a timed-out native tab is closed when its handle arrives after cleanup als
       1,
     )
   } finally {
-    await rm(directory, { recursive: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -664,7 +665,7 @@ test('a pending debugger launch releases the already acquired Cursor tab and bri
     )
   } finally {
     releaseDebugger(true)
-    await rm(directory, { recursive: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -1779,7 +1780,7 @@ async function savedSessionFolder(context: TestContext, calls: string[]) {
   const parent = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook saved-session ')),
   )
-  context.after(() => rm(parent, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(parent))
   const folder = join(parent, 'sign-in-profiles', 'hash0123456789')
   await mkdir(join(folder, 'Default'), { recursive: true })
   const cookies = join(folder, 'Default', 'Cookies')
@@ -2012,6 +2013,7 @@ test('a saved-session Chrome whose marker write or process listing fails names t
     )
     // A folder that is gone fails the listing's resolution of it with an error that names it.
     if (scenario === 'listing fails')
+      // not cleanup: deletes a path the code under test must find missing
       await rm(saved.folder, { recursive: true, force: true })
 
     // Act

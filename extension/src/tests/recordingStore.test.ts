@@ -35,6 +35,7 @@ import { recordingOwnerRecordPath } from '../utils/recordingOwnerRecordPath'
 import { systemTrashName } from '../utils/systemTrashName'
 
 import { idleChild } from './utils/idleChild'
+import { removeTestFolder } from './utils/removeTestFolder'
 import { rewriteWriterRecord } from './utils/rewriteWriterRecord'
 
 const png = Buffer.from(
@@ -50,7 +51,7 @@ async function recordingHarness(
   io: RecordingIo = recordingDiskIo,
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-recording-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const instanceId = randomUUID(),
     runId = randomUUID()
   const binding: RecordingBinding = {

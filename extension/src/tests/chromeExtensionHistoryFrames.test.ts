@@ -519,6 +519,7 @@ async function recordCleanupOrder(
     if (blob) inner.after(() => blob.restore())
     if (!hasCleanupHook) {
       // The unfixed order: the folder goes while the write is pending, then the write resumes.
+      // not cleanup: the test's Act removes the learning folder while a frame write is pending
       await fsPromises.rm(learningDirectory, { recursive: true, force: true })
       cleanup.started = true
       cleanup.release()

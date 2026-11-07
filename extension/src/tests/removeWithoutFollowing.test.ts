@@ -25,6 +25,7 @@ import { removeWithoutFollowing } from '../utils/removeWithoutFollowing'
 
 import { fileSystemWhoseLinksResistRemoval } from './utils/fileSystemWhoseLinksResistRemoval'
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /**
  * Makes a temporary folder that is removed with the test, holding a folder `kept` with a file and a subfolder with a file: what a link of a test leads to.
@@ -34,7 +35,7 @@ async function folderWithKeptFiles(context: TestContext): Promise<string> {
   const folder = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-remove-')),
   )
-  context.after(() => rm(folder, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(folder))
   await mkdir(join(folder, 'kept', 'photos'), { recursive: true })
   await writeFile(join(folder, 'kept', 'notes.txt'), 'kept')
   await writeFile(join(folder, 'kept', 'photos', 'holiday.txt'), 'kept')
@@ -392,10 +393,12 @@ test('a folder that another window removes while the walk is at it counts as rem
   const removeBesideAnotherWindow = await loadWalkOn({
     ...realFileSystem,
     readdir: async (path: string) => {
+      // not cleanup: a stand-in file system removes the path while the code under test works on it
       if (path === goneAtTheListing) await rm(path, { recursive: true })
       return readdir(path)
     },
     rmdir: async (path: string) => {
+      // not cleanup: a stand-in file system removes the path while the code under test works on it
       if (path === goneAtTheRemoval) await rm(path, { recursive: true })
       await realFileSystem.rmdir(path)
     },
@@ -738,6 +741,7 @@ test('a folder removed during the last listing still counts as removed', async (
     readdir: async (path: string) => {
       const names = await readdir(path)
       if (path === folder && (listings += 1) === 2)
+        // not cleanup: a stand-in file system removes the path while the code under test works on it
         await rm(folder, { recursive: true })
       return names
     },

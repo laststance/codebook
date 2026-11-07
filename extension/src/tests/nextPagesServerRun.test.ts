@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -29,6 +29,7 @@ import {
   pagesServerRun,
   pagesServerService,
 } from './utils/pagesServerRunHarness'
+import { removeTestFolder } from './utils/removeTestFolder'
 import type { PagesHitScript } from './utils/serverRenderParticipant'
 
 /** How often a test looks for the run's answer to a scripted hit. */
@@ -2330,7 +2331,7 @@ test('the saved study of a getServerSideProps pause holds none of the request co
   await service.continue(state().participants.server!.continueArguments!)
   await waitUntil(() => state().state === 'completed', 'the completed run')
   const directory = await mkdtemp(join(tmpdir(), 'codebook-pages-cookie-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   // Act
   const saved = await captureStudy(
     service,

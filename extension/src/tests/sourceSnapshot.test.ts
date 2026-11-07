@@ -5,7 +5,6 @@ import {
   mkdir,
   mkdtemp,
   realpath,
-  rm,
   symlink,
   unlink,
   writeFile,
@@ -19,10 +18,12 @@ import { findChangedTrackedFile } from '../utils/findChangedTrackedFile'
 import { hashTrackedFiles } from '../utils/hashTrackedFiles'
 import { listTrackedFiles } from '../utils/listTrackedFiles'
 
+import { removeTestFolder } from './utils/removeTestFolder'
+
 const roots: string[] = []
 
 after(async () => {
-  for (const root of roots) await rm(root, { recursive: true, force: true })
+  for (const root of roots) await removeTestFolder(root)
 })
 
 /** Makes a repository with one tracked file `tracked.ts`, one untracked file `fresh.ts` and one ignored file `ignored.log`. */

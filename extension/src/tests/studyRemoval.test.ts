@@ -36,6 +36,7 @@ import { createCrossRuntimeStudy } from './utils/createCrossRuntimeStudy'
 import { idleChild } from './utils/idleChild'
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 import { rewriteWriterRecord } from './utils/rewriteWriterRecord'
 
 /**
@@ -47,7 +48,7 @@ import { rewriteWriterRecord } from './utils/rewriteWriterRecord'
  */
 async function removalStorage(context: TestContext, limit: number) {
   const root = await mkdtemp(join(tmpdir(), 'codebook-removal-'))
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   const directory = join(root, 'learning'),
     trash = join(root, 'trash')
   await mkdir(trash)
@@ -971,7 +972,7 @@ test('a removal whose evidence move the Trash refuses after the recording moved 
 test('the library reports how many studies it keeps and its limit, and only the count while the limit setting is invalid', async (context) => {
   // Arrange
   const root = await mkdtemp(join(tmpdir(), 'codebook-usage-'))
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   let limitSetting: unknown = 3
   const study = createConfiguredStudy()
   const library = new LearningLibrary(
@@ -1181,6 +1182,7 @@ test('a Trash move that rejects for a folder that cannot be looked at afterwards
   const moverWhoseFolderCannotBeLookedAt: StudyMover = async (path) => {
     await storage.moveToTrash(path)
     if (path !== recordingFolder) return
+    // not cleanup: the injected remover stands in for the learner removing the study files by hand
     await rm(recordingsRoot, { recursive: true })
     await symlink('recordings.v2', recordingsRoot)
     throw new Error('Trash answered late')
@@ -1213,6 +1215,7 @@ test('a Trash move that rejects after the folder left the library and a file too
   const moverWhoseParentBecameAFile: StudyMover = async (path) => {
     await storage.moveToTrash(path)
     if (path !== recordingFolder) return
+    // not cleanup: the injected remover stands in for the learner removing the study files by hand
     await rm(recordingsRoot, { recursive: true })
     await writeFile(recordingsRoot, '')
     throw new Error('Trash answered late')
@@ -1452,6 +1455,7 @@ test('what is left of a saved study whose archive alone was removed by hand stay
     (error: unknown) => String(error),
   )
   const recordingWhileListed = await nextRecording()
+  // not cleanup: the removal simulates the learner or a second window removing study files the code under test must notice
   for (const path of filesLeft) await rm(path, { recursive: true })
   const listedAfterRemoval = await storage.library.list()
   const recordingAfterRemoval = await nextRecording()

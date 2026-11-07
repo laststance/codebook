@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { readRootClaimBasis } from '../utils/readRootClaimBasis'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /**
  * Makes a repository with a cited package test and the given root files, removed when the test ends.
@@ -20,7 +22,7 @@ async function repository(
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-root-claim-basis-')),
   )
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   await mkdir(join(root, 'packages', 'a', 'src'), { recursive: true })
   await writeFile(join(root, 'packages', 'a', 'src', 'a.test.ts'), '')
   for (const [path, bytes] of Object.entries(files)) {

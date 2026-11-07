@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -18,6 +18,7 @@ import { validateRecordingContext } from '../utils/validateRecordingContext'
 
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { createCrossRuntimeStudy } from './utils/createCrossRuntimeStudy'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const VITE_RUN_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
 
@@ -160,7 +161,7 @@ test('a Next browser, a Next cross-runtime and a vite-dev study sealed as format
 test('a study of format 6 is saved as .study.v6.json and an earlier Codebook that reads up to 5 judges it newer by name and number', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-v6-study-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const study = { ...createConfiguredStudy(), version: 6 as const }
   const library = new LearningLibrary(directory, study.workspaceKey)
   const previousReadableVersion = 5
@@ -194,7 +195,7 @@ test('a vite-dev study of format 5 decodes in this version and a Next browser st
 test('a vite-dev study is saved as .study.v5.json, reopens and seeks to its browser stop', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-vite-study-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const study = viteStudy()
   const library = new LearningLibrary(directory, study.workspaceKey)
   const index: RecordingIndex = {
@@ -244,7 +245,7 @@ test('a vite-dev study is saved as .study.v5.json, reopens and seeks to its brow
 test('a library holding Next format 3, Next format 4 and vite-dev format 5 studies lists all three, each file named and numbered by its format', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-vite-library-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const nextBrowser = createConfiguredStudy()
   const nextCrossRuntime = createCrossRuntimeStudy()
   nextCrossRuntime.runId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'

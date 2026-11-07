@@ -19,11 +19,12 @@ import { writeNodeTestWriterRecord } from '../utils/writeNodeTestWriterRecord'
 
 import { markNodeTestWriterGone } from './utils/markNodeTestWriterGone'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** Two stores on one learning folder, standing for two editor windows of one workspace; the first writes, the second only lists. */
 async function twoWindows(context: TestContext) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-history-windows-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const workspaceKey = 'd'.repeat(64)
   return {
     directory,

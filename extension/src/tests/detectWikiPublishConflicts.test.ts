@@ -18,6 +18,7 @@ import { test } from 'node:test'
 import { detectWikiPublishConflicts } from '../utils/detectWikiPublishConflicts'
 
 import { publishedWikiFixture } from './utils/publishedWikiFixture'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** Builds `<project>/wiki` with one owned page and returns its paths. */
 async function publishedWiki(): Promise<{
@@ -39,7 +40,7 @@ async function publishedWiki(): Promise<{
   return {
     parent,
     output,
-    cleanup: (): Promise<void> => rm(parent, { recursive: true, force: true }),
+    cleanup: (): Promise<void> => removeTestFolder(parent),
   }
 }
 
@@ -262,7 +263,7 @@ test('a Wiki folder without a readable manifest reports no conflict', async () =
     // Assert
     assert.deepEqual(conflicts, [])
   } finally {
-    await rm(parent, { recursive: true, force: true })
+    await removeTestFolder(parent)
   }
 })
 

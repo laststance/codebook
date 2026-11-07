@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -7,6 +7,7 @@ import { test, type TestContext } from 'node:test'
 import type * as EnvironmentModule from '../environment'
 
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 type InspectedSetting = { globalValue?: boolean; workspaceValue?: boolean }
 
@@ -16,7 +17,7 @@ async function environmentOver(
   inspected: InspectedSetting | undefined,
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-confirm-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   await writeFile(
     join(directory, 'product.json'),
     JSON.stringify({ version: '1.140.0', commit: 'fixture' }),

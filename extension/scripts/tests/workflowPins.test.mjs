@@ -871,6 +871,7 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
     'extension/src/tests/utils/loadOpenWithoutFollowing.ts',
     'extension/src/tests/utils/realProcessStart.ts',
     'extension/src/tests/utils/removeAsNodeOnWindows.ts',
+    'extension/src/tests/utils/removeTestFolder.ts',
     'extension/src/tests/utils/requireOwnPidNamespace.ts',
     'extension/src/tests/utils/savedSessionEditorStubs.ts',
     'extension/src/tests/utils/standInForPs.ts',
@@ -1853,7 +1854,7 @@ test('the Format workflow checks formatting with a pinned Bun running bun fmt', 
   assert.equal(manifest.scripts.format, 'cd .. && bun fmt')
 })
 
-// Value: protects=the split of the Fallow workflow: each check (measured health, dupes, dead-code, architecture) runs in a job of its own, so the 10 to 12 minutes of the measured health run never delay the one-minute static checks and a failed check never hides another; fails_when=two checks share a job again, a check's job runs another script, or a job lacks the shared prepare action; why_new=Cycle 0062 task 19; seam=the text of .github/workflows/fallow.yml; no_claim=that the jobs start without queueing behind the plan's 20 concurrent jobs (CI measures that)
+// Value: protects=the split of the Fallow workflow: each check (measured health, dupes, dead-code, architecture) runs in a job of its own, so the 10 to 12 minutes of the measured health run never delay the one-minute static checks and a failed check never hides another; fails_when=two checks share a job again, a check's job runs another script (the health job a separate build again, which checkHealth.mjs already runs itself), or a job lacks the shared prepare action; why_new=Cycle 0062 task 19; Cycle 0094 task 9 (Discussion 185) dropped the health job's redundant Build step; seam=the text of .github/workflows/fallow.yml; no_claim=that the jobs start without queueing behind the plan's 20 concurrent jobs (CI measures that)
 test('the Fallow workflow runs measured health, dupes, dead-code and architecture each in a job of its own', async () => {
   // Arrange
   const workflow = await repositoryText('.github/workflows/fallow.yml')
@@ -1886,7 +1887,12 @@ test('the Fallow workflow runs measured health, dupes, dead-code and architectur
     'architecture',
     'analyses',
   ])
-  assert.deepEqual(scriptsOf(jobs.health), ['build', 'health'])
+  assert.deepEqual(scriptsOf(jobs.health), ['health'])
+  // Every command of the health job, so a build written another way (`pnpm -C extension build`, `node …`) shows too; checkHealth.mjs builds itself (health.test.mjs: a type error refuses health before any test runs).
+  assert.deepEqual(
+    [...jobs.health.matchAll(/^ +run: (.+)$/gm)].map((match) => match[1]),
+    ['pnpm --dir extension health'],
+  )
   assert.deepEqual(scriptsOf(jobs.dupes), ['dupes'])
   assert.deepEqual(scriptsOf(jobs['dead-code']), ['dead-code'])
   assert.deepEqual(scriptsOf(jobs.architecture), ['architecture'])

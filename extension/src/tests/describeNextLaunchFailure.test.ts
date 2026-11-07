@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { createServer, type AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -13,6 +13,8 @@ import { readDeclaredDevelopmentPort } from '../utils/readDeclaredDevelopmentPor
 import { readRepositoryAdapterReadiness } from '../utils/readRepositoryAdapterReadiness'
 import { rootNextPackage } from '../utils/resolveNextPackage'
 
+import { removeTestFolder } from './utils/removeTestFolder'
+
 /**
  * Creates a temporary project whose `package.json` has this `dev` script.
  * @returns The workspace root.
@@ -22,7 +24,7 @@ async function projectWithDevScript(
   scripts: Record<string, string>,
 ): Promise<string> {
   const workspace = await mkdtemp(join(tmpdir(), 'codebook-next-launch-'))
-  context.after(() => rm(workspace, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(workspace))
   await writeFile(
     join(workspace, 'package.json'),
     JSON.stringify({ name: 'stand-in', scripts }),
@@ -95,7 +97,7 @@ async function nextProjectWithStandInNext(
   dev: string,
 ): Promise<string> {
   const workspace = await mkdtemp(join(tmpdir(), 'codebook-next-flag-'))
-  context.after(() => rm(workspace, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(workspace))
   await mkdir(join(workspace, 'node_modules/next/dist/bin'), {
     recursive: true,
   })

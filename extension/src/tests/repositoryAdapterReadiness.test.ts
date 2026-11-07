@@ -15,13 +15,14 @@ import {
 
 import { createViteRepository } from './utils/createViteRepository'
 import { createEnvironmentWith } from './utils/nodeServerEnvironment'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const SIGNAL = new AbortController().signal
 
 /** Creates a temporary workspace that holds an installed Next, as the Next adapter needs. */
 async function createNextRepository(context: TestContext): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'codebook-next-ready-'))
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   await mkdir(join(root, 'node_modules/next/dist/bin'), { recursive: true })
   await writeFile(join(root, 'node_modules/next/dist/bin/next'), '')
   await writeFile(
@@ -149,7 +150,7 @@ test('a Vite workspace with a predev script reads not ready and names the predev
 test('a Yarn Plug-n-Play workspace reports yarnPnp and the PnP sentence', async (context) => {
   // Arrange
   const root = await mkdtemp(join(tmpdir(), 'codebook-pnp-ready-'))
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   await writeFile(join(root, '.pnp.cjs'), '')
   await writeFile(join(root, 'package.json'), '{}')
   // Act
@@ -301,7 +302,7 @@ test('a configured Node that cannot run is named as such by codebook_status and 
 test('reads the version of one Node executable once and answers the second read from memory', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-node-memo-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const executable = join(directory, 'node')
   await writeFile(executable, '#!/bin/sh\necho v1.2.3\n', { mode: 0o755 })
   // Act

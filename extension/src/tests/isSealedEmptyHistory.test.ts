@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
-import fsPromises, { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import fsPromises, { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { isSealedEmptyHistory } from '../utils/isSealedEmptyHistory'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** A seal as the writer stores it, recording the given entry count and journal size. */
 function sealText(entryCount: number, journalBytes: number): string {
@@ -26,7 +28,7 @@ async function historyFolder(
   files: Record<string, string>,
 ): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-sealed-empty-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   for (const [name, content] of Object.entries(files))
     await writeFile(join(directory, name), content)
   return directory

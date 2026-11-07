@@ -7,13 +7,15 @@ import { test, type TestContext } from 'node:test'
 import { evidenceInUseElsewhere } from '../utils/evidenceInUseElsewhere'
 import { studyEvidenceDirectory } from '../utils/studyEvidenceDirectory'
 
+import { removeTestFolder } from './utils/removeTestFolder'
+
 const INSTANCE_ID = '11111111-1111-4111-8111-111111111111',
   RUN_ID = '22222222-2222-4222-8222-222222222222'
 
 /** Creates an empty agent storage directory that the test's teardown removes. @example const agentRoot = await agentStorage(context) */
 async function agentStorage(context: TestContext): Promise<string> {
   const agentRoot = await mkdtemp(join(tmpdir(), 'codebook-agent-'))
-  context.after(() => rm(agentRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(agentRoot))
   return agentRoot
 }
 

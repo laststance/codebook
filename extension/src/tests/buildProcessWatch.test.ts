@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { mkdtemp, rm, unlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -11,6 +11,8 @@ import { findChangedTrackedFile } from '../utils/findChangedTrackedFile'
 import { hashTrackedFiles } from '../utils/hashTrackedFiles'
 import { observeBuildExit } from '../utils/observeBuildExit'
 import { watchBuildTree } from '../utils/watchBuildTree'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 // protects=a secret, NODE_OPTIONS and ELECTRON_RUN_AS_NODE of the host stay out of the build environment while PATH and the Next-free basics stay in; fails_when=the host environment is copied whole or Next-only settings leak in; no_claim=that WXT builds with this environment (native check)
 test('builds the WXT environment from the allow-list without credentials or Node switches', () => {
@@ -137,7 +139,7 @@ test('names a tracked file the build deleted and ignores one it left alone', asy
   // Act
   await unlink(join(root, 'b.ts'))
   const changed = await findChangedTrackedFile(root, snapshot)
-  await rm(root, { recursive: true, force: true })
+  await removeTestFolder(root)
   // Assert
   assert.equal(unchanged, undefined)
   assert.equal(snapshot.get('a.ts')?.length, 64)
@@ -154,7 +156,7 @@ test('hashes every tracked file beyond one batch and catches a change in the las
   // Act
   await writeFile(join(root, 'f69.ts'), 'edited by the build')
   const changed = await findChangedTrackedFile(root, snapshot)
-  await rm(root, { recursive: true, force: true })
+  await removeTestFolder(root)
   // Assert
   assert.equal(snapshot.size, 70)
   assert.deepEqual(changed, { kind: 'changed', path: 'f69.ts' })

@@ -7,6 +7,7 @@ import { test } from 'node:test'
 import type * as AtomicPrivateBytesModule from '../utils/atomicPrivateBytes'
 
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /**
  * Loads the compiled byte writer with the given file-system functions replaced.
@@ -34,9 +35,7 @@ async function folderWithOldFile(context: {
   const directory = await filesystem.mkdtemp(
     join(tmpdir(), 'codebook-atomic-bytes-'),
   )
-  context.after(() =>
-    filesystem.rm(directory, { recursive: true, force: true }),
-  )
+  context.after(() => removeTestFolder(directory))
   await filesystem.writeFile(join(directory, 'data.json'), 'old')
   return directory
 }

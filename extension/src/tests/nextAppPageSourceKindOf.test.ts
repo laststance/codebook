@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { nextAppPageSourceKindOf } from '../utils/nextAppPageSourceKindOf'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** Creates a temporary Next project with the given stand-in files (never application code), which the test removes afterwards. @example await projectWith(context, ['app/page.tsx']) */
 async function projectWith(
@@ -12,7 +14,7 @@ async function projectWith(
   files: readonly string[],
 ): Promise<string> {
   const workspace = await mkdtemp(join(tmpdir(), 'codebook-app-source-'))
-  context.after(() => rm(workspace, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(workspace))
   for (const file of files) {
     await mkdir(dirname(join(workspace, file)), { recursive: true })
     await writeFile(join(workspace, file), 'export default 1\n')

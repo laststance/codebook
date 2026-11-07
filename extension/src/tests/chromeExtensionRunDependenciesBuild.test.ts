@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { access, mkdtemp, realpath, rm } from 'node:fs/promises'
+import { access, mkdtemp, realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -8,6 +8,7 @@ import type * as RunDependenciesModule from '../chromeExtensionRunDependencies'
 import type { ChromeExtensionRunDependencies } from '../ownedChromeExtensionRun'
 
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** Whether a path exists. */
 async function exists(path: string): Promise<boolean> {
@@ -30,7 +31,7 @@ async function load(
   const profileRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-run-deps-')),
   )
-  context.after(() => rm(profileRoot, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(profileRoot))
   const folders: string[] = []
   const module = await loadModule<typeof RunDependenciesModule>(
     resolve(__dirname, '../chromeExtensionRunDependencies.js'),

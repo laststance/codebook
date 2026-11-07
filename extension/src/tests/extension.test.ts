@@ -41,6 +41,7 @@ import {
   FakeRelativePattern,
 } from './utils/fakeFileWatching'
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 // Value: protects=normal installed breakpoints keeping keyboard input while native frame/value inspection commits; fails_when=the native focus default contribution is omitted or enabled; seam=normal extension manifest, not native keyboard proof.
 test('ordinary installations let native breakpoints preserve keyboard input by default', async () => {
@@ -152,7 +153,7 @@ test('browser Wiki opening rejects a manifest from another checkout and opens a 
     )
   } finally {
     await boundary.deactivate()
-    await rm(projectRoot, { recursive: true, force: true })
+    await removeTestFolder(projectRoot)
   }
 })
 
@@ -251,7 +252,7 @@ test('shutting down releases the Study workspace before the DeepWiki reader even
     await assert.rejects(stopping, /reader close failed/)
     assert.deepEqual(releases, ['study-workspace', 'deepwiki-reader'])
   } finally {
-    await rm(projectRoot, { recursive: true, force: true })
+    await removeTestFolder(projectRoot)
   }
 })
 
@@ -330,7 +331,7 @@ test('the retired Select Presentation command is neither contributed to the Comm
     )
   } finally {
     await boundary.deactivate()
-    await rm(projectRoot, { recursive: true, force: true })
+    await removeTestFolder(projectRoot)
   }
 })
 
@@ -432,7 +433,7 @@ test('Move Learning Summary… is contributed as a title action of the Learning 
     )
   } finally {
     await boundary.deactivate()
-    await rm(projectRoot, { recursive: true, force: true })
+    await removeTestFolder(projectRoot)
   }
 })
 
@@ -551,7 +552,7 @@ test('Set Up Saved Session… and Remove Saved Session… are contributed in the
     )
   } finally {
     await boundary.deactivate()
-    await rm(projectRoot, { recursive: true, force: true })
+    await removeTestFolder(projectRoot)
   }
 })
 
@@ -669,7 +670,7 @@ test('a Wiki question opens a source-cited editor chat draft when VS Code expose
     )
   } finally {
     await boundary.deactivate()
-    await rm(projectRoot, { recursive: true, force: true })
+    await removeTestFolder(projectRoot)
   }
 })
 
@@ -793,7 +794,7 @@ test('a Cursor Wiki question returns a source-cited browser answer when the edit
     assert.match(prompts[0]!, /source\.ts/)
   } finally {
     await boundary.deactivate()
-    await rm(projectRoot, { recursive: true, force: true })
+    await removeTestFolder(projectRoot)
   }
 })
 
@@ -902,7 +903,7 @@ test('browser source citations activate only the matching checkout and report ch
     assert.equal(warnings.length, 1)
   } finally {
     await boundary.deactivate()
-    await rm(projectDirectory, { recursive: true, force: true })
+    await removeTestFolder(projectDirectory)
   }
 })
 
@@ -986,7 +987,7 @@ test('a citation link whose path is written as a command link shows an error wit
     assert.equal(errors[0]!.includes(']('), false)
   } finally {
     await boundary.deactivate()
-    await rm(projectDirectory, { recursive: true, force: true })
+    await removeTestFolder(projectDirectory)
   }
 })
 
@@ -1133,7 +1134,7 @@ test('browser Update LLM Wiki starts the shared skill only for its opened reposi
     ])
   } finally {
     await boundary.deactivate()
-    await rm(projectDirectory, { recursive: true, force: true })
+    await removeTestFolder(projectDirectory)
   }
 })
 
@@ -1217,7 +1218,7 @@ test('browser Change location opens this project’s Wiki output setting and ref
     assert.match(errors[1]!, /Wiki output settings.*another checkout/)
   } finally {
     await boundary.deactivate()
-    await rm(projectDirectory, { recursive: true, force: true })
+    await removeTestFolder(projectDirectory)
   }
 })
 
@@ -1374,7 +1375,7 @@ test('Cursor Wiki update starts its project-bound agent without leaving an unsen
     )
   } finally {
     await boundary.deactivate()
-    await rm(projectDirectory, { recursive: true, force: true })
+    await removeTestFolder(projectDirectory)
   }
 })
 
@@ -1911,7 +1912,7 @@ test('activation gives the service and the Study reader one sink that writes une
   } finally {
     await boundary.deactivate()
     await harness.close()
-    await rm(globalStorage, { recursive: true, force: true })
+    await removeTestFolder(globalStorage)
   }
 })
 
@@ -2015,7 +2016,7 @@ test('a browser citation with an invalid line opens no source and explains the r
     )
   } finally {
     await boundary.deactivate()
-    await rm(projectDirectory, { recursive: true, force: true })
+    await removeTestFolder(projectDirectory)
   }
 })
 
@@ -2159,7 +2160,7 @@ test('a Cursor Wiki update that leaves source changed reports a failure instead 
     )
   } finally {
     await boundary.deactivate()
-    await rm(projectDirectory, { recursive: true, force: true })
+    await removeTestFolder(projectDirectory)
   }
 })
 
@@ -2280,7 +2281,7 @@ test('a browser Wiki update link starts no Cursor Agent unless the learner confi
     )
   } finally {
     await boundary.deactivate()
-    await rm(projectDirectory, { recursive: true, force: true })
+    await removeTestFolder(projectDirectory)
   }
 })
 
@@ -2349,7 +2350,7 @@ test('a failed Codebook command rejects with a message the editor cannot turn in
     assert.equal(rejection.message.includes(']('), false)
   } finally {
     await boundary.deactivate()
-    await rm(projectRoot, { recursive: true, force: true })
+    await removeTestFolder(projectRoot)
   }
 })
 
@@ -2457,7 +2458,7 @@ test('a Cursor chat registration that fails with an error quoting a command link
     assert.equal(warnings[0]!.includes(']('), false)
   } finally {
     await boundary.deactivate()
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -2600,7 +2601,7 @@ test('a Cursor that exposes no MCP registration is answered with what works, to 
     )
   } finally {
     await boundary.deactivate()
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -2729,7 +2730,7 @@ test('a Set Up AI Chat in Cursor whose server is stopped while it connects says 
     )
   } finally {
     await boundary.deactivate()
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -2887,7 +2888,7 @@ test('a start of the agent server that a stop overtakes, while the server is pre
     )
   } finally {
     await boundary.deactivate()
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -2949,7 +2950,7 @@ test('Update LLM Wiki without a Wiki, in an output folder named like a command l
     assert.equal(errors[0]!.includes(']('), false)
   } finally {
     await boundary.deactivate()
-    await rm(projectRoot, { recursive: true, force: true })
+    await removeTestFolder(projectRoot)
   }
 })
 
@@ -3030,7 +3031,7 @@ test('a managed Cursor skill removal whose catalog cleanup error quotes a comman
     assert.equal(warnings[0]!.includes(']('), false)
   } finally {
     await boundary.deactivate()
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -3159,7 +3160,7 @@ test('a failed Open LLM Wiki in Browser whose error quotes a command link shows 
     assert.equal(errors[0]!.includes(']('), false)
   } finally {
     await boundary.deactivate()
-    await rm(projectRoot, { recursive: true, force: true })
+    await removeTestFolder(projectRoot)
   }
 })
 
@@ -3223,7 +3224,7 @@ test('a failed Update LLM Wiki whose error quotes a command link shows no clicka
     assert.equal(errors[0]!.includes(']('), false)
   } finally {
     await boundary.deactivate()
-    await rm(projectRoot, { recursive: true, force: true })
+    await removeTestFolder(projectRoot)
   }
 })
 
@@ -4220,7 +4221,7 @@ test('a reconnect that finds the Cursor skill edited says once what happened and
     ])
   } finally {
     await boundary.deactivate()
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -4292,7 +4293,7 @@ test('a reconnect that fails with an error quoting a command link warns without 
     assert.equal(warnings[0]!.includes(']('), false)
   } finally {
     await boundary.deactivate()
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -4424,7 +4425,7 @@ test('a Cursor chat registration that finds the skill edited says once what happ
     ])
   } finally {
     await boundary.deactivate()
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -4593,7 +4594,7 @@ async function removalCommandOverATemporaryHome(
     catalogReceiptPath,
     dispose: async (): Promise<void> => {
       await boundary.deactivate()
-      await rm(directory, { recursive: true, force: true })
+      await removeTestFolder(directory)
     },
   }
 }
@@ -4817,6 +4818,7 @@ test('a Remove Managed Cursor Skill whose skill receipt is invalid says to delet
       (error: Error) => error.message,
     )
     await rm(cursor.skillReceiptPath)
+    // not cleanup: deletes the skill or extension folder to simulate the learner or an install replacing it
     await rm(dirname(cursor.skillPath), { recursive: true })
     await cursor.runRemoval()
 
@@ -4941,6 +4943,6 @@ test('activation hands the workspace storage to the node-server orphan reaper on
     assert.equal(reaped[0]?.graceMs, 5_000)
   } finally {
     await boundary.deactivate()
-    await rm(projectRoot, { recursive: true, force: true })
+    await removeTestFolder(projectRoot)
   }
 })

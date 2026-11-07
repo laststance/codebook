@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
@@ -10,6 +10,7 @@ import type * as DeepWikiReaderModule from '../deepWikiReader'
 import { openFakeWikiPage } from './utils/fakeWikiPage'
 import { loadModule } from './utils/loadModule'
 import { readServedWikiScript } from './utils/readServedWikiScript'
+import { removeTestFolder } from './utils/removeTestFolder'
 import { serveMinimalWiki } from './utils/serveMinimalWiki'
 
 const output = {
@@ -1463,7 +1464,7 @@ test('the page reads the update state from the route the reader serves', async (
     assert.equal((await servedRoute.json()).state, 'idle')
   } finally {
     await reader.close()
-    await rm(projectRoot, { recursive: true, force: true })
+    await removeTestFolder(projectRoot)
   }
 })
 

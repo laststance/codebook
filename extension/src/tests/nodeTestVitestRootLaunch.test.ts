@@ -28,6 +28,8 @@ import {
   type PreparedNodeTestLaunch,
 } from '../utils/prepareNodeTestLaunch'
 
+import { removeTestFolder } from './utils/removeTestFolder'
+
 const SOURCE_TEXT = 'export function subscribe() { return true }\n'
 const TEST_TEXT = 'import { subscribe } from "./subscribable"\n'
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex')
@@ -57,7 +59,7 @@ async function createRepository(
   const calls = `${root}-calls.jsonl`
   const rootAnswer = `${root}-root-answer.json`
   context.after(async () => {
-    await rm(root, { recursive: true, force: true })
+    await removeTestFolder(root)
     await rm(calls, { force: true })
     await rm(rootAnswer, { force: true })
   })
@@ -200,7 +202,7 @@ async function planAndLaunch(
   )
   await owned.waitForExit(10_000)
   await owned.close()
-  await rm(launch.report.directory, { recursive: true, force: true })
+  await removeTestFolder(launch.report.directory)
   return { launch, events }
 }
 
@@ -560,7 +562,7 @@ test('a root config added or edited, or the root Vitest replaced, after a packag
       plan,
     ).then(
       async (launch) => {
-        await rm(launch.report.directory, { recursive: true, force: true })
+        await removeTestFolder(launch.report.directory)
         return `launched in ${launch.execution.vitestRoot}`
       },
       (thrown: unknown) =>
@@ -741,7 +743,7 @@ test('a package test whose root answers the same root claim at launch lists and 
       listWithOwnedNode,
       plan,
     )
-    await rm(launch.report.directory, { recursive: true, force: true })
+    await removeTestFolder(launch.report.directory)
     return {
       rootClaim: launch.execution.rootClaim,
       listedFrom: (await calls()).map(
@@ -822,7 +824,7 @@ test('a package test whose root now answers a different root claim is refused at
       plan,
     ).then(
       async (launch) => {
-        await rm(launch.report.directory, { recursive: true, force: true })
+        await removeTestFolder(launch.report.directory)
         return `launched in ${launch.execution.vitestRoot}`
       },
       (thrown: unknown) =>
@@ -916,7 +918,7 @@ test('a root listing at launch that times out or cannot confirm its process grou
       plan,
     ).then(
       async (launch) => {
-        await rm(launch.report.directory, { recursive: true, force: true })
+        await removeTestFolder(launch.report.directory)
         return undefined
       },
       (error: unknown) => error,
@@ -999,7 +1001,7 @@ test('a package test whose plan made no root claim launches without listing from
     listWithOwnedNode,
     plan,
   )
-  await rm(launch.report.directory, { recursive: true, force: true })
+  await removeTestFolder(launch.report.directory)
 
   // Assert
   assert.deepEqual(

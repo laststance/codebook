@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { copyFile, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { createConnection } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,6 +9,7 @@ import { waitUntil } from '../../runtimeSupport/utils/waitUntil'
 import { isProcessGroupGone } from '../../utils/isProcessGroupGone'
 
 import { freeLoopbackPort } from './freeLoopbackPort'
+import { removeTestFolder } from './removeTestFolder'
 
 /** The test-only HTTP server as compiled beside the tests; it never ships. */
 const FIXTURE_SERVER = join(__dirname, '../fixtures/node-server/server.js')
@@ -88,7 +89,7 @@ export async function startFixtureServer(
       }
     } finally {
       // The folder goes even when the group did not end in time.
-      await rm(workspace, { recursive: true, force: true })
+      await removeTestFolder(workspace)
     }
     // Every port the fixture took is free again.
     if (await accepts(host, port))

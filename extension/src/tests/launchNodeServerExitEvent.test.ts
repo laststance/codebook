@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -11,6 +11,8 @@ import { isProcessGroupGone } from '../utils/isProcessGroupGone'
 import { launchNodeServer } from '../utils/launchNodeServer'
 import { resolveNodeServerLaunch } from '../utils/resolveNodeServerLaunch'
 import { signalProcessGroup } from '../utils/signalProcessGroup'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** A script that starts a descendant sharing its output pipes, then exits at once: its own exit is known long before its pipes close. */
 const SCRIPT_WITH_PIPE_HOLDING_CHILD = `
@@ -27,7 +29,7 @@ test('a script that exits while its child holds the output pipes reports its exi
   const workspace = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-exit-event-')),
   )
-  t.after(() => rm(workspace, { recursive: true, force: true }))
+  t.after(() => removeTestFolder(workspace))
   await writeFile(join(workspace, 'script.cjs'), SCRIPT_WITH_PIPE_HOLDING_CHILD)
   const launch = await resolveNodeServerLaunch(workspace, {
     packageRoot: '.',

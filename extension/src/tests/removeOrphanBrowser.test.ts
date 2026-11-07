@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -11,11 +11,12 @@ import { removeAbandonedProfiles } from '../runtimeSupport/utils/removeAbandoned
 import type { ProcessStopper } from '../runtimeSupport/utils/stopListedProcesses'
 
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** Makes a profile root of the test's own. */
 async function profileRoot(context: TestContext): Promise<string> {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'codebook-orphan-')))
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   return root
 }
 

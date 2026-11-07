@@ -25,6 +25,7 @@ import { inspectDeepWikiFreshness } from '../utils/inspectDeepWikiFreshness'
 import { answeredAtOnce } from './utils/answeredAtOnce'
 import { childProcessThatNotesPrograms } from './utils/childProcessThatNotesPrograms'
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const runGit = promisify(execFile)
 
@@ -96,7 +97,7 @@ test('Wiki freshness detects edited, deleted and added source against a clean ge
       ['source.ts'],
     )
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -157,7 +158,7 @@ test('a Wiki that indexes a lockfile larger than the question composer reads is 
       addedPaths: [],
     })
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -203,7 +204,7 @@ test('an indexed source outside the project keeps freshness unknown and is named
       addedFilesUnchecked: true,
     })
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -275,7 +276,7 @@ test('a Wiki generated from dirty source reports current until another source fi
       ['new-source.ts'],
     )
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -309,7 +310,7 @@ test('a Wiki of a project without a Git repository is current when every indexed
       addedFilesUnchecked: true,
     })
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -345,7 +346,7 @@ test('a Wiki of a project without a Git repository whose indexed source was edit
       addedFilesUnchecked: true,
     })
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -382,7 +383,7 @@ test('Wiki freshness stays unknown in a Git repository when the manifest records
       unknownCause: 'no-revision',
     })
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -452,7 +453,7 @@ test('a file added under an excluded directory keeps the Wiki current', async ()
     )
     assert.equal(withSlash.status, 'current')
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -512,7 +513,7 @@ test('a source file moved in from an excluded folder counts as added', async () 
       addedPaths: ['src/x.ts'],
     })
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -579,7 +580,7 @@ test('a file added under a directory glob exclusion keeps the Wiki current', asy
       'a directory glob excludes the files inside matching folders but not a similarly named file',
     )
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -655,7 +656,7 @@ test('a Wiki of a monorepo subfolder is checked against that subfolder’s added
       addedPaths: ['added.ts'],
     })
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -701,7 +702,7 @@ test('the backup the publisher keeps beside a visible Wiki folder is not counted
       addedPaths: [],
     })
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -755,7 +756,7 @@ test('the files the publisher keeps beside a visible Wiki folder, named after it
     // Assert: only the source file the learner added counts.
     assert.deepEqual(freshness.addedPaths, ['added.ts'])
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -798,7 +799,7 @@ test('a freshness check reads several indexed sources at once and still names ch
     assert.equal(mostInFlight, 16)
     assert.deepEqual(freshness.changedPaths, names)
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -819,7 +820,7 @@ test(
         (writer) => writer.close(),
         () => undefined,
       )
-      await rm(directory, { recursive: true, force: true })
+      await removeTestFolder(directory)
     })
 
     // Act
@@ -940,7 +941,7 @@ test('the Wiki freshness check starts every Git command by the absolute path fou
       { started: [git, git, git, git], gitIsAbsolute: true },
     )
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -950,7 +951,7 @@ test('the Wiki freshness check runs no fsmonitor hook that the repository’s ow
   const directory = await mkdtemp(
     join(tmpdir(), 'codebook-wiki-freshness-fsmonitor-'),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const root = join(await realpath(directory), 'project')
   await mkdir(root)
   const source = 'export const answer = 1;\n'
@@ -993,7 +994,7 @@ test('the Wiki freshness check on a machine whose PATH holds no Git answers unkn
   const directory = await mkdtemp(
     join(tmpdir(), 'codebook-wiki-freshness-no-git-'),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const root = await realpath(directory)
   const source = 'export const answer = 1;\n'
   await writeFile(join(root, 'source.ts'), source)
@@ -1063,7 +1064,7 @@ test('the Wiki freshness check runs no clean filter, textconv driver or external
   const directory = await mkdtemp(
     join(tmpdir(), 'codebook-wiki-freshness-drivers-'),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const notes = join(await realpath(directory), 'notes')
   await mkdir(notes)
   const root = join(await realpath(directory), 'project')

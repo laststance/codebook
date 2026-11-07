@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, test } from 'node:test'
@@ -11,6 +11,8 @@ import {
   freezeLibraryBuild,
   type LibraryPackage,
 } from '../utils/libraryBuildStop'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const SOURCE = [
   'export function a(x: number) {',
@@ -25,9 +27,7 @@ const BUILT_PATH = 'packages/core/build/modern/core.js'
 
 const roots: string[] = []
 after(async () => {
-  await Promise.all(
-    roots.map((root) => rm(root, { recursive: true, force: true })),
-  )
+  await Promise.all(roots.map((root) => removeTestFolder(root)))
 })
 
 /** Freezes a one-flavour library build whose map holds exactly `mappings`. */

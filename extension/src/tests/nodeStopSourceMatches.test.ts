@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mock, test } from 'node:test'
@@ -11,6 +11,7 @@ import { sha256 } from '../runtimeSupport/utils/sha256'
 import { nodeStopSourceMatches } from '../utils/nodeStopSourceMatches'
 
 import { saveOneStopNodeHistory } from './studyWorkspaceHarness'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** Reads the sealed stop that the workspace fixtures save, so each case edits one field of a real journal entry. @example const stop = await savedStop() */
 async function savedStop(): Promise<{
@@ -25,8 +26,7 @@ async function savedStop(): Promise<{
   assert.ok(stop?.type === 'stop')
   return {
     stop,
-    cleanup: (): Promise<void> =>
-      rm(directory, { recursive: true, force: true }),
+    cleanup: (): Promise<void> => removeTestFolder(directory),
   }
 }
 

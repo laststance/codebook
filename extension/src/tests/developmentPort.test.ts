@@ -1,14 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import {
-  chmod,
-  mkdir,
-  mkdtemp,
-  realpath,
-  rm,
-  writeFile,
-} from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import type { Socket } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
@@ -30,6 +23,8 @@ import {
 } from '../utils/ownedDevelopmentPorts'
 import { readDeclaredDevelopmentPort } from '../utils/readDeclaredDevelopmentPort'
 
+import { removeTestFolder } from './utils/removeTestFolder'
+
 /** Makes a project folder with the given files, runs the check and removes the folder. */
 async function declaredPortOf(
   files: Record<string, string>,
@@ -41,7 +36,7 @@ async function declaredPortOf(
       await writeFile(join(root, name), text)
     return await readDeclaredDevelopmentPort(root, platform)
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await removeTestFolder(root)
   }
 }
 
@@ -63,7 +58,7 @@ async function declaredPortOfTree(
     }
     return await readDeclaredDevelopmentPort(join(root, opened), platform)
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await removeTestFolder(root)
   }
 }
 
@@ -1338,7 +1333,7 @@ test('a relative root finds the Bun lockfile at the Git root above the current d
     })
   } finally {
     process.chdir(originalCwd)
-    await rm(tree, { recursive: true, force: true })
+    await removeTestFolder(tree)
   }
 })
 
@@ -2116,7 +2111,7 @@ test(
           "Next's default port, taken because package.json is not a regular file Codebook reads",
       })
     } finally {
-      await rm(root, { recursive: true, force: true })
+      await removeTestFolder(root)
     }
   },
 )
@@ -2245,7 +2240,7 @@ for (const [name, script, unread] of [
       if (unread) assert.equal(declared.port, 3000)
       else assert.equal(declared.port, shellRan)
     } finally {
-      await rm(folder, { recursive: true, force: true })
+      await removeTestFolder(folder)
     }
   })
 
@@ -2411,8 +2406,8 @@ for (const [name, scripts, expected] of [
         expected === undefined,
       )
     } finally {
-      await rm(tools, { recursive: true, force: true })
-      await rm(project, { recursive: true, force: true })
+      await removeTestFolder(tools)
+      await removeTestFolder(project)
     }
   })
 

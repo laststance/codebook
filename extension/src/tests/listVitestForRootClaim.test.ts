@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -13,6 +13,8 @@ import {
   type VitestListingReleaseFailure,
 } from '../utils/listVitestTestFiles'
 
+import { removeTestFolder } from './utils/removeTestFolder'
+
 /**
  * Writes a stand-in Vitest program that behaves as the given body and returns its folder and path.
  * @param context - Removes the folder when the test ends.
@@ -24,7 +26,7 @@ async function stubVitest(context: TestContext, body: string) {
   const folder = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-root-claim-')),
   )
-  context.after(() => rm(folder, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(folder))
   const program = join(folder, 'vitest.mjs')
   await writeFile(
     program,

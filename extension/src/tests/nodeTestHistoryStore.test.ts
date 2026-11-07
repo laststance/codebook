@@ -6,7 +6,6 @@ import fsPromises, {
   readdir,
   readFile,
   realpath,
-  rm,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -27,6 +26,7 @@ import { idleChild } from './utils/idleChild'
 import { markNodeTestWriterGone } from './utils/markNodeTestWriterGone'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 import { realProcessStart } from './utils/realProcessStart'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 // Every start of a history takes the storage lock, which names this process's own start; the product reads that start once and keeps it, also a failed read for a minute. It is read here first, with the tests' own bound, as the tests of the lock do.
 before(async () => {
@@ -118,7 +118,7 @@ test('Node history remains a readable interrupted prefix after extension restart
       /another workspace/i,
     )
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -158,7 +158,7 @@ test('Node history refuses edited bytes after a sealed partial run', async () =>
       'catalog keeps corrupted evidence visible without trusting it',
     )
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -226,7 +226,7 @@ test('Node reader restores a verified event cursor without changing the sealed j
       'a stale cursor leaves the sealed journal byte-identical',
     )
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -268,7 +268,7 @@ test('stepping through an opened Node history saves each reader position without
       /unavailable in verified history/i,
     )
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -387,7 +387,7 @@ test('Node history understanding is an explicit private decision that survives s
       'a foreign learner decision does not modify execution evidence',
     )
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -543,7 +543,7 @@ test('Node learning explanation restores by revision and accepts only exact seal
       'invalid revisions and references preserve the last valid explanation',
     )
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -583,7 +583,7 @@ test('a new Node test is refused when saved studies and histories reach the conf
     )
     assert.equal((await store.read(first.studyId)).status, 'partial')
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -623,7 +623,7 @@ test('a stray file and a stray folder in the Node history directory take no plac
       ['.DS_Store', first.studyId, 'notes'].sort(),
     )
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -633,7 +633,7 @@ test('a Node test whose history cannot be started leaves no folder behind, and t
   const directory = await mkdtemp(
     join(tmpdir(), 'codebook-node-history-failed-start-'),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const workspaceKey = createWorkspaceKey()
   const store = new NodeTestHistoryStore(directory, workspaceKey, () => 1)
   const historyDirectory = join(directory, NODE_TEST_HISTORY_DIRECTORY)
@@ -715,7 +715,7 @@ test('a folder without a header and one whose header cannot be read take no plac
   const directory = await mkdtemp(
     join(tmpdir(), 'codebook-node-history-unlisted-'),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const workspaceKey = createWorkspaceKey()
   const store = new NodeTestHistoryStore(directory, workspaceKey, () => 1)
   const historyDirectory = join(directory, NODE_TEST_HISTORY_DIRECTORY)
@@ -760,7 +760,7 @@ test('a Node test asked for while another one is being started under a limit of 
   const directory = await mkdtemp(
     join(tmpdir(), 'codebook-node-history-two-starts-'),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const workspaceKey = createWorkspaceKey()
   const store = new NodeTestHistoryStore(directory, workspaceKey, () => 1)
   const historyDirectory = join(directory, NODE_TEST_HISTORY_DIRECTORY)
@@ -804,7 +804,7 @@ test('of two windows that start a Node test with one place left, one history is 
   const directory = await mkdtemp(
     join(tmpdir(), 'codebook-node-history-two-windows-'),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const workspaceKey = createWorkspaceKey()
   const firstWindow = new NodeTestHistoryStore(
       directory,
@@ -852,7 +852,7 @@ test('of two starts with one study id and a third Node test asked for while the 
   const directory = await mkdtemp(
     join(tmpdir(), 'codebook-node-history-one-id-twice-'),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const workspaceKey = createWorkspaceKey()
   const store = new NodeTestHistoryStore(directory, workspaceKey, () => 1)
   const historyDirectory = join(directory, NODE_TEST_HISTORY_DIRECTORY)
@@ -904,7 +904,7 @@ test('a Node test asked for while another start is under way is admitted when th
   const directory = await mkdtemp(
     join(tmpdir(), 'codebook-node-history-failed-first-'),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const workspaceKey = createWorkspaceKey()
   const store = new NodeTestHistoryStore(directory, workspaceKey, () => 1)
   const historyDirectory = join(directory, NODE_TEST_HISTORY_DIRECTORY)
@@ -948,7 +948,7 @@ test('a Node test history start whose storage lock cannot be released after it m
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-node-history-unreleased-')),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const workspaceKey = createWorkspaceKey()
   const store = new NodeTestHistoryStore(directory, workspaceKey, () => 2)
   const first = nodeTestHistoryHeader(workspaceKey),
@@ -1020,7 +1020,7 @@ test('a Node test asked for while another window holds the storage lock is refus
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-node-history-locked-')),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const otherWindow = await idleChild(context)
   const lockPath = join(directory, 'writer.lock'),
     lockBytes = JSON.stringify({
@@ -1080,7 +1080,7 @@ test('a Node test asked for under a study id that already has a history is refus
     )
     assert.equal((await store.read(header.studyId)).status, 'partial')
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -1135,7 +1135,7 @@ test('a refused history entry still lets the run seal its verified prefix as par
       ['RUN src/theme.test.ts'],
     )
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -1184,7 +1184,7 @@ test('a journal holding bytes its writer never confirmed stays an unsealed inter
       ['RUN src/theme.test.ts'],
     )
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -1258,7 +1258,7 @@ test('a failing Node test result can be sealed only as partial history', async (
       ['output', 'stop', 'result'],
     )
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -1303,7 +1303,7 @@ test("an interrupted history's broken journal line is read with a reason the sto
       `${prefix}${'x'.repeat(1_024 - prefix.length - '… [cut]'.length)}… [cut]`,
     )
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -1345,7 +1345,7 @@ test("a recording history's broken journal line is listed with a reason cut to t
       `${prefix}${'x'.repeat(1_024 - prefix.length - '… [cut]'.length)}… [cut]`,
     )
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -1389,6 +1389,6 @@ test('a broken journal line read with a long reason is cut between characters wi
     )
     assert.equal(history.reason?.endsWith('… [cut]'), true)
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })

@@ -6,7 +6,6 @@ import {
   readFile,
   readdir,
   realpath,
-  rm,
   stat,
   symlink,
 } from 'node:fs/promises'
@@ -27,6 +26,7 @@ import {
   fakeOwnedChrome,
   type FakeOwnedChromeBehaviour,
 } from './utils/fakeOwnedChrome'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const EXTENSION_ID = 'kgdakicbeoenmomkdpkiobphgcknpomd'
 const EXTENSION_ROOT = '/Users/learner/private/project/extension'
@@ -36,7 +36,7 @@ async function profileRoot(context: TestContext): Promise<string> {
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-owned-launch-')),
   )
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   return root
 }
 

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
@@ -27,6 +27,7 @@ import {
 } from '../utils/studyFormatOfConfiguration'
 
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const BROWSER_ONLY_V7_PATH = join(
   resolve(__dirname, '../../src/tests/fixtures'),
@@ -192,7 +193,7 @@ test('studyFormatOfConfiguration gives 15 for an expo-web-dev run at the root an
 test('an expo-web-dev study saved in the library reopens with its expoVersion and is listed as v15', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-format-15-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const study = await resealedStudy('expo-web-dev', 15, 'apps/app', '57.0.25')
   const library = new LearningLibrary(directory, study.workspaceKey)
   // Act

@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { canonicalFsPath } from '../utils/canonicalFsPath'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 // protects=LR-W1 (Cycle 0062 ship last round): a stop file reached through a symlinked folder meets the editor's path of the same file; fails_when=the canonical forms differ, so the paused file never moves; no_claim=Windows symlinks
 test(
@@ -14,7 +16,7 @@ test(
   async (context) => {
     // Arrange
     const root = await mkdtemp(join(tmpdir(), 'canonical-'))
-    context.after(() => rm(root, { recursive: true, force: true }))
+    context.after(() => removeTestFolder(root))
     await writeFile(join(root, 'settings.js'), '')
     await symlink(root, join(root, 'link'))
     // Act

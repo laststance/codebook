@@ -24,6 +24,7 @@ import {
   publishGeneratedWiki,
 } from './utils/openProjectWithoutWiki'
 import { publishedWikiFixture } from './utils/publishedWikiFixture'
+import { removeTestFolder } from './utils/removeTestFolder'
 import { openWikiUpdateWindow } from './utils/wikiUpdateWindow'
 
 type Window = Awaited<ReturnType<typeof openWikiUpdateWindow>>
@@ -292,6 +293,7 @@ const ATTENTION_HOST_CASES: Array<{
   {
     name: 'not-a-folder',
     prepare: async (wiki): Promise<void> => {
+      // not cleanup: deletes a Wiki folder or claim to simulate the learner or another window; the code under test must notice
       await rm(wiki.outputDirectory, { recursive: true })
       await writeFile(wiki.outputDirectory, 'a file where the folder was')
     },
@@ -684,6 +686,7 @@ test('changing the output setting and showing the view again read the state agai
     6_000,
   )
   const watchedAfterTheSetting = window.watchedPatterns().at(-1)
+  // not cleanup: deletes a Wiki folder or claim to simulate the learner or another window; the code under test must notice
   await rm(join(wiki.projectRoot, 'docs'), { recursive: true })
   window.llmWiki.setVisible(true)
   await untilRow(window, 'wiki', false)
@@ -736,7 +739,7 @@ test('another window’s run row disappears at the next poll after its marker is
 test('an output folder outside the project shows its Wiki with the absolute folder as its label', async (context) => {
   // Arrange
   const outside = await mkdtemp(join(tmpdir(), 'codebook-outside-wiki-'))
-  context.after(() => rm(outside, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(outside))
   const project = await openProjectWithoutWiki({
     constants: FAST,
     outputSetting: join(outside, 'wiki'),
@@ -807,6 +810,7 @@ test('an output folder deleted while the view is open brings back the empty stat
   const { wiki, window } = await openPublishedWiki(context)
 
   // Act
+  // not cleanup: deletes a Wiki folder or claim to simulate the learner or another window; the code under test must notice
   await rm(wiki.outputDirectory, { recursive: true })
   window.reportFileEvent(
     'delete',
@@ -1934,6 +1938,7 @@ test('a delete event of the output folder alone, for a deleted or a renamed Wiki
   const renamed = await openPublishedWiki(context)
 
   // Act
+  // not cleanup: deletes a Wiki folder or claim to simulate the learner or another window; the code under test must notice
   await rm(deleted.wiki.outputDirectory, { recursive: true })
   deleted.window.reportFileEvent('delete', deleted.wiki.outputDirectory)
   await rename(
@@ -1961,6 +1966,7 @@ test('deleting the .codebook folder that holds the Wiki brings back the no-Wiki 
   const codebookFolder = join(wiki.projectRoot, '.codebook')
 
   // Act
+  // not cleanup: deletes a Wiki folder or claim to simulate the learner or another window; the code under test must notice
   await rm(codebookFolder, { recursive: true })
   window.reportFileEvent('delete', codebookFolder)
   await untilRow(window, 'wiki', false)
@@ -1990,6 +1996,7 @@ test('deleting a folder between the project root and a nested Wiki output brings
   const siteFolder = join(wiki.projectRoot, 'docs', 'site')
 
   // Act
+  // not cleanup: deletes a Wiki folder or claim to simulate the learner or another window; the code under test must notice
   await rm(siteFolder, { recursive: true })
   window.reportFileEvent('delete', siteFolder)
   await untilRow(window, 'wiki', false)

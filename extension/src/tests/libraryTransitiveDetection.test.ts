@@ -29,12 +29,11 @@ import {
   stageLibrary,
 } from './utils/libraryServerRunHarness'
 import { pagesServerService } from './utils/pagesServerRunHarness'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const roots: string[] = []
 after(async () => {
-  await Promise.all(
-    roots.map((root) => rm(root, { recursive: true, force: true })),
-  )
+  await Promise.all(roots.map((root) => removeTestFolder(root)))
 })
 
 const CORE_STOP = 'packages/core/src/x.ts'

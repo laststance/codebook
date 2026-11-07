@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, realpath } from 'node:fs/promises'
 import os, { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
@@ -10,6 +10,7 @@ import { readProcessStart } from '../utils/readProcessStart'
 
 import { answerKernelBootId } from './utils/answerKernelBootId'
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 type Command = () => Promise<unknown>
 type Definition = {
@@ -31,7 +32,7 @@ async function boundary(
   confirmRemoval = false,
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-chat-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const commands = new Map<string, Command>(),
     state = new Map<string, unknown>()
   const registrations: {

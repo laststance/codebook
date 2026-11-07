@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, realpath, rename, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
@@ -11,6 +11,7 @@ import type * as ReadWikiRegularFileModule from '../utils/readWikiRegularFile'
 import { fileSystemWithLargeFileIds } from './utils/fileSystemWithLargeFileIds'
 import { loadModule } from './utils/loadModule'
 import { loadOpenWithoutFollowing } from './utils/loadOpenWithoutFollowing'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** Makes an empty Wiki output folder and returns it with its cleanup. */
 async function wikiFolder(): Promise<{
@@ -22,7 +23,7 @@ async function wikiFolder(): Promise<{
   )
   return {
     output,
-    cleanup: (): Promise<void> => rm(output, { recursive: true, force: true }),
+    cleanup: (): Promise<void> => removeTestFolder(output),
   }
 }
 

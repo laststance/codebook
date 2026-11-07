@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
@@ -21,6 +21,7 @@ import {
 } from '../utils/listVitestTestFiles'
 
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 import { ROOT_MODE_EXECUTION_PLAN } from './utils/rootModeExecutionPlan'
 import { sourceBreakpointRequest } from './utils/sourceBreakpointRequest'
 
@@ -938,8 +939,8 @@ async function nodeRunHarness({
     cleanup: async (): Promise<void> => {
       runStopped = true
       clearTimeout(childStartTimer)
-      await rm(directory, { recursive: true, force: true })
-      await rm(reportDirectory, { recursive: true, force: true })
+      await removeTestFolder(directory)
+      await removeTestFolder(reportDirectory)
     },
     // Another debugger control resumes the accepted source pause outside Codebook.
     resume: () =>

@@ -5,12 +5,12 @@ import {
   mkdtemp,
   realpath,
   rename,
-  rm,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { removeTestFolder } from './removeTestFolder'
 import { openWikiUpdateWindow } from './wikiUpdateWindow'
 
 /** Says whether a path exists on disk. */
@@ -78,7 +78,7 @@ export async function openProjectWithoutWiki(
     closeWindow: (): Promise<void> => window.close(),
     async close(): Promise<void> {
       await window.close()
-      await rm(projectDirectory, { recursive: true, force: true })
+      await removeTestFolder(projectDirectory)
     },
   }
 }

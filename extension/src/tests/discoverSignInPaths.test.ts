@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -10,6 +10,7 @@ import {
   createLinkIfAllowed,
   LINK_NOT_ALLOWED,
 } from './utils/createLinkIfAllowed'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** Makes a temp repository holding the given files (paths relative, contents given). */
 async function repository(
@@ -17,7 +18,7 @@ async function repository(
   files: Record<string, string>,
 ): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'codebook-signin-paths-'))
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   for (const [path, contents] of Object.entries(files)) {
     await mkdir(join(root, path, '..'), { recursive: true })
     await writeFile(join(root, path), contents)

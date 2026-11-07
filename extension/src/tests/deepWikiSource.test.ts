@@ -1,18 +1,13 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import {
-  mkdtemp,
-  mkdir,
-  realpath,
-  rm,
-  symlink,
-  writeFile,
-} from 'node:fs/promises'
+import { mkdtemp, mkdir, realpath, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { resolveDeepWikiSource } from '../utils/resolveDeepWikiSource'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 test('browser citations open only a source in the selected checkout and flag changed content', async () => {
   // Arrange
@@ -90,7 +85,7 @@ test('browser citations open only a source in the selected checkout and flag cha
       ),
     )
   } finally {
-    await rm(projectDirectory, { recursive: true, force: true })
-    await rm(otherDirectory, { recursive: true, force: true })
+    await removeTestFolder(projectDirectory)
+    await removeTestFolder(otherDirectory)
   }
 })

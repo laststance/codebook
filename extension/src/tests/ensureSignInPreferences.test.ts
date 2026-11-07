@@ -1,17 +1,12 @@
 import assert from 'node:assert/strict'
-import {
-  mkdir,
-  mkdtemp,
-  readFile,
-  realpath,
-  rm,
-  writeFile,
-} from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { ensureSignInPreferences } from '../runtimeSupport/utils/ensureSignInPreferences'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 // Value: protects=the probe requirement (no password saved in the session) and cross-check 4 (no restored tab set); fails_when=a key is missing, a Chrome setting of the learner is lost, or an unreadable file stops the launch; no_claim=that Chrome honours the keys (native N70b check)
 test('password saving is off and sessions do not restore, while the profile keeps its other settings', async (context) => {
@@ -19,7 +14,7 @@ test('password saving is off and sessions do not restore, while the profile keep
   const folder = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-prefs-')),
   )
-  context.after(() => rm(folder, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(folder))
   await mkdir(join(folder, 'Default'))
   await writeFile(
     join(folder, 'Default', 'Preferences'),
@@ -55,7 +50,7 @@ test('Preferences that are not a JSON object are replaced by the required keys',
   const folder = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-prefs-')),
   )
-  context.after(() => rm(folder, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(folder))
   await mkdir(join(folder, 'Default'))
   await writeFile(join(folder, 'Default', 'Preferences'), '[1,2')
 

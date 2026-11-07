@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   health:
-    # Own job: it builds again and runs the complete suite under c8 for its coverage (10 to 14 minutes on the hosted
+    # Own job: it builds and runs the complete suite under c8 for its coverage (10 to 14 minutes on the hosted
     # runner, 2026-10-29), so it sets the workflow's time while the static checks finish in about a minute each.
     name: Fallow health
     runs-on: ubuntu-24.04
@@ -28,11 +28,8 @@ jobs:
       - name: Prepare environment
         uses: ./.github/actions/prepare
 
-      # Package and native-QA scripts import the compiled extension from dist; build it so those imports resolve.
-      - name: Build
-        run: pnpm --dir extension build
-
-      # scripts/checkHealth.mjs: score health with this run's own coverage against the measured baseline;
+      # scripts/checkHealth.mjs builds the extension itself (runBuild) before the suite, so no Build step precedes it;
+      # it scores health with this run's own coverage against the measured baseline;
       # stale, mixed, failed or partial evidence is refused (exit 2) instead of scored.
       - name: Run measured fallow health
         run: pnpm --dir extension health

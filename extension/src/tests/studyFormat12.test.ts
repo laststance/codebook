@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -20,6 +20,7 @@ import { validateConfiguredStudyEvidence } from '../utils/validateConfiguredStud
 
 import { createOperationsStudy } from './utils/createOperationsStudy'
 import { serviceHostedEntryRun } from './utils/entryRenderService'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** The observation fields a pause in a module's evaluation carries. */
 type PauseFields = Partial<ConfiguredStudy['observations'][number]>
@@ -112,7 +113,7 @@ test('studyFormatOfEvidence gives 12 for a module-evaluation or preparation obse
 test('a study with a preparation module-evaluation pause is saved as .study.v12.json, reopens and is listed as v12', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-format-12-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const study = entryRenderStudy(12, MODULE_PREPARATION)
   const library = new LearningLibrary(directory, study.workspaceKey)
   // Act
@@ -137,7 +138,7 @@ test('a study with a preparation module-evaluation pause is saved as .study.v12.
 test('a run saved at format 8 moves to format 12 at the checkpoint that holds its first preparation pause', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-format-12-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const later = entryRenderStudy(12, MODULE_PREPARATION)
   const earlier: ConfiguredStudy = {
     ...later,
@@ -240,7 +241,7 @@ test('a format 12 study with a packageRoot validates and a preparation pause aft
 test('a study saved in format 16 is listed as saved by a newer Codebook', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-format-13-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const study = entryRenderStudy(12, MODULE_PREPARATION)
   await writeFile(
     join(directory, `${study.id}.study.v16.json`),

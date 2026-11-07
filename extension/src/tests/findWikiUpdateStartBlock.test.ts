@@ -28,6 +28,7 @@ import { fileSystemWhoseLinksResistRemoval } from './utils/fileSystemWhoseLinksR
 import { fileSystemWhoseRealPathFails } from './utils/fileSystemWhoseRealPathFails'
 import { loadModule } from './utils/loadModule'
 import { publishedWikiFixture } from './utils/publishedWikiFixture'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 test('a generated page the learner edited by hand blocks the start and is named, as the real publisher refuses it too', async () => {
   // Arrange
@@ -284,7 +285,7 @@ test('a manifest that lists files outside the Wiki folder among its owned files 
     // Assert
     assert.equal(block, undefined)
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -307,7 +308,7 @@ test('a Wiki published before file hashes were recorded does not block the start
     // Assert
     assert.equal(block, undefined)
   } finally {
-    await rm(join(output, '..'), { recursive: true, force: true })
+    await removeTestFolder(join(output, '..'))
   }
 })
 
@@ -541,7 +542,7 @@ test('a link at a folder on the Wiki folder’s path in the project refuses the 
     )
   } finally {
     await wiki.cleanup()
-    await rm(outside, { recursive: true, force: true })
+    await removeTestFolder(outside)
   }
 })
 
@@ -588,7 +589,7 @@ test('a folder on the Wiki folder’s path in the project that lstat calls a dir
     )
   } finally {
     await wiki.cleanup()
-    await rm(outside, { recursive: true, force: true })
+    await removeTestFolder(outside)
   }
 })
 
@@ -652,7 +653,7 @@ test('an output outside the project reached through a link outside it does not b
     // Assert
     assert.equal(block, undefined)
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -661,6 +662,7 @@ test('a file at the Wiki folder’s own path refuses the update at its start wit
   // Arrange
   const wiki = await publishedWikiFixture()
   try {
+    // not cleanup: deletes a Wiki folder or claim to simulate the learner or another window; the code under test must notice
     await rm(wiki.outputDirectory, { recursive: true })
     await writeFile(wiki.outputDirectory, '../elsewhere/wiki')
 

@@ -4,7 +4,6 @@ import {
   mkdtemp,
   readFile,
   realpath,
-  rm,
   stat,
   writeFile,
 } from 'node:fs/promises'
@@ -23,6 +22,7 @@ import {
 import { endProcessesAfter } from './utils/endProcessesAfter'
 import { keptListingFolderOf } from './utils/keptListingFolderOf'
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /**
  * Writes a stand-in Vitest CLI that records how it was started, then behaves as the given script body.
@@ -70,7 +70,7 @@ async function removeKeptListingFolder(
 ): Promise<void> {
   const started = await vitest.started().catch(() => undefined)
   const folder = keptListingFolderOf(started?.argv ?? [], tmpdir())
-  if (folder) await rm(folder, { recursive: true, force: true })
+  if (folder) await removeTestFolder(folder)
 }
 
 /** The process ids a stand-in listing writes into its start file once its helper runs. */
@@ -166,8 +166,8 @@ test('listing runs the owned Vitest in the repository with the run environment a
     )
   } finally {
     delete process.env.CODEBOOK_LIST_TEST_SECRET
-    await rm(vitest.directory, { recursive: true, force: true })
-    await rm(workspace, { recursive: true, force: true })
+    await removeTestFolder(vitest.directory)
+    await removeTestFolder(workspace)
   }
 })
 
@@ -195,7 +195,7 @@ test('a Vitest listing that fails reports its exit code and bounded error text',
         error.message.length < 2_300,
     )
   } finally {
-    await rm(vitest.directory, { recursive: true, force: true })
+    await removeTestFolder(vitest.directory)
   }
 })
 
@@ -217,7 +217,7 @@ test('a Vitest listing that does not write a list of files is refused', async ()
     // Assert
     await assert.rejects(listing, /Vitest wrote an unreadable test file list/)
   } finally {
-    await rm(vitest.directory, { recursive: true, force: true })
+    await removeTestFolder(vitest.directory)
   }
 })
 
@@ -246,7 +246,7 @@ test('cancelling the run stops a Vitest listing that is still working', async ()
       'the listing ends with the run instead of its own deadline',
     )
   } finally {
-    await rm(vitest.directory, { recursive: true, force: true })
+    await removeTestFolder(vitest.directory)
   }
 })
 
@@ -269,7 +269,7 @@ test('a Vitest listing that outlives its deadline is stopped and reported', asyn
     // Assert
     await assert.rejects(listing, /did not list its test files within 300 ms/)
   } finally {
-    await rm(vitest.directory, { recursive: true, force: true })
+    await removeTestFolder(vitest.directory)
   }
 })
 
@@ -309,7 +309,7 @@ test('cancelling a listing keeps the reason of the run while an exited member of
     await assert.rejects(listing, /run cancelled/)
     assert.equal(unreapedProbes, 0)
   } finally {
-    await rm(vitest.directory, { recursive: true, force: true })
+    await removeTestFolder(vitest.directory)
   }
 })
 
@@ -352,7 +352,7 @@ test('a finished listing still returns its files while an exited member of its g
     assert.deepEqual(outcome, [{ file: '/repo/src/a.test.ts' }])
     assert.equal(unreapedAnswers, 0)
   } finally {
-    await rm(vitest.directory, { recursive: true, force: true })
+    await removeTestFolder(vitest.directory)
   }
 })
 
@@ -416,7 +416,7 @@ test('a finished listing whose process group does not end after SIGTERM and SIGK
     )
   } finally {
     await removeKeptListingFolder(vitest)
-    await rm(vitest.directory, { recursive: true, force: true })
+    await removeTestFolder(vitest.directory)
   }
 })
 
@@ -477,7 +477,7 @@ test('a finished listing whose process group has a member the user may not signa
     )
   } finally {
     await removeKeptListingFolder(vitest)
-    await rm(vitest.directory, { recursive: true, force: true })
+    await removeTestFolder(vitest.directory)
   }
 })
 
@@ -541,7 +541,7 @@ test('a listing whose release failed hands over a retry that fails while the gro
     await assert.rejects(stat(directory), { code: 'ENOENT' })
   } finally {
     await removeKeptListingFolder(vitest)
-    await rm(vitest.directory, { recursive: true, force: true })
+    await removeTestFolder(vitest.directory)
   }
 })
 
@@ -593,7 +593,7 @@ test('a retried listing release sends no signal to a group that has ended since 
     await assert.rejects(stat(directory), { code: 'ENOENT' })
   } finally {
     await removeKeptListingFolder(vitest)
-    await rm(vitest.directory, { recursive: true, force: true })
+    await removeTestFolder(vitest.directory)
   }
 })
 
@@ -677,7 +677,7 @@ writeFileSync('started-helper.json', JSON.stringify({ launcher: process.pid, hel
         process.kill(processes.helper, 'SIGKILL')
       } catch {}
     await removeKeptListingFolder(vitest)
-    await rm(vitest.directory, { recursive: true, force: true })
+    await removeTestFolder(vitest.directory)
   }
 })
 
@@ -753,7 +753,7 @@ writeFileSync('started-helper.json', JSON.stringify({ launcher: process.pid, hel
         process.kill(processes.helper, 'SIGKILL')
       } catch {}
     await removeKeptListingFolder(vitest)
-    await rm(vitest.directory, { recursive: true, force: true })
+    await removeTestFolder(vitest.directory)
   }
 })
 
@@ -822,7 +822,7 @@ test('a retry that found the group ended and could not remove the folder touches
   } finally {
     if (directory) await chmod(directory, 0o700).catch(() => undefined)
     await removeKeptListingFolder(vitest)
-    await rm(vitest.directory, { recursive: true, force: true })
+    await removeTestFolder(vitest.directory)
   }
 })
 
@@ -872,7 +872,7 @@ setInterval(() => {}, 1000);
         try {
           process.kill(pid, 'SIGKILL')
         } catch {}
-    await rm(vitest.directory, { recursive: true, force: true })
+    await removeTestFolder(vitest.directory)
   }
 })
 

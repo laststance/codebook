@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { TestContext } from 'node:test'
@@ -7,12 +7,14 @@ import { promisify } from 'node:util'
 
 import { RepositorySourceService } from '../../repositorySource'
 
+import { removeTestFolder } from './removeTestFolder'
+
 const executeFile = promisify(execFile)
 
 /** Gives source/book regressions real Git membership and independent tracked bytes; cleanup removes only the owned temporary root. @example const { sources, track } = await repositoryHarness(context) */
 export async function repositoryHarness(context: TestContext) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-source-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   await executeFile('git', ['init', '--quiet', directory])
   const track = async (
     path: string,

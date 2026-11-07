@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -11,6 +11,7 @@ import {
   extensionEditorHarness,
   type TestStop,
 } from './utils/chromeExtensionEditorHarness'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const SIGNAL = (): AbortSignal => AbortSignal.timeout(5_000)
 const BUILD = { tool: 'wxt', version: '0.21.4', durationMs: 1_000 } as const
@@ -135,7 +136,7 @@ test('matches a frame reached through a link to the stop file and rejects a miss
   const missing = await isFrameInStopSource(undefined, stopPath)
   const empty = await isFrameInStopSource('', stopPath)
   const other = await isFrameInStopSource(join(root, 'Other.tsx'), stopPath)
-  await rm(root, { recursive: true, force: true })
+  await removeTestFolder(root)
   // Assert
   assert.equal(throughLink, true)
   assert.equal(missing, false)

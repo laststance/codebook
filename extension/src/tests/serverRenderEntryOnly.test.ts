@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -16,6 +16,7 @@ import {
   heldEntryPause,
 } from './utils/entryRenderHarness'
 import { serviceHostedEntryRun } from './utils/entryRenderService'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** The idempotency name of the explanation that carries the learning summary. */
 const SUMMARY_EXPLANATION = 'entry-summary'
@@ -55,7 +56,7 @@ test('a completed run with no operation is saved and reopened with its entry pau
   const { service, receipt } = run
   await completeEntryOnly(run)
   const directory = await mkdtemp(join(tmpdir(), 'codebook-entry-only-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   // Act
   const saved = await captureStudy(
     service,
@@ -272,7 +273,7 @@ test('a completed run with no operation gives a terminal reference that a learni
     },
   })
   const directory = await mkdtemp(join(tmpdir(), 'codebook-entry-summary-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const saved = await captureStudy(
     service,
     service.record(receipt),

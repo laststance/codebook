@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import * as fileSystem from 'node:fs/promises'
-import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -8,6 +8,7 @@ import { test, type TestContext } from 'node:test'
 import type * as lookModule from '../utils/isFolderOfItsOwn'
 
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /**
  * Makes a temporary folder that is removed with the test, holding the folder `wiki` of its own: the entry every test of this file looks at.
@@ -17,7 +18,7 @@ async function folderOfItsOwn(context: TestContext): Promise<string> {
   const folder = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-own-folder-')),
   )
-  context.after(() => rm(folder, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(folder))
   await mkdir(join(folder, 'wiki'))
   return join(folder, 'wiki')
 }

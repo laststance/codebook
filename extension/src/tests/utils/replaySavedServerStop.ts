@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { TestContext } from 'node:test'
@@ -15,6 +15,8 @@ import { buildRecordingContext } from '../../utils/buildRecordingContext'
 import { decodeConfiguredStudy } from '../../utils/decodeConfiguredStudy'
 import { projectRecording } from '../../utils/projectRecording'
 import { validateRecordingContext } from '../../utils/validateRecordingContext'
+
+import { removeTestFolder } from './removeTestFolder'
 
 /** What the learner sees of the recorded server stop in the replay debug session. */
 export interface ReplayedStop {
@@ -43,7 +45,7 @@ export async function replaySavedServerStop(
   participant: 'server' | 'browser' = 'server',
 ): Promise<ReplayedStop> {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-pages-replay-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const library = new LearningLibrary(directory, study.workspaceKey)
   await library.saveStudy(study)
   const reopened = await library.readStudy(study.id)

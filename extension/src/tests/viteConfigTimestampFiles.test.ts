@@ -3,7 +3,6 @@ import {
   mkdir,
   mkdtemp,
   realpath,
-  rm,
   stat,
   symlink,
   writeFile,
@@ -19,6 +18,8 @@ import {
 } from '../utils/viteConfigTimestampFiles'
 import { VITE_DEV_ADAPTER } from '../viteDevAdapter'
 
+import { removeTestFolder } from './utils/removeTestFolder'
+
 const TEMP_NAME = 'vite.config.ts.timestamp-123-abc.mjs'
 
 /** Whether a path exists. */
@@ -33,7 +34,7 @@ async function pathExists(path: string): Promise<boolean> {
 async function makeRoot(context: TestContext): Promise<string> {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'vite-timestamp-')))
   context.after(async () => {
-    await rm(root, { recursive: true, force: true })
+    await removeTestFolder(root)
   })
   return root
 }

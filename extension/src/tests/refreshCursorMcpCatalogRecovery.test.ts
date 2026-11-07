@@ -32,6 +32,7 @@ import {
 import { loadDropSecondNameWhoseLinkIsRefused } from './utils/loadDropSecondNameWhoseLinkIsRefused'
 import { loadModule } from './utils/loadModule'
 import { loadSecondNameRulesOverHeldFiles } from './utils/loadSecondNameRulesOverHeldFiles'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** The real `node:fs/promises`, which a test passes on to the loaded catalog beside the calls it replaces. */
 const fileSystem = fsPromises
@@ -68,7 +69,7 @@ async function catalogFolders(context: TestContext): Promise<{
   const cursorDirectory = await mkdtemp(
     join(tmpdir(), 'codebook-cursor-mcp-recovery-'),
   )
-  context.after(() => rm(cursorDirectory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(cursorDirectory))
   const storageRoot = join(cursorDirectory, 'storage')
   return {
     cursorDirectory,
@@ -1401,7 +1402,7 @@ test('a window that sleeps between staging its first Cursor MCP config and putti
 test('a Cursor settings folder removed between staging the first Cursor MCP config and linking it ends the setup with the link’s sentence, and the config is not staged again', async (context) => {
   // Arrange: no config yet, Codebook's storage beside Cursor's settings folder, and that folder removed right before the first link.
   const base = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-folder-gone-'))
-  context.after(() => rm(base, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(base))
   const cursorDirectory = join(base, '.cursor')
   const storageRoot = join(base, 'storage')
   await mkdir(cursorDirectory)
@@ -1410,6 +1411,7 @@ test('a Cursor settings folder removed between staging the first Cursor MCP conf
     ...fileSystem,
     link: async (existingPath: string, newPath: string) => {
       links += 1
+      // not cleanup: a stand-in file system removes the path while the code under test works on it
       if (links === 1) await rm(cursorDirectory, { recursive: true })
       return fileSystem.link(existingPath, newPath)
     },

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mock, test } from 'node:test'
@@ -18,6 +18,7 @@ import {
 import { verifyNodeTestInspectorOwnership } from '../utils/verifyNodeTestInspectorOwnership'
 
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
+import { removeTestFolder } from './utils/removeTestFolder'
 import { ROOT_MODE_EXECUTION } from './utils/rootModeExecutionPlan'
 
 test('an owned Node test announces its own loopback debugger and releases the paused process', async () => {
@@ -132,7 +133,7 @@ test('an owned Node test announces its own loopback debugger and releases the pa
     boundDebugger?.cdp.close()
     inspector?.close()
     await owned.close()
-    await rm(workspace, { recursive: true, force: true })
+    await removeTestFolder(workspace)
   }
   assert.deepEqual(events, ['node-test.started', 'node-test.closed'])
 })
@@ -189,7 +190,7 @@ test('a test launched in its package passes the worker check against that packag
   } finally {
     inspector?.close()
     await owned.close()
-    await rm(workspace, { recursive: true, force: true })
+    await removeTestFolder(workspace)
   }
 })
 
@@ -216,7 +217,7 @@ test('a Node test that exits before inspection reports the failure and still cle
     )
   } finally {
     await owned.close()
-    await rm(workspace, { recursive: true, force: true })
+    await removeTestFolder(workspace)
   }
 })
 
@@ -257,7 +258,7 @@ test('closing a finished Node test resolves while macOS still answers its exited
     await assert.doesNotReject(closing)
     assert.equal(unreapedAnswers, 0)
   } finally {
-    await rm(workspace, { recursive: true, force: true })
+    await removeTestFolder(workspace)
   }
 })
 
@@ -301,7 +302,7 @@ test('a later close retries a Node test release whose first signal failed instea
     assert.equal(firstClose, 'kill EAGAIN')
     assert.equal(secondClose, 'released')
   } finally {
-    await rm(workspace, { recursive: true, force: true })
+    await removeTestFolder(workspace)
   }
 })
 
@@ -361,7 +362,7 @@ test('a Node test reports its final exit and output after a long log', async () 
     )
   } finally {
     await owned.close()
-    await rm(workspace, { recursive: true, force: true })
+    await removeTestFolder(workspace)
   }
 })
 
@@ -396,7 +397,7 @@ test('a test file still running 20 seconds after its final continuation reports 
   } finally {
     mock.timers.reset()
     await owned.close()
-    await rm(workspace, { recursive: true, force: true })
+    await removeTestFolder(workspace)
   }
 })
 
@@ -447,7 +448,7 @@ test('a Node test reports stdout and stderr separately with valid Unicode text',
     )
   } finally {
     await owned.close()
-    await rm(workspace, { recursive: true, force: true })
+    await removeTestFolder(workspace)
   }
 })
 
@@ -556,7 +557,7 @@ test('output that arrives while an earlier line is still being saved reaches the
     confirmFirstWrite()
     await owned.close()
     await writer.finish('partial', 'Output order test.').catch(() => undefined)
-    await rm(workspace, { recursive: true, force: true })
+    await removeTestFolder(workspace)
   }
 })
 
@@ -595,7 +596,7 @@ test('a failed Node output observer refuses capture and releases its process', a
     )
   } finally {
     await owned.close()
-    await rm(workspace, { recursive: true, force: true })
+    await removeTestFolder(workspace)
   }
 })
 
@@ -676,7 +677,7 @@ test(
       )
     } finally {
       await owned.close()
-      await rm(workspace, { recursive: true, force: true })
+      await removeTestFolder(workspace)
     }
   },
 )

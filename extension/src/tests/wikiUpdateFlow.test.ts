@@ -25,6 +25,7 @@ import { WikiUpdateTimeoutError } from '../utils/wikiUpdateTimeoutError'
 
 import { createManualClock } from './utils/createManualClock'
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
+import { removeTestFolder } from './utils/removeTestFolder'
 import {
   openWikiUpdateWindow,
   type CancellableProgress,
@@ -120,7 +121,7 @@ async function openWikiWindow(
     closeWindow: (): Promise<void> => window.close(),
     async close(): Promise<void> {
       await window.close()
-      await rm(projectDirectory, { recursive: true, force: true })
+      await removeTestFolder(projectDirectory)
     },
   }
 }
@@ -841,6 +842,7 @@ test('the update command and the browser link pressed while the first start is s
 test('updating before any Wiki exists says to generate one first instead of showing a file error, and the page shows the same sentence as a refused start that kept no site', async () => {
   // Arrange
   const wiki = await openWikiWindow()
+  // not cleanup: deletes a Wiki folder or claim to simulate the learner or another window; the code under test must notice
   await rm(wiki.outputDirectory, { recursive: true })
   try {
     // Act
@@ -1008,7 +1010,7 @@ test('a window that was reloaded while it watched a VS Code update starts the ne
     assert.deepEqual(reloaded.errors, [])
   } finally {
     await reloaded.close()
-    await rm(wiki.projectRoot, { recursive: true, force: true })
+    await removeTestFolder(wiki.projectRoot)
   }
 })
 
@@ -1095,7 +1097,7 @@ test('a stopped VS Code watch whose record cannot be stored leaves no unhandled 
   } finally {
     process.off('unhandledRejection', noteUnhandled)
     await reloaded?.close()
-    await rm(wiki.projectRoot, { recursive: true, force: true })
+    await removeTestFolder(wiki.projectRoot)
   }
 })
 
@@ -1133,7 +1135,7 @@ test('a window that is reloaded after its VS Code watch was stopped still answer
     assert.deepEqual(reloaded.chatRequests, [])
   } finally {
     await reloaded?.close()
-    await rm(wiki.projectRoot, { recursive: true, force: true })
+    await removeTestFolder(wiki.projectRoot)
   }
 })
 
@@ -1189,7 +1191,7 @@ test('a window that closes while it watches a VS Code update waits until the rec
     assert.deepEqual(reloaded.errors, [])
   } finally {
     await reloaded?.close()
-    await rm(wiki.projectRoot, { recursive: true, force: true })
+    await removeTestFolder(wiki.projectRoot)
   }
 })
 
@@ -1792,7 +1794,7 @@ test('a Cursor update during which another repository was opened ends as failed 
     )
   } finally {
     await wiki.close()
-    await rm(otherRepository, { recursive: true, force: true })
+    await removeTestFolder(otherRepository)
   }
 })
 
@@ -2825,7 +2827,7 @@ test('a folder the publisher prepares beside the Wiki counts as the chat’s wor
     assert.deepEqual(wiki.errors, [])
   } finally {
     await wiki.close()
-    await rm(preparedFolder, { recursive: true, force: true })
+    await removeTestFolder(preparedFolder)
   }
 })
 
@@ -3312,6 +3314,7 @@ test('an update whose end could not remove its marker because another window hel
     // Act: the second window presses Update while the end waits for its next attempt; then the claim is freed and a next attempt comes.
     await secondWindow.clickUpdate()
     const refusedMeanwhile = secondWindow.status()
+    // not cleanup: deletes a Wiki folder or claim to simulate the learner or another window; the code under test must notice
     await rm(claimDirectory, { recursive: true })
     await waitForMarkerAnswer(wiki, true)
     await secondWindow.clickUpdate()
@@ -3357,6 +3360,7 @@ test('a stopped watch whose reservation could not be written because another win
     await waitForMarkerAnswer(wiki, false)
 
     // Act: the claim is freed, a next attempt comes, and the second window presses Update.
+    // not cleanup: deletes a Wiki folder or claim to simulate the learner or another window; the code under test must notice
     await rm(claimDirectory, { recursive: true })
     await waitForMarkerAnswer(wiki, true)
     await secondWindow.clickUpdate()
@@ -3397,6 +3401,7 @@ test('Update pressed again in the same window while its earlier update’s marke
     await wiki.publish('b'.repeat(64))
     const ended = await waitForEnd(wiki.status)
     await waitForMarkerAnswer(wiki, false)
+    // not cleanup: deletes a Wiki folder or claim to simulate the learner or another window; the code under test must notice
     await rm(claimDirectory, { recursive: true })
     wiki.setFreshness({
       status: 'changed',
@@ -3440,6 +3445,7 @@ test('a window that closes while the removal of its marker waits for its next at
       false,
       'the first removal attempt must have failed on the held claim before the claim is freed',
     )
+    // not cleanup: deletes a Wiki folder or claim to simulate the learner or another window; the code under test must notice
     await rm(claimDirectory, { recursive: true })
 
     // Act
@@ -3458,7 +3464,7 @@ test('a window that closes while the removal of its marker waits for its next at
       false,
     )
   } finally {
-    await rm(wiki.projectRoot, { recursive: true, force: true })
+    await removeTestFolder(wiki.projectRoot)
   }
 })
 
@@ -3813,6 +3819,7 @@ test('a VS Code watch that saw the chat’s candidate goes on waiting for that c
     await wiki.clickUpdate()
     const pressedWhileCandidateIsThere = wiki.status()
     const requestsWhileCandidateIsThere = wiki.chatRequests.length
+    // not cleanup: deletes a Wiki folder or claim to simulate the learner or another window; the code under test must notice
     await rm(candidateFolder, { recursive: true })
     await wiki.publish('c'.repeat(64))
     await datePublishTwoMinutesLater(wiki.manifestPath)
@@ -3837,7 +3844,7 @@ test('a VS Code watch that saw the chat’s candidate goes on waiting for that c
     assert.equal(wiki.chatRequests.length, 2)
   } finally {
     await wiki.close()
-    await rm(candidateFolder, { recursive: true, force: true })
+    await removeTestFolder(candidateFolder)
   }
 })
 
@@ -4046,8 +4053,8 @@ test('a stopped watch’s reservation leaves the disk when its window closes, an
     assert.equal(await isOnDisk(markerOf(takenOver)), true)
   } finally {
     await takingOver.close()
-    await rm(closedAlone.projectRoot, { recursive: true, force: true })
-    await rm(takenOver.projectRoot, { recursive: true, force: true })
+    await removeTestFolder(closedAlone.projectRoot)
+    await removeTestFolder(takenOver.projectRoot)
   }
 })
 
@@ -4659,8 +4666,8 @@ test('the confirmation of an update whose output lies outside the project says t
     }
     assert.deepEqual(fromTheCommand.confirmations, [])
   } finally {
-    await rm(projectRoot, { recursive: true, force: true })
-    await rm(outsideDirectory, { recursive: true, force: true })
+    await removeTestFolder(projectRoot)
+    await removeTestFolder(outsideDirectory)
   }
 })
 

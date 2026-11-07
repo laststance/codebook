@@ -5,7 +5,6 @@ import {
   readFile,
   realpath,
   rename,
-  rm,
   symlink,
   writeFile,
 } from 'node:fs/promises'
@@ -36,6 +35,7 @@ import { sameScriptUrl } from '../utils/sameScriptUrl'
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { fileSystemWithLargeFileIds } from './utils/fileSystemWithLargeFileIds'
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 import { repositoryHarness } from './utils/repositoryHarness'
 
 test('unchanged native BOM and mixed-EOL source buffers pass identity guards while actual edits still reject', () => {
@@ -253,7 +253,7 @@ test('configured build reads reject linked files linked ancestors directory targ
   // Arrange
   const { directory, track } = await repositoryHarness(context),
     external = await mkdtemp(join(tmpdir(), 'codebook-outside-build-'))
-  context.after(() => rm(external, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(external))
   await track('source.ts', 'abc')
   await writeFile(join(external, 'outside.js'), 'outside')
   await symlink(join(external, 'outside.js'), join(directory, 'linked.js'))

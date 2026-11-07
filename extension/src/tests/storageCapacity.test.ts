@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises'
 import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -9,6 +9,7 @@ import { LearningLibrary } from '../learningLibrary'
 import { RecordingStore } from '../recordingStore'
 
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** Creates distinct sealed identities for capacity admission tests without running an application. @example const { study, binding } = capacityStudy() */
 function capacityStudy() {
@@ -40,7 +41,7 @@ function capacityStudy() {
 test('a seventeenth saved study and recording remain discoverable after restart without evicting the first sixteen', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-capacity-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const first = capacityStudy(),
     library = new LearningLibrary(directory, first.study.workspaceKey),
     recordings = new RecordingStore(directory, first.study.workspaceKey)
@@ -77,7 +78,7 @@ test('a seventeenth saved study and recording remain discoverable after restart 
 test('two windows admitted for the last free place both start, and the study saved second is refused at its save with the retry-storage message', async (context) => {
   // Arrange: a limit of two with one study saved; each window asks before either has saved.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-capacity-race-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const saved = capacityStudy(),
     firstWindow = capacityStudy(),
     secondWindow = capacityStudy(),
@@ -123,7 +124,7 @@ test('two windows admitted for the last free place both start, and the study sav
 test('raising the setting recovers both full stores and lowering it keeps prior checkpoints and recordings readable', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-capacity-change-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   let capacity: unknown = 1
   const first = capacityStudy(),
     second = capacityStudy()
@@ -214,7 +215,7 @@ test('raising the setting recovers both full stores and lowering it keeps prior 
 test('two editor windows cannot admit two new studies into the last configured slot', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-capacity-race-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const first = capacityStudy(),
     second = capacityStudy()
   const left = new LearningLibrary(directory, first.study.workspaceKey, () => 1)
@@ -243,7 +244,7 @@ test('two editor windows cannot admit two new studies into the last configured s
 test('a full study library tells before a run that it can keep a study it already holds and no new one', async (context) => {
   // Arrange: one saved study under a limit of one.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-capacity-admit-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   let capacity: unknown = 1
   const first = capacityStudy(),
     second = capacityStudy()
@@ -280,7 +281,7 @@ test('a full study library tells before a run that it can keep a study it alread
 test('the run admission answers while another window holds the storage lock', async (context) => {
   // Arrange: one saved study under a limit of one, and the writer lock of a running editor process in the library directory.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-capacity-locked-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const first = capacityStudy(),
     second = capacityStudy()
   const library = new LearningLibrary(
@@ -315,7 +316,7 @@ test('the run admission answers while another window holds the storage lock', as
 test('saving a new study into a full library still reports the limit setting and keeps the saved study', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-capacity-save-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const first = capacityStudy(),
     second = capacityStudy()
   const library = new LearningLibrary(

@@ -1,12 +1,5 @@
 import assert from 'node:assert/strict'
-import {
-  mkdir,
-  mkdtemp,
-  realpath,
-  rm,
-  symlink,
-  writeFile,
-} from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, test } from 'node:test'
@@ -17,14 +10,14 @@ import {
   type LibraryAppFolder,
 } from '../utils/libraryBuildStop'
 
+import { removeTestFolder } from './utils/removeTestFolder'
+
 const STOP_PATH = 'packages/core/src/core.ts'
 const APP_ROOT = 'examples/app'
 
 const roots: string[] = []
 after(async () => {
-  await Promise.all(
-    roots.map((root) => rm(root, { recursive: true, force: true })),
-  )
+  await Promise.all(roots.map((root) => removeTestFolder(root)))
 })
 
 /** Builds a temp repository whose app links the library, with a caller-chosen library `package.json` text. */

@@ -5,7 +5,6 @@ import {
   readFile,
   readdir,
   realpath,
-  rm,
   utimes,
   writeFile,
 } from 'node:fs/promises'
@@ -20,6 +19,7 @@ import { readLiveWikiUpdateMarker } from '../utils/readLiveWikiUpdateMarker'
 import { idleChild } from './utils/idleChild'
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
 import { realProcessStart } from './utils/realProcessStart'
+import { removeTestFolder } from './utils/removeTestFolder'
 import { startOfKilledWindow } from './utils/startOfKilledWindow'
 
 // The tests with real child processes need the system's answer, which on Windows is a PowerShell that starts cold: the first read is made here, with the tests' own bound, and names its query when it fails.
@@ -566,7 +566,7 @@ async function wikiFolder(
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-owner-without-start-')),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const outputDirectory = join(directory, 'wiki')
   await mkdir(outputDirectory)
   return { outputDirectory, markerPath: `${outputDirectory}.update-run.json` }

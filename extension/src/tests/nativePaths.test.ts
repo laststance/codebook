@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
-import { rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { createNativeProfile } from '../utils/createNativeProfile'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 test('native editor profiles can bind their actual IPC socket within the macOS pathname budget', async () => {
   // Arrange
@@ -22,6 +23,6 @@ test('native editor profiles can bind their actual IPC socket within the macOS p
     assert.equal(server.listening, true)
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()))
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   }
 })

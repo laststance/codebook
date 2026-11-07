@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -22,6 +22,7 @@ import { redactValuePreview } from '../utils/redactValuePreview'
 import { sanitizeCause } from '../utils/sanitizeCause'
 import { sourceImportBindings } from '../utils/sourceImportBindings'
 
+import { removeTestFolder } from './utils/removeTestFolder'
 import { ROOT_MODE_EXECUTION } from './utils/rootModeExecutionPlan'
 
 // Credential-shaped fixtures are joined at run time, so this file holds no literal a secret scanner takes for a real credential.
@@ -885,7 +886,7 @@ test('node test output masks a token the event split and the tail cut would have
     assert.equal(result.output.includes('[masked]'), true)
   } finally {
     await owned.close()
-    await rm(workspace, { recursive: true, force: true })
+    await removeTestFolder(workspace)
   }
 })
 

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -21,6 +21,7 @@ import {
   type HarnessBehaviour,
 } from './utils/chromeExtensionRunHarness'
 import { openServerRepository } from './utils/nodeServerHistoryFixture'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const PAUSED_FRAME = pngOf(720, 640, 'paused').toString('base64')
 
@@ -171,7 +172,7 @@ test('a run with a stalled recording clicks and stops with the same calls and ti
   const directory = await mkdtemp(
     join(tmpdir(), 'codebook-extension-run-timing-'),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const header = parseExtensionHistoryHeader({
     ...extensionHistoryHeader(EXTENSION_WORKSPACE_KEY),
     formatVersion: 1,

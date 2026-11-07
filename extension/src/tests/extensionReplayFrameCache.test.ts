@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -9,11 +9,12 @@ import { ExtensionReplayFrameCache } from '../extensionReplayFrameCache'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 
 import { pngOf } from './utils/chromeExtensionHistoryFixture'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** Makes a history folder holding the given frames as blobs and removes it when the test ends. */
 async function folderWith(context: TestContext, salts: string[]) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-frame-cache-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   await mkdir(join(directory, 'frames'))
   const frames = []
   for (const salt of salts) {

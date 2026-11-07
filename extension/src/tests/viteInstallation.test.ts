@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { resolveViteInstallation } from '../utils/resolveViteInstallation'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** Creates a package root whose `node_modules/vite/package.json` holds the given manifest. */
 async function workspaceWithVite(
@@ -12,7 +14,7 @@ async function workspaceWithVite(
   manifest: Record<string, unknown> | string,
 ): Promise<string> {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'codebook-vite-i-')))
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   await mkdir(join(root, 'node_modules/vite'), { recursive: true })
   await writeFile(
     join(root, 'node_modules/vite/package.json'),

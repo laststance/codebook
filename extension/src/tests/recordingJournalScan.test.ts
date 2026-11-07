@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { appendFile, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
+import { appendFile, mkdtemp, rename, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -7,6 +7,7 @@ import { test, type TestContext } from 'node:test'
 import { advanceRecordingScan } from '../utils/recordingJournalScan'
 
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** One output entry as the writer stores it, as a journal line. */
 function outputLine(sequence: number, elapsedMs = sequence): string {
@@ -23,7 +24,7 @@ function outputLine(sequence: number, elapsedMs = sequence): string {
 /** A journal file in a temporary folder, removed when the test ends. */
 async function journalFile(context: TestContext, content: string) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-journal-scan-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const path = join(directory, 'events.jsonl')
   await writeFile(path, content)
   return path

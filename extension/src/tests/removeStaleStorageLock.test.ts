@@ -5,7 +5,6 @@ import {
   readFile,
   readdir,
   realpath,
-  rm,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -19,13 +18,14 @@ import {
 import { removeStaleStorageLock } from '../utils/removeStaleStorageLock'
 
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** Creates an empty storage directory that is removed with the test, and returns its canonical path. @example const directory = await storageDirectory(context) */
 async function storageDirectory(context: TestContext): Promise<string> {
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-stale-lock-')),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   return directory
 }
 

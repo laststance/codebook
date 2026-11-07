@@ -1,10 +1,11 @@
-import { mkdtemp, realpath, rm } from 'node:fs/promises'
+import { mkdtemp, realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { type DeepWikiReader, startDeepWikiReader } from '../../deepWikiReader'
 import type { WikiUpdateStatus } from '../../utils/wikiUpdateRun'
 
+import { removeTestFolder } from './removeTestFolder'
 import { writeMinimalWiki } from './writeMinimalWiki'
 
 /**
@@ -37,8 +38,7 @@ export async function serveMinimalWiki(
   const projectDirectory = await mkdtemp(
     join(tmpdir(), 'codebook-wiki-status-'),
   )
-  const removeProject = (): Promise<void> =>
-    rm(projectDirectory, { recursive: true, force: true })
+  const removeProject = (): Promise<void> => removeTestFolder(projectDirectory)
   try {
     const projectRoot = await realpath(projectDirectory)
     const { outputDirectory: output, manifestPath } =

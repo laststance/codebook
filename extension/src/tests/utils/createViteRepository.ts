@@ -1,8 +1,10 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { TestContext } from 'node:test'
+
+import { removeTestFolder } from './removeTestFolder'
 
 /** What the stub `vite` package does when a test starts it, written to `stub-vite.json` in the package root. */
 export type StubViteBehavior = {
@@ -207,7 +209,7 @@ export async function createViteRepository(
 ): Promise<ViteRepository> {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'codebook-vite-')))
   context.after(async () => {
-    await rm(root, { recursive: true, force: true })
+    await removeTestFolder(root)
   })
   await mkdir(join(root, 'node_modules/vite'), { recursive: true })
   await writeFile(

@@ -6,6 +6,8 @@ import { test } from 'node:test'
 
 import { Evidence } from '../runtimeSupport/evidence'
 
+import { removeTestFolder } from './utils/removeTestFolder'
+
 test('recording and debug events share the same monotonic receipt clock', async () => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-evidence-test-')),
@@ -26,7 +28,7 @@ test('recording and debug events share the same monotonic receipt clock', async 
       stopped.elapsedMs,
     )
   } finally {
-    await rm(directory, { recursive: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -57,7 +59,7 @@ test('later input acknowledgements cannot rewrite the recorded observation or di
       evidence.events[0],
     )
   } finally {
-    await rm(directory, { recursive: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -89,7 +91,7 @@ test('overlapping manifest writes leave the latest complete state after flushing
       'run.failed',
     )
   } finally {
-    await rm(directory, { recursive: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -113,7 +115,7 @@ test('immediate cleanup can record evidence before initialization finishes', asy
       { cleaned: true },
     )
   } finally {
-    await rm(parent, { recursive: true })
+    await removeTestFolder(parent)
   }
 })
 
@@ -145,7 +147,7 @@ test('a bounded recorder stops retaining events at capacity and reports missing 
       2,
     )
   } finally {
-    await rm(directory, { recursive: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -178,7 +180,7 @@ test('retained bytes and queued bytes have separate limits even before the write
     await rejectedWrites
     await assert.rejects(queued.flush(), /queued write limit/)
   } finally {
-    await rm(directory, { recursive: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -239,7 +241,7 @@ test('a run failure journaled after the evidence refused an event past its bound
       },
     )
   } finally {
-    await rm(directory, { recursive: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -273,7 +275,7 @@ test('only the first run failure is kept in the journal after the evidence refus
       ],
     )
   } finally {
-    await rm(directory, { recursive: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -348,7 +350,7 @@ test("a stopped run's explanation failure after a refusal and the run's kept fai
       },
     )
   } finally {
-    await rm(directory, { recursive: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -397,7 +399,7 @@ test('the one run failure kept past a refusal is cut to the event detail limit a
       },
     )
   } finally {
-    await rm(directory, { recursive: true })
+    await removeTestFolder(directory)
   }
 })
 
@@ -414,6 +416,7 @@ test('a run failure journaled after the evidence failed to write an event ends t
   try {
     evidence.record('first')
     await evidence.flush()
+    // not cleanup: the evidence folder is removed by hand so later writes of the code under test fail
     await rm(directory, { recursive: true })
     evidence.record('unwritten')
     await evidence.flush().catch(() => undefined)
@@ -443,7 +446,7 @@ test('a run failure journaled after the evidence failed to write an event ends t
       },
     )
   } finally {
-    await rm(parent, { recursive: true })
+    await removeTestFolder(parent)
   }
 })
 
@@ -460,6 +463,7 @@ test('a save queued behind an append that fails keeps the append’s failure as 
   try {
     evidence.record('first')
     await evidence.flush()
+    // not cleanup: the evidence folder is removed by hand so later writes of the code under test fail
     await rm(directory, { recursive: true })
     evidence.record('unwritten')
 
@@ -485,7 +489,7 @@ test('a save queued behind an append that fails keeps the append’s failure as 
       },
     )
   } finally {
-    await rm(parent, { recursive: true })
+    await removeTestFolder(parent)
   }
 })
 
@@ -502,6 +506,7 @@ test('a save the evidence refuses after a failed write names that failure once, 
   try {
     evidence.record('first')
     await evidence.flush()
+    // not cleanup: the evidence folder is removed by hand so later writes of the code under test fail
     await rm(directory, { recursive: true })
     evidence.record('unwritten')
 
@@ -538,6 +543,6 @@ test('a save the evidence refuses after a failed write names that failure once, 
       },
     )
   } finally {
-    await rm(parent, { recursive: true })
+    await removeTestFolder(parent)
   }
 })

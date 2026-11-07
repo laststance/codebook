@@ -7,7 +7,6 @@ import {
   mkdtemp,
   readFile,
   readdir,
-  rm,
   symlink,
   writeFile,
 } from 'node:fs/promises'
@@ -23,6 +22,7 @@ import {
   openProjectWithoutWiki,
   publishGeneratedWiki,
 } from './utils/openProjectWithoutWiki'
+import { removeTestFolder } from './utils/removeTestFolder'
 import { openWikiUpdateWindow } from './utils/wikiUpdateWindow'
 
 const CURRENT: WikiFreshness = {
@@ -1231,7 +1231,7 @@ test('Generate in a project whose .codebook is a link out of it refuses before i
   const project = await openProjectWithoutWiki()
   context.after(() => project.close())
   const outside = await mkdtemp(join(tmpdir(), 'codebook-wiki-outside-'))
-  context.after(() => rm(outside, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(outside))
   await symlink(outside, join(project.projectRoot, '.codebook'))
 
   // Act

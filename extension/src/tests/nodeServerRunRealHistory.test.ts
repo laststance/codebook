@@ -5,7 +5,6 @@ import {
   readdir,
   readFile,
   realpath,
-  rm,
   stat,
   writeFile,
 } from 'node:fs/promises'
@@ -30,6 +29,7 @@ import {
   untilView,
 } from './utils/realNodeServerDependencies'
 import { realProcessStart } from './utils/realProcessStart'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 before(async () => {
   await realProcessStart(process.pid)
@@ -44,7 +44,7 @@ test('a real fixture server run writes a sealed complete history under 2 MiB', a
   const workspace = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-node-server-history-')),
   )
-  context.after(() => rm(workspace, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(workspace))
   const port = await freeLoopbackPort()
   await copyFile(FIXTURE_SERVER, join(workspace, 'server.cjs'))
   await writeFile(

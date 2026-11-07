@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -24,6 +24,7 @@ import { projectRecording } from '../utils/projectRecording'
 import { validateRecordingContext } from '../utils/validateRecordingContext'
 
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const png = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=',
@@ -40,7 +41,7 @@ async function configuredRecordingHarness(
   const directory = await mkdtemp(
     join(tmpdir(), 'codebook-configured-recording-'),
   )
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const study = createConfiguredStudy(),
     library = new LearningLibrary(directory, study.workspaceKey),
     store = new RecordingStore(directory, study.workspaceKey, limits, io)

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, realpath, rm } from 'node:fs/promises'
+import { mkdtemp, realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -16,6 +16,7 @@ import {
   type FakeOwnedChromeBehaviour,
   type RecordedCommand,
 } from './utils/fakeOwnedChrome'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const EXTENSION_ID = 'kgdakicbeoenmomkdpkiobphgcknpomd'
 const WAKE_BOUND_MS = 5_000
@@ -36,7 +37,7 @@ async function profileRoot(context: TestContext): Promise<string> {
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-owned-start-')),
   )
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   return root
 }
 

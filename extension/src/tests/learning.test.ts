@@ -31,6 +31,7 @@ import {
   LINK_NOT_ALLOWED,
 } from './utils/createLinkIfAllowed'
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const workspaceKey = sha256('workspace-a'),
   source = 'const nextTheme = \"dark\";\n',
@@ -74,7 +75,7 @@ function decision(understood: boolean): LearnerDecision {
 test('capturing a successful observation never checks understanding and explicit choices survive a fresh library instance', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-learning-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const library = new LearningLibrary(directory, workspaceKey),
     study = capturedStudy()
   // Act
@@ -135,7 +136,7 @@ test('understanding is scoped to the learning item even when another item uses i
 test('queued learner choices and navigation retain both decisions and repeated intent does not double count', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-learning-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const library = new LearningLibrary(directory, workspaceKey),
     checked = decision(true),
     unchecked = decision(false)
@@ -168,7 +169,7 @@ test('queued learner choices and navigation retain both decisions and repeated i
 test('another writer or corrupt progress fails visibly without replacing persisted learner history', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-learning-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const library = new LearningLibrary(directory, workspaceKey)
   await library.decide(decision(true))
   const path = join(directory, 'progress.repository.v4.json'),
@@ -217,7 +218,7 @@ test('altered captured source or image cannot be read as the original historical
 test('a later checkpoint cannot rewrite captured values or erase an existing observation', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-learning-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const library = new LearningLibrary(directory, workspaceKey),
     study = capturedStudy()
   await library.saveStudy(study)
@@ -243,7 +244,7 @@ test('a later checkpoint cannot rewrite captured values or erase an existing obs
 test('a rejected atomic rename retains the old value and cleans its own incomplete temporary file', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-learning-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const path = join(directory, 'progress.repository.v4.json')
   await writeFile(path, 'old value')
   const filesystem = await import('node:fs/promises')
@@ -275,7 +276,7 @@ test('a rejected atomic rename retains the old value and cleans its own incomple
 test('a configured sixteen-entry library rejects the seventeenth study without losing history and still checkpoints an existing study', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-learning-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const library = new LearningLibrary(directory, workspaceKey, () => 16),
     studies = Array.from({ length: 16 }, () => capturedStudy())
   for (const study of studies) await library.saveStudy(study)
@@ -307,7 +308,7 @@ test('a configured sixteen-entry library rejects the seventeenth study without l
 test('a library that holds a study in a newer format beside its older file lists it as saved by a newer Codebook, counts it once and refuses to read it', async (context) => {
   // Arrange: one study this Codebook saved, one study that also has a file in format 9, and one whose format 4 files (archive and sidecar) hold format 16.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-learning-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const library = new LearningLibrary(directory, workspaceKey, () => 16),
     readable = capturedStudy(),
     savedAgainByNewer = capturedStudy(),
@@ -394,7 +395,7 @@ test('a library that holds a study in a newer format beside its older file lists
 test('a save refused by a full library names no delete remedy after this editor’s Trash refused a removal', async (context) => {
   // Arrange: a library full at one study, in a window whose last removal left its study in the library.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-learning-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const library = new LearningLibrary(
     directory,
     workspaceKey,
@@ -413,7 +414,7 @@ test('a save refused by a full library names no delete remedy after this editor�
 test('one thousand learner choices retain their bytes when new intent is rejected and identical retry still succeeds', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-learning-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const library = new LearningLibrary(directory, workspaceKey),
     decisions = Array.from({ length: 1000 }, () => decision(true))
   const path = join(directory, 'progress.repository.v4.json'),
@@ -431,7 +432,7 @@ test('one thousand learner choices retain their bytes when new intent is rejecte
 test('the exact UTF-8 byte limit is writable and an oversized replacement preserves the old document', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-learning-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const path = join(directory, 'progress.repository.v4.json')
   // Act
   await atomicPrivateWrite(path, 'あ', 5)
@@ -448,7 +449,7 @@ test('the exact UTF-8 byte limit is writable and an oversized replacement preser
 test('Retry storage over sixty-four saved studies lists the library directory once', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-learning-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const library = new LearningLibrary(directory, workspaceKey, () => 64)
   for (let saved = 0; saved < 64; saved += 1)
     await library.saveStudy(capturedStudy())
@@ -472,7 +473,7 @@ test('Retry storage over sixty-four saved studies lists the library directory on
 test('a stray x.study.v16.json in the library leaves the list, save admission, removal, forgetting absent studies and Retry storage working', async (context) => {
   // Arrange: two saved studies and the stray file beside them.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-learning-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const library = new LearningLibrary(directory, workspaceKey, () => 3),
     kept = capturedStudy(),
     removed = capturedStudy(),
@@ -485,6 +486,7 @@ test('a stray x.study.v16.json in the library leaves the list, save admission, r
   const admitsThird = await library.admitsStudy(removedByHand.id)
   await library.saveStudy(removedByHand)
   const removal = await library.removeStudy(removed.id, (path) =>
+    // not cleanup: the injected remover stands in for the learner removing the study files by hand
     rm(path, { recursive: true }),
   )
   await library.select({
@@ -521,7 +523,7 @@ test('a stray x.study.v16.json in the library leaves the list, save admission, r
 test('Retry storage over a library with a study a newer Codebook saved under a known file name repairs the other studies and keeps that study as it is', async (context) => {
   // Arrange: one saved study whose sidecar is gone, one study whose format 4 archive holds format 16, and one saved study whose sidecar a newer Codebook wrote again in format 16 beside the readable archive.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-learning-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const library = new LearningLibrary(directory, workspaceKey, () => 16),
     repaired = capturedStudy(),
     newerInKnownFile = capturedStudy(),
@@ -579,8 +581,8 @@ test('a link or a folder where the progress file should be is refused with the f
   // Arrange: one library whose saved progress is kept elsewhere behind a link, and one with a folder at the progress file's path.
   const withLink = await mkdtemp(join(tmpdir(), 'codebook-learning-')),
     withFolder = await mkdtemp(join(tmpdir(), 'codebook-learning-'))
-  context.after(() => rm(withLink, { recursive: true, force: true }))
-  context.after(() => rm(withFolder, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(withLink))
+  context.after(() => removeTestFolder(withFolder))
   await new LearningLibrary(withLink, workspaceKey).decide(decision(true))
   const linkedPath = join(withLink, 'progress.repository.v4.json'),
     folderPath = join(withFolder, 'progress.repository.v4.json')

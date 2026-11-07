@@ -1,7 +1,9 @@
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { TestContext } from 'node:test'
+
+import { removeTestFolder } from './removeTestFolder'
 
 /**
  * Makes a `ps` of the test's own until the test ends, for a test that needs a process listing that never answers or one of a size it chooses, or that shows a `ps` of the search path is never started: a directory that holds one executable named `ps`, which runs the given Node.js source with this Node binary. The listing starts `ps` only by an absolute path ({@link psProgramPath}), so the test names the stand-in's path as the listing's `psPrograms`; the directory is also the whole command search path of this test process meanwhile, which a check that started the bare `ps` would find.
@@ -21,7 +23,7 @@ export async function standInForPs(
   const searchPathBefore = process.env.PATH
   context.after(async () => {
     process.env.PATH = searchPathBefore
-    await rm(directory, { recursive: true, force: true })
+    await removeTestFolder(directory)
   })
   const program = join(directory, 'listing.js'),
     command = join(directory, 'ps')

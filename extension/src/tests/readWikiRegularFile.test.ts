@@ -9,7 +9,6 @@ import {
   open,
   readFile,
   rename,
-  rm,
   stat,
   utimes,
   writeFile,
@@ -35,6 +34,7 @@ import {
 import { fileSystemWithLargeFileIds } from './utils/fileSystemWithLargeFileIds'
 import { loadModule } from './utils/loadModule'
 import { loadOpenWithoutFollowing } from './utils/loadOpenWithoutFollowing'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** The open flags of a system whose open cannot refuse a link: Windows defines neither `O_NOFOLLOW` nor `O_NONBLOCK`. Handed to the reader, it takes the way it takes on Windows on every system. */
 const OPEN_FLAGS_WITHOUT_NOFOLLOW = { O_RDONLY: openConstants.O_RDONLY }
@@ -114,7 +114,7 @@ test('a manifest that grows past the limit while it is read is refused', async (
     // Assert
     assert.equal(read, undefined)
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })
 
@@ -131,7 +131,7 @@ test('a manifest that grows while it is read but stays within the limit is read 
     // Assert
     assert.equal(read?.bytes.toString('utf8'), '{"a":"12"}      ')
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })
 
@@ -152,7 +152,7 @@ test('a manifest that grows while it is read but stays within the limit is read 
     // Assert
     assert.equal(read?.bytes.toString('utf8'), '{"a":"12"}      ')
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })
 
@@ -172,7 +172,7 @@ test('a manifest that is a symbolic link is not read, also when the file it poin
     // Assert
     assert.equal(read?.bytes.toString('utf8'), undefined)
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })
 
@@ -196,7 +196,7 @@ test('a manifest that is a symbolic link is not read where the system’s open c
     // Assert
     assert.equal(read?.bytes.toString('utf8'), undefined)
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })
 
@@ -224,7 +224,7 @@ test(
         (writer) => writer.close(),
         () => undefined,
       )
-      await rm(folder, { recursive: true, force: true })
+      await removeTestFolder(folder)
     })
 
     // Act
@@ -269,7 +269,7 @@ test('a manifest that is a regular file is read with its bytes, inode and modifi
       },
     )
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })
 
@@ -304,7 +304,7 @@ test('a manifest that becomes a link to another file between the look at its pat
       { read: undefined, pathHoldsALink: true },
     )
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })
 
@@ -335,7 +335,7 @@ test('a manifest that another file replaces between the look at its path and its
       { read: undefined, pathHolds: '{"another":1}' },
     )
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })
 
@@ -362,7 +362,7 @@ test('a manifest whose file id is above 2^53, as on an NTFS volume, is read with
       { bytes: '{"a":"12"}', inode: '210824757556437109' },
     )
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })
 
@@ -405,6 +405,6 @@ test('a manifest whose file handle cannot be closed is answered as a file that c
     assert.deepEqual(closes, ['closed, then reported as failed'])
     assert.equal(readByAHandleThatCloses?.bytes.toString('utf8'), '{"a":"12"}')
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })

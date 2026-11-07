@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -21,6 +21,7 @@ import type { StudyError } from '../../errors'
 import type * as DebuggerModule from '../../vscodeChromeExtensionDebugger'
 
 import { loadModule } from './loadModule'
+import { removeTestFolder } from './removeTestFolder'
 import { sourceBreakpointRequest } from './sourceBreakpointRequest'
 
 /** The extension id every run of the harness loads. */
@@ -548,7 +549,7 @@ export async function extensionEditorHarness(
     },
     path: (name: string) => join(folder, name),
     async dispose(): Promise<void> {
-      await rm(folder, { recursive: true, force: true })
+      await removeTestFolder(folder)
     },
     /**
      * Creates the debugger under test over the harness folder.

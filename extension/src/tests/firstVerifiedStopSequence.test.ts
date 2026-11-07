@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -9,6 +9,7 @@ import { NodeTestHistoryStore } from '../nodeTestHistoryStore'
 import { firstVerifiedStopSequence } from '../utils/firstVerifiedStopSequence'
 
 import { saveOneStopNodeHistory } from './studyWorkspaceHarness'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 type SavedStop = Extract<NodeTestHistoryEntry, { type: 'stop' }>
 
@@ -32,8 +33,7 @@ async function savedJournal(): Promise<{
   return {
     output,
     stop,
-    cleanup: (): Promise<void> =>
-      rm(directory, { recursive: true, force: true }),
+    cleanup: (): Promise<void> => removeTestFolder(directory),
   }
 }
 

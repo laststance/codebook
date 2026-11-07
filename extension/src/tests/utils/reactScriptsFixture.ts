@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { createServer, type Server, type ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -13,6 +13,7 @@ import { sha256 } from '../../runtimeSupport/utils/sha256'
 import { resolveReactScriptsPackage } from '../../utils/resolveReactScriptsPackage'
 
 import { freeLoopbackPort } from './freeLoopbackPort'
+import { removeTestFolder } from './removeTestFolder'
 
 /** The text of the stop file the fake compile reads. */
 export const APP_SOURCE_TEXT = [
@@ -153,7 +154,7 @@ export async function createReactScriptsRepository(
   options: ReactScriptsFixtureOptions = {},
 ) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'react-scripts-')))
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   const appFolder = options.appFolder ?? 'examples/counter'
   const appRoot = appFolder === '.' ? root : join(root, appFolder)
   const port = await freeLoopbackPort()

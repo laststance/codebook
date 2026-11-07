@@ -122,6 +122,7 @@ test('an understanding choice for a server replay whose folder is gone answers t
     await repositoryOf(harness)
       .resolve(header.studyId)!
       .store.settleReaderPositionWrites()
+    // not cleanup: deletes a path the code under test must find missing
     await rm(folder, { recursive: true, force: true })
 
     // Act
@@ -196,6 +197,7 @@ test('a held position write of a server replay whose folder is removed meanwhile
       sequence: sequences.output[0]!,
     })
     await waitUntil(() => held, 'the write is held', READER_RESULT_BOUND_MS)
+    // not cleanup: deletes a path the code under test must find missing
     await rm(
       join(
         harness.service.nodeHistoryStore!.learningDirectory,

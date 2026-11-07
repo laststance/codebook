@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.94.0] - 2026-11-07 (development candidate)
+
+Cycle 0094 part 1 ([Issue #241](https://github.com/laststance/codebook/issues/241)), an owner-directed process cycle. **The extension itself is unchanged; this version changes how Codebook is built and checked.** It carries out the process proposals posted in the repository's GitHub Discussions.
+
+### Changed
+- **Delivery rules (AGENTS.md):** Step 11 promotes only blocking or High findings; the targeted reader runs once on the release head; measured health runs before `/ship` and on the release head; P2 findings on a natively verified path are skipped by default after the native candidate is frozen; an E1 that de-risks a native route observes through the product's adapter channels; new fixtures carry no secret-named high-entropy values; an outside-voice brief over 900,000 bytes is narrowed before the call.
+- **Pre-gate policy:** one `entry-load` allowlist entry covers every saved-study fixture, so a new golden fixture with an entry-render stop needs no separate policy change.
+- **CI:** the Fallow health job no longer builds twice; `checkHealth.mjs` builds once itself.
+
+### Fixed
+- **Test cleanup under load:** every test removes its temporary folder through one helper that retries while a writer is still finishing, so a loaded full-suite run no longer fails an unchanged test with `ENOTEMPTY`. A guard test keeps new cleanups on the helper.
+
 ## [0.2.93.0] - 2026-11-07 (development candidate)
 
 Cycle 0093 ([Issue #239](https://github.com/laststance/codebook/issues/239)), a feature cycle. **A library's Node Example now runs on the checked-out library.** A learner who opens a library's repository can ask how one of its Examples uses the library, and the run uses the library source they opened. Before, an Example always ran the published copy in its own `node_modules`, which can differ from the checked-out source even at the same version string.

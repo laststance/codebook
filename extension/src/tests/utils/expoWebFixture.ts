@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { TestContext } from 'node:test'
@@ -12,6 +12,7 @@ import { resolveExpoWebPackage } from '../../utils/resolveExpoWebPackage'
 
 import { freeLoopbackPort } from './freeLoopbackPort'
 import { APP_SOURCE_TEXT } from './reactScriptsFixture'
+import { removeTestFolder } from './removeTestFolder'
 
 /** What the fake Expo CLI does after it starts. */
 export type FakeExpoWebMode =
@@ -179,7 +180,7 @@ export async function createExpoWebRepository(
   options: ExpoWebFixtureOptions = {},
 ) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'expo-web-')))
-  context.after(() => rm(root, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(root))
   const appFolder = options.appFolder ?? 'apps/app'
   const appRoot = appFolder === '.' ? root : join(root, appFolder)
   const port = await freeLoopbackPort()

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
@@ -11,6 +11,7 @@ import {
   isFileIdExactAsANumber,
 } from './utils/isFileIdExactAsANumber'
 import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 // Value: protects=the tests that expect an ownership record to keep device and inode as numbers (the Cursor skill's and the Cursor MCP catalog's), on a volume that gives the test's file an id above 2^53; fails_when=such a test fails although the product rightly records decimal text there, or skips without saying why; why_new=Cycle 0046 row 153: the skill's test had no such skip; seam=node:fs/promises of the loaded helper, whose files have ids above 2^53
 test('a test of a record with numbers learns that its file’s id is above 2^53, and skips with a reason that says so', async () => {
@@ -39,6 +40,6 @@ test('a test of a record with numbers learns that its file’s id is above 2^53,
     // The real file system's answer depends on the volume: it is a yes or a no, never an error.
     assert.equal(typeof (await isFileIdExactAsANumber(filePath)), 'boolean')
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })

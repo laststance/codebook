@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { createServer } from 'node:net'
 import type { AddressInfo } from 'node:net'
@@ -13,6 +13,8 @@ import { assertDevelopmentWorkspace } from '../utils/assertDevelopmentWorkspace'
 import { launchDevelopmentServer } from '../utils/launchDevelopmentServer'
 import type * as ServerModule from '../utils/launchDevelopmentServer'
 import { ownedDevelopmentPortState } from '../utils/ownedDevelopmentPorts'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 test('development readiness waits for a complete port across process output chunks', async () => {
   // Arrange
@@ -779,7 +781,7 @@ async function freePort(): Promise<number> {
 test('a stopped development server lets its worker release the build lock before another run checks the workspace', async (context) => {
   // Arrange: the Next-shaped parent has its actual default100ms child cutoff; the worker needs250ms to release its native lock after TERM.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-next-shutdown-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(directory))
   const nextDirectory = join(directory, 'node_modules/next/dist/bin')
   await mkdir(nextDirectory, { recursive: true })
   await writeFile(
