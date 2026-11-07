@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.96.0] - 2026-11-07 (development candidate)
+
+Cycle 0094 part 3 ([Issue #241](https://github.com/laststance/codebook/issues/241)), an owner-directed process cycle. **The extension behaves as before; this version reorganizes the Study workspace code.** It carries out the last process proposal from the repository's GitHub Discussions: the 30,244-line `studyWorkspace.ts` is split by feature.
+
+### Changed
+- **Study workspace split by feature:** four parts of `extension/src/studyWorkspace.ts` (about 6,200 lines: the captured-source return, presentation state and receipts, replay and recording opening, presentation guards and learner-input watches) moved into their own modules under `extension/src/studyWorkspace/`, each behind a narrow host the workspace builds. Every public `StudyWorkspace` method keeps its name and signature. The file is now about 24,100 lines. The entry and placement part stays in the workspace for a later cycle.
+- **Test loader:** the test sandbox now loads a module's same-context sibling modules with their own file names, so measured coverage keeps each moved function's position.
+- **Health baselines:** the Fallow baselines were re-keyed to the new files as an exact transfer of the same findings, and the measured baseline was retaken on the split code.
+- **Delivery rules (AGENTS.md):** moving baselined functions to another file re-keys the static baseline and retakes the measured one as an exact transfer.
+
 ## [0.2.95.0] - 2026-11-07 (development candidate)
 
 Cycle 0094 part 2 ([Issue #241](https://github.com/laststance/codebook/issues/241)), an owner-directed process cycle. **The extension itself is unchanged; this version changes how Codebook is checked.** It carries out two more process proposals from the repository's GitHub Discussions: faster measured health and recorded editor event orders for the workspace tests.
