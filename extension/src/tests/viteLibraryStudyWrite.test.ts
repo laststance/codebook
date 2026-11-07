@@ -140,10 +140,11 @@ async function savedLibraryStudy(
     join(harness.directory, '.service'),
   )
   service.repository = books
+  const runKey = 'library-study'
   const receipt = service.start({
     instanceId: service.instanceId,
     profile: 'repository-browser',
-    key: 'entry-load',
+    key: runKey,
     configuration: harness.definition.configuration,
   })
   const record = service.record(receipt)

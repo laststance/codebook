@@ -49,6 +49,7 @@ test('the library help section states the route, its observation states, refusal
   const text = JSON.stringify(library)
   // Act / Assert
   for (const phrase of [
+    // pregate-literal: API_VERSION=1.33 the node-script library route's minimum API, not the current API
     'codebook_status reports API 1.33 or later',
     'depends on that library by a published version',
     'repositoryPackageCopies',
