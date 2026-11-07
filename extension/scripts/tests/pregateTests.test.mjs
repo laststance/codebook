@@ -12,7 +12,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, matchesGlob } from 'node:path'
 import { test } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -219,6 +219,45 @@ test('the pre-gate policy declares workflowPins.test.mjs as the test lane of the
     version: [],
   })
   assert.equal(existsSync(`${repositoryRoot}${workflowPins[0]}`), true)
+})
+
+// Value: protects=the pre-gate's secrets check lets the operation key `entry-load` stand in every saved-study fixture folder through one glob, so a new golden fixture with an entry-render stop needs no policy PR on the base first, while that entry still allows only this exact value; fails_when=the entry lists single fixture folders again (a new folder then fails the pre-gate), reaches files outside the fixture folders, or its pattern lets another value through; why_new=Cycle 0094 task 7 (Discussion 212); seam=none; no_claim=that gstack's pre-gate reads the glob and the pattern as this test does (Node's path.matchesGlob, the pattern anchored by the test); the real secrets scan runs only in /ship's pre-gate
+test('the pre-gate policy allows the operation key entry-load in every saved-study fixture folder and no other value there', () => {
+  // Arrange
+  const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
+  const policy = JSON.parse(
+    readFileSync(`${repositoryRoot}.gstack/pregate.json`, 'utf8'),
+  )
+  const fixtureFolders = readdirSync(
+    `${repositoryRoot}extension/src/tests/fixtures`,
+    { withFileTypes: true },
+  )
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+
+  // Act
+  const entryLoadEntries = policy.allowlist.filter(
+    (entry) => entry.finding === 'env.kv' && entry.pattern === 'entry-load',
+  )
+  const [glob] = entryLoadEntries[0].paths
+  const uncoveredFolders = fixtureFolders.filter(
+    (folder) =>
+      !matchesGlob(`extension/src/tests/fixtures/${folder}/study.json`, glob),
+  )
+  const allowedValue = new RegExp(`^(?:${entryLoadEntries[0].pattern})$`)
+
+  // Assert
+  assert.equal(entryLoadEntries.length, 1)
+  assert.deepEqual(entryLoadEntries[0].paths, [
+    'extension/src/tests/fixtures/*/*.json',
+  ])
+  assert.deepEqual(uncoveredFolders, [])
+  assert.equal(
+    matchesGlob('extension/src/tests/chromeExtensionService.test.ts', glob),
+    false,
+  )
+  assert.equal(allowedValue.test('entry-load'), true)
+  assert.equal(allowedValue.test('q8Zr3kV9mW2xT7pLc4Nb'), false)
 })
 
 // Value: protects=the pre-gate runs the script test that reads a repository file no import reaches (a file it opens by a path built in code, a place beside it, a file it copies into a fixture, or the policy itself): a change to that file selects the test; fails_when=one of these entries is dropped or points to another test, so a change to `.gitignore`, `AGENTS.md`, `.codex/hooks.json`, the shipped skill's `SKILL.md` or `reader-shell.html`, a browser check, the health checker, the shard script or the policy runs no test that reads it; why_new=Cycle 0048 task 122 (Red Team: workflowPins.test.mjs read five files that the policy named nowhere; the same search over every script test found the rest); Cycle 0048 task 154 added renderWikiPageLimit.test.mjs and wikiReaderDomQa.test.mjs to the reader shell (the renderer reads it) and package.test.mjs to `.gitignore` (the Git status guarding the build reads it); Cycle 0048 task 191 (Red Team) gave the committed `extension/test-timings.json` its lane, testShards.test.mjs, which reads it through readTestTimings; seam=none; no_claim=files that a test only writes into a fixture (the fixtures of packageIO.test.mjs), and the files the import graph reaches, which the pre-gate decides

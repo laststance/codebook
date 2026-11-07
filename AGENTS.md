@@ -67,6 +67,7 @@ Goal and visual target → gap audit → one observable increment → implementa
 2. **Select** smallest connected behavior or bounded experiment closing gap or settling highest-impact unknown that could invalidate later work; core-experience blockers before polish; plan only that.
    - Inspect existing code, then freeze in Issue: AC IDs (primary, dependency, regression); gap and why now; starting action → expected result, failure behavior, modules, falsifying observation; procedure, target, host, evidence level, result location.
    - Changed assumption = new expectation version; keep old attempts.
+   - E1 de-risking native route observes through product's adapter channels (browser route: js-debug `requestCDPProxy` on DAP session, journaling `Debugger.scriptParsed` there), not only direct CDP connection; harness fixtures copy URL spelling native journal shows.
    - Gate: action follows from audit; checkable outcome. Open product gap overrides no documentation-only assignment. Repeated inconclusive attempts → smaller question or new hypothesis, never silent loss of required behavior.
 3. **Prove** normal user entry through its result, recovery and preservation included.
    - Reuse modules and real package scripts; mechanism tests for logic, declared native checks for product claims.
@@ -94,6 +95,12 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 - Codex automatic review off (no Codex cloud step).
 - Hosted CodeRabbit off from Cycle 0057: `.coderabbit.yaml` keeps `reviews.auto_review.enabled: false` (CodeRabbit reads PR branch's file); never post `@coderabbitai review`, no `@coderabbitai ignore` in PR bodies. Merge waits for no hosted review or approval; hosted review still appearing → report in PR, findings follow cycle rule like local review's; run local CodeRabbit CLI on PR's final range before merge.
 - Outside review early: `/ship` Step 9 pass 1 also runs Step 11's Codex structured review (`codex review --base main`) on whole diff, findings part of pass 1; plan changing process signalling, process identity or stop/kill path also gets Codex review before implementation. Fix-range pass (pass 2 on) under 300 changed lines dispatches red team and specialists whose area range changes.
+- Step 11 FIXABLE promotion only for findings marked `Blocks: yes` or High and above. FIXABLE Low/Medium with `Blocks: no` follow defect rule (fixed when cheap in same fixing cycle, else named once in PR); never reopen loop after pass 1.
+- Targeted reader runs once: on release head after release commit, with classes `gstack-review-plan` prints at that head; not on each pass's tree.
+- Outside-voice size: before Codex outside voice, measure rendered brief in bytes (`wc -c`).
+  - Over 900,000 → re-render with tests and fixtures excluded (`--exclude`).
+  - Still over → split by directory, recursing to single files, into briefs ≤ 900,000 bytes; file alone over limit left out, named in PR.
+  - PR discloses either change; call never fails at provider's 1 MiB input limit.
 
 **Delivery parameters.**
 
@@ -313,6 +320,7 @@ Formatting: `pnpm --dir extension format` / `format:check` and lint-staged hook 
   - Baselines = current codebase at retake, not one fixed old revision: fix findings above committed baseline in source.
   - Changing pinned producer or one of three settings → retake on current code in separate worktree with new pins, record revision and hashes in reference (`health.test.mjs` pins it), state in PR.
   - Never rename callback or add test only to move its static estimate.
+  - Per PR: once on integrated tree after review-round fixes, before `/ship` starts (alone on Mac; may overlap Space native checks), and again on release head after version-changing commit.
 - `pnpm --dir extension health:static` (~2 s; in `check` after `lint`, before tests): cyclomatic/cognitive limits of `pnpm health` without coverage, per function (`--baseline-mode identity`), against `fallow-health-baseline.json`. CRAP needs coverage → stays with `pnpm health`.
   - Fixers run it after every change, before full gate.
   - Fix new findings in source; re-save baseline (`fallow health --complexity --max-crap inf --baseline-mode identity --save-baseline fallow-health-baseline.json`) only to drop fixed findings, never to absorb one.
@@ -330,6 +338,9 @@ Formatting: `pnpm --dir extension format` / `format:check` and lint-staged hook 
 
 - Native checks part of `/ship`, not own phase: VS Code and Cursor checks cycle owes run as `/ship` Step 9.2.1's required plan checks (QA step), beside smoke probes.
 - Build and evidence: build VSIX with `qa-build.mjs` from clean commit `/ship` reviews, install in each host; build gets no own review. Critical/Major finding of check fixed in that `/ship` pass (new commit, new build, check repeated). Post each run's log with `post-trial-evidence.mjs --manifest`, quoting exit line.
+- Native candidate frozen once cycle's defects fixed; `/ship` reviews that tree. Fix after freeze reruns only native steps whose path it changed (frozen expectations name them).
+- Candidate or `/ship` review P2/Low/Medium finding on path native check already verified: Skip by default, named once in PR, unless it blocks that check's frozen expectation.
+- Cycle Issue's timeline records, per candidate review, count of P2/Low/Medium findings per natively verified file; two consecutive reviews each ≥ 3 on same file → structural task for that file on later-candidate list (not current cycle).
 - UI changes: view PNG again; compare real screenshots with its region at normal desktop baseline; record differences and interaction.
 - Motion needs recorded interaction + inspected frames; generated pixels or renderer assertions prove no native behavior.
 - All work on WSL desktop or in macOS Space (setup, repair, native check, recording, moving evidence to Mac) follows rules below.
@@ -449,6 +460,7 @@ ffmpeg -hide_banner -loglevel error -i "$QA_ORIGINAL_VIDEO" -map 0:v:0 -c copy -
 - Before TypeScript work read `/Users/ryotamurakami/.claude/rules/ts-rules.md`; for React also `/Users/ryotamurakami/.claude/rules/react-rules.md`.
 - Check for existing utilities, hooks, components, types before adding one. Reusable functions and classes: short purpose, trigger and caller docs with example; workspace symbols as JSDoc links; brief notes on non-obvious branches and loops.
 - DAMP behavior tests, hard-coded expectations, Arrange/Act/Assert, `test`; `toBeVisible` for displayed UI.
+- New fixtures: no secret-named field (`key`, `token`, `secret`, `password`, `auth`) with high-entropy literal value; unavoidable saved-format `key` field uses fixed low-entropy product name already allowlisted in `.gstack/pregate.json` (e.g. `entry-load`).
 
 ## Agent skills
 
