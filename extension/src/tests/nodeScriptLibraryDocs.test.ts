@@ -5,7 +5,7 @@ import { test } from 'node:test'
 
 import {
   LIBRARY_BUILD_FAILED_REASONS,
-  LIBRARY_BUILD_UNSUPPORTED_REASONS,
+  NODE_SCRIPT_LIBRARY_UNSUPPORTED_REASONS,
   LIBRARY_PACK_ERROR_STEPS,
 } from '../constants'
 import { nodeScriptConfigSchema } from '../nodeScriptConfigSchemas'
@@ -77,7 +77,7 @@ test('the library help section states the route, its observation states, refusal
       library.refusals.unsupportedNothingStarted,
       /details\.reason one of ([a-z, -]+):/,
     ),
-    [...LIBRARY_BUILD_UNSUPPORTED_REASONS],
+    [...NODE_SCRIPT_LIBRARY_UNSUPPORTED_REASONS],
   )
   assert.deepEqual(
     listAfter(
@@ -93,7 +93,7 @@ test('the library help section states the route, its observation states, refusal
       codeWhen('LIBRARY_BUILD_UNSUPPORTED'),
       /details\.reason is one of ([a-z, -]+);/,
     ),
-    [...LIBRARY_BUILD_UNSUPPORTED_REASONS],
+    [...NODE_SCRIPT_LIBRARY_UNSUPPORTED_REASONS],
   )
   assert.deepEqual(
     listAfter(
