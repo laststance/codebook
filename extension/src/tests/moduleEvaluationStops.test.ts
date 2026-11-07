@@ -288,6 +288,55 @@ test('a warm-up page pause at a provisional breakpoint is resumed and journaled,
   await prepared
 })
 
+// Value: protects=C95-N1 (Cursor, nextjs-dashboard): the page keeps pausing at a provisional breakpoint in its copies of server components after the window retired that breakpoint, and such a pause is resumed as the window's own hit instead of ending the run before the entry load; fails_when=the late page pause, whose breakpoint id the retirement cleared, ends the run with "Unexpected or additional browser stop invalidated the declared operation"; why_new=only a page pause while the provisional breakpoint was still registered was tested; seam=the harness sends the page's acknowledgement of the provisional breakpoint and a page stopped naming its id after the window closed; no_claim=React's real browser copies and js-debug's binding order (native C95-N1 batch)
+test('a warm-up page pause at a provisional breakpoint the window already retired is resumed and journaled, and the stop still pauses at the entry load', async (context) => {
+  // Arrange: the page acknowledged the provisional breakpoint, and the warm load ends without a server pause, so the window retires it.
+  const harness = await entryRenderHarness(context, {
+    ...SAVED_SESSION,
+    operations: {
+      operations: [],
+      stopOperations: [0],
+      stopParticipants: ['server'],
+      signInPaths: ['/login'],
+    },
+  })
+  const prepared = harness.run.prepare()
+  await waitUntil(
+    () => harness.navigations.length >= 1,
+    'the warm-up navigation started',
+  )
+  const pageIds = harness.acknowledgeOwnedBreakpointsInPage()
+  harness.answerNavigation()
+  await waitUntil(
+    () => journalTypes(harness).includes('preparation.window-closed'),
+    'the window closed and retired its provisional breakpoint',
+  )
+  // Act: the page pauses once more at the retired provisional breakpoint
+  harness.emitStopped({ hitBreakpointIds: pageIds })
+  await waitUntil(
+    () =>
+      journalTypes(harness).includes('breakpoint.preparation-hit-resumed') ||
+      harness.run.view().failures.length > 0,
+    'the late page pause resumed or the run failed',
+  )
+  // Assert
+  assert.deepEqual([...harness.run.view().failures], [])
+  // Act: the entry load reaches the stop
+  await waitUntil(
+    () => harness.navigations.length >= 2,
+    'the entry navigation started',
+  )
+  harness.server!.hit({ route: '/dashboard' })
+  const entryPause = await publishedPause(harness)
+  // Assert
+  assert.equal(entryPause.attribution, 'entry-load')
+  // Cleanup
+  await harness.run.continue('server', entryPause.pause)
+  harness.answerNavigation()
+  harness.setDocumentReadyState('complete')
+  await prepared
+})
+
 // Value: protects=AC 3 (a provisional hit inside a function): a call of the stop's function during Codebook's own request is resumed at once and journaled, nothing is published, and the stop pauses at the entry load as before; fails_when=the call is published as the module evaluation, fails the run, or the stop is lost for the entry load; no_claim=a real render
 test('a call of the stop function during the readiness request is resumed and journaled, and the stop pauses at the entry load', async (context) => {
   // Arrange

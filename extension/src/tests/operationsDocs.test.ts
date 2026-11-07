@@ -321,6 +321,20 @@ test('the frames help tells a chat that a browser stop image the paused page cou
   )
 })
 
+// protects=native C94-L3: the chat learns that a server stop's image can be unavailable in Cursor while the stop keeps its source and values and the run goes on, so it does not tell the learner the run failed; fails_when=the frames help omits the server stop's unavailable image or its reason; no_claim=the behaviour itself (stopImageUnavailable tests)
+test('the frames help tells a chat that a server stop whose page draws no image keeps its values and leaves the run going', async (context) => {
+  // Arrange
+  const help = await readHelp(context)
+  // Act
+  const frames = String(help.operationsSecrets.frames)
+  // Assert
+  assert.ok(
+    frames.includes(
+      'A server stop whose page draws no image within the same bound while the server is paused (seen in Cursor) reads captures[].status failed with the reason "The page drew no image while the server was paused at this stop within 3 s; the stop keeps its source and values, and the run goes on and ends partial." and keeps its source and values the same way.',
+    ),
+  )
+})
+
 // protects=the help and the packaged README tell a chat and a learner that a recorded snapshot skips a function's members and prototype chains and what such an entry reads, so neither presents them as observed; fails_when=the sentence leaves the Secrets and masking help or the README's Codebook · Recorded learning paragraph, or names a different label than the capture saves; no_claim=the capture itself (captureReplayDebugSnapshotInternals.test.ts)
 test('the help and the README say a recorded snapshot does not keep engine internals and what their entries read', async (context) => {
   // Arrange

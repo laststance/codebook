@@ -226,7 +226,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.96'
+export const EXTENSION_VERSION = '0.2.97'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -2498,6 +2498,9 @@ export const VALUE_SHAPE_KEY_LIMIT_CHARS = 40
 export const VALUE_SHAPE_SUMMARY_LIMIT_CHARS = 300
 /** The error a stop's capture reads when the paused page drew no image within {@link CAPTURE_TIMEOUT_MS}: the stop keeps its source and values, and the run goes on and ends partial (native C79-2: a stop that pauses right after the previous stop's continue, in the same render). */
 export const STOP_IMAGE_UNAVAILABLE_TEXT = `The paused page drew no image of this stop within ${CAPTURE_TIMEOUT_MS / 1000} s; the stop keeps its source and values, and the run goes on and ends partial.`
+
+/** The capture state of a server stop whose page drew no image within {@link CAPTURE_TIMEOUT_MS}: the page is not paused then, but Cursor's page has been seen to draw nothing while the server is paused (Cycle 0095, C94-L3). The stop keeps its source and values, and the run goes on and ends partial (decision D3). */
+export const SERVER_STOP_IMAGE_UNAVAILABLE_TEXT = `The page drew no image while the server was paused at this stop within ${CAPTURE_TIMEOUT_MS / 1000} s; the stop keeps its source and values, and the run goes on and ends partial.`
 
 /** The capture state of a pause that happened while Codebook prepared the run, before any page could be drawn (the readiness request, or a warm-up load whose viewport is not attached yet): no image is taken and none is borrowed from a later frame (Cycle 0086, R11). */
 export const STOP_IMAGE_APPLICATION_NOT_YET_AVAILABLE_TEXT =
