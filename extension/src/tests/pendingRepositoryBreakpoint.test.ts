@@ -1013,3 +1013,67 @@ test('the read of a pending breakpoint requested at column 1 refuses a binding w
     'bound as declared',
   ])
 })
+
+// Value: protects=the adapter's place stands in for an editor that answers nothing only under the acknowledged id the run read before it asked the editor; fails_when=a re-registration acknowledged under another id meanwhile lends its place to the old id, so the run binds an id the adapter never reported there; why_new=Cycle 0095 ship review (Codex outside voice and structured review) of the C94-L1 stand-in; seam=none; no_claim=VS Code's own re-registration timing (explicit adapter messages stand in)
+test('the adapter place that stands in at a pause belongs to the acknowledged id the run holds, not to a re-registration acknowledged under another id', async () => {
+  // Arrange: the adapter acknowledged the owned breakpoint as id 8 at its requested place 20:5.
+  const { breakpoint, session, request, response } = await breakpointHarness()
+  breakpoint.onRequest(session, request())
+  breakpoint.onResponse(
+    session,
+    response(1, { id: 8, verified: true, line: 20, column: 5 }),
+  )
+  const placeForFirstId = breakpoint.adapterVerifiedPlace(session, 8)
+  // Act: the editor re-registers the file and the adapter acknowledges the breakpoint as id 9.
+  breakpoint.onRequest(session, request(2))
+  breakpoint.onResponse(
+    session,
+    response(2, { id: 9, verified: true, line: 20, column: 5 }),
+  )
+  // Assert
+  assert.equal(JSON.stringify(placeForFirstId), '{"line":20,"column":5}')
+  assert.equal(breakpoint.adapterVerifiedPlace(session, 8), undefined)
+  assert.equal(
+    JSON.stringify(breakpoint.adapterVerifiedPlace(session, 9)),
+    '{"line":20,"column":5}',
+  )
+})
+
+// Value: protects=a place the adapter withdrew (unverified news, a reloaded script) does not stand in again when the owner's changed rule takes an earlier refused place, only after the adapter's new verified news; fails_when=retakeRefusedPlace clears the withdrawal, so a place the adapter no longer verifies stands in for an editor that answers nothing; why_new=Cycle 0095 ship review (Codex outside voice) of the C94-L1 stand-in; seam=none; no_claim=js-debug's real reload and break-location order (explicit adapter messages stand in)
+test('a place the adapter withdrew stays withdrawn for the pause stand-in when the owner’s changed rule takes a refused place again', async () => {
+  // Arrange: the owner requested 20:5 and accepts line 21; the adapter verified 20:5, then reported 30:1 (refused), then withdrew the breakpoint.
+  let acceptedLine = 21
+  const { breakpoint, session, request, response } = await breakpointHarness(
+    (line) => line === acceptedLine,
+  )
+  breakpoint.onRequest(session, request())
+  breakpoint.onResponse(
+    session,
+    response(1, { id: 8, verified: true, line: 20, column: 5 }),
+  )
+  breakpoint.onEvent(session, {
+    seq: 200,
+    type: 'event',
+    event: 'breakpoint',
+    body: {
+      reason: 'changed',
+      breakpoint: { id: 8, verified: true, line: 30, column: 1 },
+    },
+  })
+  breakpoint.onEvent(session, {
+    seq: 201,
+    type: 'event',
+    event: 'breakpoint',
+    body: { reason: 'changed', breakpoint: { id: 8, verified: false } },
+  })
+  // Act: the owner's rule now accepts line 30, and the run takes the refused place again.
+  acceptedLine = 30
+  const retaken = breakpoint.retakeRefusedPlace(session)
+  // Assert
+  assert.equal(retaken, true)
+  assert.equal(
+    JSON.stringify(breakpoint.verifiedPlace(session)),
+    '{"line":30,"column":1}',
+  )
+  assert.equal(breakpoint.adapterVerifiedPlace(session, 8), undefined)
+})

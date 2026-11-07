@@ -13986,7 +13986,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Why it exists: VS Code 1.145.2 answers `getDebugProtocolBreakpoint` with nothing for a few hundred milliseconds or more right after the first stop that follows a re-registration under a burst of the adapter's `breakpoint` news (Cycle 0095, C94-L1), while the run's own channel already holds the adapter's reply and news for that breakpoint ({@link OwnedRepositoryBreakpoint.adapterVerifiedPlace}).
    * @param stop - The paused server stop.
    * @param breakpointId - The adapter's id of the acknowledged registration.
-   * @returns The binding `{ id, verified: true, line, column }`; `undefined` when the owned breakpoint is no longer in the editor (the learner removed it) or the adapter has no verified place for it (pending, refused, or unverified by later news).
+   * @returns The binding `{ id, verified: true, line, column }`; `undefined` when the owned breakpoint is no longer in the editor (the learner removed it), the adapter has no verified place for it (pending, refused, or unverified by later news), or a re-registration was acknowledged under another id while the editor was asked.
    * @example
    * this.adapterAcknowledgedBinding(stop, 2) // => { id: 2, verified: true, line: 296, column: 22 }
    */
@@ -14002,10 +14002,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       )
     )
       return undefined
+    // The tracker gives a place only while the standing registration is still acknowledged under this id, and takes news only for that id in the owned file, so the place belongs to this id and file.
     const verified = owned.adapterVerifiedPlace(
       this.participants[stop.participant].selected!,
+      breakpointId,
     )
-    // The id is the acknowledged registration's: the tracker starts a new registration on every request and takes news only for that id in the owned file, so the place belongs to this id and file.
     return verified && { id: breakpointId, verified: true, ...verified }
   }
 
