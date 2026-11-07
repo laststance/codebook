@@ -17,11 +17,13 @@ import type { LibraryRunView } from './nodeScriptRuntimeTypes'
 import {
   assertLibraryRouteSupported,
   libraryBuildPath,
+  type LibraryDependencyRelation,
 } from './utils/assertLibraryRouteSupported'
 import { canonicalJson } from './utils/canonicalJson'
 import type { ViteLibraryRunQuestion } from './utils/createViteLibraryRunAsker'
 import { isAtOrInsideFolder } from './utils/isAtOrInsideFolder'
 import { isInsideFolder } from './utils/isInsideFolder'
+import { libraryFactsView } from './utils/libraryFactsView'
 import { removeFolderUnlessCleanupPending } from './utils/removeFolderUnlessCleanupPending'
 import { removeWithoutFollowing } from './utils/removeWithoutFollowing'
 
@@ -63,6 +65,8 @@ export type LibraryRouteInput = {
   appRootRelative: string
   /** Appends to the run's evidence journal. */
   record: (type: string, detail?: unknown) => unknown
+  /** How the Example must depend on the library (API 1.35); `direct` when absent. The react-scripts route passes `direct-or-installed`. */
+  dependencyRelation?: LibraryDependencyRelation
   dependencies: LibraryRouteDependencies
 }
 
@@ -84,6 +88,8 @@ export type PlannedLibrary = {
 /** One script the page's debugger announced as parsed. */
 export type LibraryScript = {
   url: string
+  /** The debugger's id of the script; an attribution that keeps per-script state counts each id once. */
+  scriptId?: string
   /** The `Debugger.scriptParsed` content hash; a bundler that matches a compilation report uses it. */
   hash?: string
   /** Tells whether an origin is the run's own application origin. */
@@ -106,6 +112,8 @@ export type LibraryScriptAttribution = {
   /** `true` when the script came from the run's own origin, i.e. a page actually opened and was observed. */
   pageObserved: boolean
   verdict: LibraryScriptVerdict
+  /** Further verdicts of the same script, for a bundler whose script holds many files (a react-scripts bundle); judged exactly as `verdict` is. */
+  additionalVerdicts?: readonly LibraryScriptVerdict[]
 }
 
 /** What the core lets an attribution look at. */
@@ -136,6 +144,25 @@ export interface LibraryAttribution {
     script: LibraryScript,
     scope: LibraryAttributionScope,
   ): LibraryScriptAttribution
+}
+
+/**
+ * What the run (not the bundler's launcher) needs from a library route, whichever bundler serves the page: {@link ViteLibraryRoute} and the react-scripts route implement it.
+ * Why it exists: {@link ConfiguredBrowserRun} calls the same seams for every bundler; only how a parsed script is attributed differs.
+ */
+export interface LibraryRunRoute {
+  /** The phase the route is in before the server listens, or `undefined` once it is past building. */
+  currentPhase(): LibraryPhase | undefined
+  /** Builds and packs the library (seam 2). */
+  prepare(signal: AbortSignal): Promise<void>
+  /** Judges one script the page parsed (seam 3). */
+  observeParsedScript(script: LibraryScript): void
+  /** Finalizes the observation after the page closed (seam 4). */
+  finalize(isPageClosed: boolean): void | Promise<void>
+  /** Removes the private folder; see {@link LibraryRoute.dispose}. */
+  dispose(options?: { serverStopped?: boolean }): Promise<void>
+  /** The library facts the run resource states. */
+  view(): LibraryRunView
 }
 
 /**
@@ -282,6 +309,7 @@ export class LibraryRoute {
       declaredPackageRoot: input.declared,
       node,
       pathText: libraryBuildPath(node.executable, process.env.PATH ?? ''),
+      dependencyRelation: input.dependencyRelation,
     })
     this.packageName = supported.name
     this.packageManagerName = supported.packageManager.name
@@ -404,7 +432,7 @@ export class LibraryRoute {
           examplePackageRoot: this.input.appRoot,
           privateFolder,
         },
-        { node, signal },
+        { node, signal, dependencyRelation: this.input.dependencyRelation },
       )
       await this.refuseWhenPackedManifestDiffers(core)
       await (this.input.dependencies.writeAnchor ?? writeLibraryAnchor)(core)
@@ -487,13 +515,20 @@ export class LibraryRoute {
       this.observation === 'unreadable'
     )
       return
-    const { pageObserved, verdict } = this.attribution.attribute(script, {
-      packedRoot,
-      privateFolder,
-      packageName,
-      isOtherCopyFile: (realFile) => this.isOtherCopyFile(realFile),
-    })
+    const { pageObserved, verdict, additionalVerdicts } =
+      this.attribution.attribute(script, {
+        packedRoot,
+        privateFolder,
+        packageName,
+        isOtherCopyFile: (realFile) => this.isOtherCopyFile(realFile),
+      })
     if (pageObserved) this.pageObserved = true
+    for (const each of [verdict, ...(additionalVerdicts ?? [])])
+      this.applyVerdict(each)
+  }
+
+  /** Records one verdict: a packed file counts as loaded, the first other copy is kept, an unreadable verdict ends the observation. */
+  private applyVerdict(verdict: LibraryScriptVerdict): void {
     if (verdict.kind === 'packed') this.packedFiles.add(verdict.file)
     // Only the first other copy is kept.
     else if (verdict.kind === 'other-copy')
@@ -591,18 +626,7 @@ export class LibraryRoute {
       package: facts?.package ?? this.displayName(),
       packageRoot: this.input.declared,
       prepared: facts !== undefined,
-      ...(facts
-        ? {
-            version: facts.version,
-            revision: facts.revision,
-            dirty: facts.dirty,
-            packageManager: facts.packageManager,
-            buildMs: facts.buildMs,
-            packMs: facts.packMs,
-            tarballSha256: facts.tarballSha256,
-            installedVersion: facts.installedVersion,
-          }
-        : {}),
+      ...(facts ? libraryFactsView(facts) : {}),
       observation: this.observation,
       ...(this.finalized ? this.observedFacts() : {}),
       ...(this.cleanup ? { cleanup: this.cleanup } : {}),

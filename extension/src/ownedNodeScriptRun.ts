@@ -8,11 +8,7 @@ import {
   REPOSITORY_RUN_TIMEOUT_MS,
 } from './constants'
 import { StudyError } from './errors'
-import {
-  LibraryPackageCancelled,
-  type LibraryPackage,
-  type LibraryPackageFacts,
-} from './libraryPackage'
+import { LibraryPackageCancelled, type LibraryPackage } from './libraryPackage'
 import {
   NodeProcessRun,
   type NodeProcessRunDependencies,
@@ -42,6 +38,7 @@ import {
 } from './utils/describeNodeScriptRefusal'
 import { serverExitedError } from './utils/describeNodeServerRunFailure'
 import type { NodeServerExit } from './utils/launchNodeServer'
+import { libraryFactsView } from './utils/libraryFactsView'
 import type { RepositoryPackageCopy } from './utils/listRepositoryPackageCopies'
 import { createNodeRunHistoryHooks } from './utils/nodeRunHistoryHooks'
 import type { LibraryObservation } from './utils/readLibraryObservation'
@@ -124,31 +121,6 @@ export type NodeScriptRunInput = {
   /** Where an unexpected failure points the chat to reconcile what the script did (the run's history resource). */
   traceUri?: string
   dependencies: NodeScriptRunDependencies
-}
-
-/**
- * Picks the build facts the run resource shows from a built library's facts.
- * @param facts - The facts {@link prepareLibraryPackage} returned.
- * @returns The view fields for a prepared library.
- * @example libraryFactsView(facts).version // => '2.14.0'
- */
-function libraryFactsView(facts: LibraryPackageFacts): Partial<LibraryRunView> {
-  return {
-    version: facts.version,
-    revision: facts.revision,
-    dirty: facts.dirty,
-    packageManager: facts.packageManager,
-    buildMs: facts.buildMs,
-    packMs: facts.packMs,
-    tarballSha256: facts.tarballSha256,
-    installedVersion: facts.installedVersion,
-    ...(facts.reachedThrough === undefined
-      ? {}
-      : {
-          reachedThrough: facts.reachedThrough,
-          reachedThroughCount: facts.reachedThroughCount,
-        }),
-  }
 }
 
 /**

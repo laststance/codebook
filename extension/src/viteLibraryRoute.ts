@@ -11,6 +11,7 @@ import {
   type LibraryPhase,
   type LibraryRouteDependencies,
   type LibraryRouteInput,
+  type LibraryRunRoute,
   type LibraryScript,
   type LibraryScriptAttribution,
 } from './libraryRoute'
@@ -204,7 +205,7 @@ class ViteAttribution implements LibraryAttribution {
  *
  * Why it exists: the redirect itself lives in the launcher ({@link createLibraryRedirectPlugin}); the run needs one narrow place for everything that decides what the run may claim (decision D12). Created by {@link ConfiguredBrowserRun} for a nested version 3 `vite-dev` run that declares `library`; it calls it at four seams: before the server (`plan`), between the facts and the listen (`prepare`), for each script the page parsed (`observeScript`) and at the end (`finalize`, `dispose`).
  */
-export class ViteLibraryRoute {
+export class ViteLibraryRoute implements LibraryRunRoute {
   private readonly core: LibraryRoute
 
   constructor(input: ViteLibraryRouteInput) {
@@ -254,6 +255,11 @@ export class ViteLibraryRoute {
    */
   observeScript(url: string, isOwnedOrigin: (origin: string) => boolean): void {
     this.core.observeScript({ url, isOwnedOrigin })
+  }
+
+  /** Seam 3 for the run, which hands over the whole announced script; see {@link LibraryRoute.observeScript}. @example route.observeParsedScript({ url, isOwnedOrigin }) */
+  observeParsedScript(script: LibraryScript): void {
+    this.core.observeScript(script)
   }
 
   /** Seam 4: finalizes the observation; see {@link LibraryRoute.finalize}. @example route.finalize(true) */

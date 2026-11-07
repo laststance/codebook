@@ -159,6 +159,14 @@ export const REACT_SCRIPTS_LIBRARY_REPORT_LIMIT_BYTES = 32 * 1024 * 1024
 /** The most bytes one line of a react-scripts library run's compilation report may have; the generated preload writes a `truncated` line instead of a longer one, and the reader treats a longer line as `unreadable`. */
 export const REACT_SCRIPTS_LIBRARY_REPORT_LINE_LIMIT_BYTES = 1024 * 1024
 
+/** How long the run waits at its end for a trailing, still unterminated line of a react-scripts library run's compilation report before it judges the scripts it has (Cycle 0097). */
+export const REACT_SCRIPTS_LIBRARY_REPORT_SETTLE_MS = 2000
+
+/** The file names of a react-scripts library run's private folder: the generated preload, the compilation report it appends to, and the folder its caches go to (Cycle 0097). */
+export const REACT_SCRIPTS_LIBRARY_PRELOAD_FILE_NAME = 'preload.cjs'
+export const REACT_SCRIPTS_LIBRARY_REPORT_FILE_NAME = 'report.jsonl'
+export const REACT_SCRIPTS_LIBRARY_CACHE_FOLDER_NAME = 'cache'
+
 /** The most project sources a `STOP_FILE_NOT_LOADED` refusal of a `wxt-build` run lists in `details.contextSources`. */
 export const EXTENSION_CONTEXT_SOURCES_LIMIT = 20
 

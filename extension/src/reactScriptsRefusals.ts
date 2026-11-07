@@ -1,5 +1,6 @@
 import {
   MILLISECONDS_PER_SECOND,
+  REACT_SCRIPTS_COMPILER_LINE_MAX_CHARS,
   REPOSITORY_MAP_LIMIT_BYTES,
   REPOSITORY_MAPPED_POSITION_MAX_GENERATED_LINES,
   REPOSITORY_MAPPED_POSITION_MAX_SCANNED_CHARS,
@@ -205,6 +206,52 @@ export function reactScriptsCompileFailedRefusal(
     `react-scripts failed to compile the app: ${compilerLine}`,
     `Tell the learner the app does not compile, quoting details.compilerLine; never edit the project to make it compile. Start again only after the learner fixes the app.${REACT_SCRIPTS_QUOTE_NOTE} The server Codebook started was stopped. ${recoveryEnd('REACT_SCRIPTS_LAUNCHER_FAILED')}`,
     { reason: 'compile-failed', compilerLine, sideEffects: 'partial' },
+  )
+}
+
+/**
+ * Builds the `LIBRARY_BUILD_UNSUPPORTED` refusal of a `react-scripts-dev` app at the repository root that declares `library`.
+ *
+ * Why it exists: the library route redirects an Example below the repository root, so a root app has nothing to redirect. Called by the configured browser run before the library is planned; nothing was built or started.
+ * @returns The refusal: `details.reason: "library-needs-package-root"` and `sideEffects: "none"`.
+ * @example
+ * reactScriptsLibraryNeedsPackageRootRefusal().details?.reason // => 'library-needs-package-root'
+ */
+export function reactScriptsLibraryNeedsPackageRootRefusal(): StudyError {
+  const message =
+    "configuration.library needs the Example's nested configuration.packageRoot: the library route redirects an Example below the repository root, and this react-scripts app is the repository root. Nothing was built or started."
+  return new StudyError(
+    'LIBRARY_BUILD_UNSUPPORTED',
+    message,
+    message,
+    undefined,
+    undefined,
+    { reason: 'library-needs-package-root', sideEffects: 'none' },
+  )
+}
+
+/**
+ * Builds the `REACT_SCRIPTS_UNSUPPORTED` refusal of a library run whose first compile ended without the preload's applied marker, or with its error line.
+ *
+ * Why it exists: a react-scripts installation that builds its webpack configuration another way ignores the redirect, and the page would then run the installed copy while the run reads complete (decision D13). Called by the configured browser run after the first compile of a `react-scripts-dev` library run.
+ * @param cause - The preload's error message, when it wrote one; cut to the compiler-line bound.
+ * @returns The refusal: `details.reason: "library-redirect-not-applied"`, `cause` (when known) and `sideEffects: "partial"` (the library was built and packed, the owned server is stopped, no browser opened).
+ * @example
+ * reactScriptsLibraryRedirectNotAppliedRefusal('boom').details?.cause // => 'boom'
+ */
+export function reactScriptsLibraryRedirectNotAppliedRefusal(
+  cause?: string,
+): StudyError {
+  const quoted = cause?.slice(0, REACT_SCRIPTS_COMPILER_LINE_MAX_CHARS)
+  return reactScriptsRefusal(
+    'REACT_SCRIPTS_UNSUPPORTED',
+    `The first compile ended without the library redirect applied${quoted === undefined ? '' : ` (${quoted})`}, so the Example would run its installed copy of the library, not the checked-out one. The library was built and packed, the owned server was stopped and no browser was opened.`,
+    `Tell the learner this react-scripts installation cannot take the library route in this version, then start again once without library, saying the Example then runs its installed copy; never retry with library. ${recoveryEnd('REACT_SCRIPTS_UNSUPPORTED')}`,
+    {
+      reason: 'library-redirect-not-applied',
+      ...(quoted === undefined ? {} : { cause: quoted }),
+      sideEffects: 'partial',
+    },
   )
 }
 

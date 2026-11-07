@@ -189,7 +189,13 @@ export async function launchReactScriptsDevelopmentServer(
     false,
     declared.port,
     {
-      arguments: [join(workspace.installationDirectory, 'scripts/start.js')],
+      arguments: [
+        // A library run preloads the generated redirect before react-scripts starts; every other run starts exactly as before.
+        ...(request.reactScriptsLibrary
+          ? ['--require', request.reactScriptsLibrary.preloadPath]
+          : []),
+        join(workspace.installationDirectory, 'scripts/start.js'),
+      ],
       environment: buildReactScriptsEnvironment(
         workspace.assignments,
         declared.port,
