@@ -59,6 +59,7 @@ import {
 import { NEXT_PAGES_STATE_EXPRESSION } from '../../utils/readNextPagesState'
 import { readPagesDevelopmentBundle } from '../../utils/readPagesDevelopmentBundle'
 import * as viteDevAdapter from '../../viteDevAdapter'
+import type { ViteLibraryRouteDependencies } from '../../viteLibraryRoute'
 
 import {
   answerBreakLocationRequest,
@@ -231,6 +232,11 @@ export async function configuredRuntimeHarness(
     ipv6Loopback?: 'owned' | 'absent' | 'held'
     /** Runs the configuration on the Vite adapter: its stand-in starts the stub server, serves the sealed module at its owned address and loads the entry page once. */
     adapter?: 'vite-dev'
+    /** A nested Vite run that declares `library` (API 1.34): the declared folder and the route's seams (confirmation, checks, build, private folder), which a test fakes. The stand-in start then runs the build between the facts and the listen, as the real launcher start does. */
+    libraryRoute?: {
+      declared: string
+      dependencies: ViteLibraryRouteDependencies
+    }
     /** Makes the Vite stand-in refuse to seal with this sentence, as a missing served module does. */
     sealFailure?: string
     /** Makes the stand-in seal (the Vite served-module read, or the Next `.next/dev` read) never finish, as a server that stops answering does while a stop is sealed. */
@@ -531,7 +537,13 @@ export async function configuredRuntimeHarness(
     throw new Error('A nested Next app needs a version 3 configuration')
   const configuration = (
     packageRootDeclared
-      ? { ...unnestedConfiguration, packageRoot: packageRootDeclared }
+      ? {
+          ...unnestedConfiguration,
+          packageRoot: packageRootDeclared,
+          ...(options.libraryRoute
+            ? { library: { packageRoot: options.libraryRoute.declared } }
+            : {}),
+        }
       : unnestedConfiguration
   ) as typeof unnestedConfiguration
   // Each of these changes makes the frozen intent hash stale.
@@ -548,6 +560,7 @@ export async function configuredRuntimeHarness(
     options.initialInputs ||
     options.inspections ||
     options.participant ||
+    options.libraryRoute ||
     options.operations
   )
     reference.configurationHash = sha256(JSON.stringify(configuration))
@@ -713,7 +726,7 @@ export async function configuredRuntimeHarness(
   // What the Vite stand-in received, so a nested Vite run proves the app folder reached the workspace check, the start and the seal.
   const viteRequests: {
     assertedWorkspace: { workspace: string; packageRoot?: string }[]
-    started: { workspace: string; packageRoot?: string }[]
+    started: { workspace: string; packageRoot?: string; library?: unknown }[]
     sealed: { workspace: string; packageRoot?: string; sourcePath: string }[]
   } = { assertedWorkspace: [], started: [], sealed: [] }
   const releases: string[] = [],
@@ -2263,13 +2276,23 @@ export async function configuredRuntimeHarness(
           start: async (request: {
             workspace: string
             vitePackage?: { packageRoot: string }
+            viteLibrary?: unknown
+            prepareLibrary?: () => Promise<void>
             onApp(app: typeof fakeApplication): void
             onStep(step: string): void
           }) => {
             viteRequests.started.push({
               workspace: request.workspace,
               packageRoot: request.vitePackage?.packageRoot,
+              ...(request.viteLibrary === undefined
+                ? {}
+                : { library: request.viteLibrary }),
             })
+            // The real start builds the library between the facts and the listen.
+            if (request.viteLibrary) {
+              request.onApp(fakeApplication)
+              await request.prepareLibrary?.()
+            }
             request.onStep('starting Vite')
             setupSteps.push('starting Vite')
             request.onApp(fakeApplication)
@@ -2417,6 +2440,9 @@ export async function configuredRuntimeHarness(
     assertWorkspace() {},
     savedSession: savedSessionPort,
     onSignInRequired: ({ reason }) => signInNotices.push(reason),
+    ...(options.libraryRoute
+      ? { viteLibrary: options.libraryRoute.dependencies }
+      : {}),
     revealSource: async () => {
       releases.push('captured source')
     },

@@ -4203,6 +4203,9 @@ export class StudyService {
       ...(operationStatus ? { operationStatus } : {}),
       // A server render in progress says what it waits for, and that its first execution was not observed.
       ...(runtime?.renderMessage ? { message: runtime.renderMessage } : {}),
+      ...(runtime?.libraryPhase === 'building' && runtime.library
+        ? { message: `Building ${runtime.library.package} for the Example…` }
+        : {}),
       ...(runtime?.firstExecutionObserved === false
         ? { firstExecutionObserved: false as const }
         : {}),
@@ -4284,6 +4287,9 @@ export class StudyService {
       applicationPortSource: runtime?.applicationPortSource,
       viteVersion: runtime?.viteVersion,
       expoVersion: runtime?.expoVersion,
+      // A Vite library run states the library facts (API 1.34) and, while it waits or builds, its phase.
+      ...(runtime?.library ? { library: runtime.library } : {}),
+      ...(runtime?.libraryPhase ? { libraryPhase: runtime.libraryPhase } : {}),
       nextRoute: runtime?.nextRoute,
       // A Pages run that declares a server stop names its Next version and what became of its hits, and every run that sent Codebook's readiness request records it.
       ...(runtime?.nextVersion ? { nextVersion: runtime.nextVersion } : {}),
