@@ -109,6 +109,11 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 - `/ship` documentation candidate (`gstack-docs-candidate snapshot`) `--docs` roots: AGENTS.md, CHANGELOG.md, PRODUCT_GOAL.md, README.md, `extension/README.md`, `extension/skills/codebook/SKILL.md`, v9 PNG.
 - CI packages via `node extension/scripts/package.mjs --out artifacts/packages/codebook.vsix`, checks via `node extension/scripts/check-package.mjs artifacts/packages/codebook.vsix` (`package.yml`).
 - Release commit: besides version files and CHANGELOG.md, one test line (expected version in `extension/scripts/tests/package.test.mjs`); `/ship` Step 16 counts it as release metadata, not reviewed-tree change. Order: `/ship` Step 12 writes `VERSION` and CHANGELOG heading → `node extension/scripts/bump-version.mjs <VERSION>` writes three three-part places → Step 13 writes entry → `bump-version.mjs --check` exits 0 (`test:package` fails any commit whose five places disagree).
+- Release commit route: `gstack-ship-release finish` reads `extension/package.json`'s version, `EXTENSION_VERSION` and package test's expected version as behavior (ship policy's stamp rules count only stamps of `VERSION`'s four-part width) → Step 16 by hand (Discussion 243):
+  - `git diff <reviewed head> <release commit>` = those three-part strings, `VERSION`, CHANGELOG.md only;
+  - `gstack-pregate --stage preflight --allow-repo-commands` on release head;
+  - exact-HEAD gate on release head (its suite and measured health = Step 16 lanes and release-head health run);
+  - then Step 17.
 
 **Pre-gate:** `/ship` pre-gate = Stage 1 only: `gstack-pregate --stage preflight --allow-repo-commands`, secrets scan every time. Test lanes (Stage 2) = `pnpm --dir extension test` on final tree + required CI.
 
@@ -320,6 +325,7 @@ Formatting: `pnpm --dir extension format` / `format:check` and lint-staged hook 
   - Baselines = current codebase at retake, not one fixed old revision: fix findings above committed baseline in source.
   - Changing pinned producer or one of three settings → retake on current code in separate worktree with new pins, record revision and hashes in reference (`health.test.mjs` pins it), state in PR.
   - Never rename callback or add test only to move its static estimate.
+  - Sharded form (CI): `health --shard i/N --out <dir>` runs share of whole test files (balanced by `test-timings.json`) with `NODE_V8_COVERAGE`, writes renamed dumps + `manifest.json`; `health --merge <dir> [--compare <coverage-final.json>]` builds, refuses unless manifests, exit codes, identity (Node, c8, `.c8rc.json`, `dist`/source hashes, checkout path), every planned file once and every dump (parses, matches SHA-256) check out, then one `c8 report --all` + same Fallow scoring. CI runs only this form (D16: one CI run gave single and merged runs the same Fallow report; two single runs already differ in branch maps, so coverage maps of independent runs never compare equal). `--compare <map>` (with `--keep-coverage` of a single run) stays a diagnostic: identical or covered-or-not equal, else exit 2 naming first difference. Local `pnpm health` stays single run.
   - Per PR: once on integrated tree after review-round fixes, before `/ship` starts (alone on Mac; may overlap Space native checks), and again on release head after version-changing commit.
 - `pnpm --dir extension health:static` (~2 s; in `check` after `lint`, before tests): cyclomatic/cognitive limits of `pnpm health` without coverage, per function (`--baseline-mode identity`), against `fallow-health-baseline.json`. CRAP needs coverage → stays with `pnpm health`.
   - Fixers run it after every change, before full gate.
@@ -344,6 +350,12 @@ Formatting: `pnpm --dir extension format` / `format:check` and lint-staged hook 
 - UI changes: view PNG again; compare real screenshots with its region at normal desktop baseline; record differences and interaction.
 - Motion needs recorded interaction + inspected frames; generated pixels or renderer assertions prove no native behavior.
 - All work on WSL desktop or in macOS Space (setup, repair, native check, recording, moving evidence to Mac) follows rules below.
+
+**Host event traces** (Discussion 183; `extension/src/tests/fixtures/host-traces/`):
+- Record with `tools/host-event-recorder` (private VSIX, QA profiles in Space only, never in Codebook's VSIX): Start, `Codebook Dev: Mark Host Event Recording` before each step (label = step), Stop; takes land in workspace's `.codebook-host-traces/` (recorder writes a `.gitignore` of `*` there; other repositories do not ignore it).
+- Commit only `node extension/scripts/sanitizeHostTrace.mjs <take> <out> --repository <root>` output (exit 0); raw takes stay in private `artifacts/`.
+- Window replay tests (`studyWorkspaceHostTrace*.test.ts`) build start state with harness helpers, assert role-normalized equality at start mark, replay one window; counts hard-coded.
+- Host version change (VS Code or Cursor update) → record takes again for that host, rerun window tests; changed host order = harness or product work, never a weakened test.
 
 **Observing a native check** (Cua Space `local:codebook-qa` or desktop). `computer_screenshot` answers ~600,000 characters; in Cycles 0056 to 0058 screenshots were 85% of all tool output and forced most context compactions → check state with **text** first, spend **pictures** on visual evidence.
 
@@ -455,7 +467,7 @@ ffmpeg -hide_banner -loglevel error -i "$QA_ORIGINAL_VIDEO" -map 0:v:0 -c copy -
 
 ## Working conventions
 
-- Japanese chat; English code, comments, documents (except quoted user requests).
+- Japanese chat with owner only; English code, comments, documents (except quoted user requests). Review tools `/ship` runs (Codex outside voice, `codex review --base`, subagent readers) answer in English with exact markers (`NO FINDINGS`, `[P0]`–`[P3]`, `Recommendation:`): Japanese reply without markers = unverified coverage (Discussion 243).
 - Context7 for third-party library/API docs; Serena symbols for substantial code understanding or refactoring when available.
 - Before TypeScript work read `/Users/ryotamurakami/.claude/rules/ts-rules.md`; for React also `/Users/ryotamurakami/.claude/rules/react-rules.md`.
 - Check for existing utilities, hooks, components, types before adding one. Reusable functions and classes: short purpose, trigger and caller docs with example; workspace symbols as JSDoc links; brief notes on non-obvious branches and loops.

@@ -1,0 +1,32 @@
+{
+  "name": "codebook-host-event-recorder",
+  "displayName": "Codebook Dev: Host Event Recorder",
+  "description": "Development-only recorder of VS Code / Cursor editor-group and tab events, for Codebook's host-order replay fixtures. Never part of the Codebook VSIX.",
+  "version": "0.1.0",
+  "publisher": "laststance-dev",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.120.0"
+  },
+  "activationEvents": [
+    "*"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "codebookHostRecorder.start",
+        "title": "Codebook Dev: Start Host Event Recording"
+      },
+      {
+        "command": "codebookHostRecorder.mark",
+        "title": "Codebook Dev: Mark Host Event Recording"
+      },
+      {
+        "command": "codebookHostRecorder.stop",
+        "title": "Codebook Dev: Stop Host Event Recording"
+      }
+    ]
+  }
+}

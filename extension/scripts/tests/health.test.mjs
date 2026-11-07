@@ -833,3 +833,342 @@ test('a test runner filter in NODE_OPTIONS is refused before the build', async (
   )
   await assert.rejects(stat(join(fixture.root, 'dist')), { code: 'ENOENT' })
 })
+
+// Value: protects=the command line of the sharded measured run: a typo in the shard number or a missing output folder must stop the CI job at once, before a build of several minutes; fails_when=a bad `i/N`, a shard without `--out`, a shard run with a report option, a merge without a folder or a mix of modes starts a build or exits with another code than 2; why_new=Cycle 0094 task 11 (Discussion 185 step 2, eng review R3); seam=the checker's command line in the fixture checkout; no_claim=the sharded run itself (the next tests run it on the fixture)
+test('an invalid shard or merge command line is refused before the build', async (context) => {
+  // Arrange
+  const fixture = await createFixture(context)
+  const commandLines = {
+    zeroShard: ['--shard', '0/3', '--out', 'out'],
+    pastTotal: ['--shard', '4/3', '--out', 'out'],
+    notAFraction: ['--shard', 'two', '--out', 'out'],
+    noFolder: ['--shard', '1/3'],
+    shardWithMerge: ['--shard', '1/3', '--out', 'out', '--merge', 'shards'],
+    shardWithFormat: ['--shard', '1/3', '--out', 'out', '--format', 'json'],
+    outAlone: ['--out', 'out'],
+    missingMergeFolder: ['--merge', 'no-such-folder'],
+    compareAlone: ['--compare', 'single.json'],
+  }
+
+  // Act
+  const results = {}
+  for (const [name, commandLine] of Object.entries(commandLines))
+    results[name] = await runChecker(fixture, commandLine)
+
+  // Assert: every one is a refusal with its own sentence, and nothing was built or written.
+  const refusals = Object.fromEntries(
+    Object.entries(results).map(([name, result]) => [
+      name,
+      [result.code, lineOf(result.stderr, 'Health refused:')],
+    ]),
+  )
+  assert.deepEqual(refusals, {
+    zeroShard: [
+      2,
+      'Health refused: --shard takes i/N with 1 <= i <= N <= 1000, not "0/3".',
+    ],
+    pastTotal: [
+      2,
+      'Health refused: --shard takes i/N with 1 <= i <= N <= 1000, not "4/3".',
+    ],
+    notAFraction: [
+      2,
+      'Health refused: --shard takes i/N with 1 <= i <= N <= 1000, not "two".',
+    ],
+    noFolder: [2, 'Health refused: --shard needs --out <folder>.'],
+    shardWithMerge: [
+      2,
+      'Health refused: --shard and --merge are different modes.',
+    ],
+    shardWithFormat: [2, 'Health refused: --shard takes only --out.'],
+    outAlone: [2, 'Health refused: --out belongs to --shard.'],
+    missingMergeFolder: [
+      2,
+      'Health refused: --merge needs a folder of shard results; no-such-folder is none.',
+    ],
+    compareAlone: [2, 'Health refused: --compare belongs to --merge.'],
+  })
+  await assert.rejects(stat(join(fixture.root, 'dist')), { code: 'ENOENT' })
+  await assert.rejects(stat(join(fixture.root, 'out')), { code: 'ENOENT' })
+})
+
+// Value: protects=the equivalence of the sharded and the single measured run on a small checkout: the merged coverage map is byte for byte the single run's, so the CI merge may replace the single job; fails_when=a shard drops or renames a dump wrongly, the merge pools another set of dumps, or c8 reads the shards' dumps differently from its own run (the two SHA-256 values differ, exit 2); why_new=Cycle 0094 task 11 (eng review R4, R7); seam=the fixture checkout: one single run with --keep-coverage, one shard run with --shard 1/1, one merge with --compare; no_claim=that the real suite's merged map equals its single run (the equivalence run in CI shows that); the fixture's timings file, dumps and tests stand in for the real ones
+test('a merged shard run reports the same coverage map as the single run', async (context) => {
+  // Arrange
+  const fixture = await createFixture(context, {
+    'extension/test-timings.json': JSON.stringify({
+      files: { 'amount.test.js': { totalMs: 5 } },
+    }),
+  })
+  const single = join(fixture.temporary, 'single-coverage.json')
+  const shards = join(fixture.temporary, 'shards')
+
+  // Act
+  const singleRun = await runChecker(fixture, ['--keep-coverage', single])
+  const shardRun = await runChecker(fixture, [
+    '--shard',
+    '1/1',
+    '--out',
+    join(shards, 'health-shard-1'),
+  ])
+  const mergeRun = await runChecker(fixture, [
+    '--merge',
+    shards,
+    '--compare',
+    single,
+  ])
+
+  // Assert: the merge printed one SHA-256 for both maps and scored health as the single run did.
+  assert.equal(singleRun.code, 0, singleRun.stderr)
+  assert.equal(shardRun.code, 0, shardRun.stderr)
+  assert.match(
+    lineOf(shardRun.stderr, 'Shard 1 of 1:'),
+    /^Shard 1 of 1: 2 tests in 1 files; 1 coverage dumps in /,
+  )
+  assert.equal(mergeRun.code, 0, mergeRun.stderr)
+  const hashes =
+    /^Coverage map SHA-256: merged (\w{64}), single run (\w{64})\.$/m.exec(
+      mergeRun.stderr,
+    )
+  assert.ok(hashes, mergeRun.stderr)
+  assert.equal(hashes[1], hashes[2])
+  assert.equal(
+    lineOf(mergeRun.stderr, 'Merged 1 shards:'),
+    'Merged 1 shards: 2 tests in 1 files; 1 passed, 1 skipped, 0 todo. Coverage of 1 source files.',
+  )
+})
+
+// Value: protects=the equivalence run's verdict: a merged map that differs from the single run's must fail the CI job, not pass with a printed hash nobody reads; fails_when=`--compare` against a different coverage file exits 0; why_new=Cycle 0094 task 11 (eng review R7); seam=the fixture checkout: one shard run, one merge against a map that is not its own; no_claim=none
+test('a merge compared with a different coverage map refuses after printing both hashes', async (context) => {
+  // Arrange
+  const fixture = await createFixture(context, {
+    'extension/test-timings.json': JSON.stringify({ files: {} }),
+  })
+  const shards = join(fixture.temporary, 'shards')
+  const other = join(fixture.temporary, 'other-coverage.json')
+  await writeFile(other, '{}')
+  const shardRun = await runChecker(fixture, [
+    '--shard',
+    '1/1',
+    '--out',
+    join(shards, 'health-shard-1'),
+  ])
+
+  // Act
+  const mergeRun = await runChecker(fixture, [
+    '--merge',
+    shards,
+    '--compare',
+    other,
+    '--format',
+    'json',
+  ])
+
+  // Assert
+  assert.equal(shardRun.code, 0, shardRun.stderr)
+  assert.equal(mergeRun.code, 2)
+  assert.match(
+    lineOf(mergeRun.stderr, 'Coverage map SHA-256:'),
+    /^Coverage map SHA-256: merged \w{64}, single run \w{64}\.$/,
+  )
+  assert.match(
+    lineOf(mergeRun.stderr, 'Health refused:'),
+    /^Health refused: The merged coverage map differs from the single run's coverage map: .*amount\.ts: only in the merged map\.$/,
+  ) // Fallow's report was shown before the refusal, so the findings stay readable above it.
+  assert.equal(JSON.parse(mergeRun.stdout).kind, 'health')
+})
+
+/**
+ * Runs the single run and one shard of the fixture, then merges with `--compare` against a copy of the single run's coverage map that `changeMap` rewrites.
+ * @param context - The test context.
+ * @param changeMap - Receives the parsed single-run map and mutates it.
+ * @returns The merge run's `{ code, stdout, stderr }`.
+ * @example
+ * await mergeAgainstChangedMap(context, (map) => {}) // => { code: 0, … }
+ */
+async function mergeAgainstChangedMap(context, changeMap) {
+  const fixture = await createFixture(context, {
+    'extension/test-timings.json': JSON.stringify({ files: {} }),
+  })
+  const single = join(fixture.temporary, 'single-coverage.json')
+  const shards = join(fixture.temporary, 'shards')
+  const singleRun = await runChecker(fixture, ['--keep-coverage', single])
+  const shardRun = await runChecker(fixture, [
+    '--shard',
+    '1/1',
+    '--out',
+    join(shards, 'health-shard-1'),
+  ])
+  assert.equal(singleRun.code, 0, singleRun.stderr)
+  assert.equal(shardRun.code, 0, shardRun.stderr)
+  const map = JSON.parse(await readFile(single, 'utf8'))
+  changeMap(map)
+  await writeFile(single, JSON.stringify(map))
+  return runChecker(fixture, ['--merge', shards, '--compare', single])
+}
+
+// Value: protects=the equivalence run against independent runs: a polling loop executes a different number of times in each run, so the raw maps differ in counts though the same code is covered; fails_when=--compare refuses maps that differ only in execution counts; why_new=Cycle 0094 part 2 /ship outside voice (Issue 241 task 11 fallback criterion); seam=the fixture checkout: merge compared with the single map whose counts were multiplied; no_claim=that the real suite's counts differ (CI shows that)
+test('a merge compared with a map that differs only in execution counts passes as normalized-equal', async (context) => {
+  // Arrange: every statement, function and branch count of the single run's map is multiplied by 7 and raised by 3, except counters that are 0.
+  const scaled = (count) => (count > 0 ? count * 7 + 3 : 0)
+  const changeCounts = (map) => {
+    for (const file of Object.values(map)) {
+      for (const key of Object.keys(file.s)) file.s[key] = scaled(file.s[key])
+      for (const key of Object.keys(file.f)) file.f[key] = scaled(file.f[key])
+      for (const key of Object.keys(file.b))
+        file.b[key] = file.b[key].map(scaled)
+    }
+  }
+
+  // Act
+  const mergeRun = await mergeAgainstChangedMap(context, changeCounts)
+
+  // Assert
+  assert.equal(mergeRun.code, 0, mergeRun.stderr)
+  assert.equal(
+    lineOf(mergeRun.stderr, 'Coverage maps equal:'),
+    'Coverage maps equal: normalized-equal.',
+  )
+})
+
+// Value: protects=the equivalence run against a real coverage gap: a statement that one run covered and the other did not is a different measurement; fails_when=--compare passes maps where one counter is covered in one and not in the other; why_new=Cycle 0094 part 2 /ship outside voice (Issue 241 task 11 fallback criterion); seam=the fixture checkout: merge compared with the single map whose first statement counter was set to 0; no_claim=none
+test('a merge compared with a map where one statement is no longer covered refuses and names the file and counter', async (context) => {
+  // Arrange
+  const uncoverFirstStatement = (map) => {
+    map[Object.keys(map)[0]].s['0'] = 0
+  }
+
+  // Act
+  const mergeRun = await mergeAgainstChangedMap(context, uncoverFirstStatement)
+
+  // Assert
+  assert.equal(mergeRun.code, 2)
+  assert.match(
+    lineOf(mergeRun.stderr, 'Health refused:'),
+    /^Health refused: The merged coverage map differs from the single run's coverage map: .*amount\.ts: s\[0\] is true in the merged map, false in the single run \(covered or not\)\.$/,
+  )
+})
+
+// Value: protects=the CI single run: it passes --keep-coverage a path under a folder that does not exist yet (RUNNER_TEMP/health-single), and a missing folder must not turn every pull request red; fails_when=the copy does not create the destination's folder (ENOENT, exit 2); why_new=Cycle 0094 part 2 review round (Major finding on fallow.yml's keep-coverage path); seam=the fixture checkout: one single run with a destination below two missing folders; no_claim=that the artifact upload finds the file (CI shows that)
+test('a single run keeps its coverage map in a folder that does not exist yet', async (context) => {
+  // Arrange
+  const fixture = await createFixture(context)
+  const kept = join(
+    fixture.temporary,
+    'missing',
+    'health-single',
+    'coverage-final.json',
+  )
+
+  // Act
+  const result = await runChecker(fixture, ['--keep-coverage', kept])
+
+  // Assert
+  assert.equal(result.code, 0, result.stderr)
+  assert.ok((await stat(kept)).size > 0)
+})
+
+// Value: protects=the shard folder against leftovers of another run: a dump or manifest from an earlier shard in the same folder would be pooled by the merge; fails_when=a shard writes into a folder that already holds a file; why_new=Cycle 0094 task 11 (/ship coverage audit); seam=the fixture checkout: one shard run into a folder that holds a file; no_claim=none
+test('a shard run refuses an output folder that is not empty', async (context) => {
+  // Arrange
+  const fixture = await createFixture(context)
+  const out = join(fixture.temporary, 'shard-out')
+  await mkdir(out)
+  await writeFile(join(out, 'left-over.json'), '{}')
+
+  // Act
+  const result = await runChecker(fixture, ['--shard', '1/1', '--out', out])
+
+  // Assert
+  assert.equal(result.code, 2)
+  assert.equal(
+    lineOf(result.stderr, 'Health refused:'),
+    `Health refused: ${out} is not empty; a shard writes into a new folder.`,
+  )
+})
+
+// Value: protects=the shard plan against a CI matrix larger than the suite: a shard with no file would upload an empty result the merge could mistake for a measurement; fails_when=a shard that receives no test file runs and exits 0; why_new=Cycle 0094 task 11 (/ship coverage audit); seam=the fixture checkout with one test file: shard 5 of 5; no_claim=none
+test('a shard that receives no test file refuses to run', async (context) => {
+  // Arrange
+  const fixture = await createFixture(context, {
+    'extension/test-timings.json': JSON.stringify({ files: {} }),
+  })
+  const out = join(fixture.temporary, 'shard-out')
+
+  // Act
+  const result = await runChecker(fixture, ['--shard', '5/5', '--out', out])
+
+  // Assert
+  assert.equal(result.code, 2)
+  assert.equal(
+    lineOf(result.stderr, 'Health refused:'),
+    'Health refused: Shard 5 of 5 has no test file; 1 files cannot fill 5 shards.',
+  )
+})
+
+// Value: protects=the shard result against a failed run: a shard whose test fails measured less than its share and must leave no manifest the merge could accept; fails_when=a shard with a failing test exits 0 or writes manifest.json; why_new=Cycle 0094 task 11 (/ship coverage audit); seam=the fixture checkout: one shard run with a failing test; no_claim=none
+test('a shard whose test fails exits with a refusal and writes no manifest', async (context) => {
+  // Arrange
+  const fixture = await createFixture(context, {
+    'extension/test-timings.json': JSON.stringify({ files: {} }),
+    'extension/src/tests/amount.test.ts': `import assert from 'node:assert/strict'
+import { test } from 'node:test'
+
+import { describeAmount } from '../amount.js'
+
+test('describes a positive amount', () => {
+  assert.equal(describeAmount(3), 'negative')
+})
+`,
+  })
+  const out = join(fixture.temporary, 'shard-out')
+
+  // Act
+  const result = await runChecker(fixture, ['--shard', '1/1', '--out', out])
+
+  // Assert
+  assert.equal(result.code, 2)
+  assert.equal(
+    lineOf(result.stderr, 'Health refused:'),
+    'Health refused: The suite failed (exit 1); a failed run measures no health.',
+  )
+  assert.equal(
+    await stat(join(out, 'manifest.json')).catch((error) => error.code),
+    'ENOENT',
+  )
+})
+
+// Value: protects=the shard result against a source edited while its tests ran: the dumps would mix two sources; fails_when=a shard whose test edits a source file still writes its manifest and exits 0; why_new=Cycle 0094 task 11 (/ship coverage audit; the single run has the same test); seam=the fixture checkout: one shard run whose test appends to a source; no_claim=none
+test('a source edited while a shard runs refuses the mixed evidence and writes no manifest', async (context) => {
+  // Arrange
+  const fixture = await createFixture(context, {
+    'extension/test-timings.json': JSON.stringify({ files: {} }),
+    'extension/src/tests/amount.test.ts': `import assert from 'node:assert/strict'
+import { appendFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { test } from 'node:test'
+
+import { describeAmount } from '../amount.js'
+
+test('describes a positive amount while its source changes', () => {
+  appendFileSync(join(__dirname, '../../src/amount.ts'), '// edited\\n')
+  assert.equal(describeAmount(3), 'positive')
+})
+`,
+  })
+  const out = join(fixture.temporary, 'shard-out')
+
+  // Act
+  const result = await runChecker(fixture, ['--shard', '1/1', '--out', out])
+
+  // Assert
+  assert.equal(result.code, 2)
+  assert.equal(
+    lineOf(result.stderr, 'Health refused:'),
+    'Health refused: The inputs changed while the suite ran, so its coverage would mix two sources: extension/src/amount.ts.',
+  )
+  assert.equal(
+    await stat(join(out, 'manifest.json')).catch((error) => error.code),
+    'ENOENT',
+  )
+})
