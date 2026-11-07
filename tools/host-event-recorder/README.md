@@ -20,7 +20,7 @@ Install the resulting `.vsix` into the QA profiles only (never your daily profil
 
 1. Open the target repository as the workspace folder.
 2. Run `Codebook Dev: Start Host Event Recording` and type the sequence name (for example `arrange-restore`).
-3. Perform the sequence in the editor. A Reload Window is fine: the recorder resumes the open take, writes a `reload` event naming the unrecorded interval, then a fresh snapshot.
+3. Before each step of the sequence, run `Codebook Dev: Mark Host Event Recording` and type the step's label (for example `open-study`, `arrange`). A mark is written as a `mark` event followed by a snapshot, and the replay cuts the take into windows between marks. Perform the step in the editor. A Reload Window is fine: the recorder resumes the open take, writes a `reload` event naming the unrecorded interval, then a fresh snapshot.
 4. Run `Codebook Dev: Stop Host Event Recording`. It waits for pending layout reads and writes a final `tabGroups` and `editorLayout` snapshot.
 
 ## Where takes land

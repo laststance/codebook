@@ -367,6 +367,7 @@ test('the serializer still writes exactly the committed sample trace holding eve
     'selection',
     'editorLayout',
     'reload',
+    'mark',
   ])
   assert.deepEqual(SAMPLE_CONTEXT.workspaceFolders, [
     { scheme: 'file', path: '/work/repo' },
@@ -446,4 +447,35 @@ test('a mark whose take file is missing starts a fresh take and says so', () => 
     notice:
       'The open take file /gone.jsonl is missing; a new take of "arrange" starts.',
   })
+})
+
+// Value: protects=a take's step boundaries: the recorder writing the author's label as a mark event with a snapshot after it, which the replay cuts windows at; fails_when=a mark loses its label, keeps extra fields, or is written without the snapshot that follows every event; why_new=Cycle 0094 task 12 (contract revision R13, recorder marks); seam=createEventWriter; no_claim=that the Mark command's input box reaches the writer (extension.js needs a host)
+test('a mark is written with only its label and a snapshot of the tab groups after it', () => {
+  // Arrange
+  const writer = createEventWriter({ context })
+  const snapshot = { groups: [{ viewColumn: 1, isActive: true, tabs: [] }] }
+
+  // Act
+  const lines = writer
+    .lines(
+      'mark',
+      { label: 'arrange', secret: '/Users/alice' },
+      95_270,
+      snapshot,
+    )
+    .map((line) => JSON.parse(line))
+
+  // Assert
+  assert.deepEqual(lines, [
+    { seq: 1, tMs: 95270, kind: 'mark', data: { label: 'arrange' } },
+    {
+      seq: 2,
+      tMs: 95270,
+      kind: 'tabGroups',
+      data: {
+        groups: [{ viewColumn: 1, isActive: true, tabs: [] }],
+        activeGroupIndex: 0,
+      },
+    },
+  ])
 })

@@ -20,6 +20,10 @@
         "title": "Codebook Dev: Start Host Event Recording"
       },
       {
+        "command": "codebookHostRecorder.mark",
+        "title": "Codebook Dev: Mark Host Event Recording"
+      },
+      {
         "command": "codebookHostRecorder.stop",
         "title": "Codebook Dev: Stop Host Event Recording"
       }

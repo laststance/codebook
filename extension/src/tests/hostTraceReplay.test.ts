@@ -7,9 +7,12 @@ import { workspaceHarness } from './studyWorkspaceHarness'
 import {
   findCoveringRun,
   HostOrderInterposer,
+  hostTraceWindow,
   HostTraceError,
   layoutProportions,
   parseHostTrace,
+  roleNormalize,
+  startSnapshot,
   type HostOrderFake,
   type ModelEvent,
   type TabGroupsSnapshot,
@@ -669,4 +672,315 @@ test('listener calls made while the replay is bypassed reach the workspace at on
   assert.deepEqual(heardBeforeAnyBurstEnded, ['tab event'])
   assert.equal(result.unmatchedModelBursts, 0)
   assert.equal(result.unreachedTraceBursts, 0)
+})
+
+/** A trace of one window: a mark `step` after a first event, one event inside the window, a layout after it, and a second mark `end`, then one event after the window. */
+function windowedTraceText(): string {
+  const before = COLUMN_ONE_ACTIVE(['a.ts'], 'a.ts')
+  return traceText([
+    snapshotEvent(1, 0, before),
+    tabsChangedEvent(2, 5, 'a.ts'),
+    snapshotEvent(3, 5, before),
+    { seq: 4, tMs: 10, kind: 'editorLayout', data: { orientation: 0 } },
+    { seq: 5, tMs: 900, kind: 'mark', data: { label: 'step' } },
+    snapshotEvent(6, 900, COLUMN_ONE_ACTIVE(['a.ts', 'b.ts'], 'a.ts')),
+    tabsChangedEvent(7, 910, 'b.ts'),
+    snapshotEvent(8, 910, COLUMN_ONE_ACTIVE(['a.ts', 'b.ts'], 'b.ts')),
+    { seq: 9, tMs: 915, kind: 'editorLayout', data: { orientation: 1 } },
+    { seq: 10, tMs: 2000, kind: 'mark', data: { label: 'end' } },
+    snapshotEvent(11, 2000, COLUMN_ONE_ACTIVE(['a.ts', 'b.ts'], 'b.ts')),
+    tabsChangedEvent(12, 2010, 'a.ts'),
+    snapshotEvent(13, 2010, COLUMN_ONE_ACTIVE(['a.ts', 'b.ts'], 'a.ts')),
+  ])
+}
+
+// Value: protects=a replay of one step of a take: only the events between two marks are replayed, from the state recorded at the first mark to the state recorded at the second; fails_when=events before the start mark or after the end mark enter the window, or the window's start or end state is read from the wrong snapshot or layout; why_new=Cycle 0094 task 12 (R13 windowed replay); seam=parseHostTrace marks, hostTraceWindow, startSnapshot; no_claim=what the fake does inside the window
+test('a window between two marks holds only the events between them with the start and end state recorded at the marks', () => {
+  // Arrange
+  const trace = parseHostTrace(windowedTraceText())
+
+  // Act
+  const window = hostTraceWindow(trace, 'step', 'end')
+
+  // Assert
+  assert.deepEqual(
+    window.trace.segments[0]!.events.map((event) => event.seq),
+    [7],
+  )
+  assert.deepEqual(
+    startSnapshot(window).snapshot.groups[0]!.tabs.map((tab) => tab.label),
+    ['a.ts', 'b.ts'],
+  )
+  assert.deepEqual(startSnapshot(window).layout, { orientation: 0 })
+  assert.deepEqual(window.trace.finalLayout, { orientation: 1 })
+  assert.equal(window.trace.finalSnapshot?.groups[0]?.tabs[1]?.isActive, true)
+})
+
+// Value: protects=a window that runs to the take's end (the last step has no closing mark); fails_when=the window stops early or its end state is not the take's final one; why_new=Cycle 0094 task 12 (R13); seam=hostTraceWindow without an end label; no_claim=none
+test('a window without an end mark runs to the take end and ends in the take final state', () => {
+  // Arrange
+  const trace = parseHostTrace(windowedTraceText())
+
+  // Act
+  const window = hostTraceWindow(trace, 'end')
+
+  // Assert
+  assert.deepEqual(
+    window.trace.segments[0]!.events.map((event) => event.seq),
+    [12],
+  )
+  assert.equal(window.trace.finalSnapshot?.groups[0]?.tabs[0]?.isActive, true)
+})
+
+// Value: protects=a test failing loudly when its mark is not in the take instead of replaying an empty window; fails_when=an unknown label or an end before the start returns a window; why_new=Cycle 0094 task 12 (R13); seam=hostTraceWindow; no_claim=none
+test('a window naming a mark the take does not have is refused as trace-window-invalid', () => {
+  // Arrange
+  const trace = parseHostTrace(windowedTraceText())
+
+  // Act
+  const unknownStart = (): unknown => hostTraceWindow(trace, 'missing')
+  const endBeforeStart = (): unknown => hostTraceWindow(trace, 'end', 'step')
+
+  // Assert
+  for (const refuse of [unknownStart, endBeforeStart])
+    assert.throws(refuse, (error) => {
+      assert.ok(error instanceof HostTraceError)
+      assert.equal(error.code, 'trace-window-invalid')
+      return true
+    })
+})
+
+// Value: protects=the comparison of a native take with the harness despite their labels: Codebook's panes, the captured source and the chat group by role, learner tabs by label, fixture-only tabs dropped by name, layout per role; fails_when=a chat group's conversation count, a captured file name or a listed fixture tab makes two equal states differ, or a role is mislabelled; why_new=Cycle 0094 task 12 (R13 role normalization); seam=roleNormalize; no_claim=that a state differing in a learner's tab label compares equal (it must not)
+test('a state is compared by roles: panes, captured source and chat group by what they are, learner tabs by label, listed fixture tabs dropped', () => {
+  // Arrange
+  const webview = (viewType: string, label: string, isActive: boolean) => ({
+    label,
+    input: { kind: 'webview' as const, viewType },
+    isActive,
+    isPreview: false,
+  })
+  const learnerTab = (label: string) => ({
+    label,
+    input: { kind: 'text' as const },
+    isActive: false,
+    isPreview: false,
+  })
+  const state = {
+    snapshot: {
+      groups: [
+        {
+          viewColumn: 1,
+          isActive: false,
+          tabs: [
+            learnerTab('article-source.ts'),
+            learnerTab('data.ts'),
+            webview(
+              'mainThreadWebview-codebook.scopedBrowser',
+              'codebook · Application',
+              true,
+            ),
+          ],
+        },
+        {
+          viewColumn: 2,
+          isActive: true,
+          tabs: [
+            {
+              label: 'Captured-theme.ts',
+              input: {
+                kind: 'text' as const,
+                uri: 'codebook-source:Captured-theme.ts',
+              },
+              isActive: true,
+              isPreview: false,
+            },
+          ],
+        },
+        {
+          viewColumn: 3,
+          isActive: false,
+          tabs: [
+            {
+              label: 'Fix login',
+              input: { kind: 'unknown' as const },
+              isActive: true,
+              isPreview: false,
+            },
+            {
+              label: 'Plan billing',
+              input: { kind: 'unknown' as const },
+              isActive: false,
+              isPreview: false,
+            },
+          ],
+        },
+      ],
+      activeGroupIndex: 1,
+    },
+    layout: { orientation: 0, groups: [{ size: 1 }, { size: 3 }] },
+  }
+
+  // Act
+  const normalized = roleNormalize(state, {
+    dropTabLabels: ['article-source.ts'],
+  })
+
+  // Assert
+  assert.deepEqual(normalized, {
+    groups: [
+      {
+        tabs: ['text:data.ts', 'application'],
+        frontTab: 'application',
+        isActive: false,
+      },
+      {
+        tabs: ['captured-source'],
+        frontTab: 'captured-source',
+        isActive: true,
+      },
+      { tabs: ['chat'], frontTab: 'chat', isActive: false },
+    ],
+    layout: {
+      orientation: 0,
+      groups: [
+        { share: 0.25, role: 'application' },
+        { share: 0.75, role: 'captured-source' },
+      ],
+    },
+  })
+})
+
+// Value: protects=the host's order of events relative to the command that caused them: a window replay delivers a matched burst before the awaited operation answers, as the native host reports events before the command result; fails_when=the listener hears the burst only after the operation's promise resolved (the guard that reads the groups right after the command then sees a state no event described); why_new=Cycle 0094 task 12 (R13 delivery before the operation's result); seam=HostOrderInterposer with-operation delivery; no_claim=gap timing inside a run
+test('a window replay delivers the matched burst before the awaited operation resolves', async () => {
+  // Arrange
+  const trace = parseHostTrace(
+    traceText([
+      tabsChangedEvent(1, 0, 'a.ts'),
+      snapshotEvent(2, 1, COLUMN_ONE_ACTIVE(['a.ts'], 'a.ts')),
+    ]),
+  )
+  const groups: StubGroup[] = [{ viewColumn: 1, tabs: [{ label: 'a.ts' }] }]
+  const interposer = new HostOrderInterposer(
+    trace,
+    stubFake(groups),
+    'with-operation',
+  )
+  const order: string[] = []
+  const listener = interposer.wrap('tabsChanged', (_event: unknown) =>
+    order.push('listener heard the tab change'),
+  )
+  /** The fake operation: changes the model, tells its listeners synchronously, then answers. */
+  async function fakeCommand(): Promise<void> {
+    listener({ opened: [], closed: [], changed: [groups[0]!.tabs[0]!] })
+  }
+
+  // Act
+  await fakeCommand()
+  order.push('caller continued after the command')
+
+  // Assert
+  assert.deepEqual(order, [
+    'listener heard the tab change',
+    'caller continued after the command',
+  ])
+})
+
+// Value: protects=the default delivery staying after the operation (the hand-written order scenarios keep their verdicts); fails_when=the default mode delivers before the operation answers; why_new=Cycle 0094 task 12 (R13: the new mode is opt-in); seam=HostOrderInterposer default delivery; no_claim=none
+test('the default replay still delivers a matched burst only after the operation resolved', async () => {
+  // Arrange
+  const trace = parseHostTrace(
+    traceText([
+      tabsChangedEvent(1, 0, 'a.ts'),
+      snapshotEvent(2, 1, COLUMN_ONE_ACTIVE(['a.ts'], 'a.ts')),
+    ]),
+  )
+  const groups: StubGroup[] = [{ viewColumn: 1, tabs: [{ label: 'a.ts' }] }]
+  const interposer = new HostOrderInterposer(trace, stubFake(groups))
+  const order: string[] = []
+  const listener = interposer.wrap('tabsChanged', (_event: unknown) =>
+    order.push('listener heard the tab change'),
+  )
+  async function fakeCommand(): Promise<void> {
+    listener({ opened: [], closed: [], changed: [groups[0]!.tabs[0]!] })
+  }
+
+  // Act
+  await fakeCommand()
+  order.push('caller continued after the command')
+  await interposer.settled()
+
+  // Assert
+  assert.deepEqual(order, [
+    'caller continued after the command',
+    'listener heard the tab change',
+  ])
+})
+
+// Value: protects=events of the window that the fake never produced: they still reach the workspace, after the last burst and at their recorded offsets, and stay counted as unreached; fails_when=a trailing event is not delivered, is delivered before the burst, or is dropped from the unreached count; why_new=Cycle 0094 task 12 (R13 unsolicited events); seam=HostOrderInterposer.deliverTrailing, result; no_claim=the 2 s cap's exact wait
+test('events no model burst reached are delivered after the last burst and still counted as unreached', async () => {
+  // Arrange
+  const trace = parseHostTrace(
+    traceText([
+      tabsChangedEvent(1, 0, 'a.ts'),
+      snapshotEvent(2, 1, COLUMN_ONE_ACTIVE(['a.ts'], 'a.ts')),
+      {
+        seq: 3,
+        tMs: 30,
+        kind: 'groupsChanged',
+        data: { opened: [], closed: [], changed: [{ groupIndex: 0 }] },
+      },
+      snapshotEvent(4, 31, COLUMN_ONE_ACTIVE(['a.ts'], 'a.ts')),
+    ]),
+  )
+  const groups: StubGroup[] = [{ viewColumn: 1, tabs: [{ label: 'a.ts' }] }]
+  const interposer = new HostOrderInterposer(
+    trace,
+    stubFake(groups),
+    'with-operation',
+  )
+  const heard: string[] = []
+  const onTabs = interposer.wrap('tabsChanged', (_event: unknown) =>
+    heard.push('tabs'),
+  )
+  interposer.wrap('groupsChanged', (_event: unknown) => heard.push('groups'))
+
+  // Act
+  onTabs({ opened: [], closed: [], changed: [groups[0]!.tabs[0]!] })
+  await interposer.deliverTrailing()
+  const result = interposer.result()
+
+  // Assert
+  assert.deepEqual(heard, ['tabs', 'groups'])
+  assert.equal(result.unmatchedModelBursts, 0)
+  assert.equal(result.unreachedTraceBursts, 1)
+})
+
+// Value: protects=the fake's layout following what the host settled on after an event (a host resizes groups as it activates them, which the fake does not derive); fails_when=the recorded layout after a delivered event is not applied to the fake; why_new=Cycle 0094 task 12 (R13: Cursor's resize on the Arrange window); seam=HostOrderFake.applyLayout, HostOrderInterposer.deliverTrailing; no_claim=that the fake would produce the layout itself
+test('the fake layout follows the layout the host recorded after a delivered event', async () => {
+  // Arrange
+  const trace = parseHostTrace(windowedTraceText())
+  const window = hostTraceWindow(trace, 'step', 'end')
+  const groups: StubGroup[] = [
+    { viewColumn: 1, tabs: [{ label: 'a.ts' }, { label: 'b.ts' }] },
+  ]
+  let layout: unknown = { orientation: 0 }
+  const fake = {
+    ...stubFake(groups),
+    editorLayout: () => layout,
+    applyLayout: (recorded: unknown): void => {
+      layout = recorded
+    },
+  }
+  const interposer = new HostOrderInterposer(
+    window.trace,
+    fake,
+    'with-operation',
+  )
+  interposer.wrap('tabsChanged', (_event: unknown) => undefined)
+
+  // Act
+  await interposer.deliverTrailing()
+
+  // Assert
+  assert.deepEqual(layout, { orientation: 1 })
 })

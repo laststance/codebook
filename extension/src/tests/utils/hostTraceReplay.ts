@@ -26,11 +26,13 @@ export type HostListenerKind = (typeof HOST_TRACE_LISTENER_KINDS)[number]
 const SNAPSHOT_KIND = 'tabGroups'
 const LAYOUT_KIND = 'editorLayout'
 const RELOAD_KIND = 'reload'
+const MARK_KIND = 'mark'
 const KNOWN_TRACE_KINDS: readonly string[] = [
   ...HOST_TRACE_LISTENER_KINDS,
   SNAPSHOT_KIND,
   LAYOUT_KIND,
   RELOAD_KIND,
+  MARK_KIND,
 ]
 const HEADER_FIELDS = [
   'host',
@@ -98,6 +100,8 @@ export interface HostTraceEvent {
   kindOnly: boolean
   /** The `tabGroups` snapshot that follows the event in the stream: the state recorded with it. */
   snapshot?: TabGroupsSnapshot
+  /** The last `editorLayout` the host answered after this event and before the next listener event: the layout it had settled on (a host resizes groups as it activates them, which the fake does not derive). */
+  layout?: unknown
 }
 
 /** The events between two reloads (or the whole trace when none). */
@@ -109,10 +113,27 @@ export interface HostTraceSegment {
   reload?: { unrecordedFromMs: number; unrecordedToMs: number }
 }
 
+/** A step boundary the take's author typed (the recorder's Mark command): where a window of the take starts or ends. */
+export interface HostTraceMark {
+  label: string
+  seq: number
+  tMs: number
+  /** The segment the mark stands in. */
+  segmentIndex: number
+  /** How many of the segment's listener events came before the mark: the first event after it is `events[eventCount]`. */
+  eventCount: number
+  /** The `tabGroups` snapshot recorded with the mark: the state the step starts from. */
+  snapshot?: TabGroupsSnapshot
+  /** The last `editorLayout` recorded before the mark. */
+  layout?: unknown
+}
+
 /** A validated trace. */
 export interface ParsedHostTrace {
   header: HostTraceHeader
   segments: HostTraceSegment[]
+  /** The marks of the take, in order. */
+  marks: HostTraceMark[]
   /** The file's last `tabGroups` snapshot and `editorLayout`: what a replay's final fake state must equal. */
   finalSnapshot?: TabGroupsSnapshot
   finalLayout?: unknown
@@ -126,7 +147,8 @@ export class HostTraceError extends Error {
       | 'trace-malformed'
       | 'trace-unknown-kind'
       | 'trace-seq-not-increasing'
-      | 'trace-mapping-failed',
+      | 'trace-mapping-failed'
+      | 'trace-window-invalid',
     message: string,
   ) {
     super(`${code}: ${message}`)
@@ -326,6 +348,9 @@ export function parseHostTrace(text: string): ParsedHostTrace {
     previousSeq = event.seq
   }
   const segments: HostTraceSegment[] = [{ events: [] }]
+  const marks: HostTraceMark[] = []
+  // The mark whose snapshot line has not come yet.
+  let openMark: HostTraceMark | undefined
   let lastSnapshot: TabGroupsSnapshot | undefined
   let finalLayout: unknown
   let finalSnapshot: TabGroupsSnapshot | undefined
@@ -335,14 +360,35 @@ export function parseHostTrace(text: string): ParsedHostTrace {
       lastSnapshot = toSnapshot(event.data, event.seq)
       finalSnapshot = lastSnapshot
       segment.endSnapshot = lastSnapshot
+      // The snapshot after a mark is the state its step starts from.
+      if (openMark) {
+        openMark.snapshot = lastSnapshot
+        openMark = undefined
+        return
+      }
       // The snapshot after an event is the state recorded with it.
       const pending = segment.events.at(-1)
       if (pending && pending.snapshot === undefined)
         attachSnapshot(pending, lastSnapshot)
       return
     }
+    if (event.kind === MARK_KIND) {
+      openMark = {
+        label: String(isRecord(event.data) ? event.data.label : ''),
+        seq: event.seq,
+        tMs: event.tMs,
+        segmentIndex: segments.length - 1,
+        eventCount: segment.events.length,
+        layout: finalLayout,
+      }
+      marks.push(openMark)
+      return
+    }
     if (event.kind === LAYOUT_KIND) {
       finalLayout = event.data
+      // The layout belongs to the listener event before it; a later read replaces an earlier one of the same event.
+      const owner = segment.events.at(-1)
+      if (owner) owner.layout = event.data
       return
     }
     if (event.kind === RELOAD_KIND) {
@@ -377,6 +423,7 @@ export function parseHostTrace(text: string): ParsedHostTrace {
   return {
     header: { ...fields } as HostTraceHeader,
     segments,
+    marks,
     finalSnapshot,
     finalLayout,
   }
@@ -540,6 +587,10 @@ export interface HostOrderFake<
   selectionChange(editor: Editor): unknown
   /** The fake's editor layout as the host's `vscode.getEditorLayout` answers it. */
   editorLayout(): unknown
+  /** Makes the fake's editor layout the one the host recorded after an event; a replay calls it while it delivers the event. Optional: a fake without it keeps the layout its own operations produced. */
+  applyLayout?(layout: unknown): void
+  /** The fake's tab groups in the shape of a recorded `tabGroups` snapshot (tab URI as `<scheme>:<file name>` for a virtual document, else the file name; webview `viewType` as the host reports it). Needed only by a window replay's role-normalized comparison ({@link HostOrderInterposer.roleNormalizedState}). */
+  snapshot?(): TabGroupsSnapshot
 }
 
 /** One tab or group listener call of the fake, before the replay lets it reach the workspace. */
@@ -660,6 +711,204 @@ export interface HostOrderReplayResult {
   unreachedTraceBursts: number
 }
 
+/** One window of a take: the events between two of its marks, replayed on a state built to equal the start. */
+export interface HostTraceWindow {
+  startLabel: string
+  /** The mark that ends the window; `undefined` when it runs to the take's end. */
+  endLabel: string | undefined
+  /** The window as a trace of its own (one segment holding only the window's events, the end state as its final state), so the interposer's counts and final comparison apply to the window. */
+  trace: ParsedHostTrace
+  /** The state the window starts from. */
+  start: HostStateRecord
+}
+
+/** A recorded state: the `tabGroups` snapshot and the editor layout that go with it. */
+export interface HostStateRecord {
+  snapshot: TabGroupsSnapshot
+  layout: unknown
+}
+
+/**
+ * Cuts the window between two marks of a take (contract revision R13).
+ *
+ * Called by a window replay test before it builds the fake host: the window's start state is what the test must rebuild with harness helpers, its events are what the interposer then replays, and events outside it are never delivered.
+ * @param trace - The parsed take.
+ * @param startLabel - The label of the mark the window starts at (the first mark of that name).
+ * @param endLabel - The label of the mark that ends it (the first mark of that name after the start); omitted for a window that runs to the take's end.
+ * @returns The window.
+ * @throws {@link HostTraceError} `trace-window-invalid` for a label no mark has, an end before the start, marks in different segments (a Reload Window between them) or a start mark without its snapshot.
+ * @example
+ * const window = hostTraceWindow(trace, 'arrange')
+ * window.trace.segments[0]!.events.length // => the events after the arrange mark
+ */
+export function hostTraceWindow(
+  trace: ParsedHostTrace,
+  startLabel: string,
+  endLabel?: string,
+): HostTraceWindow {
+  const invalid = (reason: string): never => {
+    throw new HostTraceError('trace-window-invalid', reason)
+  }
+  const startIndex = trace.marks.findIndex((mark) => mark.label === startLabel)
+  const start = trace.marks[startIndex]
+  if (!start) return invalid(`the take has no mark "${startLabel}"`)
+  if (!start.snapshot)
+    return invalid(`mark "${startLabel}" has no snapshot after it`)
+  const end =
+    endLabel === undefined
+      ? undefined
+      : trace.marks
+          .slice(startIndex + 1)
+          .find((mark) => mark.label === endLabel)
+  if (endLabel !== undefined && !end)
+    return invalid(`the take has no mark "${endLabel}" after "${startLabel}"`)
+  if (end && end.segmentIndex !== start.segmentIndex)
+    return invalid(
+      `"${startLabel}" and "${endLabel}" stand in different segments`,
+    )
+  const segment = trace.segments[start.segmentIndex]!
+  const events = segment.events.slice(
+    start.eventCount,
+    end ? end.eventCount : undefined,
+  )
+  const endSnapshot = end ? end.snapshot : trace.finalSnapshot
+  return {
+    startLabel,
+    endLabel,
+    start: { snapshot: start.snapshot, layout: start.layout },
+    trace: {
+      header: trace.header,
+      segments: [{ events, endSnapshot }],
+      marks: [],
+      finalSnapshot: endSnapshot,
+      finalLayout: end ? end.layout : trace.finalLayout,
+    },
+  }
+}
+
+/**
+ * The recorded state a window starts from.
+ * @param window - A window of {@link hostTraceWindow}.
+ * @returns The snapshot and layout at its start mark, for {@link roleNormalize}.
+ * @example roleNormalize(startSnapshot(window), { dropTabLabels: ['article-source.ts'] })
+ */
+export function startSnapshot(window: HostTraceWindow): HostStateRecord {
+  return window.start
+}
+
+/** Which tabs a role normalization leaves out: fixture-only extras the harness adds that the native take did not have, named per test so nothing is dropped silently. */
+export interface RoleNormalizeOptions {
+  /** Labels of tabs dropped from the state before comparing (both sides get the same list). */
+  dropTabLabels?: readonly string[]
+}
+
+/** One group of a role-normalized state. */
+export interface RoleNormalizedGroup {
+  /** The group's tabs in order, as roles. */
+  tabs: string[]
+  /** The role of the tab in front, or `undefined` for an empty group. */
+  frontTab: string | undefined
+  isActive: boolean
+}
+
+/** A layout node whose leaves carry the role of the group they hold. */
+export type RoleLayoutNode =
+  { share: number; role: string } | { share: number; groups: RoleLayoutNode[] }
+
+/** A recorded or fake state with groups and tabs named by what they are, not by the label or URI of this machine: comparable across a native take and the harness. */
+export interface RoleNormalizedState {
+  /** The groups in column order. */
+  groups: RoleNormalizedGroup[]
+  /** The main editor grid's proportions (rounded to 0.01) with the role of each leaf; the chat group stands outside the grid. */
+  layout: { orientation: number; groups: RoleLayoutNode[] } | undefined
+}
+
+/** Strips the prefix an editor puts on its webview types. */
+const MAIN_THREAD_WEBVIEW_PREFIX = 'mainThreadWebview-'
+
+/** Says whether a group is the Agent chat's: it holds tabs, and none of them has an input kind the extension API names. */
+function isChatGroup(group: TraceGroup): boolean {
+  return (
+    group.tabs.length > 0 &&
+    group.tabs.every((tab) => tab.input.kind === 'unknown')
+  )
+}
+
+/** Names a tab's role: Codebook's panes and captured source by what they are, the chat's tabs as `chat`, any other tab by input kind and label. */
+function tabRole(group: TraceGroup, tab: TraceTab): string {
+  if (isChatGroup(group)) return 'chat'
+  const { kind, uri, viewType } = tab.input
+  const view = viewType?.replace(MAIN_THREAD_WEBVIEW_PREFIX, '')
+  if (kind === 'webview' && view === 'codebook.scopedBrowser')
+    return 'application'
+  if (kind === 'webview' && view === 'codebook.studyContext') return 'study'
+  if (kind === 'text' && uri?.startsWith('codebook-source:'))
+    return 'captured-source'
+  return `${kind}:${tab.label}`
+}
+
+/** The role that names a group in the layout: the first Codebook role of its tabs, else `learner` (or `empty`). */
+function groupRole(tabRoles: string[]): string {
+  const codebookRole = ['application', 'study', 'captured-source'].find(
+    (role) => tabRoles.includes(role),
+  )
+  if (codebookRole) return codebookRole
+  return tabRoles.length > 0 ? 'learner' : 'empty'
+}
+
+/**
+ * Maps a recorded or fake state to roles so a native take and the harness compare despite their labels, file names and extra fixture tabs.
+ *
+ * Tabs become `application` (the scoped-browser webview), `study` (the study-context webview), `captured-source` (a `codebook-source:` document), `chat` (every tab of a group whose tabs are all of unknown input kind, the Cursor Agent group) or `<kind>:<label>` for a learner's tabs. Layout proportions are rounded to 0.01 and each leaf of the main grid carries its group's role; the chat group is outside the grid.
+ * @param state - A snapshot and the layout recorded with it, or the fake's.
+ * @param options - Tabs the fixture adds that the take lacks, dropped from the state.
+ * @returns The role-normalized state, groups in column order.
+ * @example
+ * roleNormalize({ snapshot, layout }, { dropTabLabels: ['article-source.ts'] }).groups[0]!.tabs // => ['text:data.ts', 'application']
+ */
+export function roleNormalize(
+  state: HostStateRecord,
+  options: RoleNormalizeOptions = {},
+): RoleNormalizedState {
+  const dropped = new Set(options.dropTabLabels ?? [])
+  const ordered = [...state.snapshot.groups].sort(
+    (a, b) => a.viewColumn - b.viewColumn,
+  )
+  const gridRoles: string[] = []
+  const groups = ordered.map((group): RoleNormalizedGroup => {
+    const kept = group.tabs.filter((tab) => !dropped.has(tab.label))
+    // How many Agent conversations the chat group lists is no layout fact: its tabs collapse to one `chat`.
+    const tabs = isChatGroup(group)
+      ? ['chat']
+      : kept.map((tab) => tabRole(group, tab))
+    const front = kept.find((tab) => tab.isActive)
+    // The chat group stands outside the main editor grid.
+    if (!isChatGroup(group)) gridRoles.push(groupRole(tabs))
+    return {
+      tabs,
+      frontTab: front ? tabRole(group, front) : undefined,
+      isActive: group.isActive,
+    }
+  })
+  const proportions = layoutProportions(state.layout)
+  let leaf = 0
+  const withRoles = (nodes: LayoutProportions['groups']): RoleLayoutNode[] =>
+    nodes.map((node) =>
+      node.groups
+        ? { share: node.share, groups: withRoles(node.groups) }
+        : { share: node.share, role: gridRoles[leaf++] ?? 'unknown' },
+    )
+  return {
+    groups,
+    layout: proportions
+      ? {
+          orientation: proportions.orientation,
+          groups: withRoles(proportions.groups),
+        }
+      : undefined,
+  }
+}
+
 /**
  * Sits between the fake host and the workspace's listeners and delivers the trace's order and gaps (contract rules 1 to 5).
  *
@@ -699,9 +948,16 @@ export class HostOrderInterposer<
   private readonly seenTabs: { column?: number; tab: Tab }[] = []
   private readonly seenGroups = new Map<number, Group>()
 
+  /**
+   * @param trace - The trace to replay; for a window replay, the {@link HostTraceWindow}'s `trace`.
+   * @param fake - What the replay needs from the fake host.
+   * @param mode - `'after-operation'` (default): a burst ends before the next macrotask and its events are delivered afterwards, with the trace's gaps. `'with-operation'`: a burst ends at the next microtask checkpoint, so its matched events reach the listeners before the fake operation's promise resolves, as the native host reports them before the command result; no gap is waited inside a flush, and events no burst reached are delivered by {@link HostOrderInterposer.deliverTrailing}.
+   */
   constructor(
     private readonly trace: ParsedHostTrace,
     private readonly fake: HostOrderFake<Group, Tab, Editor>,
+    private readonly mode:
+      'after-operation' | 'with-operation' = 'after-operation',
   ) {}
 
   /**
@@ -781,6 +1037,50 @@ export class HostOrderInterposer<
   }
 
   /**
+   * The fake's current state, role-normalized (see {@link roleNormalize}).
+   * @param options - The tabs to drop from the fake's state.
+   * @returns The state of the fake's tab groups and editor layout.
+   * @throws When the fake offers no `snapshot()`.
+   */
+  roleNormalizedState(options: RoleNormalizeOptions = {}): RoleNormalizedState {
+    if (!this.fake.snapshot)
+      throw new HostTraceError(
+        'trace-mapping-failed',
+        'the fake host offers no snapshot() for a role-normalized comparison',
+      )
+    return roleNormalize(
+      { snapshot: this.fake.snapshot(), layout: this.fake.editorLayout() },
+      options,
+    )
+  }
+
+  /**
+   * Ends a window replay and reports it role-normalized: the fake's final state, the trace window's end state and the two counts, all within the window.
+   * @param options - The tabs to drop from the fake's and the trace's states.
+   * @returns The role-normalized states and the counts.
+   */
+  windowResult(options: RoleNormalizeOptions = {}): {
+    fakeState: RoleNormalizedState
+    traceState: RoleNormalizedState | undefined
+    unmatchedModelBursts: number
+    unreachedTraceBursts: number
+  } {
+    const { unmatchedModelBursts, unreachedTraceBursts } = this.result()
+    const { finalSnapshot, finalLayout } = this.trace
+    return {
+      fakeState: this.roleNormalizedState(options),
+      traceState: finalSnapshot
+        ? roleNormalize(
+            { snapshot: finalSnapshot, layout: finalLayout },
+            options,
+          )
+        : undefined,
+      unmatchedModelBursts,
+      unreachedTraceBursts,
+    }
+  }
+
+  /**
    * Ends the replay and reports it.
    * @returns The fake's and the trace's final states and the two counts.
    */
@@ -821,7 +1121,9 @@ export class HostOrderInterposer<
     else this.burst.push({ model, args, calls: [call] })
     if (!this.burstScheduled) {
       this.burstScheduled = true
-      setImmediate(() => this.endBurst())
+      // A microtask queued here runs before the continuation of whoever awaits the fake operation that is making this call, because that promise settles after this synchronous part.
+      if (this.mode === 'with-operation') queueMicrotask(() => this.endBurst())
+      else setImmediate(() => this.endBurst())
     }
   }
 
@@ -898,7 +1200,7 @@ export class HostOrderInterposer<
     }
   }
 
-  /** Ends the open burst: matches it to a run of the trace and queues the delivery. */
+  /** Ends the open burst: matches it to a run of the trace and delivers it (queued, or at once in the `with-operation` mode). */
   private endBurst(): void {
     this.burstScheduled = false
     const buffered = this.burst.splice(0)
@@ -914,7 +1216,7 @@ export class HostOrderInterposer<
     // Contract rule 5: no covering run, so the burst reaches the workspace in the fake's own order.
     if (!run) {
       this.unmatchedModelBursts++
-      this.queue(async () => {
+      this.deliver(() => {
         for (const entry of buffered)
           for (const call of entry.calls) this.call(call.wrapper, call.args)
       })
@@ -923,26 +1225,89 @@ export class HostOrderInterposer<
     const delivering = events.slice(this.cursor, run.end + 1)
     const firstIndex = this.cursor
     this.cursor = run.end + 1
+    if (this.mode === 'with-operation') {
+      this.deliver(() => {
+        for (const [offset, event] of delivering.entries())
+          this.deliverEvent(event, firstIndex + offset, run, buffered)
+        this.followLastSnapshot(delivering)
+      })
+      return
+    }
     this.queue(async () => {
       for (const [offset, event] of delivering.entries()) {
         await this.waitFor(event)
         if (this.disposed) return
-        const index = firstIndex + offset
-        // Events of the run that cover a model event carry the fake's own payload; unsolicited events are built from the trace.
-        const covered =
-          index >= run.start
-            ? buffered.find((entry) => coversModelEvent(entry.model, event))
-            : undefined
-        // Rule 3: flags follow the snapshot recorded with the event while it is delivered.
-        if (event.snapshot) this.fake.applyActiveState(event.snapshot)
-        if (covered)
-          for (const call of covered.calls) this.call(call.wrapper, call.args)
-        else this.deliverToAll(event)
+        this.deliverEvent(event, firstIndex + offset, run, buffered)
       }
-      // After the run the flags follow its last snapshot.
-      const last = delivering.at(-1)?.snapshot
-      if (last) this.fake.applyActiveState(last)
+      this.followLastSnapshot(delivering)
     })
+  }
+
+  /** Delivers one event of a run: the fake's own payload when it covers a model event, else one built from the trace. */
+  private deliverEvent(
+    event: HostTraceEvent,
+    index: number,
+    run: CoveringRun,
+    buffered: BufferedEvent[],
+  ): void {
+    // Events of the run that cover a model event carry the fake's own payload; unsolicited events are built from the trace.
+    const covered =
+      index >= run.start
+        ? buffered.find((entry) => coversModelEvent(entry.model, event))
+        : undefined
+    // Rule 3: flags follow the snapshot recorded with the event while it is delivered.
+    if (event.snapshot) this.fake.applyActiveState(event.snapshot)
+    if (covered)
+      for (const call of covered.calls) this.call(call.wrapper, call.args)
+    else this.deliverToAll(event)
+    this.applyRecordedLayout(event)
+  }
+
+  /** Lets the fake's layout follow what the host settled on after an event. */
+  private applyRecordedLayout(event: HostTraceEvent): void {
+    if (event.layout !== undefined) this.fake.applyLayout?.(event.layout)
+  }
+
+  /** After a run the flags follow its last snapshot. */
+  private followLastSnapshot(delivered: HostTraceEvent[]): void {
+    const last = delivered.at(-1)?.snapshot
+    if (last) this.fake.applyActiveState(last)
+  }
+
+  /** Runs a synchronous delivery now (a failure is kept for {@link HostOrderInterposer.settled}) or queues it, by the delivery mode. */
+  private deliver(delivery: () => void): void {
+    if (this.mode !== 'with-operation') {
+      this.queue(async () => delivery())
+      return
+    }
+    if (this.failure !== undefined || this.disposed) return
+    try {
+      delivery()
+    } catch (error) {
+      this.failure = error
+    }
+  }
+
+  /**
+   * Delivers the events of the replayed window that no model burst reached, at their recorded offsets (each capped at {@link HOST_TRACE_MAX_GAP_MS}) after the last delivered one, and ends the window.
+   *
+   * Call it once, after the last step of a window replay and before {@link HostOrderInterposer.result}; the events still count as unreached, because no model burst reached them.
+   * @returns Resolves when every trailing event was delivered.
+   * @throws The first delivery failure, like {@link HostOrderInterposer.settled}.
+   */
+  async deliverTrailing(): Promise<void> {
+    await this.settled()
+    // Count first: delivering them does not make a model burst reach them.
+    this.endSegment()
+    const events = this.trace.segments[this.segmentIndex]?.events ?? []
+    for (const event of events.slice(this.cursor)) {
+      await this.waitFor(event)
+      if (this.disposed) return
+      if (event.snapshot) this.fake.applyActiveState(event.snapshot)
+      this.deliverToAll(event)
+      this.applyRecordedLayout(event)
+    }
+    this.followLastSnapshot(events.slice(this.cursor))
   }
 
   private rememberPayload(entry: BufferedEvent): void {

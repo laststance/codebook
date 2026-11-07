@@ -68,7 +68,7 @@ const SAMPLE_GROUPS = [
 ]
 
 /**
- * Builds the sample trace from fixed fake events with the recorder's serializer: one event of every kind.
+ * Builds the sample trace from fixed fake events with the recorder's serializer: one event of every kind, a mark included.
  *
  * The committed file `fixtures/host-trace-sample.jsonl` is this function's output; the recorder-side test compares them, and the replay parser's test reads the same file.
  *
@@ -102,6 +102,7 @@ export function buildSampleTrace() {
       }),
     ),
     emit('tabGroups', { groups: SAMPLE_GROUPS }, 0),
+    emit('mark', { label: 'close-todo' }, 20),
     emit(
       'tabsChanged',
       {

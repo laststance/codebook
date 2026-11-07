@@ -16,7 +16,7 @@
  */
 const TRACE_FORMAT_VERSION = 1
 
-/** Every event kind a trace line may carry; the replay parser keeps its own list, pinned by a cross-check test. */
+/** Every event kind a trace line may carry (a `mark` is a step boundary the author typed during the take); the replay parser keeps its own list, pinned by a cross-check test. */
 const EVENT_KINDS = [
   'tabGroups',
   'tabsChanged',
@@ -26,6 +26,7 @@ const EVENT_KINDS = [
   'selection',
   'editorLayout',
   'reload',
+  'mark',
 ]
 
 /**
@@ -238,6 +239,9 @@ function sanitizeEventData(kind, data, context) {
       return sanitizeEditor(data)
     case 'visibleTextEditors':
       return data.map(sanitizeEditor)
+    case 'mark':
+      // A mark carries only the label its author typed.
+      return { label: String(data.label) }
     default:
       // editorLayout (the layout itself) and reload carry numbers only.
       return data

@@ -127,7 +127,7 @@ afterEach(() => {
 /**
  * Keeps native presentation inert while exercising actual checkpoints, source watching and durable decisions.
  * @param remoteName - `vscode.env.remoteName` of the fake window, for the editor and the service alike; `wsl` models a WSL remote window, which has no Trash.
- * @param options - `hostOrder`: a parsed host trace; the fake editor then delivers its five listener events in the trace's order and timing (see {@link HostOrderInterposer}) and the harness exposes the interposer as `hostOrder`. Without it nothing changes.
+ * @param options - `hostOrder`: a parsed host trace; the fake editor then delivers its five listener events in the trace's order and timing (see {@link HostOrderInterposer}) and the harness exposes the interposer as `hostOrder`. Without it nothing changes. `hostOrderDelivery`: the interposer's delivery mode; `'with-operation'` delivers a matched burst before the fake operation's promise resolves (a window replay, see `hostTraceWindow`).
  * @example const reader = await workspaceHarness()
  * @example const readerInWsl = await workspaceHarness(true, false, 'wsl')
  */
@@ -135,7 +135,10 @@ export async function workspaceHarness(
   attach = true,
   deterministicClock = false,
   remoteName?: string,
-  options: { hostOrder?: ParsedHostTrace } = {},
+  options: {
+    hostOrder?: ParsedHostTrace
+    hostOrderDelivery?: 'after-operation' | 'with-operation'
+  } = {},
 ) {
   // The ledger is shared by the module's every reader: a verdict of an earlier test's stop must not decide this one's.
   codebookStopLedger.reset()
@@ -547,6 +550,11 @@ export async function workspaceHarness(
           : tab.input instanceof TabInputTerminal
             ? 'terminal'
             : 'unknown'
+  /** Writes a text tab's document as a trace names it: `<scheme>:<file name>` for a virtual document (Codebook's captured source), the file name for a file. */
+  const traceTabUri = (uri: Uri): string =>
+    uri.scheme === 'file'
+      ? fileNameOf(uri.toString())
+      : `${uri.scheme}:${fileNameOf(uri.toString())}`
   /** The host-order replay of the `hostOrder` option: wraps the five listener registrations below and delivers a recorded trace's order and timing; `undefined` without the option. */
   const hostOrder = options.hostOrder
     ? new HostOrderInterposer<(typeof groups)[number], Tab, SourceEditor>(
@@ -595,7 +603,34 @@ export async function workspaceHarness(
             kind: undefined,
           }),
           editorLayout: () => structuredClone(editorLayout),
+          applyLayout(layout) {
+            editorLayout = structuredClone(layout)
+          },
+          snapshot: () => ({
+            groups: groups.map((group) => ({
+              viewColumn: group.viewColumn,
+              isActive: group === activeTabGroup,
+              tabs: group.tabs.map((tab) => ({
+                label: tab.label,
+                input: {
+                  kind: traceInputKind(tab),
+                  uri:
+                    tab.input instanceof TabInputText
+                      ? traceTabUri(tab.input.uri)
+                      : undefined,
+                  viewType:
+                    tab.input instanceof TabInputWebview
+                      ? tab.input.viewType
+                      : undefined,
+                },
+                isActive: group.activeTab === tab,
+                isPreview: tab.isPreview === true,
+              })),
+            })),
+            activeGroupIndex: groups.indexOf(activeTabGroup),
+          }),
         } satisfies HostOrderFake<(typeof groups)[number], Tab, SourceEditor>,
+        options.hostOrderDelivery,
       )
     : undefined
   let primaryNotificationOrder: 'together' | 'editor first' | 'group first' =

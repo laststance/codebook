@@ -415,7 +415,18 @@ async function stopTake(context) {
 }
 
 /**
- * Activates the recorder: registers both commands, subscribes to the events and resumes an open take.
+ * Records a mark: a labelled boundary between two steps of a take, followed by a snapshot like any event.
+ *
+ * Called by the `codebookHostRecorder.mark` command, which the author runs just before each step of a take so the replay can cut the take into windows.
+ *
+ * @param {string} label - The step's name (for example `arrange`).
+ */
+function recordMark(label) {
+  record('mark', { label })
+}
+
+/**
+ * Activates the recorder: registers all three commands, subscribes to the events and resumes an open take.
  *
  * @param {import('vscode').ExtensionContext} context - The extension context.
  */
@@ -438,6 +449,19 @@ async function activate(context) {
       void vscode.window.showInformationMessage(
         `Recording host events to ${take.file}`,
       )
+    }),
+    vscode.commands.registerCommand('codebookHostRecorder.mark', async () => {
+      if (!take) {
+        void vscode.window.showWarningMessage(
+          'No host event take is open; start one before marking.',
+        )
+        return
+      }
+      const label = await vscode.window.showInputBox({
+        prompt: 'Label of the step that starts now (for example arrange)',
+        ignoreFocusOut: true,
+      })
+      if (label) recordMark(label)
     }),
     vscode.commands.registerCommand('codebookHostRecorder.stop', async () => {
       const file = await stopTake(context)
