@@ -13915,7 +13915,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @param pausedAt - The generated place of the paused top frame.
    * @param current - Throws when the pause is no longer the inspected one; asked once the editor answered, before the answer is journaled or judged.
    * @returns The binding's line and column, and where the column came from.
-   * @throws "Pending server breakpoint did not bind to the captured source" when the answer is absent, unverified, under another id, in another file, or names no column and neither the adapter nor the paused frame names one on its line.
+   * @throws "Pending server breakpoint did not bind to the captured source" when the answer is unverified, under another id, in another file, or names no column and neither the adapter nor the paused frame names one on its line; and when the editor answers nothing and the adapter's own acknowledgement cannot stand in ({@link adapterAcknowledgedBinding}).
    * @example
    * ```ts
    * await this.serverBindingAtPause(stop, pause, 0, pausedAt, current) // { line: 32, column: 11, columnFrom: 'adapter' } for an answer { id: 0, verified: true, line: 32 }
@@ -13928,7 +13928,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     pausedAt: Protocol.Debugger.Location | undefined,
     current: () => void,
   ): Promise<CompletedBindingPlace> {
-    const answered = await awaitResponse(
+    const editorAnswer = await awaitResponse(
       this.participants[stop.participant].selected!.getDebugProtocolBreakpoint(
         stop.breakpoint!.breakpoint,
       ),
@@ -13936,8 +13936,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.abort.signal,
     )
     current()
+    // VS Code 1.145 can answer nothing for a while right after a stop (C94-L1); the adapter's own verified acknowledgement of the same breakpoint then decides.
+    const fromAdapter =
+      editorAnswer === undefined
+        ? this.adapterAcknowledgedBinding(stop, breakpointId)
+        : undefined
+    const answered = editorAnswer ?? fromAdapter
     const place = this.ownedBindingPlace(stop, answered, breakpointId, pausedAt)
-    this.journalPauseBinding(stop, pause, breakpointId, answered, place)
+    this.journalPauseBinding(stop, pause, breakpointId, editorAnswer, place, {
+      fromAdapter,
+    })
     if (!place)
       throw new Error(
         'Pending server breakpoint did not bind to the captured source',
@@ -13973,6 +13981,33 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Gives the adapter's own verified acknowledgement of a server stop's owned breakpoint in the shape the editor answers it, for {@link serverBindingAtPause} when the editor answered nothing at the pause.
+   * Why it exists: VS Code 1.145.2 answers `getDebugProtocolBreakpoint` with nothing for a few hundred milliseconds or more right after the first stop that follows a re-registration under a burst of the adapter's `breakpoint` news (Cycle 0095, C94-L1), while the run's own channel already holds the adapter's reply and news for that breakpoint ({@link OwnedRepositoryBreakpoint.verifiedPlace}).
+   * @param stop - The paused server stop.
+   * @param breakpointId - The adapter's id of the acknowledged registration.
+   * @returns The binding `{ id, verified: true, line, column }`; `undefined` when the owned breakpoint is no longer in the editor (the learner removed it) or the adapter has no verified place for it.
+   * @example
+   * this.adapterAcknowledgedBinding(stop, 2) // => { id: 2, verified: true, line: 296, column: 22 }
+   */
+  private adapterAcknowledgedBinding(
+    stop: PreparedStop,
+    breakpointId: number,
+  ): z.infer<typeof pausedServerBindingSchema> | undefined {
+    const owned = stop.breakpoint!
+    // A breakpoint the learner removed from the editor has no binding to stand in for, whatever the adapter last reported.
+    if (
+      !vscode.debug.breakpoints.some(
+        (breakpoint) => breakpoint.id === owned.breakpoint.id,
+      )
+    )
+      return undefined
+    const verified = owned.verifiedPlace(
+      this.participants[stop.participant].selected!,
+    )
+    return verified && { id: breakpointId, verified: true, ...verified }
+  }
+
+  /**
    * Tells {@link ownedBindingPlace} whether a verified binding is the acknowledged breakpoint in the stop's cited file.
    * @param stop - The paused server stop.
    * @param binding - The binding's id and, when the adapter names it, its file.
@@ -14001,9 +14036,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @param breakpointId - The adapter's id of the acknowledged registration.
    * @param answered - What the editor answered.
    * @param place - The binding's whole place when the answer was taken; its `columnFrom` is journaled when the column did not come from the answer itself.
+   * @param standIn - `fromAdapter`: the adapter's acknowledgement that stood in for an editor that answered nothing ({@link adapterAcknowledgedBinding}); journaled as `takenFrom: 'adapter'` with that binding, so the entry still says the editor answered nothing.
    * @example
    * ```ts
-   * this.journalPauseBinding(stop, pause, 0, { id: 0, verified: true, line: 32 }, { line: 32, column: 11, columnFrom: 'adapter' })
+   * this.journalPauseBinding(stop, pause, 0, { id: 0, verified: true, line: 32 }, { line: 32, column: 11, columnFrom: 'adapter' }, {})
    * ```
    */
   private journalPauseBinding(
@@ -14012,6 +14048,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     breakpointId: number,
     answered: unknown,
     place: CompletedBindingPlace | undefined,
+    standIn: { fromAdapter?: z.infer<typeof pausedServerBindingSchema> },
   ): void {
     const receipt = bindingReceiptSchema.safeParse(answered)
     this.evidence.record('breakpoint.pause-binding', {
@@ -14029,6 +14066,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       ),
       returned: this.describeAnswer(answered, receipt.success),
       observed: receipt.success ? receipt.data : undefined,
+      // The editor answered nothing and the adapter's own acknowledgement stood in: the entry names it apart from the editor's answer.
+      ...(standIn.fromAdapter
+        ? { takenFrom: 'adapter', adapter: standIn.fromAdapter }
+        : {}),
       // The editor answered no column: the entry says where the run took it from.
       ...(place && place.columnFrom !== 'binding'
         ? { completedColumn: place.column, columnFrom: place.columnFrom }

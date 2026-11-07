@@ -1212,6 +1212,51 @@ test('a paused server binding under another adapter id than its registration nev
   assert.equal(harness.run.view().snapshots.length, 0)
 })
 
+// Value: protects=a server stop the adapter verified still pauses when the editor answers nothing for its breakpoint at the pause, as VS Code 1.145.2 does right after the first stop that follows a re-registration; fails_when=the run ends with "Pending server breakpoint did not bind to the captured source"; why_new=Cycle 0095 C94-L1 (probe: undefined at +302 ms, the binding at +628 ms; Codebook read once at +1.0 s); seam=the fake editor answers getDebugProtocolBreakpoint with nothing while the adapter's reply verified the breakpoint
+test('a server stop the adapter verified pauses with its values when the editor answers nothing for its breakpoint at the pause', async (context) => {
+  // Arrange: the adapter's registration reply verifies the breakpoint, as js-debug's did in the native run (`breakpoint.registered` status bound).
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  harness.acknowledgeRegistrationsAt(1, 1)
+  await harness.run.prepare()
+  harness.forgetBindingInEditor('kept')
+  // Act
+  harness.run.action('once', 'repository-click')
+  const server = await pauseReady(harness, 'server')
+  // Assert
+  assert.equal(server.source.line, 1)
+  assert.equal(server.values['value:mode'], 'display')
+  assert.equal(harness.run.view().failures.length, 0)
+  const receipt = harness.run
+    .view()
+    .events.find((event) => event.type === 'breakpoint.pause-binding')
+  const detail = JSON.parse(JSON.stringify(receipt?.detail))
+  assert.equal(detail.returned, 'absent')
+  assert.equal(detail.takenFrom, 'adapter')
+  assert.equal(detail.adapter.line, 1)
+})
+
+// Value: protects=a breakpoint the learner removed from the editor is not bound from the adapter's last report, so the run still refuses truthfully; fails_when=the adapter's stale acknowledgement stands in and the stop publishes facts; why_new=Cycle 0095 C94-L1 negative case of the adapter stand-in; seam=the fake editor drops the breakpoint and answers nothing at the pause
+test('a server stop whose breakpoint the learner removed from the editor still fails as not bound and publishes nothing', async (context) => {
+  // Arrange: the adapter verified the breakpoint, so only the removal can refuse it.
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  harness.acknowledgeRegistrationsAt(1, 1)
+  await harness.run.prepare()
+  harness.forgetBindingInEditor('removed')
+  // Act
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'removed breakpoint rejected',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    'Error: Pending server breakpoint did not bind to the captured source',
+  )
+  assert.equal(harness.run.view().snapshots.length, 0)
+})
+
 test('a stack refresh that reports the bound position keeps the captured pause of a stop whose column moved', async (context) => {
   // Arrange: declared 1:7, bound and paused at 1:1.
   const harness = await nativeParticipantsHarness(context, ['server'], {

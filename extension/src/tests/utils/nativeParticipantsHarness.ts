@@ -192,6 +192,8 @@ export async function nativeParticipantsHarness(
       | undefined,
     browserLineRunsOnInput = false,
     reboundPauseId = false
+  // As VS Code 1.145.2 does right after the first stop that follows a re-registration (C94-L1): the editor answers nothing for a breakpoint the adapter verified; `removed` also takes the breakpoint out of the editor, as a learner's removal whose news has not reached the run yet.
+  let editorForgetsBinding: 'kept' | 'removed' | undefined
   // The one-based column of a requested breakpoint whose registration request the adapter leaves unanswered.
   let unansweredColumn: number | undefined
   // The generated places each participant's adapter lists as break locations of its module; without them it cannot answer.
@@ -436,6 +438,16 @@ export async function nativeParticipantsHarness(
         heldBindingLookup = undefined
         held.entered()
         await held.wait
+      }
+      if (editorForgetsBinding) {
+        // Only the editor's mirror loses the binding; the adapter's reply and news stay with the run.
+        if (editorForgetsBinding === 'removed') {
+          const index = breakpoints.findIndex(
+            (candidate) => candidate.id === breakpoint.id,
+          )
+          if (index >= 0) breakpoints.splice(index, 1)
+        }
+        return undefined
       }
       const current = breakpoints.find(
         (candidate) => candidate.id === breakpoint.id,
@@ -1613,6 +1625,10 @@ export async function nativeParticipantsHarness(
     /** Reports the paused binding under another adapter id than the acknowledged registration. */
     rebindPauseId(): void {
       reboundPauseId = true
+    },
+    /** Makes the editor answer nothing for an owned breakpoint the adapter verified, as VS Code 1.145.2 does right after a stop (C94-L1); `removed` also takes the breakpoint out of the editor first, as a learner's removal. @example harness.forgetBindingInEditor('kept') */
+    forgetBindingInEditor(mode: 'kept' | 'removed'): void {
+      editorForgetsBinding = mode
     },
     /** Moves a manual clock forward and fires every run timer that is due by then; it does nothing for a run on real timers. @example harness.advance(20_000) */
     advance: manualClock.advance,
