@@ -129,7 +129,9 @@ test('the help and the README state that the installed-copy disclosure needs a m
   }
 })
 
+// pregate-literal: API_VERSION=1.33 the node-script library route's minimum API in the bundled skill, not the current API
 // protects=the bundled skill 1.0.82 tells the chat to declare library.packageRoot behind the API 1.33 gate, to say the build runs the project's own scripts, and to call a copy without library unverified; fails_when=a sentence or the version leaves the skill or a project name enters it; no_claim=how a chat follows it
+// pregate-literal: API_VERSION=1.33 the node-script library route's minimum API named in the test title, not the current API
 test('the bundled skill 1.0.82 routes a library Example to library.packageRoot behind the API 1.33 gate', async () => {
   // Arrange
   const skill = await readPackaged('skills/codebook/SKILL.md')
