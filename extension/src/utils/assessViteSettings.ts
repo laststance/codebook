@@ -71,6 +71,18 @@ async function isInside(packageRoot: string, folder: string): Promise<boolean> {
   )
 }
 
+/** Whether a `cacheDir` is exactly the run's own private cache, comparing real paths. */
+async function isOwnedCache(
+  cacheDir: string,
+  ownedCacheDir: string | undefined,
+): Promise<boolean> {
+  if (ownedCacheDir === undefined) return false
+  return (
+    (await realPathOfPlanned(cacheDir)) ===
+    (await realPathOfPlanned(ownedCacheDir))
+  )
+}
+
 /**
  * Lists every setting of the resolved Vite config that Codebook cannot run, for the launcher handshake of {@link launchViteDevelopmentServer}.
  *
@@ -78,6 +90,7 @@ async function isInside(packageRoot: string, folder: string): Promise<boolean> {
  *
  * @param facts - The facts the launcher sent.
  * @param packageRoot - The package root (the workspace root this version).
+ * @param ownedCacheDir - The run's own private Vite cache (library route): a `cacheDir` outside the package root is accepted only when its real path equals this one; absent for every other run.
  * @returns One phrase per unsupported setting, empty when the config is supported. `root` and `cacheDir` are judged on real paths, so a symlinked folder that leaves the package root is listed.
  * @example
  * await assessViteSettings({ …facts, base: '/app/', https: true }, '/repo') // => ['base is "/app/"', 'server.https is set']
@@ -85,6 +98,7 @@ async function isInside(packageRoot: string, folder: string): Promise<boolean> {
 export async function assessViteSettings(
   facts: ViteFacts,
   packageRoot: string,
+  ownedCacheDir?: string,
 ): Promise<string[]> {
   const unsupported: string[] = []
   if (facts.base !== '/')
@@ -110,7 +124,10 @@ export async function assessViteSettings(
     unsupported.push('server.ws is set (its own port, host or server)')
   if (facts.middlewareMode) unsupported.push('server.middlewareMode is true')
   else if (facts.appType === 'custom') unsupported.push('appType is "custom"')
-  if (!(await isInside(packageRoot, facts.cacheDir)))
+  if (
+    !(await isInside(packageRoot, facts.cacheDir)) &&
+    !(await isOwnedCache(facts.cacheDir, ownedCacheDir))
+  )
     unsupported.push('cacheDir is outside the package root')
   return unsupported
 }
