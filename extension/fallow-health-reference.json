@@ -1,10 +1,10 @@
 {
   "mode": "measured-istanbul",
   "description": "Budget of the measured health gate (scripts/checkHealth.mjs): the Fallow health findings of the source at sourceRevision, scored with that source's own complete c8 coverage. The checker never writes it; retake it only as AGENTS.md describes.",
-  "sourceRevision": "b406c9172c1a904b93f9baa8ca06d92d561ac6e6",
+  "sourceRevision": "f4578afbd6df4fe1750257a2132b50047b1ccb71",
   "baseline": {
     "file": "fallow-health-measured-baseline.json",
-    "sha256": "ad4f46771b8d6651a616aeb7eb5af93ffe54eacbd69a36b93ba0a8a9840b057f"
+    "sha256": "a9ba8d5ccd0a4533fd9506d1a68ff0efc457bffd398e039d0490263f6c716c26"
   },
   "limits": {
     "maxCyclomatic": 20,
@@ -24,15 +24,15 @@
   },
   "referenceRun": {
     "recordedOn": "2026-11-07",
-    "tests": 12316,
-    "passed": 12306,
+    "tests": 12550,
+    "passed": 12532,
     "failed": 0,
     "cancelled": 0,
     "skipped": 10,
-    "todo": 0,
-    "coverageFiles": 1290,
-    "coverageSha256": "492c1ff3ae706f1fb824119d60c2504e2fcf425ec508b5fd684aa86a138f6169",
-    "suiteLogSha256": "c857a382d35dd2685846bfa0155cb2b93c9ecda0624a5aeda35a60a6997e7e83",
+    "todo": 8,
+    "coverageFiles": 1317,
+    "coverageSha256": "b8be611b4a94f7b1043a33c4f5a52eacff055c1f1a53ec806988650eaa2d5c7b",
+    "suiteLogSha256": "13f2f57d51670c2826caa8ce2baf5d30aa86f3a7fbec8d016540dedf1859f9d8",
     "baselineEntries": 214
   }
 }
