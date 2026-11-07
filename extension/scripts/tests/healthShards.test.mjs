@@ -146,6 +146,50 @@ test('a test file without a recorded duration counts one second and equal weight
   ])
 })
 
+// Value: protects=the plan against a file recorded with 0 seconds: it is still assigned, once; fails_when=a zero-second file is dropped from every shard or given to two; why_new=Cycle 0094 part 2 review round; seam=none; no_claim=none
+test('a test file recorded as 0 seconds is still assigned to exactly one shard', () => {
+  // Arrange
+  const files = ['dist/tests/a.test.js', 'dist/tests/free.test.js']
+  const timings = {
+    files: { 'a.test.js': { totalMs: 3000 }, 'free.test.js': { totalMs: 0 } },
+  }
+
+  // Act
+  const plan = planHealthShards(files, timings, 2)
+
+  // Assert
+  assert.deepEqual(plan, [
+    ['dist/tests/a.test.js'],
+    ['dist/tests/free.test.js'],
+  ])
+})
+
+// Value: protects=the pooled dump folder of the merge: two shards must never carry a dump of the same name, or the copy would overwrite one dump and lose its coverage; fails_when=a dump name that two shards list is accepted; why_new=Cycle 0094 part 2 review round (dump overwrite finding); seam=the folder of shard results; no_claim=none
+test('two shards that carry a dump of the same name refuse the merge', async (context) => {
+  // Arrange
+  const fixture = await createShards(context)
+  const shard1 = await readManifest(fixture.folder, 1)
+  const dump = shard1.dumps[0]
+  await writeFile(
+    join(fixture.folder, 'health-shard-2', SHARD_RAW_FOLDER, dump.name),
+    PRODUCT_DUMP,
+  )
+  const shard2 = await readManifest(fixture.folder, 2)
+  await writeManifest(fixture.folder, 2, {
+    ...shard2,
+    dumps: [...shard2.dumps, dump],
+  })
+
+  // Act
+  const merging = checkHealthShards(fixture)
+
+  // Assert
+  await assert.rejects(merging, {
+    message:
+      'Dump name shard-1-coverage-1.json appears twice (again in shard 2); pooled dumps would overwrite each other.',
+  })
+})
+
 // Value: protects=the equivalence of the sharded and the single measured run: the shards together cover every compiled test exactly as the single run does; fails_when=a shard result with a wrong count, exit, file list or dump still reaches c8, so a measured gap passes as complete evidence; why_new=Cycle 0094 task 11 (eng review R4, R11); seam=the folder of shard results; no_claim=that c8 merges the dumps into the single run's map (the equivalence run in CI shows that)
 test('three complete shard results with every planned file and valid dumps are accepted and summed', async (context) => {
   // Arrange

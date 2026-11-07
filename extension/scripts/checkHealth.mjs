@@ -27,6 +27,7 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
+  constants,
   copyFile,
   mkdir,
   mkdtemp,
@@ -40,7 +41,7 @@ import {
 } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { delimiter, join, relative, resolve, sep } from 'node:path'
+import { delimiter, dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 
@@ -610,7 +611,11 @@ async function measureHealth(reference, output, format, keepCoverage) {
   const suite = await runSuite(output, tests)
   await assertInputsUnchanged(reference, before, compiled)
   const files = await assertCoverageSet(suite.coverage)
-  if (keepCoverage) await copyFile(suite.coverage, keepCoverage)
+  if (keepCoverage) {
+    // The destination folder may not exist yet (CI passes a path under a fresh temporary folder).
+    await mkdir(dirname(keepCoverage), { recursive: true })
+    await copyFile(suite.coverage, keepCoverage)
+  }
   console.error(
     `Measured suite: ${suite.tests} tests in ${tests.length} files; ${suite.pass} passed, ${suite.skipped} skipped, ${suite.todo} todo. Coverage of ${files} source files.`,
   )
@@ -669,6 +674,11 @@ async function runShardSuite(output, shard, files) {
   const dumps = []
   for (const name of (await readdir(raw)).sort()) {
     const renamed = `shard-${shard}-${name}`
+    // rename() would overwrite a dump of the same name silently; a collision means two dumps would count as one.
+    if (await stat(join(raw, renamed)).catch(() => null))
+      throw new Error(
+        `Coverage dump ${renamed} already exists in ${raw}; a shard never overwrites a dump.`,
+      )
     await rename(join(raw, name), join(raw, renamed))
     dumps.push({
       name: renamed,
@@ -760,7 +770,7 @@ async function measureMerge(reference, output, { folder, compare, format }) {
     coverage = join(output, 'coverage')
   await mkdir(raw)
   for (const dump of shards.dumps)
-    await copyFile(dump.path, join(raw, dump.name))
+    await copyFile(dump.path, join(raw, dump.name), constants.COPYFILE_EXCL)
   const { code, signal } = await runChild(process.execPath, [
     requireFromExtension.resolve('c8/bin/c8.js'),
     'report',
@@ -779,8 +789,10 @@ async function measureMerge(reference, output, { folder, compare, format }) {
   console.error(
     `Merged ${shards.total} shards: ${shards.summary.tests} tests in ${tests.length} files; ${shards.summary.pass} passed, ${shards.summary.skipped} skipped, ${shards.summary.todo} todo. Coverage of ${files} source files.`,
   )
+  // Fallow's report comes first, so a failing comparison still leaves the findings readable above its refusal.
+  const verdict = await reportHealth(reference, merged, files, format)
   if (compare) await assertSameCoverage(merged, compare)
-  return reportHealth(reference, merged, files, format)
+  return verdict
 }
 
 /**

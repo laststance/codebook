@@ -1937,6 +1937,11 @@ test('the Fallow workflow measures health in three shards, merges them and compa
   )
   assert.match(withoutComments, /name: health-single\n/)
   assert.match(withoutComments, /needs: \[health, health-shard\]\n/)
+  // A skipped merge job counts as passing for a required check, so it must run after a failed shard and refuse there itself.
+  assert.match(
+    withoutComments,
+    /needs: \[health, health-shard\]\n {4}if: \$\{\{ !cancelled\(\) \}\}\n/,
+  )
   assert.match(
     withoutComments,
     /health --merge "\$RUNNER_TEMP\/health-shards" --compare "\$RUNNER_TEMP\/health-single\/coverage-final\.json"\n/,

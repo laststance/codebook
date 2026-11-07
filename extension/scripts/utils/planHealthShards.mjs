@@ -10,7 +10,7 @@ function secondsOf(file, timings) {
 }
 
 /**
- * Divides the compiled test files over the shards of the sharded measured health run so that every shard takes about the same time; called by `scripts/checkHealth.mjs` in `--shard` mode (for its own share) and in `--merge` mode (to recompute the plan from its own build).
+ * Divides the compiled test files over the shards of the sharded measured health run so that every shard takes about the same time; called by `scripts/checkHealth.mjs` in `--shard` mode only, which runs its own share. The `--merge` mode does not plan: it checks the shards' file lists against the files of its own build ({@link checkHealthShards}).
  *
  * A file is never split: coverage dumps are collected one process per file, and the merge proves every file ran once. Files go heaviest first onto the lightest shard; equal weights keep path order, so every job computes the same plan from the same inputs.
  * @param files - Compiled test files, for example `dist/tests/service.test.js`.

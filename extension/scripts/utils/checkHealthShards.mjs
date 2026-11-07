@@ -214,6 +214,15 @@ export async function checkHealthShards({ folder, plannedFiles, identity }) {
   )
   const dumps = []
   for (const entry of entries) dumps.push(...(await checkShardDumps(entry)))
+  // The merge pools all dumps into one folder; one name twice would overwrite a dump.
+  const names = new Set()
+  for (const dump of dumps) {
+    if (names.has(dump.name))
+      throw new Error(
+        `Dump name ${dump.name} appears twice (again in shard ${dump.shard}); pooled dumps would overwrite each other.`,
+      )
+    names.add(dump.name)
+  }
   const summary = {}
   for (const { manifest } of entries)
     for (const [name, count] of Object.entries(manifest.summary ?? {}))

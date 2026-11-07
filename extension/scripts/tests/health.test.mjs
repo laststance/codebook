@@ -960,6 +960,8 @@ test('a merge compared with a different coverage map refuses after printing both
     shards,
     '--compare',
     other,
+    '--format',
+    'json',
   ])
 
   // Assert
@@ -972,5 +974,25 @@ test('a merge compared with a different coverage map refuses after printing both
   assert.equal(
     lineOf(mergeRun.stderr, 'Health refused:'),
     "Health refused: The merged coverage map differs from the single run's coverage map.",
+  ) // Fallow's report was shown before the refusal, so the findings stay readable above it.
+  assert.equal(JSON.parse(mergeRun.stdout).kind, 'health')
+})
+
+// Value: protects=the CI single run: it passes --keep-coverage a path under a folder that does not exist yet (RUNNER_TEMP/health-single), and a missing folder must not turn every pull request red; fails_when=the copy does not create the destination's folder (ENOENT, exit 2); why_new=Cycle 0094 part 2 review round (Major finding on fallow.yml's keep-coverage path); seam=the fixture checkout: one single run with a destination below two missing folders; no_claim=that the artifact upload finds the file (CI shows that)
+test('a single run keeps its coverage map in a folder that does not exist yet', async (context) => {
+  // Arrange
+  const fixture = await createFixture(context)
+  const kept = join(
+    fixture.temporary,
+    'missing',
+    'health-single',
+    'coverage-final.json',
   )
+
+  // Act
+  const result = await runChecker(fixture, ['--keep-coverage', kept])
+
+  // Assert
+  assert.equal(result.code, 0, result.stderr)
+  assert.ok((await stat(kept)).size > 0)
 })
