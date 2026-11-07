@@ -155,7 +155,7 @@ test('the migration table lists the API-route study and no help limit calls Page
   assert.ok(row?.change.startsWith('format 14 (.study.v14.json)'))
   assert.equal(limit.includes('Pages API routes, middleware or proxy'), false)
   assert.equal(notStoppable.includes('API routes (pages/api)'), false)
-  assert.equal(API_VERSION, '1.34')
+  assert.equal(API_VERSION, '1.35')
 })
 
 // Value: protects=the README documents API-route stops beside Route handlers (fields, identity limit, values, refusals, not-reached, configuration pointer), the format 14 sentence, skill 1.0.78 and API 1.29, names Pages API routes beside route handlers as the exception to the entry-route rule, and no longer lists Pages API routes as unsupported; fails_when=a sentence leaves the README or the entry-route limits still call every other route's server code unsupported; no_claim=the behavior itself
@@ -163,7 +163,7 @@ test('the README documents API-route stops under API 1.29 and no longer lists Pa
   // Arrange
   const readme = await readPackaged('README.md')
   // Act / Assert
-  assert.ok(readme.includes('with **MCP API 1.34**'))
+  assert.ok(readme.includes('with **MCP API 1.35**'))
   assert.ok(
     readme.includes('API 1.29 is additive: it adds Pages API-route stops'),
   )

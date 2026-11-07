@@ -2,6 +2,7 @@ import { configuredObservationSchema } from '../configuredStudySchemas'
 import {
   REPOSITORY_BROWSER_ACTION,
   REPOSITORY_BROWSER_PROFILE,
+  REACT_SCRIPTS_LIBRARY_STUDY_VERSION,
   VITE_LIBRARY_STUDY_VERSION,
 } from '../constants'
 import { EvidenceIntegrityError, StudyError } from '../errors'
@@ -256,9 +257,10 @@ export async function captureStudy(
           runtime.expoVersion
             ? { expoVersion: runtime.expoVersion }
             : {}),
-          // A Vite library study (format 16) keeps the library facts as they stand at this checkpoint; no other study carries them.
+          // A Vite or react-scripts library study (format 16 or 17) keeps the library facts as they stand at this checkpoint; no other study carries them.
           // A run that ended before the library route existed (a refusal in package resolution, admission, source preparation or workspace checks) has no facts yet: it saves the pending facts of the declared folder, so the preparation failure stays representable.
-          ...(studyVersion === VITE_LIBRARY_STUDY_VERSION
+          ...(studyVersion === VITE_LIBRARY_STUDY_VERSION ||
+          studyVersion === REACT_SCRIPTS_LIBRARY_STUDY_VERSION
             ? {
                 library:
                   (runtime?.profile === REPOSITORY_BROWSER_PROFILE

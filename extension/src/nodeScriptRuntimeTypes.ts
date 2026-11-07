@@ -61,6 +61,10 @@ export type LibraryRunView = {
   publishedCopyPath?: string
   /** Whether the private folder is `removed` or its removal is `pending`; absent until the run released it. */
   cleanup?: 'removed' | 'pending'
+  /** Only when the Example does not list the library itself (API 1.35): the Example's dependencies whose installed manifest declares it, sorted, at most 16. The declared relation, never an observed importer. */
+  reachedThrough?: string[]
+  /** The number of all such dependencies, at least the length of `reachedThrough`; present with it. */
+  reachedThroughCount?: number
 }
 
 /** What a node-script run shows the service: its state, confirmation, stops, current or held pause, captures, failure and (once it ended) its end. */

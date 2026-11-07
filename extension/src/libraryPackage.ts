@@ -23,6 +23,7 @@ import {
   assertLibraryRouteSupported,
   libraryBuildPath,
   type SupportedLibrary,
+  type LibraryDependencyRelation,
 } from './utils/assertLibraryRouteSupported'
 import { buildProcessEnvironment } from './utils/buildProcessEnvironment'
 import type {
@@ -87,6 +88,8 @@ export type LibraryPackageDependencies = {
   hostEnvironment?: NodeJS.ProcessEnv
   platform?: NodeJS.Platform
   isProgramFile?: (path: string) => Promise<boolean>
+  /** How the Example must depend on the library (API 1.35); `direct` when absent. Passed on to {@link assertLibraryRouteSupported}, which this core calls a second time. */
+  dependencyRelation?: LibraryDependencyRelation
   /** Reads the repository's HEAD; the real `git rev-parse HEAD` unless a test names its own. */
   readRevision?: (repositoryRoot: string) => Promise<string>
   /** How long a removal that follows a failure or a stop is waited for. */
@@ -109,6 +112,10 @@ export type LibraryPackageFacts = {
   tarballSha256: string
   /** The version the Example's own `node_modules` holds of the package, or `null`. */
   installedVersion: string | null
+  /** Present only when the Example reaches the library through installed dependencies instead of listing it: their names, sorted, at most 16. */
+  reachedThrough?: string[]
+  /** The number of all such dependencies, present with `reachedThrough`. */
+  reachedThroughCount?: number
 }
 
 /** The answer of {@link LibraryPackage.dispose}. */
@@ -683,6 +690,7 @@ export async function prepareLibraryCore(
     pathText,
     platform: dependencies.platform,
     isProgramFile: dependencies.isProgramFile,
+    dependencyRelation: dependencies.dependencyRelation,
   })
   const privateFolder = await realpath(roots.privateFolder)
   const processes: BuildProcess[] = []
@@ -787,6 +795,13 @@ export async function prepareLibraryCore(
       packMs: steps.packMs,
       tarballSha256: packed.tarballSha256,
       installedVersion: installed?.version ?? null,
+      // Only a transitive Example states the relation, so every other run's facts stay byte-identical.
+      ...(library.reachedThrough === undefined
+        ? {}
+        : {
+            reachedThrough: library.reachedThrough,
+            reachedThroughCount: library.reachedThroughCount,
+          }),
     },
     packedRoot,
     peers: packed.peers,

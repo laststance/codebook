@@ -4,7 +4,12 @@ import type { LibraryRunView } from '../nodeScriptRuntimeTypes'
 /** What a run's replay line needs of its library facts: the built identity and the observation. Both the Script replay (journal entries) and the browser replay (saved facts) build one. */
 export type LibraryObservationInput = Pick<
   LibraryRunView,
-  'observation' | 'loaded' | 'publishedCopyLoaded' | 'publishedCopyPath'
+  | 'observation'
+  | 'loaded'
+  | 'publishedCopyLoaded'
+  | 'publishedCopyPath'
+  | 'reachedThrough'
+  | 'reachedThroughCount'
 > & {
   package: string
   version: string
@@ -50,5 +55,9 @@ export function describeLibraryObservation(
     return observer === 'script'
       ? `Built ${built}, but not loaded by this script.`
       : `Built ${built}, but not served to this page.`
-  return `Ran on the checked-out ${built} built from ${revision}${dirty} (packed by ${input.packageManager})`
+  const base = `Ran on the checked-out ${built} built from ${revision}${dirty} (packed by ${input.packageManager})`
+  if (input.reachedThrough === undefined) return base
+  // The declared relation only, never an observed importer; the count says how many names the list leaves out.
+  const more = (input.reachedThroughCount ?? 0) - input.reachedThrough.length
+  return `${base}, declared by ${input.reachedThrough.join(', ')}${more > 0 ? ` and ${more} more` : ''} in this Example`
 }

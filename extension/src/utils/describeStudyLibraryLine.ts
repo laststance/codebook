@@ -35,6 +35,8 @@ export function describeStudyLibraryLine(
       loaded: library.loaded,
       publishedCopyLoaded: library.publishedCopyLoaded,
       publishedCopyPath: library.publishedCopyPath,
+      reachedThrough: library.reachedThrough,
+      reachedThroughCount: library.reachedThroughCount,
     },
     'page',
   )

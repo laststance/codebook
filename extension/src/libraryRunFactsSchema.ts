@@ -29,6 +29,9 @@ const COMPLETE_OBSERVATION_FIELDS = [
   'publishedCopyLoaded',
 ] as const
 
+/** The most package names the Example's declared relation to the library lists in `reachedThrough` (API 1.35, D14); a larger number is stated by `reachedThroughCount` only. */
+export const LIBRARY_REACHED_THROUGH_LIMIT = 16
+
 /** The facts as the object schema parses them, before the state rules. */
 type ParsedFacts = {
   prepared: boolean
@@ -38,6 +41,8 @@ type ParsedFacts = {
   loadCount?: number
   publishedCopyLoaded?: boolean
   publishedCopyPath?: string
+  reachedThrough?: string[]
+  reachedThroughCount?: number
 } & Partial<
   Record<
     Exclude<
@@ -87,6 +92,47 @@ function addPackageNameIssue(
       code: 'custom',
       path: ['package'],
       message: `package is a package name of at most ${NODE_SCRIPT_LIBRARY_PACKAGE_LIMIT_CHARS} characters once the library is prepared.`,
+    })
+}
+
+/**
+ * Adds an issue for a `reachedThrough` relation that breaks its rules: the two fields come together, the names are sorted (code-unit order) and unique, and the count is at least the number of names listed.
+ * Called by the {@link libraryRunFactsSchema} refinement.
+ * @param facts - The parsed facts.
+ * @param context - The refinement context that receives the issues.
+ * @example addReachedThroughIssues({ reachedThrough: ['b', 'a'], reachedThroughCount: 2, ... }, context) // issue at ['reachedThrough']
+ */
+function addReachedThroughIssues(
+  facts: ParsedFacts,
+  context: z.RefinementCtx,
+): void {
+  const { reachedThrough, reachedThroughCount } = facts
+  // Both fields describe one relation: neither exists without the other.
+  if ((reachedThrough === undefined) !== (reachedThroughCount === undefined))
+    context.addIssue({
+      code: 'custom',
+      path: [
+        reachedThrough === undefined ? 'reachedThrough' : 'reachedThroughCount',
+      ],
+      message: 'reachedThrough and reachedThroughCount come together.',
+    })
+  if (reachedThrough === undefined || reachedThroughCount === undefined) return
+  // Strictly ascending order is both the sort rule and the uniqueness rule.
+  if (
+    reachedThrough.some(
+      (name, index) => index > 0 && name <= reachedThrough[index - 1]!,
+    )
+  )
+    context.addIssue({
+      code: 'custom',
+      path: ['reachedThrough'],
+      message: 'reachedThrough lists unique package names in sorted order.',
+    })
+  if (reachedThroughCount < reachedThrough.length)
+    context.addIssue({
+      code: 'custom',
+      path: ['reachedThroughCount'],
+      message: 'reachedThroughCount is at least the number of names listed.',
     })
 }
 
@@ -161,8 +207,8 @@ function addObservationIssues(
 }
 
 /**
- * The library facts a saved `vite-dev` study of format 16 keeps (the run resource's library view as it stood at the save).
- * Which fields exist depends on the state, not on a fixed list (D18): `package` (the declared folder until the name is known), `packageRoot`, `prepared` and `observation` always; the build facts only when `prepared`; `loaded`, `loadCount` and `publishedCopyLoaded` when the observation is `complete`, and as lower bounds when it is `incomplete`, never when it is `pending` or `unreadable`; `publishedCopyPath` only when `publishedCopyLoaded`; `cleanup` once the private folder was released.
+ * The library facts a saved `vite-dev` study of format 16 or `react-scripts-dev` study of format 17 keeps (the run resource's library view as it stood at the save).
+ * Which fields exist depends on the state, not on a fixed list (D18): `package` (the declared folder until the name is known), `packageRoot`, `prepared` and `observation` always; the build facts only when `prepared`; `loaded`, `loadCount` and `publishedCopyLoaded` when the observation is `complete`, and as lower bounds when it is `incomplete`, never when it is `pending` or `unreadable`; `publishedCopyPath` only when `publishedCopyLoaded`; `cleanup` once the private folder was released; `reachedThrough` and `reachedThroughCount` together, when the Example declares the library only through its direct dependencies.
  * Read by {@link configuredStudySchema}; the state rules are checked here so a study that breaks them is listed as unreadable like any malformed study.
  * @example
  * libraryRunFactsSchema.parse({ package: 'widgets', packageRoot: 'packages/widgets', prepared: false, observation: 'pending' })
@@ -213,9 +259,17 @@ export const libraryRunFactsSchema = z
       .max(NODE_SCRIPT_LIBRARY_PATH_LIMIT_CHARS)
       .optional(),
     cleanup: z.enum(['removed', 'pending']).optional(),
+    // The packages of the Example's own dependencies that declare the library when the Example does not list it itself (API 1.35, D14): at most 16 sorted unique names and the count of all of them.
+    reachedThrough: z
+      .array(z.string().min(1).max(NODE_SCRIPT_LIBRARY_PACKAGE_LIMIT_CHARS))
+      .min(1)
+      .max(LIBRARY_REACHED_THROUGH_LIMIT)
+      .optional(),
+    reachedThroughCount: z.number().int().positive().optional(),
   })
   .superRefine((facts, context) => {
     addPackageNameIssue(facts, context)
+    addReachedThroughIssues(facts, context)
     addPreparedIssues(facts, context)
     addObservationIssues(facts, context)
   })

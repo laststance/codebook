@@ -96,7 +96,7 @@ test('a real VSIX loads outside the checkout and excludes bundled applications a
   assert.equal(receipt.isolatedModuleLoad, true)
   assert.equal(receipt.isolatedWikiPageWorker, true)
   assert.equal(checked.extension.version, '0.2.98')
-  assert.equal(checked.extension.apiVersion, '1.34')
+  assert.equal(checked.extension.apiVersion, '1.35')
   assert.equal(checked.entries, 34)
   assert.equal(receipt.dependencies.length, 16)
   assert.deepEqual(

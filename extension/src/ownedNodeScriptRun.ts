@@ -142,6 +142,12 @@ function libraryFactsView(facts: LibraryPackageFacts): Partial<LibraryRunView> {
     packMs: facts.packMs,
     tarballSha256: facts.tarballSha256,
     installedVersion: facts.installedVersion,
+    ...(facts.reachedThrough === undefined
+      ? {}
+      : {
+          reachedThrough: facts.reachedThrough,
+          reachedThroughCount: facts.reachedThroughCount,
+        }),
   }
 }
 
