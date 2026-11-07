@@ -5,6 +5,7 @@ import { test } from 'node:test'
 
 import { workspaceHarness } from './studyWorkspaceHarness'
 import {
+  fileNameOf,
   findCoveringRun,
   HostOrderInterposer,
   hostTraceWindow,
@@ -983,4 +984,24 @@ test('the fake layout follows the layout the host recorded after a delivered eve
 
   // Assert
   assert.deepEqual(layout, { orientation: 1 })
+})
+
+// Value: protects=a sanitized trace's selection or active-editor event on Codebook's captured source being matched to the fake's editor; fails_when=a document URI of the form `scheme:Name` (no slash, as the recorder writes a virtual document) names the whole URI, so the event never finds the fake's `Captured-index.ts` editor and a replay stops with trace-mapping-failed; why_new=Cycle 0094 task 12 (VS Code 1.145.2 window replays); seam=fileNameOf; no_claim=any other URI shape than the three asserted
+test('names a captured source by its file name whether its URI has a slash path or only a scheme', () => {
+  // Arrange
+  const uris = [
+    'codebook-source:Captured-index.ts',
+    'codebook-source://key/study/Captured-index.ts?x=1',
+    'file:///repo/db/index.ts#L3',
+  ]
+
+  // Act
+  const names = uris.map(fileNameOf)
+
+  // Assert
+  assert.deepEqual(names, [
+    'Captured-index.ts',
+    'Captured-index.ts',
+    'index.ts',
+  ])
 })

@@ -158,9 +158,9 @@ export class HostTraceError extends Error {
 
 type Json = Record<string, unknown>
 
-/** The last path segment of a document URI, without query or fragment: how an editor is named across machines. @example fileNameOf('file:///repo/src/a.ts?x=1') // => 'a.ts' */
+/** The last path segment of a document URI, without query or fragment: how an editor is named across machines. A URI with a scheme and no slash (`codebook-source:Captured-a.ts`, as the recorder writes a virtual document) is named by the part after the scheme. @example fileNameOf('file:///repo/src/a.ts?x=1') // => 'a.ts' @example fileNameOf('codebook-source:Captured-a.ts') // => 'Captured-a.ts' */
 export function fileNameOf(uri: string): string {
-  return uri.split(/[?#]/)[0]!.split('/').at(-1) ?? ''
+  return uri.split(/[?#]/)[0]!.split(/[/:]/).at(-1) ?? ''
 }
 
 function isRecord(value: unknown): value is Json {
