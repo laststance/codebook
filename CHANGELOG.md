@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.97.0] - 2026-11-07 (development candidate)
+
+Cycle 0095 ([Issue #247](https://github.com/laststance/codebook/issues/247)), a bug-fix cycle. **Live server stops in a Next.js app no longer end the run for reasons outside the code being explained.** Cycle 0094's native check found runtime defects that ended a learner's live run after the server had already paused; this version fixes the two that were product defects (the third run had lost its database, so its refusal was correct) and a third that this cycle's own native check found in Cursor.
+
+### Fixed
+- **A server stop binds in VS Code 1.145:** right after a server stop pauses, VS Code 1.145.2 can answer for a while that it knows nothing about Codebook's breakpoint, and the run used to end with "Pending server breakpoint did not bind to the captured source" (half of such runs in the native check). The stop now binds where the debugger itself reported the breakpoint verified, and the run's journal says so (`takenFrom: "adapter"`). A breakpoint you removed from the editor is still refused.
+- **A server stop keeps its values when the page draws no image:** in Cursor the page could draw nothing within 3 s while the server was paused, and the run used to end with "CDP Page.captureScreenshot timed out" after the stop's values were read. The stop now keeps its source and values, its image reads as unavailable, and the run goes on and ends partial.
+- **A server component stop no longer ends the run at the warm-up:** in development React rebuilds a server component's stack in the page, and Next maps those copies to the server file, so the page could pause at the stop's preparation breakpoint; once Codebook had removed that breakpoint, the next such pause ended the run with "Unexpected or additional browser stop invalidated the declared operation" (all 5 Cursor runs of 2026-11-07 that declared a stop in the dashboard's Latest Invoices or Revenue chart component). The page's pause is now resumed as a preparation hit, also after the removal.
+
+### Changed
+- **Development chats (AGENTS.md):** Cursor trials run Agent with Grok 4.6 High and Fast off, at the owner's direction; a new Agent chat opens with a newer Grok model, so each trial switches the model and checks that the label reads Grok 4.6 High, without Fast.
+
 ## [0.2.96.0] - 2026-11-07 (development candidate)
 
 Cycle 0094 part 3 ([Issue #241](https://github.com/laststance/codebook/issues/241)), an owner-directed process cycle. **The extension behaves as before; this version reorganizes the Study workspace code.** It carries out the last process proposal from the repository's GitHub Discussions: the 30,244-line `studyWorkspace.ts` is split by feature.
