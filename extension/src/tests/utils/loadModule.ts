@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { basename, dirname } from 'node:path'
-import { createContext, runInContext } from 'node:vm'
+import { compileFunction, createContext, runInContext } from 'node:vm'
 
 import { withSavedSessionEditorStubs } from './savedSessionEditorStubs'
 
@@ -69,12 +69,12 @@ export async function loadModule<Module>(
       const file = sameContext[name]!
       if (!sameContextExports.has(file)) {
         const sibling = { exports: {} }
-        // The sibling runs as a function of this context, with its own module object and its own relative requires.
-        const evaluate = runInContext(
-          `(function (module, exports, require, __dirname, __filename) {${sameContextSources.get(name)}\n})`,
-          context,
-          { filename: file },
-        ) as (...values: unknown[]) => void
+        // The sibling runs as a function of this context, with its own module object and its own relative requires. compileFunction, as Node's own CommonJS loader does, adds no wrapper text, so V8's coverage offsets match the file and its source map (a wrapper on line 1 shifted every offset and c8 lost the sibling's function records).
+        const evaluate = compileFunction(
+          sameContextSources.get(name) ?? '',
+          ['module', 'exports', 'require', '__dirname', '__filename'],
+          { filename: file, parsingContext: context },
+        )
         const siblingRequire = createRequire(file)
         // The sibling resolves the stubbed dependencies first, as the module that requires it does.
         evaluate(
