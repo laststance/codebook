@@ -155,6 +155,7 @@ import {
   type StartInput,
 } from './schemas'
 import type { StudyWorkspace } from './studyWorkspace'
+import { assertViteLibraryNeedsPackageRoot } from './utils/assertViteLibraryNeedsPackageRoot'
 import { buildRecordingContext } from './utils/buildRecordingContext'
 import { canonicalDefinition } from './utils/canonicalDefinition'
 import { canonicalPackageRootOfConfiguration } from './utils/canonicalPackageRootOfConfiguration'
@@ -1991,6 +1992,9 @@ export class StudyService {
   private assertProfileDeclaration(input: StartInput): void {
     this.assertNodeServerDeclaration(input)
     this.assertNodeScriptDeclaration(input)
+    // A vite-dev library run needs the Example's nested packageRoot; the refusal carries its reason before the generic parse.
+    if (input.profile === REPOSITORY_BROWSER_PROFILE)
+      assertViteLibraryNeedsPackageRoot(input.configuration)
     if (input.profile === CHROME_EXTENSION_PROFILE)
       parseChromeExtensionConfiguration(input.configuration)
   }
