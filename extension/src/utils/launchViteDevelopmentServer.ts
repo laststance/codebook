@@ -1,7 +1,10 @@
+import { join } from 'node:path'
+
 import {
   REPOSITORY_SETUP_TIMEOUT_MS,
   VITE_LAUNCHER_FACTS_TIMEOUT_MS,
   VITE_LAUNCHER_MESSAGES,
+  VITE_LIBRARY_CACHE_FOLDER_NAME,
   VITE_MODE_ENV_NAMES,
   VITE_SETUP_STEPS,
 } from '../constants'
@@ -73,6 +76,15 @@ function portSourceOf(facts: ViteFacts, scriptPort: number | undefined) {
   return facts.configFile
     ? `the Vite config (${facts.configFile})`
     : "Vite's default port"
+}
+
+/** The private Vite cache of a library run (`<privateFolder>/vite-cache`), the one cacheDir outside the package root the settings check accepts; `undefined` for a run without library. */
+function ownedViteCacheDir(
+  library: DevelopmentServerStart['viteLibrary'],
+): string | undefined {
+  return library
+    ? join(library.privateFolder, VITE_LIBRARY_CACHE_FOLDER_NAME)
+    : undefined
 }
 
 /** Tells a message of the launcher's protocol from anything project code sends over the same IPC channel. */
@@ -187,6 +199,7 @@ export async function launchViteDevelopmentServer(
     mode: script.mode,
     configFile: script.configFile,
     port: script.port,
+    library: request.viteLibrary,
   }
   request.onStep(VITE_SETUP_STEPS.resolvingConfig)
   const app = launchDevelopmentServer(
@@ -252,7 +265,12 @@ export async function launchViteDevelopmentServer(
     )
   maskedValues.push(...first.envValues)
   const { facts } = first
-  const unsupported = await assessViteSettings(facts, request.workspace)
+  const unsupported = await assessViteSettings(
+    facts,
+    request.workspace,
+    // The library route's private cache is the one cacheDir outside the package root a run accepts.
+    ownedViteCacheDir(request.viteLibrary),
+  )
   if (unsupported.length) {
     refuseLaunch(app)
     throw viteRefusal(

@@ -22,6 +22,7 @@ import type {
 import type { ResolvedVitePackage } from './utils/resolveVitePackage'
 import type { ViteLibraryModuleSource } from './utils/selectViteLibraryCandidate'
 import type { ViteLibraryModules } from './utils/viteLibraryModules'
+import type { ViteLauncherLibraryOptions } from './viteLauncherProtocol'
 
 /** The name a repository-browser configuration gives its development server (`adapter`), the one key of {@link DevelopmentServerAdapter}. */
 export type DevelopmentServerAdapterName =
@@ -42,6 +43,8 @@ export type DevelopmentServerStart = {
   reactScriptsPackage?: ResolvedPackage
   /** The Expo app an `expo-web-dev` run resolved ({@link resolveExpoWebPackage}): the CLI runs with `workspace` (the app folder) as its working folder. Absent for every other run. */
   expoWebPackage?: ResolvedPackage
+  /** The checked-out library a Vite run serves from its packed copy (the library route): the owned launcher redirects the app's imports of it, and the run's private Vite cache (`<privateFolder>/vite-cache`) passes the settings check. Absent for every other run. */
+  viteLibrary?: ViteLauncherLibraryOptions
   /** The configured entry path of the run (`/` when none): an `expo-web-dev` run asks Metro's entry page there to find the bundle. */
   entryPath?: string
   /** The Node executable of the run (`Codebook: Node Executable`). */

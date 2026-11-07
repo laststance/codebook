@@ -1,4 +1,5 @@
 import type { ViteFacts } from './utils/assessViteSettings'
+import type { LibraryBlockers } from './viteLibraryRedirect'
 
 /** What the extension passes the launcher on its command line (one JSON argument). */
 export type ViteLauncherOptions = {
@@ -12,6 +13,26 @@ export type ViteLauncherOptions = {
   configFile: string | undefined
   /** `--port` of the dev script, when given. */
   port: number | undefined
+  /** The checked-out library to serve from its packed copy (the library route); absent for every other run. */
+  library?: ViteLauncherLibraryOptions
+}
+
+/** What the launcher needs to redirect the Example's imports of one library to its packed copy; every path is absolute. */
+export type ViteLauncherLibraryOptions = {
+  /** The library's package name. */
+  packageName: string
+  /** The real path of the unpacked package folder; it may be empty when the server is created. */
+  packedRoot: string
+  /** A real file inside the private folder, the importer the redirect resolves the library from. */
+  anchorFile: string
+  /** The real path of the library's package folder. */
+  libraryRoot: string
+  /** The packed `package.json` `peerDependencies` names. */
+  peers: string[]
+  /** The packed `package.json` `imports` field, when it has one. */
+  imports?: Record<string, unknown>
+  /** The run's private folder: it holds the Vite cache (`vite-cache`) and is allowed to the dev server. */
+  privateFolder: string
 }
 
 /** The phase a launcher failure happened in, named in the refusal. */
@@ -29,6 +50,8 @@ export type ViteLauncherReport =
       facts: ViteFacts
       /** Values of the env files Vite loaded (at least the masked minimum length), for masking by value only; never published. */
       envValues: string[]
+      /** What would defeat the redirect, read from the same resolved config; present only for a library run. */
+      libraryBlockers?: LibraryBlockers
     }
   | {
       type: 'vite-failed'

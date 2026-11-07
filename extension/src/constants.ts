@@ -3355,6 +3355,9 @@ export const NEXT_WEBPACK_COMPATIBILITY_SENTENCE =
 /** The most reloads before the inputs the run tolerates (a dependency optimizer reloads once or twice). */
 export const VITE_PAGE_GENERATION_LIMIT = 4
 
+/** The folder inside a library run's private folder that holds Vite's cache, so the Example's `node_modules/.vite` is never rewritten. */
+export const VITE_LIBRARY_CACHE_FOLDER_NAME = 'vite-cache'
+
 /** The message types of the IPC channel between the extension and the owned Vite launcher. */
 export const VITE_LAUNCHER_MESSAGES = {
   env: 'vite-env',
