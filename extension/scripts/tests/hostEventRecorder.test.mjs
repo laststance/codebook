@@ -12,6 +12,7 @@ const {
   buildHeader,
   createEventWriter,
   decideResume,
+  readHostVersion,
   sanitizeTab,
   sanitizeUri,
   snapshotTabGroups,
@@ -28,11 +29,11 @@ test('a file inside the repository is recorded by its repository-relative path',
   const sanitized = sanitizeUri(uri, context)
 
   // Assert
-  assert.deepEqual(sanitized, { scheme: 'file', path: 'src/a.ts' })
+  assert.equal(sanitized, 'src/a.ts')
 })
 
 // Value: protects=a trace never revealing a path outside the repository; fails_when=a URI outside the workspace (or in a sibling folder sharing the name prefix) keeps its path; why_new=Cycle 0094 task 12; seam=none; no_claim=none beyond protects
-test('a URI outside the repository keeps only its scheme', () => {
+test('a URI outside the repository is left out of the trace', () => {
   // Arrange
   const sibling = { scheme: 'file', path: '/work/repo2/src/a.ts' }
   const untitled = { scheme: 'untitled', path: 'Untitled-1' }
@@ -44,11 +45,7 @@ test('a URI outside the repository keeps only its scheme', () => {
   )
 
   // Assert
-  assert.deepEqual(results, [
-    { scheme: 'file' },
-    { scheme: 'untitled', path: 'Untitled-1' },
-    { scheme: 'file' },
-  ])
+  assert.deepEqual(results, [undefined, 'untitled:Untitled-1', undefined])
 })
 
 // Value: protects=tab labels (file names) of resources outside the repository staying out of a public trace; fails_when=such a tab keeps its label; why_new=Cycle 0094 task 12; seam=none; no_claim=labels of tabs without a resource (webviews), which stay
@@ -69,7 +66,7 @@ test('the label of a tab outside the repository becomes its input kind', () => {
 
   // Assert
   assert.equal(sanitized.label, 'text')
-  assert.deepEqual(sanitized.input.uri, { scheme: 'file' })
+  assert.equal(sanitized.input.uri, undefined)
 })
 
 // Value: protects=Codebook's own webview panels being identifiable in a trace; fails_when=a webview tab loses its viewType or its label; why_new=Cycle 0094 task 12; seam=none; no_claim=none beyond protects
@@ -115,20 +112,22 @@ test('a webview tab keeps its viewType and label in the snapshot', () => {
         ],
       },
     ],
+    activeGroupIndex: 0,
   })
 })
 
 // Value: protects=a trace saying where and with what it was recorded; fails_when=a header field is missing; why_new=Cycle 0094 task 12; seam=none; no_claim=none beyond protects
-test('the header names host, host version, OS, sequence, Codebook version, recorder version and start time', () => {
+test('the header names host, host version, host API version, OS, sequence, Codebook version, recorder version and start time', () => {
   // Arrange
   const fields = {
     host: 'Cursor',
-    hostVersion: '3.27.0',
+    hostVersion: '3.29.9',
+    hostApiVersion: '1.128.0',
     os: 'darwin',
     sequence: 'arrange-restore',
     codebookVersion: '0.2.93.0',
     recorderVersion: '0.1.0',
-    startTime: '2026-11-07T00:00:00.000Z',
+    startedAt: '2026-11-07T00:00:00.000Z',
   }
 
   // Act
@@ -172,7 +171,7 @@ test('events are written one JSON object per line with a monotonic seq and a ful
     ),
     ...writer.lines(
       'editorLayout',
-      { layout: { orientation: 0, groups: [] } },
+      { orientation: 0, groups: [] },
       20,
       snapshot,
     ),
@@ -192,10 +191,151 @@ test('events are written one JSON object per line with a monotonic seq and a ful
       [4, 20, 'tabGroups'],
     ],
   )
-  assert.deepEqual(parsed[1].data.groups[0].tabs[0].input.uri, {
-    scheme: 'file',
-    path: 'a.ts',
+  assert.equal(parsed[1].data.groups[0].tabs[0].input.uri, 'a.ts')
+})
+
+// Value: protects=no absolute path leaking through a group event (the Cycle 0094 native take wrote full group objects with `/Users/...` tab inputs); fails_when=a groupsChanged payload keeps a group's tabs or any path outside groupIndex; why_new=Cycle 0094 task 12 sanitizer leak; seam=none (pure writer); no_claim=that the editor's real groupsChanged entries have this shape
+test('a group event carrying tab inputs with absolute paths is written as group indexes only', () => {
+  // Arrange
+  const writer = createEventWriter({ context })
+  const groupWithAbsolutePath = {
+    groupIndex: 2,
+    viewColumn: 3,
+    isActive: false,
+    tabs: [
+      {
+        label: 'data.ts',
+        isActive: true,
+        isPreview: false,
+        input: {
+          kind: 'text',
+          uri: { scheme: 'file', path: '/work/repo/app/lib/data.ts' },
+        },
+      },
+    ],
+  }
+  const snapshot = { groups: [] }
+
+  // Act
+  const [eventLine] = writer.lines(
+    'groupsChanged',
+    { opened: [], closed: [], changed: [groupWithAbsolutePath] },
+    5,
+    snapshot,
+  )
+
+  // Assert
+  assert.deepEqual(JSON.parse(eventLine).data, {
+    opened: [],
+    closed: [],
+    changed: [{ groupIndex: 2 }],
   })
+  assert.ok(!eventLine.includes('/work/repo'))
+})
+
+// Value: protects=a tab event naming its group by index and its tab by label and kind, the shape the replay parser reads, with outside labels hidden; fails_when=tabsChanged writes groupViewColumn or a whole tab, or keeps the label of a file outside the repository; why_new=Cycle 0094 task 12 format decision; seam=the parser lane reads the committed sample; no_claim=none beyond protects
+test('a tab event is written as groupIndex, label and input kind with the label of an outside file hidden', () => {
+  // Arrange
+  const writer = createEventWriter({ context })
+  const insideTab = {
+    label: 'a.ts',
+    isActive: true,
+    isPreview: false,
+    input: { kind: 'text', uri: { scheme: 'file', path: '/work/repo/a.ts' } },
+  }
+  const outsideTab = {
+    label: 'notes.md',
+    isActive: false,
+    isPreview: false,
+    input: {
+      kind: 'text',
+      uri: { scheme: 'file', path: '/home/alice/notes.md' },
+    },
+  }
+
+  // Act
+  const [eventLine] = writer.lines(
+    'tabsChanged',
+    {
+      opened: [{ groupIndex: 1, tab: insideTab }],
+      closed: [{ groupIndex: 0, tab: outsideTab }],
+      changed: [],
+    },
+    7,
+    { groups: [] },
+  )
+
+  // Assert
+  assert.deepEqual(JSON.parse(eventLine).data, {
+    opened: [{ groupIndex: 1, label: 'a.ts', inputKind: 'text' }],
+    closed: [{ groupIndex: 0, label: 'text', inputKind: 'text' }],
+    changed: [],
+  })
+})
+
+// Value: protects=the replay parser's input kinds and Codebook's own virtual documents staying matchable in a public trace; fails_when=a diff tab keeps the recorder-side kind textDiff, or a codebook-source tab loses its file name and label; why_new=Cycle 0094 task 12 format decision; seam=none; no_claim=other virtual schemes of other extensions, which stay out of the trace
+test('a diff tab is written as kind diff and a codebook-source tab keeps its file name and label', () => {
+  // Arrange
+  const groups = [
+    {
+      viewColumn: 1,
+      isActive: true,
+      tabs: [
+        {
+          label: 'a.ts (Working Tree)',
+          isActive: true,
+          isPreview: false,
+          input: {
+            kind: 'textDiff',
+            original: { scheme: 'file', path: '/work/repo/a.ts' },
+            modified: { scheme: 'file', path: '/work/repo/b.ts' },
+          },
+        },
+        {
+          label: 'Captured-cards.tsx',
+          isActive: false,
+          isPreview: false,
+          input: {
+            kind: 'text',
+            uri: {
+              scheme: 'codebook-source',
+              path: '/study/repository%2Fa/hash/app/ui/Captured-cards.tsx',
+            },
+          },
+        },
+      ],
+    },
+  ]
+
+  // Act
+  const [diffTab, virtualTab] = snapshotTabGroups(groups, context).groups[0]
+    .tabs
+
+  // Assert
+  assert.deepEqual(diffTab.input, {
+    kind: 'diff',
+    original: 'a.ts',
+    modified: 'b.ts',
+  })
+  assert.equal(virtualTab.label, 'Captured-cards.tsx')
+  assert.equal(virtualTab.input.uri, 'codebook-source:Captured-cards.tsx')
+})
+
+// Value: protects=the trace header telling the editor product version, not the VS Code API version (Cursor 3.29.9 reported 1.128.0 through vscode.version); fails_when=the version is not read from product.json or a missing or broken file does not give unknown; why_new=Cycle 0094 task 12 host version; seam=extension.js reads product.json and passes the text; no_claim=that appRoot resolves to the product folder in every host
+test('the host version is the product.json version and unknown when it cannot be read', () => {
+  // Arrange
+  const cursorProduct = '{"nameShort":"Cursor","version":"3.29.12"}'
+
+  // Act
+  const versions = [
+    readHostVersion(cursorProduct),
+    readHostVersion(undefined),
+    readHostVersion('not json'),
+    readHostVersion('{"nameShort":"Cursor"}'),
+  ]
+
+  // Assert
+  assert.deepEqual(versions, ['3.29.12', 'unknown', 'unknown', 'unknown'])
 })
 
 // Value: protects=the recorder-side half of the trace format contract (eng review R6); fails_when=the serializer's bytes for the fixed sample events change, or a kind is renamed on this side only; why_new=Cycle 0094 task 12; seam=lane B2's replay parser test reads the same fixture file; no_claim=that the replay parser reads the file (that test is the parser lane's)

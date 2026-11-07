@@ -36,6 +36,18 @@ const SAMPLE_GROUPS = [
           uri: { scheme: 'file', path: '/home/alice/notes/todo.md' },
         },
       },
+      {
+        label: 'Captured-a.ts',
+        isActive: false,
+        isPreview: false,
+        input: {
+          kind: 'text',
+          uri: {
+            scheme: 'codebook-source',
+            path: '/study-id/repository%2Fa/hash/src/Captured-a.ts',
+          },
+        },
+      },
     ],
   },
   {
@@ -81,11 +93,12 @@ export function buildSampleTrace() {
       buildHeader({
         host: 'Visual Studio Code',
         hostVersion: '1.142.0',
+        hostApiVersion: '1.142.0',
         os: 'darwin',
         sequence: 'sample',
         codebookVersion: '0.2.93.0',
         recorderVersion: '0.1.0',
-        startTime: '2026-11-07T00:00:00.000Z',
+        startedAt: '2026-11-07T00:00:00.000Z',
       }),
     ),
     emit('tabGroups', { groups: SAMPLE_GROUPS }, 0),
@@ -93,18 +106,23 @@ export function buildSampleTrace() {
       'tabsChanged',
       {
         opened: [],
-        closed: [{ groupViewColumn: 1, tab: closedTab }],
-        changed: [{ groupViewColumn: 1, tab: SAMPLE_GROUPS[0].tabs[0] }],
+        closed: [{ groupIndex: 0, tab: closedTab }],
+        changed: [{ groupIndex: 0, tab: SAMPLE_GROUPS[0].tabs[0] }],
       },
       40,
     ),
     emit(
       'groupsChanged',
-      { opened: [], closed: [], changed: [SAMPLE_GROUPS[1]] },
+      // The writer keeps only groupIndex of a group entry, whatever else the entry carries.
+      {
+        opened: [],
+        closed: [],
+        changed: [{ groupIndex: 1, ...SAMPLE_GROUPS[1] }],
+      },
       46,
     ),
     emit('activeTextEditor', { uri, viewColumn: 1 }, 90),
-    emit('visibleTextEditors', { editors: [{ uri, viewColumn: 1 }] }, 90),
+    emit('visibleTextEditors', [{ uri, viewColumn: 1 }], 90),
     emit(
       'selection',
       {
@@ -122,12 +140,7 @@ export function buildSampleTrace() {
     ),
     emit(
       'editorLayout',
-      {
-        layout: {
-          orientation: 0,
-          groups: [{ size: 0.5 }, { size: 0.5 }],
-        },
-      },
+      { orientation: 0, groups: [{ size: 0.5 }, { size: 0.5 }] },
       170,
     ),
     emit(

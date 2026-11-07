@@ -9,7 +9,11 @@
  * `extension/scripts/sanitizeHostTrace.mjs` before a trace may enter the public repository.
  */
 
-/** The version of the line format; the replay parser refuses a header that names another. */
+/**
+ * The version of the line format; the replay parser (`extension/src/tests/utils/hostTraceReplay.ts`, the contract) refuses a header that names another.
+ *
+ * One format, written here and read there: a repository-relative `uri` is a plain string (`app/lib/data.ts`; a virtual document of the repository is `<scheme>:<file name>`), a tab input kind is one of `text`, `webview`, `diff`, `notebook`, `custom`, `terminal`, `unknown`, `tabsChanged` entries are `{ groupIndex, label, inputKind }`, `groupsChanged` entries are `{ groupIndex }` and every snapshot names its `activeGroupIndex`.
+ */
 const TRACE_FORMAT_VERSION = 1
 
 /** Every event kind a trace line may carry; the replay parser keeps its own list, pinned by a cross-check test. */
@@ -48,65 +52,90 @@ function isAbsolutePath(path) {
   return /^(?:\/|[A-Za-z]:[\\/]|~[\\/])/.test(path)
 }
 
+/** URI schemes Codebook itself registers for documents of the repository: their path is never a local folder, so the file name is kept. */
+const REPOSITORY_VIRTUAL_SCHEMES = ['codebook-source']
+
+/** The tab input kinds the replay parser names, by the kind the recorder's plain input uses. */
+const FROZEN_INPUT_KIND = { textDiff: 'diff', notebookDiff: 'diff' }
+
 /**
- * Sanitizes one URI for a public trace.
+ * Splits a URI given as `{ scheme, path }` or as a trace string into scheme and path.
  *
- * A `file` URI inside a workspace folder keeps only its repository-relative path; every other URI
- * keeps only its scheme. The function is idempotent, so a trace that was already sanitized passes
- * through unchanged.
+ * @param {{ scheme: string, path?: string } | string} uri - A raw URI object or an already written `uri` string.
+ * @returns {{ scheme: string, path: string }} A string without a scheme of two or more letters is a `file` path (so `C:\` is a drive, not a scheme).
+ */
+function splitUri(uri) {
+  if (typeof uri !== 'string')
+    return {
+      scheme: uri.scheme,
+      path: typeof uri.path === 'string' ? uri.path : '',
+    }
+  const match = /^([A-Za-z][A-Za-z0-9+.-]+):(.*)$/s.exec(uri)
+  return match
+    ? { scheme: match[1], path: match[2] }
+    : { scheme: 'file', path: uri }
+}
+
+/**
+ * Sanitizes one URI for a public trace and writes it as the format's `uri` string.
  *
- * @param {{ scheme: string, path?: string } | null | undefined} uri - A URI as `{ scheme, path }`.
+ * A `file` URI inside a workspace folder keeps only its repository-relative path; a virtual document of the repository keeps `<scheme>:<file name>`; a relative path of another scheme (`untitled:Untitled-1`) stays; every other URI is dropped. The function is idempotent, so a trace that was already sanitized passes through unchanged.
+ *
+ * @param {{ scheme: string, path?: string } | string | null | undefined} uri - A raw URI as `{ scheme, path }` or an already written `uri` string.
  * @param {{ workspaceFolders: { scheme: string, path: string }[] }} context - The workspace folders of the repository.
- * @returns {{ scheme: string, path?: string } | null} `{ scheme, path }` for a file inside the repository, `{ scheme }` otherwise, `null` for no URI.
+ * @returns {string | undefined} The `uri` string, or `undefined` for no URI or one that reveals more than the repository.
  * @example
  * sanitizeUri({ scheme: 'file', path: '/repo/src/a.ts' }, { workspaceFolders: [{ scheme: 'file', path: '/repo' }] })
- * // => { scheme: 'file', path: 'src/a.ts' }
+ * // => 'src/a.ts'
  */
 function sanitizeUri(uri, context) {
-  if (!uri) return null
-  const path = typeof uri.path === 'string' ? uri.path : ''
-  // Already relative or scheme-only: nothing to remove.
-  if (!path || !isAbsolutePath(path))
-    return path ? { scheme: uri.scheme, path } : { scheme: uri.scheme }
-  if (uri.scheme === 'file') {
+  if (!uri) return undefined
+  const { scheme, path } = splitUri(uri)
+  if (!path) return undefined
+  // Already relative: nothing to remove.
+  if (!isAbsolutePath(path))
+    return scheme === 'file' ? path : `${scheme}:${path}`
+  if (scheme === 'file') {
     const normalized = normalizePath(path)
     for (const folder of context.workspaceFolders) {
       if (folder.scheme !== 'file') continue
       const root = normalizePath(folder.path)
-      if (normalized === root) return { scheme: 'file', path: '.' }
+      if (normalized === root) return '.'
       // Prefix match on a whole folder name, so /repo2 is not inside /repo.
       const prefix = root === '/' ? '/' : `${root}/`
-      if (normalized.startsWith(prefix))
-        return { scheme: 'file', path: normalized.slice(prefix.length) }
+      if (normalized.startsWith(prefix)) return normalized.slice(prefix.length)
     }
+    return undefined
   }
-  return { scheme: uri.scheme }
+  if (REPOSITORY_VIRTUAL_SCHEMES.includes(scheme))
+    return `${scheme}:${path.split('/').at(-1)}`
+  return undefined
 }
 
 /**
- * Sanitizes one tab input (`kind` plus its URIs), keeping a webview's `viewType`.
+ * Drops the keys whose value is `null` or `undefined`, so a payload never writes an empty field.
  *
- * @param {object} input - A plain tab input: `{ kind, uri?, original?, modified?, viewType? }`.
+ * @param {object} fields - A plain object.
+ * @returns {object} A copy without nullish values.
+ */
+function withoutNullish(fields) {
+  return Object.fromEntries(
+    Object.entries(fields).filter(([, value]) => value != null),
+  )
+}
+
+/**
+ * Sanitizes one tab input (`kind` plus its URIs as strings), keeping a webview's `viewType`.
+ *
+ * @param {object} input - A plain tab input: `{ kind, uri?, original?, modified?, viewType? }` with raw or written URIs.
  * @param {{ workspaceFolders: object[] }} context - The workspace folders of the repository.
- * @returns {object} The input with every URI sanitized.
+ * @returns {object} The input with the replay parser's kind and every URI sanitized to a string (a URI that reveals more than the repository is left out).
  */
 function sanitizeInput(input, context) {
-  const result = { ...input }
+  const result = { ...input, kind: FROZEN_INPUT_KIND[input.kind] ?? input.kind }
   for (const key of ['uri', 'original', 'modified'])
     if (key in result) result[key] = sanitizeUri(result[key], context)
-  return result
-}
-
-/**
- * Says whether a tab input points at a resource outside the repository.
- *
- * @param {object} input - A sanitized tab input.
- * @returns {boolean} `true` when some URI of the input kept only its scheme.
- */
-function hasResourceOutsideRepository(input) {
-  return ['uri', 'original', 'modified'].some(
-    (key) => input[key] && input[key].path === undefined,
-  )
+  return withoutNullish(result)
 }
 
 /**
@@ -120,17 +149,19 @@ function hasResourceOutsideRepository(input) {
  */
 function sanitizeTab(tab, context) {
   const input = sanitizeInput(tab.input, context)
-  // A label can carry a file name or a user's folder; the kind says what is open without naming it.
-  const label = hasResourceOutsideRepository(input) ? input.kind : tab.label
-  return { ...tab, label, input }
+  // A resource the sanitizer dropped was outside the repository; its label can carry a file name or a user's folder, so the kind says what is open without naming it.
+  const isOutsideRepository = ['uri', 'original', 'modified'].some(
+    (key) => tab.input[key] && input[key] === undefined,
+  )
+  return { ...tab, label: isOutsideRepository ? input.kind : tab.label, input }
 }
 
 /**
- * Builds the full `tabGroups` snapshot payload: every group in order with its tabs.
+ * Builds the full `tabGroups` snapshot payload: every group in order with its tabs and the active group's index.
  *
  * @param {{ viewColumn: number, isActive: boolean, tabs: object[] }[]} groups - Plain tab groups.
  * @param {{ workspaceFolders: object[] }} context - The workspace folders of the repository.
- * @returns {{ groups: object[] }} The sanitized snapshot.
+ * @returns {{ groups: object[], activeGroupIndex: number }} The sanitized snapshot; `activeGroupIndex` is -1 when no group is active.
  */
 function snapshotTabGroups(groups, context) {
   return {
@@ -149,55 +180,94 @@ function snapshotTabGroups(groups, context) {
         ),
       ),
     })),
+    activeGroupIndex: groups.findIndex((group) => group.isActive),
   }
 }
 
 /**
- * Sanitizes the payload of one event according to its kind.
+ * Sanitizes the payload of one event according to its kind and writes it in the format's shape.
+ *
+ * A group event keeps only `groupIndex`: a full group object would carry its tabs' inputs and their absolute paths (the take of Cycle 0094 leaked `/Users/...` that way).
  *
  * @param {string} kind - One of {@link EVENT_KINDS}.
- * @param {object} data - The raw payload.
+ * @param {object} data - The raw payload (or an already written one).
  * @param {{ workspaceFolders: object[] }} context - The workspace folders of the repository.
  * @returns {object} The payload with URIs and tab labels sanitized.
  */
 function sanitizeEventData(kind, data, context) {
-  const sanitizeTabs = (entries) =>
-    entries.map((entry) => ({ ...entry, tab: sanitizeTab(entry.tab, context) }))
+  const sanitizeEditor = (editor) =>
+    withoutNullish({
+      ...editor,
+      uri: sanitizeUri(editor.uri, context),
+    })
+  // A raw tab entry carries its plain tab; an already written one carries label and inputKind.
+  const tabEntries = (entries) =>
+    entries.map((entry) => {
+      if (!entry.tab)
+        return {
+          groupIndex: entry.groupIndex,
+          label: entry.label,
+          inputKind: entry.inputKind,
+        }
+      const tab = sanitizeTab(entry.tab, context)
+      return {
+        groupIndex: entry.groupIndex,
+        label: tab.label,
+        inputKind: tab.input.kind,
+      }
+    })
+  const groupEntries = (entries) =>
+    entries.map((entry) => ({ groupIndex: entry.groupIndex }))
   switch (kind) {
     case 'tabGroups':
       return snapshotTabGroups(data.groups, context)
     case 'tabsChanged':
       return {
-        opened: sanitizeTabs(data.opened),
-        closed: sanitizeTabs(data.closed),
-        changed: sanitizeTabs(data.changed),
+        opened: tabEntries(data.opened),
+        closed: tabEntries(data.closed),
+        changed: tabEntries(data.changed),
       }
     case 'groupsChanged':
       return {
-        opened: data.opened.map((group) => ({ ...group })),
-        closed: data.closed.map((group) => ({ ...group })),
-        changed: data.changed.map((group) => ({ ...group })),
+        opened: groupEntries(data.opened),
+        closed: groupEntries(data.closed),
+        changed: groupEntries(data.changed),
       }
     case 'activeTextEditor':
     case 'selection':
-      return { ...data, uri: sanitizeUri(data.uri, context) }
+      return sanitizeEditor(data)
     case 'visibleTextEditors':
-      return {
-        editors: data.editors.map((editor) => ({
-          ...editor,
-          uri: sanitizeUri(editor.uri, context),
-        })),
-      }
+      return data.map(sanitizeEditor)
     default:
-      // editorLayout and reload carry numbers only.
+      // editorLayout (the layout itself) and reload carry numbers only.
       return data
+  }
+}
+
+/**
+ * Reads the host's own version from the text of its `product.json`.
+ *
+ * `vscode.version` is the VS Code API version (Cursor 3.29.9 reports 1.128.0), so the header takes the product version instead. Called by `extension.js` when a take starts.
+ *
+ * @param {string | undefined} productJsonText - The text of `<vscode.env.appRoot>/product.json`, or `undefined` when it could not be read.
+ * @returns {string} The `version` field, or `unknown` for missing, malformed or version-less text.
+ * @example
+ * readHostVersion('{"version":"3.29.12"}') // => '3.29.12'
+ */
+function readHostVersion(productJsonText) {
+  if (!productJsonText) return 'unknown'
+  try {
+    const { version } = JSON.parse(productJsonText)
+    return typeof version === 'string' && version ? version : 'unknown'
+  } catch {
+    return 'unknown'
   }
 }
 
 /**
  * Builds the first line of a take.
  *
- * @param {{ host: string, hostVersion: string, os: string, sequence: string, codebookVersion: string, recorderVersion: string, startTime: string }} fields - Where and when the take was recorded.
+ * @param {{ host: string, hostVersion: string, hostApiVersion: string, os: string, sequence: string, codebookVersion: string, recorderVersion: string, startedAt: string }} fields - Where and when the take was recorded; `hostApiVersion` is `vscode.version`, `hostVersion` the product version ({@link readHostVersion}).
  * @returns {object} The header object (serialize it with {@link serializeLine}).
  */
 function buildHeader(fields) {
@@ -206,11 +276,12 @@ function buildHeader(fields) {
     formatVersion: TRACE_FORMAT_VERSION,
     host: fields.host,
     hostVersion: fields.hostVersion,
+    hostApiVersion: fields.hostApiVersion,
     os: fields.os,
     sequence: fields.sequence,
     codebookVersion: fields.codebookVersion,
     recorderVersion: fields.recorderVersion,
-    startTime: fields.startTime,
+    startedAt: fields.startedAt,
   }
 }
 
@@ -230,7 +301,7 @@ function serializeLine(line) {
  * Called by `extension.js` when a take starts or resumes, and by the format tests.
  *
  * @param {{ context: { workspaceFolders: object[] }, firstSeq?: number }} options - The sanitizing context and the first `seq` (greater than 1 when a take resumes).
- * @returns {{ lines: (kind: string, data: object, tMs: number, snapshot: { groups: object[] }) => string[], nextSeq: () => number }} The writer.
+ * @returns {{ lines: (kind: string, data: object | unknown[], tMs: number, snapshot: { groups: object[] }) => string[], nextSeq: () => number }} The writer.
  * @example
  * const writer = createEventWriter({ context })
  * writer.lines('activeTextEditor', { uri, viewColumn: 1 }, 120, snapshot) // => [eventLine, snapshotLine]
@@ -307,6 +378,7 @@ module.exports = {
   createEventWriter,
   decideResume,
   isAbsolutePath,
+  readHostVersion,
   sanitizeTab,
   sanitizeTraceLine,
   sanitizeUri,

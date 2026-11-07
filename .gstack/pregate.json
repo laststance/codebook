@@ -155,7 +155,8 @@
     ],
     "extension/scripts/tests/fixtures/host-trace-sample.jsonl": [
       "extension/scripts/tests/hostEventRecorder.test.mjs",
-      "extension/scripts/tests/sanitizeHostTrace.test.mjs"
+      "extension/scripts/tests/sanitizeHostTrace.test.mjs",
+      "extension/src/tests/hostTraceReplay.test.ts"
     ],
     "extension/scripts/package.mjs": [
       "extension/scripts/tests/packageCli.test.mjs"

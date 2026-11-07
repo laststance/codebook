@@ -28,3 +28,7 @@ Install the resulting `.vsix` into the QA profiles only (never your daily profil
 `<workspace folder>/.codebook-host-traces/<sequence>-<host>-<version>-<timestamp>.jsonl`. This folder is private output: it is git-ignored and a take is never committed as recorded.
 
 Before a trace enters the repository, run it through `node extension/scripts/sanitizeHostTrace.mjs <take.jsonl> <out.jsonl> --repository <path>`. The script re-applies the sanitizer (file URIs inside the repository become repository-relative paths, other URIs keep only their scheme, labels of tabs outside the repository become their input kind) and refuses a trace that still holds an absolute path, a home folder or a user name. The committed fixtures are those sanitized copies.
+
+## Trace format
+
+One format, written by `traceFormat.js` and read by the replay parser `extension/src/tests/utils/hostTraceReplay.ts` (the contract). The header names `formatVersion`, `host`, `hostVersion` (the product version from `product.json`, because `vscode.version` is only the VS Code API version, kept as `hostApiVersion`), `os`, `sequence`, `codebookVersion`, `recorderVersion` and `startedAt`. Tab and group events name a group by its index in the tab-group list; a `uri` is a repository-relative string. Every event is followed by a full `tabGroups` snapshot with its `activeGroupIndex`.

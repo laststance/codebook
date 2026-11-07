@@ -262,7 +262,7 @@ function describeTraceEvent(
  * Called by every replay before the harness is built, so a malformed take fails here with a named reason instead of as a mismatching replay.
  * @param text - The JSONL file: a header line, then events with strictly increasing `seq`.
  * @returns The validated trace.
- * @throws {@link HostTraceError} `trace-header-missing` when line 1 is not a header with every field; `trace-unknown-kind` for an event kind the format does not name; `trace-seq-not-increasing` when `seq` does not strictly increase; `trace-malformed` for a line that is not JSON or lacks `seq`, `tMs` or `kind`.
+ * @throws {@link HostTraceError} `trace-header-missing` when line 1 is not a header with every field; `trace-malformed` also for a header whose `formatVersion` is not 1; `trace-unknown-kind` for an event kind the format does not name; `trace-seq-not-increasing` when `seq` does not strictly increase; `trace-malformed` for a line that is not JSON or lacks `seq`, `tMs` or `kind`.
  * @example
  * ```ts
  * const trace = parseHostTrace(readFileSync('take.jsonl', 'utf8'))
@@ -289,6 +289,12 @@ export function parseHostTrace(text: string): ParsedHostTrace {
     throw new HostTraceError(
       'trace-header-missing',
       `line 1 must be a header with ${HEADER_FIELDS.join(', ')}`,
+    )
+  // A header without formatVersion predates the field; one that names another version is not this format.
+  if (header.formatVersion !== undefined && header.formatVersion !== 1)
+    throw new HostTraceError(
+      'trace-malformed',
+      `header names formatVersion ${String(header.formatVersion)}, this parser reads 1`,
     )
   const rawEvents = lines.slice(1).map((line, index) => {
     const value = parse(line, index + 1)

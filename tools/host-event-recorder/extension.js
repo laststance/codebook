@@ -18,6 +18,7 @@ const {
   buildHeader,
   createEventWriter,
   decideResume,
+  readHostVersion,
   serializeLine,
 } = require('./traceFormat')
 
@@ -118,6 +119,21 @@ function sanitizeContext() {
   }
 }
 
+/**
+ * Reads the host's own version from its `product.json` (see {@link readHostVersion}).
+ *
+ * @returns {string} The product version, or `unknown` when `product.json` cannot be read.
+ */
+function readProductVersion() {
+  try {
+    return readHostVersion(
+      fs.readFileSync(path.join(vscode.env.appRoot, 'product.json'), 'utf8'),
+    )
+  } catch {
+    return 'unknown'
+  }
+}
+
 /** @returns {{ groups: object[] }} The current tab groups as plain groups. */
 function currentGroups() {
   return { groups: vscode.window.tabGroups.all.map(plainGroup) }
@@ -160,7 +176,7 @@ function record(kind, data) {
 async function readLayout() {
   take.lastLayoutAt = Date.now()
   const layout = await vscode.commands.executeCommand('vscode.getEditorLayout')
-  record('editorLayout', { layout })
+  record('editorLayout', layout)
 }
 
 /**
@@ -199,12 +215,15 @@ function recordBatch(kind, data) {
  * @param {import('vscode').ExtensionContext} context - The extension context that owns the subscriptions.
  */
 function subscribe(context) {
+  // A group's position in `tabGroups.all` at the event; -1 for a group that is already closed.
+  const groupIndexOf = (group) => vscode.window.tabGroups.all.indexOf(group)
   const tabEntries = (tabs) =>
     tabs.map((tab) => ({
-      groupViewColumn: tab.group.viewColumn,
+      groupIndex: groupIndexOf(tab.group),
       tab: plainTab(tab),
     }))
-  const groupEntries = (groups) => groups.map(plainGroup)
+  const groupEntries = (groups) =>
+    groups.map((group) => ({ groupIndex: groupIndexOf(group) }))
   const editorFields = (editor) => ({
     uri: plainUri(editor.document.uri),
     viewColumn: editor.viewColumn ?? null,
@@ -225,13 +244,10 @@ function subscribe(context) {
       }),
     ),
     vscode.window.onDidChangeActiveTextEditor((editor) =>
-      recordBatch(
-        'activeTextEditor',
-        editor ? editorFields(editor) : { uri: null, viewColumn: null },
-      ),
+      recordBatch('activeTextEditor', editor ? editorFields(editor) : {}),
     ),
     vscode.window.onDidChangeVisibleTextEditors((editors) =>
-      recordBatch('visibleTextEditors', { editors: editors.map(editorFields) }),
+      recordBatch('visibleTextEditors', editors.map(editorFields)),
     ),
     vscode.window.onDidChangeTextEditorSelection((event) =>
       recordBatch('selection', {
@@ -262,7 +278,7 @@ function subscribe(context) {
 function takeFileName(sequence, now) {
   const safe = (text) => text.replace(/[^A-Za-z0-9._-]+/g, '-')
   const stamp = now.toISOString().replace(/[:.]/g, '-')
-  return `${safe(sequence)}-${safe(vscode.env.appName)}-${safe(vscode.version)}-${stamp}.jsonl`
+  return `${safe(sequence)}-${safe(vscode.env.appName)}-${safe(readProductVersion())}-${stamp}.jsonl`
 }
 
 /**
@@ -284,12 +300,13 @@ async function startTake(context, sequence) {
     serializeLine(
       buildHeader({
         host: vscode.env.appName,
-        hostVersion: vscode.version,
+        hostVersion: readProductVersion(),
+        hostApiVersion: vscode.version,
         os: process.platform,
         sequence,
         codebookVersion: codebook?.packageJSON.version ?? 'unknown',
         recorderVersion: context.extension.packageJSON.version,
-        startTime: now.toISOString(),
+        startedAt: now.toISOString(),
       }),
     ),
   )

@@ -115,3 +115,65 @@ test('a trace that names a forbidden user name is refused with exit 2', async (c
   assert.equal(result.status, 2)
   assert.match(result.stderr, /^E_TRACE_NOT_CLEAN: line 1 .*user name/m)
 })
+
+// Value: protects=no absolute path reaching a committed fixture through a group event (the Cycle 0094 native take carried `/Users/...` tab inputs inside groupsChanged); fails_when=the command refuses such a take instead of cleaning it, or the output still holds the path; why_new=Cycle 0094 task 12 sanitizer leak; seam=real child process; no_claim=takes of another format version
+test('a raw take whose group event carries absolute tab paths is written without them', async (context) => {
+  // Arrange
+  const header = JSON.stringify({ type: 'header', sequence: 'sample' })
+  const groupEvent = JSON.stringify({
+    seq: 1,
+    tMs: 0,
+    kind: 'groupsChanged',
+    data: {
+      opened: [],
+      closed: [],
+      changed: [
+        {
+          groupIndex: 1,
+          viewColumn: 2,
+          isActive: true,
+          tabs: [
+            {
+              label: 'data.ts',
+              isActive: true,
+              isPreview: false,
+              input: {
+                kind: 'text',
+                uri: { scheme: 'file', path: '/work/repo/app/lib/data.ts' },
+              },
+            },
+          ],
+        },
+      ],
+    },
+  })
+  const editorEvent = JSON.stringify({
+    seq: 2,
+    tMs: 5,
+    kind: 'activeTextEditor',
+    data: { uri: '/work/repo/app/lib/data.ts', viewColumn: 2 },
+  })
+
+  // Act
+  const { result, output } = await runSanitizer(
+    context,
+    `${header}\n${groupEvent}\n${editorEvent}\n`,
+  )
+
+  // Assert
+  assert.equal(result.status, 0, result.stderr)
+  assert.deepEqual(output.trim().split('\n').slice(1).map(JSON.parse), [
+    {
+      seq: 1,
+      tMs: 0,
+      kind: 'groupsChanged',
+      data: { opened: [], closed: [], changed: [{ groupIndex: 1 }] },
+    },
+    {
+      seq: 2,
+      tMs: 5,
+      kind: 'activeTextEditor',
+      data: { uri: 'app/lib/data.ts', viewColumn: 2 },
+    },
+  ])
+})

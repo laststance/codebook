@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { workspaceHarness } from './studyWorkspaceHarness'
@@ -119,6 +121,76 @@ test('a trace without its header line is refused as trace-header-missing', () =>
   assert.throws(parse, (error) => {
     assert.ok(error instanceof HostTraceError)
     assert.equal(error.code, 'trace-header-missing')
+    return true
+  })
+})
+
+// Value: protects=the recorder and the replay parser agreeing on one trace format (eng review R6); fails_when=the committed sample written by the recorder's serializer is refused by parseHostTrace, or a kind, a payload shape or the header fields stop being read; why_new=Cycle 0094 task 12 cross-check; seam=extension/scripts/tests/fixtures/host-trace-sample.jsonl, which the recorder-side test pins to the serializer's output; no_claim=that a native take is clean
+test('the sample trace written by the recorder is read by the parser with every event kind', () => {
+  // Arrange
+  const sample = readFileSync(
+    join(
+      __dirname,
+      '..',
+      '..',
+      'scripts',
+      'tests',
+      'fixtures',
+      'host-trace-sample.jsonl',
+    ),
+    'utf8',
+  )
+
+  // Act
+  const trace = parseHostTrace(sample)
+
+  // Assert
+  assert.equal(trace.header.host, 'Visual Studio Code')
+  assert.equal(trace.header.hostVersion, '1.142.0')
+  assert.equal(trace.header.startedAt, '2026-11-07T00:00:00.000Z')
+  assert.equal(trace.segments.length, 2)
+  assert.equal(trace.segments[0]!.reload?.unrecordedToMs, 2170)
+  assert.deepEqual(
+    trace.segments[0]!.events.map((event) => event.kind),
+    [
+      'tabsChanged',
+      'groupsChanged',
+      'activeTextEditor',
+      'visibleTextEditors',
+      'selection',
+    ],
+  )
+  assert.deepEqual(trace.segments[0]!.events[0]!.roles.closed, [
+    { type: 'tab', column: 1, label: 'text', inputKind: 'text' },
+  ])
+  assert.deepEqual(trace.segments[0]!.events[1]!.roles.changed, [
+    { type: 'group', column: 2 },
+  ])
+  assert.deepEqual(trace.segments[0]!.events[2]!.objects, [
+    { type: 'editor', name: 'a.ts', column: 1 },
+  ])
+  assert.equal(trace.finalSnapshot?.activeGroupIndex, 0)
+  assert.equal(trace.finalSnapshot?.groups[0]?.tabs[0]?.input.uri, 'src/a.ts')
+  assert.deepEqual(trace.finalLayout, {
+    orientation: 0,
+    groups: [{ size: 0.5 }, { size: 0.5 }],
+  })
+})
+
+// Value: protects=a replay refusing a take of another format version instead of misreading it; fails_when=a header naming formatVersion 2 parses; why_new=Cycle 0094 task 12 (header formatVersion); seam=parseHostTrace; no_claim=what version 2 would contain
+test('a trace whose header names another formatVersion is refused as trace-malformed', () => {
+  // Arrange
+  const text = [{ ...HEADER, formatVersion: 2 }]
+    .map((line) => JSON.stringify(line))
+    .join('\n')
+
+  // Act
+  const parse = (): unknown => parseHostTrace(text)
+
+  // Assert
+  assert.throws(parse, (error) => {
+    assert.ok(error instanceof HostTraceError)
+    assert.equal(error.code, 'trace-malformed')
     return true
   })
 })
