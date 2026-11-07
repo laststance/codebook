@@ -44,6 +44,13 @@ import type { OpenRequestSettled } from '../utils/readOpenRequest'
 import { ControlledRuntime, createHarness } from './helpers'
 import { ControlledConfiguredRuntime } from './utils/configuredServiceHarness'
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
+import {
+  fileNameOf,
+  HostOrderInterposer,
+  type HostOrderFake,
+  type HostTraceInputKind,
+  type ParsedHostTrace,
+} from './utils/hostTraceReplay'
 import { loadModule } from './utils/loadModule'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 
@@ -120,6 +127,7 @@ afterEach(() => {
 /**
  * Keeps native presentation inert while exercising actual checkpoints, source watching and durable decisions.
  * @param remoteName - `vscode.env.remoteName` of the fake window, for the editor and the service alike; `wsl` models a WSL remote window, which has no Trash.
+ * @param options - `hostOrder`: a parsed host trace; the fake editor then delivers its five listener events in the trace's order and timing (see {@link HostOrderInterposer}) and the harness exposes the interposer as `hostOrder`. Without it nothing changes.
  * @example const reader = await workspaceHarness()
  * @example const readerInWsl = await workspaceHarness(true, false, 'wsl')
  */
@@ -127,6 +135,7 @@ export async function workspaceHarness(
   attach = true,
   deterministicClock = false,
   remoteName?: string,
+  options: { hostOrder?: ParsedHostTrace } = {},
 ) {
   // The ledger is shared by the module's every reader: a verdict of an earlier test's stop must not decide this one's.
   codebookStopLedger.reset()
@@ -437,6 +446,8 @@ export async function workspaceHarness(
     isPreview?: boolean
     isDirty?: boolean
     isPinned?: boolean
+    /** Set only by a host-order replay, which makes the flag follow the recorded snapshot. */
+    isActive?: boolean
   }
   /**
    * Names a text tab as both editors do, by the base name of its document's path ({@link Tab}'s `label`); called wherever the fake editor opens a text tab.
@@ -450,6 +461,8 @@ export async function workspaceHarness(
     tabs: Tab[]
     activeTab?: Tab
     locked?: boolean
+    /** Set only by a host-order replay, which makes the flag follow the recorded snapshot. */
+    isActive?: boolean
   }[] = [
     { viewColumn: 2, tabs: [] },
     { viewColumn: 1, tabs: [] },
@@ -523,6 +536,68 @@ export async function workspaceHarness(
   const activeTextEditorChanged = (editor: SourceEditor | undefined): void => {
     for (const listener of activeEditorListeners) listener(editor)
   }
+  /** Names a fake tab's input the way the recorder's trace does. */
+  const traceInputKind = (tab: Tab): HostTraceInputKind =>
+    tab.input instanceof TabInputText
+      ? 'text'
+      : tab.input instanceof TabInputTextDiff
+        ? 'diff'
+        : tab.input instanceof TabInputWebview
+          ? 'webview'
+          : tab.input instanceof TabInputTerminal
+            ? 'terminal'
+            : 'unknown'
+  /** The host-order replay of the `hostOrder` option: wraps the five listener registrations below and delivers a recorded trace's order and timing; `undefined` without the option. */
+  const hostOrder = options.hostOrder
+    ? new HostOrderInterposer<(typeof groups)[number], Tab, SourceEditor>(
+        options.hostOrder,
+        {
+          groups: () => groups,
+          groupColumn: (group) => group.viewColumn,
+          groupTabs: (group) => group.tabs,
+          tabLabel: (tab) => tab.label,
+          tabInputKind: traceInputKind,
+          applyActiveState(snapshot) {
+            for (const recorded of snapshot.groups) {
+              const group = groups.find(
+                (candidate) => candidate.viewColumn === recorded.viewColumn,
+              )
+              if (!group) continue
+              const front = recorded.tabs.find((tab) => tab.isActive)
+              for (const tab of group.tabs) {
+                const isFront =
+                  front !== undefined &&
+                  tab.label === front.label &&
+                  traceInputKind(tab) === front.input.kind
+                tab.isActive = isFront
+                if (isFront) group.activeTab = tab
+              }
+              group.isActive = recorded.isActive
+              if (recorded.isActive) {
+                activeTabGroup = group
+                staleNamedGroup = undefined
+              }
+            }
+          },
+          activeGroupColumn: () => activeTabGroup.viewColumn,
+          findTextEditor: (name, column) =>
+            visibleSourceEditors.find(
+              (editor) =>
+                fileNameOf(editor.document.uri.toString()) === name &&
+                (column === undefined || editor.viewColumn === column),
+            ),
+          textEditorName: (editor) =>
+            fileNameOf(editor.document.uri.toString()),
+          textEditorColumn: (editor) => editor.viewColumn,
+          selectionChange: (editor) => ({
+            textEditor: editor,
+            selections: editor.selections,
+            kind: undefined,
+          }),
+          editorLayout: () => structuredClone(editorLayout),
+        } satisfies HostOrderFake<(typeof groups)[number], Tab, SourceEditor>,
+      )
+    : undefined
   let primaryNotificationOrder: 'together' | 'editor first' | 'group first' =
     'together'
   let partialFocusEditor: { value: SourceEditor | undefined } | undefined
@@ -5042,28 +5117,33 @@ export async function workspaceHarness(
         onDidChangeActiveTextEditor: (
           callback: typeof activeTextEditorChanged,
         ) => {
-          activeEditorListeners.add(callback)
+          const listener =
+            hostOrder?.wrap('activeTextEditor', callback) ?? callback
+          activeEditorListeners.add(listener)
           return {
             dispose(): void {
-              activeEditorListeners.delete(callback)
+              activeEditorListeners.delete(listener)
             },
           }
         },
         onDidChangeVisibleTextEditors: (callback: () => void) => {
-          visibleEditorListeners.add(callback)
+          const listener =
+            hostOrder?.wrap('visibleTextEditors', callback) ?? callback
+          visibleEditorListeners.add(listener)
           return {
             dispose(): void {
-              visibleEditorListeners.delete(callback)
+              visibleEditorListeners.delete(listener)
             },
           }
         },
         onDidChangeTextEditorSelection: (
           callback: (change: SelectionChange) => void,
         ) => {
-          selectionListeners.add(callback)
+          const listener = hostOrder?.wrap('selection', callback) ?? callback
+          selectionListeners.add(listener)
           return {
             dispose(): void {
-              selectionListeners.delete(callback)
+              selectionListeners.delete(listener)
             },
           }
         },
@@ -5266,18 +5346,21 @@ export async function workspaceHarness(
             ): void => {
               callback(event)
             }
-            tabChangeListeners.add(notify)
+            const listener = hostOrder?.wrap('tabsChanged', notify) ?? notify
+            tabChangeListeners.add(listener)
             return {
               dispose(): void {
-                tabChangeListeners.delete(notify)
+                tabChangeListeners.delete(listener)
               },
             }
           },
           onDidChangeTabGroups: (callback: typeof changedGroups) => {
-            groupChangeListeners.add(callback)
+            const listener =
+              hostOrder?.wrap('groupsChanged', callback) ?? callback
+            groupChangeListeners.add(listener)
             return {
               dispose(): void {
-                groupChangeListeners.delete(callback)
+                groupChangeListeners.delete(listener)
               },
             }
           },
@@ -5623,6 +5706,8 @@ export async function workspaceHarness(
     Boolean(postedMessages.at(-1)?.replayFamily)
   return {
     ...harness,
+    /** The host-order replay of the `hostOrder` option; `undefined` without it. @example await harness.hostOrder?.settled() */
+    hostOrder,
     createRepositoryWikiReader,
     playbackPanel,
     playbackPanelMessages,
@@ -8625,6 +8710,7 @@ export async function workspaceHarness(
       return { started, release }
     },
     async close(): Promise<void> {
+      hostOrder?.dispose()
       await reader.retire(harness.service)
       for (const wiki of repositoryWikiReaders.splice(0)) await wiki.dispose()
       // Teardown releases exact fixture panel handles after assertions; intentionally ambiguous/duplicate inputs must not be mistaken for a successful product Close.
