@@ -121,7 +121,7 @@ export const VITE_LIBRARY_CONFIGURATION = {
     anchorIndex: 0,
   },
   source: {
-    path: 'examples/widgets-vite/src/features/counter/counterSlice.ts',
+    path: 'examples/widgets-vite/src/features/counter/counter.ts',
     hash: '0000000000000000000000000000000000000000000000000000000000000000',
     line: 20,
     column: 5,
@@ -358,10 +358,12 @@ function viteLibraryHelp() {
       unsupportedNothingStarted: `LIBRARY_BUILD_UNSUPPORTED, details.reason one of ${[...NODE_SCRIPT_LIBRARY_UNSUPPORTED_REASONS, ...VITE_LIBRARY_UNSUPPORTED_REASONS].join(', ')}: nothing was built or started; the reasons shared with node-script are explained at codebook://help/node-script#LIBRARY_BUILD_UNSUPPORTED.`,
       failedAfterStart: `LIBRARY_BUILD_FAILED, details.reason one of ${LIBRARY_BUILD_FAILED_REASONS.join(', ')}: follow codebook://help/node-script#LIBRARY_BUILD_FAILED. Retry a build-error or timeout once at most; never retry tracked-file-changed or tracked-files-unverified. pack-error details.step is one of ${LIBRARY_PACK_ERROR_STEPS.join(', ')}.`,
       librarySourceStops:
-        "A browser stop in the library's checked-out source (a file below library.packageRoot, never in node_modules) is sealed against the served packed module's source map, which names the checked-out file where its sourcesContent equals that file, and pauses there. It is refused before the browser opens with the API 1.21 VITE_SEAL_FAILED reasons (library-build-stale when the file was edited after this run's build, library-build-unmapped with details.cause, library-not-in-build; library-build-changed during the run), in sentences that name the packed build and its revision. details.sideEffects is partial: Codebook built and packed the library and wrote its ignored build output, the private folder was removed, no browser opened and no input was sent. A stop outside both the Example and the declared library stays outside-package.",
+        "A browser stop in the library's checked-out source (a file below library.packageRoot, never in node_modules) is sealed against the served packed module's source map, which names the checked-out file where its sourcesContent equals that file, and pauses there. It is refused before the browser opens with the API 1.21 VITE_SEAL_FAILED reasons (library-build-stale when the file was edited after this run's build, library-build-unmapped with details.cause, library-not-in-build), in sentences that name the packed build and its revision. For these details.sideEffects is partial: Codebook built and packed the library and wrote its ignored build output, the private folder was removed, no browser opened and no input was sent. library-build-changed is different: it is raised during the run, after the page loaded, as RUNTIME_FAILED with details.sideEffects unknown. A stop outside both the Example and the declared library stays outside-package.",
     },
     limits: [
-      "Versions can differ from a fresh install: the library's dependencies come from its own install (the repository lockfile), not from the Example's. One measured case: immer 11.2.9 from the library's install against 11.1.17 in the Example's.",
+      "Versions can differ from a fresh install: the library's dependencies come from its own install (the repository lockfile), not from the Example's. A dependency can resolve to another version than a fresh install of the packed tarball would.",
+      "A peer imported by one of the library's own dependencies resolves from the library's install, not the Example's, so two copies of a peer can load when the installs differ.",
+      'An app plugin with enforce: "pre" that resolves the package itself can take the import before the redirect; this is not refused before the build, and the run then reports another copy as loaded (publishedCopyLoaded).',
       "The library's own dependencies are pre-bundled by Vite, so a stop in them is refused; stops stay in the Example's own source and in the library's checked-out source.",
       "The run uses its own optimizer cache inside the private folder, so the first start re-optimizes the Example's dependencies (a few seconds); the Example's node_modules/.vite is not rewritten.",
       'One library per run; browser stops only (no server or SSR participants, no worker code).',

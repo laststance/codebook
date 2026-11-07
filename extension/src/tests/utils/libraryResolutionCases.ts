@@ -28,7 +28,7 @@ export const CASE_IMPORTS: Readonly<Record<string, unknown>> = {
 }
 
 /**
- * The resolution policy of the library route as cases (decision D14): the Vite plugin and the Node hook must agree on every row.
+ * The resolution policy of the library route as cases: the Vite plugin and the Node hook must agree on every row.
  * Run against both by `viteLibraryRedirect.test.ts` and `libraryHookResolutionCases.test.ts`.
  */
 export const LIBRARY_RESOLUTION_CASES: readonly LibraryResolutionCase[] = [

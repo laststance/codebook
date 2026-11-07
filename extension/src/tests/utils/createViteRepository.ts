@@ -120,7 +120,8 @@ export async function createServer(inline) {
     server: { port, host: inline.server.host, ...behavior.server },
   }
   // The inline settings the launcher passed, for a test to read (plugins are reported by name).
-  await writeFile(join(cwd, 'inline-config.json'), JSON.stringify({
+  // Only runs that carry library options (plugins or a cache directory) leave the file.
+  if ((inline.plugins ?? []).length > 0 || inline.cacheDir !== undefined) await writeFile(join(cwd, 'inline-config.json'), JSON.stringify({
     pluginNames: (inline.plugins ?? []).map((plugin) => plugin.name),
     pluginEnforce: (inline.plugins ?? []).map((plugin) => plugin.enforce),
     cacheDir: inline.cacheDir,
