@@ -588,8 +588,10 @@ export async function workspaceHarness(
               for (const tab of group.tabs) {
                 const isFront = tab === frontTab
                 tab.isActive = isFront
-                if (isFront) group.activeTab = tab
               }
+              // A recorded group with no front tab (an empty group) leaves no active tab: never keep the previous one. A named front tab the fake cannot match by label (the trace sanitizes chat and captured-source labels) leaves the fake's own choice.
+              if (front === undefined || frontTab !== undefined)
+                group.activeTab = frontTab
               group.isActive = recorded.isActive
               if (recorded.isActive) {
                 activeTabGroup = group

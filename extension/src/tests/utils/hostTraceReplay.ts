@@ -224,6 +224,70 @@ function columnAt(
   )
 }
 
+/** Names a recorded group by what it holds, so two snapshots can tell whether it is the same group. */
+function groupContentKey(group: TabGroupsSnapshot['groups'][number]): string {
+  return JSON.stringify(
+    group.tabs.map((tab) => [tab.label, tab.input.kind, tab.input.uri]),
+  )
+}
+
+/**
+ * Names the columns (in the snapshot before) of the groups that stood before an event and no longer stand after it.
+ *
+ * `viewColumn` is a position, not an identity: closing a group that is not the last renumbers the survivors, so a column absent after the event can belong to a survivor. Survivors are matched in order by their tabs (and, weaker, by column); the before-groups left without a partner are the closed ones.
+ * @returns The before-columns of the closed groups, in order.
+ * @example
+ * // before: column 1 empty, column 2 holds index.ts; after: column 1 holds index.ts
+ * closedColumnsBetween(before, after) // => [1]
+ */
+function closedColumnsBetween(
+  before: TabGroupsSnapshot | undefined,
+  after: TabGroupsSnapshot | undefined,
+): number[] {
+  const olderGroups = before?.groups ?? []
+  const newerGroups = after?.groups ?? []
+  // Pairing weight: equal tabs outweigh an equal column; no common ground means no pairing.
+  const weightOf = (older: number, newer: number): number => {
+    const olderGroup = olderGroups[older]!
+    const newerGroup = newerGroups[newer]!
+    return (
+      (groupContentKey(olderGroup) === groupContentKey(newerGroup) ? 2 : 0) +
+      (olderGroup.viewColumn === newerGroup.viewColumn ? 1 : 0)
+    )
+  }
+  // Order-preserving matching of maximal total weight (a weighted longest common subsequence).
+  const best: number[][] = Array.from({ length: olderGroups.length + 1 }, () =>
+    new Array<number>(newerGroups.length + 1).fill(0),
+  )
+  for (let older = olderGroups.length - 1; older >= 0; older--)
+    for (let newer = newerGroups.length - 1; newer >= 0; newer--) {
+      const weight = weightOf(older, newer)
+      best[older]![newer] = Math.max(
+        best[older + 1]![newer]!,
+        best[older]![newer + 1]!,
+        weight > 0 ? weight + best[older + 1]![newer + 1]! : 0,
+      )
+    }
+  const matched = new Set<number>()
+  let older = 0
+  let newer = 0
+  while (older < olderGroups.length && newer < newerGroups.length) {
+    const weight = weightOf(older, newer)
+    if (
+      weight > 0 &&
+      best[older]![newer] === weight + best[older + 1]![newer + 1]!
+    ) {
+      matched.add(older)
+      older++
+      newer++
+    } else if (best[older]![newer] === best[older + 1]![newer]) older++
+    else newer++
+  }
+  return olderGroups
+    .filter((_group, index) => !matched.has(index))
+    .map((group) => group.viewColumn)
+}
+
 /** Builds what an event names and its objects by role, from the trace's data and its neighboring snapshots. */
 function describeTraceEvent(
   kind: HostListenerKind,
@@ -238,11 +302,7 @@ function describeTraceEvent(
   }
   if (kind === 'tabsChanged' || kind === 'groupsChanged') {
     // The recorder reads a closed group's index after it closed, so it writes -1: such a group is one the snapshot before had and the one after lacks.
-    const removedColumns = (before?.groups ?? [])
-      .map((group) => group.viewColumn)
-      .filter(
-        (column) => !after?.groups.some((group) => group.viewColumn === column),
-      )
+    const removedColumns = closedColumnsBetween(before, after)
     for (const role of ['opened', 'closed', 'changed'] as const)
       for (const entry of recordsOf(isRecord(data) ? data[role] : undefined)) {
         const groupIndex = Number(entry.groupIndex)
@@ -1295,6 +1355,8 @@ export class HostOrderInterposer<
     const modelIndex = run.modelIndexOf[index - run.start] ?? -1
     const covered =
       index >= run.start && modelIndex >= 0 ? buffered[modelIndex] : undefined
+    // A synchronous delivery waits for nothing, but the recorded time still passed: the next gap counts from this event.
+    this.lastDeliveredMs = event.tMs
     // Rule 3: flags follow the snapshot recorded with the event while it is delivered.
     if (event.snapshot) this.fake.applyActiveState(event.snapshot)
     if (covered)
@@ -1364,14 +1426,26 @@ export class HostOrderInterposer<
     // Count first: delivering them does not make a model burst reach them.
     this.endSegment()
     const events = this.trace.segments[this.segmentIndex]?.events ?? []
-    for (const event of events.slice(this.cursor)) {
-      await this.waitFor(event)
-      if (this.disposed) return
-      if (event.snapshot) this.fake.applyActiveState(event.snapshot)
-      this.deliverToAll(event)
-      this.applyRecordedLayout(event)
-    }
-    this.followLastSnapshot(events.slice(this.cursor))
+    // The drain runs in the delivery queue, so a burst a listener starts while it drains is delivered after it, never beside it.
+    this.queue(async () => {
+      const delivered: HostTraceEvent[] = []
+      while (this.cursor < events.length) {
+        const index = this.cursor
+        const event = events[index]!
+        await this.waitFor(event)
+        if (this.disposed) return
+        // A burst a listener started meanwhile matched this event and delivers it itself: delivering it here too would reach the listeners twice.
+        if (this.cursor !== index) continue
+        // Reserve the event before any listener runs, so a burst that ends during the delivery cannot match it again.
+        this.cursor = index + 1
+        if (event.snapshot) this.fake.applyActiveState(event.snapshot)
+        this.deliverToAll(event)
+        this.applyRecordedLayout(event)
+        delivered.push(event)
+      }
+      this.followLastSnapshot(delivered)
+    })
+    await this.settled()
   }
 
   private rememberPayload(entry: BufferedEvent): void {

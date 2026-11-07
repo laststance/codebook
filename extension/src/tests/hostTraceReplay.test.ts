@@ -1371,3 +1371,154 @@ test('a snapshot front tab among same-name tabs of one group activates only the 
   assert.deepEqual(labels, ['x.ts', 'x.ts'])
   assert.deepEqual(active, [true, false])
 })
+
+// Value: protects=the identity of a group the host closed when closing it renumbered the survivors (the take vscode-standard seq 18: the empty column 1 closes and index.ts moves from column 2 to 1); fails_when=the surviving group is delivered as the closed one because its old column is absent from the snapshot after; why_new=Cycle 0094 /ship pass 1 (Codex finding 1); seam=HostOrderInterposer.deliverTrailing, describeTraceEvent; no_claim=that the listener learns of the renumbering
+test('a closed group is told from the surviving group the host renumbered into its column', async () => {
+  // Arrange
+  const trace = parseHostTrace(
+    traceText([
+      snapshotEvent(1, 0, [
+        { viewColumn: 1, isActive: false, tabs: [] },
+        {
+          viewColumn: 2,
+          isActive: true,
+          tabs: [textTab('index.ts', true)],
+        },
+      ]),
+      {
+        seq: 2,
+        tMs: 1,
+        kind: 'groupsChanged',
+        data: { opened: [], closed: [{ groupIndex: -1 }], changed: [] },
+      },
+      snapshotEvent(3, 2, COLUMN_ONE_ACTIVE(['index.ts'], 'index.ts')),
+    ]),
+  )
+  const closing: StubGroup = { viewColumn: 1, tabs: [] }
+  const survivor: StubGroup = { viewColumn: 2, tabs: [{ label: 'index.ts' }] }
+  const groups: StubGroup[] = [closing, survivor]
+  const interposer = new HostOrderInterposer(trace, stubFake(groups))
+  const closedGroups: StubGroup[] = []
+  interposer.wrap('groupsChanged', (event: { closed: StubGroup[] }) => {
+    closedGroups.push(...event.closed)
+  })
+  interposer.bypass(true)
+  interposer.bypass(false)
+
+  // Act
+  await interposer.deliverTrailing()
+
+  // Assert
+  assert.deepEqual(closedGroups, [closing])
+})
+
+// Value: protects=the once-only delivery of trailing trace events when a listener starts a fake operation while they are drained; fails_when=the burst of that operation matches an event the drain delivers too, so a listener hears it twice; why_new=Cycle 0094 /ship pass 1 (Codex finding 2); seam=HostOrderInterposer.deliverTrailing; no_claim=the order of the events heard
+test('a listener that starts an operation while trailing events are delivered hears each trace event once', async () => {
+  // Arrange
+  const trace = parseHostTrace(
+    traceText([
+      snapshotEvent(1, 0, COLUMN_ONE_ACTIVE(['a.ts'], 'a.ts')),
+      {
+        seq: 2,
+        tMs: 1,
+        kind: 'groupsChanged',
+        data: { opened: [], closed: [], changed: [{ groupIndex: 0 }] },
+      },
+      tabsChangedEvent(3, 2, 'a.ts'),
+    ]),
+  )
+  const groups: StubGroup[] = [{ viewColumn: 1, tabs: [{ label: 'a.ts' }] }]
+  const interposer = new HostOrderInterposer(
+    trace,
+    stubFake(groups),
+    'with-operation',
+  )
+  const heard: string[] = []
+  const onTabs = interposer.wrap('tabsChanged', (_event: unknown) =>
+    heard.push('tabs'),
+  )
+  interposer.wrap('groupsChanged', (_event: unknown) => {
+    heard.push('groups')
+    // The workspace reacts to the group change with a tab operation of its own.
+    if (heard.length === 1)
+      onTabs({ opened: [], closed: [], changed: [groups[0]!.tabs[0]!] })
+  })
+
+  // Act
+  await interposer.deliverTrailing()
+
+  // Assert
+  assert.deepEqual(heard, ['groups', 'tabs'])
+})
+
+// Value: protects=the group's front tab in the fake after a recorded snapshot whose group has no front tab; fails_when=the group keeps the previous activeTab while no tab is active; why_new=Cycle 0094 /ship pass 1 (Codex finding 3); seam=workspaceHarness hostOrder applyActiveState; no_claim=listener events
+test('a group the recorded snapshot shows without tabs has no active tab in the fake', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false, false, undefined, {
+    hostOrder: parseHostTrace(
+      traceText([
+        snapshotEvent(1, 0, COLUMN_ONE_ACTIVE(['x.ts'], 'x.ts')),
+        tabsChangedEvent(2, 5, 'x.ts'),
+        snapshotEvent(3, 6, [{ viewColumn: 1, isActive: true, tabs: [] }]),
+      ]),
+    ),
+  })
+  harness.hostOrder!.bypass(true)
+  harness.openAnnouncedTextTab('first/x.ts', 1, {
+    isPreview: false,
+    isDirty: false,
+  })
+  harness.hostOrder!.bypass(false)
+
+  // Act
+  await harness.hostOrder!.deliverTrailing()
+  const activeTab = harness.groups.find(
+    (group) => group.viewColumn === 1,
+  )!.activeTab
+  await harness.close()
+
+  // Assert
+  assert.equal(activeTab, undefined)
+})
+
+// Value: protects=the recorded gap before an unsolicited event that follows a matched one in the with-operation mode; fails_when=the matched event does not advance the delivered time, so the gap before the next event is skipped; why_new=Cycle 0094 /ship pass 1 (Codex finding 4); seam=HostOrderInterposer.deliverTrailing; no_claim=the wait length beyond the cap
+test('the recorded gap after a synchronously delivered matched event is waited before the next unsolicited event', async () => {
+  // Arrange
+  const trace = parseHostTrace(
+    traceText([
+      tabsChangedEvent(1, 10, 'a.ts'),
+      snapshotEvent(2, 11, COLUMN_ONE_ACTIVE(['a.ts'], 'a.ts')),
+      {
+        seq: 3,
+        tMs: 1010,
+        kind: 'groupsChanged',
+        data: { opened: [], closed: [], changed: [{ groupIndex: 0 }] },
+      },
+    ]),
+  )
+  const groups: StubGroup[] = [{ viewColumn: 1, tabs: [{ label: 'a.ts' }] }]
+  const interposer = new HostOrderInterposer(
+    trace,
+    stubFake(groups),
+    'with-operation',
+  )
+  const onTabs = interposer.wrap('tabsChanged', (_event: unknown) => {})
+  interposer.wrap('groupsChanged', (_event: unknown) => {})
+  const waitedMs: number[] = []
+  const realSetTimeout = globalThis.setTimeout
+  globalThis.setTimeout = ((handler: () => void, delayMs?: number) => {
+    waitedMs.push(delayMs ?? 0)
+    return realSetTimeout(handler, 0)
+  }) as typeof setTimeout
+
+  // Act
+  try {
+    onTabs({ opened: [], closed: [], changed: [groups[0]!.tabs[0]!] })
+    await interposer.deliverTrailing()
+  } finally {
+    globalThis.setTimeout = realSetTimeout
+  }
+
+  // Assert
+  assert.deepEqual(waitedMs, [1000])
+})
