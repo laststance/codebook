@@ -158,6 +158,9 @@
       "extension/scripts/tests/sanitizeHostTrace.test.mjs",
       "extension/src/tests/hostTraceReplay.test.ts"
     ],
+    "extension/src/tests/fixtures/host-traces/*.jsonl": [
+      "extension/src/tests/studyWorkspaceHostTraceHistorical.test.ts"
+    ],
     "extension/scripts/package.mjs": [
       "extension/scripts/tests/packageCli.test.mjs"
     ],

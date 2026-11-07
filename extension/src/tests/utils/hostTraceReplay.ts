@@ -690,6 +690,7 @@ export class HostOrderInterposer<
   private delivery: Promise<void> = Promise.resolve()
   private failure: unknown
   private disposed = false
+  private bypassed = false
   private readonly registered = new Map<
     HostListenerKind,
     Set<(...args: never[]) => void>
@@ -749,6 +750,20 @@ export class HostOrderInterposer<
     this.unreachedTraceBursts += Math.max(0, events.length - this.cursor)
   }
 
+  /**
+   * Lets the fake's listener calls reach the workspace at once and in the fake's own order, without matching or counting them, while `active` is `true`.
+   *
+   * A take starts with its window already set up (the recorder's first line is a snapshot), so a replay test builds that setup while bypassed and turns the bypass off at the step its trace begins with.
+   * @param active - `true` to bypass the replay, `false` to match the fake's bursts against the trace from the next call on.
+   * @example
+   * interposer.bypass(true)
+   * openSetupTabs()
+   * interposer.bypass(false)
+   */
+  bypass(active: boolean): void {
+    this.bypassed = active
+  }
+
   /** Stops every pending delivery; the harness calls it when it closes. */
   dispose(): void {
     this.disposed = true
@@ -788,6 +803,10 @@ export class HostOrderInterposer<
     wrapper: (...args: never[]) => void,
     args: unknown[],
   ): void {
+    if (this.bypassed) {
+      this.call(wrapper, args)
+      return
+    }
     this.rememberObjects()
     const call: BufferedCall = { kind, wrapper, args }
     const model = this.describeModelEvent(kind, args)

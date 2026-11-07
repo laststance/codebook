@@ -645,3 +645,28 @@ test('a group change delivered before the front-tab change shows the old front t
   assert.equal(result.unmatchedModelBursts, 0)
   assert.equal(result.unreachedTraceBursts, 0)
 })
+
+// Value: protects=a replay test building its recorded start state (a take's first line is a snapshot of a window already set up) without the setup consuming trace events; fails_when=a call the fake makes while the replay is bypassed waits for a burst end, is matched against the trace or is counted as unmatched; why_new=Cycle 0094 task 12 spike (the historical take starts from a prepared window); seam=workspaceHarness hostOrder, openAnnouncedTextTab, the fake's tab listeners; no_claim=the replay after the bypass is turned off, which the other tests cover
+test('listener calls made while the replay is bypassed reach the workspace at once and are not counted', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false, false, undefined, {
+    hostOrder: parseHostTrace(traceText([snapshotEvent(1, 0, [])])),
+  })
+  const heard: string[] = []
+  harness.editor.window.tabGroups.onDidChangeTabs(() => {
+    heard.push('tab event')
+  })
+
+  // Act
+  harness.hostOrder!.bypass(true)
+  harness.openAnnouncedTextTab('a.ts', 1, { isPreview: false, isDirty: false })
+  const heardBeforeAnyBurstEnded = [...heard]
+  await harness.hostOrder!.settled()
+  const result = harness.hostOrder!.result()
+  await harness.close()
+
+  // Assert
+  assert.deepEqual(heardBeforeAnyBurstEnded, ['tab event'])
+  assert.equal(result.unmatchedModelBursts, 0)
+  assert.equal(result.unreachedTraceBursts, 0)
+})
