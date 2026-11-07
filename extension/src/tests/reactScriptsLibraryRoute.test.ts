@@ -422,3 +422,65 @@ test('does not build or write a preload when the learner declines', async (conte
   assert.equal(run.seen.relations.length, 1)
   assert.throws(() => run.route.preloadPath(), /prepare must run/)
 })
+
+/** The bundler-neutral core the route delegates to (the unit under test for the unreadable guard). */
+function coreOf(route: ReactScriptsLibraryRoute): {
+  markUnreadable(cause: string): void
+} {
+  return (route as unknown as { core: { markUnreadable(c: string): void } })
+    .core
+}
+
+const unreadableEntries = (journal: { type: string; detail?: unknown }[]) =>
+  journal.filter((entry) => entry.type === 'library.observation-unreadable')
+
+// protects=an unreadable cause arriving after library.observed was journaled does not flip a complete observation; fails_when=markUnreadable overwrites a finalized observation
+test('keeps a finalized complete observation when an unreadable cause arrives afterwards', async (context) => {
+  // Arrange
+  const run = await stage(context)
+  const file = await put(join(run.packedRoot, 'dist', 'redux.mjs'))
+  await appendFile(
+    run.reportPath,
+    `{"wrapped":true}\n${compilationLine([{ name: 'static/js/bundle.js', sha256: BUNDLE_HASH, resources: [file] }])}`,
+  )
+  run.route.observeParsedScript(bundleScript())
+  await run.route.finalize(true)
+  // Act
+  coreOf(run.route).markUnreadable('late-fault')
+  // Assert
+  assert.equal(run.route.view().observation, 'complete')
+  assert.equal(unreadableEntries(run.journal).length, 0)
+})
+
+// protects=several unreadable verdicts of one attribution journal one entry with the first cause; fails_when=every verdict journals again
+test('journals the unreadable observation once for repeated unreadable verdicts', async (context) => {
+  // Arrange
+  const run = await stage(context)
+  // Act
+  coreOf(run.route).markUnreadable('first-cause')
+  coreOf(run.route).markUnreadable('second-cause')
+  // Assert
+  assert.equal(run.route.view().observation, 'unreadable')
+  assert.deepEqual(
+    unreadableEntries(run.journal).map((entry) => entry.detail),
+    [{ cause: 'first-cause' }],
+  )
+})
+
+// protects=a retried Stop re-runs finalize without journaling the unreadable cause or the observation again and keeps the first result; fails_when=finalize repeats its settle and journal writes
+test('finalizes the route once when a retried Stop calls finalize again', async (context) => {
+  // Arrange
+  const run = await stage(context)
+  await appendFile(run.reportPath, '{"wrapped":true}\n{oops\n')
+  run.route.observeParsedScript(bundleScript())
+  // Act
+  await run.route.finalize(true)
+  await run.route.finalize(false)
+  // Assert
+  assert.equal(run.route.view().observation, 'unreadable')
+  assert.equal(unreadableEntries(run.journal).length, 1)
+  assert.equal(
+    run.journal.filter((entry) => entry.type === 'library.observed').length,
+    1,
+  )
+})

@@ -181,6 +181,7 @@ export class ReactScriptsLibraryRoute implements LibraryRunRoute {
   private readonly core: LibraryRoute
   private readonly attribution: ReactScriptsAttribution
   private privateFolder?: string
+  private finalizing?: Promise<void>
   private preload?: string
   /** The packed library a library stop is sealed through, once the preload is written. */
   private packed?: {
@@ -345,7 +346,13 @@ export class ReactScriptsLibraryRoute implements LibraryRunRoute {
    * @param isPageClosed - Whether the owned page closed within the close bound.
    * @example await route.finalize(true)
    */
-  async finalize(isPageClosed: boolean): Promise<void> {
+  finalize(isPageClosed: boolean): Promise<void> {
+    // A retried Stop re-runs finalization: the first call's result stands, nothing is settled, judged or journaled again.
+    this.finalizing ??= this.finalizeOnce(isPageClosed)
+    return this.finalizing
+  }
+
+  private async finalizeOnce(isPageClosed: boolean): Promise<void> {
     await this.attribution.settle()
     for (const script of this.attribution.takeDeferred())
       this.core.observeScript(script)

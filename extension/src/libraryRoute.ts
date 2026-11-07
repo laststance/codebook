@@ -537,11 +537,13 @@ export class LibraryRoute {
   }
 
   /**
-   * Ends the observation as `unreadable` because the bundler's evidence cannot be read; the cause is journaled and no count is ever claimed.
+   * Ends the observation as `unreadable` because the bundler's evidence cannot be read; the cause is journaled once and no count is ever claimed; after finalization or a first unreadable verdict the call changes nothing.
    * @param cause - Why the evidence cannot be read.
    * @example core.markUnreadable('compilation report is not valid JSON')
    */
   markUnreadable(cause: string): void {
+    // A finalized observation stays as journaled by `library.observed`, and a second unreadable verdict adds no second entry (a retried Stop re-runs finalization).
+    if (this.finalized || this.observation === 'unreadable') return
     this.observation = 'unreadable'
     this.input.record('library.observation-unreadable', { cause })
   }
