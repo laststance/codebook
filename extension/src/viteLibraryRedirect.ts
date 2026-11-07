@@ -139,32 +139,53 @@ function matchImportsKey(
 ): { target: unknown; matched: string } | undefined {
   if (Object.hasOwn(imports, specifier) && !specifier.includes('*'))
     return { target: imports[specifier], matched: '' }
-  let best:
-    { prefixLength: number; target: unknown; matched: string } | undefined
+  let best: (ImportsPatternMatch & { target: unknown }) | undefined
   for (const key of Object.keys(imports)) {
-    const star = key.indexOf('*')
-    // Only keys with exactly one star are patterns.
-    if (star === -1 || star !== key.lastIndexOf('*')) continue
-    const prefix = key.slice(0, star)
-    const suffix = key.slice(star + 1)
-    if (
-      specifier.length < key.length ||
-      !specifier.startsWith(prefix) ||
-      !specifier.endsWith(suffix)
-    )
-      continue
+    const match = matchImportsPattern(key, specifier)
     // The longest prefix wins.
-    if (best === undefined || prefix.length > best.prefixLength)
-      best = {
+    if (match && (best === undefined || match.prefixLength > best.prefixLength))
+      best = { ...match, target: imports[key] }
+  }
+  return best && { target: best.target, matched: best.matched }
+}
+
+/** What one single-star `imports` key matched in a specifier. */
+type ImportsPatternMatch = { prefixLength: number; matched: string }
+
+/**
+ * Matches one `imports` key with exactly one `*` against a `#` specifier, as Node's pattern rule does.
+ *
+ * Why it exists: {@link matchImportsKey} compares every pattern key and keeps the one with the longest prefix. Called by {@link matchImportsKey} once per key.
+ *
+ * @param key - One key of the `imports` map.
+ * @param specifier - A `#` specifier.
+ * @returns The prefix length and the part the `*` matched; `undefined` for a key without exactly one `*` or one that does not match.
+ * @example
+ * matchImportsPattern('#lib/*.js', '#lib/a.js') // => { prefixLength: 5, matched: 'a' }
+ * matchImportsPattern('#lib/*', '#other/a') // => undefined
+ */
+function matchImportsPattern(
+  key: string,
+  specifier: string,
+): ImportsPatternMatch | undefined {
+  const star = key.indexOf('*')
+  // Only keys with exactly one star are patterns.
+  if (star === -1 || star !== key.lastIndexOf('*')) return undefined
+  const prefix = key.slice(0, star)
+  const suffix = key.slice(star + 1)
+  const fits =
+    specifier.length >= key.length &&
+    specifier.startsWith(prefix) &&
+    specifier.endsWith(suffix)
+  return fits
+    ? {
         prefixLength: prefix.length,
-        target: imports[key],
         matched: specifier.slice(
           prefix.length,
           specifier.length - suffix.length,
         ),
       }
-  }
-  return best
+    : undefined
 }
 
 /**
@@ -271,6 +292,80 @@ function routeLibraryImport(
 }
 
 /**
+ * Tells whether a map `sources` entry carries a URL scheme (`webpack://`, `file://`) rather than a path; a Windows drive path is no scheme.
+ *
+ * Why it exists: a scheme entry never names a file inside the packed folder, so the rewrite leaves it as it is. Called by {@link rewriteMapSource}.
+ *
+ * @param source - One `sources` entry.
+ * @returns `true` for an entry with a URL scheme.
+ * @example
+ * isUrlSource('webpack://lib/src/a.ts') // => true
+ * isUrlSource('C:/repo/src/a.ts') // => false
+ */
+function isUrlSource(source: string): boolean {
+  return (
+    /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(source) && !/^[a-zA-Z]:[\\/]/.test(source)
+  )
+}
+
+/**
+ * Rewrites one map `sources` entry to the checked-out file when the entry names a file inside the packed folder whose embedded text equals that file.
+ *
+ * Why it exists: the editor and the seal must show the checked-out file only where it is the text that ran. Called by {@link rewriteMapSources} for each entry.
+ *
+ * @param source - One `sources` entry.
+ * @param content - The same entry's `sourcesContent` text.
+ * @param moduleFile - The packed module the map belongs to.
+ * @param sourceRoot - The map's `sourceRoot`, or `''`.
+ * @param options - The packed and library folders and the file reader.
+ * @returns The checked-out absolute path, or the entry unchanged.
+ * @example
+ * rewriteMapSource('../src/a.ts', 'x', '/p/dist/a.mjs', '', { packedRoot: '/p', libraryRoot: '/lib', readText }) // => '/lib/src/a.ts'
+ */
+function rewriteMapSource(
+  source: unknown,
+  content: unknown,
+  moduleFile: string,
+  sourceRoot: string,
+  options: Pick<LibraryRedirectOptions, 'packedRoot' | 'libraryRoot'> & {
+    readText: (path: string) => string | undefined
+  },
+): unknown {
+  if (typeof source !== 'string' || isUrlSource(source)) return source
+  const packedSource = resolve(dirname(moduleFile), sourceRoot, source)
+  return matchingCheckedOutFile(packedSource, content, options) ?? source
+}
+
+/**
+ * Gives the checked-out file a packed source stands for, when the packed source lies inside the packed folder and its embedded text equals that file.
+ *
+ * Why it exists: the editor must never show text that did not run. Called by {@link rewriteMapSource}.
+ *
+ * @param packedSource - The absolute path the entry resolves to.
+ * @param content - The entry's `sourcesContent` text.
+ * @param options - The packed and library folders and the file reader.
+ * @returns The checked-out absolute path; `undefined` outside the packed folder or when the text differs.
+ * @example
+ * matchingCheckedOutFile('/p/src/a.ts', 'x', { packedRoot: '/p', libraryRoot: '/lib', readText }) // => '/lib/src/a.ts' when /lib/src/a.ts reads 'x'
+ */
+function matchingCheckedOutFile(
+  packedSource: string,
+  content: unknown,
+  options: Pick<LibraryRedirectOptions, 'packedRoot' | 'libraryRoot'> & {
+    readText: (path: string) => string | undefined
+  },
+): string | undefined {
+  if (!isInsideFolder(options.packedRoot, packedSource)) return undefined
+  const checkedOut = join(
+    options.libraryRoot,
+    relative(options.packedRoot, packedSource),
+  )
+  return typeof content === 'string' && options.readText(checkedOut) === content
+    ? checkedOut
+    : undefined
+}
+
+/**
  * Rewrites the `sources` of a built module's source map to the checked-out files, only where the map's text equals the checked-out file.
  *
  * Why it exists: the existing library seal and the native breakpoint binding match a map source to the checked-out file (decision D7); the packed copy's own `src/` path would neither seal nor bind. Called by the plugin's `load` of {@link createLibraryRedirectPlugin}.
@@ -292,26 +387,9 @@ function rewriteMapSources(
   const sources = Array.isArray(map.sources) ? map.sources : []
   const contents = Array.isArray(map.sourcesContent) ? map.sourcesContent : []
   const sourceRoot = typeof map.sourceRoot === 'string' ? map.sourceRoot : ''
-  const rewritten = sources.map((source: unknown, index: number): unknown => {
-    if (typeof source !== 'string') return source
-    // A source with a URL scheme (webpack://, file://) is not a path inside the packed folder.
-    if (
-      /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(source) &&
-      !/^[a-zA-Z]:[\\/]/.test(source)
-    )
-      return source
-    const packedSource = resolve(dirname(moduleFile), sourceRoot, source)
-    if (!isInsideFolder(options.packedRoot, packedSource)) return source
-    const checkedOut = join(
-      options.libraryRoot,
-      relative(options.packedRoot, packedSource),
-    )
-    const content: unknown = contents[index]
-    // Only a source whose embedded text is the checked-out file is shown from it: the editor must never show text that did not run.
-    if (typeof content === 'string' && options.readText(checkedOut) === content)
-      return checkedOut
-    return source
-  })
+  const rewritten = sources.map((source: unknown, index: number): unknown =>
+    rewriteMapSource(source, contents[index], moduleFile, sourceRoot, options),
+  )
   const { sourceRoot: _dropped, ...rest } = map
   void _dropped
   return { ...rest, sources: rewritten }

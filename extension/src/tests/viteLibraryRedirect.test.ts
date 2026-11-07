@@ -342,3 +342,44 @@ test('reports no blockers for a config without alias or include', () => {
     { aliased: [], optimizeInclude: [] },
   ])
 })
+
+// protects=`#` imports of the packed copy follow Node's pattern rule: an exact key first, else the single-star key with the longest prefix and a matching suffix, a key with two stars never matches, and an import no key matches is left alone; fails_when=a shorter prefix wins, a suffix is ignored, a two-star key matches or an unmatched `#` import is redirected; no_claim=Vite's own resolution of the target (the context stands in for `this.resolve`)
+test('a # import of the packed copy takes the exact key, else the longest single-star pattern with its suffix', async () => {
+  // Arrange
+  const plugin = pluginOver(
+    {},
+    {
+      imports: {
+        '#ui/*': 'lodash-es/*',
+        '#ui/button/*': 'react/*',
+        '#ui/exact': 'react',
+        '#data/*.js': 'lodash-es/fp/*',
+        '#two/*/stars/*': 'react',
+      },
+    },
+  )
+  const importer = `${PACKED}/dist/index.mjs`
+  // Act
+  const longest = await resolvedFrom(plugin, '#ui/button/primary', importer)
+  const shorter = await resolvedFrom(plugin, '#ui/card', importer)
+  const exact = await resolvedFrom(plugin, '#ui/exact', importer)
+  const suffix = await resolvedFrom(plugin, '#data/map.js', importer)
+  const wrongSuffix = await resolvedFrom(plugin, '#data/map.ts', importer)
+  const twoStars = await resolvedFrom(plugin, '#two/a/stars/b', importer)
+  // Assert
+  assert.deepEqual(longest, {
+    target: 'react/primary',
+    via: `${EXAMPLE}/package.json`,
+  })
+  assert.deepEqual(shorter, {
+    target: 'lodash-es/card',
+    via: `${LIBRARY}/package.json`,
+  })
+  assert.deepEqual(exact, { target: 'react', via: `${EXAMPLE}/package.json` })
+  assert.deepEqual(suffix, {
+    target: 'lodash-es/fp/map',
+    via: `${LIBRARY}/package.json`,
+  })
+  assert.equal(wrongSuffix, null)
+  assert.equal(twoStars, null)
+})

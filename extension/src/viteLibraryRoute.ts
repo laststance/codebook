@@ -80,22 +80,47 @@ export type ViteLibraryRouteInput = {
 /** The phases of the route that the run resource states before `running`. */
 export type ViteLibraryPhase = 'confirming' | 'building'
 
-/** Reads the `peerDependencies` names and `imports` of a library's `package.json`. */
+/**
+ * Reads the `peerDependencies` names and `imports` of a library's `package.json`; the pack copies that file verbatim, so the redirect can know them before the build.
+ *
+ * Why it exists: the dev server is created once, before the pack, with the final redirect options. Called by {@link ViteLibraryRoute} when it plans the route (unless a test injects `readManifest`).
+ *
+ * @param libraryRoot - The library's real checked-out folder.
+ * @returns The peer names and, when present, the `imports` map.
+ * @example
+ * await readLibraryManifestParts('/repo/packages/widgets') // => { peers: ['react'], imports: { '#internal': './src/internal.ts' } }
+ */
 async function readLibraryManifestParts(
   libraryRoot: string,
 ): Promise<LibraryManifestParts> {
   const manifest: unknown = JSON.parse(
     await readFile(join(libraryRoot, 'package.json'), 'utf8'),
   )
-  const peers = Reflect.get(Object(manifest), 'peerDependencies')
-  const imports = Reflect.get(Object(manifest), 'imports')
-  return {
-    peers:
-      typeof peers === 'object' && peers !== null ? Object.keys(peers) : [],
-    ...(typeof imports === 'object' && imports !== null
-      ? { imports: Object(imports) }
-      : {}),
-  }
+  const peers = objectFieldOf(manifest, 'peerDependencies')
+  const imports = objectFieldOf(manifest, 'imports')
+  return { peers: Object.keys(peers ?? {}), ...(imports ? { imports } : {}) }
+}
+
+/**
+ * Reads one field of a parsed JSON value when it is an object.
+ *
+ * Why it exists: a manifest field may be absent or of another type, and only an object counts. Called by {@link readLibraryManifestParts}.
+ *
+ * @param value - A parsed JSON value.
+ * @param field - The field name.
+ * @returns The field's object; `undefined` when absent or not an object.
+ * @example
+ * objectFieldOf({ imports: { '#a': './a.js' } }, 'imports') // => { '#a': './a.js' }
+ * objectFieldOf({ imports: 'x' }, 'imports') // => undefined
+ */
+function objectFieldOf(
+  value: unknown,
+  field: string,
+): Record<string, unknown> | undefined {
+  const fieldValue: unknown = Reflect.get(Object(value), field)
+  return typeof fieldValue === 'object' && fieldValue !== null
+    ? Object(fieldValue)
+    : undefined
 }
 
 /** Makes the run's private folder in the system's temporary folder, outside the repository so no snapshot sees the pack output. */
