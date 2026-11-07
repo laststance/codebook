@@ -93,6 +93,7 @@ import type {
   DevelopmentServerAdapterName,
   DevelopmentServerStart,
   LibraryStopSealInput,
+  ReactScriptsLibraryStopSeal,
 } from './developmentServerAdapter'
 import {
   SAVED_SESSION_INITIAL_STORAGE_RECOVERY,
@@ -135,6 +136,8 @@ import {
 import { REACT_SCRIPTS_DEV_ADAPTER } from './reactScriptsDevAdapter'
 import { ReactScriptsLibraryRoute } from './reactScriptsLibraryRoute'
 import {
+  reactScriptsLibraryBuildChangedFailure,
+  reactScriptsLibraryFailureText,
   reactScriptsLibraryNeedsPackageRootRefusal,
   reactScriptsNodeModulesRefusal,
   reactScriptsOutsidePackageRefusal,
@@ -276,6 +279,7 @@ import {
   requiredInspectionFailureMessage,
 } from './utils/inspectConfiguredValues'
 import { isAnnouncedScriptOf } from './utils/isAnnouncedScriptOf'
+import { isAtOrInsideFolder } from './utils/isAtOrInsideFolder'
 import { isBlankOrCommentLine } from './utils/isBlankOrCommentLine'
 import { isBrowserOnEntryRoute } from './utils/isBrowserOnEntryRoute'
 import { isDebugTargetSession } from './utils/isDebugTargetSession'
@@ -1586,9 +1590,101 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @example this.reactScriptsPackage = await this.resolveReactScriptsPackageOfRun()
    */
   private resolveReactScriptsPackageOfRun(): Promise<ResolvedPackage> {
-    return this.resolveAppPackageOfRun(resolveReactScriptsPackage, {
-      outside: reactScriptsOutsidePackageRefusal,
-      nodeModules: reactScriptsNodeModulesRefusal,
+    return this.resolveAppPackageOfRun(
+      resolveReactScriptsPackage,
+      {
+        outside: reactScriptsOutsidePackageRefusal,
+        nodeModules: reactScriptsNodeModulesRefusal,
+      },
+      // A browser stop in the declared library of a library run is sealed through the packed build (decision D3), not refused as outside the app.
+      async (stop) =>
+        stop.participant === 'browser' &&
+        this.isReactScriptsLibraryStopPath(stop.source.path),
+    )
+  }
+
+  /**
+   * The declared library folder of a version 3 `react-scripts-dev` run that declares `library`.
+   * @returns The repository-relative folder (`"."` for the repository root); `undefined` for every other run.
+   * @example this.reactScriptsLibraryFolder() // => '.'
+   */
+  private reactScriptsLibraryFolder(): string | undefined {
+    const { configuration } = this.definition
+    return configuration.version === OPERATIONS_CONFIG_VERSION &&
+      configuration.adapter === 'react-scripts-dev'
+      ? configuration.library?.packageRoot
+      : undefined
+  }
+
+  /**
+   * Tells whether a declared stop file lies in the declared library folder of a react-scripts library run.
+   * Called before the start (a library stop is not refused as outside the app) and when a stop is sealed or its module changed (a library stop takes the library seal and wording).
+   * @param repositoryPath - The stop's repository-relative path.
+   * @returns `true` inside the declared library folder; `false` for every other path and every run without a react-scripts library.
+   * @example this.isReactScriptsLibraryStopPath('src/createStore.ts') // => true for library "."
+   */
+  private isReactScriptsLibraryStopPath(repositoryPath: string): boolean {
+    const folder = this.reactScriptsLibraryFolder()
+    if (folder === undefined) return false
+    return isAtOrInsideFolder(
+      join(this.options.workspace, folder),
+      join(this.options.workspace, repositoryPath),
+    )
+  }
+
+  /**
+   * Gives the library seal input of a browser stop that lies in the checked-out library outside the app of a react-scripts library run.
+   * Called by {@link sealDeclaredStop} (the stop takes the library seal) and {@link reactScriptsLibraryChanged} (a change at a pause takes the library wording).
+   * @param stop - The declared stop.
+   * @returns `{ reactScriptsLibraryStop }` for such a stop once the library was prepared; an empty object for every other stop.
+   * @example this.reactScriptsLibraryStopRequest(stop) // => { reactScriptsLibraryStop: { packageName: 'redux', … } }
+   */
+  private reactScriptsLibraryStopRequest(stop: {
+    participant: string
+    source: { path: string }
+  }): { reactScriptsLibraryStop?: ReactScriptsLibraryStopSeal } {
+    const packed = this.reactScriptsLibraryRoute?.packedLibrary()
+    const app = this.reactScriptsPackage
+    const folder = this.reactScriptsLibraryFolder()
+    if (
+      !packed ||
+      !app ||
+      folder === undefined ||
+      stop.participant !== 'browser'
+    )
+      return {}
+    // A stop inside the app keeps the app seal, even when the app lies inside the library folder.
+    if (app.toPackageRelative(stop.source.path) !== undefined) return {}
+    if (!this.isReactScriptsLibraryStopPath(stop.source.path)) return {}
+    return {
+      reactScriptsLibraryStop: {
+        packageName: packed.packageName,
+        libraryRoot: packed.libraryRoot,
+        libraryRootRelative: folder,
+        packedRoot: packed.packedRoot,
+        examplePackageRoot: app.packageRootRelative,
+      },
+    }
+  }
+
+  /**
+   * Words a library stop's module that changed after the seal in a react-scripts library run (`library-build-changed`).
+   * Called by {@link assertExecutedModuleSealed}, {@link changedLibraryOrError} and {@link changedAfterSealingText}.
+   * @param stop - The paused or re-parsed stop.
+   * @returns The failure for a library stop; `undefined` for every other stop.
+   * @example this.reactScriptsLibraryChanged(stop) // RUNTIME_FAILED library-build-changed for a library stop
+   */
+  private reactScriptsLibraryChanged(stop: {
+    participant: string
+    source: { path: string }
+  }): StudyError | undefined {
+    const library =
+      this.reactScriptsLibraryStopRequest(stop).reactScriptsLibraryStop
+    if (!library) return undefined
+    return reactScriptsLibraryBuildChangedFailure({
+      packageRoot: library.examplePackageRoot,
+      library: library.packageName,
+      file: stop.source.path,
     })
   }
 
@@ -1613,13 +1709,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       ) => StudyError
       nodeModules: (files: readonly string[]) => StudyError
     },
+    isHandled?: Parameters<ConfiguredBrowserRun['stopFilesOutside']>[1],
   ): Promise<ResolvedPackage> {
     const configuration = this.definition.configuration
     const declared =
       'packageRoot' in configuration ? configuration.packageRoot : undefined
     const resolved = await resolve(this.options.workspace, declared)
-    // A library stop is out of scope for these adapters (decision D4): every stop outside the app is refused.
-    const outside = await this.stopFilesOutside(resolved)
+    // Every stop outside the app is refused, except one the caller handles (a react-scripts library run's library stop).
+    const outside = await this.stopFilesOutside(resolved, isHandled)
     if (outside.length)
       throw refusals.outside(resolved.packageRootRelative, outside)
     // A published package in the app's node_modules is not the checked-out library: refused here, before the server starts.
@@ -1912,6 +2009,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const viteLibrary = this.viteLibraries.libraryOf(stop.source)
     return (
       this.nextLibraryChanged(stop) ??
+      this.reactScriptsLibraryChanged(stop) ??
       (viteLibrary ? this.viteLibraryChanged(stop, viteLibrary) : error)
     )
   }
@@ -6246,6 +6344,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       workspace: this.options.workspace,
       ...this.resolvedPackageFields(),
       ...this.viteLibraryRequest(stop, adapter, ownedOrigin, generation),
+      ...this.reactScriptsLibraryStopRequest(stop),
       ...(freeze && this.nextPackage
         ? { library: this.librarySealInput(freeze, this.nextPackage) }
         : {}),
@@ -7781,6 +7880,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       // A library module that changed after the seal (a rebuild, a hot update) is a changed build, not a generic mismatch.
       const nextLibraryChange = this.nextLibraryChanged(stop)
       if (nextLibraryChange) throw nextLibraryChange
+      const reactScriptsLibraryChange = this.reactScriptsLibraryChanged(stop)
+      if (reactScriptsLibraryChange) throw reactScriptsLibraryChange
       const library = this.viteLibraries.libraryOf(stop.source)
       if (library) throw this.viteLibraryChanged(stop, library)
       throw new Error(
@@ -7800,6 +7901,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private changedAfterSealingText(stop: PreparedStop): string {
     const nextLibraryText = libraryFailureText(this.nextLibraryChanged(stop))
     if (nextLibraryText) return nextLibraryText
+    const reactScriptsLibraryText = reactScriptsLibraryFailureText(
+      this.reactScriptsLibraryChanged(stop),
+    )
+    if (reactScriptsLibraryText) return reactScriptsLibraryText
     const library = this.viteLibraries.libraryOf(stop.source)
     const libraryText =
       library && viteLibraryFailureText(this.viteLibraryChanged(stop, library))
@@ -16283,6 +16388,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           this.fail(
             viteLibraryFailureText(error) ??
               libraryFailureText(error) ??
+              reactScriptsLibraryFailureText(error) ??
               String(error),
           )
       })

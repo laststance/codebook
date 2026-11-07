@@ -20,6 +20,7 @@ import type {
   ResolvedPackage,
 } from './utils/resolveNextPackage'
 import type { ResolvedVitePackage } from './utils/resolveVitePackage'
+import type { ReactScriptsLibraryStopInput } from './utils/sealReactScriptsLibraryStop'
 import type { ViteLibraryModuleSource } from './utils/selectViteLibraryCandidate'
 import type { ViteLibraryModules } from './utils/viteLibraryModules'
 import type { ViteLauncherLibraryOptions } from './viteLauncherProtocol'
@@ -78,6 +79,14 @@ export type DevelopmentServerStart = {
 }
 
 /** What {@link DevelopmentServerAdapter.readBundle} needs to seal one declared stop. */
+/** What a react-scripts library stop is sealed through: the library (its package name, real checked-out folder and repository-relative folder), its real packed copy and the Example's folder, which a refusal names. */
+export type ReactScriptsLibraryStopSeal = ReactScriptsLibraryStopInput & {
+  /** The checked-out library's real folder; the stop is read below it. */
+  libraryRoot: string
+  /** The library's repository-relative folder (`"."` for the repository root). */
+  libraryRootRelative: string
+}
+
 export type DevelopmentBundleRequest = {
   /** The opened repository's root (stop files and recorded sources are relative to it). */
   workspace: string
@@ -89,6 +98,8 @@ export type DevelopmentBundleRequest = {
   reactScriptsPackage?: ResolvedPackage
   /** The Expo app an `expo-web-dev` run resolved: the seal reads the stop in the app folder under the stop's package-relative path. Absent for every other run. */
   expoWebPackage?: ResolvedPackage
+  /** Set for a browser stop of a react-scripts library run whose file lies in the checked-out library outside the app: the stop is sealed through the packed build ({@link sealReactScriptsLibraryStop}) instead of being refused as outside the app. Absent for every other stop. */
+  reactScriptsLibraryStop?: ReactScriptsLibraryStopSeal
   source: RepositoryConfiguration['source']
   /** The last line of the stop's citation, up to which a stop declared on a line with no mapped position is requested at the first mapped position after it ({@link resolveArmedPlace}); a Pages server stop's seal checks that line's client mapping too ({@link sealPagesServerStop}). */
   citationEndLine: number

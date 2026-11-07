@@ -182,6 +182,12 @@ export class ReactScriptsLibraryRoute implements LibraryRunRoute {
   private readonly attribution: ReactScriptsAttribution
   private privateFolder?: string
   private preload?: string
+  /** The packed library a library stop is sealed through, once the preload is written. */
+  private packed?: {
+    packageName: string
+    libraryRoot: string
+    packedRoot: string
+  }
 
   /**
    * @param input - The run's facts and seams; the dependency relation is fixed to `direct-or-installed` here (decision D4) and the anchor writer is this route's own.
@@ -292,7 +298,24 @@ export class ReactScriptsLibraryRoute implements LibraryRunRoute {
       )
     }
     this.preload = preloadPath
+    this.packed = {
+      packageName: prepared.facts.package,
+      libraryRoot: prepared.libraryRoot,
+      packedRoot: prepared.packedRoot,
+    }
     return preloadPath
+  }
+
+  /**
+   * The packed library a stop in the checked-out library is sealed through (decision D3).
+   * Called by {@link ConfiguredBrowserRun} when it seals a library stop and when it words a library build change at a pause.
+   * @returns The package name, the real checked-out folder and the real packed folder; `undefined` before the library was prepared.
+   * @example route.packedLibrary() // => { packageName: 'redux', libraryRoot: '/repo', packedRoot: '/tmp/run/node_modules/redux' }
+   */
+  packedLibrary():
+    | { packageName: string; libraryRoot: string; packedRoot: string }
+    | undefined {
+    return this.packed
   }
 
   /**
