@@ -1332,7 +1332,7 @@ export class StudyWorkspace {
     }
     // Frames: Error, noteMarker, the setter, then the method that assigned; when that method moved into a part, the part's host setter stands in between and the part's method names the owner as the workspace method it was.
     const frames = new Error().stack?.split('\n') ?? []
-    const frame = isWorkspaceHostSetterFrame(frames[3] ?? '')
+    const frame = isWorkspaceHostSetterFrame(frames[3] ?? '', frames[2] ?? '')
       ? (frames[4] ?? '')
       : (frames[3] ?? '')
     this.markerSetAt.set(name, {
