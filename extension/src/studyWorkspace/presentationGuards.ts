@@ -491,16 +491,28 @@ export class PresentationGuards {
         returnForeignFocus,
         requester,
       )
-      .finally(() => {
-        if (this.host.presentationTransition === transition)
-          this.host.presentationTransition = undefined
-        if (this.host.presentationOperation === pending)
-          this.host.presentationOperation = undefined
-        this.host.publish()
-      })
+      .finally(() => this.settlePresentation(transition, pending))
     this.host.presentationOperation = pending
     this.host.publish()
     return pending
+  }
+
+  /**
+   * Clears a finished presentation transition and operation, then publishes, for {@link admitPresentation} and {@link focusCurrentPresentation}.
+   * @param transition - The transition the finished operation started; cleared only while it is still current.
+   * @param pending - The operation promise; cleared only while it is still current.
+   * @example .finally(() => this.settlePresentation(transition, pending))
+   */
+  private settlePresentation(
+    transition: object,
+    pending: Promise<unknown>,
+  ): void {
+    // A newer transition or operation owns the field now: leave it alone.
+    if (this.host.presentationTransition === transition)
+      this.host.presentationTransition = undefined
+    if (this.host.presentationOperation === pending)
+      this.host.presentationOperation = undefined
+    this.host.publish()
   }
 
   /** Lets explicit MCP recovery return from another editor to the existing explanation without changing layout or execution. @example await this.focusCurrentPresentation(input) */
@@ -545,11 +557,7 @@ export class PresentationGuards {
       })
       .finally(() => {
         windowFocus.dispose()
-        if (this.host.presentationTransition === transition)
-          this.host.presentationTransition = undefined
-        if (this.host.presentationOperation === pending)
-          this.host.presentationOperation = undefined
-        this.host.publish()
+        this.settlePresentation(transition, pending)
       })
     this.host.presentationOperation = pending
     this.host.publish()
