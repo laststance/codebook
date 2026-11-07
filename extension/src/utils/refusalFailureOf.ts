@@ -18,6 +18,8 @@ import {
   PAGES_STOP_REFUSAL_DETAILS,
 } from '../nextRefusals'
 import {
+  REACT_SCRIPTS_LIBRARY_BUILD_CHANGED_RECOVERY,
+  REACT_SCRIPTS_LIBRARY_BUILD_CHANGED_VARIANT,
   REACT_SCRIPTS_REFUSAL_CODES,
   reactScriptsSetupDeadlineDetailsOf,
   type ReactScriptsSetupDeadlineFailureDetails,
@@ -86,7 +88,8 @@ export type RefusalFailure = {
 type ViteLibraryFailureDetails = ViteLibraryStopIdentity & {
   reason: 'library-build-changed' | 'library-build-unmapped'
   cause?: 'lazy-import'
-  sideEffects: 'unknown'
+  // A react-scripts library build change is `partial` (its help row); the Vite ones are `unknown`.
+  sideEffects: 'unknown' | 'partial'
 }
 
 /** The lead of a coded failure text: `<CODE>: ` or `<CODE>(<variant>): `; a variant holds no parenthesis and no line break. */
@@ -201,6 +204,22 @@ function restoredViteFailure(text: string): RefusalFailure | undefined {
         reason: 'library-build-changed',
         ...changed.identity,
         sideEffects: 'unknown',
+      },
+    }
+  const reactScriptsChanged = viteLibraryFailureLead(
+    text,
+    'RUNTIME_FAILED',
+    REACT_SCRIPTS_LIBRARY_BUILD_CHANGED_VARIANT,
+  )
+  if (reactScriptsChanged)
+    return {
+      code: 'RUNTIME_FAILED',
+      message: reactScriptsChanged.message,
+      recoveryOverride: REACT_SCRIPTS_LIBRARY_BUILD_CHANGED_RECOVERY,
+      libraryDetails: {
+        reason: 'library-build-changed',
+        ...reactScriptsChanged.identity,
+        sideEffects: 'partial',
       },
     }
   const lazy = viteLibraryFailureLead(

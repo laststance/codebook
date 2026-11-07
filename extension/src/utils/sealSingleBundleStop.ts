@@ -5,7 +5,10 @@ import { REPOSITORY_SOURCE_LIMIT_BYTES } from '../constants'
 import type { BundleSource } from '../repositoryBundle'
 import type { RepositoryConfiguration } from '../repositoryConfigSchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
-import type { SingleBundleProfile } from '../singleBundleProfile'
+import type {
+  SingleBundleLibraryRoute,
+  SingleBundleProfile,
+} from '../singleBundleProfile'
 import {
   DEFAULT_SOURCE_MAP_LIMITS,
   SOURCE_MAP_LIMIT_FIELD,
@@ -38,6 +41,18 @@ export type SingleBundleSealRequest = Readonly<{
   /** The run's bundle cache: one map read per compile. */
   cache: SingleBundleCache
 }>
+
+/**
+ * Tells whether a read failed because the file or a folder above it does not exist.
+ * @example isMissingFileError(Object.assign(new Error('x'), { code: 'ENOENT' })) // => true
+ */
+function isMissingFileError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    'code' in error &&
+    (error.code === 'ENOENT' || error.code === 'ENOTDIR')
+  )
+}
 
 /** An absolute local path: POSIX root or a Windows drive. */
 const ABSOLUTE_PATH = /^(?:\/|[A-Za-z]:[\\/])/
@@ -126,6 +141,7 @@ function scanLimitOf(
  * @param stopPath - The stop file's canonical path.
  * @param request - The seal request, for the refusal.
  * @param profile - The adapter's profile, which words the refusals.
+ * @param library - Set for a library stop: also finds the packed copy's entry and words a missing one as `library-not-in-build`.
  * @returns The map, its normalized sources, the stop's index and the retained text.
  * @throws The profile's `notInEntryBundle` refusal unless the map names the file, and its `ambiguousSource` refusal when it names it more than once.
  * @example locateStop(served, '/app/src/App.js', request, profile).stopIndex // => 0
@@ -135,18 +151,29 @@ function locateStop(
   stopPath: string,
   request: SingleBundleSealRequest,
   profile: SingleBundleProfile,
+  library?: SingleBundleLibraryRoute,
 ) {
   const sources = served.map.sources.map(normalizeMapSource)
+  // A library stop is named by the checked-out file or, when its packed copy was not byte-equal at compile time, by the packed copy.
+  const packedPath =
+    library &&
+    canonicalForwardSlashPath(
+      join(library.packedRoot, ...request.packageRelativePath.split('/')),
+    )
   const matches = sources.flatMap((entry, index) =>
-    ABSOLUTE_PATH.test(entry) && mapSourceNamesStop(entry, stopPath)
+    ABSOLUTE_PATH.test(entry) &&
+    (mapSourceNamesStop(entry, stopPath) ||
+      (packedPath !== undefined && mapSourceNamesStop(entry, packedPath)))
       ? [index]
       : [],
   )
   // A map that does not name the file names another folder; one that names it twice leaves the executed copy unknown.
   if (matches.length === 0)
-    throw profile.refusals.notInEntryBundle(request.packageRootRelative, [
-      request.source.path,
-    ])
+    throw library
+      ? library.notInBuild()
+      : profile.refusals.notInEntryBundle(request.packageRootRelative, [
+          request.source.path,
+        ])
   if (matches.length > 1)
     throw profile.refusals.ambiguousSource(request.source.path)
   const stopIndex = matches[0]!
@@ -159,12 +186,81 @@ function locateStop(
 }
 
 /**
+ * Reads the packed copy of a library stop file, or `undefined` when the packed copy has no such file.
+ * @param packedRoot - The real path of the packed copy.
+ * @param segments - The file's path below the package, split at slashes.
+ * @param request - The seal request, for the signal.
+ * @returns The packed text; `undefined` when the file does not exist.
+ * @example await readPackedText('/private/node_modules/redux', ['src', 'a.ts'], request) // => 'export const a = 1\n'
+ */
+async function readPackedText(
+  packedRoot: string,
+  segments: readonly string[],
+  request: SingleBundleSealRequest,
+): Promise<string | undefined> {
+  try {
+    return await readRepositoryBuildText(
+      packedRoot,
+      join(packedRoot, ...segments),
+      REPOSITORY_SOURCE_LIMIT_BYTES,
+      request.signal,
+    )
+  } catch (error) {
+    // An absent file (or absent folder) is the only "no packed copy"; any other failure is real.
+    if (isMissingFileError(error)) return undefined
+    throw error
+  }
+}
+
+/**
+ * Refuses a library file that differs from its packed copy, the text the build compiled.
+ * @param library - The library route.
+ * @param segments - The file's path below the package.
+ * @param sourceText - The checked-out text.
+ * @param request - The seal request, for the signal.
+ * @throws The route's `buildStale` refusal; nothing when the packed copy equals the file or has no such file (that ends in not-in-build).
+ * @example await assertNotStale(library, ['src', 'a.ts'], text, request)
+ */
+async function assertNotStale(
+  library: SingleBundleLibraryRoute,
+  segments: readonly string[],
+  sourceText: string,
+  request: SingleBundleSealRequest,
+): Promise<void> {
+  const packedText = await readPackedText(library.packedRoot, segments, request)
+  if (packedText !== undefined && packedText !== sourceText)
+    throw library.buildStale()
+}
+
+/**
+ * Words the refusal for a stop whose map text is not the checked-out file: `SOURCE_CHANGED` for an app stop, the library's `no-sources-content` or `content-differs` for a library stop.
+ * @param retained - The map's retained text for the stop, when it has one.
+ * @param request - The seal request, for the stop's path.
+ * @param profile - The adapter's profile.
+ * @param library - The library route, when the stop lies in a library.
+ * @returns The error to throw.
+ * @example throw unvouchedTextRefusal(null, request, profile, library) // details.cause: 'no-sources-content'
+ */
+function unvouchedTextRefusal(
+  retained: string | null | undefined,
+  request: SingleBundleSealRequest,
+  profile: SingleBundleProfile,
+  library?: SingleBundleLibraryRoute,
+) {
+  if (!library) return profile.refusals.sourceChanged(request.source.path)
+  return library.buildUnmapped(
+    typeof retained === 'string' ? 'content-differs' : 'no-sources-content',
+  )
+}
+
+/**
  * Seals one declared browser stop from the single bundle a dev server serves, before the browser opens.
  *
  * Why it exists: the executed bytes are checked against these served bytes before the click. The stop file must be named in the served map by the canonical path of the app (real root joined with the package-relative path), with retained text equal to the checked-out file. Called by each single-bundle adapter's `readBundle` once per stop ({@link sealReactScriptsStop}; the Expo adapter).
  * Only this stop's retained text is kept in the sealed map; the other sources keep their names so the map still locates the stop.
  * @param request - The app, the stop, the owned origin and the run's cache.
  * @param profile - The adapter's profile: refusal wording, limits, bundle selection and map address.
+ * @param library - Set for a stop in the checked-out library: the checks run in order stale, not-in-build, unmapped and refuse with the library's own refusals instead of `SOURCE_CHANGED`; absent, the seal is byte-identical to an app stop's.
  * @returns The sealed bundle (served bytes unchanged) with the discovery measurements, and `limits` when the profile's limits are not today's defaults, so the run applies them to its verifier and source resources.
  * @throws The profile's refusals (`nodeModules`, `outsidePackage`, `notInEntryBundle`, `ambiguousSource`, `unmappedLine`, `mapLimit`, `mapUnreadable`); the profile's `sourceChanged` (`SOURCE_CHANGED`) when the file differs from the accepted article or from the compiled text.
  * @example
@@ -173,6 +269,7 @@ function locateStop(
 export async function sealSingleBundleStop(
   request: SingleBundleSealRequest,
   profile: SingleBundleProfile,
+  library?: SingleBundleLibraryRoute,
 ) {
   const { refusals, limits } = profile
   const started = performance.now()
@@ -191,6 +288,8 @@ export async function sealSingleBundleStop(
     REPOSITORY_SOURCE_LIMIT_BYTES,
     request.signal,
   )
+  // A library file that differs from its packed copy was edited after the build; a missing packed copy cannot be stale and ends in not-in-build below.
+  if (library) await assertNotStale(library, segments, sourceText, request)
   if (sha256(sourceText) !== source.hash)
     throw refusals.sourceChanged(source.path)
   const stopPath = canonicalForwardSlashPath(join(realRoot, ...segments))
@@ -205,6 +304,7 @@ export async function sealSingleBundleStop(
     stopPath,
     request,
     profile,
+    library,
   )
   // The cache is keyed by the bundle bytes, which an edit can leave unchanged while the map differs: a cached map that disagrees with the checked-out file is read once more before the stop is refused.
   if (
@@ -222,9 +322,11 @@ export async function sealSingleBundleStop(
       stopPath,
       request,
       profile,
+      library,
     )
   }
-  if (located.retained !== sourceText) throw refusals.sourceChanged(source.path)
+  if (located.retained !== sourceText)
+    throw unvouchedTextRefusal(located.retained, request, profile, library)
   const { served, sources, stopIndex } = located
   const scan = sourceMapMappedPositions(
     served.map.mappings,

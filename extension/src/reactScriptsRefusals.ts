@@ -8,6 +8,7 @@ import {
   REPOSITORY_SETUP_TIMEOUT_MS,
 } from './constants'
 import { StudyError, type ErrorCode } from './errors'
+import { encodeViteLibraryVariant } from './utils/viteLibraryFailureIdentity'
 
 /**
  * The stable codes the `react-scripts-dev` adapter refuses with, in the order of the groups of the agent-ready contract:
@@ -580,4 +581,132 @@ export function reactScriptsEnvFileRefusal(
     `Tell the learner that ${file} is over the size limit, is not a regular file, or holds values that expand past Codebook's limits (details.file); never edit the project or its .env files. ${recoveryEnd('REACT_SCRIPTS_UNSUPPORTED')}`,
     { reason: 'env-file-unreadable', file, sideEffects: 'none' },
   )
+}
+
+/** The library-stop reasons the react-scripts seal raises before the browser opens, in the order the checks run. */
+export type ReactScriptsLibrarySealReason =
+  'library-build-stale' | 'library-not-in-build' | 'library-build-unmapped'
+
+/** Why the served map cannot tie a library stop to the checked-out file: it names the file without its text, or with other text. */
+export type ReactScriptsLibraryUnmappedCause =
+  'no-sources-content' | 'content-differs'
+
+/** What a react-scripts library refusal names: the Example, the library and the repository-relative stop file. */
+export type ReactScriptsLibraryStopIdentity = Readonly<{
+  /** The Example's canonical repository-relative package root. */
+  packageRoot: string
+  /** The library's package name. */
+  library: string
+  /** The repository-relative stop file. */
+  file: string
+}>
+
+/** The recovery of each library seal reason, before the shared side-effects sentence and the help anchor. */
+const REACT_SCRIPTS_LIBRARY_SEAL_RECOVERIES: Record<
+  ReactScriptsLibrarySealReason,
+  string
+> = {
+  'library-build-stale':
+    'The checked-out file changed after this run built and packed the library. Tell the learner the file changed after the build and start the run again so it builds the current source; never run the build yourself.',
+  'library-not-in-build':
+    "The bundle the page parsed, with its source map, does not contain the stop file: the Example does not import that file, or the library entry the Example loads does not reach it. Tell the learner, or choose a stop on a line the page's code runs; do not start another run with the same stop.",
+  'library-build-unmapped':
+    "The served source map cannot tie the stop to the checked-out file; details.cause says why (no-sources-content: the map names the file without its source text; content-differs: the map's text differs from the file). Tell the learner the cause, or offer a stop in the Example's own files.",
+}
+
+/**
+ * Builds the `REACT_SCRIPTS_SEAL_FAILED` refusal of a stop in the checked-out library, raised at seal time, after the library was built and packed and the owned server ran.
+ *
+ * Why it exists: the library route of `react-scripts-dev` seals a library stop from the same served bundle as an app stop, and a chat reads the reason vocabulary of Next and Vite (`library-build-stale`, `library-not-in-build`, `library-build-unmapped`) under the react-scripts code. Called by {@link sealReactScriptsLibraryStop} through its library route.
+ * @param request - The reason, the stop's identity and, for `library-build-unmapped`, the cause.
+ * @returns The refusal: `details.reason`, `details.library`, `details.file`, `details.packageRoot`, `details.sideEffects: "partial"` and `details.cause` where the reason has one.
+ * @example
+ * reactScriptsLibrarySealRefusal({ reason: 'library-build-stale', packageRoot: 'examples/counter', library: 'redux', file: 'src/createStore.ts' }).details?.reason // => 'library-build-stale'
+ */
+export function reactScriptsLibrarySealRefusal(
+  request: ReactScriptsLibraryStopIdentity & {
+    reason: ReactScriptsLibrarySealReason
+    cause?: ReactScriptsLibraryUnmappedCause
+  },
+): StudyError {
+  const { reason, packageRoot, library, file, cause } = request
+  const place = `${file} in library ${library} (packageRoot ${packageRoot})`
+  const message =
+    reason === 'library-build-stale'
+      ? `The checked-out ${place} differs from the copy Codebook packed for this run, so the library was edited after the build; the stop cannot be sealed. The owned server was stopped and no click was sent.`
+      : reason === 'library-not-in-build'
+        ? `The served bundle's source map does not name ${place}, so the page does not load that file from the packed build; the stop cannot be sealed. The owned server was stopped and no click was sent.`
+        : `The served bundle's source map names ${place} ${cause === 'no-sources-content' ? 'without its source text' : 'with source text that differs from the checked-out file'}, so the stop cannot be sealed. The owned server was stopped and no click was sent.`
+  return reactScriptsRefusal(
+    'REACT_SCRIPTS_SEAL_FAILED',
+    message,
+    `${REACT_SCRIPTS_LIBRARY_SEAL_RECOVERIES[reason]} Codebook built and packed the library and wrote its ignored build output; the owned server was stopped, the run's private folder was removed, no browser opened and no input was sent (details.sideEffects is partial). See codebook://help/repository-browser#${reason}.`,
+    {
+      reason,
+      ...(cause === undefined ? {} : { cause }),
+      packageRoot,
+      library,
+      file,
+      sideEffects: 'partial',
+    },
+  )
+}
+
+/** The variant a react-scripts library build change carries in a run's failure text (`RUNTIME_FAILED(react-scripts-library-build-changed:<identity>): …`). */
+export const REACT_SCRIPTS_LIBRARY_BUILD_CHANGED_VARIANT =
+  'react-scripts-library-build-changed'
+
+/** The recovery of a changed library build, ending at its help anchor. */
+export const REACT_SCRIPTS_LIBRARY_BUILD_CHANGED_RECOVERY =
+  'The bundle the browser executed differs from the bytes Codebook sealed (a rebuild or a hot update replaced it). Tell the learner the library was rebuilt during the run and start the run again once the rebuild is done; never run the build yourself. Codebook built and packed the library for this run (details.sideEffects is partial). See codebook://help/repository-browser#library-build-changed.'
+
+/**
+ * Builds the failure of a library stop whose executed bundle differs from the sealed one, raised after the page loaded.
+ *
+ * Why it exists: under `react-scripts-dev` the executed-bytes check of a library stop must end with `library-build-changed` (code `RUNTIME_FAILED`) instead of the generic changed-module error. Called by the run where that check finds a difference for a library stop.
+ * @param identity - The Example's package root, the library and the stop file.
+ * @returns The `RUNTIME_FAILED` error: `details.reason: "library-build-changed"`, `details.library`, `details.file`, `details.packageRoot`, `details.sideEffects: "partial"`.
+ * @example
+ * throw reactScriptsLibraryBuildChangedFailure({ packageRoot: 'examples/counter', library: 'redux', file: 'src/createStore.ts' })
+ */
+export function reactScriptsLibraryBuildChangedFailure(
+  identity: ReactScriptsLibraryStopIdentity,
+): StudyError {
+  const message = `The served bundle of library ${identity.library} changed while the run was open (the executed code of ${identity.file} differs from the code sealed before the start; a rebuild or a hot update), so Codebook stopped it for packageRoot ${identity.packageRoot}. Start the run again once the rebuild is done.`
+  return new StudyError(
+    'RUNTIME_FAILED',
+    message,
+    message,
+    REACT_SCRIPTS_LIBRARY_BUILD_CHANGED_RECOVERY,
+    undefined,
+    {
+      reason: 'library-build-changed',
+      packageRoot: identity.packageRoot,
+      library: identity.library,
+      file: identity.file,
+      sideEffects: 'partial',
+    },
+  )
+}
+
+/**
+ * Writes the failure text a run records for a react-scripts library build change raised at a pause or an event, the form {@link refusalFailureOf} restores.
+ * @param error - What the activity threw.
+ * @returns `RUNTIME_FAILED(react-scripts-library-build-changed:<identity>): …`; `undefined` for any other error.
+ * @example
+ * reactScriptsLibraryFailureText(reactScriptsLibraryBuildChangedFailure(identity)) // => 'RUNTIME_FAILED(react-scripts-library-build-changed:%5B…%5D): The served bundle of library …'
+ */
+export function reactScriptsLibraryFailureText(
+  error: unknown,
+): string | undefined {
+  if (!(error instanceof StudyError)) return undefined
+  const { details } = error
+  if (
+    error.code !== 'RUNTIME_FAILED' ||
+    details?.reason !== 'library-build-changed' ||
+    details.sideEffects !== 'partial'
+  )
+    return undefined
+  const text = (value: unknown) => (typeof value === 'string' ? value : '')
+  return `RUNTIME_FAILED(${encodeViteLibraryVariant(REACT_SCRIPTS_LIBRARY_BUILD_CHANGED_VARIANT, { packageRoot: text(details.packageRoot), library: text(details.library), file: text(details.file) })}): ${error.message}`
 }
