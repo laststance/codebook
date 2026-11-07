@@ -5619,7 +5619,14 @@ export async function workspaceHarness(
     resolve(__dirname, '../studyWorkspace.js'),
     editorDependencies,
     {},
-    { './replayDebuggerSlot': resolve(__dirname, '../replayDebuggerSlot.js') },
+    {
+      './replayDebuggerSlot': resolve(__dirname, '../replayDebuggerSlot.js'),
+      // The parts cut out of the reader import the editor too, so they run in the reader's context with its stand-in.
+      './studyWorkspace/capturedSourceReturn': resolve(
+        __dirname,
+        '../studyWorkspace/capturedSourceReturn.js',
+      ),
+    },
   )
   const repositoryBoundary = await loadModule<typeof RepositoryReaderModule>(
     resolve(__dirname, '../repositoryReader.js'),
