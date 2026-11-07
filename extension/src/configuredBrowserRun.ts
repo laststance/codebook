@@ -211,6 +211,7 @@ import {
   type DevelopmentLockIdentity,
 } from './utils/assertDevelopmentWorkspace'
 import { assertFrameAtBoundPosition } from './utils/assertFrameAtBoundPosition'
+import { assertReactScriptsLibraryPortFree } from './utils/assertReactScriptsLibraryPortFree'
 import { assertSavedSessionOrigin } from './utils/assertSavedSessionOrigin'
 import { assertViteLibraryNeedsPackageRoot } from './utils/assertViteLibraryNeedsPackageRoot'
 import { refuseViteMisroute } from './utils/assessViteWorkspace'
@@ -2265,6 +2266,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private async planReactScriptsLibrary(
     input: ConstructorParameters<typeof ReactScriptsLibraryRoute>[0],
   ): Promise<{ reactScriptsLibrary: { preloadPath: string } }> {
+    // A busy declared port refuses before the learner's confirmation and the build, so the refusal's `sideEffects: none` is true.
+    if (this.reactScriptsPackage)
+      await assertReactScriptsLibraryPortFree(
+        this.reactScriptsPackage,
+        (declared, refuse) =>
+          assertDevelopmentPortFree(declared, {
+            signal: this.abort.signal,
+            ...(refuse ? { refuse } : {}),
+          }),
+      )
     const route = new ReactScriptsLibraryRoute(input)
     this.libraryRoute = route
     this.reactScriptsLibraryRoute = route

@@ -293,6 +293,7 @@ export type ReactScriptsPortSource = 'pre-start-check' | 'react-scripts-exit'
  * Builds the `REACT_SCRIPTS_PORT_UNAVAILABLE` refusal of a port that is already in use.
  * @param port - The port that is busy.
  * @param source - `pre-start-check` (nothing started) or `react-scripts-exit` (react-scripts refused the port itself and ended).
+ * @param sideEffects - Overrides what the source implies; a library run's start check runs after the build wrote its ignored output, so it says `partial`.
  * @returns The refusal: `details.reason: "port-in-use"`, `port`, `source` and `sideEffects`.
  * @example
  * reactScriptsPortRefusal(3000, 'pre-start-check').details?.sideEffects // => 'none'
@@ -300,9 +301,10 @@ export type ReactScriptsPortSource = 'pre-start-check' | 'react-scripts-exit'
 export function reactScriptsPortRefusal(
   port: number,
   source: ReactScriptsPortSource,
+  sideEffectsOverride?: ReactScriptsSideEffects,
 ): StudyError {
   const sideEffects: ReactScriptsSideEffects =
-    source === 'pre-start-check' ? 'none' : 'partial'
+    sideEffectsOverride ?? (source === 'pre-start-check' ? 'none' : 'partial')
   return reactScriptsRefusal(
     'REACT_SCRIPTS_PORT_UNAVAILABLE',
     `Port ${port} is in use on this machine, and Codebook never starts the app on another port.`,

@@ -172,7 +172,12 @@ export async function launchReactScriptsDevelopmentServer(
   const declared = declaredReactScriptsPort(workspace.assignments)
   request.onDeclaredPort(declared)
   await request.assertPortFree(declared, (refusal) =>
-    reactScriptsPortRefusal(refusal.port, 'pre-start-check'),
+    // A library run's build already wrote its ignored output before this check, so a port taken since the early check leaves a partial effect.
+    reactScriptsPortRefusal(
+      refusal.port,
+      'pre-start-check',
+      request.reactScriptsLibrary ? 'partial' : undefined,
+    ),
   )
   request.alive()
   request.onStep(VITE_SETUP_STEPS.startingReactScripts)
