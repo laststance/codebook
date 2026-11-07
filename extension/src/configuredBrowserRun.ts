@@ -258,6 +258,7 @@ import {
   describeRenderRunMessage,
   type RenderRunMessageInput,
 } from './utils/describeRenderRunMessage'
+import { detectPackedLibraryStop } from './utils/detectPackedLibraryStop'
 import { elapsedMsSince } from './utils/elapsedMsSince'
 import { entryRoutePatternOf } from './utils/entryRoutePatternOf'
 import { bundleOfEvaluatedModule } from './utils/extractDevelopmentModule'
@@ -1761,6 +1762,24 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.definition.configuration.version !== OPERATIONS_CONFIG_VERSION
     )
       return false
+    // A run that declares `library` pauses in the checked-out library's source on the run's packed copy: the stop is sealed through the same library route with the packed folder as the walk folder.
+    const declared =
+      this.definition.configuration.adapter === 'vite-dev'
+        ? this.definition.configuration.library?.packageRoot
+        : undefined
+    const packed =
+      declared === undefined
+        ? undefined
+        : await detectPackedLibraryStop(
+            this.options.workspace,
+            declared,
+            stop.source.path,
+            this.abort.signal,
+          )
+    if (packed) {
+      this.viteLibraries.registerPacked(stop.source, packed)
+      return true
+    }
     const library = await detectLibraryPackage(
       this.options.workspace,
       vitePackage,
@@ -1792,9 +1811,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const library = this.viteLibraries.libraryOf(stop.source)
     if (!library || !adapter.walkLibraryModules) return {}
     const walk = adapter.walkLibraryModules
+    const packed = this.viteLibraries.packedFactsOf(stop.source)
     return {
       viteLibrary: {
         library,
+        ...(packed ? { packed } : {}),
         moduleSource: this.viteLibraries.moduleSourceFor(
           generation,
           library,
@@ -1825,11 +1846,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     stop: PreparedStop,
     library: NonNullable<ReturnType<ViteLibraryRegistry['libraryOf']>>,
   ): StudyError {
-    return viteLibraryBuildChangedFailure({
-      packageRoot: this.vitePackage?.packageRootRelative ?? '.',
-      library: library.name,
-      file: stop.source.path,
-    })
+    const packed = this.viteLibraries.packedFactsOf(stop.source)
+    return viteLibraryBuildChangedFailure(
+      {
+        packageRoot: this.vitePackage?.packageRootRelative ?? '.',
+        library: library.name,
+        file: stop.source.path,
+      },
+      packed,
+    )
   }
 
   /**
@@ -2066,7 +2091,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       dependencies,
     })
     const route = this.libraryRoute
-    return this.withSetupBudgetPaused(() => route.plan(this.abort.signal))
+    const options = await this.withSetupBudgetPaused(() =>
+      route.plan(this.abort.signal),
+    )
+    // Stops in the checked-out library are sealed against the packed copy, whose real folder the walk looks at.
+    this.viteLibraries.setPackedRoute({
+      name: options.packageName,
+      packedFolder: options.packedRoot,
+      revision: () => route.view().revision,
+    })
+    return options
   }
 
   /**
@@ -7703,12 +7737,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): void {
     const library = this.viteLibraries.libraryOf(stop.source)
     if (!library || stop.script || !beforeOperation) return
+    const packed = this.viteLibraries.packedFactsOf(stop.source)
     throw viteLibraryRefusal({
       reason: 'library-build-unmapped',
       cause: 'lazy-import',
       packageRoot: this.vitePackage?.packageRootRelative ?? '.',
       library: library.name,
       file: stop.source.path,
+      ...(packed ? { packed } : {}),
     })
   }
 

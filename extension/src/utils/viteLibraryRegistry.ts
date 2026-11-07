@@ -4,6 +4,16 @@ import type { ViteLibraryModuleSource } from './selectViteLibraryCandidate'
 /** The place a stop is declared at: the key a run keeps its per-stop library facts under. */
 type StopPlace = Readonly<{ path: string; line: number; column: number }>
 
+/** Where the run's packed copy of the declared library is, as the route planned it. */
+type PackedRoute = Readonly<{
+  /** The library's package name. */
+  name: string
+  /** The packed copy's real folder: the folder the launcher's walk looks at. */
+  packedFolder: string
+  /** The revision the library was built from; `undefined` before the build finished. */
+  revision: () => string | undefined
+}>
+
 /**
  * Keeps what a nested Vite run knows about its library stops: which declared stop lies in which workspace library, and one module source per page generation and library folder.
  *
@@ -35,14 +45,58 @@ export class ViteLibraryRegistry {
     this.libraries.set(ViteLibraryRegistry.keyOf(place), library)
   }
 
+  private readonly packedPlaces = new Set<string>()
+  private packedRoute?: PackedRoute
+
+  /**
+   * Records that a declared stop lies in the checked-out source of the library the run builds and packs; its walk folder is the run's packed copy once {@link setPackedRoute} was called.
+   * @param place - The stop's declared place.
+   * @param library - The declared library with its checked-out real folder.
+   * @example registry.registerPacked(stop.source, library)
+   */
+  registerPacked(place: StopPlace, library: LibraryPackage): void {
+    this.register(place, library)
+    this.packedPlaces.add(ViteLibraryRegistry.keyOf(place))
+  }
+
+  /**
+   * Tells the registry where the run's packed copy is, once the route has planned it.
+   * @param route - The package name, the packed copy's real folder and the revision the build was made from (read when a refusal is worded).
+   * @example registry.setPackedRoute({ name: '@acme/core', packedFolder, revision: () => facts.revision })
+   */
+  setPackedRoute(route: PackedRoute): void {
+    this.packedRoute = route
+  }
+
+  /**
+   * Gives the packed-build facts of a stop on the packed route.
+   * @param place - The stop's declared place.
+   * @returns The facts a refusal names; `undefined` for any stop that is not on the packed route.
+   * @example registry.packedFactsOf(stop.source) // => { revision: 'abc…' }
+   */
+  packedFactsOf(place: StopPlace): { revision?: string } | undefined {
+    if (!this.packedPlaces.has(ViteLibraryRegistry.keyOf(place)))
+      return undefined
+    const revision = this.packedRoute?.revision()
+    return revision === undefined ? {} : { revision }
+  }
+
   /**
    * Gives the library a declared stop lies in.
    * @param place - The stop's declared place.
-   * @returns The library, or `undefined` for a stop inside the app.
+   * @returns The library, or `undefined` for a stop inside the app. A stop on the packed route gets the package name and the packed folder as its walk folder once the route is planned.
    * @example registry.libraryOf(stop.source)?.name // => '@scope/core'
    */
   libraryOf(place: StopPlace): LibraryPackage | undefined {
-    return this.libraries.get(ViteLibraryRegistry.keyOf(place))
+    const key = ViteLibraryRegistry.keyOf(place)
+    const library = this.libraries.get(key)
+    if (!library || !this.packedPlaces.has(key) || !this.packedRoute)
+      return library
+    return {
+      ...library,
+      name: this.packedRoute.name,
+      realFolder: this.packedRoute.packedFolder,
+    }
   }
 
   /**

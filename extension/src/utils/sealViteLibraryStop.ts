@@ -1,12 +1,15 @@
 import { realpath } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 
 import { REPOSITORY_SOURCE_LIMIT_BYTES } from '../constants'
 import type { BundleSource } from '../repositoryBundle'
 import type { RepositoryConfiguration } from '../repositoryConfigSchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { WaitTimeoutError } from '../runtimeSupport/utils/waitTimeoutError'
-import { viteLibraryRefusal } from '../viteLibraryRefusals'
+import {
+  viteLibraryRefusal,
+  type ViteLibraryPackedFacts,
+} from '../viteLibraryRefusals'
 import { viteRefusal } from '../viteRefusals'
 
 import { ViteLibraryFetchBound } from './createViteLibraryModuleSource'
@@ -26,8 +29,10 @@ export type ViteLibrarySealRequest = Readonly<{
   appRoot: string
   /** The app's canonical repository-relative package root, named in a refusal. */
   packageRootRelative: string
-  /** The workspace library holding the stop file. */
+  /** The library holding the stop file; for a packed stop `realFolder` is the run's packed copy, `folder` the checked-out one. */
   library: LibraryPackage
+  /** Set for a stop in the checked-out library of a run that built and packed it: refusals name the packed build and carry `sideEffects: "partial"`. */
+  packed?: ViteLibraryPackedFacts
   /** The opened repository's root. */
   repositoryRoot: string
   /** The declared stop's source (repository-relative path, line and the hash the article accepted). */
@@ -40,6 +45,17 @@ export type ViteLibrarySealRequest = Readonly<{
   moduleSource: ViteLibraryModuleSource
   signal: AbortSignal
 }>
+
+/** Tells whether a selection was refused because no served map names the stop file at all (`library-build-unmapped`, cause `no-map`). */
+function isUnmappedForNoMap(
+  selection: Awaited<ReturnType<typeof selectViteLibraryCandidate>>,
+): boolean {
+  return (
+    selection.kind === 'refused' &&
+    selection.facts.reason === 'library-build-unmapped' &&
+    selection.facts.cause === 'no-map'
+  )
+}
 
 /**
  * Seals a browser stop in a workspace library from the one served module whose inline map names the stop file, before the browser opens.
@@ -69,25 +85,43 @@ export async function sealViteLibraryStop(request: ViteLibrarySealRequest) {
       packageRoot: request.packageRootRelative,
       library: library.name,
       file: source.path,
+      ...(request.packed ? { packed: request.packed } : {}),
     })
-  const selection = await selectViteLibraryCandidate({
-    source: request.moduleSource,
-    stop: {
-      realPath,
-      text,
-      line: source.line,
-      citationEndLine: request.citationEndLine,
-    },
-    ownedOrigin: request.ownedOrigin,
-    appRoot: request.appRoot,
-  }).catch((error: unknown) => {
-    if (error instanceof ViteLibraryFetchBound)
-      throw refuse({ reason: 'library-build-unmapped', cause: 'bound' })
-    // The launcher's walk answer did not arrive in time: decision-table row 2, cause deadline. A launcher exit or any other failure stays what it is.
-    if (error instanceof WaitTimeoutError)
-      throw refuse({ reason: 'library-build-unmapped', cause: 'deadline' })
-    throw error
-  })
+  const stopFile = {
+    realPath,
+    text,
+    line: source.line,
+    citationEndLine: request.citationEndLine,
+  }
+  const select = (stop: typeof stopFile) =>
+    selectViteLibraryCandidate({
+      source: request.moduleSource,
+      stop,
+      ownedOrigin: request.ownedOrigin,
+      appRoot: request.appRoot,
+    })
+  const selection = await select(stopFile)
+    .then(async (selected) => {
+      // The map rewrite leaves a packed `src/` path where the checked-out text differs, so no map names the checked-out file; the packed copy's file with other text is the stale build.
+      if (!request.packed || !isUnmappedForNoMap(selected)) return selected
+      const packedFile = join(
+        library.realFolder,
+        relative(join(request.repositoryRoot, library.folder), realPath),
+      )
+      const again = await select({ ...stopFile, realPath: packedFile })
+      return again.kind === 'refused' &&
+        again.facts.reason === 'library-build-stale'
+        ? again
+        : selected
+    })
+    .catch((error: unknown) => {
+      if (error instanceof ViteLibraryFetchBound)
+        throw refuse({ reason: 'library-build-unmapped', cause: 'bound' })
+      // The launcher's walk answer did not arrive in time: decision-table row 2, cause deadline. A launcher exit or any other failure stays what it is.
+      if (error instanceof WaitTimeoutError)
+        throw refuse({ reason: 'library-build-unmapped', cause: 'deadline' })
+      throw error
+    })
   if (selection.kind === 'refused') throw refuse(selection.facts)
   const url = ownedModuleUrl(request.ownedOrigin, selection.modulePath)
   // The selection only names owned-origin paths; this guards the invariant.

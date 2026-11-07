@@ -23,6 +23,7 @@ import type { ResolvedVitePackage } from './utils/resolveVitePackage'
 import type { ViteLibraryModuleSource } from './utils/selectViteLibraryCandidate'
 import type { ViteLibraryModules } from './utils/viteLibraryModules'
 import type { ViteLauncherLibraryOptions } from './viteLauncherProtocol'
+import type { ViteLibraryPackedFacts } from './viteLibraryRefusals'
 
 /** The name a repository-browser configuration gives its development server (`adapter`), the one key of {@link DevelopmentServerAdapter}. */
 export type DevelopmentServerAdapterName =
@@ -112,6 +113,8 @@ export type DevelopmentBundleRequest = {
 /** What the Vite library seal needs besides the stop: the detected library and the generation's module source. */
 export type ViteLibraryStopSealInput = {
   library: LibraryPackage
+  /** Set for a stop in the checked-out library of a run that built and packed it: the library's `realFolder` is then the packed copy, and a refusal names the packed build. */
+  packed?: ViteLibraryPackedFacts
   /** The launcher's walk and the served modules of this library for the current page generation. */
   moduleSource: ViteLibraryModuleSource
 }

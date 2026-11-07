@@ -29,6 +29,26 @@ export type ViteLibraryStopIdentity = Readonly<{
   file: string
 }>
 
+/** What a refusal of the packed route knows about the run's build: the revision the library was built from, when the build had finished. */
+export type ViteLibraryPackedFacts = Readonly<{ revision?: string }>
+
+/**
+ * Names the build of the packed route in a refusal sentence.
+ * @param library - The library's package name.
+ * @param packed - The run's packed-build facts.
+ * @returns `the packed build of library X (built from revision R)`, without the revision when it is not known.
+ * @example packedBuildPhrase('@acme/core', { revision: 'abc' }) // => 'the packed build of library @acme/core (built from revision abc)'
+ */
+function packedBuildPhrase(
+  library: string,
+  packed: ViteLibraryPackedFacts,
+): string {
+  const revision = packed.revision
+    ? ` (built from revision ${packed.revision})`
+    : ''
+  return `the packed build of library ${library}${revision}`
+}
+
 /** The sentence each cause of `library-build-unmapped` adds to the message. */
 const UNMAPPED_CAUSE_SENTENCES: Record<LibraryBuildUnmappedCause, string> = {
   'no-map':
@@ -69,6 +89,8 @@ export function viteLibraryRefusal(
     reason: Exclude<ViteLibraryRefusalReason, 'library-build-changed'>
     cause?: LibraryBuildUnmappedCause
     candidates?: readonly string[]
+    /** Set for a stop in the checked-out library of a run that built and packed it: the sentences name the packed build and the side effects are `partial`. */
+    packed?: ViteLibraryPackedFacts
   },
 ): StudyError {
   const { reason, packageRoot, library, file } = request
@@ -82,7 +104,9 @@ export function viteLibraryRefusal(
     'VITE_SEAL_FAILED',
     message,
     message,
-    libraryRecoveryOf(reason, 'vite'),
+    request.packed
+      ? viteLibraryPackedRecoveryOf(reason)
+      : libraryRecoveryOf(reason, 'vite'),
     undefined,
     {
       reason,
@@ -92,7 +116,13 @@ export function viteLibraryRefusal(
       file,
       ...(candidates === undefined ? {} : { candidates }),
       // A lazy-import refusal comes after the page loaded, so its code already ran; every other reason is raised before the browser opens.
-      sideEffects: request.cause === 'lazy-import' ? 'unknown' : 'none',
+      // The packed route built and packed the library and wrote its ignored output before the refusal; the private folder is removed.
+      sideEffects:
+        request.cause === 'lazy-import'
+          ? 'unknown'
+          : request.packed
+            ? 'partial'
+            : 'none',
     },
   )
 }
@@ -116,6 +146,8 @@ function viteLibraryMessage(
   request: Parameters<typeof viteLibraryRefusal>[0],
   place: string,
 ): string {
+  if (request.packed)
+    return packedLibraryMessage(request, request.packed, place)
   if (request.reason === 'library-build-stale')
     return `The library's served source map for ${place} carries source text that differs from the checked-out file, so a stop there was refused before the browser opened. Run the build script of library ${request.library} yourself, then start again; Codebook never builds.`
   if (request.reason === 'library-not-in-build')
@@ -129,19 +161,66 @@ function viteLibraryMessage(
   return `The library's served modules cannot be tied to ${place} (${request.cause ?? 'unknown'}: ${cause}). Codebook never builds.${rebuild}`
 }
 
+/** Words the message of {@link viteLibraryRefusal} for a stop on the packed route. */
+function packedLibraryMessage(
+  request: Parameters<typeof viteLibraryRefusal>[0],
+  packed: ViteLibraryPackedFacts,
+  place: string,
+): string {
+  const build = packedBuildPhrase(request.library, packed)
+  if (request.reason === 'library-build-stale')
+    return `The source text that ${build} carries for ${place} differs from the checked-out file, which was edited after the build, so a stop there was refused before the browser opened. Start the run again to build and pack the current file.`
+  if (request.reason === 'library-not-in-build')
+    return `The modules the entry page loads do not hold exactly one served module of ${build} that maps ${place} (${listedCandidates(request.candidates)}), so a stop there cannot be sealed. The page may load another copy of the file, or may not load it at all.`
+  const cause = request.cause ? UNMAPPED_CAUSE_SENTENCES[request.cause] : ''
+  const rebuild =
+    request.cause !== undefined && MAP_FIXED_BY_REBUILD.has(request.cause)
+      ? " The library's own build must emit source maps that include sourcesContent."
+      : ''
+  return `The served modules of ${build} cannot be tied to ${place} (${request.cause ?? 'unknown'}: ${cause}).${rebuild}`
+}
+
+/**
+ * Gives the static recovery of a refusal on the packed route: what to tell the learner, what the run built and wrote, and that no browser opened.
+ *
+ * Why it exists: the Vite recovery of {@link libraryRecoveryOf} says Codebook never builds and `details.sideEffects` is none, which is false once the library was built and packed. Called by {@link viteLibraryRefusal} for a packed refusal.
+ * @param reason - The refusal's reason.
+ * @returns The recovery text, ending at the reason's help anchor.
+ * @example viteLibraryPackedRecoveryOf('library-build-stale') // => 'The checked-out file was edited after this run\'s build. …'
+ */
+export function viteLibraryPackedRecoveryOf(
+  reason: Exclude<ViteLibraryRefusalReason, 'library-build-changed'>,
+): string {
+  const started =
+    "Codebook built and packed the library for this run and wrote its ignored build output; the run's private folder was removed (details.sideEffects is partial). No browser was opened and no input was sent; no page or application code ran."
+  const advice: Record<typeof reason, string> = {
+    'library-build-stale':
+      "The checked-out file was edited after this run's build. Tell the learner and ask for a new start, which builds and packs the current file; never run the build yourself.",
+    'library-build-unmapped':
+      'The packed build cannot be tied to the stop file; details.cause says why. Read it and follow the help for the cause; do not retry with the same stop.',
+    'library-not-in-build':
+      'The page does not load that library file from the packed build exactly once (details.candidates lists the module URLs when more than one matches). Tell the learner, or choose a stop in code the entry page runs; do not start another run with the same stop.',
+  }
+  return `${advice[reason]} ${started} See codebook://help/repository-browser#${reason}.`
+}
+
 /**
  * Builds the failure of a library whose served module changed after the seal: the executed bytes differ from the sealed ones, including a hot update (`…?t=<n>`).
  *
  * Why it exists: under Vite the executed-bytes check ends a library stop with this failure instead of the generic changed-module error. Called by the run when that check finds a difference for a library stop.
  * @param identity - The app, the library and the stop file.
+ * @param packed - Set for a stop on the packed route: the sentence names the packed build instead of telling the learner to rebuild.
  * @returns The `RUNTIME_FAILED` error: `details.reason: "library-build-changed"`, `details.sideEffects: "unknown"` (the page had loaded).
  * @example
  * throw viteLibraryBuildChangedFailure({ packageRoot: 'examples/react/basic', library: '@scope/core', file: 'packages/core/src/a.ts' })
  */
 export function viteLibraryBuildChangedFailure(
   identity: ViteLibraryStopIdentity,
+  packed?: ViteLibraryPackedFacts,
 ): StudyError {
-  const message = `The served module of library ${identity.library} changed while the run was open (the executed code of ${identity.file} differs from the code sealed before the start; a rebuild or a hot update), so Codebook stopped it for packageRoot ${identity.packageRoot}. Finish the rebuild yourself and start again; Codebook never builds.`
+  const message = packed
+    ? `The served module of ${packedBuildPhrase(identity.library, packed)} changed while the run was open (the executed code of ${identity.file} differs from the code sealed before the start; a hot update or a replaced file), so Codebook stopped it for packageRoot ${identity.packageRoot}. Start the run again to build and pack the library again.`
+    : `The served module of library ${identity.library} changed while the run was open (the executed code of ${identity.file} differs from the code sealed before the start; a rebuild or a hot update), so Codebook stopped it for packageRoot ${identity.packageRoot}. Finish the rebuild yourself and start again; Codebook never builds.`
   return new StudyError(
     'RUNTIME_FAILED',
     message,

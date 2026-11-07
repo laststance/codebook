@@ -309,6 +309,8 @@ export async function configuredRuntimeHarness(
       lazy?: boolean
       /** Leaves the app's `node_modules` link to the library out, so the app does not reach it. */
       unlinked?: boolean
+      /** Makes the stand-in launcher's walk list the library module twice (two served addresses with the same text), as a page that loads two copies of the file does. */
+      listTwice?: boolean
     }
     /** Variations of the nested app declared by `packageRoot`. */
     packageApp?: {
@@ -2318,7 +2320,14 @@ export async function configuredRuntimeHarness(
             libraryWalks.push(request)
             return {
               modules: viteLibrary
-                ? [`${viteLibrary.moduleRoute}?v=${libraryVersion}`]
+                ? [
+                    `${viteLibrary.moduleRoute}?v=${libraryVersion}`,
+                    ...(options.viteLibrary?.listTwice
+                      ? [
+                          `${viteLibrary.moduleRoute}?v=${libraryVersion}&copy=2`,
+                        ]
+                      : []),
+                  ]
                 : [],
               optimizedLibrary: false,
             }
