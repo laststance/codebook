@@ -1204,6 +1204,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private readonly pausedRenderStops = new Set<PreparedStop>()
   /** How many resumed hits of each journal event type were seen, for the journal cap. */
   private readonly resumedHitCounts = new Map<string, number>()
+  /** The ids each session's adapter gave the preparation window's provisional breakpoints the window retired, by session id: retiring clears a breakpoint's registrations, while the page keeps hitting the breakpoint in its copies of server components and names the old id (C95-N1, {@link rememberRetiredProvisionalIds}). */
+  private readonly retiredProvisionalIds = new Map<string, Set<number>>()
   /** The ids each server session's adapter gave browser library stops' breakpoints the run has retired, by session id: retiring clears a breakpoint's registrations, while a pause the server copy took before the removal reached the adapter still names the old id ({@link rememberServerCopyId}). */
   private readonly retiredServerCopyIds = new Map<string, Set<number>>()
   /** The `stopped` events whose pause kind the run already settled, so a deferred event is handled once ({@link settleServerStop}). */
@@ -2986,6 +2988,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const session = this.participants.server.selected!
     // Codebook's own requests are over: a later server pause is not caused by them.
     codebookStopLedger.closeWindow([session.id])
+    // The ids are kept before any retirement starts, so a page pause that arrives while one is under way is still the window's own hit.
+    for (const entry of window.provisional)
+      if (!entry.prepared) this.rememberRetiredProvisionalIds(entry.breakpoint)
     for (const entry of window.provisional)
       if (!entry.prepared)
         await entry.breakpoint.retire(session, this.abort.signal)
@@ -3756,11 +3761,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Tells whether a debugger stop names only provisional breakpoints of the window, for a page pause the warm-up load causes.
+   * Tells whether a debugger stop names only provisional breakpoints of the window, for a page pause the warm-up load causes, also after the window retired them: the page keeps hitting a provisional breakpoint in its copies of server components while and after the retirement reaches it (C95-N1).
    * @param session - The session that sent the event.
    * @param hitIds - The adapter's ids of the breakpoints the pause hit.
-   * @returns `true` when at least one id is named and each belongs to a provisional breakpoint.
-   * @example this.hitsOnlyProvisionalBreakpoints(session, [12]) // true when 12 is a provisional breakpoint's id
+   * @returns `true` when at least one id is named and each belongs to a provisional breakpoint of the open window or to one the window retired ({@link retiredProvisionalIds}).
+   * @example this.hitsOnlyProvisionalBreakpoints(session, [12]) // true when 12 is a provisional breakpoint's id, live or retired
    */
   private hitsOnlyProvisionalBreakpoints(
     session: vscode.DebugSession,
@@ -3770,7 +3775,24 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const own = (this.preparationWindow?.provisional ?? []).map((entry) =>
       entry.breakpoint.acknowledgedId(session),
     )
-    return hitIds.every((id) => own.includes(id))
+    const retired = this.retiredProvisionalIds.get(session.id)
+    return hitIds.every((id) => own.includes(id) || Boolean(retired?.has(id)))
+  }
+
+  /**
+   * Keeps the id every session's adapter gave a provisional breakpoint, just before the window retires it, in {@link retiredProvisionalIds}.
+   * Why it exists: retiring clears the breakpoint's registrations and with them the ids, while the page keeps pausing at the breakpoint in React's browser copies of server components (Next maps them to the server file) and names the old id; without the id that pause ends the run as an unexpected browser stop (C95-N1). Called by {@link closePreparationWindow} before its first retirement.
+   * @param breakpoint - The provisional breakpoint about to be retired.
+   * @example this.rememberRetiredProvisionalIds(entry.breakpoint) // keeps 101 for the page session that acknowledged it as 101
+   */
+  private rememberRetiredProvisionalIds(
+    breakpoint: OwnedRepositoryBreakpoint,
+  ): void {
+    for (const [sessionId, id] of breakpoint.acknowledgedIds()) {
+      const ids = this.retiredProvisionalIds.get(sessionId) ?? new Set<number>()
+      ids.add(id)
+      this.retiredProvisionalIds.set(sessionId, ids)
+    }
   }
 
   /**
@@ -12786,7 +12808,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Resumes a pause of the warm-up page at a provisional breakpoint of the preparation window, which the editor also sends to the page's session: it is nobody's stop.
+   * Resumes a pause of the page at a provisional breakpoint of the preparation window, which the editor also sends to the page's session: it is nobody's stop, while the window is open and after it retired the breakpoint (C95-N1).
    * Called by {@link onEvent} for a `stopped` event before any stop admission.
    * @param session - The session that stopped.
    * @param name - The participant of that session.
@@ -12801,7 +12823,6 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): boolean {
     if (
       name !== 'browser' ||
-      !this.preparationWindow ||
       !this.hitsOnlyProvisionalBreakpoints(session, body.hitBreakpointIds)
     )
       return false

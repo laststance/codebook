@@ -500,6 +500,22 @@ export class OwnedRepositoryBreakpoint {
   }
 
   /**
+   * Lists the id each session's adapter acknowledged for this breakpoint, for {@link ConfiguredBrowserRun} just before it retires a provisional breakpoint: retiring clears every registration, while a page that keeps hitting the breakpoint in its copies of server components still names the old id (Cycle 0095, C95-N1).
+   * Like {@link movedTo} it never throws.
+   * @returns The session id and acknowledged breakpoint id of every session whose latest registration has a receipt; empty when none has.
+   * @example
+   * owned.acknowledgedIds() // => Map { 'server-session' => 7, 'page-session' => 101 }
+   */
+  acknowledgedIds(): ReadonlyMap<string, number> {
+    const ids = new Map<string, number>()
+    // Only an acknowledged registration names an id; a pending or refused one names none.
+    for (const [sessionId, registration] of this.registrations)
+      if (registration.receipt)
+        ids.set(sessionId, registration.receipt.breakpointId)
+    return ids
+  }
+
+  /**
    * Reads current ACK authority synchronously at the final input boundary; {@link registered} also polls it during setup.
    * @param session - The debug session whose adapter acknowledges the breakpoint.
    * @returns A copy of the adapter's current receipt, or `undefined` while the latest registration request is unanswered.
