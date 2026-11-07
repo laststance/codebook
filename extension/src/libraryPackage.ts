@@ -60,7 +60,7 @@ const productionClock: BuildClock = {
 const HOOK_FILE_NAME = 'library-hook.mjs'
 
 /** The name of the anchor file the Vite redirect resolves from, inside the run's private folder. */
-const LIBRARY_ANCHOR_FILE_NAME = 'codebook-anchor.js'
+export const LIBRARY_ANCHOR_FILE_NAME = 'codebook-anchor.js'
 
 /** The name of the observation file inside the run's private folder. */
 const OBSERVATION_FILE_NAME = 'library-observation.jsonl'
