@@ -160,6 +160,7 @@ test('the skill, README and AGENTS.md document the react-scripts library route',
     '`react-scripts-dev` when it reports API 1.35 or later',
     'keep polling the run resource while it reads `confirming`',
     '`publishedCopyLoaded` false',
+    'never say a dependency imported it',
   ])
     assert.ok(skill.includes(phrase), phrase)
   for (const phrase of [

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import {
+  LIBRARY_REACHED_THROUGH_LIMIT_PACKAGES,
   NODE_SCRIPT_LIBRARY_PACKAGE_LIMIT_CHARS,
   NODE_SCRIPT_LIBRARY_PACKAGE_MANAGERS,
   NODE_SCRIPT_LIBRARY_PATH_LIMIT_CHARS,
@@ -28,9 +29,6 @@ const COMPLETE_OBSERVATION_FIELDS = [
   'loadCount',
   'publishedCopyLoaded',
 ] as const
-
-/** The most package names the Example's declared relation to the library lists in `reachedThrough` (API 1.35, D14); a larger number is stated by `reachedThroughCount` only. */
-export const LIBRARY_REACHED_THROUGH_LIMIT = 16
 
 /** The facts as the object schema parses them, before the state rules. */
 type ParsedFacts = {
@@ -263,7 +261,7 @@ export const libraryRunFactsSchema = z
     reachedThrough: z
       .array(z.string().min(1).max(NODE_SCRIPT_LIBRARY_PACKAGE_LIMIT_CHARS))
       .min(1)
-      .max(LIBRARY_REACHED_THROUGH_LIMIT)
+      .max(LIBRARY_REACHED_THROUGH_LIMIT_PACKAGES)
       .optional(),
     reachedThroughCount: z.number().int().positive().optional(),
   })

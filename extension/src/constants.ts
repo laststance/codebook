@@ -1603,6 +1603,8 @@ export const NODE_SCRIPT_LIBRARY_OBSERVATIONS = [
 export const NODE_SCRIPT_LIBRARY_PATH_LIMIT_CHARS = 2_048
 /** The most characters of a library's package name a `library.prepared` event keeps (the npm name limit). */
 export const NODE_SCRIPT_LIBRARY_PACKAGE_LIMIT_CHARS = 214
+/** The most package names the Example's declared relation to the library lists in `reachedThrough` (API 1.35, D14); a larger number is stated by `reachedThroughCount` only. */
+export const LIBRARY_REACHED_THROUGH_LIMIT_PACKAGES = 16
 /** The most characters of a library version (built or installed) a `library.prepared` event keeps. */
 export const NODE_SCRIPT_LIBRARY_VERSION_LIMIT_CHARS = 256
 /** The most characters of a library's repository revision a `library.prepared` event keeps. */

@@ -1,9 +1,11 @@
 import { readFile, realpath, stat } from 'node:fs/promises'
 import { delimiter, dirname, join, relative, sep } from 'node:path'
 
-import { MIN_NODE_MAJOR_VERSION } from '../constants'
+import {
+  LIBRARY_REACHED_THROUGH_LIMIT_PACKAGES,
+  MIN_NODE_MAJOR_VERSION,
+} from '../constants'
 import type { StudyError } from '../errors'
-import { LIBRARY_REACHED_THROUGH_LIMIT } from '../libraryRunFactsSchema'
 
 import { createLibraryBuildError } from './createLibraryBuildError'
 import { isAtOrInsideFolder } from './isAtOrInsideFolder'
@@ -53,7 +55,7 @@ export type SupportedLibrary = {
   /** The names in the library's `peerDependencies` that are not optional. */
   peers: string[]
   packageManager: Extract<RepositoryPackageManagerResult, { ok: true }>
-  /** Only when the Example does not list the library itself and `direct-or-installed` found it through installed dependencies: their names, sorted, at most {@link LIBRARY_REACHED_THROUGH_LIMIT}. */
+  /** Only when the Example does not list the library itself and `direct-or-installed` found it through installed dependencies: their names, sorted, at most {@link LIBRARY_REACHED_THROUGH_LIMIT_PACKAGES}. */
   reachedThrough?: string[]
   /** The number of all such dependencies (at least the length of `reachedThrough`); present with it. */
   reachedThroughCount?: number
@@ -274,7 +276,10 @@ async function readSupportedManifest(
         { package: library.name },
       )
     relation = {
-      reachedThrough: dependents.slice(0, LIBRARY_REACHED_THROUGH_LIMIT),
+      reachedThrough: dependents.slice(
+        0,
+        LIBRARY_REACHED_THROUGH_LIMIT_PACKAGES,
+      ),
       reachedThroughCount: dependents.length,
     }
   }
