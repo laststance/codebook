@@ -1,12 +1,5 @@
 import assert from 'node:assert/strict'
-import {
-  access,
-  mkdir,
-  mkdtemp,
-  realpath,
-  rm,
-  writeFile,
-} from 'node:fs/promises'
+import { access, mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -98,7 +91,7 @@ async function libraryDependencies(
         privateFolder,
         dispose: async () => {
           calls.push('dispose')
-          await rm(privateFolder, { recursive: true, force: true })
+          await removeTestFolder(privateFolder)
           return { cleanup: 'removed' }
         },
         failLink: async (sentence) => {
