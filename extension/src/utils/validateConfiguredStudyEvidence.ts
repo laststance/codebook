@@ -4,6 +4,7 @@ import {
   OPERATIONS_CONFIG_VERSION,
   RECORDED_LOCATION_STUDY_VERSION,
   REPOSITORY_CAPTURED_TYPES,
+  VITE_LIBRARY_STUDY_VERSION,
 } from '../constants'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 
@@ -40,6 +41,18 @@ export function validateConfiguredStudyEvidence(
           study.version !== legacyStudyFormatOfConfiguration(configuration))
   )
     throw new Error('Configured archive and intent versions disagree.')
+  // Library facts exist exactly in a format 16 study, whose configuration declares the library they describe.
+  if (
+    (study.version === VITE_LIBRARY_STUDY_VERSION) !==
+    (study.library !== undefined)
+  )
+    throw new Error('Configured library facts and study format disagree.')
+  if (
+    study.library !== undefined &&
+    configuration.version === OPERATIONS_CONFIG_VERSION &&
+    configuration.library?.packageRoot !== study.library.packageRoot
+  )
+    throw new Error('Configured library facts name another library folder.')
   if (
     study.workspaceKey !== workspaceKey ||
     study.id !== `${study.instanceId}_${study.runId}`

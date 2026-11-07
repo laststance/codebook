@@ -8,11 +8,7 @@ import {
   configuredStudySchema,
   type ConfiguredStudy,
 } from '../configuredStudySchemas'
-import {
-  EXPO_WEB_STUDY_VERSION,
-  READABLE_STUDY_VERSION,
-  STUDY_STORAGE_FORMATS,
-} from '../constants'
+import { EXPO_WEB_STUDY_VERSION, STUDY_STORAGE_FORMATS } from '../constants'
 import { LearningLibrary } from '../learningLibrary'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { assertReadableStudyFormat } from '../utils/assertReadableStudyFormat'
@@ -79,11 +75,9 @@ test('Codebook 0.2.88 lists a .study.v15.json archive as saved by a newer Codebo
   )
 })
 
-// Value: protects=DX-8 this Codebook reads format 15, stores it as .study.v15.json beside its metadata and refuses format 16 as a newer Codebook's; fails_when=the storage table lacks v15, the readable limit stays 14, or 16 is read; why_new=a new format number; seam=none; no_claim=the library round trip of an Expo run
-test('format 15 is a stored and readable format and format 16 is refused as saved by a newer Codebook', () => {
-  // Arrange
-  const sixteen = { version: 16 }
-  // Act
+// Value: protects=DX-8 this Codebook reads format 15 and stores it as .study.v15.json beside its metadata; fails_when=the storage table lacks v15 or format 15 is refused; why_new=a new format number; seam=none; no_claim=the library round trip of an Expo run (the readable limit and the newer-format refusal moved to studyFormat16.test.ts)
+test('format 15 is a stored and readable format', () => {
+  // Arrange / Act
   const row = STUDY_STORAGE_FORMATS.find((entry) => entry.version === 15)
   // Assert
   assert.deepEqual(row, {
@@ -92,13 +86,8 @@ test('format 15 is a stored and readable format and format 16 is refused as save
     archiveSuffix: '.study.v15.json',
     metadataSuffix: '.study.meta.v15.json',
   })
-  assert.equal(READABLE_STUDY_VERSION, 15)
   assert.equal(isOperationsStudyFormat(15), true)
   assert.doesNotThrow(() => assertReadableStudyFormat({ version: 15 }))
-  assert.throws(
-    () => assertReadableStudyFormat(sixteen),
-    /saved in format 16 by a newer Codebook; this Codebook reads formats up to 15/,
-  )
 })
 
 // Value: protects=E-8 a format 15 study with expoVersion reads back with that version and a longer value than 64 characters or an empty one is refused; fails_when=the schema drops expoVersion, accepts a 65-character version or rejects format 15; why_new=expoVersion is new; seam=none; no_claim=that an Expo run writes the field, which the run's own tests prove
