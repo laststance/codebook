@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.95.0] - 2026-11-07 (development candidate)
+
+Cycle 0094 part 2 ([Issue #241](https://github.com/laststance/codebook/issues/241)), an owner-directed process cycle. **The extension itself is unchanged; this version changes how Codebook is checked.** It carries out two more process proposals from the repository's GitHub Discussions: faster measured health and recorded editor event orders for the workspace tests.
+
+### Added
+- **Host event recorder (development only):** `tools/host-event-recorder/` is a small VS Code extension that is never part of the Codebook package; the package check refuses a VSIX that contains it. In a dedicated window it records the editor's tab, group, editor, selection and layout events of one take as JSONL, with marks naming each step. It resumes the take after Reload Window, keeps each take inside its own git-ignored folder, and leaves out file paths outside the repository, other extensions' tab titles and user names. `extension/scripts/sanitizeHostTrace.mjs` checks a take again before it enters the repository.
+- **Recorded editor orders in the workspace tests:** four sanitized takes (VS Code 1.145.2 and Cursor 3.29.9) live under `extension/src/tests/fixtures/host-traces/`. The workspace harness replays one marked step of a take at a time. It builds the step's start state, checks it against the take, delivers the editor's events in the recorded order before each fake editor operation resolves, and compares the end state. Five steps replay today. Eight are named pending tests that hold editor behaviors the fake editor does not model yet.
+
+### Changed
+- **Measured health in CI:** the Fallow health check now runs the coverage suite in three parallel shards of about 6 minutes each and merges their raw V8 coverage into one score, instead of one run of 14 to 18 minutes. On the same commit both forms printed the same Fallow health report. The merge refuses a missing or failed shard, a test file run twice, unreadable or altered coverage files and a different build or checkout. Local `pnpm health` still runs the suite once.
+- **Delivery rules (AGENTS.md):** the release commit's Step 16 is done by hand with its exact checks; review tools are asked to answer in English with their exact markers; host event takes are refreshed when an editor version changes.
+
 ## [0.2.94.0] - 2026-11-07 (development candidate)
 
 Cycle 0094 part 1 ([Issue #241](https://github.com/laststance/codebook/issues/241)), an owner-directed process cycle. **The extension itself is unchanged; this version changes how Codebook is built and checked.** It carries out the process proposals posted in the repository's GitHub Discussions.
