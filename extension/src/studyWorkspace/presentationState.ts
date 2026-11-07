@@ -865,16 +865,15 @@ export class PresentationReceipts {
       undefined,
       beforeScopeFocus,
     )
+    // Everything after the grid read is synchronous, so the group is read once.
     const parsed = editorLayoutSchema.safeParse(grid.layout),
-      isNativeComposition = this.host.hasComposition()
-    if (isNativeComposition && this.host.applicationGroup)
+      isNativeComposition = this.host.hasComposition(),
+      applicationGroup = this.host.applicationGroup
+    if (isNativeComposition && applicationGroup)
       return (
-        grid.groups.length === this.host.applicationGroup.count &&
-        grid.preservesOtherParts(this.host.applicationGroup.count) &&
-        isProportionalEditorLayout(
-          this.host.applicationGroup.layout,
-          grid.layout,
-        )
+        grid.groups.length === applicationGroup.count &&
+        grid.preservesOtherParts(applicationGroup.count) &&
+        isProportionalEditorLayout(applicationGroup.layout, grid.layout)
       )
     if (isNativeComposition)
       return (
