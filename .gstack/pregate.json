@@ -145,10 +145,15 @@
     ],
     "tools/host-event-recorder/traceFormat.js": [
       "extension/scripts/tests/hostEventRecorder.test.mjs",
+      "extension/scripts/tests/hostEventRecorderExtension.test.mjs",
       "extension/scripts/tests/sanitizeHostTrace.test.mjs"
     ],
     "tools/host-event-recorder/*": [
-      "extension/scripts/tests/hostEventRecorder.test.mjs"
+      "extension/scripts/tests/hostEventRecorder.test.mjs",
+      "extension/scripts/tests/hostEventRecorderExtension.test.mjs"
+    ],
+    "extension/scripts/tests/utils/fakeVscodeForRecorder.mjs": [
+      "extension/scripts/tests/hostEventRecorderExtension.test.mjs"
     ],
     "extension/scripts/tests/utils/hostTraceSample.mjs": [
       "extension/scripts/tests/hostEventRecorder.test.mjs"
@@ -159,6 +164,7 @@
       "extension/src/tests/hostTraceReplay.test.ts"
     ],
     "extension/src/tests/fixtures/host-traces/*.jsonl": [
+      "extension/scripts/tests/hostTraceFixtures.test.mjs",
       "extension/src/tests/studyWorkspaceHostTraceHistorical.test.ts",
       "extension/src/tests/studyWorkspaceHostTraceVscodeStandard.test.ts",
       "extension/src/tests/studyWorkspaceHostTraceCursorStandard.test.ts"

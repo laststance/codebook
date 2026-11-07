@@ -6,7 +6,8 @@
  *
  * A take is a JSONL file under `.codebook-host-traces/` in the first workspace folder; every line
  * is appended the moment it happens, and an open take survives Reload Window (it is marked in the
- * recorder's global state and resumed at activation).
+ * recorder's workspace state, so only the workspace that recorded it resumes it, and resumed at
+ * activation).
  */
 
 const fs = require('node:fs')
@@ -18,16 +19,21 @@ const {
   buildHeader,
   createEventWriter,
   decideResume,
+  nameProblem,
+  planTakeRepair,
   readHostVersion,
   serializeLine,
 } = require('./traceFormat')
 
-/** The global-state key holding the mark of the open take. */
+/** The workspace-state key holding the mark of the open take (workspace state, not global state: every window of the extension reads global state). */
 const OPEN_TAKE_KEY = 'codebookHostRecorder.openTake'
 /** The folder of take files, inside the workspace folder; private output, never committed raw. */
 const TAKE_FOLDER = '.codebook-host-traces'
 /** The shortest time between two `vscode.getEditorLayout` reads. */
 const LAYOUT_READ_INTERVAL_MS = 50
+
+/** The `.gitignore` written into a new take folder, so no repository can commit a raw take by accident. */
+const TAKE_FOLDER_GITIGNORE = '*\n'
 
 /** The open take, or `undefined`. */
 let take
@@ -140,19 +146,40 @@ function currentGroups() {
 }
 
 /**
- * Appends lines to the take file at once (no buffering) and keeps the global-state mark current.
+ * Shows a failed take write to the author, once per take; the take stays open.
+ *
+ * @param {unknown} error - What the write or the layout read threw.
+ */
+function reportFailure(error) {
+  if (!take || take.failureShown) return
+  take.failureShown = true
+  void vscode.window.showErrorMessage(
+    `Host event recorder could not write ${take.file}: ${error instanceof Error ? error.message : String(error)}`,
+  )
+}
+
+/**
+ * Appends lines to the take file at once (no buffering) and keeps the workspace-state mark current.
+ *
+ * A failing write is shown ({@link reportFailure}) instead of thrown, so an editor listener never throws and no rejection goes unhandled.
  *
  * @param {string[]} lines - Serialized lines.
  */
 function append(lines) {
-  fs.appendFileSync(take.file, lines.join(''))
-  take.state.update(OPEN_TAKE_KEY, {
-    takeId: take.id,
-    file: take.file,
-    sequence: take.sequence,
-    lastSeq: take.writer.nextSeq() - 1,
-    startMs: take.startMs,
-  })
+  try {
+    fs.appendFileSync(take.file, lines.join(''))
+    Promise.resolve(
+      take.state.update(OPEN_TAKE_KEY, {
+        takeId: take.id,
+        file: take.file,
+        sequence: take.sequence,
+        lastSeq: take.writer.nextSeq() - 1,
+        startMs: take.startMs,
+      }),
+    ).catch(reportFailure)
+  } catch (error) {
+    reportFailure(error)
+  }
 }
 
 /**
@@ -175,8 +202,14 @@ function record(kind, data) {
  */
 async function readLayout() {
   take.lastLayoutAt = Date.now()
-  const layout = await vscode.commands.executeCommand('vscode.getEditorLayout')
-  record('editorLayout', layout)
+  try {
+    const layout = await vscode.commands.executeCommand(
+      'vscode.getEditorLayout',
+    )
+    record('editorLayout', layout)
+  } catch (error) {
+    reportFailure(error)
+  }
 }
 
 /**
@@ -193,7 +226,9 @@ function scheduleLayout() {
     const current = take
     if (!current) return
     current.layoutTimer = undefined
-    const pending = readLayout().finally(() => current.pending.delete(pending))
+    const pending = readLayout()
+      .catch(reportFailure)
+      .finally(() => current.pending.delete(pending))
     current.pending.add(pending)
   }, wait)
 }
@@ -293,6 +328,18 @@ async function startTake(context, sequence) {
   const now = new Date()
   const directory = path.join(folder.uri.fsPath, TAKE_FOLDER)
   fs.mkdirSync(directory, { recursive: true })
+  // The folder is git-ignored only in Codebook itself; `wx` never overwrites a .gitignore that is already there.
+  try {
+    fs.writeFileSync(
+      path.join(directory, '.gitignore'),
+      TAKE_FOLDER_GITIGNORE,
+      {
+        flag: 'wx',
+      },
+    )
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error
+  }
   const file = path.join(directory, takeFileName(sequence, now))
   const codebook = vscode.extensions.getExtension('laststance.codebook')
   fs.writeFileSync(
@@ -331,7 +378,7 @@ async function startTake(context, sequence) {
 function openTake(context, fields) {
   return {
     ...fields,
-    state: context.globalState,
+    state: context.workspaceState,
     writer: createEventWriter({
       context: sanitizeContext(),
       firstSeq: fields.firstSeq,
@@ -362,13 +409,32 @@ function readLastLine(file) {
 }
 
 /**
+ * Ends a take file cut in the middle of its last line, so the next appended line starts on its own line.
+ *
+ * A complete last line that lacks only its newline is terminated; a line that does not parse is truncated away (its event was never complete). See {@link planTakeRepair}.
+ *
+ * @param {string} file - A take file.
+ * @returns {'none' | 'terminate' | 'truncate'} What was done.
+ */
+function repairTakeFile(file) {
+  const text = fs.readFileSync(file, 'utf8')
+  const plan = planTakeRepair(text)
+  if (plan.action === 'terminate') fs.appendFileSync(file, '\n')
+  if (plan.action === 'truncate')
+    fs.truncateSync(file, Buffer.byteLength(text.slice(0, plan.keepLength)))
+  return plan.action
+}
+
+/**
  * Resumes (or restarts) the open take after activation, e.g. after Reload Window.
  *
  * @param {import('vscode').ExtensionContext} context - The extension context.
  */
 async function resumeIfMarked(context) {
-  const mark = context.globalState.get(OPEN_TAKE_KEY)
+  const mark = context.workspaceState.get(OPEN_TAKE_KEY)
   const exists = mark ? fs.existsSync(mark.file) : false
+  // Before anything is appended: a crash mid-write can leave a last line without its newline.
+  const repair = exists ? repairTakeFile(mark.file) : 'none'
   const decision = decideResume({
     mark,
     fileExists: exists,
@@ -377,7 +443,7 @@ async function resumeIfMarked(context) {
   })
   if (decision.action === 'none') return
   if (decision.action === 'fresh') {
-    await context.globalState.update(OPEN_TAKE_KEY, undefined)
+    await context.workspaceState.update(OPEN_TAKE_KEY, undefined)
     void vscode.window.showWarningMessage(decision.notice)
     await startTake(context, decision.sequence)
     return
@@ -389,6 +455,10 @@ async function resumeIfMarked(context) {
     startMs: decision.startMs,
     firstSeq: decision.nextSeq,
   })
+  if (repair !== 'none')
+    void vscode.window.showWarningMessage(
+      `The resumed take ended in a cut line; it was ${repair === 'terminate' ? 'complete and is kept' : 'incomplete and was removed'}.`,
+    )
   // Name the interval no event could be recorded in, then take a fresh snapshot.
   record('reload', decision.reload)
   record('tabGroups', currentGroups())
@@ -410,7 +480,7 @@ async function stopTake(context) {
   record('tabGroups', currentGroups())
   await readLayout()
   take = undefined
-  await context.globalState.update(OPEN_TAKE_KEY, undefined)
+  await context.workspaceState.update(OPEN_TAKE_KEY, undefined)
   return current.file
 }
 
@@ -443,6 +513,7 @@ async function activate(context) {
       const sequence = await vscode.window.showInputBox({
         prompt: 'Sequence name of this take (for example arrange-restore)',
         ignoreFocusOut: true,
+        validateInput: nameProblem,
       })
       if (!sequence) return
       await startTake(context, sequence)
@@ -460,6 +531,7 @@ async function activate(context) {
       const label = await vscode.window.showInputBox({
         prompt: 'Label of the step that starts now (for example arrange)',
         ignoreFocusOut: true,
+        validateInput: nameProblem,
       })
       if (label) recordMark(label)
     }),

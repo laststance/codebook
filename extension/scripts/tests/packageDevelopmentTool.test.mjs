@@ -65,3 +65,23 @@ test('check-package.mjs exits non-zero for a VSIX named after the recorder', asy
     /Development-only tool entered the package: extension\/codebook-host-event-recorder\/package\.json/,
   )
 })
+
+// Value: protects=the recorder refusal not firing on a bundled dependency that merely has a tools folder or a recorder-named folder below the package root; fails_when=an entry such as extension/node_modules/x/tools/y.js or extension/dist/host-event-recorder/z.js is reported as a development-only tool; why_new=Cycle 0094 task 12 review finding (anchor the pattern); seam=a tiny real ZIP read by the package reader; no_claim=that the rest of the content check passes for this archive (it does not, and the test only reads which error comes first)
+test('the package check does not call a nested tools folder or recorder-named folder a development tool', async (context) => {
+  // Arrange
+  const path = await tinyVsix(context, [
+    ['extension/package.json', '{}'],
+    [
+      'extension/node_modules/dependency/tools/helper.js',
+      'module.exports = {}',
+    ],
+    ['extension/dist/host-event-recorder/z.js', 'module.exports = {}'],
+  ])
+  const entries = await readVsixEntries(path)
+
+  // Act / Assert
+  await assert.rejects(
+    verifyPackageContent(entries),
+    (error) => !/Development-only tool/.test(error.message),
+  )
+})

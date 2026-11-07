@@ -24,9 +24,9 @@ export const REQUIRED_PACKAGE_FILES = [
   'THIRD_PARTY_NOTICES.md',
 ]
 
-/** Entries of the development-only tools folder or of the host event recorder, which no VSIX may hold. */
+/** Entries of the development-only tools folder or of the host event recorder at the package root (`extension/tools/`, `extension/host-event-recorder/`), which no VSIX may hold. */
 const DEVELOPMENT_TOOL_ENTRY =
-  /(?:^|\/)tools\/|(?:^|\/)(?:codebook-)?host-event-recorder(?:\/|$)/
+  /^extension\/(?:tools\/|(?:codebook-)?host-event-recorder\/)/
 
 /** Checks a closed file inventory, metadata, notices and manifest references without loading extension code. @example await verifyPackageContent(entries, expectedStageFiles) */
 export async function verifyPackageContent(entries, expectedFiles) {

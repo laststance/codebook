@@ -479,3 +479,217 @@ test('a mark is written with only its label and a snapshot of the tab groups aft
     },
   ])
 })
+
+// Value: protects=Cursor chat tab titles (user prompts) staying out of a public trace; fails_when=a tab without any resource and with input kind unknown or terminal keeps its label in a snapshot, a tab event or a re-sanitized written line; why_new=Cycle 0094 task 12 review finding (resource-less labels); seam=none; no_claim=webview and custom tabs, which keep their labels
+test('the label of a tab without a resource and of kind unknown or terminal becomes its input kind', () => {
+  // Arrange
+  const chatTab = {
+    label: 'Dashboard total amount calculation',
+    isActive: true,
+    isPreview: false,
+    input: { kind: 'unknown' },
+  }
+  const terminalTab = {
+    label: 'zsh - /Users/alice',
+    isActive: false,
+    isPreview: false,
+    input: { kind: 'terminal' },
+  }
+  const writer = createEventWriter({ context })
+
+  // Act
+  const snapshot = snapshotTabGroups(
+    [{ viewColumn: 1, isActive: true, tabs: [chatTab, terminalTab] }],
+    context,
+  )
+  const [eventLine] = writer.lines(
+    'tabsChanged',
+    {
+      opened: [{ groupIndex: 0, tab: chatTab }],
+      closed: [],
+      // An already written entry, as a committed fixture holds it.
+      changed: [
+        {
+          groupIndex: 0,
+          label: 'Invoice update process',
+          inputKind: 'unknown',
+        },
+      ],
+    },
+    3,
+    { groups: [] },
+  )
+
+  // Assert
+  assert.deepEqual(
+    snapshot.groups[0].tabs.map((tab) => tab.label),
+    ['unknown', 'terminal'],
+  )
+  assert.deepEqual(JSON.parse(eventLine).data, {
+    opened: [{ groupIndex: 0, label: 'unknown', inputKind: 'unknown' }],
+    closed: [],
+    changed: [{ groupIndex: 0, label: 'unknown', inputKind: 'unknown' }],
+  })
+})
+
+// Value: protects=a Windows-built codebook-source URI keeping only its file name; fails_when=a backslash separated path keeps its folders in the written uri; why_new=Cycle 0094 task 12 review finding (separator split); seam=none; no_claim=none beyond protects
+test('a codebook-source uri with backslash separators keeps only its file name', () => {
+  // Arrange
+  const uri = {
+    scheme: 'codebook-source',
+    path: '\\study\\repository\\app\\ui\\Captured-cards.tsx',
+  }
+
+  // Act
+  const sanitized = sanitizeUri(uri, context)
+
+  // Assert
+  assert.equal(sanitized, 'codebook-source:Captured-cards.tsx')
+})
+
+// Value: protects=a mark label or sequence name never carrying a path or a name into a trace; fails_when=a label with slashes, a name or more than 64 characters is written as typed; why_new=Cycle 0094 task 12 review finding (label charset); seam=none; no_claim=the input box validation (hostEventRecorderExtension.test.mjs)
+test('a mark label and a header sequence keep only letters, digits, dash, underscore, dot and space and at most 64 characters', () => {
+  // Arrange
+  const writer = createEventWriter({ context })
+  const snapshot = { groups: [] }
+
+  // Act
+  const [markLine] = writer.lines(
+    'mark',
+    { label: '/Users/alice/open study' },
+    1,
+    snapshot,
+  )
+  const [longLine] = writer.lines(
+    'mark',
+    { label: 'a'.repeat(100) },
+    2,
+    snapshot,
+  )
+  const header = buildHeader({
+    host: 'Cursor',
+    hostVersion: '3.29.9',
+    hostApiVersion: '1.128.0',
+    os: 'darwin',
+    sequence: 'C:\\work\\arrange',
+    codebookVersion: '0.2.93.0',
+    recorderVersion: '0.1.0',
+    startedAt: '2026-11-07T00:00:00.000Z',
+  })
+
+  // Assert
+  assert.equal(JSON.parse(markLine).data.label, '-Users-alice-open study')
+  assert.equal(JSON.parse(longLine).data.label, 'a'.repeat(64))
+  assert.equal(header.sequence, 'C--work-arrange')
+})
+
+// Value: protects=an event carrying only the fields its kind defines; fails_when=an unknown field on an editor, selection, reload or layout payload, a tab or a tab input reaches the written line; why_new=Cycle 0094 task 12 review finding (field allow-list); seam=none; no_claim=fields a future format version adds
+test('every event kind writes only its own fields and drops unknown ones', () => {
+  // Arrange
+  const writer = createEventWriter({ context })
+  const snapshot = {
+    groups: [
+      {
+        viewColumn: 1,
+        isActive: true,
+        extraGroupField: 'x',
+        tabs: [
+          {
+            label: 'a.ts',
+            isActive: true,
+            isPreview: false,
+            tooltip: '/Users/alice/a.ts',
+            input: {
+              kind: 'text',
+              uri: { scheme: 'file', path: '/work/repo/a.ts' },
+              extra: 'x',
+            },
+          },
+        ],
+      },
+    ],
+  }
+
+  // Act
+  const lines = [
+    ...writer.lines(
+      'activeTextEditor',
+      { uri: null, viewColumn: 1, secret: 'x' },
+      1,
+      snapshot,
+    ),
+    ...writer.lines(
+      'selection',
+      {
+        uri: { scheme: 'file', path: '/work/repo/a.ts' },
+        viewColumn: 1,
+        selectionKind: 3,
+        secret: 'x',
+        selections: [
+          {
+            anchor: { line: 1, character: 2, secret: 'x' },
+            active: { line: 3, character: 4 },
+            secret: 'x',
+          },
+        ],
+      },
+      2,
+      snapshot,
+    ),
+    ...writer.lines(
+      'reload',
+      {
+        unrecordedFromMs: 1,
+        unrecordedToMs: 5,
+        unrecordedMs: 4,
+        secret: 'x',
+      },
+      3,
+      snapshot,
+    ),
+    ...writer.lines(
+      'editorLayout',
+      { orientation: 1, groups: [{ size: 1, secret: 'x' }], secret: 'x' },
+      4,
+      snapshot,
+    ),
+  ].map((line) => JSON.parse(line))
+
+  // Assert
+  const dataOf = (kind) => lines.find((line) => line.kind === kind).data
+  assert.deepEqual(dataOf('activeTextEditor'), { viewColumn: 1 })
+  assert.deepEqual(dataOf('selection'), {
+    uri: 'a.ts',
+    viewColumn: 1,
+    selectionKind: 3,
+    selections: [
+      { anchor: { line: 1, character: 2 }, active: { line: 3, character: 4 } },
+    ],
+  })
+  assert.deepEqual(dataOf('reload'), {
+    unrecordedFromMs: 1,
+    unrecordedToMs: 5,
+    unrecordedMs: 4,
+  })
+  assert.deepEqual(dataOf('editorLayout'), {
+    orientation: 1,
+    groups: [{ size: 1 }],
+  })
+  assert.deepEqual(dataOf('tabGroups'), {
+    groups: [
+      {
+        viewColumn: 1,
+        isActive: true,
+        tabs: [
+          {
+            label: 'a.ts',
+            input: { kind: 'text', uri: 'a.ts' },
+            isActive: true,
+            isPreview: false,
+          },
+        ],
+      },
+    ],
+    activeGroupIndex: 0,
+  })
+})

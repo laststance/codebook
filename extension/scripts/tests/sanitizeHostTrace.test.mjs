@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -16,7 +16,15 @@ const sample = fileURLToPath(
 /** Runs the sanitizer command on `input` text and returns its result and the output file's text (or undefined). */
 async function runSanitizer(context, input, extraArgs = []) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-sanitize-trace-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  // Retrying removal, as a just-exited child can still hold the folder for a moment.
+  context.after(() =>
+    rm(directory, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 50,
+    }),
+  )
   const take = join(directory, 'take.jsonl')
   const out = join(directory, 'out.jsonl')
   await writeFile(take, input)
@@ -176,4 +184,113 @@ test('a raw take whose group event carries absolute tab paths is written without
       data: { uri: 'app/lib/data.ts', viewColumn: 2 },
     },
   ])
+})
+
+/** A one-tab `tabGroups` line whose tab label is `label`, as a take would hold it. */
+function labelLine(label) {
+  return JSON.stringify({
+    seq: 1,
+    tMs: 0,
+    kind: 'tabGroups',
+    data: {
+      groups: [
+        {
+          viewColumn: 1,
+          isActive: true,
+          tabs: [
+            {
+              label,
+              isActive: true,
+              isPreview: false,
+              input: { kind: 'webview', viewType: 'x' },
+            },
+          ],
+        },
+      ],
+    },
+  })
+}
+
+// Value: protects=a short forbidden user name still being searched for; fails_when=a --forbid text of one or two characters is dropped instead of matched on word boundaries, or matches inside a longer word; why_new=Cycle 0094 task 12 review finding (short forbidden texts); seam=real child process; no_claim=none beyond protects
+test('a forbidden text shorter than three characters is refused as a whole word and ignored inside longer words', async (context) => {
+  // Arrange
+  const named = labelLine('notes of ab')
+  const inside = labelLine('about cabs')
+
+  // Act
+  const refused = await runSanitizer(context, `${named}\n`, ['--forbid', 'ab'])
+  const accepted = await runSanitizer(context, `${inside}\n`, [
+    '--forbid',
+    'ab',
+  ])
+
+  // Assert
+  assert.equal(refused.result.status, 2)
+  assert.match(refused.result.stderr, /user name/)
+  assert.equal(accepted.result.status, 0, accepted.result.stderr)
+})
+
+// Value: protects=the recording machine's user and the current user never reaching a fixture in any letter case; fails_when=lume or the current user name passes in upper case; why_new=Cycle 0094 task 12 review finding (forbid list); seam=real child process; no_claim=other users
+test('the recording machine user lume and the current user are refused in any letter case', async (context) => {
+  // Arrange
+  const lume = labelLine('Notes of LUME')
+  const current = labelLine(`notes of ${userInfo().username.toUpperCase()}`)
+
+  // Act
+  const lumeRun = await runSanitizer(context, `${lume}\n`)
+  const currentRun = await runSanitizer(context, `${current}\n`)
+
+  // Assert
+  assert.equal(lumeRun.result.status, 2)
+  assert.equal(currentRun.result.status, 2)
+})
+
+// Value: protects=the path detector catching the forms a committed fixture could still hold; fails_when=a backslash, UNC, ~user, percent-encoded, after-colon or after-comma path, or a path used as an object key, passes; why_new=Cycle 0094 task 12 review finding (path detector); seam=real child process; no_claim=every conceivable path spelling
+test('backslash, UNC, ~user, percent-encoded, delimited and object-key paths are refused', async (context) => {
+  // Arrange
+  const labels = [
+    'C:\\Users\\alice\\notes.md',
+    '\\\\server\\share\\notes.md',
+    '\\Users\\alice\\notes.md',
+    '~alice/notes.md',
+    '%2FUsers%2Falice%2Fnotes.md',
+    'path:/home/alice/notes.md',
+    'a,/home/alice/notes.md',
+  ]
+  const keyLeak = `${JSON.stringify({ type: 'header', '/home/alice/notes.md': 1 })}\n`
+
+  // Act
+  const results = []
+  for (const label of labels)
+    results.push(await runSanitizer(context, `${labelLine(label)}\n`))
+  const keyResult = await runSanitizer(context, keyLeak)
+
+  // Assert
+  assert.deepEqual(
+    results.map(({ result }) => result.status),
+    labels.map(() => 2),
+  )
+  assert.equal(keyResult.result.status, 2)
+})
+
+// Value: protects=a take with an unknown field on an event being cleaned to the fields the format defines; fails_when=an extra field survives into the committed output; why_new=Cycle 0094 task 12 review finding (field allow-list); seam=real child process; no_claim=none beyond protects
+test('unknown fields on events are dropped from the written trace', async (context) => {
+  // Arrange
+  const editorEvent = JSON.stringify({
+    seq: 1,
+    tMs: 0,
+    kind: 'activeTextEditor',
+    data: { uri: 'a.ts', viewColumn: 1, note: 'x' },
+    extra: 'y',
+  })
+
+  // Act
+  const { result, output } = await runSanitizer(context, `${editorEvent}\n`)
+
+  // Assert
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(
+    output,
+    `${JSON.stringify({ seq: 1, tMs: 0, kind: 'activeTextEditor', data: { uri: 'a.ts', viewColumn: 1 } })}\n`,
+  )
 })

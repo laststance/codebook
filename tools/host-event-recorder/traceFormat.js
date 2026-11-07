@@ -50,7 +50,8 @@ function normalizePath(path) {
  * @returns {boolean} `true` for a path that starts at a root.
  */
 function isAbsolutePath(path) {
-  return /^(?:\/|[A-Za-z]:[\\/]|~[\\/])/.test(path)
+  // A leading backslash is a rooted or UNC Windows path; `~user/` is another user's home.
+  return /^(?:\/|\\|[A-Za-z]:[\\/]|~[^\s/\\]*[\\/])/.test(path)
 }
 
 /** URI schemes Codebook itself registers for documents of the repository: their path is never a local folder, so the file name is kept. */
@@ -58,6 +59,64 @@ const REPOSITORY_VIRTUAL_SCHEMES = ['codebook-source']
 
 /** The tab input kinds the replay parser names, by the kind the recorder's plain input uses. */
 const FROZEN_INPUT_KIND = { textDiff: 'diff', notebookDiff: 'diff' }
+
+/** The longest sequence name or mark label the recorder writes. */
+const MAX_NAME_LENGTH = 64
+
+/** The characters a sequence name or mark label may hold (a path or a name typed there would reach a public trace). */
+const UNSAFE_NAME_CHARACTER = /[^A-Za-z0-9._ -]/g
+
+/** Input kinds a tab can have without any resource: their label is a chat title or a shell title, which can name a user's prompt or folder. */
+const RESOURCE_LESS_INPUT_KINDS = ['unknown', 'terminal']
+
+/**
+ * Turns typed text into a sequence name or mark label that is safe to write into a public trace.
+ *
+ * Called by {@link buildHeader} and by the event writer for `mark` events; anything outside letters, digits, `.`, `_`, `-` and space becomes `-`, and the result is cut to {@link MAX_NAME_LENGTH}.
+ *
+ * @param {unknown} text - What the author typed.
+ * @returns {string} The safe text.
+ * @example
+ * safeName('/Users/alice/open study') // => '-Users-alice-open study'
+ */
+function safeName(text) {
+  return String(text)
+    .replace(UNSAFE_NAME_CHARACTER, '-')
+    .slice(0, MAX_NAME_LENGTH)
+}
+
+/**
+ * Says why typed text cannot be a sequence name or mark label, for the input box's validation.
+ *
+ * @param {string} text - What the author typed.
+ * @returns {string | undefined} A message for rejected text, or `undefined` when {@link safeName} would keep it as typed.
+ * @example
+ * nameProblem('arrange') // => undefined
+ */
+function nameProblem(text) {
+  if (!text || !text.trim()) return 'Type a name.'
+  if (text.length > MAX_NAME_LENGTH)
+    return `Use at most ${MAX_NAME_LENGTH} characters.`
+  if (safeName(text) !== text)
+    return 'Use letters, digits, dash, underscore, dot and space only.'
+  return undefined
+}
+
+/**
+ * Copies the allowed fields of an object in their original order, transforming some of them.
+ *
+ * @param {object | null | undefined} object - A plain object (an unknown field on it is dropped).
+ * @param {string[]} allowed - The field names to keep.
+ * @param {Record<string, (value: any) => unknown>} [transform] - A function per field that rewrites its value.
+ * @returns {object} The copy.
+ */
+function pickFields(object, allowed, transform = {}) {
+  const result = {}
+  for (const [key, value] of Object.entries(object ?? {}))
+    if (allowed.includes(key))
+      result[key] = key in transform ? transform[key](value) : value
+  return result
+}
 
 /**
  * Splits a URI given as `{ scheme, path }` or as a trace string into scheme and path.
@@ -109,7 +168,8 @@ function sanitizeUri(uri, context) {
     return undefined
   }
   if (REPOSITORY_VIRTUAL_SCHEMES.includes(scheme))
-    return `${scheme}:${path.split('/').at(-1)}`
+    // Either separator: a trace built on Windows can carry backslashes.
+    return `${scheme}:${path.split(/[\\/]/).at(-1)}`
   return undefined
 }
 
@@ -133,10 +193,19 @@ function withoutNullish(fields) {
  * @returns {object} The input with the replay parser's kind and every URI sanitized to a string (a URI that reveals more than the repository is left out).
  */
 function sanitizeInput(input, context) {
-  const result = { ...input, kind: FROZEN_INPUT_KIND[input.kind] ?? input.kind }
-  for (const key of ['uri', 'original', 'modified'])
-    if (key in result) result[key] = sanitizeUri(result[key], context)
-  return withoutNullish(result)
+  const sanitizeField = (value) => sanitizeUri(value, context)
+  return withoutNullish(
+    pickFields(
+      input,
+      ['kind', 'uri', 'original', 'modified', 'viewType', 'notebookType'],
+      {
+        kind: (kind) => FROZEN_INPUT_KIND[kind] ?? kind,
+        uri: sanitizeField,
+        original: sanitizeField,
+        modified: sanitizeField,
+      },
+    ),
+  )
 }
 
 /**
@@ -144,7 +213,7 @@ function sanitizeInput(input, context) {
  *
  * @param {{ label: string, isActive?: boolean, isPreview?: boolean, input: object }} tab - A plain tab.
  * @param {{ workspaceFolders: object[] }} context - The workspace folders of the repository.
- * @returns {object} The tab with sanitized input; the label becomes the input kind when the resource is outside the repository.
+ * @returns {object} The tab with sanitized input (only `label`, `input`, `isActive` and `isPreview`); the label becomes the input kind when the resource is outside the repository or the tab has no resource and is of kind `unknown` or `terminal`.
  * @example
  * sanitizeTab({ label: 'secret.ts', input: { kind: 'text', uri: { scheme: 'file', path: '/other/secret.ts' } } }, ctx).label // => 'text'
  */
@@ -154,7 +223,18 @@ function sanitizeTab(tab, context) {
   const isOutsideRepository = ['uri', 'original', 'modified'].some(
     (key) => tab.input[key] && input[key] === undefined,
   )
-  return { ...tab, label: isOutsideRepository ? input.kind : tab.label, input }
+  // A tab with no resource at all (a chat or a terminal) is titled by its content, so it is named by its kind as well.
+  const hasNoResource = ['uri', 'original', 'modified'].every(
+    (key) => !tab.input[key],
+  )
+  const isUntitledKind =
+    hasNoResource && RESOURCE_LESS_INPUT_KINDS.includes(input.kind)
+  return {
+    label: isOutsideRepository || isUntitledKind ? input.kind : tab.label,
+    input,
+    isActive: tab.isActive,
+    isPreview: tab.isPreview,
+  }
 }
 
 /**
@@ -197,19 +277,48 @@ function snapshotTabGroups(groups, context) {
  */
 function sanitizeEventData(kind, data, context) {
   const sanitizeEditor = (editor) =>
-    withoutNullish({
-      ...editor,
-      uri: sanitizeUri(editor.uri, context),
+    withoutNullish(
+      pickFields(editor, ['uri', 'viewColumn'], {
+        uri: (uri) => sanitizeUri(uri, context),
+      }),
+    )
+  const point = (position) => pickFields(position, ['line', 'character'])
+  const sanitizeSelection = (selection) =>
+    withoutNullish(
+      pickFields(
+        selection,
+        ['uri', 'viewColumn', 'selectionKind', 'selections'],
+        {
+          uri: (uri) => sanitizeUri(uri, context),
+          selections: (selections) =>
+            selections.map((range) =>
+              pickFields(range, ['anchor', 'active'], {
+                anchor: point,
+                active: point,
+              }),
+            ),
+        },
+      ),
+    )
+  // The editor layout is nested groups of sizes: keep only that.
+  const sanitizeLayout = (layout) =>
+    pickFields(layout, ['orientation', 'groups', 'size'], {
+      groups: (groups) => groups.map(sanitizeLayout),
     })
   // A raw tab entry carries its plain tab; an already written one carries label and inputKind.
   const tabEntries = (entries) =>
     entries.map((entry) => {
-      if (!entry.tab)
+      if (!entry.tab) {
+        // A written entry of a resource-less tab still holds its raw title in a historical trace.
+        const isUntitledKind = RESOURCE_LESS_INPUT_KINDS.includes(
+          entry.inputKind,
+        )
         return {
           groupIndex: entry.groupIndex,
-          label: entry.label,
+          label: isUntitledKind ? entry.inputKind : entry.label,
           inputKind: entry.inputKind,
         }
+      }
       const tab = sanitizeTab(entry.tab, context)
       return {
         groupIndex: entry.groupIndex,
@@ -235,15 +344,23 @@ function sanitizeEventData(kind, data, context) {
         changed: groupEntries(data.changed),
       }
     case 'activeTextEditor':
-    case 'selection':
       return sanitizeEditor(data)
+    case 'selection':
+      return sanitizeSelection(data)
     case 'visibleTextEditors':
       return data.map(sanitizeEditor)
+    case 'editorLayout':
+      return sanitizeLayout(data)
+    case 'reload':
+      return pickFields(data, [
+        'unrecordedFromMs',
+        'unrecordedToMs',
+        'unrecordedMs',
+      ])
     case 'mark':
-      // A mark carries only the label its author typed.
-      return { label: String(data.label) }
+      // A mark carries only the label its author typed, in the safe charset.
+      return { label: safeName(data.label) }
     default:
-      // editorLayout (the layout itself) and reload carry numbers only.
       return data
   }
 }
@@ -282,7 +399,7 @@ function buildHeader(fields) {
     hostVersion: fields.hostVersion,
     hostApiVersion: fields.hostApiVersion,
     os: fields.os,
-    sequence: fields.sequence,
+    sequence: safeName(fields.sequence),
     codebookVersion: fields.codebookVersion,
     recorderVersion: fields.recorderVersion,
     startedAt: fields.startedAt,
@@ -364,6 +481,28 @@ function decideResume({ mark, fileExists, lastLine, nowMs }) {
 }
 
 /**
+ * Decides how to end a take file that may have been cut in the middle of its last line (a crash or kill during a write).
+ *
+ * Called by `extension.js` before it appends to a resumed take: a complete last line that only lacks its newline is ended with one (`terminate`); a line that does not parse is cut off at the previous newline (`truncate`, its event was never complete, so nothing readable is lost).
+ *
+ * @param {string} text - The take file's whole text.
+ * @returns {{ action: 'none' | 'terminate' } | { action: 'truncate', keepLength: number }} What to do; `keepLength` is the number of characters to keep.
+ * @example
+ * planTakeRepair('{"a":1}\n{"seq"') // => { action: 'truncate', keepLength: 8 }
+ */
+function planTakeRepair(text) {
+  if (text === '' || text.endsWith('\n')) return { action: 'none' }
+  const keepLength = text.lastIndexOf('\n') + 1
+  try {
+    const tail = JSON.parse(text.slice(keepLength))
+    if (tail && typeof tail === 'object') return { action: 'terminate' }
+  } catch {
+    // A cut line: fall through to truncate.
+  }
+  return { action: 'truncate', keepLength }
+}
+
+/**
  * Re-applies the sanitizer to one parsed trace line of any kind, for a take about to enter the repository.
  *
  * @param {object} line - A parsed header or event line.
@@ -372,7 +511,11 @@ function decideResume({ mark, fileExists, lastLine, nowMs }) {
  */
 function sanitizeTraceLine(line, context) {
   if (line.type === 'header' || !EVENT_KINDS.includes(line.kind)) return line
-  return { ...line, data: sanitizeEventData(line.kind, line.data, context) }
+  // Only the four fields of the format: an unknown top-level field is dropped.
+  return {
+    ...pickFields(line, ['seq', 'tMs', 'kind']),
+    data: sanitizeEventData(line.kind, line.data, context),
+  }
 }
 
 module.exports = {
@@ -382,9 +525,12 @@ module.exports = {
   createEventWriter,
   decideResume,
   isAbsolutePath,
+  nameProblem,
+  planTakeRepair,
   readHostVersion,
   sanitizeTab,
   sanitizeTraceLine,
+  safeName,
   sanitizeUri,
   serializeLine,
   snapshotTabGroups,

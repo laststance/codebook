@@ -30,9 +30,19 @@ or user name, the repository path, or a --forbid text.
 
 Exit codes: 0 written; 2 refused (E_TRACE_NOT_CLEAN, E_TRACE_LINE) ; 64 usage.`
 
-/** A string that starts at, or contains after a separator, an absolute POSIX/Windows/home path or a file URL. */
-const ABSOLUTE_PATH =
-  /(?:^|[\s"'(=])(?:\/[^\s/]+\/|\/[^\s/]+$|[A-Za-z]:[\\/]|~[\\/])|file:\/\//
+/** The text a path may follow: the string start, white space, a quote, a bracket, `=`, `:`, `,` or `;`. */
+const AFTER = String.raw`(?:^|[\s"'(=:,;\[{<])`
+
+/**
+ * A string that starts at, or contains after a separator, an absolute path or a file URL: POSIX, Windows drive,
+ * rooted backslash or UNC, home (`~` or `~user`).
+ */
+const ABSOLUTE_PATH = new RegExp(
+  String.raw`${AFTER}(?:\/[^\s/]+\/|\/[^\s/]+$|[A-Za-z]:[\\/]|~[^\s/\\]*[\\/]|\\{1,2}[^\s\\]+\\)|file:\/\/`,
+)
+
+/** The machine user of the recorded takes; a trace never names it. */
+const RECORDING_MACHINE_USER = 'lume'
 
 /**
  * Collects every string value of a parsed JSON value, with its key path for the message.
@@ -48,9 +58,11 @@ function stringLeaves(value, where) {
       stringLeaves(item, `${where}[${index}]`),
     )
   if (value && typeof value === 'object')
-    return Object.entries(value).flatMap(([key, item]) =>
-      stringLeaves(item, `${where}.${key}`),
-    )
+    // A key is text too: a path used as a key must be found (its text is checked, its name is not repeated).
+    return Object.entries(value).flatMap(([key, item]) => [
+      { where: `${where} (a key)`, text: key },
+      ...stringLeaves(item, `${where}.${key}`),
+    ])
   return []
 }
 
@@ -58,15 +70,45 @@ function stringLeaves(value, where) {
  * Names what a string still reveals, or nothing.
  *
  * @param {string} text - A string value of a trace line.
- * @param {string[]} forbidden - Texts that must not appear (home folder, user name, repository path, extras).
+ * @param {RegExp[]} forbidden - Whole-word, case-insensitive matchers of texts that must not appear (home folder, user names, repository path, extras), from {@link forbiddenMatchers}.
  * @returns {string | undefined} A short reason, or `undefined` for a clean string.
  */
 function leakOf(text, forbidden) {
-  if (ABSOLUTE_PATH.test(text)) return 'an absolute path'
-  const hit = forbidden.find((item) => text.includes(item))
-  return hit === undefined
-    ? undefined
-    : 'a home folder, user name or repository path'
+  // A percent-encoded path (`%2FUsers%2F...`) is checked in its decoded form too, up to twice for double encoding.
+  const forms = [text]
+  for (let pass = 0; pass < 2; pass++) {
+    try {
+      const decoded = decodeURIComponent(forms.at(-1))
+      if (decoded === forms.at(-1)) break
+      forms.push(decoded)
+    } catch {
+      break
+    }
+  }
+  if (forms.some((form) => ABSOLUTE_PATH.test(form))) return 'an absolute path'
+  return forms.some((form) => forbidden.some((matcher) => matcher.test(form)))
+    ? 'a home folder, user name or repository path'
+    : undefined
+}
+
+/**
+ * Builds the matchers of the forbidden texts: each must appear as a whole word (so a two-letter user name is still
+ * found, and `lume` is not found inside `volume`), in any letter case.
+ *
+ * @param {string[]} items - Forbidden texts; one without a letter or digit (a bare `/` home folder) is ignored.
+ * @returns {RegExp[]} One matcher per text.
+ * @example forbiddenMatchers(['ab'])[0].test('notes of AB') // => true
+ */
+function forbiddenMatchers(items) {
+  return items
+    .filter((item) => /[A-Za-z0-9]/.test(item))
+    .map(
+      (item) =>
+        new RegExp(
+          String.raw`(?<![A-Za-z0-9_])${item.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`)}(?![A-Za-z0-9_])`,
+          'i',
+        ),
+    )
 }
 
 /**
@@ -86,7 +128,13 @@ export function sanitizeTake(text, { repository, forbid }) {
       { scheme: 'file', path: repository.replaceAll('\\', '/') },
     ],
   }
-  const forbidden = [...forbid, repository].filter((item) => item.length >= 3)
+  // The repository is forbidden in both spellings; the recording machine's user always is.
+  const forbidden = forbiddenMatchers([
+    ...forbid,
+    repository,
+    repository.replaceAll('\\', '/'),
+    RECORDING_MACHINE_USER,
+  ])
   const output = []
   text.split('\n').forEach((raw, index) => {
     if (!raw.trim()) return

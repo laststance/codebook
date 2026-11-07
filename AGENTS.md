@@ -352,7 +352,7 @@ Formatting: `pnpm --dir extension format` / `format:check` and lint-staged hook 
 - All work on WSL desktop or in macOS Space (setup, repair, native check, recording, moving evidence to Mac) follows rules below.
 
 **Host event traces** (Discussion 183; `extension/src/tests/fixtures/host-traces/`):
-- Record with `tools/host-event-recorder` (private VSIX, QA profiles in Space only, never in Codebook's VSIX): Start, `Codebook Dev: Mark Host Event Recording` before each step (label = step), Stop; takes land in workspace's ignored `.codebook-host-traces/`.
+- Record with `tools/host-event-recorder` (private VSIX, QA profiles in Space only, never in Codebook's VSIX): Start, `Codebook Dev: Mark Host Event Recording` before each step (label = step), Stop; takes land in workspace's `.codebook-host-traces/` (recorder writes a `.gitignore` of `*` there; other repositories do not ignore it).
 - Commit only `node extension/scripts/sanitizeHostTrace.mjs <take> <out> --repository <root>` output (exit 0); raw takes stay in private `artifacts/`.
 - Window replay tests (`studyWorkspaceHostTrace*.test.ts`) build start state with harness helpers, assert role-normalized equality at start mark, replay one window; counts hard-coded.
 - Host version change (VS Code or Cursor update) → record takes again for that host, rerun window tests; changed host order = harness or product work, never a weakened test.
