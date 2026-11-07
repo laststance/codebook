@@ -732,17 +732,79 @@ async function measureShard(reference, { shard, total, out }) {
   return 0
 }
 
-/** Refuses a merged coverage map that is not byte for byte the single run's, after printing both SHA-256 values; the equivalence run of the sharded measurement. @example await assertSameCoverage('/tmp/x/coverage-final.json', '/tmp/single/coverage-final.json') // throws when the hashes differ */
+/** The counter groups of an Istanbul file coverage, each with its map of locations (`s`/`statementMap`, `f`/`fnMap`, `b`/`branchMap`). */
+const COUNTER_GROUPS = [
+  ['s', 'statementMap'],
+  ['f', 'fnMap'],
+  ['b', 'branchMap'],
+]
+
+/** Reduces an execution count (a number, or the counts of a branch's arms) to covered or not. @example coveredOrNot([0, 3]) // => [false, true] */
+function coveredOrNot(count) {
+  return Array.isArray(count) ? count.map(coveredOrNot) : count > 0
+}
+
+/**
+ * Names the first difference between two Istanbul coverage maps once every counter is reduced to covered or not; undefined when they are equal. Istanbul percentages, and so CRAP, depend only on covered or not, so maps equal here give the same Fallow health findings.
+ * @param merged - Parsed `coverage-final.json` of the merged shards.
+ * @param single - Parsed `coverage-final.json` of the single run.
+ * @returns A sentence naming the file and counter (or the location map) that differs, or `undefined`.
+ * @example
+ * firstCoverageDifference({ 'a.js': { s: { 0: 1 } } }, { 'a.js': { s: { 0: 5 } } }) // => undefined
+ * firstCoverageDifference({ 'a.js': { s: { 0: 1 } } }, { 'a.js': { s: { 0: 0 } } }) // => 'a.js: s[0] is true in the merged map, false in the single run (covered or not).'
+ */
+function firstCoverageDifference(merged, single) {
+  const mergedFiles = Object.keys(merged).sort(),
+    singleFiles = Object.keys(single).sort()
+  // Different file sets already differ.
+  const onlyMerged = mergedFiles.find((file) => !(file in single))
+  if (onlyMerged) return `${onlyMerged}: only in the merged map.`
+  const onlySingle = singleFiles.find((file) => !(file in merged))
+  if (onlySingle) return `${onlySingle}: only in the single run.`
+  for (const file of mergedFiles)
+    for (const [counters, locations] of COUNTER_GROUPS) {
+      if (
+        JSON.stringify(merged[file][locations]) !==
+        JSON.stringify(single[file][locations])
+      )
+        return `${file}: ${locations} differs.`
+      const mergedCounters = merged[file][counters] ?? {},
+        singleCounters = single[file][counters] ?? {}
+      for (const key of new Set([
+        ...Object.keys(mergedCounters),
+        ...Object.keys(singleCounters),
+      ])) {
+        const left = JSON.stringify(coveredOrNot(mergedCounters[key])),
+          right = JSON.stringify(coveredOrNot(singleCounters[key]))
+        if (left !== right)
+          return `${file}: ${counters}[${key}] is ${left} in the merged map, ${right} in the single run (covered or not).`
+      }
+    }
+  return undefined
+}
+
+/** Refuses a merged coverage map that differs from the single run's: passes when both are byte for byte equal ("identical") or when every counter is the same covered-or-not ("normalized-equal", since independent runs execute polling loops a different number of times); prints both SHA-256 values and the criterion that held. @example await assertSameCoverage('/tmp/x/coverage-final.json', '/tmp/single/coverage-final.json') // throws naming the first differing counter */
 async function assertSameCoverage(merged, single) {
-  const mergedHash = sha256Of(await readFile(merged))
-  const singleHash = sha256Of(await readFile(single))
+  const mergedBytes = await readFile(merged),
+    singleBytes = await readFile(single)
+  const mergedHash = sha256Of(mergedBytes),
+    singleHash = sha256Of(singleBytes)
   console.error(
     `Coverage map SHA-256: merged ${mergedHash}, single run ${singleHash}.`,
   )
-  if (mergedHash !== singleHash)
+  if (mergedHash === singleHash) {
+    console.error('Coverage maps equal: identical.')
+    return
+  }
+  const difference = firstCoverageDifference(
+    JSON.parse(mergedBytes.toString('utf8')),
+    JSON.parse(singleBytes.toString('utf8')),
+  )
+  if (difference !== undefined)
     throw new Error(
-      "The merged coverage map differs from the single run's coverage map.",
+      `The merged coverage map differs from the single run's coverage map: ${difference}`,
     )
+  console.error('Coverage maps equal: normalized-equal.')
 }
 
 /**

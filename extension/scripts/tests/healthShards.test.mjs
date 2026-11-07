@@ -387,6 +387,140 @@ test('a shard measured on another compiled output refuses the merge', async (con
   })
 })
 
+// Value: protects=a shard artifact that lost its manifest (a failed upload, a half-copied folder): the merge must name the folder instead of crashing or skipping it; fails_when=a shard folder without manifest.json is skipped or reported without its path; why_new=Cycle 0094 task 11 (/ship coverage audit); seam=the folder of shard results; no_claim=none
+test('a shard folder without a manifest refuses the merge and names the folder', async (context) => {
+  // Arrange
+  const fixture = await createShards(context)
+  await rm(join(fixture.folder, 'health-shard-2', SHARD_MANIFEST_FILE))
+
+  // Act
+  const merging = checkHealthShards(fixture)
+
+  // Assert
+  await assert.rejects(merging, {
+    message: `${join(fixture.folder, 'health-shard-2')} has no readable manifest.json (ENOENT).`,
+  })
+})
+
+// Value: protects=a manifest damaged in transit: the merge must name the file, not throw a bare JSON error; fails_when=a manifest that is no JSON is accepted or reported without its path; why_new=Cycle 0094 task 11 (/ship coverage audit); seam=the folder of shard results; no_claim=none
+test('a shard manifest that is no JSON refuses the merge and names the file', async (context) => {
+  // Arrange
+  const fixture = await createShards(context)
+  await writeFile(
+    join(fixture.folder, 'health-shard-1', SHARD_MANIFEST_FILE),
+    '{"shard": 1, "total"',
+  )
+
+  // Act
+  const merging = checkHealthShards(fixture)
+
+  // Assert
+  await assert.rejects(merging, {
+    message: `${join(fixture.folder, 'health-shard-1', SHARD_MANIFEST_FILE)} is no JSON.`,
+  })
+})
+
+// Value: protects=the shard count the merge expects: shards cut for 3 jobs and for 4 jobs hold different files; fails_when=manifests that name different totals are merged; why_new=Cycle 0094 task 11 (/ship coverage audit); seam=the folder of shard results; no_claim=none
+test('shards that disagree on the shard total refuse the merge', async (context) => {
+  // Arrange
+  const fixture = await createShards(context)
+  await writeManifest(fixture.folder, 2, {
+    ...(await readManifest(fixture.folder, 2)),
+    total: 4,
+  })
+
+  // Act
+  const merging = checkHealthShards(fixture)
+
+  // Assert
+  await assert.rejects(merging, {
+    message: 'The shard manifests disagree on the shard total: 3 and 4.',
+  })
+})
+
+// Value: protects=a manifest without a usable total: the merge cannot tell which shards are missing; fails_when=a manifest that names no shard total is merged; why_new=Cycle 0094 task 11 (/ship coverage audit); seam=the folder of shard results; no_claim=none
+test('shards that name no shard total refuse the merge', async (context) => {
+  // Arrange
+  const fixture = await createShards(context)
+  for (const shard of [1, 2, 3]) {
+    const { total: _total, ...withoutTotal } = await readManifest(
+      fixture.folder,
+      shard,
+    )
+    await writeManifest(fixture.folder, shard, withoutTotal)
+  }
+
+  // Act
+  const merging = checkHealthShards(fixture)
+
+  // Assert
+  await assert.rejects(merging, {
+    message: 'The shard manifests name no shard total (undefined).',
+  })
+})
+
+// Value: protects=the dumps a manifest vouches for: a dump on disk that the manifest does not list could be a stray or swapped file; fails_when=a raw folder with an unlisted dump is merged; why_new=Cycle 0094 task 11 (/ship coverage audit); seam=the folder of shard results; no_claim=none
+test('a raw folder with a dump its manifest does not list refuses the merge', async (context) => {
+  // Arrange
+  const fixture = await createShards(context)
+  await writeFile(
+    join(fixture.folder, 'health-shard-1', SHARD_RAW_FOLDER, 'stray.json'),
+    PRODUCT_DUMP,
+  )
+
+  // Act
+  const merging = checkHealthShards(fixture)
+
+  // Assert
+  await assert.rejects(merging, {
+    message:
+      "Shard 1's raw folder differs from its manifest: not listed [stray.json], missing [].",
+  })
+})
+
+// Value: protects=the dumps a manifest vouches for: a listed dump that is gone means a measurement was lost; fails_when=a raw folder that lacks a listed dump is merged; why_new=Cycle 0094 task 11 (/ship coverage audit); seam=the folder of shard results; no_claim=none
+test('a raw folder that lacks a dump its manifest lists refuses the merge', async (context) => {
+  // Arrange
+  const fixture = await createShards(context)
+  await rm(
+    join(
+      fixture.folder,
+      'health-shard-3',
+      SHARD_RAW_FOLDER,
+      'shard-3-coverage-1.json',
+    ),
+  )
+
+  // Act
+  const merging = checkHealthShards(fixture)
+
+  // Assert
+  await assert.rejects(merging, {
+    message:
+      "Shard 3's raw folder differs from its manifest: not listed [], missing [shard-3-coverage-1.json].",
+  })
+})
+
+// Value: protects=the coverage from another toolchain: other Node, c8, v8-to-istanbul, c8 settings or sources produce another map; fails_when=a shard whose node, c8, v8ToIstanbul, c8rcSha256 or srcHash differs from the merge's is merged; why_new=Cycle 0094 task 11 (/ship coverage audit; beside the distHash and checkout rows); seam=the folder of shard results; no_claim=none
+for (const field of ['node', 'c8', 'v8ToIstanbul', 'c8rcSha256', 'srcHash']) {
+  test(`a shard measured with another ${field} refuses the merge`, async (context) => {
+    // Arrange
+    const fixture = await createShards(context)
+    await writeManifest(fixture.folder, 2, {
+      ...(await readManifest(fixture.folder, 2)),
+      identity: { ...IDENTITY, [field]: 'other' },
+    })
+
+    // Act
+    const merging = checkHealthShards(fixture)
+
+    // Assert
+    await assert.rejects(merging, {
+      message: `Shard 2 was measured with another identity than the merge: ${field} is other there, ${IDENTITY[field]} here.`,
+    })
+  })
+}
+
 // Value: protects=the coverage paths: c8 records absolute paths, so dumps from another checkout path would not match the merge's sources; fails_when=a shard from another absolute checkout path is merged; why_new=Cycle 0094 task 11 (eng review R4); seam=the folder of shard results; no_claim=none
 test('a shard measured in another checkout path refuses the merge', async (context) => {
   // Arrange
