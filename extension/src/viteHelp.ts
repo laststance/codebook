@@ -243,7 +243,7 @@ const VITE_LIBRARY_ROWS: Record<
 function viteLibraryRefusals() {
   return Object.fromEntries(
     LIBRARY_STOP_REASONS.flatMap((reason) =>
-      // library-place-ambiguous never occurs under vite-dev (D14); every other reason must have a row, which the table's key type enforces
+      // library-place-ambiguous never occurs under vite-dev (a vite-dev run declares at most one library, so its place is never ambiguous); every other reason must have a row, which the table's key type enforces
       reason === 'library-place-ambiguous'
         ? []
         : [

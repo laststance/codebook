@@ -105,7 +105,7 @@ export function viteLibraryRefusal(
     message,
     message,
     request.packed
-      ? viteLibraryPackedRecoveryOf(reason)
+      ? viteLibraryPackedRecoveryOf(reason, request.cause)
       : libraryRecoveryOf(reason, 'vite'),
     undefined,
     {
@@ -185,12 +185,17 @@ function packedLibraryMessage(
  *
  * Why it exists: the Vite recovery of {@link libraryRecoveryOf} says Codebook never builds and `details.sideEffects` is none, which is false once the library was built and packed. Called by {@link viteLibraryRefusal} for a packed refusal.
  * @param reason - The refusal's reason.
+ * @param cause - The cause of a `library-build-unmapped` refusal; `lazy-import` comes after the page loaded, so its recovery says the browser had loaded the entry page and the side effects are unknown.
  * @returns The recovery text, ending at the reason's help anchor.
  * @example viteLibraryPackedRecoveryOf('library-build-stale') // => 'The checked-out file was edited after this run\'s build. …'
  */
 function viteLibraryPackedRecoveryOf(
   reason: Exclude<ViteLibraryRefusalReason, 'library-build-changed'>,
+  cause?: LibraryBuildUnmappedCause,
 ): string {
+  // A lazy-import refusal is raised when the first stop is armed, after the entry page loaded: page code ran and the side effects are unknown.
+  if (cause === 'lazy-import')
+    return `The library module is loaded only by the operation itself, not by the entry page: declare the stop in code the entry page runs at load, or tell the learner; do not retry with the same stop. Codebook built and packed the library for this run and wrote its ignored build output; the browser had loaded the entry page, so page code ran and details.sideEffects is unknown. See codebook://help/repository-browser#${reason}.`
   const started =
     "Codebook built and packed the library for this run and wrote its ignored build output; the run's private folder was removed (details.sideEffects is partial). No browser was opened and no input was sent; no page or application code ran."
   const advice: Record<typeof reason, string> = {
@@ -225,7 +230,9 @@ export function viteLibraryBuildChangedFailure(
     'RUNTIME_FAILED',
     message,
     message,
-    libraryRecoveryOf('library-build-changed', 'vite'),
+    packed
+      ? `The packed build's served module changed while the run was open (a hot update or a replaced file). Tell the learner and ask for a new start, which builds and packs the library again; never run the build yourself. Codebook built and packed the library for this run and wrote its ignored build output; the browser had loaded the page, so page code ran and details.sideEffects is unknown. See codebook://help/repository-browser#library-build-changed.`
+      : libraryRecoveryOf('library-build-changed', 'vite'),
     undefined,
     {
       reason: 'library-build-changed',

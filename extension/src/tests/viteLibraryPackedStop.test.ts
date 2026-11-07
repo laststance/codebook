@@ -362,3 +362,32 @@ test('rejects with the abort reason when the run is cancelled before detecting a
   // Assert
   await assert.rejects(outcome, /run cancelled/)
 })
+
+// protects=one library per run: with library declared, a stop in ANOTHER workspace library the app links to (not the declared one, not the app) is refused as outside-package before anything starts; fails_when=the stop is registered through the workspace-library route; no_claim=the workspace route without a declared library (viteLibraryStop tests)
+test('a stop in another linked workspace library than the declared one keeps the outside-package refusal', async (context) => {
+  // Arrange
+  const library = await libraryDependencies(context)
+  const harness = await configuredRuntimeHarness(context, undefined, [], {
+    adapter: 'vite-dev',
+    packageRoot: PACKAGE_ROOT,
+    packageApp: { decoyRoot: true, stopsOutside: true },
+    sourcePath: NESTED_VITE_LIBRARY_SOURCE_PATH,
+    viteLibrary: {},
+    operations: { operations: [CLICK], stopOperations: [1] },
+    libraryRoute: {
+      declared: 'packages/declared',
+      dependencies: library.dependencies,
+    },
+  })
+  // Act
+  const refusal = await refusalOf(harness)
+  // Assert
+  assert.equal(refusal.code, 'VITE_SEAL_FAILED')
+  assert.deepEqual(refusal.details, {
+    reason: 'outside-package',
+    files: [NESTED_VITE_LIBRARY_SOURCE_PATH],
+    packageRoot: PACKAGE_ROOT,
+    sideEffects: 'none',
+  })
+  assert.deepEqual(harness.viteRequests.started, [])
+})

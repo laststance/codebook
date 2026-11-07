@@ -1782,6 +1782,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.viteLibraries.registerPacked(stop.source, packed)
       return true
     }
+    // One library per run: with `library` declared, a stop in any other workspace library stays an `outside-package` stop.
+    if (declared !== undefined) return false
     const library = await detectLibraryPackage(
       this.options.workspace,
       vitePackage,

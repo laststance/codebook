@@ -1293,6 +1293,8 @@ export const UPDATE_WIKI_ACTION = 'Update LLM Wiki'
 export const OPEN_WIKI_IN_BROWSER_ACTION = 'Open in Browser'
 /** How many characters of a commit hash the generation line of the LLM Wiki view's Wiki row shows. */
 export const WIKI_SHORT_REVISION_CHARS = 7
+/** How many characters of the revision a run's library line shows, as a short Git revision does by default. */
+export const LIBRARY_SHORT_REVISION_CHARS = 7
 /** VS Code's command that reveals the chat a request would go to (the chat focused last when it can be shown, the Chat view otherwise) and makes it the chat focused last; with a query it sends the query as a request into that chat and, with `blockOnResponse`, returns when the response completes or waits for a confirmation. Without one it only reveals the chat: the LLM Wiki view's Open Chat action runs it, so a chat that waits for an approval, or never started the skill, is one click away. */
 export const OPEN_CHAT_COMMAND = 'workbench.action.chat.open'
 /** The editor's own command that opens settings, with a setting's id as its argument. */

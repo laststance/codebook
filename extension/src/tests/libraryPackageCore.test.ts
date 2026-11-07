@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { chmodSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -108,14 +108,14 @@ test('writeLibraryAnchor writes codebook-anchor.js in the private folder and dis
   )
 })
 
-// protects=an anchor that cannot be written ends the preparation as LIBRARY_BUILD_FAILED pack-error with step link and removes the private folder; fails_when=the failure is another reason or step, or the private folder stays; no_claim=none beyond protects (a read-only folder stands in for a full disk)
+// protects=an anchor that cannot be written ends the preparation as LIBRARY_BUILD_FAILED pack-error with step link and removes the private folder; fails_when=the failure is another reason or step, or the private folder stays; no_claim=none beyond protects (a directory at the anchor's path stands in for a full disk and fails for root and on Windows alike)
 test('writeLibraryAnchor fails as a pack-error with step link when the file cannot be written', async (context) => {
   // Arrange
   const { prepare } = setUp({ name: 'lib', version: '2.0.0' })
   const prepared = await prepare()
-  chmodSync(prepared.privateFolder, 0o500)
+  // A directory at the anchor's path makes the write fail whoever runs the test, unlike a permission bit.
+  mkdirSync(join(prepared.privateFolder, 'codebook-anchor.js'))
   context.after(() => {
-    chmodSync(prepared.privateFolder, 0o700)
     rmSync(prepared.privateFolder, { recursive: true, force: true })
   })
   // Act

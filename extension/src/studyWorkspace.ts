@@ -11238,7 +11238,8 @@ export class StudyWorkspace {
         links: browserReplay ? [] : study.links,
         historyOutcome,
         studyOutcome,
-        ...libraryLineFieldOf(study),
+        // A Node (Script) or test replay shows its own library line elsewhere; the previously selected Vite study's line must not stay under its title.
+        ...(selectedNodeHistory ? {} : libraryLineFieldOf(study)),
         recordingSave: selectedState
           ? {
               status: selectedState.recording.status,

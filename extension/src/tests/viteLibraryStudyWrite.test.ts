@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
-import { VITE_LIBRARY_STUDY_VERSION } from '../constants'
 import { LearningLibrary } from '../learningLibrary'
 import type { LibraryRunFacts } from '../libraryRunFactsSchema'
 import { RepositoryBookStore } from '../repositoryBook'
@@ -176,7 +175,7 @@ test('a library run is saved as format 16 with its final facts and the replay se
   // Arrange / Act
   const study = await savedLibraryStudy(context, 'packed')
   // Assert
-  assert.equal(study?.version, VITE_LIBRARY_STUDY_VERSION)
+  assert.equal(study?.version, 16)
   const facts: LibraryRunFacts | undefined =
     study && 'library' in study ? study.library : undefined
   assert.equal(facts?.observation, 'complete')

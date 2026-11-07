@@ -1,7 +1,5 @@
+import { LIBRARY_SHORT_REVISION_CHARS } from '../constants'
 import type { LibraryRunView } from '../nodeScriptRuntimeTypes'
-
-/** How many characters of the revision the line shows, as a short Git revision does by default. */
-const SHORT_REVISION_CHARS = 7
 
 /** What a run's replay line needs of its library facts: the built identity and the observation. Both the Script replay (journal entries) and the browser replay (saved facts) build one. */
 export type LibraryObservationInput = Pick<
@@ -40,7 +38,7 @@ export function describeLibraryObservation(
   // No complete observation: the line must not read a missing or damaged file as "not loaded".
   if (input.observation !== 'complete')
     return `What the ${observer} loaded was not fully observed.`
-  const revision = input.revision.slice(0, SHORT_REVISION_CHARS)
+  const revision = input.revision.slice(0, LIBRARY_SHORT_REVISION_CHARS)
   const dirty = input.dirty ? ' (uncommitted changes)' : ''
   const otherCopy = input.publishedCopyPath ?? 'an unknown path'
   // Another copy is named before "not loaded": a run that loaded only another copy did not load the built one, and saying just that would hide the copy it ran on.
