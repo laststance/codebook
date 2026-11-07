@@ -65,9 +65,10 @@ export async function loadModule<Module>(
     require: (name: string) => {
       if (Object.hasOwn(dependencies, name)) return dependencies[name]
       if (!Object.hasOwn(sameContext, name)) return required(name)
-      if (!sameContextExports.has(name)) {
-        const file = sameContext[name]!,
-          sibling = { exports: {} }
+      // Keyed by file: two spellings of one sibling's path (`./support` from a part, `./studyWorkspace/support` from the reader) share one instance and so one module-level state.
+      const file = sameContext[name]!
+      if (!sameContextExports.has(file)) {
+        const sibling = { exports: {} }
         // The sibling runs as a function of this context, with its own module object and its own relative requires.
         const evaluate = runInContext(
           `(function (module, exports, require, __dirname, __filename) {${sameContextSources.get(name)}\n})`,
@@ -79,16 +80,18 @@ export async function loadModule<Module>(
         evaluate(
           sibling,
           sibling.exports,
+          // A request the module itself would answer from a stand-in or from its context (a part naming the shared leaf by its own spelling) goes through the module's require.
           (request: string) =>
-            Object.hasOwn(dependencies, request)
-              ? dependencies[request]
+            Object.hasOwn(dependencies, request) ||
+            Object.hasOwn(sameContext, request)
+              ? (context.require as (name: string) => unknown)(request)
               : siblingRequire(request),
           dirname(file),
           file,
         )
-        sameContextExports.set(name, sibling.exports)
+        sameContextExports.set(file, sibling.exports)
       }
-      return sameContextExports.get(name)
+      return sameContextExports.get(file)
     },
   })
   runInContext(await readFile(path, 'utf8'), context, { filename: path })

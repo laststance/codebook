@@ -15,7 +15,8 @@
     "src/studyWorkspace.ts:6195-6204|src/utils/focusWebview.ts:57-66",
     "src/studyWorkspace.ts:2358-2366|src/studyWorkspace.ts:2571-2579",
     "src/replayDebugAdapter.ts:251-258|src/replayDebugAdapter.ts:496-503",
-    "src/configuredBrowserRun.ts:6654-6660|src/runtimeSupport/hostBrowser.ts:602-608"
+    "src/configuredBrowserRun.ts:6654-6660|src/runtimeSupport/hostBrowser.ts:602-608",
+    "src/studyWorkspace/presentationGuards.ts:495-503|src/studyWorkspace/presentationGuards.ts:548-556"
   ],
   "clone_fingerprints": [
     "dup:35ea6ae9:2",
@@ -32,7 +33,8 @@
     "dup:67021b83:2",
     "dup:f8126a7b:2",
     "dup:5aa71335:2",
-    "dup:62d530ae:2"
+    "dup:62d530ae:2",
+    "dup:b3e3084d:2"
   ],
   "normalized_clone_fingerprints": [
     "dup:1194cf34:2",
@@ -49,6 +51,7 @@
     "dup:2ef33145:2",
     "dup:5e9090b7:2",
     "dup:4b62d6fa:2",
-    "dup:d556d75f:2"
+    "dup:d556d75f:2",
+    "dup:1653121a:2"
   ]
 }

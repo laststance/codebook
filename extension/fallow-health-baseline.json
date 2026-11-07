@@ -154,10 +154,15 @@
         "count": 11
       },
       "complexity_high": {
-        "count": 7
+        "count": 4
       },
       "complexity_moderate": {
         "count": 6
+      }
+    },
+    "src/studyWorkspace/presentationGuards.ts": {
+      "complexity_high": {
+        "count": 3
       }
     },
     "src/studyWorkspace/presentationState.ts": {
@@ -539,16 +544,11 @@
         "count": 3
       },
       "complexity_high": {
-        "count": 2
+        "count": 1
       }
     },
     "src/studyWorkspace.ts\u0000action": {
       "complexity_critical": {
-        "count": 1
-      }
-    },
-    "src/studyWorkspace.ts\u0000admitPresentation": {
-      "complexity_high": {
         "count": 1
       }
     },
@@ -559,11 +559,6 @@
     },
     "src/studyWorkspace.ts\u0000message": {
       "complexity_critical": {
-        "count": 1
-      }
-    },
-    "src/studyWorkspace.ts\u0000observeEditorGroups": {
-      "complexity_high": {
         "count": 1
       }
     },
@@ -634,6 +629,21 @@
     },
     "src/studyWorkspace.ts\u0000understand": {
       "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "src/studyWorkspace/presentationGuards.ts\u0000<arrow>": {
+      "complexity_high": {
+        "count": 1
+      }
+    },
+    "src/studyWorkspace/presentationGuards.ts\u0000admitPresentation": {
+      "complexity_high": {
+        "count": 1
+      }
+    },
+    "src/studyWorkspace/presentationGuards.ts\u0000observeEditorGroups": {
+      "complexity_high": {
         "count": 1
       }
     },

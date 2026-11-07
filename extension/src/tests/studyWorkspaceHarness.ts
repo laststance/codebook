@@ -5628,6 +5628,15 @@ export async function workspaceHarness(
         __dirname,
         '../studyWorkspace/capturedSourceReturn.js',
       ),
+      './studyWorkspace/support': resolve(
+        __dirname,
+        '../studyWorkspace/support.js',
+      ),
+      './support': resolve(__dirname, '../studyWorkspace/support.js'),
+      './studyWorkspace/presentationGuards': resolve(
+        __dirname,
+        '../studyWorkspace/presentationGuards.js',
+      ),
       './studyWorkspace/replayOpening': resolve(
         __dirname,
         '../studyWorkspace/replayOpening.js',
