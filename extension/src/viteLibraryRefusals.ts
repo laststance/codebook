@@ -188,7 +188,7 @@ function packedLibraryMessage(
  * @returns The recovery text, ending at the reason's help anchor.
  * @example viteLibraryPackedRecoveryOf('library-build-stale') // => 'The checked-out file was edited after this run\'s build. …'
  */
-export function viteLibraryPackedRecoveryOf(
+function viteLibraryPackedRecoveryOf(
   reason: Exclude<ViteLibraryRefusalReason, 'library-build-changed'>,
 ): string {
   const started =
