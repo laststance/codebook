@@ -103,8 +103,8 @@ test('Codebook 0.2.97 lists a .study.v16.json archive as saved by a newer Codebo
   assert.equal(sidecar, undefined)
 })
 
-// protects=this Codebook stores format 16 as .study.v16.json beside its metadata right after format 17 in the table; fails_when=the format 16 storage row is missing or changes its suffixes; no_claim=the library round trip of a run
-test('format 16 stays a stored and readable format below format 17', () => {
+// protects=the second storage format row is format 16 with the v16 archive and metadata suffixes, and format 16 is an operations format that passes the readable check; fails_when=that row is missing, moves from index 1 or changes its suffixes, or format 16 stops being an operations or readable format; no_claim=the order against format 17 or the library round trip of a run
+test('storage format row 1 is format 16 with its v16 suffixes and format 16 is readable', () => {
   // Arrange / Act
   const row = STUDY_STORAGE_FORMATS[1]
   // Assert

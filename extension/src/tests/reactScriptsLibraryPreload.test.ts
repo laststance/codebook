@@ -21,6 +21,8 @@ import { buildReactScriptsLibraryPreloadSource } from '../utils/reactScriptsLibr
 import { ReactScriptsReportReader } from '../utils/reactScriptsLibraryReport'
 
 const run = promisify(execFile)
+/** The longest a child that compiles with webpack may run. */
+const WEBPACK_CHILD_TIMEOUT_MS = 60_000
 const temporaryRoots: string[] = []
 
 after(() => {
@@ -240,6 +242,7 @@ async function runWithPreload(
   fixture: Fixture,
   environment: Record<string, string> = {},
 ): Promise<RunnerOutput> {
+  // A hung webpack compile is killed after the bound and fails this test by name instead of stalling the suite.
   const { stdout } = await run(
     process.execPath,
     [
@@ -249,8 +252,19 @@ async function runWithPreload(
       fixture.factoryPath,
       require.resolve('webpack'),
     ],
-    { env: { ...process.env, ...environment }, cwd: fixture.root },
-  )
+    {
+      env: { ...process.env, ...environment },
+      cwd: fixture.root,
+      timeout: WEBPACK_CHILD_TIMEOUT_MS,
+      killSignal: 'SIGKILL',
+    },
+  ).catch((error: unknown) => {
+    if (error instanceof Error && 'killed' in error && error.killed === true)
+      throw new Error(
+        `the webpack child did not finish within ${WEBPACK_CHILD_TIMEOUT_MS} ms and was killed`,
+      )
+    throw error
+  })
   return JSON.parse(stdout.trim().split('\n').at(-1) ?? '{}') as RunnerOutput
 }
 

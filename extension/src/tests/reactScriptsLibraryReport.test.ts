@@ -113,7 +113,10 @@ test('refresh reads only the bytes appended since the previous call', () => {
   // Arrange
   const directory = mkdtempSync(join(tmpdir(), 'codebook-rs-report-'))
   const file = join(directory, 'report.jsonl')
-  writeFileSync(file, '{"wrapped":true}\n')
+  writeFileSync(
+    file,
+    '{"compilationHash":"c0","publicPath":"/","truncated":true}\n',
+  )
   const reader = new ReactScriptsReportReader()
   reader.refresh(file)
 
@@ -122,12 +125,45 @@ test('refresh reads only the bytes appended since the previous call', () => {
   reader.refresh(file)
   rmSync(directory, { recursive: true })
 
-  // Assert
-  assert.equal(reader.wrapped, true)
+  // Assert: a full reread would count the truncated line a second time
+  assert.equal(reader.truncatedCompilations, 1)
   assert.equal(
     reader.match('http://h/static/js/bundle.js', HASH_A).kind,
     'matched',
   )
+})
+
+test('a line past the line bound without a newline makes the report unreadable', () => {
+  // Arrange
+  const directory = mkdtempSync(join(tmpdir(), 'codebook-rs-report-'))
+  const file = join(directory, 'report.jsonl')
+  writeFileSync(file, '')
+  const reader = new ReactScriptsReportReader(1000, 20)
+
+  // Act
+  appendFileSync(file, 'x'.repeat(30))
+  reader.refresh(file)
+  rmSync(directory, { recursive: true })
+
+  // Assert
+  assert.equal(reader.unreadableCause, 'line-too-long')
+})
+
+test('a report rewritten shorter than what was read is unreadable', () => {
+  // Arrange
+  const directory = mkdtempSync(join(tmpdir(), 'codebook-rs-report-'))
+  const file = join(directory, 'report.jsonl')
+  writeFileSync(file, '{"wrapped":true}\n'.repeat(3))
+  const reader = new ReactScriptsReportReader()
+  reader.refresh(file)
+
+  // Act
+  writeFileSync(file, '{"wrapped":true}\n')
+  reader.refresh(file)
+  rmSync(directory, { recursive: true })
+
+  // Assert
+  assert.equal(reader.unreadableCause, 'report-shrunk')
 })
 
 test('a script of a truncated compilation is unmatched but owned', () => {
