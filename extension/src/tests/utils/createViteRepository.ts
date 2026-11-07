@@ -121,7 +121,7 @@ export async function createServer(inline) {
   }
   // The inline settings the launcher passed, for a test to read (plugins are reported by name).
   // Written inside the stub package folder so no file appears in the app's own folders.
-  await writeFile(join(cwd, 'node_modules/vite/inline-config.json'), JSON.stringify({
+  await writeFile(new URL('./inline-config.json', import.meta.url), JSON.stringify({
     pluginNames: (inline.plugins ?? []).map((plugin) => plugin.name),
     pluginEnforce: (inline.plugins ?? []).map((plugin) => plugin.enforce),
     cacheDir: inline.cacheDir,

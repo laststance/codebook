@@ -55,7 +55,7 @@ test('the viteLibrary help section states the route, its observation states, ref
     'a module of the packed copy was served to the page',
     'publishedCopyLoaded true',
     'never "not loaded"',
-    'immer 11.2.9',
+    'can resolve to another version than a fresh install',
     'pre-bundled by Vite, so a stop in them is refused',
     'first start re-optimizes',
     'One library per run; browser stops only',
