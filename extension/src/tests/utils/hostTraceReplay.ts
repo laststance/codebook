@@ -237,9 +237,19 @@ function describeTraceEvent(
     changed: [],
   }
   if (kind === 'tabsChanged' || kind === 'groupsChanged') {
+    // The recorder reads a closed group's index after it closed, so it writes -1: such a group is one the snapshot before had and the one after lacks.
+    const removedColumns = (before?.groups ?? [])
+      .map((group) => group.viewColumn)
+      .filter(
+        (column) => !after?.groups.some((group) => group.viewColumn === column),
+      )
     for (const role of ['opened', 'closed', 'changed'] as const)
       for (const entry of recordsOf(isRecord(data) ? data[role] : undefined)) {
-        const column = columnAt(Number(entry.groupIndex), role, before, after)
+        const groupIndex = Number(entry.groupIndex)
+        const column =
+          kind === 'groupsChanged' && role === 'closed' && groupIndex < 0
+            ? removedColumns.shift()
+            : columnAt(groupIndex, role, before, after)
         roles[role].push(
           kind === 'groupsChanged'
             ? { type: 'group', column }
@@ -772,13 +782,20 @@ export function hostTraceWindow(
     end ? end.eventCount : undefined,
   )
   const endSnapshot = end ? end.snapshot : trace.finalSnapshot
+  // A window that runs to the take's end keeps the later segments (after a Reload Window) whole.
+  const segments: HostTraceSegment[] = end
+    ? [{ events, endSnapshot }]
+    : [
+        { events, endSnapshot: segment.endSnapshot, reload: segment.reload },
+        ...trace.segments.slice(start.segmentIndex + 1),
+      ]
   return {
     startLabel,
     endLabel,
     start: { snapshot: start.snapshot, layout: start.layout },
     trace: {
       header: trace.header,
-      segments: [{ events, endSnapshot }],
+      segments,
       marks: [],
       finalSnapshot: endSnapshot,
       finalLayout: end ? end.layout : trace.finalLayout,
@@ -985,6 +1002,20 @@ export class HostOrderInterposer<
     if (!set) this.registered.set(kind, (set = new Set()))
     set.add(wrapper)
     return erased
+  }
+
+  /**
+   * Ends the registration of a wrapped listener: no later delivery, of the fake's calls or of trace-built events, reaches the workspace's callback.
+   *
+   * Called by the harness' registration `dispose`, so a disposed listener hears nothing even when a delivery was already queued.
+   * @param listener - What {@link HostOrderInterposer.wrap} returned.
+   * @example
+   * const listener = interposer.wrap('selection', callback)
+   * interposer.unwrap(listener)
+   */
+  unwrap(listener: (...args: never[]) => void): void {
+    this.delivered.delete(listener)
+    for (const set of this.registered.values()) set.delete(listener)
   }
 
   private readonly delivered = new Map<
@@ -1261,10 +1292,9 @@ export class HostOrderInterposer<
     buffered: BufferedEvent[],
   ): void {
     // Events of the run that cover a model event carry the fake's own payload; unsolicited events are built from the trace.
+    const modelIndex = run.modelIndexOf[index - run.start] ?? -1
     const covered =
-      index >= run.start
-        ? buffered.find((entry) => coversModelEvent(entry.model, event))
-        : undefined
+      index >= run.start && modelIndex >= 0 ? buffered[modelIndex] : undefined
     // Rule 3: flags follow the snapshot recorded with the event while it is delivered.
     if (event.snapshot) this.fake.applyActiveState(event.snapshot)
     if (covered)
@@ -1408,13 +1438,21 @@ export class HostOrderInterposer<
         changed: [],
       }
       for (const role of ['opened', 'closed', 'changed'] as const)
-        for (const ref of event.roles[role])
+        for (const ref of event.roles[role]) {
+          // A closed group whose column the trace cannot name (no snapshot before it) has no object to hand over.
+          if (
+            ref.type === 'group' &&
+            role === 'closed' &&
+            ref.column === undefined
+          )
+            continue
           payload[role].push(
             ref.type === 'tab'
               ? (this.findTab(ref) ?? fail(`the tab "${ref.label}"`))
               : (this.findGroup(ref.column) ??
                   fail(`the group in column ${ref.column}`)),
           )
+        }
       return [payload]
     }
     const named = event.objects[0]

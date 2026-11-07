@@ -1131,3 +1131,243 @@ test('names a captured source by its file name whether its URI has a slash path 
     'index.ts',
   ])
 })
+
+// Value: protects=rule 4 for a group the host closed before the recorder read its index (the recorder writes -1 for it): the closed group is named by the column the snapshot before the event had and the one after it lacks; fails_when=a closed entry with groupIndex -1 names no column and the replay fails as trace-mapping-failed instead of handing the listener the fake object it kept by identity; why_new=Cycle 0094 part 2 review round (R3 finding 1); seam=parseHostTrace, HostOrderInterposer.wrap, settled; no_claim=which group the host closed when two close at once (they are named in column order)
+test('a group the host closed before the recorder read its index is delivered as the closed group the fake kept by identity', async () => {
+  // Arrange
+  const trace = parseHostTrace(
+    traceText([
+      snapshotEvent(1, 0, [
+        ...COLUMN_ONE_ACTIVE(['a.ts'], 'a.ts'),
+        { viewColumn: 2, isActive: false, tabs: [] },
+      ]),
+      {
+        seq: 2,
+        tMs: 1,
+        kind: 'groupsChanged',
+        data: { opened: [], closed: [{ groupIndex: -1 }], changed: [] },
+      },
+      snapshotEvent(3, 2, COLUMN_ONE_ACTIVE(['a.ts'], 'a.ts')),
+      tabsChangedEvent(4, 6, 'a.ts'),
+    ]),
+  )
+  const closing: StubGroup = { viewColumn: 2, tabs: [] }
+  const groups: StubGroup[] = [
+    { viewColumn: 1, tabs: [{ label: 'a.ts' }] },
+    closing,
+  ]
+  const interposer = new HostOrderInterposer(trace, stubFake(groups))
+  const closedGroups: StubGroup[] = []
+  interposer.wrap('groupsChanged', (event: { closed: StubGroup[] }) => {
+    closedGroups.push(...event.closed)
+  })
+  const onTabs = interposer.wrap('tabsChanged', (_event: unknown) => {})
+  onTabs({ opened: [], closed: [], changed: [groups[0]!.tabs[0]!] })
+  groups.splice(1, 1)
+  await interposer.settled()
+
+  // Act
+  onTabs({ opened: [], closed: [], changed: [groups[0]!.tabs[0]!] })
+  const settled = interposer.settled()
+
+  // Assert
+  await settled
+  assert.deepEqual(closedGroups, [closing])
+})
+
+// Value: protects=the replay of a closed group whose column no snapshot names (a window cut right after a reload has no state before it): it is left out of the payload instead of failing the whole replay; fails_when=the unnamed closed group throws trace-mapping-failed; why_new=Cycle 0094 part 2 review round (R3 finding 1); seam=HostOrderInterposer.deliverTrailing; no_claim=that the listener learns of the closed group
+test('a closed group no snapshot can name is left out of the delivered payload and does not fail the replay', async () => {
+  // Arrange
+  const trace = parseHostTrace(
+    traceText([
+      {
+        seq: 1,
+        tMs: 0,
+        kind: 'groupsChanged',
+        data: { opened: [], closed: [{ groupIndex: -1 }], changed: [] },
+      },
+    ]),
+  )
+  const groups: StubGroup[] = [{ viewColumn: 1, tabs: [{ label: 'a.ts' }] }]
+  const interposer = new HostOrderInterposer(trace, stubFake(groups))
+  const closedCounts: number[] = []
+  interposer.wrap('groupsChanged', (event: { closed: StubGroup[] }) => {
+    closedCounts.push(event.closed.length)
+  })
+
+  // Act
+  const trailing = interposer.deliverTrailing()
+
+  // Assert
+  await trailing
+  assert.deepEqual(closedCounts, [0])
+})
+
+// Value: protects=a run's events carrying the payload of the model event each one was assigned to (findCoveringRun's modelIndexOf), not of the first model event that could cover it; fails_when=two model events that a trace event could each cover both deliver the first one's payload; why_new=Cycle 0094 part 2 review round (R3 finding 2); seam=HostOrderInterposer.wrap, settled; no_claim=the order of the two assigned events beyond what the assignment gives
+test('each event of a matched run delivers the payload of the model event assigned to it, not the first one that could cover it', async () => {
+  // Arrange
+  const trace = parseHostTrace(
+    traceText([
+      {
+        seq: 1,
+        tMs: 0,
+        kind: 'tabsChanged',
+        data: {
+          opened: [],
+          closed: [],
+          changed: [
+            { groupIndex: 0, label: 'a.ts', inputKind: 'text' },
+            { groupIndex: 0, label: 'b.ts', inputKind: 'text' },
+          ],
+        },
+      },
+      tabsChangedEvent(2, 1, 'a.ts'),
+    ]),
+  )
+  const groups: StubGroup[] = [
+    { viewColumn: 1, tabs: [{ label: 'a.ts' }, { label: 'b.ts' }] },
+  ]
+  const interposer = new HostOrderInterposer(trace, stubFake(groups))
+  const heard: string[] = []
+  const onTabs = interposer.wrap(
+    'tabsChanged',
+    (event: { changed: StubTab[]; opened?: StubTab[]; closed?: StubTab[] }) => {
+      heard.push(event.changed.map((tab) => tab.label).join(','))
+    },
+  )
+
+  // Act
+  onTabs({ opened: [], closed: [], changed: [groups[0]!.tabs[0]!] })
+  onTabs({
+    opened: [],
+    closed: [],
+    changed: [groups[0]!.tabs[0]!, groups[0]!.tabs[1]!],
+  })
+  await interposer.settled()
+
+  // Assert
+  assert.deepEqual(heard, ['a.ts,b.ts', 'a.ts'])
+})
+
+// Value: protects=a disposed workspace listener hearing nothing more, also from trace events the replay builds itself; fails_when=an unwrapped listener still receives a delivery; why_new=Cycle 0094 part 2 review round (R3 finding 3); seam=HostOrderInterposer.wrap, unwrap, deliverTrailing; no_claim=the harness' own registration bookkeeping
+test('a listener whose registration ended hears no trace event delivered afterwards', async () => {
+  // Arrange
+  const trace = parseHostTrace(traceText([tabsChangedEvent(1, 0, 'a.ts')]))
+  const groups: StubGroup[] = [{ viewColumn: 1, tabs: [{ label: 'a.ts' }] }]
+  const interposer = new HostOrderInterposer(trace, stubFake(groups))
+  const heard: string[] = []
+  const listener = interposer.wrap('tabsChanged', (_event: unknown) => {
+    heard.push('tabs')
+  })
+
+  // Act
+  interposer.unwrap(listener)
+  await interposer.deliverTrailing()
+
+  // Assert
+  assert.deepEqual(heard, [])
+})
+
+// Value: protects=the workspace harness ending a listener's registration in the replay when the workspace disposes it; fails_when=a tab-group listener the workspace disposed still hears a trace event the replay delivers afterwards; why_new=Cycle 0094 part 2 review round (R3 finding 3); seam=workspaceHarness hostOrder, tabGroups.onDidChangeTabs, deliverTrailing; no_claim=listeners of the other four registrations (they share the same dispose line)
+test('a tab listener the workspace disposed hears no trailing trace event in the harness', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false, false, undefined, {
+    hostOrder: parseHostTrace(
+      traceText([
+        snapshotEvent(1, 0, COLUMN_ONE_ACTIVE(['a.ts'], 'a.ts')),
+        tabsChangedEvent(2, 5, 'a.ts'),
+        snapshotEvent(3, 6, COLUMN_ONE_ACTIVE(['a.ts'], 'a.ts')),
+      ]),
+    ),
+  })
+  const heard: string[] = []
+  const registration = harness.editor.window.tabGroups.onDidChangeTabs(() => {
+    heard.push('tabs')
+  })
+  harness.hostOrder!.bypass(true)
+  harness.openAnnouncedTextTab('a.ts', 1, { isPreview: false, isDirty: false })
+  harness.hostOrder!.bypass(false)
+  heard.length = 0
+
+  // Act
+  registration.dispose()
+  await harness.hostOrder!.deliverTrailing()
+  await harness.close()
+
+  // Assert
+  assert.deepEqual(heard, [])
+})
+
+// Value: protects=a window that has no end mark running to the take's end across a Reload Window; fails_when=the later segments' events are dropped from the window; why_new=Cycle 0094 part 2 review round (R3 finding 4); seam=hostTraceWindow, parseHostTrace; no_claim=what a replay does with the second segment (runSegments' tests)
+test('a window without an end mark keeps the segments after a Reload Window whole', () => {
+  // Arrange
+  const trace = parseHostTrace(
+    traceText([
+      snapshotEvent(1, 0, COLUMN_ONE_ACTIVE(['a.ts'], 'a.ts')),
+      { seq: 2, tMs: 5, kind: 'mark', data: { label: 'step' } },
+      snapshotEvent(3, 5, COLUMN_ONE_ACTIVE(['a.ts'], 'a.ts')),
+      tabsChangedEvent(4, 6, 'a.ts'),
+      {
+        seq: 5,
+        tMs: 7,
+        kind: 'reload',
+        data: { unrecordedFromMs: 7, unrecordedToMs: 50 },
+      },
+      snapshotEvent(6, 60, COLUMN_ONE_ACTIVE(['a.ts'], 'a.ts')),
+      tabsChangedEvent(7, 61, 'a.ts'),
+      tabsChangedEvent(8, 62, 'a.ts'),
+    ]),
+  )
+
+  // Act
+  const window = hostTraceWindow(trace, 'step')
+
+  // Assert
+  assert.deepEqual(
+    window.trace.segments.map((segment) => segment.events.map((e) => e.seq)),
+    [[4], [7, 8]],
+  )
+  assert.equal(window.trace.segments[0]!.reload?.unrecordedToMs, 50)
+})
+
+// Value: protects=the front tab of a recorded snapshot being applied to the one fake tab at its position when a group holds several tabs of one name and kind; fails_when=every same-name tab of the group becomes active; why_new=Cycle 0094 part 2 review round (R3 finding 5); seam=workspaceHarness hostOrder applyActiveState via deliverTrailing; no_claim=which of two identical tabs the editor would really show
+test('a snapshot front tab among same-name tabs of one group activates only the tab at its position', async () => {
+  // Arrange
+  const twoXTabs = [
+    {
+      viewColumn: 1,
+      isActive: true,
+      tabs: [textTab('x.ts', true), textTab('x.ts', false)],
+    },
+  ]
+  const harness = await workspaceHarness(false, false, undefined, {
+    hostOrder: parseHostTrace(
+      traceText([
+        snapshotEvent(1, 0, twoXTabs),
+        tabsChangedEvent(2, 5, 'x.ts'),
+        snapshotEvent(3, 6, twoXTabs),
+      ]),
+    ),
+  })
+  harness.hostOrder!.bypass(true)
+  harness.openAnnouncedTextTab('first/x.ts', 1, {
+    isPreview: false,
+    isDirty: false,
+  })
+  harness.openAnnouncedTextTab('second/x.ts', 1, {
+    isPreview: false,
+    isDirty: false,
+  })
+  harness.hostOrder!.bypass(false)
+
+  // Act
+  await harness.hostOrder!.deliverTrailing()
+  const tabs = harness.groups.find((group) => group.viewColumn === 1)!.tabs
+  const active = tabs.map((tab) => tab.isActive)
+  const labels = tabs.map((tab) => tab.label)
+  await harness.close()
+
+  // Assert
+  assert.deepEqual(labels, ['x.ts', 'x.ts'])
+  assert.deepEqual(active, [true, false])
+})

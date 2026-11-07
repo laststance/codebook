@@ -9,11 +9,15 @@
  * - After Reload Window the Study panes do not come back (by design since 0.2.73.1) and the Study's editor groups stay empty; the recorder writes a `reload` event with the unrecorded interval.
  *
  * A window whose replay diverges is a `todo` test with its full intended body and its first divergence named; none is weakened.
+ *
+ * The final-state equality of these tests is not independent evidence for the active group and front tabs: the replay makes the fake follow each delivered event's recorded snapshot (`applyActiveState`), so only the groups, tabs, layout and the two alignment counts are evidence; the active flags are compared as a consistency check.
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
+
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import {
   openRetainedStudy,
@@ -99,12 +103,18 @@ async function chatClosedHarness(window: HostTraceWindow) {
     hostOrder: window.trace,
     hostOrderDelivery: 'with-operation',
   })
-  harness.hostOrder!.bypass(true)
-  harness.useNativeLayout({ orientation: 1, groups: [{ size: 678 }] })
-  harness.addSeparateEditorPart()
-  // Chat closed: the editor part stays as an empty group.
-  harness.leaveEmptyGroup(2)
-  return harness
+  // A setup step that throws must not leave the harness open for the next test.
+  try {
+    harness.hostOrder!.bypass(true)
+    harness.useNativeLayout({ orientation: 1, groups: [{ size: 678 }] })
+    harness.addSeparateEditorPart()
+    // Chat closed: the editor part stays as an empty group.
+    harness.leaveEmptyGroup(2)
+    return harness
+  } catch (error) {
+    await harness.close()
+    throw error
+  }
 }
 
 /**
@@ -114,16 +124,21 @@ async function chatClosedHarness(window: HostTraceWindow) {
  */
 async function arrangedStudyHarness(window: HostTraceWindow) {
   const harness = await chatClosedHarness(window)
-  await openRetainedStudy(harness)
-  await harness.editor.commands.executeCommand('vscode.setEditorLayout', {
-    orientation: 0,
-    groups: [
-      { size: 220, groups: [{ size: 608 }, { size: 70 }] },
-      { size: 1486 },
-    ],
-  })
-  harness.hostOrder!.bypass(false)
-  return harness
+  try {
+    await openRetainedStudy(harness)
+    await harness.editor.commands.executeCommand('vscode.setEditorLayout', {
+      orientation: 0,
+      groups: [
+        { size: 220, groups: [{ size: 608 }, { size: 70 }] },
+        { size: 1486 },
+      ],
+    })
+    harness.hostOrder!.bypass(false)
+    return harness
+  } catch (error) {
+    await harness.close()
+    throw error
+  }
 }
 
 /**
@@ -137,27 +152,38 @@ async function recordedArrangedStudyHarness(window: HostTraceWindow) {
     hostOrderDelivery: 'with-operation',
     startBypassed: true,
   })
-  // The recording's own setup closed the reader; the take starts with the learner's one group and the chat part closed.
-  await harness.reader.close()
-  harness.useNativeLayout({ orientation: 1, groups: [{ size: 678 }] })
-  harness.addSeparateEditorPart()
-  harness.leaveEmptyGroup(2)
-  await harness.reader.open()
-  harness.receive({
-    type: 'history',
-    revision: harness.reader.inspect().view!.revision,
-    studyId: harness.studyId,
-  })
-  // The reader selects the study on the next turns of its own queue.
-  await new Promise((resolve) => setTimeout(resolve, 300))
-  await harness.editor.commands.executeCommand('vscode.setEditorLayout', {
-    orientation: 0,
-    groups: [
-      { size: 220, groups: [{ size: 608 }, { size: 70 }] },
-      { size: 1486 },
-    ],
-  })
-  return harness
+  try {
+    // The recording's own setup closed the reader; the take starts with the learner's one group and the chat part closed.
+    await harness.reader.close()
+    harness.useNativeLayout({ orientation: 1, groups: [{ size: 678 }] })
+    harness.addSeparateEditorPart()
+    harness.leaveEmptyGroup(2)
+    await harness.reader.open()
+    harness.receive({
+      type: 'history',
+      revision: harness.reader.inspect().view!.revision,
+      studyId: harness.studyId,
+    })
+    // The reader selects the study on the next turns of its own queue.
+    await waitUntil(
+      () =>
+        harness.reader.inspect().view!.model.selection.studyId ===
+          harness.studyId && !harness.reader.inspect().view!.loading,
+      'the saved study selected in the reader',
+      1_000,
+    )
+    await harness.editor.commands.executeCommand('vscode.setEditorLayout', {
+      orientation: 0,
+      groups: [
+        { size: 220, groups: [{ size: 608 }, { size: 70 }] },
+        { size: 1486 },
+      ],
+    })
+    return harness
+  } catch (error) {
+    await harness.close()
+    throw error
+  }
 }
 
 // Value: protects=Open Study Workspace and the first Arrange after it on the order Cursor 3.29.9 reported them with the Agent chat closed (the open-study window): the entry reserves its panes although the host's layout report recorded before its own answer arrives after the reader's layout command, and the groups, active group and layout end as the take's at the arrange mark; fails_when=the harness start state differs from the take at the open-study mark, the replay applies the stale recorded layout over the reader's layout command (the fake reverts to one group and Open throws "The editor could not reserve separate Codebook panes"), or the final role-normalized groups, active group or layout differ from the take's; why_new=Cycle 0094 task 12 (D11 windowed replay of the part 2 takes; the recorded layout no longer overrides the product's own layout command); seam=workspaceHarness hostOrder with-operation delivery, useNativeLayout, addSeparateEditorPart, the reader's open and arrange; no_claim=the refusal text of the first Arrange (the take showed the pending refusal, the fake answers with another sentence: the todo test below), Cursor's timing beyond the 2 s gap cap, the layout between two events (the fake's layout follows the layout recorded after each delivered event, so a layout read inside a window holds by construction)
@@ -355,9 +381,9 @@ test(
   },
 )
 
-// Value: protects=the Study's editor groups staying empty after Reload Window with the Agent chat closed (the Study panes do not come back, by design since 0.2.73.1); fails_when=the harness start state (the Recorded application beside the captured source) differs from the take at the reload-window mark, or the post-reload groups differ from the take's; why_new=Cycle 0094 task 12 (D11 windowed replay of the part 2 takes); seam=hostTraceWindow at the reload event, the fake editor's leaveEmptyGroup; no_claim=the events of the reload itself (the recorder wrote none for the unrecorded interval), a reader that restores panes
+// Value: protects=the Study's editor groups staying empty after Reload Window with the Agent chat closed (the Study panes do not come back, by design since 0.2.73.1); fails_when=the harness start state (the Recorded application beside the captured source) differs from the take at the reload-window mark, or the post-reload groups differ from the take's; why_new=Cycle 0094 task 12 (D11 windowed replay of the part 2 takes); seam=hostTraceWindow at the reload event, the fake editor's leaveEmptyGroup; no_claim=the product's reload path (the post-reload groups are emptied by this test's own harness operations), the events of the reload itself (the recorder wrote none for the unrecorded interval), a reader that restores panes
 test(
-  'after Reload Window with the Agent chat closed the Study panes do not come back and the groups stay empty',
+  "the window state the harness builds for Reload Window with the Agent chat closed equals the take's: Study panes closed, groups empty",
   {
     todo: "first divergence: the start state differs from the take at the reload-window mark in one tab. The take keeps the Study's captured source (Captured-cards.tsx) open beside the new Captured-source.mts, two captured-source tabs in the first group; the fake's Open Recording replaces the Study's slot, so its group holds one (recordedReaderHarness builds the Recorded application, the layout and the active group as the take has them). The window itself holds no event, because the reload event ends the segment",
   },
@@ -405,7 +431,7 @@ test(
 )
 
 // Value: protects=the Study's editor groups staying empty after Reload Window with the Study open beside the Agent chat (the Study panes do not come back, by design since 0.2.73.1, and the chat's group stays the active one); fails_when=the harness start state (Application, captured source, Study, chat) differs from the take at the reload-window mark, or the groups the editor restores after the reload differ from the take's; why_new=Cycle 0094 task 12 (D11 windowed replay of the part 2 takes); seam=hostTraceWindow at the reload event, openRetainedStudy, addSeparateEditorPart, leaveEmptyGroup, focusTab; no_claim=the product's own behavior at the reload (the window holds no event and the groups are emptied by the harness, so only the start state, the final state and the counts carry the evidence), the events of the reload itself (the recorder wrote none for the unrecorded interval), that a fresh reader opens nothing by itself (its own tests), Cursor's timing
-test('after Reload Window with the Agent chat open the Study groups stay empty and the chat group stays active', async () => {
+test("the window state the harness builds for Reload Window with the Agent chat open equals the take's: Study groups empty, chat group active", async () => {
   // Arrange
   const window = takeWindow(CHAT_OPEN_TAKE, 'reload-window')
   const harness = await workspaceHarness(false, false, undefined, {
@@ -413,12 +439,15 @@ test('after Reload Window with the Agent chat open the Study groups stay empty a
     hostOrderDelivery: 'with-operation',
   })
   const replay = harness.hostOrder!
-  replay.bypass(true)
-  harness.useNativeLayout({ orientation: 0, groups: [{}] })
-  const chat = harness.addSeparateEditorPart()
-  // The editor answers layout reads for the chat's own part while it is the active part, as the take's single 993 px group shows.
-  harness.reportSeparatePartLayout({ orientation: 1, groups: [{ size: 993 }] })
   try {
+    replay.bypass(true)
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    const chat = harness.addSeparateEditorPart()
+    // The editor answers layout reads for the chat's own part while it is the active part, as the take's single 993 px group shows.
+    harness.reportSeparatePartLayout({
+      orientation: 1,
+      groups: [{ size: 993 }],
+    })
     await openRetainedStudy(harness)
     chat.focus()
     harness.changeEditorLayout({ orientation: 1, groups: [{ size: 993 }] })

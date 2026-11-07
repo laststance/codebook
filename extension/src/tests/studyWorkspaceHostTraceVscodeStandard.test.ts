@@ -5,6 +5,8 @@
  * Each test builds the window's start state with harness helpers while the replay is bypassed, asserts it equals the take at the start mark, then replays the window with the `with-operation` delivery. A window the fake cannot follow is a `todo` that keeps its full intended body and names the first divergence.
  *
  * What the take showed (asserted, no product behavior is changed here): after the command-palette Arrange the Study pane showed "Native focus changed while presentation panes moved; the learner focus was preserved."; the Study pane's Restore cleared it. After Reload Window the Study panes do not come back (by design since 0.2.73.1) and the Study's editor groups stay empty.
+ *
+ * The final-state equality of these tests is not independent evidence for the active group and front tabs: the replay makes the fake follow each delivered event's recorded snapshot (`applyActiveState`), so only the groups, tabs, layout and the two alignment counts are evidence; the active flags are compared as a consistency check.
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -12,6 +14,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { sha256 } from '../runtimeSupport/utils/sha256'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { citationContext } from '../utils/citationContext'
 
 import {
@@ -112,7 +115,13 @@ async function openSavedStudy(
     studyId,
   })
   // The reader selects the study on the next turns of its own queue.
-  await new Promise((resolve) => setTimeout(resolve, 300))
+  await waitUntil(
+    () =>
+      harness.reader.inspect().view!.model.selection.studyId === studyId &&
+      !harness.reader.inspect().view!.loading,
+    'the saved study selected in the reader',
+    1_000,
+  )
 }
 
 /**
@@ -212,11 +221,11 @@ test(
     const window = hostTraceWindow(takeTrace(), 'open-study', 'arrange')
     const harness = await harnessForWindow(window)
     const replay = harness.hostOrder!
-    // The take starts with an empty first group above the learner's index.ts.
-    harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
-    harness.leaveEmptyGroup(1)
-    harness.focusMutableDraft('index.ts', 2)
     try {
+      // The take starts with an empty first group above the learner's index.ts.
+      harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+      harness.leaveEmptyGroup(1)
+      harness.focusMutableDraft('index.ts', 2)
       const study = await saveStudy(harness)
       replay.bypass(false)
       assertStartState(harness, startSnapshot(window), 'open-study')
@@ -371,8 +380,8 @@ function reloadWindowTrace(trace: ParsedHostTrace): {
   }
 }
 
-// Value: protects=Developer: Reload Window with the Study open in VS Code 1.145.2: after the reload the Study panes do not come back and the Study's editor groups stay empty beside index.ts (the take ends with an empty first group and index.ts in the second); fails_when=the start state differs from the take's at the reload-window mark, the segment after the reload is matched against the one before, the end state differs from the take's last snapshot, or an event stays unaligned; why_new=Cycle 0094 task 12 (VS Code take, window 5, two segments); seam=recordedReaderHarness hostOrder (started bypassed), openRecording, HostOrderInterposer.runSegments, leaveEmptyGroup and the close of the captured source for what the reload leaves; no_claim=the unrecorded 3.7 s of the reload itself, that the host's own post-reload reports (2 events) are produced by the fake, Cursor, that the reader after the reload offers Open Study Workspace again (the take stops there)
-test('Reload Window with the Study open leaves the Study panes closed and the first group empty beside index.ts', async () => {
+// Value: protects=the harness' model of the window after Developer: Reload Window with the Study open in VS Code 1.145.2: after the reload the Study panes do not come back and the Study's editor groups stay empty beside index.ts (the take ends with an empty first group and index.ts in the second); fails_when=the start state differs from the take's at the reload-window mark, the segment after the reload is matched against the one before, the end state differs from the take's last snapshot, or an event stays unaligned; why_new=Cycle 0094 task 12 (VS Code take, window 5, two segments); seam=recordedReaderHarness hostOrder (started bypassed), openRecording, HostOrderInterposer.runSegments, leaveEmptyGroup and the close of the captured source for what the reload leaves; no_claim=the product's reload path (the state after the reload is built by this test's own harness operations: leaveEmptyGroup and the close of the captured source), the unrecorded 3.7 s of the reload itself, that the host's own post-reload reports (2 events) are produced by the fake, Cursor, that the reader after the reload offers Open Study Workspace again (the take stops there)
+test("the window state the harness builds for Reload Window with the Study open equals the take's: Study panes closed, first group empty beside index.ts", async () => {
   // Arrange
   const cut = reloadWindowTrace(recordedStudyTakeTrace())
   const harness = await recordedReaderHarness(false, false, 1, undefined, {

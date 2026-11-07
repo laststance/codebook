@@ -6,6 +6,8 @@
  * - `learner-group` (tMs 49606): the gap after the Study's captured source settled (tMs 13128, 36.5 s); the first event after it opens the learner's group at tMs 49607.
  * - `arrange` (tMs 95270): the gap after `data.ts` was moved into the learner's group (tMs 83217, 12 s); the first event after it is the Study group becoming active at tMs 95271, the Arrange. The Study pane's Restore that follows produced no event, so the window runs to the take's end.
  * Only `arrange` is replayed here; the other two are recorded for the Open Study Workspace window, whose harness fixture still differs from the take (captured source name, chat tab names).
+ *
+ * The final-state equality of these tests is not independent evidence for the active group and front tabs: the replay makes the fake follow each delivered event's recorded snapshot (`applyActiveState`), so only the groups, tabs, layout and the two alignment counts are evidence; the active flags are compared as a consistency check.
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -46,13 +48,13 @@ test('the historical fourth-group Arrange window replays in the recorded Cursor 
     hostOrder: window.trace,
     hostOrderDelivery: 'with-operation',
   })
-  const replay = harness.hostOrder!
-  replay.bypass(true)
-  harness.useNativeLayout({ orientation: 0, groups: [{}] })
-  harness.focusMutableDraft('data.ts', 1)
-  harness.focusMutableDraft('cards.tsx', 1)
-  harness.addSeparateEditorPart()
   try {
+    const replay = harness.hostOrder!
+    replay.bypass(true)
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.focusMutableDraft('data.ts', 1)
+    harness.focusMutableDraft('cards.tsx', 1)
+    harness.addSeparateEditorPart()
     await openRetainedStudy(harness)
     // The learner's fourth group right of the Study: search.tsx first, then data.ts in front.
     const learnerColumn = harness.groups.length

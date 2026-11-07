@@ -573,12 +573,20 @@ export async function workspaceHarness(
                 (candidate) => candidate.viewColumn === recorded.viewColumn,
               )
               if (!group) continue
-              const front = recorded.tabs.find((tab) => tab.isActive)
+              const frontIndex = recorded.tabs.findIndex((tab) => tab.isActive)
+              const front = recorded.tabs[frontIndex]
+              const namesFront = (tab: Tab): boolean =>
+                front !== undefined &&
+                tab.label === front.label &&
+                traceInputKind(tab) === front.input.kind
+              // Same-name tabs of one group are told apart by position: the tab at the front tab's index first, else the first one that matches.
+              const frontTab =
+                group.tabs[frontIndex] !== undefined &&
+                namesFront(group.tabs[frontIndex])
+                  ? group.tabs[frontIndex]
+                  : group.tabs.find(namesFront)
               for (const tab of group.tabs) {
-                const isFront =
-                  front !== undefined &&
-                  tab.label === front.label &&
-                  traceInputKind(tab) === front.input.kind
+                const isFront = tab === frontTab
                 tab.isActive = isFront
                 if (isFront) group.activeTab = tab
               }
@@ -5162,6 +5170,7 @@ export async function workspaceHarness(
           return {
             dispose(): void {
               activeEditorListeners.delete(listener)
+              hostOrder?.unwrap(listener)
             },
           }
         },
@@ -5172,6 +5181,7 @@ export async function workspaceHarness(
           return {
             dispose(): void {
               visibleEditorListeners.delete(listener)
+              hostOrder?.unwrap(listener)
             },
           }
         },
@@ -5183,6 +5193,7 @@ export async function workspaceHarness(
           return {
             dispose(): void {
               selectionListeners.delete(listener)
+              hostOrder?.unwrap(listener)
             },
           }
         },
@@ -5390,6 +5401,7 @@ export async function workspaceHarness(
             return {
               dispose(): void {
                 tabChangeListeners.delete(listener)
+                hostOrder?.unwrap(listener)
               },
             }
           },
@@ -5400,6 +5412,7 @@ export async function workspaceHarness(
             return {
               dispose(): void {
                 groupChangeListeners.delete(listener)
+                hostOrder?.unwrap(listener)
               },
             }
           },
