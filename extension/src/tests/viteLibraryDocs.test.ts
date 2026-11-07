@@ -39,6 +39,7 @@ test('the viteLibrary help sample parses with the live repository-browser schema
   assert.deepEqual(sample, VITE_LIBRARY_CONFIGURATION)
 })
 
+// pregate-literal: API_VERSION=1.34 the Vite library route's minimum API stays 1.34 (VITE_LIBRARY_MINIMUM_API)
 // protects=the section states the API 1.34 gate, the confirmation, the build and pack, the observation states, one anchor per new reason, every limit and format 16; fails_when=any of those leaves the section; no_claim=the behavior itself, which the integration lane and the native checks cover
 test('the viteLibrary help section states the route, its observation states, refusals, limits and study format', () => {
   // Arrange
@@ -46,6 +47,7 @@ test('the viteLibrary help section states the route, its observation states, ref
   const text = JSON.stringify(section)
   // Act / Assert
   for (const phrase of [
+    // pregate-literal: API_VERSION=1.34 the Vite library help gates on its own minimum API, 1.34
     'codebook_status reports API 1.34 or later',
     'refuses library under vite-dev as an unknown key',
     'depends on that library by a published version',

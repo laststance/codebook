@@ -232,6 +232,7 @@ export async function configuredRuntimeHarness(
     ipv6Loopback?: 'owned' | 'absent' | 'held'
     /** Runs the configuration on the Vite adapter: its stand-in starts the stub server, serves the sealed module at its owned address and loads the entry page once. */
     adapter?: 'vite-dev'
+    // pregate-literal: API_VERSION=1.34 the Vite library route was added at API 1.34 (its minimum), not the current API
     /** A nested Vite run that declares `library` (API 1.34): the declared folder and the route's seams (confirmation, checks, build, private folder), which a test fakes. The stand-in start then runs the build between the facts and the listen, as the real launcher start does. */
     libraryRoute?: {
       declared: string

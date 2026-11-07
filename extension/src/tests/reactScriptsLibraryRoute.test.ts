@@ -346,6 +346,7 @@ test('waits for the unterminated last report line and then matches the script', 
   // Act
   run.route.observeParsedScript(bundleScript())
   const finalizing = run.route.finalize(true)
+  // gstack-timing-ok: the pause only lets finalize start waiting for the line; the outcome is asserted, and the settle bound (REACT_SCRIPTS_LIBRARY_REPORT_SETTLE_MS, 2000 ms) is far above it
   await new Promise((resolve) => setTimeout(resolve, 120))
   await appendFile(run.reportPath, line.slice(20))
   await finalizing
