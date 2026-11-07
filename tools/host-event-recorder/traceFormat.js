@@ -69,6 +69,28 @@ const UNSAFE_NAME_CHARACTER = /[^A-Za-z0-9._ -]/g
 /** Input kinds a tab can have without any resource: their label is a chat title or a shell title, which can name a user's prompt or folder. */
 const RESOURCE_LESS_INPUT_KINDS = ['unknown', 'terminal']
 
+/** The view types of Codebook's own panels (the editor prefixes a webview's type with `mainThreadWebview-`); only their titles are fixed product text. */
+const CODEBOOK_VIEW_TYPE = /^(?:mainThreadWebview-)?codebook\./
+
+/** The title prefix of Codebook's own panels, for a written entry that no longer carries its view type. */
+const CODEBOOK_TITLE_PREFIX = 'codebook · '
+
+/**
+ * Says whether a resource-less webview or custom tab belongs to another extension, so its title (a prompt, a preview file name) must not be written.
+ *
+ * @param {string} kind - The tab input kind.
+ * @param {string | undefined} viewType - The view type, when the input has one.
+ * @param {string} [writtenLabel] - The label of an already written entry, used when no view type is known.
+ * @returns {boolean} `true` for a webview or custom tab that is not a Codebook panel.
+ * @example
+ * isForeignPanelKind('webview', 'mainThreadWebview-markdown.preview') // => true
+ */
+function isForeignPanelKind(kind, viewType, writtenLabel) {
+  if (kind !== 'webview' && kind !== 'custom') return false
+  if (viewType) return !CODEBOOK_VIEW_TYPE.test(viewType)
+  return !(writtenLabel ?? '').startsWith(CODEBOOK_TITLE_PREFIX)
+}
+
 /**
  * Turns typed text into a sequence name or mark label that is safe to write into a public trace.
  *
@@ -152,6 +174,8 @@ function sanitizeUri(uri, context) {
   if (!uri) return undefined
   const { scheme, path } = splitUri(uri)
   if (!path) return undefined
+  // A `..` segment (either separator) can leave the repository, whether the path is relative or sliced from a workspace prefix.
+  if (path.split(/[\\/]/).includes('..')) return undefined
   // Already relative: nothing to remove.
   if (!isAbsolutePath(path))
     return scheme === 'file' ? path : `${scheme}:${path}`
@@ -228,7 +252,9 @@ function sanitizeTab(tab, context) {
     (key) => !tab.input[key],
   )
   const isUntitledKind =
-    hasNoResource && RESOURCE_LESS_INPUT_KINDS.includes(input.kind)
+    hasNoResource &&
+    (RESOURCE_LESS_INPUT_KINDS.includes(input.kind) ||
+      isForeignPanelKind(input.kind, input.viewType))
   return {
     label: isOutsideRepository || isUntitledKind ? input.kind : tab.label,
     input,
@@ -310,9 +336,9 @@ function sanitizeEventData(kind, data, context) {
     entries.map((entry) => {
       if (!entry.tab) {
         // A written entry of a resource-less tab still holds its raw title in a historical trace.
-        const isUntitledKind = RESOURCE_LESS_INPUT_KINDS.includes(
-          entry.inputKind,
-        )
+        const isUntitledKind =
+          RESOURCE_LESS_INPUT_KINDS.includes(entry.inputKind) ||
+          isForeignPanelKind(entry.inputKind, undefined, entry.label)
         return {
           groupIndex: entry.groupIndex,
           label: isUntitledKind ? entry.inputKind : entry.label,

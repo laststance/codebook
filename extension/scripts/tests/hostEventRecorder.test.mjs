@@ -532,6 +532,105 @@ test('the label of a tab without a resource and of kind unknown or terminal beco
   })
 })
 
+// Value: protects=a third-party webview or custom tab title (which can hold a prompt or a preview file name) staying out of a public trace; fails_when=a resource-less webview or custom tab of another extension keeps its label in a snapshot, a tab event or a re-sanitized written line; why_new=Cycle 0094 task 12 /ship pass 1 finding (webview labels); seam=none; no_claim=labels of Codebook's own panels, which stay
+test('the label of a resource-less webview or custom tab of another extension becomes its input kind', () => {
+  // Arrange
+  const previewTab = {
+    label: 'Preview secret-plans.md',
+    isActive: false,
+    isPreview: false,
+    input: { kind: 'webview', viewType: 'mainThreadWebview-markdown.preview' },
+  }
+  const customTab = {
+    label: 'Ask: how do I rotate my keys',
+    isActive: false,
+    isPreview: false,
+    input: { kind: 'custom', viewType: 'vendor.chat' },
+  }
+  const codebookTab = {
+    label: 'codebook · Study',
+    isActive: true,
+    isPreview: false,
+    input: {
+      kind: 'webview',
+      viewType: 'mainThreadWebview-codebook.studyContext',
+    },
+  }
+  const writer = createEventWriter({ context })
+
+  // Act
+  const snapshot = snapshotTabGroups(
+    [
+      {
+        viewColumn: 1,
+        isActive: true,
+        tabs: [previewTab, customTab, codebookTab],
+      },
+    ],
+    context,
+  )
+  const [eventLine] = writer.lines(
+    'tabsChanged',
+    {
+      opened: [{ groupIndex: 0, tab: previewTab }],
+      closed: [],
+      // Already written entries, as a committed fixture holds them.
+      changed: [
+        { groupIndex: 0, label: 'Preview my-diary.md', inputKind: 'webview' },
+        {
+          groupIndex: 0,
+          label: 'codebook · Application',
+          inputKind: 'webview',
+        },
+      ],
+    },
+    3,
+    { groups: [] },
+  )
+
+  // Assert
+  assert.deepEqual(
+    snapshot.groups[0].tabs.map((tab) => tab.label),
+    ['webview', 'custom', 'codebook · Study'],
+  )
+  assert.deepEqual(JSON.parse(eventLine).data, {
+    opened: [{ groupIndex: 0, label: 'webview', inputKind: 'webview' }],
+    closed: [],
+    changed: [
+      { groupIndex: 0, label: 'webview', inputKind: 'webview' },
+      {
+        groupIndex: 0,
+        label: 'codebook · Application',
+        inputKind: 'webview',
+      },
+    ],
+  })
+})
+
+// Value: protects=a trace never revealing a path outside the repository through a relative or dot-dot path; fails_when=a path with a .. segment (relative, or inside the workspace prefix) is kept; why_new=Cycle 0094 task 12 /ship pass 1 finding (dot-dot paths); seam=none; no_claim=a repository-relative path without .. segments, which stays
+test('a path with a dot-dot segment is left out of the trace', () => {
+  // Arrange
+  const uris = [
+    { scheme: 'file', path: '/work/repo/../x/secret.ts' },
+    { scheme: 'file', path: '../x/secret.ts' },
+    'src/../../x/secret.ts',
+    'src\\..\\..\\x\\secret.ts',
+    { scheme: 'file', path: '/work/repo/src/a.ts' },
+  ]
+
+  // Act
+  const results = uris.map((uri) => sanitizeUri(uri, context))
+
+  // Assert
+  assert.deepEqual(results, [
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    'src/a.ts',
+  ])
+})
+
 // Value: protects=a Windows-built codebook-source URI keeping only its file name; fails_when=a backslash separated path keeps its folders in the written uri; why_new=Cycle 0094 task 12 review finding (separator split); seam=none; no_claim=none beyond protects
 test('a codebook-source uri with backslash separators keeps only its file name', () => {
   // Arrange

@@ -26,7 +26,7 @@ export function createMemento() {
  *
  * Used by the recorder's extension tests, which cannot start a real editor host. Each call loads a fresh copy of the module (its open take is module state), the way a new window loads it.
  *
- * @param {{ workspacePath: string, globalState: object, workspaceState: object, inputs?: string[] }} options - The workspace folder this "window" opened, the two mementos its context holds (share `globalState` between windows as the editor does) and the answers the input box gives in order.
+ * @param {{ workspacePath: string, globalState: object, workspaceState: object, inputs?: string[], inputBox?: (options: object) => Promise<string | undefined>, layoutRead?: () => Promise<object> }} options - The workspace folder this "window" opened, the two mementos its context holds (share `globalState` between windows as the editor does) and the answers the input box gives in order (or `inputBox`, a function that answers one box later or never, for a race) and `layoutRead` (a function that answers each `vscode.getEditorLayout` read, possibly later).
  * @returns {{ recorder: object, context: object, commands: Map<string, Function>, messages: { kind: string, text: string }[], inputOptions: object[], fire: Record<string, Function> }} The module, its context, the registered commands, shown messages, input box options and the listeners the editor events would call.
  * @example
  * const { recorder, context } = loadRecorder({ workspacePath, globalState, workspaceState })
@@ -37,6 +37,8 @@ export function loadRecorder({
   globalState,
   workspaceState,
   inputs = [],
+  inputBox,
+  layoutRead,
 }) {
   const commands = new Map()
   const messages = []
@@ -80,7 +82,7 @@ export function loadRecorder({
       onDidChangeTextEditorSelection: listener('selection'),
       showInputBox: async (options) => {
         inputOptions.push(options)
-        return inputs.shift()
+        return inputBox ? inputBox(options) : inputs.shift()
       },
       showWarningMessage: async (text) =>
         messages.push({ kind: 'warning', text }),
@@ -93,7 +95,8 @@ export function loadRecorder({
         commands.set(id, handler)
         return { dispose() {} }
       },
-      executeCommand: async () => ({ orientation: 0, groups: [{ size: 1 }] }),
+      executeCommand: async () =>
+        layoutRead ? layoutRead() : { orientation: 0, groups: [{ size: 1 }] },
     },
   }
   const originalLoad = Module._load

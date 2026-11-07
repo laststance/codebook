@@ -38,6 +38,9 @@ const TAKE_FOLDER_GITIGNORE = '*\n'
 /** The open take, or `undefined`. */
 let take
 
+/** `true` while a start command waits for its sequence name or writes the take header. */
+let isStarting = false
+
 /**
  * Turns a VS Code URI into the plain `{ scheme, path }` the format works on.
  *
@@ -149,12 +152,13 @@ function currentGroups() {
  * Shows a failed take write to the author, once per take; the take stays open.
  *
  * @param {unknown} error - What the write or the layout read threw.
+ * @param {object | undefined} [target] - The take the failing write belongs to (the open take by default).
  */
-function reportFailure(error) {
-  if (!take || take.failureShown) return
-  take.failureShown = true
+function reportFailure(error, target = take) {
+  if (!target || target.failureShown) return
+  target.failureShown = true
   void vscode.window.showErrorMessage(
-    `Host event recorder could not write ${take.file}: ${error instanceof Error ? error.message : String(error)}`,
+    `Host event recorder could not write ${target.file}: ${error instanceof Error ? error.message : String(error)}`,
   )
 }
 
@@ -164,51 +168,74 @@ function reportFailure(error) {
  * A failing write is shown ({@link reportFailure}) instead of thrown, so an editor listener never throws and no rejection goes unhandled.
  *
  * @param {string[]} lines - Serialized lines.
+ * @param {object} target - The take the lines belong to (never looked up again, so a late write cannot reach a later take).
  */
-function append(lines) {
+function append(lines, target) {
   try {
-    fs.appendFileSync(take.file, lines.join(''))
+    fs.appendFileSync(target.file, lines.join(''))
     Promise.resolve(
-      take.state.update(OPEN_TAKE_KEY, {
-        takeId: take.id,
-        file: take.file,
-        sequence: take.sequence,
-        lastSeq: take.writer.nextSeq() - 1,
-        startMs: take.startMs,
+      target.state.update(OPEN_TAKE_KEY, {
+        takeId: target.id,
+        file: target.file,
+        sequence: target.sequence,
+        lastSeq: target.writer.nextSeq() - 1,
+        startMs: target.startMs,
       }),
-    ).catch(reportFailure)
+    ).catch((error) => reportFailure(error, target))
   } catch (error) {
-    reportFailure(error)
+    reportFailure(error, target)
   }
 }
 
 /**
- * Records one event and a full snapshot of the tab groups with it.
+ * Writes one event and a full snapshot of the tab groups with it into a given take.
+ *
+ * @param {object} target - The take to write into.
+ * @param {string} kind - An event kind of the format.
+ * @param {object} data - The raw payload (sanitized by the writer).
+ */
+function writeEvent(target, kind, data) {
+  append(
+    target.writer.lines(
+      kind,
+      data,
+      Date.now() - target.startMs,
+      currentGroups(),
+    ),
+    target,
+  )
+}
+
+/**
+ * Records one event into the open take; ignored when no take is open or the take is being stopped.
  *
  * @param {string} kind - An event kind of the format.
  * @param {object} data - The raw payload (sanitized by the writer).
  */
 function record(kind, data) {
-  if (!take) return
-  append(
-    take.writer.lines(kind, data, Date.now() - take.startMs, currentGroups()),
-  )
+  // A stopping take accepts no editor event: the stop has a fixed set of reads to drain.
+  if (!take || take.isStopping) return
+  writeEvent(take, kind, data)
 }
 
 /**
- * Reads the editor layout and records it; called after a batch of events and by stop.
+ * Reads the editor layout and records it into the take that asked for it; called after a batch of events and by stop.
  *
+ * @param {object} target - The take that asked for the read; a result that arrives after that take stopped is dropped, and never reaches a later take.
+ * @param {boolean} [isFinal] - `true` for the read that stop itself awaits (written although the take is stopping).
  * @returns {Promise<void>} Resolves when the layout line is written.
  */
-async function readLayout() {
-  take.lastLayoutAt = Date.now()
+async function readLayout(target, isFinal = false) {
+  target.lastLayoutAt = Date.now()
   try {
     const layout = await vscode.commands.executeCommand(
       'vscode.getEditorLayout',
     )
-    record('editorLayout', layout)
+    // Written only into the originating take, and only while it accepts events (or for stop's own final read).
+    if (isFinal || (take === target && !target.isStopping))
+      writeEvent(target, 'editorLayout', layout)
   } catch (error) {
-    reportFailure(error)
+    reportFailure(error, target)
   }
 }
 
@@ -216,7 +243,7 @@ async function readLayout() {
  * Schedules a layout read after the current event batch, at most every 50 ms.
  */
 function scheduleLayout() {
-  if (!take || take.layoutTimer) return
+  if (!take || take.isStopping || take.layoutTimer) return
   const wait = Math.max(
     0,
     LAYOUT_READ_INTERVAL_MS - (Date.now() - take.lastLayoutAt),
@@ -226,8 +253,8 @@ function scheduleLayout() {
     const current = take
     if (!current) return
     current.layoutTimer = undefined
-    const pending = readLayout()
-      .catch(reportFailure)
+    const pending = readLayout(current)
+      .catch((error) => reportFailure(error, current))
       .finally(() => current.pending.delete(pending))
     current.pending.add(pending)
   }, wait)
@@ -365,7 +392,7 @@ async function startTake(context, sequence) {
     firstSeq: 1,
   })
   record('tabGroups', currentGroups())
-  await readLayout()
+  await readLayout(take)
 }
 
 /**
@@ -426,12 +453,38 @@ function repairTakeFile(file) {
 }
 
 /**
+ * Says whether a take file named by a stored mark lies inside the first workspace folder's take folder.
+ *
+ * Called by {@link resumeIfMarked} before the file is read, repaired or appended to.
+ *
+ * @param {unknown} file - The `file` of a stored mark.
+ * @returns {boolean} `true` only for a path that resolves below `<workspace folder>/.codebook-host-traces/`.
+ */
+function isInsideTakeFolder(file) {
+  const folder = vscode.workspace.workspaceFolders?.[0]
+  if (!folder || typeof file !== 'string') return false
+  const relative = path.relative(
+    path.join(folder.uri.fsPath, TAKE_FOLDER),
+    path.resolve(file),
+  )
+  // Empty means the folder itself; `..` or an absolute result means outside.
+  return (
+    relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)
+  )
+}
+
+/**
  * Resumes (or restarts) the open take after activation, e.g. after Reload Window.
  *
  * @param {import('vscode').ExtensionContext} context - The extension context.
  */
 async function resumeIfMarked(context) {
   const mark = context.workspaceState.get(OPEN_TAKE_KEY)
+  // A mark is trusted only when its file lies in this workspace's take folder; any other path is cleared untouched.
+  if (mark && !isInsideTakeFolder(mark.file)) {
+    await context.workspaceState.update(OPEN_TAKE_KEY, undefined)
+    return
+  }
   const exists = mark ? fs.existsSync(mark.file) : false
   // Before anything is appended: a crash mid-write can leave a last line without its newline.
   const repair = exists ? repairTakeFile(mark.file) : 'none'
@@ -473,12 +526,14 @@ async function resumeIfMarked(context) {
  */
 async function stopTake(context) {
   const current = take
-  if (!current) return undefined
+  if (!current || current.isStopping) return undefined
+  // From here no editor event is recorded or schedules a read: every read to drain is already in `pending`.
+  current.isStopping = true
   if (current.layoutTimer) clearTimeout(current.layoutTimer)
   current.layoutTimer = undefined
   await Promise.all([...current.pending])
-  record('tabGroups', currentGroups())
-  await readLayout()
+  writeEvent(current, 'tabGroups', currentGroups())
+  await readLayout(current, true)
   take = undefined
   await context.workspaceState.update(OPEN_TAKE_KEY, undefined)
   return current.file
@@ -504,19 +559,25 @@ async function activate(context) {
   subscribe(context)
   context.subscriptions.push(
     vscode.commands.registerCommand('codebookHostRecorder.start', async () => {
-      if (take) {
+      // A start still waiting for its name box counts as open, so two quick starts cannot replace each other's take.
+      if (take || isStarting) {
         void vscode.window.showWarningMessage(
           'A host event take is already recording; stop it first.',
         )
         return
       }
-      const sequence = await vscode.window.showInputBox({
-        prompt: 'Sequence name of this take (for example arrange-restore)',
-        ignoreFocusOut: true,
-        validateInput: nameProblem,
-      })
-      if (!sequence) return
-      await startTake(context, sequence)
+      isStarting = true
+      try {
+        const sequence = await vscode.window.showInputBox({
+          prompt: 'Sequence name of this take (for example arrange-restore)',
+          ignoreFocusOut: true,
+          validateInput: nameProblem,
+        })
+        if (!sequence) return
+        await startTake(context, sequence)
+      } finally {
+        isStarting = false
+      }
       void vscode.window.showInformationMessage(
         `Recording host events to ${take.file}`,
       )

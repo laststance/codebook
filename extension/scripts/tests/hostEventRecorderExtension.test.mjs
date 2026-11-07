@@ -297,3 +297,127 @@ test('the sequence name and mark label inputs reject text outside the safe chars
     assert.equal(typeof validate(''), 'string')
   }
 })
+
+// Value: protects=a hand-edited or stale workspace-state mark never making the recorder append to a file outside the workspace's take folder; fails_when=a mark naming another path is resumed (its file is repaired, appended to, or kept as the open take); why_new=Cycle 0094 task 12 /ship pass 1 finding (resume mark trust); seam=the real extension.js against a fake vscode module; no_claim=that the editor can produce such a mark
+test('a resumed mark naming a file outside the take folder is cleared and its file is left untouched', async (context) => {
+  // Arrange
+  const workspace = await workspaceFolder(context)
+  const elsewhere = await workspaceFolder(context)
+  const outsideFile = join(elsewhere, 'victim.jsonl')
+  const original = `${HEADER}${GOOD_LINE}{"seq":2,"tMs`
+  await writeFile(outsideFile, original)
+  const workspaceState = createMemento()
+  await workspaceState.update('codebookHostRecorder.openTake', {
+    takeId: 't1',
+    file: outsideFile,
+    sequence: 'reload',
+    lastSeq: 1,
+    startMs: Date.now() - 1000,
+  })
+  const window = loadRecorder({
+    workspacePath: workspace,
+    globalState: createMemento(),
+    workspaceState,
+  })
+
+  // Act
+  await window.recorder.activate(window.context)
+  window.fire.tabs({ opened: [], closed: [], changed: [] })
+  await window.commands.get('codebookHostRecorder.stop')()
+
+  // Assert
+  assert.equal(await readFile(outsideFile, 'utf8'), original)
+  assert.equal(workspaceState.get('codebookHostRecorder.openTake'), undefined)
+})
+
+// Value: protects=one take per start; fails_when=a second start command, run while the first one's sequence name box is still open, opens a second box and its take replaces the first (orphaned file and timer); why_new=Cycle 0094 task 12 /ship pass 1 finding (start race); seam=the real extension.js against a fake vscode module with an input box that answers later; no_claim=the real input box UI
+test('a second start while the first sequence name box is open is refused and creates one take only', async (context) => {
+  // Arrange
+  const workspace = await workspaceFolder(context)
+  const answers = []
+  const window = loadRecorder({
+    workspacePath: workspace,
+    globalState: createMemento(),
+    workspaceState: createMemento(),
+    inputBox: () => new Promise((resolve) => answers.push(resolve)),
+  })
+  await window.recorder.activate(window.context)
+  const start = window.commands.get('codebookHostRecorder.start')
+
+  // Act
+  const first = start()
+  const second = start()
+  await second
+  for (const answer of answers) answer('seq')
+  await first
+  await window.commands.get('codebookHostRecorder.stop')()
+
+  // Assert
+  assert.equal(answers.length, 1)
+  assert.equal(
+    window.messages.filter((message) => message.kind === 'warning').length,
+    1,
+  )
+  const files = (
+    await readdir(join(workspace, '.codebook-host-traces'))
+  ).filter((name) => name.endsWith('.jsonl'))
+  assert.equal(files.length, 1)
+})
+
+// Value: protects=a stopped take taking no more events and a later take receiving none of its layout reads; fails_when=an editor event while stop waits for the final layout read is still recorded into the stopping take or schedules a read that lands in the next take; why_new=Cycle 0094 task 12 /ship pass 1 outside-voice finding (stop drain); seam=the real extension.js against a fake vscode module whose layout read answers later; no_claim=ordering of reads the editor itself delays
+test('an editor event during the final layout read of a stopping take is not recorded and nothing of it reaches the next take', async (context) => {
+  // Arrange
+  const workspace = await workspaceFolder(context)
+  let releaseFinalRead
+  let isGateOn = false
+  const window = loadRecorder({
+    workspacePath: workspace,
+    globalState: createMemento(),
+    workspaceState: createMemento(),
+    inputs: ['take-a', 'take-b'],
+    layoutRead: () =>
+      isGateOn
+        ? new Promise((resolve) => {
+            releaseFinalRead = () =>
+              resolve({ orientation: 1, groups: [{ size: 1 }] })
+          })
+        : { orientation: 0, groups: [{ size: 1 }] },
+  })
+  await window.recorder.activate(window.context)
+  const folder = join(workspace, '.codebook-host-traces')
+  const kindsOf = async (prefix) => {
+    const name = (await readdir(folder)).find(
+      (entry) => entry.startsWith(prefix) && entry.endsWith('.jsonl'),
+    )
+    return (await parsedLines(join(folder, name)))
+      .filter((line) => line.kind)
+      .map((line) => line.kind)
+  }
+  await window.commands.get('codebookHostRecorder.start')()
+
+  // Act
+  isGateOn = true
+  const stopping = window.commands.get('codebookHostRecorder.stop')()
+  // Let stop reach its awaited final read before the editor event fires.
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  window.fire.tabs({ opened: [], closed: [], changed: [] })
+  releaseFinalRead()
+  await stopping
+  isGateOn = false
+  await window.commands.get('codebookHostRecorder.start')()
+  await new Promise((resolve) => setTimeout(resolve, 150))
+  await window.commands.get('codebookHostRecorder.stop')()
+
+  // Assert
+  // Start and stop each write a snapshot, a layout and the snapshot that follows the layout; no tabsChanged line and no third layout.
+  const expected = [
+    'tabGroups',
+    'editorLayout',
+    'tabGroups',
+    'tabGroups',
+    'editorLayout',
+    'tabGroups',
+  ]
+  assert.deepEqual(await kindsOf('take-a'), expected)
+  assert.deepEqual(await kindsOf('take-b'), expected)
+})

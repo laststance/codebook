@@ -90,3 +90,38 @@ test('no committed host trace fixture keeps the label of a resource-less unknown
   // Assert
   assert.deepEqual(labelled, [])
 })
+
+// Value: protects=third-party webview tab titles (a prompt, a preview file name) staying out of committed traces; fails_when=a fixture tab of kind webview or custom that is not a Codebook panel keeps a label other than its kind; why_new=Cycle 0094 task 12 /ship pass 1 finding (webview labels); seam=the committed fixture files; no_claim=Codebook's own panels, whose label stays
+test('no committed host trace fixture keeps the label of a webview or custom tab that is not a Codebook panel', () => {
+  // Arrange
+  const labelled = []
+  const isCodebookPanel = (label, viewType) =>
+    viewType
+      ? /^(?:mainThreadWebview-)?codebook\./.test(viewType)
+      : label.startsWith('codebook · ')
+  const isForeign = (kind, label, viewType) =>
+    (kind === 'webview' || kind === 'custom') &&
+    !isCodebookPanel(label, viewType) &&
+    label !== kind
+
+  // Act
+  for (const name of fixtureNames)
+    readFileSync(`${fixtureFolder}${name}`, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .forEach((line, index) => {
+        const { kind, data } = JSON.parse(line)
+        const tabs =
+          kind === 'tabGroups' ? data.groups.flatMap((group) => group.tabs) : []
+        for (const tab of tabs)
+          if (isForeign(tab.input.kind, tab.label, tab.input.viewType))
+            labelled.push(`${name}:${index + 1} ${tab.label}`)
+        if (kind === 'tabsChanged')
+          for (const entry of [...data.opened, ...data.closed, ...data.changed])
+            if (isForeign(entry.inputKind, entry.label, undefined))
+              labelled.push(`${name}:${index + 1} ${entry.label}`)
+      })
+
+  // Assert
+  assert.deepEqual(labelled, [])
+})
