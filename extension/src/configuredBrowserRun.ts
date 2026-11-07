@@ -13983,10 +13983,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Gives the adapter's own verified acknowledgement of a server stop's owned breakpoint in the shape the editor answers it, for {@link serverBindingAtPause} when the editor answered nothing at the pause.
-   * Why it exists: VS Code 1.145.2 answers `getDebugProtocolBreakpoint` with nothing for a few hundred milliseconds or more right after the first stop that follows a re-registration under a burst of the adapter's `breakpoint` news (Cycle 0095, C94-L1), while the run's own channel already holds the adapter's reply and news for that breakpoint ({@link OwnedRepositoryBreakpoint.verifiedPlace}).
+   * Why it exists: VS Code 1.145.2 answers `getDebugProtocolBreakpoint` with nothing for a few hundred milliseconds or more right after the first stop that follows a re-registration under a burst of the adapter's `breakpoint` news (Cycle 0095, C94-L1), while the run's own channel already holds the adapter's reply and news for that breakpoint ({@link OwnedRepositoryBreakpoint.adapterVerifiedPlace}).
    * @param stop - The paused server stop.
    * @param breakpointId - The adapter's id of the acknowledged registration.
-   * @returns The binding `{ id, verified: true, line, column }`; `undefined` when the owned breakpoint is no longer in the editor (the learner removed it) or the adapter has no verified place for it.
+   * @returns The binding `{ id, verified: true, line, column }`; `undefined` when the owned breakpoint is no longer in the editor (the learner removed it) or the adapter has no verified place for it (pending, refused, or unverified by later news).
    * @example
    * this.adapterAcknowledgedBinding(stop, 2) // => { id: 2, verified: true, line: 296, column: 22 }
    */
@@ -14002,9 +14002,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       )
     )
       return undefined
-    const verified = owned.verifiedPlace(
+    const verified = owned.adapterVerifiedPlace(
       this.participants[stop.participant].selected!,
     )
+    // The id is the acknowledged registration's: the tracker starts a new registration on every request and takes news only for that id in the owned file, so the place belongs to this id and file.
     return verified && { id: breakpointId, verified: true, ...verified }
   }
 

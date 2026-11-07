@@ -123,7 +123,11 @@ type RegistrationReceipt = {
   movedTo?: VerifiedPlace
 }
 /** Where the adapter verified the owned breakpoint, kept beside the receipt so the run can compare a pause with it; absent while pending or when the reply named no whole position. */
-type VerifiedRegistration = { verifiedAt?: VerifiedPlace }
+/** Where the adapter verified a registration, and whether its latest news about the acknowledged breakpoint called it unverified since (a reloaded script), which {@link OwnedRepositoryBreakpoint.adapterVerifiedPlace} honours. */
+type VerifiedRegistration = {
+  verifiedAt?: VerifiedPlace
+  unverifiedByNews?: boolean
+}
 
 /**
  * Reads the place a binding is verified at; called by {@link OwnedRepositoryBreakpoint.verifiedPlaces} before it compares that place with the requested line.
@@ -638,6 +642,20 @@ export class OwnedRepositoryBreakpoint {
   }
 
   /**
+   * Reads where the adapter itself has this breakpoint verified now, for {@link ConfiguredBrowserRun} when the editor answers nothing for it at a pause (VS Code 1.145, Cycle 0095 C94-L1): like {@link verifiedPlace}, but nothing once the adapter's latest news called the breakpoint unverified.
+   * @param session - The debug session whose adapter acknowledged the breakpoint.
+   * @returns The verified line and column; `undefined` while pending, refused, gone, or unverified by later news.
+   * @example
+   * owned.adapterVerifiedPlace(session) // => { line: 296, column: 22 }
+   */
+  adapterVerifiedPlace(
+    session: vscode.DebugSession,
+  ): VerifiedPlace | undefined {
+    const registration = this.standingRegistration(session)
+    return registration?.unverifiedByNews ? undefined : registration?.verifiedAt
+  }
+
+  /**
    * Reads where the adapter itself last reported this breakpoint verified, in its registration reply or in a later `breakpoint` event, whether the owner accepts that place or refuses it; {@link ConfiguredBrowserRun} asks it for the column of a binding the editor answered without one.
    * The tracker reads the adapter's messages before the editor does, so this place keeps the column the editor drops for a breakpoint requested at column 1. Like {@link movedTo} it never throws.
    * @param session - The debug session whose adapter acknowledged the breakpoint.
@@ -721,6 +739,26 @@ export class OwnedRepositoryBreakpoint {
   }
 
   /**
+   * Tells whether a `breakpoint` event calls the acknowledged owned breakpoint unverified, for {@link takeBreakpointNews}: js-debug sends such news when the script that held the binding is reloaded.
+   * @param event - A DAP `breakpoint` event of the session.
+   * @param receipt - The receipt whose breakpoint id tells the owned breakpoint from every other.
+   * @returns `true` for news about the owned id with `verified: false`; `false` for every other event.
+   * @example
+   * this.isUnverifiedNewsOfOwned({ seq: 9, type: 'event', event: 'breakpoint', body: { reason: 'changed', breakpoint: { id: 4, verified: false } } }, receipt) // => true for a receipt of id 4
+   */
+  private isUnverifiedNewsOfOwned(
+    event: DebugProtocol.Event,
+    receipt: RegistrationReceipt,
+  ): boolean {
+    const parsed = breakpointEventSchema.safeParse(event.body)
+    return (
+      parsed.success &&
+      parsed.data.breakpoint.id === receipt.breakpointId &&
+      !parsed.data.breakpoint.verified
+    )
+  }
+
+  /**
    * Records where the adapter's news puts the acknowledged breakpoint; called by {@link onEvent} for a `breakpoint` event of a session whose registration is acknowledged.
    * @param registration - The session's registration, which gains the verified place and a rebuilt receipt, or the refused place.
    * @param receipt - The registration's receipt as it stood when the event arrived.
@@ -736,6 +774,11 @@ export class OwnedRepositoryBreakpoint {
     receipt: RegistrationReceipt,
     event: DebugProtocol.Event,
   ): void {
+    // News that calls the acknowledged breakpoint unverified leaves its earlier place standing for every reader but the adapter stand-in, which must not bind a place the adapter withdrew.
+    if (this.isUnverifiedNewsOfOwned(event, receipt)) {
+      registration.unverifiedByNews = true
+      return
+    }
     const breakpoint = this.ownedBreakpointOfEvent(event, receipt)
     if (!breakpoint) return
     const { verifiedAt, ...moved } = this.verifiedPlaces(breakpoint)
@@ -768,6 +811,7 @@ export class OwnedRepositoryBreakpoint {
   ): void {
     registration.refusedAt = undefined
     registration.verifiedAt = verifiedAt
+    registration.unverifiedByNews = false
     registration.receipt = {
       sessionId: receipt.sessionId,
       requestSequence: receipt.requestSequence,

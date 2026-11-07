@@ -143,7 +143,7 @@ test('a result image that times out still fails the run', async (context) => {
 })
 
 // protects=decision D3 (Cycle 0095, C94-L3): a server stop whose page draws no image within the 3 s bound keeps its committed source and values, its image reads failed with the server-stop sentence, and the run goes on instead of ending; fails_when=the timeout ends the run ("CDP Page.captureScreenshot timed out"), the snapshot or its values are lost, or the capture lacks the unavailable sentence; why_changed=this test pinned the old rule that a server stop's image timeout fails the run, which ended 2 of 2 Cursor runs on 2026-11-07; no_claim=a real Next server or Cursor's page (the stand-in page leaves the server stop's screenshot unanswered)
-test('a server stop whose page draws no image in time keeps its committed values and the run goes on', async (context) => {
+test('a server stop whose page draws no image in time keeps its committed values and the run goes on to its end, partial', async (context) => {
   // Arrange
   const harness = await pagesServerRun(context, {
     timedOutScreenshots: [SERVER_STOP_SCREENSHOT],
@@ -160,20 +160,30 @@ test('a server stop whose page draws no image in time keeps its committed values
     () => harness.run.view().participants.server?.snapshot,
     'the server stop committed',
   )
+  harness.setDocumentReadyState('complete')
+  await harness.run.continue('server', stop.pause)
+  await prepared
+  await waitUntil(
+    () => harness.run.view().status === 'completed',
+    'the run went on to its end',
+  )
+  await harness.run.stop()
   // Assert
   const view = harness.run.view()
   assert.deepEqual(plain(view.failures), [])
   assert.equal(stop.source?.line, PAGES_SERVER_RETURN_LINE)
+  assert.equal(stop.values['value:count'], 3)
   assert.deepEqual(plain(view.captures['paused-server']), {
     status: 'failed',
     error: SERVER_UNAVAILABLE_SENTENCE,
   })
+  assert.equal(view.snapshotCaptures?.[stop.id]?.status, 'failed')
+  assert.equal(view.captureOutcome, 'incomplete')
+  assert.equal(view.finalOutcome, 'partial')
   assert.deepEqual(
     view.events
       .filter((event) => event.type === 'capture.unavailable')
       .map((event) => Reflect.get(Object(event.detail), 'phase')),
     ['paused-server'],
   )
-  await harness.run.stop()
-  await prepared.catch(() => undefined)
 })

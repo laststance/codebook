@@ -1233,6 +1233,7 @@ test('a server stop the adapter verified pauses with its values when the editor 
   assert.equal(detail.returned, 'absent')
   assert.equal(detail.takenFrom, 'adapter')
   assert.equal(detail.adapter.line, 1)
+  assert.equal(detail.adapter.column, 1)
 })
 
 // Value: protects=a breakpoint the learner removed from the editor is not bound from the adapter's last report, so the run still refuses truthfully; fails_when=the adapter's stale acknowledgement stands in and the stop publishes facts; why_new=Cycle 0095 C94-L1 negative case of the adapter stand-in; seam=the fake editor drops the breakpoint and answers nothing at the pause
@@ -1249,7 +1250,51 @@ test('a server stop whose breakpoint the learner removed from the editor still f
     'removed breakpoint rejected',
   )
   await harness.run.stop()
+  // Assert: the refusal comes from the binding read at the pause, which the adapter did not stand in for.
+  const receipt = harness.run
+    .view()
+    .events.find((event) => event.type === 'breakpoint.pause-binding')
+  const detail = JSON.parse(JSON.stringify(receipt?.detail))
+  assert.equal(detail.returned, 'absent')
+  assert.equal(detail.takenFrom, undefined)
+  assert.equal(
+    harness.run.view().failures[0],
+    'Error: Pending server breakpoint did not bind to the captured source',
+  )
+  assert.equal(harness.run.view().snapshots.length, 0)
+})
+
+// Value: protects=the adapter stand-in never binds a place the adapter withdrew: news that calls the owned breakpoint unverified (a reloaded script) leaves nothing to stand in for an editor that answers nothing; fails_when=the earlier verified place stands in and the stop publishes facts; why_new=Cycle 0095 review (OCR lens A, Medium) of the C94-L1 stand-in; seam=the test sends the adapter's unverified news and the fake editor answers nothing at the pause
+test('a server stop whose breakpoint the adapter later called unverified fails as not bound when the editor answers nothing', async (context) => {
+  // Arrange
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  harness.acknowledgeRegistrationsAt(1, 1)
+  await harness.run.prepare()
+  const registration = journalEntries(harness, 'breakpoint.registered')[0]
+  harness.run.onEvent(harness.sessions.server, {
+    type: 'event',
+    seq: 9_101,
+    event: 'breakpoint',
+    body: {
+      reason: 'changed',
+      breakpoint: { id: registration.breakpointId, verified: false },
+    },
+  })
+  harness.forgetBindingInEditor('kept')
+  // Act
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'withdrawn binding rejected',
+  )
+  await harness.run.stop()
   // Assert
+  const receipt = harness.run
+    .view()
+    .events.find((event) => event.type === 'breakpoint.pause-binding')
+  const detail = JSON.parse(JSON.stringify(receipt?.detail))
+  assert.equal(detail.returned, 'absent')
+  assert.equal(detail.takenFrom, undefined)
   assert.equal(
     harness.run.view().failures[0],
     'Error: Pending server breakpoint did not bind to the captured source',
