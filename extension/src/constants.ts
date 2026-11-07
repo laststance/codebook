@@ -152,6 +152,12 @@ export const LIBRARY_UNPACK_ENTRY_LIMIT_COUNT = 100_000
 /** The most bytes of the observation file a library run reads; a larger file reads `incomplete` (API 1.33). */
 export const LIBRARY_OBSERVATION_LIMIT_BYTES = 16 * 1024 * 1024
 
+/** The most bytes of a react-scripts library run's compilation report that Codebook reads; a larger report reads `unreadable` (Cycle 0097). */
+export const REACT_SCRIPTS_LIBRARY_REPORT_LIMIT_BYTES = 32 * 1024 * 1024
+
+/** The most bytes one line of a react-scripts library run's compilation report may have; the generated preload writes a `truncated` line instead of a longer one, and the reader treats a longer line as `unreadable`. */
+export const REACT_SCRIPTS_LIBRARY_REPORT_LINE_LIMIT_BYTES = 1024 * 1024
+
 /** The most project sources a `STOP_FILE_NOT_LOADED` refusal of a `wxt-build` run lists in `details.contextSources`. */
 export const EXTENSION_CONTEXT_SOURCES_LIMIT = 20
 

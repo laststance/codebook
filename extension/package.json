@@ -642,6 +642,7 @@
     "fallow": "3.40.0",
     "lint-staged": "17.6.0",
     "typescript": "6.0.3",
+    "webpack": "5.112.2",
     "xml2js": "0.6.2",
     "yauzl": "3.4.0",
     "yazl": "3.3.1"
