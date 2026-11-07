@@ -137,6 +137,26 @@
     "extension/scripts/check-package.mjs": [
       "extension/scripts/tests/package.test.mjs"
     ],
+    "extension/scripts/utils/verifyPackageContent.mjs": [
+      "extension/scripts/tests/packageDevelopmentTool.test.mjs"
+    ],
+    "extension/scripts/sanitizeHostTrace.mjs": [
+      "extension/scripts/tests/sanitizeHostTrace.test.mjs"
+    ],
+    "tools/host-event-recorder/traceFormat.js": [
+      "extension/scripts/tests/hostEventRecorder.test.mjs",
+      "extension/scripts/tests/sanitizeHostTrace.test.mjs"
+    ],
+    "tools/host-event-recorder/*": [
+      "extension/scripts/tests/hostEventRecorder.test.mjs"
+    ],
+    "extension/scripts/tests/utils/hostTraceSample.mjs": [
+      "extension/scripts/tests/hostEventRecorder.test.mjs"
+    ],
+    "extension/scripts/tests/fixtures/host-trace-sample.jsonl": [
+      "extension/scripts/tests/hostEventRecorder.test.mjs",
+      "extension/scripts/tests/sanitizeHostTrace.test.mjs"
+    ],
     "extension/scripts/package.mjs": [
       "extension/scripts/tests/packageCli.test.mjs"
     ],
