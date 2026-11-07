@@ -31,8 +31,82 @@ jobs:
       # scripts/checkHealth.mjs builds the extension itself (runBuild) before the suite, so no Build step precedes it;
       # it scores health with this run's own coverage against the measured baseline;
       # stale, mixed, failed or partial evidence is refused (exit 2) instead of scored.
+      # --keep-coverage copies the run's coverage map out for the equivalence run (health-merge compares it with the merged
+      # shards' map). Temporary, Cycle 0094 task 11: a later commit of the same PR removes this job once the hashes match.
       - name: Run measured fallow health
-        run: pnpm --dir extension health
+        run: pnpm --dir extension health --keep-coverage "$RUNNER_TEMP/health-single/coverage-final.json"
+
+      - name: Keep the coverage map for the equivalence run
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: health-single
+          path: ${{ runner.temp }}/health-single
+          if-no-files-found: ignore
+          retention-days: 1
+
+  health-shard:
+    # One third of the compiled test files, measured with V8 coverage and no report (checkHealth.mjs --shard i/N). The files
+    # are balanced by test-timings.json; health-merge pools the three dumps folders and scores them as the single run does.
+    name: Fallow health shard ${{ matrix.shard }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # The shard total below (3) and these entries change together.
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Prepare environment
+        uses: ./.github/actions/prepare
+
+      - name: Measure this shard of the suite
+        run: pnpm --dir extension health --shard ${{ matrix.shard }}/3 --out "$RUNNER_TEMP/health-shard"
+
+      - name: Keep the shard's coverage dumps and manifest
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: health-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/health-shard
+          if-no-files-found: error
+          retention-days: 1
+
+  health-merge:
+    # Builds again (its dist tree and checkout path must equal the shards'), validates every shard result, pools the dumps
+    # with one c8 report and scores health. --compare prints the SHA-256 of the merged and the single run's coverage map and
+    # refuses when they differ: the equivalence run (Cycle 0094 task 11).
+    name: Fallow health merge
+    needs: [health, health-shard]
+    # Also after a health job that found findings: its coverage map is still uploaded and the comparison is what this job is for.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Prepare environment
+        uses: ./.github/actions/prepare
+
+      - name: Download the shards' results
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: health-shard-*
+          path: ${{ runner.temp }}/health-shards
+
+      - name: Download the single run's coverage map
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: health-single
+          path: ${{ runner.temp }}/health-single
+
+      - name: Merge the shards and compare with the single run
+        run: pnpm --dir extension health --merge "$RUNNER_TEMP/health-shards" --compare "$RUNNER_TEMP/health-single/coverage-final.json"
 
   dupes:
     # Reads the source only (no build): about a second of analysis after the shared setup.

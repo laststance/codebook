@@ -4,21 +4,55 @@
 //
 //   node scripts/checkHealth.mjs                 Fallow's human report on stdout
 //   node scripts/checkHealth.mjs --format json   Fallow's JSON report on stdout
+//   node scripts/checkHealth.mjs --keep-coverage <file>
+//                                                also copies the run's coverage-final.json to <file>
 //
-// Exit 0: no finding beyond the baseline. Exit 1: Fallow's findings. Exit 2: refused, with no health verdict, because the
-// evidence is missing, stale, mixed, failed or partial, or a producer or setting differs from the reference. The build,
-// the suite and this script's own lines go to stderr. No baseline is ever written; `pnpm health:static` is the fast
-// pre-check of the same complexity limits without coverage, per function, against fallow-health-baseline.json.
+// The same measurement can be split over CI jobs (Cycle 0094): shards measure, one merge scores.
+//
+//   node scripts/checkHealth.mjs --shard 2/3 --out <folder>
+//                                                builds, runs shard 2 of 3 of the compiled test files (whole files, balanced
+//                                                by test-timings.json) with NODE_V8_COVERAGE set and no report, and writes
+//                                                <folder>/raw (renamed V8 dumps) and <folder>/manifest.json
+//   node scripts/checkHealth.mjs --merge <folder> [--compare <coverage-final.json>] [--format json]
+//                                                builds, validates the shard sub-folders of <folder> (manifest count, exit
+//                                                codes, identity, every planned file once, every dump), reports all dumps
+//                                                with one c8 call, then scores health as a single run does. --compare also
+//                                                prints the SHA-256 of both coverage maps and refuses (exit 2) when they differ.
+//
+// Exit 0: no finding beyond the baseline (a shard: its dumps and manifest are written). Exit 1: Fallow's findings. Exit 2:
+// refused, with no health verdict, because the evidence is missing, stale, mixed, failed or partial, a producer or setting
+// differs from the reference, or the command line is invalid. The build, the suite and this script's own lines go to
+// stderr. No baseline is ever written; `pnpm health:static` is the fast pre-check of the same complexity limits without
+// coverage, per function, against fallow-health-baseline.json.
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, readdir, realpath, rm } from 'node:fs/promises'
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { delimiter, join, relative, sep } from 'node:path'
+import { delimiter, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 
+import {
+  SHARD_MANIFEST_FILE,
+  SHARD_RAW_FOLDER,
+  checkHealthShards,
+  sha256Of,
+} from './utils/checkHealthShards.mjs'
+import { planHealthShards } from './utils/planHealthShards.mjs'
 import { readBuildIdentity } from './utils/readBuildIdentity.mjs'
+import { readTestTimings } from './utils/readTestTimings.mjs'
 
 const extension = fileURLToPath(new URL('../', import.meta.url))
 const repository = join(extension, '..')
@@ -52,6 +86,10 @@ const REFUSED_EXIT_CODE = 2
 const MEASURED_SOURCE_NAME = /\.(?:[cm]?[jt]s|[jt]sx)$/
 /** One count of the summary that Node's TAP reporter ends a run with. */
 const TAP_SUMMARY_LINE = /^# (tests|pass|fail|cancelled|skipped|todo) (\d+)$/gm
+/** The shard count a command line may name; a larger number is a typing error. */
+const MAX_SHARD_TOTAL = 1000
+/** The recorded durations that balance the shard plan, relative to the extension. */
+const TIMINGS_FILE = 'test-timings.json'
 /** How many names a refusal lists before "and N more". */
 const SHOWN_NAME_LIMIT = 5
 
@@ -331,6 +369,41 @@ function readSummary(report) {
   return summary
 }
 
+/** The `node` arguments that run the given compiled tests with the spec reporter on stdout and the TAP report in a file, which {@link readPassingSummary} reads; shared by {@link runSuite} and {@link runShardSuite}. @example testRunnerArguments('/tmp/x/suite.tap', ['dist/tests/a.test.js']) // => ['--test', '--test-reporter=spec', …, 'dist/tests/a.test.js'] */
+function testRunnerArguments(report, tests) {
+  return [
+    '--test',
+    '--test-reporter=spec',
+    '--test-reporter-destination=stdout',
+    '--test-reporter=tap',
+    `--test-reporter-destination=${report}`,
+    ...tests,
+  ]
+}
+
+/**
+ * Reads the TAP summary of a finished test run and refuses a run that failed, ran no test or reports a failed or cancelled test; called by {@link runSuite} and {@link runShardSuite}.
+ * @param code - Exit code of the run.
+ * @param signal - Signal that ended the run, if any.
+ * @param report - Path of the run's TAP report.
+ * @returns The summary counts.
+ * @throws When the run failed or its summary is not a complete passing one.
+ * @example
+ * await readPassingSummary(0, null, '/tmp/x/suite.tap') // => { tests: 12, pass: 11, fail: 0, cancelled: 0, skipped: 1, todo: 0 }
+ */
+async function readPassingSummary(code, signal, report) {
+  if (code !== 0)
+    throw new Error(
+      `The suite failed (${describeExit(code, signal)}); a failed run measures no health.`,
+    )
+  const summary = readSummary(await readFile(report, 'utf8'))
+  if (summary.tests === 0 || summary.fail + summary.cancelled > 0)
+    throw new Error(
+      `The suite reported ${summary.tests} tests, ${summary.fail} failed and ${summary.cancelled} cancelled; only a complete passing run measures health.`,
+    )
+  return summary
+}
+
 /**
  * Runs every compiled test file once under the pinned c8, without filters, and reads the summary of that one run; called by {@link measureHealth} with the inventory of {@link listCompiledTests}.
  * @param output - This run's own temporary directory, which receives the coverage, the raw V8 data and the TAP report.
@@ -351,23 +424,12 @@ async function runSuite(output, tests) {
     `--reports-dir=${coverage}`,
     `--temp-directory=${join(output, 'raw')}`,
     process.execPath,
-    '--test',
-    '--test-reporter=spec',
-    '--test-reporter-destination=stdout',
-    '--test-reporter=tap',
-    `--test-reporter-destination=${report}`,
-    ...tests,
+    ...testRunnerArguments(report, tests),
   ])
-  if (code !== 0)
-    throw new Error(
-      `The suite failed (${describeExit(code, signal)}); a failed run measures no health.`,
-    )
-  const summary = readSummary(await readFile(report, 'utf8'))
-  if (summary.tests === 0 || summary.fail + summary.cancelled > 0)
-    throw new Error(
-      `The suite reported ${summary.tests} tests, ${summary.fail} failed and ${summary.cancelled} cancelled; only a complete passing run measures health.`,
-    )
-  return { ...summary, coverage: join(coverage, 'coverage-final.json') }
+  return {
+    ...(await readPassingSummary(code, signal, report)),
+    coverage: join(coverage, 'coverage-final.json'),
+  }
 }
 
 /**
@@ -511,20 +573,15 @@ async function reportHealth(reference, coverage, files, format) {
 }
 
 /**
- * Builds, runs the suite under coverage and scores health, refusing evidence that changed while it was made; called by {@link checkHealth} inside its own temporary directory.
+ * Refuses a measurement whose inputs or compiled output changed while the tests ran, which would mix two sources; called by {@link measureHealth}, {@link measureShard} and {@link measureMerge} after the tests.
  * @param reference - The reference of {@link readReference}.
- * @param output - This run's own temporary directory.
- * @param format - Fallow's output format.
- * @returns Fallow's exit code.
+ * @param before - {@link readInputs} as read before the build.
+ * @param compiled - {@link hashCompiled} as read after the build.
+ * @throws When an input or a compiled file differs now, naming the first few.
  * @example
- * await measureHealth(reference, '/tmp/codebook-health-x1', 'human') // => 0
+ * await assertInputsUnchanged(reference, before, compiled) // => undefined
  */
-async function measureHealth(reference, output, format) {
-  const before = await readInputs(reference)
-  await runBuild()
-  const tests = await listCompiledTests()
-  const compiled = await hashCompiled()
-  const suite = await runSuite(output, tests)
+async function assertInputsUnchanged(reference, before, compiled) {
   const changed = [
     ...changedNames(before, await readInputs(reference)),
     ...changedNames(compiled, await hashCompiled()),
@@ -533,39 +590,302 @@ async function measureHealth(reference, output, format) {
     throw new Error(
       `The inputs changed while the suite ran, so its coverage would mix two sources: ${shown(changed)}.`,
     )
+}
+
+/**
+ * Builds, runs the suite under coverage and scores health, refusing evidence that changed while it was made; called by {@link checkHealth} inside its own temporary directory.
+ * @param reference - The reference of {@link readReference}.
+ * @param output - This run's own temporary directory.
+ * @param format - Fallow's output format.
+ * @param keepCoverage - Absolute path to copy the run's `coverage-final.json` to, or `undefined`.
+ * @returns Fallow's exit code.
+ * @example
+ * await measureHealth(reference, '/tmp/codebook-health-x1', 'human') // => 0
+ */
+async function measureHealth(reference, output, format, keepCoverage) {
+  const before = await readInputs(reference)
+  await runBuild()
+  const tests = await listCompiledTests()
+  const compiled = await hashCompiled()
+  const suite = await runSuite(output, tests)
+  await assertInputsUnchanged(reference, before, compiled)
   const files = await assertCoverageSet(suite.coverage)
+  if (keepCoverage) await copyFile(suite.coverage, keepCoverage)
   console.error(
     `Measured suite: ${suite.tests} tests in ${tests.length} files; ${suite.pass} passed, ${suite.skipped} skipped, ${suite.todo} todo. Coverage of ${files} source files.`,
   )
   return reportHealth(reference, suite.coverage, files, format)
 }
 
+/** Hashes a compiled-output map ({@link hashCompiled}) into one value that names the whole `dist` tree. @example treeHash({ 'extension/dist/a.js': '9b1e…' }) // => '3f2a…' */
+function treeHash(hashes) {
+  const lines = Object.keys(hashes)
+    .sort()
+    .map((name) => `${name}:${hashes[name]}`)
+  return sha256Of(lines.join('\n'))
+}
+
 /**
- * Checks the reference, producers, settings and environment, then measures health in a temporary directory that only this run owns and removes; called once by this script.
- * @param format - Fallow's output format from the command line.
- * @returns Fallow's exit code.
+ * Reads what a shard's coverage was measured with and on, which the merge compares field by field with its own ({@link checkHealthShards}).
+ * @param compiled - {@link hashCompiled} of the build this process made.
+ * @returns `{ node, c8, v8ToIstanbul, c8rcSha256, distHash, srcHash, checkout }`.
  * @example
- * await checkHealth('human') // => 1 while findings exceed the baseline
+ * await readShardIdentity(await hashCompiled()) // => { node: '24.22.1', c8: '12.0.0', …, checkout: '/repo/extension' }
  */
-async function checkHealth(format) {
+async function readShardIdentity(compiled) {
+  const producers = await readProducers()
+  return {
+    node: producers.node,
+    c8: producers.c8,
+    v8ToIstanbul: producers.v8ToIstanbul,
+    c8rcSha256: await hashText(join(extension, '.c8rc.json')),
+    distHash: treeHash(compiled),
+    srcHash: (await readBuildIdentity(repository)).sourceHash,
+    // c8 maps coverage by absolute path, so shards and merge must share one checkout path.
+    checkout: await realpath(extension),
+  }
+}
+
+/**
+ * Runs the given compiled test files once with V8 coverage collected straight into `raw` (no c8 in a shard) and renames each dump with the shard prefix so the merge can pool them; called by {@link measureShard}.
+ * @param output - The shard's output folder, which receives `raw/` and the TAP report.
+ * @param shard - This shard's number, 1 or more.
+ * @param files - The compiled test files of this shard's share.
+ * @returns `{ exitCode, summary, dumps }`: the runner's exit code, the TAP counts and the renamed dumps `{ name, sha256 }` sorted by name.
+ * @throws When the run fails, ran no test, or reports a failed or cancelled test.
+ * @example
+ * await runShardSuite('/tmp/s2', 2, ['dist/tests/a.test.js']) // => { exitCode: 0, summary: { tests: 3, … }, dumps: [{ name: 'shard-2-coverage-1-2-0.json', sha256: '…' }] }
+ */
+async function runShardSuite(output, shard, files) {
+  const raw = join(output, SHARD_RAW_FOLDER),
+    report = join(output, 'suite.tap')
+  await mkdir(raw, { recursive: true })
+  const { code, signal } = await runChild(
+    process.execPath,
+    testRunnerArguments(report, files),
+    { env: { ...childEnvironment(), NODE_V8_COVERAGE: raw } },
+  )
+  const summary = await readPassingSummary(code, signal, report)
+  const dumps = []
+  for (const name of (await readdir(raw)).sort()) {
+    const renamed = `shard-${shard}-${name}`
+    await rename(join(raw, name), join(raw, renamed))
+    dumps.push({
+      name: renamed,
+      sha256: sha256Of(await readFile(join(raw, renamed))),
+    })
+  }
+  return { exitCode: code, summary, dumps }
+}
+
+/**
+ * Measures one shard: builds, runs this shard's share of the test files with V8 coverage collected directly, and writes the dumps and a manifest for the merge; called by {@link checkHealth} for `--shard i/N --out <folder>`.
+ * @param reference - The reference of {@link readReference}.
+ * @param mode - `{ shard, total, out }` from the command line.
+ * @returns 0: a shard gives no health verdict.
+ * @throws When the output folder is not empty, the shard has no file, a test fails, or the inputs changed during the run.
+ * @example
+ * await measureShard(reference, { shard: 2, total: 3, out: '/tmp/s2' }) // => 0
+ */
+async function measureShard(reference, { shard, total, out }) {
+  await mkdir(out, { recursive: true })
+  if ((await readdir(out)).length > 0)
+    throw new Error(`${out} is not empty; a shard writes into a new folder.`)
+  const before = await readInputs(reference)
+  await runBuild()
+  const tests = await listCompiledTests()
+  const compiled = await hashCompiled()
+  const timings = await readTestTimings(join(extension, TIMINGS_FILE))
+  const files = planHealthShards(tests, timings, total)[shard - 1]
+  if (files.length === 0)
+    throw new Error(
+      `Shard ${shard} of ${total} has no test file; ${tests.length} files cannot fill ${total} shards.`,
+    )
+  const suite = await runShardSuite(out, shard, files)
+  await assertInputsUnchanged(reference, before, compiled)
+  const manifest = {
+    shard,
+    total,
+    files,
+    exitCode: suite.exitCode,
+    identity: await readShardIdentity(compiled),
+    summary: suite.summary,
+    dumps: suite.dumps,
+  }
+  await writeFile(
+    join(out, SHARD_MANIFEST_FILE),
+    `${JSON.stringify(manifest, null, 2)}\n`,
+  )
+  console.error(
+    `Shard ${shard} of ${total}: ${suite.summary.tests} tests in ${files.length} files; ${suite.dumps.length} coverage dumps in ${out}.`,
+  )
+  return 0
+}
+
+/** Refuses a merged coverage map that is not byte for byte the single run's, after printing both SHA-256 values; the equivalence run of the sharded measurement. @example await assertSameCoverage('/tmp/x/coverage-final.json', '/tmp/single/coverage-final.json') // throws when the hashes differ */
+async function assertSameCoverage(merged, single) {
+  const mergedHash = sha256Of(await readFile(merged))
+  const singleHash = sha256Of(await readFile(single))
+  console.error(
+    `Coverage map SHA-256: merged ${mergedHash}, single run ${singleHash}.`,
+  )
+  if (mergedHash !== singleHash)
+    throw new Error(
+      "The merged coverage map differs from the single run's coverage map.",
+    )
+}
+
+/**
+ * Merges the shards' V8 dumps into one coverage map and scores health on it as a single run does; called by {@link checkHealth} for `--merge <folder>`.
+ * @param reference - The reference of {@link readReference}.
+ * @param output - This run's own temporary directory.
+ * @param mode - `{ folder, compare, format }` from the command line.
+ * @returns Fallow's exit code.
+ * @throws When the shards do not validate ({@link checkHealthShards}), c8 fails, the coverage map is not this source's, or `compare` names a different map.
+ * @example
+ * await measureMerge(reference, '/tmp/codebook-health-x1', { folder: '/tmp/shards', format: 'human' }) // => 0
+ */
+async function measureMerge(reference, output, { folder, compare, format }) {
+  const before = await readInputs(reference)
+  await runBuild()
+  const tests = await listCompiledTests()
+  const compiled = await hashCompiled()
+  const shards = await checkHealthShards({
+    folder,
+    plannedFiles: tests,
+    identity: await readShardIdentity(compiled),
+  })
+  // One folder for every dump; their names already carry the shard number.
+  const raw = join(output, 'raw'),
+    coverage = join(output, 'coverage')
+  await mkdir(raw)
+  for (const dump of shards.dumps)
+    await copyFile(dump.path, join(raw, dump.name))
+  const { code, signal } = await runChild(process.execPath, [
+    requireFromExtension.resolve('c8/bin/c8.js'),
+    'report',
+    '--all',
+    '--reporter=json',
+    `--reports-dir=${coverage}`,
+    `--temp-directory=${raw}`,
+  ])
+  if (code !== 0)
+    throw new Error(
+      `c8 report failed (${describeExit(code, signal)}); the merged dumps give no coverage.`,
+    )
+  await assertInputsUnchanged(reference, before, compiled)
+  const merged = join(coverage, 'coverage-final.json')
+  const files = await assertCoverageSet(merged)
+  console.error(
+    `Merged ${shards.total} shards: ${shards.summary.tests} tests in ${tests.length} files; ${shards.summary.pass} passed, ${shards.summary.skipped} skipped, ${shards.summary.todo} todo. Coverage of ${files} source files.`,
+  )
+  if (compare) await assertSameCoverage(merged, compare)
+  return reportHealth(reference, merged, files, format)
+}
+
+/**
+ * Checks the reference, producers, settings and environment, then measures health (alone, as one shard, or merged from shards) in a temporary directory that only this run owns and removes; called once by this script.
+ * @param mode - The command line as {@link readMode} reads it.
+ * @returns Fallow's exit code, or 0 for a shard.
+ * @example
+ * await checkHealth({ kind: 'single', format: 'human' }) // => 1 while findings exceed the baseline
+ */
+async function checkHealth(mode) {
   const reference = await readReference()
   assertMatching('producers', reference.producers, await readProducers())
   assertMatching('settings', reference.settings, await hashSettings())
   assertUnfilteredSuite(process.env)
+  if (mode.kind === 'shard') return measureShard(reference, mode)
   const output = await mkdtemp(join(tmpdir(), 'codebook-health-'))
   try {
-    return await measureHealth(reference, output, format)
+    return mode.kind === 'merge'
+      ? await measureMerge(reference, output, mode)
+      : await measureHealth(reference, output, mode.format, mode.keepCoverage)
   } finally {
     await rm(output, { recursive: true, force: true })
   }
 }
 
+/** Reads a `--shard` value `i/N`. @example readShard('2/3') // => { shard: 2, total: 3 } */
+function readShard(text) {
+  const match = /^(\d+)\/(\d+)$/.exec(text)
+  const shard = Number(match?.[1]),
+    total = Number(match?.[2])
+  if (!match || shard < 1 || shard > total || total > MAX_SHARD_TOTAL)
+    throw new Error(
+      `--shard takes i/N with 1 <= i <= N <= ${MAX_SHARD_TOTAL}, not ${JSON.stringify(text)}.`,
+    )
+  return { shard, total }
+}
+
+/** Options of the other modes that a shard run refuses. */
+const NOT_FOR_SHARD = ['format', 'compare', 'keepCoverage']
+
+/**
+ * Turns the parsed command line into one of the three modes and refuses an invalid combination before anything is built; the first step of this script.
+ * @param values - The `values` of `parseArgs` (with `keepCoverage` for `--keep-coverage`).
+ * @returns `{ kind: 'single', format, keepCoverage }`, `{ kind: 'shard', shard, total, out }` or `{ kind: 'merge', folder, compare, format }`, paths absolute.
+ * @throws When options of different modes are mixed, `--shard` is not `i/N`, `--out` is missing, or the `--merge` folder is no directory.
+ * @example
+ * await readMode({ shard: '2/3', out: 'shard-2' }) // => { kind: 'shard', shard: 2, total: 3, out: '/cwd/shard-2' }
+ */
+async function readMode(values) {
+  const refuse = (reason) => {
+    throw new Error(`${reason}.`)
+  }
+  if (values.shard !== undefined && values.merge !== undefined)
+    refuse('--shard and --merge are different modes')
+  if (values.shard !== undefined) {
+    if (values.out === undefined) refuse('--shard needs --out <folder>')
+    if (NOT_FOR_SHARD.some((name) => values[name] !== undefined))
+      refuse('--shard takes only --out')
+    return {
+      kind: 'shard',
+      ...readShard(values.shard),
+      out: resolve(values.out),
+    }
+  }
+  if (values.out !== undefined) refuse('--out belongs to --shard')
+  if (values.merge !== undefined) {
+    if (values.keepCoverage !== undefined)
+      refuse('--keep-coverage belongs to the single run')
+    const folder = resolve(values.merge)
+    if (!(await stat(folder).catch(() => null))?.isDirectory())
+      refuse(`--merge needs a folder of shard results; ${values.merge} is none`)
+    return {
+      kind: 'merge',
+      folder,
+      compare:
+        values.compare === undefined ? undefined : resolve(values.compare),
+      format: values.format ?? 'human',
+    }
+  }
+  if (values.compare !== undefined) refuse('--compare belongs to --merge')
+  return {
+    kind: 'single',
+    format: values.format ?? 'human',
+    keepCoverage:
+      values.keepCoverage === undefined
+        ? undefined
+        : resolve(values.keepCoverage),
+  }
+}
+
 try {
-  // Only the report's format is a choice: coverage, baseline, limits and the test files come from the run itself.
+  // The report's format and the sharded run's folders are the only choices: coverage, baseline, limits and the test files come from the run itself.
   const { values } = parseArgs({
-    options: { format: { type: 'string', default: 'human' } },
+    options: {
+      format: { type: 'string' },
+      'keep-coverage': { type: 'string' },
+      shard: { type: 'string' },
+      out: { type: 'string' },
+      merge: { type: 'string' },
+      compare: { type: 'string' },
+    },
   })
-  process.exitCode = await checkHealth(values.format)
+  process.exitCode = await checkHealth(
+    await readMode({ ...values, keepCoverage: values['keep-coverage'] }),
+  )
 } catch (error) {
   console.error(`Health refused: ${error.message}`)
   process.exitCode = REFUSED_EXIT_CODE
