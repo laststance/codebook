@@ -196,6 +196,7 @@ test('a build slower than the facts bound still starts the server', async (conte
     behavior: { port },
     factsTimeoutMs: 400,
     prepareLibrary: async () => {
+      // gstack-timing-ok: the build must outlast the 400 ms facts bound to show the bound does not run during the build
       await new Promise((resolve) => setTimeout(resolve, 900))
     },
   })

@@ -143,7 +143,7 @@ async function savedLibraryStudy(
   const receipt = service.start({
     instanceId: service.instanceId,
     profile: 'repository-browser',
-    key: 'library-study',
+    key: 'entry-load',
     configuration: harness.definition.configuration,
   })
   const record = service.record(receipt)

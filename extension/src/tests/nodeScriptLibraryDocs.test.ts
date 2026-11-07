@@ -41,6 +41,7 @@ test('the library help sample parses with the live node-script schema', () => {
   assert.equal(/redux|toolkit/i.test(JSON.stringify(sample)), false)
 })
 
+// pregate-literal: API_VERSION=1.33 the node-script library route's minimum API, which stays 1.33 after the current API moved on
 // protects=the help's library section states when to use it, the confirmation, the build and pack with what they write, the building phase, the observation states, the refusals, every limit and the API 1.33 gate; fails_when=any of those leaves the section or a refusal reason is not listed; no_claim=the behavior itself, which the library tests cover
 test('the library help section states the route, its observation states, refusals and limits', () => {
   // Arrange
