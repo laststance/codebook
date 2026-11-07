@@ -342,7 +342,7 @@ test(
 test(
   'Open Recording closes the Study and shows the Recorded application beside the captured source in the order Cursor 3.29.9 reported it',
   {
-    todo: 'first divergence: the start state is built (recordedReaderHarness, bypassed from its creation) and equals the take at the recording mark; the replay then fails at seq 92 (groupsChanged closed an unplaced group, groupIndex -1): after seq 90 closed the Study tab Cursor removed the emptied Study group, while the fake keeps an empty unlocked group (the harness modelling gap of the VS Code open-study window), so the trace names a group the fake never closed (trace-mapping-failed)',
+    todo: 'first divergence: the start state is built (recordedReaderHarness, bypassed from its creation) and equals the take at the recording mark; seq 92 (groupsChanged closed the emptied Study group, groupIndex -1) now maps, and the replay then fails at seq 120 (tabsChanged closed "codebook · Application" in group 0 after Cursor had opened a second Application tab in the new group at seq 112) with trace-mapping-failed: the fake never had that tab there, because it keeps the empty unlocked Study group Cursor removed (the harness modelling gap of the VS Code open-study window)',
   },
   async () => {
     // Arrange

@@ -214,7 +214,7 @@ function shownRefusals(harness: Harness): string {
 test(
   'Open Study Workspace beside an empty first group ends with the Application in the learner group and the captured source in its own group',
   {
-    todo: 'first divergence: seq 18 groupsChanged closed (VS Code removed the empty first group after the focus churn of seq 6 to 16) and seq 24 tabsChanged opened the Application in the learner group; the fake kept the empty group, opened the Application in it, left index.ts beside the captured source, and its last visibleTextEditors burst has no trace event (1 unmatched burst, 2 unreached events)',
+    todo: 'first divergence: seq 18 (groupsChanged closed the empty first group, groupIndex -1) now maps, and the replay then fails at seq 44 (tabsChanged opened Captured-index.ts in the new middle group) with trace-mapping-failed: the fake never had that tab there, because it keeps the empty first group VS Code removed after the focus churn of seq 6 to 16 and opens the Application and the captured source in other groups than the take (seq 24 opened the Application in the learner group)',
   },
   async () => {
     // Arrange
