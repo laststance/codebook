@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { basename, dirname } from 'node:path'
-import { createContext, runInContext } from 'node:vm'
+import { compileFunction, createContext, runInContext } from 'node:vm'
 
 import { withSavedSessionEditorStubs } from './savedSessionEditorStubs'
 
@@ -65,30 +65,37 @@ export async function loadModule<Module>(
     require: (name: string) => {
       if (Object.hasOwn(dependencies, name)) return dependencies[name]
       if (!Object.hasOwn(sameContext, name)) return required(name)
-      if (!sameContextExports.has(name)) {
-        const file = sameContext[name]!,
-          sibling = { exports: {} }
-        // The sibling runs as a function of this context, with its own module object and its own relative requires.
-        const evaluate = runInContext(
-          `(function (module, exports, require, __dirname, __filename) {${sameContextSources.get(name)}\n})`,
-          context,
-          { filename: file },
-        ) as (...values: unknown[]) => void
+      // Keyed by file: two spellings of one sibling's path (`./support` from a part, `./studyWorkspace/support` from the reader) share one instance and so one module-level state.
+      const file = sameContext[name]!
+      if (!sameContextExports.has(file)) {
+        const sibling = { exports: {} }
+        // The sibling runs as a function of this context, with its own module object and its own relative requires. compileFunction, as Node's own CommonJS loader does, adds no wrapper text, so V8's coverage offsets match the file and its source map (a wrapper on line 1 shifted every offset and c8 lost the sibling's function records).
+        const source = sameContextSources.get(name)
+        // A spelling missing from the map would compile an empty module silently.
+        if (source === undefined)
+          throw new Error(`loadModule: no source read for sibling ${name}`)
+        const evaluate = compileFunction(
+          source,
+          ['module', 'exports', 'require', '__dirname', '__filename'],
+          { filename: file, parsingContext: context },
+        )
         const siblingRequire = createRequire(file)
         // The sibling resolves the stubbed dependencies first, as the module that requires it does.
         evaluate(
           sibling,
           sibling.exports,
+          // A request the module itself would answer from a stand-in or from its context (a part naming the shared leaf by its own spelling) goes through the module's require.
           (request: string) =>
-            Object.hasOwn(dependencies, request)
-              ? dependencies[request]
+            Object.hasOwn(dependencies, request) ||
+            Object.hasOwn(sameContext, request)
+              ? (context.require as (name: string) => unknown)(request)
               : siblingRequire(request),
           dirname(file),
           file,
         )
-        sameContextExports.set(name, sibling.exports)
+        sameContextExports.set(file, sibling.exports)
       }
-      return sameContextExports.get(name)
+      return sameContextExports.get(file)
     },
   })
   runInContext(await readFile(path, 'utf8'), context, { filename: path })

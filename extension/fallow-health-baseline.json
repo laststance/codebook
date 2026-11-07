@@ -154,10 +154,31 @@
         "count": 11
       },
       "complexity_high": {
-        "count": 9
+        "count": 4
       },
       "complexity_moderate": {
-        "count": 9
+        "count": 6
+      }
+    },
+    "src/studyWorkspace/presentationGuards.ts": {
+      "complexity_high": {
+        "count": 3
+      }
+    },
+    "src/studyWorkspace/presentationState.ts": {
+      "complexity_high": {
+        "count": 1
+      },
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "src/studyWorkspace/replayOpening.ts": {
+      "complexity_high": {
+        "count": 1
+      },
+      "complexity_moderate": {
+        "count": 2
       }
     },
     "src/ui/repositoryHtml.ts": {
@@ -523,7 +544,7 @@
         "count": 3
       },
       "complexity_high": {
-        "count": 2
+        "count": 1
       }
     },
     "src/studyWorkspace.ts\u0000action": {
@@ -531,17 +552,7 @@
         "count": 1
       }
     },
-    "src/studyWorkspace.ts\u0000admitPresentation": {
-      "complexity_high": {
-        "count": 1
-      }
-    },
     "src/studyWorkspace.ts\u0000checkpoint": {
-      "complexity_moderate": {
-        "count": 1
-      }
-    },
-    "src/studyWorkspace.ts\u0000loadPlayback": {
       "complexity_moderate": {
         "count": 1
       }
@@ -551,18 +562,8 @@
         "count": 1
       }
     },
-    "src/studyWorkspace.ts\u0000observeEditorGroups": {
-      "complexity_high": {
-        "count": 1
-      }
-    },
     "src/studyWorkspace.ts\u0000open": {
       "complexity_critical": {
-        "count": 1
-      }
-    },
-    "src/studyWorkspace.ts\u0000openNodeHistoryFromHost": {
-      "complexity_moderate": {
         "count": 1
       }
     },
@@ -578,16 +579,6 @@
     },
     "src/studyWorkspace.ts\u0000performPresentation": {
       "complexity_critical": {
-        "count": 1
-      }
-    },
-    "src/studyWorkspace.ts\u0000presentPlayback": {
-      "complexity_high": {
-        "count": 1
-      }
-    },
-    "src/studyWorkspace.ts\u0000presentationState": {
-      "complexity_high": {
         "count": 1
       }
     },
@@ -626,11 +617,6 @@
         "count": 1
       }
     },
-    "src/studyWorkspace.ts\u0000retained": {
-      "complexity_moderate": {
-        "count": 1
-      }
-    },
     "src/studyWorkspace.ts\u0000selectNodeHistoryEvent": {
       "complexity_high": {
         "count": 1
@@ -643,6 +629,46 @@
     },
     "src/studyWorkspace.ts\u0000understand": {
       "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "src/studyWorkspace/presentationGuards.ts\u0000<arrow>": {
+      "complexity_high": {
+        "count": 1
+      }
+    },
+    "src/studyWorkspace/presentationGuards.ts\u0000admitPresentation": {
+      "complexity_high": {
+        "count": 1
+      }
+    },
+    "src/studyWorkspace/presentationGuards.ts\u0000observeEditorGroups": {
+      "complexity_high": {
+        "count": 1
+      }
+    },
+    "src/studyWorkspace/presentationState.ts\u0000presentationState": {
+      "complexity_high": {
+        "count": 1
+      }
+    },
+    "src/studyWorkspace/presentationState.ts\u0000retained": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "src/studyWorkspace/replayOpening.ts\u0000loadPlayback": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "src/studyWorkspace/replayOpening.ts\u0000openNodeHistoryFromHost": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "src/studyWorkspace/replayOpening.ts\u0000presentPlayback": {
+      "complexity_high": {
         "count": 1
       }
     },

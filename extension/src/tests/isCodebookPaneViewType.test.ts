@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { readdir, readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { test } from 'node:test'
 
@@ -61,13 +61,18 @@ test('a pane is matched against the named kinds only', () => {
 // Value: protects=every place of the Study workspace that asks which Codebook pane a tab is asks the one matcher; fails_when=a view type is compared inline again, with a literal main-thread form or a hand-built pair of forms; why_new=Cycle 0044 0037-PR1: fifteen sites compared the two forms by hand; seam=none
 test('the Study workspace compares the view type of a webview tab through the one matcher only', async () => {
   // Arrange
-  const source = await readFile(
-    resolve(__dirname, '../../src/studyWorkspace.ts'),
-    'utf8',
+  const partsFolder = resolve(__dirname, '../../src/studyWorkspace')
+  const partFiles = (await readdir(partsFolder))
+    .filter((name) => name.endsWith('.ts'))
+    .map((name) => resolve(partsFolder, name))
+  const sources = await Promise.all(
+    [resolve(__dirname, '../../src/studyWorkspace.ts'), ...partFiles].map(
+      (file) => readFile(file, 'utf8'),
+    ),
   )
   // Act
-  const inlineComparisons = source
-    .split('\n')
+  const inlineComparisons = sources
+    .flatMap((source) => source.split('\n'))
     .filter(
       (line) =>
         line.includes('mainThreadWebview-') ||
