@@ -22,7 +22,11 @@ const LAUNCHER = join(__dirname, '..', 'viteLauncher.js')
 /** The facts message of the launcher, as far as these tests read it. */
 type FactsMessage = {
   facts: ViteFacts
-  libraryBlockers?: { aliased: string[]; optimizeInclude: string[] }
+  libraryBlockers?: {
+    aliased: string[]
+    optimizeInclude: string[]
+    deduped: string[]
+  }
 }
 
 /** Library options over a real private folder whose packed folder stays empty, as before the build. */
@@ -110,14 +114,18 @@ test('creates the server with the redirect plugin, a private cache, the optimize
   )
 })
 
-// protects=the facts message names the alias and optimizeDeps.include blockers read from the same resolved config the server uses; fails_when=blockers are missing, read from another config, or sent for a run without library; no_claim=how the extension refuses on them (the run integration)
+// protects=the facts message names the alias, optimizeDeps.include and resolve.dedupe blockers read from the same resolved config the server uses; fails_when=blockers are missing, read from another config, or sent for a run without library; no_claim=how the extension refuses on them (the run integration)
 test('reports the blockers of the resolved config in the facts message only for a library run', async (context) => {
   // Arrange
   const library = await libraryOptions(context)
   const port = await freePort()
   const config = {
-    resolve: { alias: [{ find: '@acme/widgets', replacement: '/x' }] },
     optimizeDeps: { include: ['@acme/widgets/sub'] },
+    // The sibling `react` entry proves a package other than the library is not reported.
+    resolve: {
+      alias: [{ find: '@acme/widgets', replacement: '/x' }],
+      dedupe: ['react', '@acme/widgets'],
+    },
   }
   // Act
   const withLibrary = await factsOf(context, { port, config }, library)
@@ -126,6 +134,7 @@ test('reports the blockers of the resolved config in the facts message only for 
   assert.deepEqual(withLibrary.libraryBlockers, {
     aliased: ['@acme/widgets'],
     optimizeInclude: ['@acme/widgets/sub'],
+    deduped: ['@acme/widgets'],
   })
   assert.equal(withoutLibrary.libraryBlockers, undefined)
 })

@@ -1,7 +1,7 @@
 import { readFileSync, realpathSync, statSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve, sep } from 'node:path'
+import { join, relative, resolve, sep } from 'node:path'
 
 import {
   LIBRARY_RUN_FOLDER_PREFIX,
@@ -21,6 +21,7 @@ import {
   assertLibraryRouteSupported,
   libraryBuildPath,
 } from './utils/assertLibraryRouteSupported'
+import { canonicalJson } from './utils/canonicalJson'
 import type { ViteLibraryRunQuestion } from './utils/createViteLibraryRunAsker'
 import { isInsideFolder } from './utils/isInsideFolder'
 import { removeFolderUnlessCleanupPending } from './utils/removeFolderUnlessCleanupPending'
@@ -165,6 +166,10 @@ export class ViteLibraryRoute {
   private node?: { executable: string; version: string }
   private privateFolder?: string
   private packedRoot?: string
+  /** The checked-out library's real folder, where a linked install of the library resolves to. */
+  private libraryRoot?: string
+  /** The peers and `imports` the redirect was set up with before the pack. */
+  private plannedManifest?: LibraryManifestParts
   private prepared?: PreparedLibraryCore
   private phase?: ViteLibraryPhase
   private cleanup?: LibraryCleanup['cleanup']
@@ -230,6 +235,8 @@ export class ViteLibraryRoute {
     const manifest = await (
       dependencies.readManifest ?? readLibraryManifestParts
     )(supported.libraryRoot)
+    this.libraryRoot = supported.libraryRoot
+    this.plannedManifest = manifest
     this.phase = 'confirming'
     try {
       await this.askLearner(signal, confirmTimeoutMs)
@@ -345,6 +352,7 @@ export class ViteLibraryRoute {
         },
         { node, signal },
       )
+      await this.refuseWhenPackedManifestDiffers(core)
       await (this.input.dependencies.writeAnchor ?? writeLibraryAnchor)(core)
       // Set only once the anchor is written: a failed preparation never serves nor observes.
       this.prepared = core
@@ -376,6 +384,39 @@ export class ViteLibraryRoute {
   }
 
   /**
+   * Refuses when the pack rewrote the peers or `imports` the redirect was set up with.
+   *
+   * The launcher's redirect plugin was created from the checked-out `package.json` before the pack; a pack that rewrites these fields (for example `publishConfig`) would route peers or `#` imports from stale data while the run reads complete. Peers compare as a set, `imports` canonically (key order does not matter).
+   * @param core - The prepared library with the packed manifest's peers and imports.
+   * @throws `LIBRARY_BUILD_FAILED` (`pack-error`, step `link`, `sideEffects: "partial"`) through {@link PreparedLibraryCore.failLink}, which removes the private folder.
+   */
+  private async refuseWhenPackedManifestDiffers(
+    core: PreparedLibraryCore,
+  ): Promise<void> {
+    const planned = this.plannedManifest
+    if (!planned) return
+    const plannedPeers = new Set(planned.peers)
+    const packedPeers = new Set(core.peers)
+    const peersDiffer =
+      plannedPeers.size !== packedPeers.size ||
+      [...packedPeers].some((peer) => !plannedPeers.has(peer))
+    // `undefined` and `{}` differ on purpose: either way the redirect was set up from the checked-out value.
+    const importsDiffer =
+      canonicalJson(planned.imports ?? null) !==
+      canonicalJson(core.imports ?? null)
+    const changed = peersDiffer
+      ? 'peerDependencies'
+      : importsDiffer
+        ? 'imports'
+        : undefined
+    if (changed === undefined) return
+    await core.failLink(
+      `The packed package.json changed ${changed} from the checked-out package.json, but the redirect was set up from the checked-out package.json before the pack, so the run would route ${changed === 'imports' ? 'package imports' : 'peers'} from stale data.`,
+      { sideEffects: 'partial' },
+    )
+  }
+
+  /**
    * Seam 3, observation: judges one script URL the page's debugger announced as parsed.
    *
    * A same-origin URL is attributed to a file (`/@fs/<absolute>` to that path, otherwise the app root plus the pathname, query dropped; real path). A file inside the packed folder counts as loaded; a file in any other `node_modules/<package>` folder, or an optimizer chunk whose metadata names such a source, counts as another copy. A module that was only transformed never reaches here.
@@ -401,8 +442,19 @@ export class ViteLibraryRoute {
 
   /** Records the first other copy's path. */
   private noteOtherCopy(file: string): void {
+    if (this.isOtherCopyFile(file)) this.publishedCopyPath ??= file
+  }
+
+  /**
+   * Tells whether a real file belongs to a copy of the library other than the packed one: a `node_modules/<package>` folder, or the checked-out library folder itself (where a workspace or `npm link` install resolves to).
+   * Source-map sources are never parsed scripts, so a library-source stop does not reach here. The library's own `node_modules` (its dependencies) is not a copy of the library.
+   */
+  private isOtherCopyFile(realFile: string): boolean {
     const name = this.packageName
-    if (name && isInPackageCopy(file, name)) this.publishedCopyPath ??= file
+    if (name && isInPackageCopy(realFile, name)) return true
+    const { libraryRoot } = this
+    if (!libraryRoot || !isInsideFolder(libraryRoot, realFile)) return false
+    return !relative(libraryRoot, realFile).split(sep).includes('node_modules')
   }
 
   /** Maps a script URL to the real file it is served from, or `undefined` for a foreign origin or a URL with no file behind it. */
@@ -411,24 +463,31 @@ export class ViteLibraryRoute {
     isOwnedOrigin: (origin: string) => boolean,
   ): string | undefined {
     if (this.judgedUrls.has(url)) return this.judgedUrls.get(url)
-    let file: string | undefined
+    let candidate: string | undefined
     try {
       const parsed = new URL(url)
       if (isOwnedOrigin(parsed.origin)) {
         this.pageObserved = true
         const pathname = decodeURIComponent(parsed.pathname)
-        const candidate = pathname.startsWith('/@fs/')
+        const filePath = pathname.startsWith('/@fs/')
           ? pathname.slice('/@fs'.length)
           : join(this.input.appRoot, pathname)
         // A Windows drive path arrives as `/C:/…`; the leading slash is dropped.
-        file = realpathSync(
-          /^\/[A-Za-z]:/.test(candidate) ? candidate.slice(1) : candidate,
-        )
+        candidate = /^\/[A-Za-z]:/.test(filePath) ? filePath.slice(1) : filePath
       }
     } catch {
-      // A virtual module (`/@vite/client`), a data URL or a vanished file has no file behind it.
-      file = undefined
+      // A data URL or an unparsable one has no file by construction.
     }
+    let file: string | undefined
+    if (candidate !== undefined) {
+      try {
+        file = realpathSync(candidate)
+      } catch {
+        // A file not there yet (or a virtual module): not cached, so a URL announced again after the file appeared is still judged.
+        return undefined
+      }
+    }
+    // Only definite results are cached: a resolved file, or a foreign origin.
     this.judgedUrls.set(url, file)
     return file
   }
@@ -467,7 +526,7 @@ export class ViteLibraryRoute {
         } catch {
           continue
         }
-        if (isInPackageCopy(realSource, name))
+        if (this.isOtherCopyFile(realSource))
           this.publishedCopyPath ??= realSource
       }
     } catch (error) {

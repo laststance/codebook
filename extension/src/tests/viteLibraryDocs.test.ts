@@ -74,6 +74,7 @@ test('the viteLibrary help has one anchor per new reason and lists every unsuppo
     'library-needs-package-root',
     'library-optimize-include',
     'library-aliased',
+    'library-dedupe',
   ]) {
     const row: unknown = Reflect.get(refusals, reason)
     assert.ok(typeof row === 'object' && row !== null, reason)

@@ -12,7 +12,7 @@ import type {
   DevelopmentApp,
   DevelopmentServerStart,
 } from '../developmentServerAdapter'
-import type { StudyError } from '../errors'
+import { StudyError } from '../errors'
 import type {
   ViteLauncherOptions,
   ViteLauncherReport,
@@ -90,7 +90,7 @@ function ownedViteCacheDir(
 }
 
 /**
- * Words the refusal for a library run whose resolved config would defeat the redirect to the packed copy: an alias of the package, or a pre-bundled `optimizeDeps.include` of it.
+ * Words the refusal for a library run whose resolved config would defeat the redirect to the packed copy: an alias of the package, a pre-bundled `optimizeDeps.include` of it, or a `resolve.dedupe` of it.
  *
  * Why it exists: the blockers are read from the same resolved config the server uses (decision D9), so the run refuses before anything is built or started. Called by {@link launchViteDevelopmentServer} right after the facts, for a library run only.
  *
@@ -100,7 +100,7 @@ function ownedViteCacheDir(
  * @param mask - Masks env values and secret shapes in a sentence.
  * @returns The `LIBRARY_BUILD_UNSUPPORTED` error to throw, or `undefined` when nothing blocks.
  * @example
- * const refusal = libraryBlockerRefusal({ aliased: ['@acme/widgets'], optimizeInclude: [] }, '@acme/widgets', 'vite.config.ts', mask)
+ * const refusal = libraryBlockerRefusal({ aliased: ['@acme/widgets'], optimizeInclude: [], deduped: [] }, '@acme/widgets', 'vite.config.ts', mask)
  * // refusal.details.reason === 'library-aliased'
  */
 function libraryBlockerRefusal(
@@ -110,21 +110,32 @@ function libraryBlockerRefusal(
   mask: (text: string) => string,
 ): StudyError | undefined {
   if (!blockers) return undefined
-  // An alias is reported before an include: either one defeats the redirect, and one fix at a time is clearer.
-  const reason = blockers.aliased.length
-    ? 'library-aliased'
-    : blockers.optimizeInclude.length
-      ? 'library-optimize-include'
-      : undefined
-  if (reason === undefined) return undefined
-  const entries = (
-    reason === 'library-aliased' ? blockers.aliased : blockers.optimizeInclude
-  ).map(mask)
+  // An alias is reported before an include, an include before a dedupe: each one defeats the redirect, and one fix at a time is clearer.
   const where = configFile ? ` (${mask(configFile)})` : ''
-  const sentence =
-    reason === 'library-aliased'
-      ? `The Vite config${where} aliases ${packageName}: ${entries.join(', ')}. An alias takes the import away from the redirect to the packed checked-out library, so the Example would run another copy. Nothing was built or started.`
-      : `The Vite config${where} pre-bundles ${packageName} through optimizeDeps.include: ${entries.join(', ')}. Pre-bundling pulls the installed copy past the redirect to the packed checked-out library. Nothing was built or started.`
+  const found = [
+    {
+      reason: 'library-aliased',
+      entries: blockers.aliased,
+      describe: (listed: string) =>
+        `aliases ${packageName}: ${listed}. An alias takes the import away from the redirect to the packed checked-out library, so the Example would run another copy.`,
+    },
+    {
+      reason: 'library-optimize-include',
+      entries: blockers.optimizeInclude,
+      describe: (listed: string) =>
+        `pre-bundles ${packageName} through optimizeDeps.include: ${listed}. Pre-bundling pulls the installed copy past the redirect to the packed checked-out library.`,
+    },
+    {
+      reason: 'library-dedupe',
+      entries: blockers.deduped,
+      describe: (listed: string) =>
+        `lists ${packageName} in resolve.dedupe: ${listed}. Vite resolves a deduped package from the project root, so the page would get the installed copy and not the packed checked-out library. Remove it from resolve.dedupe, or run without library.`,
+    },
+  ].find((blocker) => blocker.entries.length > 0)
+  if (!found) return undefined
+  const { reason } = found
+  const entries = found.entries.map(mask)
+  const sentence = `The Vite config${where} ${found.describe(entries.join(', '))} Nothing was built or started.`
   return createLibraryBuildError(
     'LIBRARY_BUILD_UNSUPPORTED',
     reason,
@@ -171,7 +182,7 @@ function refuseLaunch(app: DevelopmentApp): void {
  * @param blockers - The blockers the launcher reported.
  * @param configFile - The config file the settings come from, when there is one.
  * @param mask - Masks env values and secret shapes in a sentence.
- * @throws `LIBRARY_BUILD_UNSUPPORTED` (`library-aliased` or `library-optimize-include`, `details.sideEffects` `none`).
+ * @throws `LIBRARY_BUILD_UNSUPPORTED` (`library-aliased`, `library-optimize-include` or `library-dedupe`, `details.sideEffects` `none`).
  * @example refuseBlockedLibrary(request, app, report.libraryBlockers, 'vite.config.ts', mask)
  */
 function refuseBlockedLibrary(
@@ -203,7 +214,7 @@ const LAUNCHER_WATCH_INTERVAL_MS = 100
  * @param request - The run's start request; a request without `prepareLibrary` builds nothing.
  * @param app - The launcher, told not to listen when the build fails.
  * @param mask - Masks env values and secret shapes in a sentence.
- * @throws What the build raised (`LIBRARY_BUILD_UNSUPPORTED` or `LIBRARY_BUILD_FAILED`); `VITE_LAUNCHER_FAILED` when the launcher exited during the build (the build is cancelled first).
+ * @throws What the build raised (`LIBRARY_BUILD_UNSUPPORTED` or `LIBRARY_BUILD_FAILED`); `VITE_LAUNCHER_FAILED` when the launcher exited during the build (the build is cancelled and has settled first, unless it raised its own typed error, which wins).
  * @example await buildLibraryBeforeListen(request, app, mask)
  */
 async function buildLibraryBeforeListen(
@@ -213,35 +224,32 @@ async function buildLibraryBeforeListen(
 ): Promise<void> {
   if (!request.viteLibrary || !request.prepareLibrary) return
   const launcherGone = new AbortController()
-  let watcher: ReturnType<typeof setInterval> | undefined
-  const launcherExit = new Promise<never>((_resolve, reject) => {
-    watcher = setInterval(() => {
-      // A stopped run closes the launcher itself: its own stop error is the message, not a launcher failure.
-      if (app.isRunning() || request.signal.aborted) return
-      clearInterval(watcher)
-      const { exitCode, signal } = app.exitStatus()
-      // Cancels the build first, then settles the race with the typed error.
-      launcherGone.abort()
-      reject(
-        viteRefusal(
-          'VITE_LAUNCHER_FAILED',
-          mask(
-            `The Vite launcher exited while the library was being built (${exitCode ?? signal ?? 'no exit status'}): ${app.outputTail()}`,
-          ),
-        ),
-      )
-    }, LAUNCHER_WATCH_INTERVAL_MS)
-  })
-  try {
-    await Promise.race([
-      request.prepareLibrary(
-        AbortSignal.any([request.signal, launcherGone.signal]),
+  // Set by the watcher once the launcher exited; the build is then cancelled and awaited.
+  let launcherFailure: StudyError | undefined
+  const watcher = setInterval(() => {
+    // A stopped run closes the launcher itself: its own stop error is the message, not a launcher failure.
+    if (app.isRunning() || request.signal.aborted) return
+    clearInterval(watcher)
+    const { exitCode, signal } = app.exitStatus()
+    launcherFailure = viteRefusal(
+      'VITE_LAUNCHER_FAILED',
+      mask(
+        `The Vite launcher exited while the library was being built (${exitCode ?? signal ?? 'no exit status'}): ${app.outputTail()}`,
       ),
-      launcherExit,
-    ])
+    )
+    // Cancels the build; the start waits for it to settle (bounded by LIBRARY_BUILD_TIMEOUT_MS) so its child processes and tracked-file check finish before the run cleans up.
+    launcherGone.abort()
+  }, LAUNCHER_WATCH_INTERVAL_MS)
+  try {
+    await request.prepareLibrary(
+      AbortSignal.any([request.signal, launcherGone.signal]),
+    )
+    if (launcherFailure) throw launcherFailure
   } catch (error) {
     // The server never listens after a failed build; the typed build error is the message that matters.
     refuseLaunch(app)
+    // A typed build error (a tracked-file step) names a fact about the learner's repository and wins; the cancellation the abort caused reads as the launcher failure.
+    if (launcherFailure && !(error instanceof StudyError)) throw launcherFailure
     throw error
   } finally {
     clearInterval(watcher)

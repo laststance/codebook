@@ -108,3 +108,17 @@ test('the retained configuration of formats 3 to 8 refuses a library declaration
   // Assert
   assert.equal(result.success, false)
 })
+
+// protects=a retained configuration with an explicit library of undefined is the older format and a declared library still needs format 16; fails_when=the refine tests the key instead of the value, which refuses the older format for a field that declares nothing; no_claim=the saved bytes (JSON drops an undefined field)
+test('the retained configuration accepts an explicit undefined library and refuses a declared one', () => {
+  // Arrange: no packageRoot, which the retained schema refuses for formats 3 to 8 on its own
+  const { packageRoot: _packageRoot, ...flatConfiguration } = sample()
+  const withoutLibrary = { ...flatConfiguration, library: undefined }
+  const withLibrary = flatConfiguration
+  // Act
+  const undeclared = retainedRepositoryConfigSchema.safeParse(withoutLibrary)
+  const declared = retainedRepositoryConfigSchema.safeParse(withLibrary)
+  // Assert
+  assert.equal(undeclared.success, true)
+  assert.equal(declared.success, false)
+})

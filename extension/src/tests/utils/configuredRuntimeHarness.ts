@@ -374,8 +374,14 @@ export async function configuredRuntimeHarness(
     entryPath?: string
     /** Makes the stand-in browser's first `close` fail, as a close that could not confirm Chrome's exit does; the second succeeds. */
     closeFailsOnce?: boolean
-    /** Makes the stand-in browser's first `close` wait for this promise and then fail, as a close that outlasts the close bound before it fails; later closes succeed. */
+    /** Makes the stand-in page's first `Page.close` wait for this promise and then fail, as a page close that outlasts the close bound before it fails; later closes succeed. */
     firstCloseFailsAfter?: Promise<void>
+    /** With `firstCloseFailsAfter`: called when the stand-in page's first `Page.close` starts, so a test waits for the close itself instead of for real time. */
+    onFirstCloseStarted?: () => void
+    /** Makes the stand-in page acknowledge `Page.close` but never report it detached, as a target Chrome keeps listed past the close bound. */
+    pageStaysAfterClose?: boolean
+    /** Makes the stand-in browser's `close` settle only after the run stopped its debuggers, as a managed Chrome does: it exits only when the debugger session stops. */
+    browserCloseWaitsForDebuggerStop?: boolean
     /** The path the stand-in page lands on after each `Page.navigate` of a saved-session run (default: the path asked for). */
     navigationLandsOn?: string
     /** Makes the stand-in server's App verdict (`confirmAppEntry`) record its answer and then never settle until the run is cancelled, as a redirected root whose second request does not answer. */
@@ -817,6 +823,11 @@ export async function configuredRuntimeHarness(
   /** The timeout each `Page.navigate` request asked for (`undefined`: the channel's own default). */
   const navigateTimeouts: (number | undefined)[] = []
   let closeAttempts = 0
+  let pageCloseAttempts = 0
+  let debuggersHaveStopped: () => void = () => undefined
+  const debuggersStopped = new Promise<void>((resolve) => {
+    debuggersHaveStopped = resolve
+  })
   const serverOrigin =
     viteLibrary?.server.origin ??
     options.serverOrigin ??
@@ -1374,6 +1385,18 @@ export async function configuredRuntimeHarness(
       timeout?: number,
     ) {
       if (method.startsWith('Input.')) inputRequests.push(method)
+      // The page close the Vite library route asks for: acknowledged, then the page is detached (unless it stays listed).
+      if (method === 'Page.close') {
+        if (options.firstCloseFailsAfter && pageCloseAttempts++ === 0) {
+          options.onFirstCloseStarted?.()
+          await options.firstCloseFailsAfter
+          throw new Error('The page close failed late')
+        }
+        releases.push('page')
+        if (!options.pageStaysAfterClose)
+          listeners.get('Inspector.detached')?.({ reason: 'target_closed' })
+        return {}
+      }
       if (method === 'Runtime.evaluate')
         evaluatedExpressions.push(parameters?.expression ?? '')
       // After the input, the after conditions answer the failure a test chose, and every read of them is counted.
@@ -1856,6 +1879,7 @@ export async function configuredRuntimeHarness(
       },
       stopDebugging: async (): Promise<void> => {
         releases.push('debugger')
+        debuggersHaveStopped()
         run.terminated(root)
         run.terminated(selected)
         if (serverParticipant) {
@@ -2119,11 +2143,9 @@ export async function configuredRuntimeHarness(
             releases.push('acquisitions')
           }
           async close(): Promise<void> {
+            // A managed Chrome exits only when the debugger session stops, so its close cannot settle before that.
+            if (options.browserCloseWaitsForDebuggerStop) await debuggersStopped
             // A close that cannot confirm Chrome's exit throws once, as the real one does for a failed process listing.
-            if (options.firstCloseFailsAfter && closeAttempts++ === 0) {
-              await options.firstCloseFailsAfter
-              throw new Error('The page close failed late')
-            }
             if (options.closeFailsOnce && closeAttempts++ === 0)
               throw new Error(
                 'The saved-session Chrome exit could not be confirmed',

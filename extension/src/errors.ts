@@ -44,6 +44,8 @@ const LIBRARY_BUILD_UNSUPPORTED_RECOVERY: Record<
     'the Vite config named in details.configFile lists the library package (details.package) or one of its subpaths in optimizeDeps.include, which would load the pre-bundled installed copy instead of the packed build: ask the learner to remove that entry, or start again without library. Nothing was built or started.',
   'library-aliased':
     "the Vite config named in details.configFile has a resolve.alias that matches the library package (details.package) or one of its subpaths, which would send the Example's imports past the packed build: ask the learner to remove that alias, or start again without library. Nothing was built or started.",
+  'library-dedupe':
+    'the Vite config named in details.configFile lists the library package (details.package) or one of its subpaths in resolve.dedupe, which makes Vite resolve the installed copy from the project root past the packed build: ask the learner to remove that entry, or start again without library. Nothing was built or started.',
   'node-version': `the library build needs an external Node ${MIN_NODE_MAJOR_VERSION} or later (details.nodeVersion is the version found, or none): ask the learner to install it or to point the setting Codebook uses for the external Node at one.`,
 }
 

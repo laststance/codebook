@@ -642,8 +642,11 @@ export type PreparedLibraryCore = {
   privateFolder: string
   /** Removes the private folder, waiting at most `boundMs` (default {@link LIBRARY_CLEANUP_BOUND_MS}); `pending` while the removal continues in the background. */
   dispose(boundMs?: number): Promise<LibraryCleanup>
-  /** Ends the preparation as a `LIBRARY_BUILD_FAILED` `pack-error` with step `link` after a runtime-specific step failed; the private folder is removed first. */
-  failLink(sentence: string): Promise<never>
+  /** Ends the preparation as a `LIBRARY_BUILD_FAILED` `pack-error` with step `link` after a runtime-specific step failed; the private folder is removed first. `details` adds fields beside the step (the Vite route adds `sideEffects`). */
+  failLink(
+    sentence: string,
+    details?: Readonly<Record<string, unknown>>,
+  ): Promise<never>
 }
 
 /**
@@ -794,8 +797,9 @@ export async function prepareLibraryCore(
       removal ??= removeFolder(privateFolder)
       return awaitRemoval(removal, boundMs).then((cleanup) => ({ cleanup }))
     },
-    failLink: (sentence) =>
+    failLink: (sentence, details = {}) =>
       fail('pack-error', sentence, {
+        ...details,
         step: 'link' satisfies (typeof LIBRARY_PACK_ERROR_STEPS)[number],
       }),
   }

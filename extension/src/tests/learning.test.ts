@@ -470,7 +470,7 @@ test('Retry storage over sixty-four saved studies lists the library directory on
 })
 
 // Value: protects=a file in the library directory that is named like an archive of a newer format but belongs to no study leaves the saved studies usable (Cycle 0045 review PL-5); fails_when=the listing parses the file's prefix as a study id and throws, which breaks the list, the save admission, the removal, forgetting absent studies and Retry storage together; why_new=every listing test named its files after study ids; seam=the library directory, into which the test writes the stray file
-test('a stray x.study.v16.json in the library leaves the list, save admission, removal, forgetting absent studies and Retry storage working', async (context) => {
+test('a stray x.study.v17.json in the library leaves the list, save admission, removal, forgetting absent studies and Retry storage working', async (context) => {
   // Arrange: two saved studies and the stray file beside them.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-learning-'))
   context.after(() => removeTestFolder(directory))
@@ -480,7 +480,7 @@ test('a stray x.study.v16.json in the library leaves the list, save admission, r
     removedByHand = capturedStudy()
   await library.saveStudy(kept)
   await library.saveStudy(removed)
-  await writeFile(join(directory, 'x.study.v16.json'), '{"version":16}')
+  await writeFile(join(directory, 'x.study.v17.json'), '{"version":17}')
   // Act
   const listedIds = (await library.list()).map((entry) => entry.id).sort()
   const admitsThird = await library.admitsStudy(removedByHand.id)
@@ -514,14 +514,14 @@ test('a stray x.study.v16.json in the library leaves the list, save admission, r
     [kept.id],
   )
   assert.equal(
-    await readFile(join(directory, 'x.study.v16.json'), 'utf8'),
-    '{"version":16}',
+    await readFile(join(directory, 'x.study.v17.json'), 'utf8'),
+    '{"version":17}',
   )
 })
 
 // Value: protects=Retry storage still repairs the library when one study's known file holds the format of a newer Codebook, and writes over neither that study's archive nor its catalog sidecar; fails_when=the repair reads that study's archive, which is refused as a newer format, and the whole Retry storage fails with that study's sentence, or a sidecar of a newer format beside a readable archive counts as a failed checkpoint and is written again in this Codebook's format, although the list shows the study as kept as it is (Cycle 0046 row 94); why_new=found in Cycle 0046 while the repair was changed to read each study from the one listing; the sidecar was added by the delegated review of that change; seam=the library directory, into which the test writes the files a newer Codebook would write under a known name
 test('Retry storage over a library with a study a newer Codebook saved under a known file name repairs the other studies and keeps that study as it is', async (context) => {
-  // Arrange: one saved study whose sidecar is gone, one study whose format 4 archive holds format 16, and one saved study whose sidecar a newer Codebook wrote again in format 17 beside the readable archive.
+  // Arrange: one saved study whose sidecar is gone, one study whose format 4 archive holds format 17, and one saved study whose sidecar a newer Codebook wrote again in format 17 beside the readable archive.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-learning-'))
   context.after(() => removeTestFolder(directory))
   const library = new LearningLibrary(directory, workspaceKey, () => 16),

@@ -170,6 +170,12 @@ const VITE_LIBRARY_REFUSALS = {
       "The Vite config named in details.configFile has a resolve.alias (a string or a regular expression) that matches the library package or a subpath of it: the Example's imports would bypass the packed build. Found in the resolved config before the build: nothing was built or started (details.sideEffects none).",
     fix: 'Ask the learner to remove that alias from the config file details.configFile names, or start again without library.',
   },
+  'library-dedupe': {
+    code: 'LIBRARY_BUILD_UNSUPPORTED',
+    meaning:
+      'The Vite config named in details.configFile lists the library package, or a subpath of it, in resolve.dedupe (or in environments.client.resolve.dedupe): Vite resolves a deduped package from the project root whatever the importer, so the page would get the installed copy and not the packed build. Found in the resolved config before the build: nothing was built or started (details.sideEffects none). Other packages in resolve.dedupe are fine.',
+    fix: "Ask the learner to remove the library package from resolve.dedupe in the config file details.configFile names, or start again without library. Never edit the learner's config yourself.",
+  },
 } as const
 
 /**

@@ -9,6 +9,7 @@ import type {
   DevelopmentServerStart,
 } from '../developmentServerAdapter'
 import { StudyError } from '../errors'
+import { LibraryPackageCancelled } from '../libraryPackage'
 import { assessViteWorkspace } from '../utils/assessViteWorkspace'
 import { launchViteDevelopmentServer } from '../utils/launchViteDevelopmentServer'
 import { resolveVitePackage } from '../utils/resolveVitePackage'
@@ -47,6 +48,7 @@ async function startLibraryRun(
       signal?: AbortSignal,
       app?: DevelopmentApp,
       controller?: AbortController,
+      startState?: { isSettled: boolean },
     ) => Promise<void>
     factsTimeoutMs?: number
   },
@@ -77,6 +79,8 @@ async function startLibraryRun(
     await app?.close()
   })
   const prepareCalls: string[] = []
+  // Flips when the start's promise settles, so a build can observe whether the start waited for it.
+  const startState = { isSettled: false }
   const request: DevelopmentServerStart = {
     workspace: appFolder,
     vitePackage: await resolveVitePackage(repository.root, APP),
@@ -106,6 +110,7 @@ async function startLibraryRun(
         signal,
         app,
         controller,
+        startState,
       )
     },
   }
@@ -121,8 +126,14 @@ async function startLibraryRun(
     LAUNCHER,
     options.factsTimeoutMs,
   ).then(
-    (started) => ({ started }),
-    (error: unknown) => ({ error }),
+    (started) => {
+      startState.isSettled = true
+      return { started }
+    },
+    (error: unknown) => {
+      startState.isSettled = true
+      return { error }
+    },
   )
   return { outcome, prepareCalls, controller }
 }
@@ -172,6 +183,39 @@ test('refuses a pre-bundled library before anything is built', async (context) =
   assert.equal(error.details?.reason, 'library-optimize-include')
   assert.equal(error.details?.sideEffects, 'none')
   assert.deepEqual(run.prepareCalls, [])
+})
+
+// protects=a resolve.dedupe of the package refuses with library-dedupe before the build, and a dedupe of another package does not; fails_when=the dedupe is not read from the resolved config, the build starts, or react in dedupe refuses; no_claim=real Vite resolution
+test('refuses a deduped library before anything is built', async (context) => {
+  // Arrange
+  const port = await freePort()
+  // Act
+  const run = await startLibraryRun(context, {
+    behavior: { port, config: { resolve: { dedupe: ['@acme/widgets'] } } },
+    prepareLibrary: async () => undefined,
+  })
+  // Assert
+  assert.ok('error' in run.outcome)
+  const error = run.outcome.error
+  assert.ok(error instanceof StudyError)
+  assert.equal(error.details?.reason, 'library-dedupe')
+  assert.equal(error.details?.sideEffects, 'none')
+  assert.deepEqual(error.details?.entries, ['@acme/widgets'])
+  assert.deepEqual(run.prepareCalls, [])
+  assert.equal(await isListening(port), false)
+})
+
+// protects=a dedupe of another package leaves the library run going (it is built); fails_when=any resolve.dedupe refuses a library run; no_claim=real Vite resolution
+test('builds the library when resolve.dedupe lists only other packages', async (context) => {
+  // Arrange
+  const port = await freePort()
+  // Act
+  const run = await startLibraryRun(context, {
+    behavior: { port, config: { resolve: { dedupe: ['react'] } } },
+    prepareLibrary: async () => undefined,
+  })
+  // Assert
+  assert.equal(run.prepareCalls.length, 1)
 })
 
 // protects=the library is built after the facts and before the listen: while the build runs nothing listens, and the server listens once it finished; fails_when=the server listens during the build or the build is skipped; no_claim=the build itself (a stub callback)
@@ -273,6 +317,95 @@ test('a launcher that exits during the build ends the start and cancels the buil
   assert.equal(error.code, 'VITE_LAUNCHER_FAILED')
   assert.match(error.message, /exited while the library was being built/)
   assert.equal(buildWasCancelled, true)
+})
+
+/** Lets every already-queued promise reaction and a few event-loop turns run, without waiting on any clock. */
+async function drainEventLoop(): Promise<void> {
+  for (let turn = 0; turn < 5; turn += 1)
+    await new Promise((resolve) => setImmediate(resolve))
+}
+
+/** Kills the launcher and resolves once the watcher aborted the build's signal. */
+async function killLauncherAndAwaitAbort(
+  app: DevelopmentApp | undefined,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  assert.ok(signal)
+  const aborted = new Promise<void>((resolve) =>
+    signal.addEventListener('abort', () => resolve(), { once: true }),
+  )
+  await killLauncher(app)
+  await aborted
+}
+
+// protects=the start rejects only after the cancelled build has settled, so the run's cleanup never races a build that is still running; fails_when=the start rejects at the abort while the build is unsettled; no_claim=the build itself (a stub callback that settles after the abort; a real launcher process is killed)
+test('a launcher that exits during the build waits for the build to settle before the start rejects', async (context) => {
+  // Arrange
+  const port = await freePort()
+  let wasStartSettledAtAbort: boolean | undefined
+  // Act
+  const run = await startLibraryRun(context, {
+    behavior: { port },
+    prepareLibrary: async (_port, signal, app, _controller, startState) => {
+      await killLauncherAndAwaitAbort(app, signal)
+      await drainEventLoop()
+      wasStartSettledAtAbort = startState?.isSettled
+      throw new LibraryPackageCancelled('removed')
+    },
+  })
+  // Assert
+  assert.equal(wasStartSettledAtAbort, false)
+  assert.ok('error' in run.outcome)
+  const error = run.outcome.error
+  assert.ok(error instanceof StudyError)
+  assert.equal(error.code, 'VITE_LAUNCHER_FAILED')
+})
+
+// protects=a tracked-file failure the build raises after the launcher died reaches the learner instead of VITE_LAUNCHER_FAILED; fails_when=the launcher failure replaces the build's own typed error; no_claim=the real tracked-file check (the stub build raises the error it would)
+test('a tracked-file build failure after a launcher exit is the start error', async (context) => {
+  // Arrange
+  const port = await freePort()
+  // Act
+  const run = await startLibraryRun(context, {
+    behavior: { port },
+    prepareLibrary: async (_port, signal, app) => {
+      await killLauncherAndAwaitAbort(app, signal)
+      throw new StudyError(
+        'LIBRARY_BUILD_FAILED',
+        'The library build changed the file src/index.ts; Codebook did not restore it.',
+        undefined,
+        undefined,
+        undefined,
+        { reason: 'tracked-file-changed', path: 'src/index.ts' },
+      )
+    },
+  })
+  // Assert
+  assert.ok('error' in run.outcome)
+  const error = run.outcome.error
+  assert.ok(error instanceof StudyError)
+  assert.equal(error.code, 'LIBRARY_BUILD_FAILED')
+  assert.equal(error.details?.reason, 'tracked-file-changed')
+})
+
+// protects=a build that ends with the cancellation the launcher exit caused reads as VITE_LAUNCHER_FAILED; fails_when=the cancellation error escapes as the start error; no_claim=the build itself (a stub that raises the cancellation)
+test('a build cancelled by a launcher exit ends the start with the launcher failure', async (context) => {
+  // Arrange
+  const port = await freePort()
+  // Act
+  const run = await startLibraryRun(context, {
+    behavior: { port },
+    prepareLibrary: async (_port, signal, app) => {
+      await killLauncherAndAwaitAbort(app, signal)
+      throw new LibraryPackageCancelled('removed')
+    },
+  })
+  // Assert
+  assert.ok('error' in run.outcome)
+  const error = run.outcome.error
+  assert.ok(error instanceof StudyError)
+  assert.equal(error.code, 'VITE_LAUNCHER_FAILED')
+  assert.match(error.message, /exited while the library was being built/)
 })
 
 // protects=a launcher that is gone when the listen is sent reads as VITE_LAUNCHER_FAILED, not a raw send error; fails_when=the send's own Error escapes; no_claim=none beyond protects

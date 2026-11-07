@@ -721,7 +721,9 @@ export const retainedRepositoryConfigSchema = liveRepositoryConfigSchema
   )
   // A `vite-dev` run that declares `library` is saved as format 16 only (Cycle 0096).
   .refine(
-    (configuration) => !('library' in configuration),
+    // An explicit `library: undefined` declares nothing, so it stays the older format.
+    (configuration) =>
+      !('library' in configuration) || configuration.library === undefined,
     'Only a study of format 16 keeps a library.',
   )
 /**
@@ -759,7 +761,8 @@ const vitePackageRootRepositoryConfigSchema = operationsConfigurationShape
   })
   // A run that declares `library` is saved as format 16 only.
   .refine(
-    (configuration) => configuration.library === undefined,
+    (configuration) =>
+      !('library' in configuration) || configuration.library === undefined,
     'Only a study of format 16 keeps a library.',
   )
 /**

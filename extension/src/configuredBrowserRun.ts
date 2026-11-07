@@ -183,6 +183,7 @@ import {
 } from './runtimeSupport/secretFrameGate'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { CdpRequestTimeoutError } from './runtimeSupport/utils/cdpRequestTimeoutError'
+import { closePageUntilGone } from './runtimeSupport/utils/closePageUntilGone'
 import { describeWithheldImage } from './runtimeSupport/utils/describeWithheldImage'
 import { isStopCausedByCodebook } from './runtimeSupport/utils/isStopCausedByCodebook'
 import { settleCleanup } from './runtimeSupport/utils/settleCleanup'
@@ -2171,7 +2172,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Seam 4 of the Vite library route: closes the owned page within the close bound, then finalizes the observation, so a script parsed up to the close is counted.
+   * Seam 4 of the Vite library route: closes the owned page itself within the close bound and confirms it is gone, then finalizes the observation, so a script parsed up to the close is counted.
+   * The browser process is not waited for: a managed Chrome exits only when the debugger session stops, which comes later; the owned browser close step of {@link cleanupOwned} does the full close.
    * Called first by {@link cleanupOwned}; the server stops and the private folder goes after it.
    * @returns The failures of the page close (empty when it closed).
    * @example const failures = await this.finalizeViteLibrary()
@@ -2179,6 +2181,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private async finalizeViteLibrary(): Promise<string[]> {
     const route = this.libraryRoute
     if (!route) return []
+    const pageCdp = this.participants.browser.cdp
+    // A page that was never attached has nothing to confirm: no script of it was observed, so the observation cannot be complete.
+    if (!pageCdp) {
+      route.finalize(false)
+      return []
+    }
     let timer: ReturnType<typeof setTimeout> | undefined
     const bound = new Promise<'bound'>((resolve) => {
       timer = setTimeout(() => resolve('bound'), ACTIVE_TIMEOUT_MS)
@@ -2186,10 +2194,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const failures: string[] = []
     let didBoundWin = false
     const outcome = await Promise.race([
-      this.browser.close().then(
+      closePageUntilGone(pageCdp).then(
         () => 'closed' as const,
         (error: unknown) => {
-          // A close that fails after the bound already won is journaled; the owned browser close step of the cleanup closes again and reports its own failure.
+          // A close that fails after the bound already won is journaled; the owned browser close step of the cleanup closes the browser and reports its own failure.
           if (didBoundWin)
             this.evidence.record('library.page-close-failed-late', {
               cause: String(error),

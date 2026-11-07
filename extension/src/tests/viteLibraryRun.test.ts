@@ -3,7 +3,6 @@ import { access, mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
-import { setTimeout } from 'node:timers/promises'
 
 import { ACTIVE_TIMEOUT_MS, REPOSITORY_SETUP_TIMEOUT_MS } from '../constants'
 import { StudyError } from '../errors'
@@ -110,7 +109,12 @@ async function libraryDependencies(
 async function libraryHarness(
   context: TestContext,
   library: Awaited<ReturnType<typeof libraryDependencies>>,
-  extra: { firstCloseFailsAfter?: Promise<void> } = {},
+  extra: {
+    firstCloseFailsAfter?: Promise<void>
+    onFirstCloseStarted?: () => void
+    pageStaysAfterClose?: boolean
+    browserCloseWaitsForDebuggerStop?: boolean
+  } = {},
 ) {
   return configuredRuntimeHarness(context, undefined, [], {
     ...extra,
@@ -238,11 +242,60 @@ test('the owned page closes before the server stops', async (context) => {
   // Act
   await harness.run.stop()
   // Assert
-  const browserAt = harness.releases.indexOf('browser')
+  const pageAt = harness.releases.indexOf('page')
   const applicationAt = harness.releases.indexOf('application')
-  assert.ok(browserAt >= 0 && applicationAt >= 0)
-  assert.ok(browserAt < applicationAt)
+  assert.ok(pageAt >= 0 && applicationAt >= 0)
+  assert.ok(pageAt < applicationAt)
   assert.equal(harness.run.view().library?.observation, 'complete')
+})
+
+// protects=a managed Chrome, which exits only after the debuggers stop, still ends the observation complete and the stop does not wait for the close bound; fails_when=finalization waits for the browser process exit, so the bound wins and the observation reads incomplete (or the stop hangs); no_claim=a real Chrome or js-debug: the stand-in page reports its detach at once
+test(
+  'a managed browser that exits only after the debuggers stop still ends the observation complete',
+  { timeout: 15_000 },
+  async (context) => {
+    // Arrange
+    const library = await libraryDependencies(context)
+    const harness = await libraryHarness(context, library, {
+      browserCloseWaitsForDebuggerStop: true,
+    })
+    await harness.run.prepare()
+    const packed = await put(join(library.packedRoot, 'dist', 'index.mjs'))
+    harness.announceScript('p1', `${ORIGIN}/@fs${packed}?v=1`)
+    await runToCompletion(harness)
+    // Act
+    // The run's manual clock is never advanced: a stop that needed the close bound would not return.
+    await harness.run.stop()
+    // Assert
+    const facts = harness.run.view().library
+    assert.equal(facts?.observation, 'complete')
+    assert.equal(facts?.loaded, true)
+    assert.deepEqual(
+      harness.releases.filter((name) =>
+        ['page', 'debugger', 'browser'].includes(name),
+      ),
+      ['page', 'debugger', 'browser'],
+    )
+  },
+)
+
+// protects=a page whose close is acknowledged but which stays listed past the close bound leaves the observation incomplete; fails_when=an acknowledged close alone counts as the page being gone; no_claim=a real Chrome: the stand-in page never reports a detach
+test('a page that stays after an acknowledged close leaves the observation incomplete', async (context) => {
+  // Arrange
+  const library = await libraryDependencies(context)
+  const harness = await libraryHarness(context, library, {
+    pageStaysAfterClose: true,
+  })
+  await harness.run.prepare()
+  harness.announceScript('a1', `${ORIGIN}/@vite/client`)
+  // Act
+  const stopping = harness.run.stop()
+  // The close bound is armed before the close is sent, so once the close was acknowledged the run's own clock can pass it.
+  await waitUntil(() => harness.releases.includes('page'), 'the page close')
+  harness.advance(ACTIVE_TIMEOUT_MS + 1_000)
+  await stopping
+  // Assert
+  assert.equal(harness.run.view().library?.observation, 'incomplete')
 })
 
 // protects=a declined confirmation ends the run with SCRIPT_NOT_CONFIRMED, starts no server and builds nothing; fails_when=the server starts or the build runs after a no; no_claim=the editor dialog
@@ -381,16 +434,21 @@ test('journals a page close that fails after the close bound', async (context) =
   const hold = new Promise<void>((resolve) => {
     failClose = resolve
   })
+  let closeStarted: () => void = () => undefined
+  const closeHasStarted = new Promise<void>((resolve) => {
+    closeStarted = resolve
+  })
   const library = await libraryDependencies(context)
   const harness = await libraryHarness(context, library, {
     firstCloseFailsAfter: hold,
+    onFirstCloseStarted: closeStarted,
   })
   await harness.run.prepare()
   harness.announceScript('a1', `${ORIGIN}/@vite/client`)
   // Act
   const stopping = harness.run.stop()
-  // Real time lets the cleanup reach the close; the run's own clock then passes the bound.
-  await setTimeout(50)
+  // The close bound is armed before the close starts, so once the close has started the run's own clock can pass it.
+  await closeHasStarted
   harness.advance(ACTIVE_TIMEOUT_MS + 1_000)
   failClose()
   await stopping

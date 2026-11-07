@@ -25,6 +25,11 @@ export const CASE_IMPORTS: Readonly<Record<string, unknown>> = {
   '#dep': 'lodash-es',
   '#local': './local.mjs',
   '#conditional': { import: 'react', default: './local.mjs' },
+  // Same prefix, generic key first / specific key first: Node ranks the longer whole key first whatever the JSON order.
+  '#generic-first/*': 'lodash-es/*',
+  '#generic-first/*.js': 'react/*',
+  '#specific-first/*.js': 'react/*',
+  '#specific-first/*': 'lodash-es/*',
 }
 
 /**
@@ -109,6 +114,24 @@ export const LIBRARY_RESOLUTION_CASES: readonly LibraryResolutionCase[] = [
     specifier: '#conditional',
     importerInsidePacked: true,
     expected: 'peer',
+  },
+  {
+    name: '# import where the generic pattern key comes first and the suffix key matches',
+    specifier: '#generic-first/sub.js',
+    importerInsidePacked: true,
+    expected: 'peer',
+  },
+  {
+    name: '# import where the suffix pattern key comes first and also matches',
+    specifier: '#specific-first/sub.js',
+    importerInsidePacked: true,
+    expected: 'peer',
+  },
+  {
+    name: '# import of the generic pattern key when the suffix key does not match',
+    specifier: '#generic-first/sub',
+    importerInsidePacked: true,
+    expected: 'dependency',
   },
   {
     name: 'peer name imported from the Example',

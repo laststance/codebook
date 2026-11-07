@@ -102,6 +102,7 @@ test('words one recovery per library refusal and failure reason', () => {
       'node-version',
       'library-optimize-include',
       'library-aliased',
+      'library-dedupe',
     ],
   )
   assert.deepEqual(

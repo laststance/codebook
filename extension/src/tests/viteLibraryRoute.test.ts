@@ -58,7 +58,7 @@ async function buildRoute(
   const prepared = (): PreparedLibraryCore => ({
     facts: FACTS,
     packedRoot: join(privateFolder, 'node_modules', '@acme', 'widgets'),
-    peers: ['react'],
+    peers: ['react', 'react-dom'],
     imports: undefined,
     libraryRoot: join(root, 'packages', 'widgets'),
     privateFolder,
@@ -653,7 +653,7 @@ test('counts a packed module when the planned private folder is a link', async (
     prepareCore: async () => ({
       facts: FACTS,
       packedRoot: realPacked,
-      peers: [],
+      peers: ['react', 'react-dom'],
       imports: undefined,
       libraryRoot: base,
       privateFolder: realFolder,
@@ -722,4 +722,189 @@ test('asks no confirmation when the run was already stopped', async (context) =>
   assert.ok(failure instanceof Error)
   assert.equal(failure.message, 'stopped')
   assert.equal(asked, 0)
+})
+
+// protects=a parsed file of the checked-out library folder (a workspace or npm link install resolves there) counts as another copy next to the packed one; fails_when=only node_modules copies are flagged and the run reads publishedCopyLoaded false; no_claim=a real link install (the real path is staged by hand)
+test('counts a parsed file of the checked-out library folder as another copy', async (context) => {
+  // Arrange
+  const run = await stage(context)
+  const packed = await put(join(run.options.packedRoot, 'dist', 'index.mjs'))
+  const linked = await put(
+    join(run.root, 'packages', 'widgets', 'dist', 'index.mjs'),
+  )
+  // Act
+  run.route.observeScript(fsUrl(packed), isOwned)
+  run.route.observeScript(fsUrl(linked), isOwned)
+  run.route.finalize(true)
+  // Assert
+  const view = run.route.view()
+  assert.equal(view.loaded, true)
+  assert.equal(view.publishedCopyLoaded, true)
+  assert.equal(view.publishedCopyPath, linked)
+})
+
+// protects=a dependency installed inside the checked-out library folder is not a copy of the library; fails_when=every file below the library folder counts as another copy; no_claim=none beyond protects
+test('does not count a dependency in the checked-out library node_modules as another copy', async (context) => {
+  // Arrange
+  const run = await stage(context)
+  const packed = await put(join(run.options.packedRoot, 'dist', 'index.mjs'))
+  const dependency = await put(
+    join(run.root, 'packages', 'widgets', 'node_modules', 'left-pad', 'a.js'),
+  )
+  // Act
+  run.route.observeScript(fsUrl(packed), isOwned)
+  run.route.observeScript(fsUrl(dependency), isOwned)
+  run.route.finalize(true)
+  // Assert
+  assert.equal(run.route.view().publishedCopyLoaded, false)
+})
+
+// protects=an optimizer chunk whose metadata source lies in the checked-out library folder counts as another copy; fails_when=only node_modules sources are flagged; no_claim=none beyond protects
+test('counts an optimizer chunk of the checked-out library folder as another copy', async (context) => {
+  // Arrange
+  const run = await stage(context)
+  const source = await put(
+    join(run.root, 'packages', 'widgets', 'dist', 'index.mjs'),
+  )
+  const deps = join(run.privateFolder, 'vite-cache', 'deps')
+  const chunk = await put(join(deps, 'acme_widgets.js'))
+  await put(
+    join(deps, '_metadata.json'),
+    JSON.stringify({
+      optimized: { '@acme/widgets': { src: source, file: 'acme_widgets.js' } },
+    }),
+  )
+  // Act
+  run.route.observeScript(fsUrl(chunk), isOwned)
+  run.route.finalize(true)
+  // Assert
+  const view = run.route.view()
+  assert.equal(view.publishedCopyLoaded, true)
+  assert.equal(view.publishedCopyPath, source)
+})
+
+// protects=a URL announced while its file is missing is judged again once the file exists; fails_when=the missing-file result is cached and the later announcement never counts; no_claim=none beyond protects
+test('counts a packed file announced again after it appeared', async (context) => {
+  // Arrange
+  const run = await stage(context)
+  const packedFile = join(run.options.packedRoot, 'dist', 'late.mjs')
+  run.route.observeScript(fsUrl(packedFile), isOwned)
+  await put(packedFile)
+  // Act
+  run.route.observeScript(fsUrl(packedFile), isOwned)
+  run.route.finalize(true)
+  // Assert
+  assert.equal(run.route.view().loadCount, 1)
+})
+
+/** A prepared core for a pack that returned the given peers and imports, whose `failLink` throws the way the shared core does, keeping the details it got. */
+function packedWith(
+  run: { root: string; privateFolder: string },
+  packed: Pick<PreparedLibraryCore, 'peers' | 'imports'>,
+  failures: { sentence: string; details?: unknown }[],
+): PreparedLibraryCore {
+  return {
+    facts: FACTS,
+    packedRoot: join(run.privateFolder, 'node_modules', '@acme', 'widgets'),
+    ...packed,
+    libraryRoot: join(run.root, 'packages', 'widgets'),
+    privateFolder: run.privateFolder,
+    dispose: async () => ({ cleanup: 'removed' }),
+    failLink: async (sentence, details) => {
+      failures.push({ sentence, details })
+      throw new Error(sentence)
+    },
+  }
+}
+
+// protects=a pack that rewrote the peers refuses the run before it serves anything, with partial side effects; fails_when=the redirect keeps its checked-out peers and the run reads complete; no_claim=a real pack rewriting package.json (the packed manifest is staged)
+test('refuses when the packed manifest changed the peers', async (context) => {
+  // Arrange
+  const failures: { sentence: string; details?: unknown }[] = []
+  let root = ''
+  let privateFolder = ''
+  const run = await buildRoute(context, {
+    prepareCore: async () =>
+      packedWith(
+        { root, privateFolder },
+        { peers: ['react'], imports: undefined },
+        failures,
+      ),
+  })
+  root = run.root
+  privateFolder = run.privateFolder
+  await run.route.plan(run.controller.signal)
+  // Act
+  const refusal = await run.route.prepare(run.controller.signal).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // Assert
+  assert.ok(refusal instanceof Error)
+  assert.equal(failures.length, 1)
+  assert.match(failures[0]?.sentence ?? '', /changed peerDependencies/)
+  assert.deepEqual(failures[0]?.details, { sideEffects: 'partial' })
+  assert.equal(run.route.view().prepared, false)
+})
+
+// protects=a pack that rewrote the imports map refuses the run; fails_when=a changed imports map is accepted; no_claim=none beyond protects
+test('refuses when the packed manifest changed the imports', async (context) => {
+  // Arrange
+  const failures: { sentence: string; details?: unknown }[] = []
+  let root = ''
+  let privateFolder = ''
+  const run = await buildRoute(context, {
+    readManifest: async () => ({
+      peers: ['react', 'react-dom'],
+      imports: { '#a': './a.js' },
+    }),
+    prepareCore: async () =>
+      packedWith(
+        { root, privateFolder },
+        { peers: ['react-dom', 'react'], imports: { '#a': './b.js' } },
+        failures,
+      ),
+  })
+  root = run.root
+  privateFolder = run.privateFolder
+  await run.route.plan(run.controller.signal)
+  // Act
+  await run.route.prepare(run.controller.signal).catch(() => undefined)
+  // Assert
+  assert.equal(failures.length, 1)
+  assert.match(failures[0]?.sentence ?? '', /changed imports/)
+})
+
+// protects=peers in another order and imports with other key order are the same values, so the run is prepared; fails_when=order differences refuse a harmless pack; no_claim=none beyond protects
+test('prepares when the packed peers and imports only differ in order', async (context) => {
+  // Arrange
+  const failures: { sentence: string; details?: unknown }[] = []
+  let root = ''
+  let privateFolder = ''
+  const run = await buildRoute(context, {
+    readManifest: async () => ({
+      peers: ['react', 'react-dom'],
+      imports: { '#a': './a.js', '#b': { default: './b.js', node: './n.js' } },
+    }),
+    prepareCore: async () =>
+      packedWith(
+        { root, privateFolder },
+        {
+          peers: ['react-dom', 'react'],
+          imports: {
+            '#b': { node: './n.js', default: './b.js' },
+            '#a': './a.js',
+          },
+        },
+        failures,
+      ),
+  })
+  root = run.root
+  privateFolder = run.privateFolder
+  await run.route.plan(run.controller.signal)
+  // Act
+  await run.route.prepare(run.controller.signal)
+  // Assert
+  assert.deepEqual(failures, [])
+  assert.equal(run.route.view().prepared, true)
 })

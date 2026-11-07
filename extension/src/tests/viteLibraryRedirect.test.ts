@@ -277,6 +277,7 @@ test('reports the aliases that match the package or a subpath of it', () => {
       '@acme',
     ],
     optimizeInclude: [],
+    deduped: [],
   })
 })
 
@@ -320,7 +321,28 @@ test('reports optimizeDeps.include entries that are the package, a subpath or a 
       'host > @acme/widgets/sub',
       '@acme/widgets/extra',
     ],
+    deduped: [],
   })
+})
+
+// protects=resolve.dedupe entries naming the package or a subpath, at the top level or for the client environment, are reported and other packages are not; fails_when=a dedupe of the package (which makes Vite resolve the installed copy from the project root) is missed, or a dedupe of react refuses the run; no_claim=Vite's own resolution
+test('reports resolve.dedupe entries of the package and ignores other packages', () => {
+  // Arrange
+  const config = {
+    resolve: { dedupe: ['react', '@acme/widgets', '@acme/widgets/sub'] },
+    environments: { client: { resolve: { dedupe: ['@acme/widgets/extra'] } } },
+  }
+  const unrelated = { resolve: { dedupe: ['react', '@acme/widgets-other'] } }
+  // Act
+  const blockers = readLibraryBlockers(config, '@acme/widgets')
+  const unrelatedBlockers = readLibraryBlockers(unrelated, '@acme/widgets')
+  // Assert
+  assert.deepEqual(blockers.deduped, [
+    '@acme/widgets',
+    '@acme/widgets/sub',
+    '@acme/widgets/extra',
+  ])
+  assert.deepEqual(unrelatedBlockers.deduped, [])
 })
 
 // protects=a config with no alias and no include has no blockers; fails_when=an empty or odd config reports a blocker or throws; no_claim=none beyond protects
@@ -337,9 +359,9 @@ test('reports no blockers for a config without alias or include', () => {
   )
   // Assert
   assert.deepEqual(results, [
-    { aliased: [], optimizeInclude: [] },
-    { aliased: [], optimizeInclude: [] },
-    { aliased: [], optimizeInclude: [] },
+    { aliased: [], optimizeInclude: [], deduped: [] },
+    { aliased: [], optimizeInclude: [], deduped: [] },
+    { aliased: [], optimizeInclude: [], deduped: [] },
   ])
 })
 
@@ -382,4 +404,221 @@ test('a # import of the packed copy takes the exact key, else the longest single
   })
   assert.equal(wrongSuffix, null)
   assert.equal(twoStars, null)
+})
+
+/** A resolved Vite config whose client environment carries `conditions`. */
+function configWith(conditions: string[], isProduction: boolean) {
+  return { isProduction, environments: { client: { resolve: { conditions } } } }
+}
+
+const CONDITIONAL_IMPORTS = {
+  '#dep': {
+    development: 'react',
+    production: 'lodash-es',
+    custom: 'both',
+    default: 'default-pkg',
+  },
+}
+
+// protects=a conditional # import is rewritten with the conditions of Vite's client environment, development by default; fails_when=the plugin keeps a fixed condition list and picks the default target Vite would not choose; no_claim=Vite's own condition handling (the config object stands in for the resolved config)
+test('picks the development target of a conditional # import when Vite resolves a development client', async () => {
+  // Arrange
+  const plugin = pluginOver({}, { imports: CONDITIONAL_IMPORTS })
+  plugin.configResolved(
+    configWith(['module', 'browser', 'development|production'], false),
+  )
+  // Act
+  const result = await resolvedFrom(plugin, '#dep', `${PACKED}/dist/a.mjs`)
+  // Assert
+  assert.deepEqual(result, {
+    target: 'react',
+    via: `${EXAMPLE}/package.json`,
+  })
+})
+
+// protects=a production Vite config picks the production target of a conditional # import; fails_when=the development placeholder is not mapped by isProduction; no_claim=none beyond protects
+test('picks the production target of a conditional # import when Vite resolves a production client', async () => {
+  // Arrange
+  const plugin = pluginOver({}, { imports: CONDITIONAL_IMPORTS })
+  plugin.configResolved(
+    configWith(['module', 'browser', 'development|production'], true),
+  )
+  // Act
+  const result = await resolvedFrom(plugin, '#dep', `${PACKED}/dist/a.mjs`)
+  // Assert
+  assert.deepEqual(result, {
+    target: 'lodash-es',
+    via: `${LIBRARY}/package.json`,
+  })
+})
+
+// protects=a condition the app adds to resolve.conditions selects its # import target; fails_when=app conditions are ignored; no_claim=none beyond protects
+test('honors a custom condition the app configures for a conditional # import', async () => {
+  // Arrange
+  const plugin = pluginOver(
+    {},
+    { imports: { '#dep': { custom: 'react', default: 'lodash-es' } } },
+  )
+  plugin.configResolved(configWith(['module', 'browser', 'custom'], false))
+  // Act
+  const result = await resolvedFrom(plugin, '#dep', `${PACKED}/dist/a.mjs`)
+  // Assert
+  assert.deepEqual(result, {
+    target: 'react',
+    via: `${EXAMPLE}/package.json`,
+  })
+})
+
+// protects=the pre-Vite-6 config shape (resolve.conditions at the top level) is read; fails_when=only environments.client is consulted; no_claim=none beyond protects
+test('reads resolve.conditions of a config without environments', async () => {
+  // Arrange
+  const plugin = pluginOver(
+    {},
+    { imports: { '#dep': { custom: 'react', default: 'lodash-es' } } },
+  )
+  plugin.configResolved({
+    isProduction: false,
+    resolve: { conditions: ['custom'] },
+  })
+  // Act
+  const result = await resolvedFrom(plugin, '#dep', `${PACKED}/dist/a.mjs`)
+  // Assert
+  assert.deepEqual(result, {
+    target: 'react',
+    via: `${EXAMPLE}/package.json`,
+  })
+})
+
+// protects=before configResolved the plugin assumes a development client (Vite's default); fails_when=the fallback lacks development; no_claim=none beyond protects
+test('assumes a development client until Vite hands over its config', async () => {
+  // Arrange
+  const plugin = pluginOver({}, { imports: CONDITIONAL_IMPORTS })
+  // Act
+  const result = await resolvedFrom(plugin, '#dep', `${PACKED}/dist/a.mjs`)
+  // Assert
+  assert.deepEqual(result, {
+    target: 'react',
+    via: `${EXAMPLE}/package.json`,
+  })
+})
+
+// protects=among pattern keys with the same prefix the longer whole key wins whatever the JSON order, as in Node; fails_when=the first key in JSON order wins; no_claim=Vite's own resolution of the target
+test('a # import takes the longer pattern key on a prefix tie in either key order', async () => {
+  // Arrange
+  const genericFirst = pluginOver(
+    {},
+    { imports: { '#a/*': 'lodash-es/*', '#a/*.js': 'react/*' } },
+  )
+  const specificFirst = pluginOver(
+    {},
+    { imports: { '#a/*.js': 'react/*', '#a/*': 'lodash-es/*' } },
+  )
+  const importer = `${PACKED}/dist/index.mjs`
+  // Act
+  const first = await resolvedFrom(genericFirst, '#a/x.js', importer)
+  const second = await resolvedFrom(specificFirst, '#a/x.js', importer)
+  // Assert
+  const expected = { target: 'react/x', via: `${EXAMPLE}/package.json` }
+  assert.deepEqual(first, expected)
+  assert.deepEqual(second, expected)
+})
+
+/** A source map of one packed `src/a.ts` entry whose text equals the checked-out file. */
+const MATCHING_MAP = JSON.stringify({
+  version: 3,
+  sources: ['../src/a.ts'],
+  sourcesContent: ['const a = 1\n'],
+  mappings: 'AAAA',
+})
+
+// protects=a built module with an inline base64 map still gets its sources rewritten to the checked-out file and loses the data comment; fails_when=the plugin reads only the sibling .map, so the inline map is ignored (null) or the data URL stays in the code; no_claim=Vite's own handling of the comment
+test('rewrites the sources of an inline base64 source map', () => {
+  // Arrange
+  const encoded = Buffer.from(MATCHING_MAP).toString('base64')
+  const plugin = pluginOver({
+    [MODULE]: `export const a = 1\n//# sourceMappingURL=data:application/json;base64,${encoded}\n`,
+    [`${LIBRARY}/src/a.ts`]: 'const a = 1\n',
+  })
+  // Act
+  const loaded = plugin.load(MODULE)
+  // Assert
+  assert.equal(loaded?.code, 'export const a = 1\n')
+  assert.deepEqual(loaded?.map.sources, [`${LIBRARY}/src/a.ts`])
+})
+
+// protects=a percent-encoded inline map (charset=utf-8, with the older //@ comment) is decoded and rewritten; fails_when=URI-encoded JSON is not decoded and the load returns null; no_claim=none beyond protects
+test('rewrites the sources of an inline percent-encoded source map', () => {
+  // Arrange
+  const plugin = pluginOver({
+    [MODULE]: `export const a = 1\n//@ sourceMappingURL=data:application/json;charset=utf-8,${encodeURIComponent(MATCHING_MAP)}`,
+    [`${LIBRARY}/src/a.ts`]: 'const a = 1\n',
+  })
+  // Act
+  const loaded = plugin.load(MODULE)
+  // Assert
+  assert.deepEqual(loaded?.map.sources, [`${LIBRARY}/src/a.ts`])
+})
+
+// protects=a comment naming another file inside the packed folder (../maps/a.map) is the map that is read, even when a sibling .map exists with other content; fails_when=the sibling .map is read instead of the named file; no_claim=none beyond protects
+test('reads the map file a sourceMappingURL comment names inside the packed folder', () => {
+  // Arrange
+  const plugin = pluginOver({
+    [MODULE]: 'export const a = 1\n//# sourceMappingURL=../maps/a.map\n',
+    [`${PACKED}/maps/a.map`]: JSON.stringify({
+      version: 3,
+      sources: ['../src/a.ts'],
+      sourcesContent: ['const a = 1\n'],
+      mappings: 'AAAA',
+    }),
+    [`${MODULE}.map`]: '{"version":3,"sources":["wrong.ts"],"mappings":""}',
+    [`${LIBRARY}/src/a.ts`]: 'const a = 1\n',
+  })
+  // Act
+  const loaded = plugin.load(MODULE)
+  // Assert
+  assert.deepEqual(loaded?.map.sources, [`${LIBRARY}/src/a.ts`])
+})
+
+// protects=a comment that points outside the packed folder, or at an http(s) URL, is not read and the module is left to Vite; fails_when=the plugin reads a file outside the packed folder or takes over a remote map; no_claim=that Vite then fetches the remote map
+test('leaves a module whose sourceMappingURL points outside the packed folder or at https to Vite', () => {
+  // Arrange
+  const plugin = pluginOver({
+    [MODULE]: 'x\n//# sourceMappingURL=../../../outside.map\n',
+    [`${PACKED}/dist/remote.mjs`]:
+      'x\n//# sourceMappingURL=https://cdn.example/a.map\n',
+    [`${PACKED}/dist/remote.mjs.map`]: MATCHING_MAP,
+    '/private/run/node_modules/outside.map': MATCHING_MAP,
+  })
+  // Act
+  const results = [MODULE, `${PACKED}/dist/remote.mjs`].map((id) =>
+    plugin.load(id),
+  )
+  // Assert
+  assert.deepEqual(results, [null, null])
+})
+
+// protects=with a map sourceRoot, an entry whose text differs keeps the place it resolved to (the absolute packed path) after sourceRoot is dropped, while a byte-equal entry becomes the checked-out file; fails_when=the unmatched entry stays relative and resolves next to the module; no_claim=the seal's lookup (read in sealViteLibraryStop.ts, not run here)
+test('keeps an unmatched map source at its sourceRoot-resolved packed path', () => {
+  // Arrange
+  const plugin = pluginOver({
+    [MODULE]: 'x\n',
+    [`${MODULE}.map`]: JSON.stringify({
+      version: 3,
+      sourceRoot: '../src',
+      sources: ['a.ts', 'b.ts', 'webpack://x/c.ts'],
+      sourcesContent: ['const a = 1\n', 'packed b', 'c'],
+      mappings: '',
+    }),
+    [`${LIBRARY}/src/a.ts`]: 'const a = 1\n',
+    [`${LIBRARY}/src/b.ts`]: 'checked-out b',
+  })
+  // Act
+  const loaded = plugin.load(MODULE)
+  // Assert
+  assert.deepEqual(loaded?.map.sources, [
+    `${LIBRARY}/src/a.ts`,
+    `${PACKED}/src/b.ts`,
+    'webpack://x/c.ts',
+  ])
+  assert.equal('sourceRoot' in (loaded?.map ?? {}), false)
 })

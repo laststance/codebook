@@ -34,6 +34,7 @@ const reportSchema = z.discriminatedUnion('type', [
       .object({
         aliased: z.array(z.string()),
         optimizeInclude: z.array(z.string()),
+        deduped: z.array(z.string()),
       })
       .optional(),
   }),
