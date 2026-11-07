@@ -224,6 +224,8 @@ export const NODE_SCRIPT_MINIMUM_EXTENSION_VERSION = '0.2.84'
 
 /** The API that first accepts the `react-scripts-dev` adapter in a version 3 configuration (skill 1.0.74). */
 export const REACT_SCRIPTS_MINIMUM_API = '1.25'
+/** The API that first accepts `library.packageRoot` in a nested version 3 `react-scripts-dev` configuration. */
+export const REACT_SCRIPTS_LIBRARY_MINIMUM_API = '1.35'
 
 /**
  * The selection rule for a react-scripts (Create React App) question, shared word for word by the repository-browser help (`startHere`, `reactScriptsQuickStart`) and the MCP initial instructions; the bundled skill paraphrases it (root only with `rootIsApp`, else the ready `packages` entry with its `packageRoot`, a hoisted install never the root, a truncated list declared from the repository's files) and a test pins those key phrases in the skill.
