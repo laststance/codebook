@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.2.100.0] - 2026-11-08 (development candidate)
+
+Cycle 0098 ([Issue #256](https://github.com/laststance/codebook/issues/256)), a feature cycle. **A library's Next.js Example now runs on the checked-out library.** When an Example of a library repository installs the library's published package, as `reduxjs/react-redux`'s `examples/publish-ci/rr-rsc-context` does for a React Server Component page, the learner used to read one release while another ran. Codebook now builds and packs the checked-out library, has the Example's own `next dev --webpack` serve the packed copy in every compilation, and says which copy the server and the page actually loaded.
+
+### Added
+- **Next library route (MCP API 1.36):** a nested version 3 `next-dev-webpack` run may declare `library: { packageRoot }` (`"."` when the library is the repository root). After the editor's confirmation, Codebook builds and packs the library with the repository's own package manager and starts the Example's own `next dev --webpack` with a preload that redirects every import of the library in the client, server and edge compilations, with the conditions Next resolves (`react-server` included). The webpack cache goes to the run's private folder; `.next` stays Next's own output.
+- **Which copy ran, from the server and the page:** the run attaches the server's debugger before Codebook's readiness request and matches the scripts the server and the page parsed with each compilation. It says "Ran on the checked-out `<name> <version>` built from `<revision>` (packed by `<package manager>`)" only when the packed copy was loaded and no other copy was, a copy the server loads outside webpack through a dependency webpack left external included. An external module of the library, a library module in the edge compilation, a compilation report cut at its size limit, or a report that is gone when the run ends makes the observation unreadable instead of a claim.
+- **Study format 18:** a saved Next library run keeps its library facts beside its module-evaluation, preparation, route-handler and API-route evidence; Codebook 0.2.99 and older list it as saved by a newer Codebook.
+- **Refusals:** a stop in the library's own source on a Next library run (`library-stop-unsupported`, before anything is built; put the stop in the Example's source), `library` on a Next app at the repository root (`library-needs-package-root`), and a start whose compilers did not all take the redirect (`library-redirect-not-applied`, after the library was built and packed; the server is stopped before any request).
+
+### Fixed
+- **A react-scripts app at the repository root that declares `library`** is refused with `library-needs-package-root` and its own recovery, as the help describes, instead of a general configuration error.
+- **A development server that exits, or is killed by a signal, before it listens** is reported with its exit code or signal instead of waiting out the setup bound.
+
+### Changed
+- **Development target (AGENTS.md):** the library Next Example on the checked-out library is trialled on the pinned P04 clone's `examples/publish-ci/rr-rsc-context`.
+
 ## [0.2.99.0] - 2026-11-08 (development candidate)
 
 Cycle 0097 ([Issue #253](https://github.com/laststance/codebook/issues/253)), a feature cycle. **A library's Create React App Example now runs on the checked-out library.** When an Example of a library repository reaches the library only through its installed dependencies, as `reduxjs/redux`'s `examples/counter` reaches `redux` through `@reduxjs/toolkit` and `react-redux`, the learner used to read one release while the published copy ran. Codebook now builds and packs the checked-out library, has the Example's own react-scripts serve the packed copy, and says which copy the page actually loaded.
