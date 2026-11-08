@@ -368,6 +368,7 @@ import { nextServedChunkFetcher } from './utils/nextServedChunkFetcher'
 import { nextServerOnlyFileReasonOfStop } from './utils/nextServerOnlyFileReason'
 import { nextServerOnlyStopMessage } from './utils/nextServerOnlyStopMessage'
 import { OperationAfterTimeoutError } from './utils/operationAfterTimeoutError'
+import { operationHasValueCheck } from './utils/operationHasValueCheck'
 import { operationRefusalText } from './utils/operationRefusalText'
 import { OutstandingPageRequests } from './utils/outstandingPageRequests'
 import {
@@ -1633,7 +1634,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           title: operation.title,
           state: 'not-run',
           ack: 'pending',
-          valueCheck: operation.kind === 'click' ? 'n/a' : 'pending',
+          valueCheck: operationHasValueCheck(operation.kind)
+            ? 'pending'
+            : 'n/a',
           effect: 'pending',
         })
     }
@@ -13879,6 +13882,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         performance.now() - this.lastNavigationAtMs,
       sleep: (delayMs) =>
         sleep(delayMs, undefined, { signal: this.abort.signal }),
+      isPagePaused: () => this.browserIsPaused(),
       readClickPoint: async (selector) => {
         const scrolled = await this.scrollTargetIntoView(selector)
         const target = await this.readConditions([], selector)
@@ -15101,6 +15105,25 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       stop: serverStops[0]!,
       scriptUrl: url === undefined ? '' : this.journalScriptUrlOf(url),
     }
+  }
+
+  /**
+   * Says whether the page is paused by the browser participant's own pause state, for the guard of a `press` operation that must not send a key into a paused page.
+   *
+   * Browser participant only: a server pause leaves the page running, and {@link adapterPausesRetired} is both too broad (the server participant) and incomplete (no announced gate, pending stop or awaited continuation). Called through {@link OperationPort.isPagePaused}.
+   * @returns `true` while the browser holds its own pause, a transient pause, an unannounced pause or an instrumentation pause.
+   * @example
+   * ```ts
+   * this.browserIsPaused() // true while a declared browser stop is being inspected
+   * ```
+   */
+  private browserIsPaused(): boolean {
+    return (
+      this.browserHoldsOwnPause() ||
+      this.transientBrowserPause !== undefined ||
+      Boolean(this.participants.browser.unannouncedPause) ||
+      this.participants.browser.instrumentationPaused === true
+    )
   }
 
   /**

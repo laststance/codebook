@@ -5,6 +5,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 /**
  * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ * 1.39 is additive: a version 3 configuration may declare an operation `{ kind: "press", title, key, selector?, after }`, one key press (optionally with Control, Alt, Shift or Meta, spelled `Control+k`) sent to the page in the browser run, for an app that opens a screen from a keyboard shortcut. The press is refused, nothing sent, when the focused control is a secret control, a text entry, in a frame, or not the declared `selector`, and when its `after` condition already holds; a run saved with a press is saved as format 21 ({@link PRESS_STUDY_VERSION}). A failed press reports one of {@link OPERATION_PRESS_REASONS} as the `reason` of its `INPUT_NOT_ACCEPTED` error.
  * 1.38 is additive: a version 3 `vite-dev` configuration may declare the same `apiServer` (plus the optional `proxyPaths`, the request prefixes the dev server forwards to the API), for a Vite app whose page reaches the repository's own Node API; Codebook starts the API beside the dev server, a server stop in the API pauses during the request the page sends (directly or through the dev server's proxy), the attribution sentence names the route, and the run is saved as format 20 ({@link VITE_API_SERVER_STUDY_VERSION}). A failed operation reports the API's output tail as `apiOutputTail`, and the refusals gain `api-port-conflict` and `api-folder-nesting` (`VITE_UNSUPPORTED`) and `VITE_SEAL_FAILED` for the API's source. A root run may also sign in within the run with `session: "fresh"`.
  * 1.37 is additive: a version 3 `expo-web-dev` configuration may declare `apiServer: { packageRoot, entry, loader?, port }`, the app's own Node API server. Codebook starts it beside Metro (`node` with an inspector and the repository's tsx), attaches the run's server participant to it, and a server stop in the API pauses during the request a page operation sends; every other adapter and version refuses the key as unknown. Such a study is saved as format 19 ({@link EXPO_WEB_API_SERVER_STUDY_VERSION}), whose server observations carry the `apiRequest` fact.
  * 1.36 is additive: a version 3 `next-dev-webpack` configuration with a nested `packageRoot` may declare `library: { packageRoot }` (the same shape as `node-script`'s since 1.33, `vite-dev`'s since 1.34 and `react-scripts-dev`'s since 1.35), for a Next Example below the repository root; such a study is saved as format 18 ({@link NEXT_LIBRARY_STUDY_VERSION}), which may hold the module-evaluation, preparation, route-handler and API-route evidence of formats 12 to 14. A root Next app that declares `library` is refused.
@@ -40,7 +41,31 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.9 is additive: a node-server run is saved as a Server replay. `codebook_explain_node_history` accepts a server history's material (steps citing the request, a stop, output, the response or the request failure), the server run resource gains `nodeServer.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing` and `captureMissing`, `nextActions` offers `save-node-learning`, and `codebook://help/node-server` has a save section.
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
-export const API_VERSION = '1.38'
+export const API_VERSION = '1.39'
+
+/** The API that first accepts a `press` operation in a version 3 configuration. */
+export const PRESS_MINIMUM_API = '1.39'
+
+/** The kinds of operation a version 3 configuration may declare, the one list every union of operation kinds derives from. @example const kind: OperationKind = 'press' */
+export const OPERATION_KINDS = ['text', 'choose', 'click', 'press'] as const
+/** One kind of operation, as {@link OPERATION_KINDS} lists it. */
+export type OperationKind = (typeof OPERATION_KINDS)[number]
+
+/** Why a `press` operation is refused (`INPUT_NOT_ACCEPTED`), nothing sent: the target is not focusable, the focus is on a secret control, in a text entry, in a frame, or moved away from the declared target, or the press's own `after` condition already holds. */
+export const OPERATION_PRESS_REASONS = [
+  'press-target-not-focusable',
+  'press-secret-control',
+  'press-focus-in-text-entry',
+  'press-focus-changed',
+  'press-focus-in-frame',
+  'press-after-already-holds',
+] as const
+/** One reason of {@link OPERATION_PRESS_REASONS}. @example const reason: PressRefusalReason = 'press-secret-control' */
+export type PressRefusalReason = (typeof OPERATION_PRESS_REASONS)[number]
+/** The longest `key` spelling a `press` operation may declare, in characters. */
+export const PRESS_KEY_LIMIT_CHARS = 40
+/** The longest a press waits for the page to acknowledge its `keyUp` release after a failure, in milliseconds; the release is tried once and never repeated. */
+export const PRESS_RELEASE_TIMEOUT_MS = 2_000
 
 /** The API that first accepts the `expo-web-dev` adapter in a version 3 configuration (skill 1.0.79). */
 export const EXPO_WEB_MINIMUM_API = '1.30'
@@ -2075,6 +2100,8 @@ export const NEXT_LIBRARY_STUDY_VERSION = 18
 export const EXPO_WEB_API_SERVER_STUDY_VERSION = 19
 /** The format of a study saved from a version 3 `vite-dev` configuration that declares `apiServer` (API 1.38): the format 8 rules for its evidence like {@link EXPO_WEB_API_SERVER_STUDY_VERSION}, plus the `route`, `proxyPath` and `watched` fields of the `apiRequest` fact. A `vite-dev` run without `apiServer` keeps its format 7, 8, 10 or 16; the suffix `.study.v20.json` makes Codebook 0.2.101 and older list such a study as saved by a newer Codebook and keep it. */
 export const VITE_API_SERVER_STUDY_VERSION = 20
+/** The format of a study saved from a version 3 browser run that declares a `press` operation (API 1.39): the format of its configuration's other features, plus the `press` kind in its saved operations; the suffix `.study.v21.json` makes Codebook 0.2.102 and older list such a study as saved by a newer Codebook and keep it. */
+export const PRESS_STUDY_VERSION = 21
 /** The longest HTTP method token an `apiRequest` fact may name. */
 export const API_REQUEST_METHOD_LIMIT_CHARS = 16
 /** The characters of an upper-cased HTTP method token an `apiRequest` fact may name: RFC 9110 `tchar` without lower-case letters (the producer upper-cases first). */
@@ -2094,7 +2121,7 @@ export const API_REQUEST_PATH_ELLIPSIS = '…'
 /** The fewest candidate requests an `unattributed` `several` fact may count. */
 export const API_REQUEST_SEVERAL_MIN_COUNT = 2
 /** The highest study format this Codebook reads; a saved study above it is listed as saved by a newer Codebook. */
-export const READABLE_STUDY_VERSION = VITE_API_SERVER_STUDY_VERSION
+export const READABLE_STUDY_VERSION = PRESS_STUDY_VERSION
 /** The replay's operation marks closer than this many pixels stack vertically instead of overlapping. */
 export const OPERATION_MARK_STACK_PX = 24
 /** Below this webview width in pixels the operation marks show their numbers only. */
@@ -2106,6 +2133,12 @@ export const CONFIGURED_STUDY_METADATA_SUFFIX = '.study.meta.v3.json'
 // Highest existing version owns a logical study, including when its bytes are corrupt.
 // A change of the saved study format that an older Codebook cannot read takes the next format number and its own `.study.v<n>.json` suffix in this table; an older Codebook then lists such a study as saved by a newer one and keeps it, instead of failing on its schema.
 export const STUDY_STORAGE_FORMATS = [
+  {
+    version: PRESS_STUDY_VERSION,
+    format: 'v21',
+    archiveSuffix: '.study.v21.json',
+    metadataSuffix: '.study.meta.v21.json',
+  },
   {
     version: VITE_API_SERVER_STUDY_VERSION,
     format: 'v20',

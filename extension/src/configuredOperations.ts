@@ -7,6 +7,7 @@ import {
   OPERATION_SETTLE_POLL_MS,
   OPERATION_SETTLE_QUIET_MS,
   REPOSITORY_RUN_TIMEOUT_MS,
+  type PressRefusalReason,
   type SignInRequiredReason,
 } from './constants'
 import type { OperationConfirmationFact } from './operationsConfirmationTypes'
@@ -48,7 +49,7 @@ export class OperationRefusal extends Error {
   readonly sent: 'not-sent' | 'sent'
   readonly sideEffects: OperationSideEffects
   /** Why the page asked for sign-in; set only for `SIGN_IN_REQUIRED`. */
-  readonly reason: SignInRequiredReason | undefined
+  readonly reason: SignInRequiredReason | PressRefusalReason | undefined
   constructor(
     readonly code: OperationRefusalCode,
     message: string,
@@ -57,7 +58,7 @@ export class OperationRefusal extends Error {
       path?: string
       sent?: 'not-sent' | 'sent'
       sideEffects?: OperationSideEffects
-      reason?: SignInRequiredReason
+      reason?: SignInRequiredReason | PressRefusalReason
     },
   ) {
     super(message)
@@ -82,6 +83,8 @@ export interface OperationPort {
   millisecondsSinceNavigation(): number
   /** Waits for the delay, ending early with a throw when the run is cancelled. */
   sleep(delayMs: number): Promise<void>
+  /** Whether the page is paused by the run's own browser pause state (a server pause leaves the page running); a press is not sent while it holds. */
+  isPagePaused(): boolean
   /** Scrolls the click target into view and reads its centre, as every click of the run does; throws the run's own sentence when the target is missing, hidden, disabled or obscured. */
   readClickPoint(selector: string): Promise<{ x: number; y: number }>
 }

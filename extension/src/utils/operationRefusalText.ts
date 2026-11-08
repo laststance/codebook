@@ -1,4 +1,5 @@
 import type { OperationRefusal } from '../configuredOperations'
+import type { SignInRequiredReason } from '../constants'
 
 import { formatRefusalFailure } from './formatRefusalFailure'
 
@@ -13,6 +14,11 @@ import { formatRefusalFailure } from './formatRefusalFailure'
  */
 export function operationRefusalText(refusal: OperationRefusal): string {
   return refusal.code === 'SIGN_IN_REQUIRED' && refusal.reason !== undefined
-    ? formatRefusalFailure('SIGN_IN_REQUIRED', refusal.message, refusal.reason)
+    ? formatRefusalFailure(
+        'SIGN_IN_REQUIRED',
+        refusal.message,
+        // The reason of a SIGN_IN_REQUIRED refusal is always a sign-in reason; the press reasons belong to INPUT_NOT_ACCEPTED
+        refusal.reason as SignInRequiredReason,
+      )
     : formatRefusalFailure(refusal.code, refusal.message)
 }

@@ -94,6 +94,7 @@ function portOf(page: RealChromePage): OperationPort {
     origins: () => [page.origin],
     assertCurrent: (): void => {},
     millisecondsSinceNavigation: () => Number.POSITIVE_INFINITY,
+    isPagePaused: () => false,
     sleep: (delayMs): Promise<void> => delay(delayMs),
     readClickPoint: async (selector) => {
       const read = await page.cdp.request('Runtime.evaluate', {
@@ -518,6 +519,7 @@ test('a click re-reads its target right before the press and refuses one that is
     origins: () => [],
     assertCurrent: (): void => {},
     millisecondsSinceNavigation: () => Number.POSITIVE_INFINITY,
+    isPagePaused: () => false,
     sleep: (): Promise<void> => delay(1),
     readClickPoint: async () => {
       const answer = answers.shift()!
@@ -564,6 +566,7 @@ test('the settle wait passes a quiet complete page and refuses a page that keeps
     origins: () => [],
     assertCurrent: (): void => {},
     millisecondsSinceNavigation: sinceNavigationMs,
+    isPagePaused: () => false,
     sleep: (): Promise<void> => delay(5),
     readClickPoint: async () => ({ x: 0, y: 0 }),
   })
@@ -861,6 +864,7 @@ test('the confirmation facts mark a control secret by any one attribute, keep a 
     origins: () => ['http://127.0.0.1:1'],
     assertCurrent: (): void => {},
     millisecondsSinceNavigation: () => Number.POSITIVE_INFINITY,
+    isPagePaused: () => false,
     sleep: async (): Promise<void> => {},
     readClickPoint: async () => ({ x: 0, y: 0 }),
   }

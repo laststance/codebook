@@ -15,6 +15,7 @@ import {
   MAX_RECORDING_PNG_BYTES,
   MAX_STUDY_CAPTURES_V2,
   MAX_STUDY_OBSERVATIONS_V2,
+  OPERATION_KINDS,
   RECORDING_REASON_LIMIT_CHARS,
   RECORDING_VERSION,
   REFERENCE_LENGTH_LIMIT,
@@ -225,7 +226,7 @@ export const recordingContextSchema = z.strictObject({
  */
 const recordingOperationSchema = z.strictObject({
   index: z.number().int().min(1).max(REPOSITORY_OPERATION_LIMIT),
-  kind: z.enum(['text', 'choose', 'click']),
+  kind: z.enum(OPERATION_KINDS),
   title: z.string().min(1).max(REFERENCE_LENGTH_LIMIT),
   atMs: elapsed.optional(),
   outcome: z.enum(['pending', 'dispatched', 'after-verified']),

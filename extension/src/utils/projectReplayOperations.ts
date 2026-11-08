@@ -1,3 +1,4 @@
+import type { OperationKind } from '../constants'
 import type { RecordingContext } from '../recordingSchemas'
 
 /** How a replay draws one operation: filled number (done), number with a cross (failed), outlined question mark (not finished or not run). */
@@ -9,7 +10,7 @@ export type ReplayOperationMark = {
   index: number
   /** How many operations the run declared. */
   total: number
-  kind: 'text' | 'choose' | 'click'
+  kind: OperationKind
   title: string
   /** The moment on the recording clock the operation's input was sent, kept inside the recording's range; absent for an operation that was never sent. */
   atMs: number | undefined

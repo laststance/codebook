@@ -41,6 +41,7 @@ import {
   REPOSITORY_LITERAL_LIMIT_CHARS,
   API_PROXY_PATHS_MAX_ENTRIES,
   API_PROXY_PATH_MAX_CHARS,
+  OPERATION_KINDS,
 } from './constants'
 import { repositoryItemSchema } from './identitySchemas'
 import { savedLearningSummarySchema } from './learningSummarySchemas'
@@ -287,7 +288,7 @@ export const configuredObservationSchema = z.strictObject({
 const configuredOperationRecordSchema = z.strictObject({
   /** 1-based, as in `afterOperation` and every receipt. */
   index: z.number().int().min(1).max(REPOSITORY_OPERATION_LIMIT),
-  kind: z.enum(['text', 'choose', 'click']),
+  kind: z.enum(OPERATION_KINDS),
   title: shortText,
   /** Milliseconds on the recording clock at which the operation's input was sent; absent for an operation that was never sent. */
   atMs: z.number().finite().nonnegative().optional(),

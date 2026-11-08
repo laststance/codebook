@@ -34,6 +34,8 @@ import type {
   REPOSITORY_BROWSER_ACTION,
   REPOSITORY_BROWSER_PROFILE,
   REPOSITORY_OPERATION_ACTION,
+  OperationKind,
+  PressRefusalReason,
 } from './constants'
 import type { DevelopmentServerAdapterName } from './developmentServerAdapter'
 import type { ErrorCode, StudyError } from './errors'
@@ -458,7 +460,7 @@ export type RuntimeAction =
 export type OperationRecord = {
   /** 1-based, as in `afterOperation` and every receipt. */
   index: number
-  kind: 'text' | 'choose' | 'click'
+  kind: OperationKind
   title: string
   state: 'not-run' | 'sending' | 'paused' | 'done' | 'failed'
   ack: 'pending' | 'yes'
@@ -476,7 +478,7 @@ export type OperationFailure = {
   /** `<runId>#<operationIndex>`: the id of the structured Output > Codebook line that records the failure. */
   logId: string
   /** Set only for `SIGN_IN_REQUIRED`: why the page asked for sign-in. */
-  reason?: SignInRequiredReason
+  reason?: SignInRequiredReason | PressRefusalReason
   /** Set only for `SERVER_STOP_NOT_REACHED`: which server-render stop was not reached and which stops did pause. */
   serverRender?: ServerRenderFailure
   /** Set only for `ENTRY_LOAD_TIMEOUT`: the entry route, the last stop that paused and the time since the entry navigation started. */
