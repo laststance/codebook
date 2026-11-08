@@ -214,6 +214,25 @@ test('the none sentence names what it watches', () => {
   })
 })
 
+// Value: protects=the none sentence of a proxy-aware run names only what it can watch: the API alone with no prefix, the unbound dev server with prefixes; fails_when=a missing prefix list or dev-server port still words a dev-server watch; why_new=the existing none test covers the bound dev server with one prefix only; seam=none; no_claim=real ports
+test('the none sentence omits the dev server when no prefix is declared and names it unbound before its port is known', () => {
+  // Arrange
+  const withoutPrefix = new ApiRequestTracker(PORT, { proxyPaths: [] })
+  withoutPrefix.bindDevServerPort(DEV_PORT)
+  const beforeBinding = new ApiRequestTracker(PORT, {
+    proxyPaths: ['/api', '/v2'],
+  })
+  // Act
+  const sentences = [withoutPrefix, beforeBinding].map(
+    (tracker) => judge(tracker).sentence,
+  )
+  // Assert
+  assert.deepEqual(sentences, [
+    "Among the requests it watches (the API on port 4100), Codebook observed none from the page that started in this operation's window and was still open when the API paused, so it cannot say what made the API reach this line.",
+    "Among the requests it watches (the API on port 4100 and the dev server under /api, /v2), Codebook observed none from the page that started in this operation's window and was still open when the API paused, so it cannot say what made the API reach this line.",
+  ])
+})
+
 // Value: protects=declared-relation wording; fails_when=the sentence claims an observed forward; no_claim=none
 test('the proxied attributed sentence says declared relation, matched by time, forward not observed', () => {
   // Arrange
