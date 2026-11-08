@@ -163,7 +163,7 @@ test('the README documents API-route stops under API 1.29 and no longer lists Pa
   // Arrange
   const readme = await readPackaged('README.md')
   // Act / Assert
-  assert.ok(readme.includes('with **MCP API 1.35**'))
+  assert.ok(readme.includes('with **MCP API 1.36**'))
   assert.ok(
     readme.includes('API 1.29 is additive: it adds Pages API-route stops'),
   )

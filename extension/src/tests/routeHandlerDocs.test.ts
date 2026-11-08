@@ -123,7 +123,7 @@ test('the README documents route-handler stops under API 1.28 and no longer list
   // Arrange
   const readme = await readPackaged('README.md')
   // Act / Assert
-  assert.ok(readme.includes('**MCP API 1.35**'))
+  assert.ok(readme.includes('**MCP API 1.36**'))
   assert.ok(
     readme.includes('API 1.28 is additive: it adds route-handler stops'),
   )

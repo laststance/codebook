@@ -99,6 +99,77 @@ export function outsidePackageRefusal(
   })
 }
 
+/** The static recovery of a `NEXT_STOP_NOT_SEALED` whose `details.reason` is `library-stop-unsupported`: it names fields, never values, because a recovery override reaches MCP unsanitized. */
+const LIBRARY_STOP_UNSUPPORTED_RECOVERY =
+  "Declare the stop in a file of the Example's own source (details.file lies in the library, which this version cannot pause on the Next library route), or start the run without library when the question is about the library's own source; never edit the project. Recovery: fix the configuration, then one new start. Nothing was started: no build, no server, no browser and no input (details.sideEffects is none). See codebook://help/repository-browser#NEXT_STOP_NOT_SEALED."
+
+/**
+ * Builds the refusal of a stop in the checked-out library's own source on a Next run that declares `library`, raised before anything is built or started.
+ *
+ * Why it exists: Next's server chunks do not chain the library's own source map, so a stop in the library's source cannot be sealed on the Next library route in this version (decision D13). Called by {@link ConfiguredBrowserRun} while it resolves the Next package of the run, for a run that declares `library`.
+ * @param libraryName - The library's package name.
+ * @param file - The repository-relative stop file inside the library folder.
+ * @returns The `NEXT_STOP_NOT_SEALED` error: `details.reason: "library-stop-unsupported"`, `library`, `file` and `sideEffects: "none"`.
+ * @example
+ * throw nextLibraryStopUnsupportedRefusal('react-redux', 'src/hooks/useSelector.ts')
+ */
+export function nextLibraryStopUnsupportedRefusal(
+  libraryName: string,
+  file: string,
+): StudyError {
+  const message = `The stop file ${file} lies in the source of library ${libraryName}; stops in the library's own source are not supported on the Next library route in this version, so the run was refused before anything was built or started. Stop in the Example's source instead, or run without library.`
+  return nextRefusal('NEXT_STOP_NOT_SEALED', message, {
+    details: {
+      reason: 'library-stop-unsupported',
+      library: libraryName,
+      file,
+      sideEffects: 'none',
+    },
+    recovery: LIBRARY_STOP_UNSUPPORTED_RECOVERY,
+  })
+}
+
+/** The static recovery of a `NEXT_UNSUPPORTED_SETTING` whose `details.reason` is `library-redirect-not-applied`; the code's own recovery speaks of basePath and i18n routing, which would mislead here. */
+const LIBRARY_REDIRECT_NOT_APPLIED_RECOVERY =
+  "Tell the learner this Next installation cannot take the library route in this version (details.compilers names the compilers whose redirect was not confirmed, details.cause the preload's error when it wrote one), then start again once without library, saying the Example then runs its installed copy of the library; never retry with library and never edit the project. Recovery: learner decision, then one new start. The library was built and packed and the owned server was started and stopped; no request was sent and no browser was opened (details.sideEffects is partial). See codebook://help/repository-browser#NEXT_UNSUPPORTED_SETTING."
+
+/** The most characters of the preload's error message a refusal quotes. */
+const LIBRARY_REDIRECT_CAUSE_MAX_CHARS = 300
+
+/**
+ * Builds the refusal of a Next library run whose preload did not confirm the redirect for every compiler, raised after the owned server started and before any request.
+ *
+ * Why it exists: a Next installation that builds its webpack configuration another way would serve the Example's installed copy while the run reads complete, so the run is refused instead (decision D20). Called by {@link ConfiguredBrowserRun} after the server start returns.
+ * @param libraryName - The library's package name.
+ * @param compilers - The compilers that wrote no `wrapped` line within the bound (`client`, `server`, `edge-server`); empty when the preload wrote its error line instead.
+ * @param cause - The preload's error message, when it wrote one; cut to {@link LIBRARY_REDIRECT_CAUSE_MAX_CHARS}.
+ * @returns The `NEXT_UNSUPPORTED_SETTING` error: `details.reason: "library-redirect-not-applied"`, `library`, `compilers`, `cause` (when known) and `sideEffects: "partial"`.
+ * @example
+ * nextLibraryRedirectNotAppliedRefusal('react-redux', ['server']).details?.compilers // => ['server']
+ */
+export function nextLibraryRedirectNotAppliedRefusal(
+  libraryName: string,
+  compilers: readonly string[],
+  cause?: string,
+): StudyError {
+  const quoted = cause?.slice(0, LIBRARY_REDIRECT_CAUSE_MAX_CHARS)
+  const missing =
+    compilers.length === 0
+      ? ''
+      : ` for the ${compilers.join(', ')} compiler${compilers.length === 1 ? '' : 's'}`
+  const message = `The library redirect of ${libraryName} was not applied${missing}${quoted === undefined ? '' : ` (${quoted})`}, so the Example would run its installed copy of the library, not the checked-out one. The library was built and packed, the owned server was stopped, no request was sent and no browser was opened.`
+  return nextRefusal('NEXT_UNSUPPORTED_SETTING', message, {
+    details: {
+      reason: 'library-redirect-not-applied',
+      library: libraryName,
+      compilers: [...compilers],
+      ...(quoted === undefined ? {} : { cause: quoted }),
+      sideEffects: 'partial',
+    },
+    recovery: LIBRARY_REDIRECT_NOT_APPLIED_RECOVERY,
+  })
+}
+
 /** What each route-handler refusal says was refused; the recovery comes from {@link ROUTE_HANDLER_REFUSAL_RECOVERY}, which the help shares. */
 const ROUTE_HANDLER_REFUSAL_TEXT: Record<RouteHandlerRefusalReason, string> = {
   'route-handler-before-operation':

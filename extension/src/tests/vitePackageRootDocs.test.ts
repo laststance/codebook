@@ -341,7 +341,7 @@ test('the README documents Vite library stops, their refusals and replay with AP
     "also after the library's build is removed",
   ])
     assert.ok(section.includes(phrase), phrase)
-  assert.ok(readme.includes('with **MCP API 1.35**'))
+  assert.ok(readme.includes('with **MCP API 1.36**'))
   assert.ok(readme.includes('API 1.21 is additive: it adds browser stops'))
   assert.ok(readme.includes('(1.0.70).**'))
   assert.ok(readme.includes('updates to **1.0.82**'))

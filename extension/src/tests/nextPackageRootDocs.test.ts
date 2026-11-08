@@ -224,7 +224,7 @@ test('the README replaces the nested-app limitation with the root-open entry', a
   // Act / Assert
   assert.equal(readme.includes('cannot run yet'), false)
   assert.ok(readme.includes('## Run a Next app below the repository root'))
-  assert.ok(readme.includes('**MCP API 1.35**'))
+  assert.ok(readme.includes('**MCP API 1.36**'))
   assert.ok(readme.includes('format 9 (`.study.v9.json`)'))
   assert.ok(
     readme.includes(

@@ -185,7 +185,7 @@ test('the README states the library-stop rule in the nested-app section with API
     ...LIBRARY_REASONS.map(([reason]) => `\`${reason}\``),
   ])
     assert.ok(section.includes(phrase), phrase)
-  assert.ok(readme.includes('with **MCP API 1.35**'))
+  assert.ok(readme.includes('with **MCP API 1.36**'))
   assert.ok(readme.includes('(1.0.68).**'))
   assert.ok(readme.includes('updates to **1.0.82**'))
 })
