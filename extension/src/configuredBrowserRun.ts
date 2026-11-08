@@ -769,6 +769,12 @@ type RouteHandlerHitResumeVerdict = {
   reason: RouteHandlerResumeReason
   declaredIndex: number
 }
+/** The verdict for a hit of an armed API stop that came before its operation's input was dispatched (background polling, an earlier request, another client): resumed and journaled, the stop stays armed for the real input. */
+type ApiBeforeInputVerdict = {
+  action: 'resume'
+  event: 'breakpoint.api-before-input'
+  declaredIndex: number
+}
 /** The verdict for a server pause in a server library stop's file that is nobody's stop: another layer's copy of the module (the `(ssr)` one) or a line only a browser stop declares; resumed and journaled with the script address, never counted and never observed. */
 type LibraryCopyVerdict = {
   action: 'resume'
@@ -5458,7 +5464,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       | BrowserLibraryCopyVerdict
       | LibraryCopyVerdict
       | PreparationHitVerdict
-      | RouteHandlerHitResumeVerdict,
+      | RouteHandlerHitResumeVerdict
+      | ApiBeforeInputVerdict,
   ): Promise<void> {
     const participant = this.participants.server
     this.journalResumedHit(verdict)
@@ -6111,7 +6118,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       | BrowserLibraryCopyVerdict
       | LibraryCopyVerdict
       | PreparationHitVerdict
-      | RouteHandlerHitResumeVerdict,
+      | RouteHandlerHitResumeVerdict
+      | ApiBeforeInputVerdict,
   ): void {
     const count = (this.resumedHitCounts.get(verdict.event) ?? 0) + 1
     this.resumedHitCounts.set(verdict.event, count)
@@ -11810,7 +11818,22 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     },
   ): Promise<boolean> {
     const { entry, held, scriptId, scriptUrl, heldMs } = hit
-    const apiRequest = await this.attributeApiPause(entry)
+    // A hit before the operation's input was dispatched is nobody's stop: it is resumed and the breakpoint stays armed for the real input.
+    const dispatchedAtMs = this.operationDispatchedAtMs.get(
+      entry.operationIndex,
+    )
+    if (
+      dispatchedAtMs === undefined ||
+      (this.apiPauseReceivedAtMs ?? Date.now()) < dispatchedAtMs
+    ) {
+      await this.resumeUnexpectedHit(session, event, {
+        action: 'resume',
+        event: 'breakpoint.api-before-input',
+        declaredIndex: entry.index,
+      })
+      return true
+    }
+    const apiRequest = await this.attributeApiPause(entry, dispatchedAtMs)
     try {
       await this.publishApiServerPause(session, event, held, {
         entry,
@@ -11841,11 +11864,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Ties an API pause to the one page request it waited for: waits until the fixed wait after the pause's first receipt has passed, then judges the requests that started in the stop's operation window and were still open at that receipt.
    * Called by {@link judgeApiServerHit}.
    * @param entry - The stop that paused.
+   * @param dispatchedAtMs - When the stop's operation sent its input; the window opens here.
    * @returns The fact: `attributed` for exactly one candidate, else `unattributed` with `none` or `several`.
-   * @example await this.attributeApiPause(entry) // { state: 'attributed', method: 'POST', path: '/api/rpc/x', operation: 2, … }
+   * @example await this.attributeApiPause(entry, 1700000000000) // { state: 'attributed', method: 'POST', path: '/api/rpc/x', operation: 2, … }
    */
   private async attributeApiPause(
     entry: RouteHandlerStop,
+    dispatchedAtMs: number,
   ): Promise<ApiRequestFact> {
     const receivedAtMs = this.apiPauseReceivedAtMs ?? Date.now()
     // The pause and the page's events come on different connections: events with a start before the receipt may still be on their way.
@@ -11857,8 +11882,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.alive()
     this.apiPauseReceivedAtMs = undefined
     return this.apiRequests!.attribute({
-      windowStartWallMs:
-        this.operationDispatchedAtMs.get(entry.operationIndex) ?? receivedAtMs,
+      windowStartWallMs: dispatchedAtMs,
       cutoffWallMs: receivedAtMs,
       operation: entry.operationIndex,
       title: this.operationRecords[entry.operationIndex - 1]!.title,
