@@ -6,6 +6,7 @@ import {
   MODULE_EVALUATION_STUDY_VERSION,
   NEXT_LIBRARY_STUDY_VERSION,
   OPERATIONS_CONFIG_VERSION,
+  PRESS_STUDY_VERSION,
   ROUTE_HANDLER_STUDY_VERSION,
 } from '../constants'
 
@@ -17,6 +18,7 @@ import {
   isApiServerStudyFormat,
   isModuleEvaluationObservation,
   isRouteHandlerObservation,
+  studyRulesVersionOf,
   usesServerRenderEvidence,
 } from './studyFormatOfConfiguration'
 
@@ -178,7 +180,9 @@ function assertApiRequestFacts(
   study: Omit<ConfiguredStudy, 'captures'>,
   stops: ReturnType<typeof configuredStops>,
 ): void {
-  const keepsApiRequest = isApiServerStudyFormat(study.version)
+  // A format 21 study keeps the apiRequest rules of the format its configuration takes without the press.
+  const rulesVersion = studyRulesVersionOf(study)
+  const keepsApiRequest = isApiServerStudyFormat(rulesVersion)
   const apiServer =
     study.configuration.version === OPERATIONS_CONFIG_VERSION
       ? study.configuration.apiServer
@@ -186,9 +190,9 @@ function assertApiRequestFacts(
   for (const observation of study.observations) {
     if (!keepsApiRequest && observation.apiRequest !== undefined)
       throw new Error('Only a study of format 19 or 20 keeps an apiRequest.')
-    if (study.version === EXPO_WEB_API_SERVER_STUDY_VERSION)
+    if (rulesVersion === EXPO_WEB_API_SERVER_STUDY_VERSION)
       assertFormat19Observation(observation, stops, apiServer)
-    if (study.version === VITE_API_SERVER_STUDY_VERSION)
+    if (rulesVersion === VITE_API_SERVER_STUDY_VERSION)
       assertFormat20Observation(observation, stops, apiServer)
   }
 }
@@ -371,8 +375,10 @@ function assertFormatHoldsItsFields(
   const holdsRouteHandler = study.observations.some(isRouteHandlerObservation)
   const holdsApiRoute = study.observations.some(isApiRouteObservation)
   // Format 18 (`next-dev-webpack` with `library`) holds the fields of formats 12 to 14 itself and moves to none of them, so it may hold any of them or none.
+  // Format 21 (a press) holds those fields itself, like formats 18 to 20: the observation fields do not move it to another format.
   if (
     study.version === NEXT_LIBRARY_STUDY_VERSION ||
+    study.version === PRESS_STUDY_VERSION ||
     isApiServerStudyFormat(study.version)
   )
     return

@@ -5,6 +5,7 @@ import type {
 
 import {
   isApiServerStudyFormat,
+  studyRulesVersionOf,
   usesServerRenderEvidence,
 } from './studyFormatOfConfiguration'
 
@@ -23,7 +24,7 @@ export function observationOfFormat(
   if (usesServerRenderEvidence(study)) {
     // `apiRequest` (with the `route`, `proxyPath` and `watched` of format 20) exists in formats 19 and 20 only; another format 8 rules study never keeps it.
     if (
-      isApiServerStudyFormat(study.version) ||
+      isApiServerStudyFormat(studyRulesVersionOf(study)) ||
       observation.apiRequest === undefined
     )
       return observation

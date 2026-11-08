@@ -24,6 +24,7 @@ import { stopOfObservation } from './stopOfObservation'
 import {
   isOperationsStudyFormat,
   isReadableStudyFormatOfConfiguration,
+  studyRulesVersionOf,
   usesServerRenderEvidence,
 } from './studyFormatOfConfiguration'
 import { validateOperationRecords } from './validateOperationRecords'
@@ -44,10 +45,12 @@ export function validateConfiguredStudyEvidence(
   )
     throw new Error('Configured archive and intent versions disagree.')
   // Library facts exist exactly in a format 16, 17 or 18 study, whose configuration declares the library they describe.
+  // Format 21 (a press) keeps the library facts exactly when the format of its configuration without the press does.
+  const rulesVersion = studyRulesVersionOf(study)
   if (
-    (study.version === VITE_LIBRARY_STUDY_VERSION ||
-      study.version === REACT_SCRIPTS_LIBRARY_STUDY_VERSION ||
-      study.version === NEXT_LIBRARY_STUDY_VERSION) !==
+    (rulesVersion === VITE_LIBRARY_STUDY_VERSION ||
+      rulesVersion === REACT_SCRIPTS_LIBRARY_STUDY_VERSION ||
+      rulesVersion === NEXT_LIBRARY_STUDY_VERSION) !==
     (study.library !== undefined)
   )
     throw new Error('Configured library facts and study format disagree.')
