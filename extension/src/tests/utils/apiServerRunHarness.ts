@@ -234,6 +234,8 @@ export async function apiServerRunHarness(
       >['vite']
     >
     proxyPaths?: string[]
+    /** Further stops after the first (an API stop), such as a browser stop declared after it; their operations and participants come from `extra.operations`. */
+    additionalStops?: Parameters<typeof configuredRuntimeHarness>[2]
     extra?: Partial<Parameters<typeof configuredRuntimeHarness>[3]>
   } = {},
 ) {
@@ -246,7 +248,7 @@ export async function apiServerRunHarness(
   const harness = await configuredRuntimeHarness(
     context,
     apiControl(context),
-    [],
+    options.additionalStops ?? [],
     {
       participant: 'server',
       adapter: options.adapter ?? 'expo-web-dev',

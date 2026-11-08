@@ -168,3 +168,31 @@ test('a learner secret typed after launch and split across two output chunks nev
     },
   )
 })
+
+// Value: protects=OCR1-3 an env-file value of the app that the API prints never appears in outputTail or details.apiOutputTail, because the run applies its own mask to the tail; fails_when=the view serves the launcher's tail unmasked by the run's env-file values; no_claim=the launcher's live learner-secret mask (ownedApiServer.test.ts)
+test('an env-file value of the app that the API prints is masked in outputTail and details.apiOutputTail', async (context) => {
+  // Arrange
+  const { service, receipt, harness } = await hostedViteRun(context, {
+    extra: {
+      // The Vite stand-in reports this env-file value as one the launcher masks.
+      maskedValues: ['env-file-value-31'],
+    },
+  })
+  harness.fake.outputTail = 'connect failed for env-file-value-31\n'
+  await sendOperation(harness, 1)
+  // Act
+  await failOperation(harness)
+  // Assert
+  const state = service.state(service.record(receipt))
+  assert.deepEqual(
+    {
+      detailsTail: (state.error?.details as { apiOutputTail?: string })
+        .apiOutputTail,
+      viewTail: harness.run.view().apiServer?.outputTail,
+    },
+    {
+      detailsTail: 'connect failed for [masked]',
+      viewTail: 'connect failed for [masked]',
+    },
+  )
+})

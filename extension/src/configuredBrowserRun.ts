@@ -488,6 +488,7 @@ import {
 } from './utils/serverRenderHitVerdictOf'
 import { serverStopSetOf } from './utils/serverStopSetOf'
 import { signInRequiredMessage } from './utils/signInRequiredMessage'
+import { sourceMapLocationsOf } from './utils/sourceMapLocationsOf'
 import type { MappedPositionsScan } from './utils/sourceMapMappedPositions'
 import {
   startIpv6LoopbackForwarder,
@@ -6975,7 +6976,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           viteResealFailureSentence(generation, error.message),
         )
       })
-      Object.assign(this.stops[index]!, renewed)
+      // `this.stops` holds the sealed (non-API) stops only, so the target is found by its declared index, never by position.
+      const target = this.stops.find((sealed) => sealed.declaredIndex === index)
+      if (target) Object.assign(target, renewed)
     }
     this.freezeSealedStops()
   }
@@ -11668,10 +11671,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         endpoint: (signal) => api.inspectorEndpoint(signal),
         cwd: api.packageRoot,
         verify: (candidate, signal) => api.verifyInspector(candidate, signal),
-        resolveSourceMapLocations: () => [
-          `${repositoryRoot}/**`,
-          '!**/node_modules/**',
-        ],
+        resolveSourceMapLocations: () => sourceMapLocationsOf(repositoryRoot),
       },
       pauseForSourceMap: false,
     })
@@ -11876,7 +11876,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     // The tail is data for a failure only: a healthy run's view never carries it (D33).
     const outputTail =
       this.failures.length > 0 || this.operationFailure !== undefined
-        ? withoutInspectorBanner(api.outputTailNow())
+        ? // The launcher masks learner secrets live; the run's mask adds the app's env-file values (idempotent).
+          this.maskRunText(withoutInspectorBanner(api.outputTailNow()))
         : ''
     return {
       apiServer: {
