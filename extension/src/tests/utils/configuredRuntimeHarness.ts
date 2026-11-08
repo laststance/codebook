@@ -251,6 +251,8 @@ export async function configuredRuntimeHarness(
         scriptPort?: number
         port?: number
         declared?: { port: number; source: string }
+        /** Makes the mocked port check find the declared Vite port taken by this occupant, so the run's `refuse` path runs (the real check refuses only for a real listener). */
+        occupant?: { reason: 'in-use' | 'not-permitted' }
       }
     }
     /** Called with the scripted participant right after the run started the server debug session and before it selected it, so a test sends the API's entry pause at that moment. */
@@ -2345,7 +2347,14 @@ export async function configuredRuntimeHarness(
         },
       },
       './utils/assertDevelopmentPortFree': {
-        assertDevelopmentPortFree: async () => {
+        assertDevelopmentPortFree: async (
+          declared: { port: number },
+          check?: { refuse?: (refusal: unknown) => Error },
+        ) => {
+          const occupant = options.apiServer?.vite?.occupant
+          // The real check hands the occupant to the caller's wording; the run's wrapper then words it.
+          if (occupant && check?.refuse)
+            throw check.refuse({ port: declared.port, ...occupant })
           if (options.declaredPortTaken)
             throw new StudyError(
               'PREREQUISITE_MISSING',
@@ -2401,10 +2410,10 @@ export async function configuredRuntimeHarness(
             onApp(app: typeof fakeApplication): void
             onStep(step: string): void
             onDeclaredPort(declared: { port: number; source: string }): void
-            assertPortFree(declared: {
-              port: number
-              source: string
-            }): Promise<void>
+            assertPortFree(
+              declared: { port: number; source: string },
+              refuse?: (refusal: unknown) => Error,
+            ): Promise<void>
           }) => {
             viteRequests.started.push({
               workspace: request.workspace,
@@ -2422,7 +2431,11 @@ export async function configuredRuntimeHarness(
             const declared = options.apiServer?.vite?.declared
             if (declared) {
               request.onDeclaredPort(declared)
-              await request.assertPortFree(declared)
+              // The real launcher words a taken port itself; the run's wrapper replaces this for an `apiServer` run.
+              await request.assertPortFree(
+                declared,
+                () => new StudyError('VITE_PORT_UNAVAILABLE', 'Port is taken'),
+              )
             }
             request.onStep('starting Vite')
             setupSteps.push('starting Vite')
