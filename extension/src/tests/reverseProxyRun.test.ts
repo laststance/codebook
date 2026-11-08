@@ -552,7 +552,7 @@ test('two spellings of the declared origin give one start intent holding the can
     service.start({
       instanceId: service.instanceId,
       profile: 'repository-browser',
-      key: 'proxy-origin',
+      key: 'origin',
       configuration: {
         version: 3,
         adapter: configuration.adapter,
@@ -706,7 +706,7 @@ test('the run resource carries the checking message only while the run prepares'
   const receipt = service.start({
     instanceId: service.instanceId,
     profile: 'repository-browser',
-    key: 'proxy-message',
+    key: 'notice',
     configuration,
   })
   await service.record(receipt).preparation

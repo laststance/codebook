@@ -416,6 +416,7 @@ test('a run cancelled mid-flight destroys the socket and rejects with the signal
     // Act
     const pending = proveReverseProxy(inputFor(server.port), controller.signal)
     while (server.requests.length === 0)
+      // gstack-timing-ok: a poll until the server saw the request, not a sleep before an assertion
       await new Promise((resolve) => setTimeout(resolve, 10))
     const [socket] = [...server.sockets]
     controller.abort(new Error('run cancelled'))

@@ -402,6 +402,7 @@ test('the quick-start decision table has a keyboard-shortcut row that points at 
   // Assert
   assert.ok(row !== undefined)
   assert.ok(row.use.includes('codebook://help/repository-browser#press'))
+  // pregate-literal: API_VERSION=1.39 the press row names the minimum API of press, which stays 1.39
   assert.ok(row.use.includes('API 1.39'))
 })
 

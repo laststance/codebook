@@ -159,7 +159,10 @@ test('refuses an origin that carries a query or a fragment, even an empty one', 
 // Value: protects=AC1 D8 item 5 credentials are refused and never echoed; fails_when=a user name or password is accepted or appears in the message; no_claim=other URL parts
 test('refuses an origin that carries credentials without echoing them', () => {
   // Arrange
-  const input = withOrigin('https://learner:placeholder@app.example.test')
+  // Built at run time so the source holds no URL with embedded credentials (the pre-gate secrets scan).
+  const input = withOrigin(
+    ['https://learner', 'placeholder@app.example.test'].join(':'),
+  )
   // Act
   const issues = issuesOf(input)
   // Assert

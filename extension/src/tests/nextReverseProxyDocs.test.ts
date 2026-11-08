@@ -206,7 +206,7 @@ test('the limits and the sign-in text carry the agreed sentences of the reverse 
   )
 })
 
-// Value: protects=the bundled skill, the README item and the Saved studies sentence tell the learner and the chat the API gate, the format and the no-bypass rule; fails_when=a sentence leaves the skill or README, or the README still names API 1.39 as current; no_claim=the CHANGELOG entry, which /ship writes
+// Value: protects=the bundled skill, the README item and the Saved studies sentence tell the learner and the chat the API gate, the format and the no-bypass rule; fails_when=a sentence leaves the skill or README, or the README still names the previous API as current; no_claim=the CHANGELOG entry, which /ship writes
 test('the skill and the README carry the reverse proxy paragraph and the format 22 sentence', async () => {
   // Arrange
   const skill = await readPackaged('skills/codebook/SKILL.md')

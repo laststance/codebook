@@ -436,7 +436,7 @@ async function stuckChrome(
 }
 
 // Value: protects=O2-2 a Stop during Chrome's start ends the check at once instead of polling for the debugging port to the bound; fails_when=an abort while Chrome is still starting waits for the 20 s bound, or leaves the process or the profile folder behind; no_claim=the length of a real Chrome's start
-test('probe returns within about a second when the run is cancelled while Chrome is still starting and leaves no process or folder', async (context) => {
+test('probe returns within seconds when the run is cancelled while Chrome is still starting and leaves no process or folder', async (context) => {
   // Arrange
   if (process.platform === 'win32') return context.skip('POSIX wrapper script')
   const { script, pidFile } = await stuckChrome(context)
@@ -456,7 +456,8 @@ test('probe returns within about a second when the run is cancelled while Chrome
 
   // Assert
   assert.equal(outcome, reason)
-  assert.ok(elapsedMs < 1_500, `took ${elapsedMs} ms`)
+  // gstack-timing-ok: the bound is the contract; before the fix the abort waited for the probe's bound (20 s), and killing the stand-in takes milliseconds, so 3 s leaves a wide margin under load
+  assert.ok(elapsedMs < 3_000, `took ${elapsedMs} ms`)
   const pid = Number((await readFile(pidFile, 'utf8')).trim())
   assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' })
   assert.deepEqual(await probeFolders(), foldersBefore)
@@ -481,6 +482,7 @@ test('probe reports proof-unclassified well under the bound for a Chrome binary 
     reason: 'proof-unclassified',
     cleanupConfirmed: true,
   })
+  // gstack-timing-ok: the bound is the contract; a spawn error ends the wait at once instead of polling to the probe's bound
   assert.ok(elapsedMs < 3_000, `took ${elapsedMs} ms`)
   assert.deepEqual(await probeFolders(), foldersBefore)
 })
