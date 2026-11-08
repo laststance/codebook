@@ -295,7 +295,7 @@ test('the skill and the README describe the Expo apiServer run, its gate and its
     assert.ok(section.includes(phrase), phrase)
   assert.ok(
     readme.includes(
-      'with **MCP API 1.37** (`codebook_status` reports the installed build). API 1.37 is additive:',
+      'with **MCP API 1.38** (`codebook_status` reports the installed build). API 1.38 is additive:',
     ),
   )
   assert.ok(readme.includes('format 19 (`.study.v19.json`)'))
@@ -535,4 +535,76 @@ test('the Expo and Vite apiServer help both tell the chat to read apiOutputTail 
   // Assert
   assert.deepEqual(expoSentences, [expected])
   assert.deepEqual(viteSentences, [expected])
+})
+
+// Value: protects=a learner and a chat find one README sentence and one skill route for each user-visible behavior of the Vite apiServer run, and no trial value leaks into README, SKILL or the help JSON; fails_when=a behavior sentence (run and pause together, proxyPaths, declared-not-observed, format 20, apiOutputTail, the three refusals, fresh-session sign-in) or the skill route disappears, or a trial value appears; why_new=AGENTS.md needs a README sentence per CHANGELOG behavior; seam=none; no_claim=that port 4000 is absent from the other adapters README and help text (it is their documented placeholder), that the CHANGELOG holds the same sentences (written by the ship step, so not asserted here) or how a chat follows the skill
+test('README, SKILL and CHANGELOG hold one sentence per behavior and no trial value', async (context) => {
+  // Arrange
+  const { text: help } = await readApiServerHelp(context)
+  const skill = await readPackaged('skills/codebook/SKILL.md')
+  const readme = await readPackaged('README.md')
+  const start = readme.indexOf('**Run a Vite app with its own Node API')
+  const section = readme.slice(start, readme.indexOf('\n', start))
+  const viteSection = JSON.stringify(
+    (JSON.parse(help) as { viteApiServer: unknown }).viteApiServer,
+  )
+  const trialValues = [
+    'nsx',
+    'stocklist',
+    '3010',
+    '4100',
+    '4101',
+    'switch-time',
+  ]
+  const bodies: Array<[string, string]> = [
+    ['help', help],
+    ['skill', skill],
+    ['readme', readme],
+  ]
+  // Act
+  const hits = trialValues.flatMap((value) =>
+    bodies
+      .filter(([, body]) => body.includes(value))
+      .map(([name]) => `${name}:${value}`),
+  )
+  // The port 4000 is a documented placeholder of other adapters' README and help text, so only the Vite apiServer text, its README paragraph and the skill are checked for it.
+  const portBodies: Array<[string, string]> = [
+    ['viteApiServer', viteSection],
+    ['readme-vite-paragraph', section],
+    ['skill', skill],
+  ]
+  const portHits = portBodies.filter(([, body]) => body.includes('4000'))
+  // Assert
+  assert.ok(start > 0)
+  for (const phrase of [
+    'MCP API 1.38',
+    'apiServer: { packageRoot, entry, loader?, port, proxyPaths? }',
+    "pauses in the API's own source during the request the page sends",
+    'study format 20 (`.study.v20.json`)',
+    '`apiServer.proxyPaths` lists the request prefixes the dev server forwards to the API',
+    'The proxy relation is declared, not observed',
+    'does not observe the forward',
+    '`apiOutputTail`',
+    '`api-port-conflict` of `VITE_UNSUPPORTED`',
+    '`api-folder-nesting` of `INVALID_CONFIGURATION`',
+    '`VITE_SEAL_FAILED` with `details.reason` `source-drift` or `source-unverifiable`',
+    'a root run declares `session: "fresh"`',
+    'the `viteApiServer` section of `codebook://help/repository-browser`',
+  ])
+    assert.ok(section.includes(phrase), phrase)
+  assert.ok(
+    readme.includes('format 20 (`.study.v20.json`) with the `apiRequest` fact'),
+  )
+  assert.ok(
+    skill.includes(
+      'goes to `viteApiServer` in `codebook://help/repository-browser`',
+    ),
+  )
+  assert.ok(
+    skill.includes(
+      'only when `codebook_status` reports API 1.38 or later (1.37 for an Expo app)',
+    ),
+  )
+  assert.deepEqual(hits, [])
+  assert.deepEqual(portHits, [])
 })
