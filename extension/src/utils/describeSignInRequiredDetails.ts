@@ -79,7 +79,7 @@ function setUpRetryOf(input: {
   savedSession?: SavedSessionStatus
 }): string {
   if (input.reason === 'package-root-fresh-session')
-    return 'Do not set up a saved session: this app cannot sign in below the root in this version. Change the flow to one that needs no sign-in, then start one new run.'
+    return 'Do not set up a saved session: without apiServer this app cannot sign in below the root in this version. Change the flow to one that needs no sign-in, or declare apiServer and sign in inside the run (apiServer.signInInRun), then start one new run.'
   // A fresh run without the status read at admission declared its fresh profile: a setup would not change its next run.
   if (input.session === 'fresh' && input.savedSession === undefined)
     return 'Remove session: "fresh" from the configuration, then start one new run.'

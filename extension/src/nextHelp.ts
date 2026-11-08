@@ -369,7 +369,7 @@ export const PACKAGE_ROOT_REFUSALS = {
     code: 'SIGN_IN_REQUIRED',
     meaning:
       "A run below the repository root starts with a fresh browser and never loads the repository's saved sign-in session, which was set up for the root app, and the app asked for a sign-in.",
-    fix: 'Do not set up a saved session: this app cannot sign in below the root in this version. Tell the learner so and offer a question about code that needs no sign-in.',
+    fix: 'Do not set up a saved session: without apiServer this app cannot sign in below the root in this version. A Vite or Expo run that declares apiServer signs in inside the run instead (apiServer.signInInRun); otherwise tell the learner so and offer a question about code that needs no sign-in.',
   },
   'nested-workspace': {
     code: 'PREREQUISITE_MISSING',
