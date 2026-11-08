@@ -253,6 +253,8 @@ export async function configuredRuntimeHarness(
         declared?: { port: number; source: string }
         /** Makes the mocked port check find the declared Vite port taken by this occupant, so the run's `refuse` path runs (the real check refuses only for a real listener). */
         occupant?: { reason: 'in-use' | 'not-permitted' }
+        /** Makes the Vite stand-in's start throw this error after the facts, as an unsupported config, a config-load failure or a listen-time port race does. */
+        startFailure?: Error
       }
     }
     /** Called with the scripted participant right after the run started the server debug session and before it selected it, so a test sends the API's entry pause at that moment. */
@@ -2437,6 +2439,8 @@ export async function configuredRuntimeHarness(
                 () => new StudyError('VITE_PORT_UNAVAILABLE', 'Port is taken'),
               )
             }
+            if (options.apiServer?.vite?.startFailure)
+              throw options.apiServer.vite.startFailure
             request.onStep('starting Vite')
             setupSteps.push('starting Vite')
             request.onApp(fakeApplication)

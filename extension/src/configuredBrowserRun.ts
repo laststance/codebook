@@ -507,6 +507,7 @@ import {
 import {
   viteApiPortConflictRefusal,
   viteApiRunPortUnavailableRefusal,
+  viteApiRunStartFailure,
 } from './viteApiServerRefusals'
 import { VITE_DEV_ADAPTER } from './viteDevAdapter'
 import type { ViteLauncherLibraryOptions } from './viteLauncherProtocol'
@@ -2769,7 +2770,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     await this.startApiServer()
     this.alive()
     // The app runs on the port the project declares (its auth origin points there); a busy port refuses the start instead of moving the app.
-    const started = await adapter.start({
+    const starting = adapter.start({
       ...(viteLibrary
         ? {
             viteLibrary,
@@ -2800,6 +2801,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       onApp: (app) => {
         this.app = app
       },
+    })
+    // B5: a Vite refusal after the API launched ends the API group and says so before it reaches the agent.
+    const started = await starting.catch(async (error: unknown) => {
+      throw await this.viteStartFailureAfterApi(error)
     })
     // D40: the proxy classification needs the port before the browser opens, so no page request can precede it.
     this.apiRequests?.bindDevServerPort(started.port)
@@ -11413,8 +11418,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }): Promise<void> {
     const declaration = this.apiServerDeclaration()
     if (!declaration || declaration.port !== declared.port) return
-    await this.killApiServerFirst().catch(() => undefined)
+    const isApiStopConfirmed = await this.endApiForRefusal()
     throw viteApiPortConflictRefusal({
+      isApiStopConfirmed,
       apiPort: declaration.port,
       vitePort: declared.port,
       // The launcher words a script port as "the dev script --port"; the pre-start check already refused that, so it is a config or default port here.
@@ -11460,9 +11466,49 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     } catch (error) {
       if (!isViteApiRun || !taken) throw error
       // D27c: the API was started; end it, then word the refusal as partial.
-      await this.killApiServerFirst().catch(() => undefined)
-      throw viteApiRunPortUnavailableRefusal(taken, declared.source)
+      const isApiStopConfirmed = await this.endApiForRefusal()
+      throw viteApiRunPortUnavailableRefusal(
+        taken,
+        declared.source,
+        isApiStopConfirmed,
+      )
     }
+  }
+
+  /**
+   * Ends the API group for a Vite refusal found after the API launched and records an unconfirmed stop as the seal path does (L1).
+   * Called by {@link refuseApiPortAtVitePort}, {@link assertAppPortFree} and {@link viteStartFailureAfterApi}.
+   * @returns `true` when the group was ended; `false` when the kill failed, so the refusal must not claim the API stopped.
+   * @example const isApiStopConfirmed = await this.endApiForRefusal()
+   */
+  private async endApiForRefusal(): Promise<boolean> {
+    const api = this.apiServer
+    try {
+      await this.killApiServerFirst()
+      return true
+    } catch {
+      // The group may survive: the cleanup reports it and keeps the API's session attached.
+      if (api) this.apiCleanupFailure = { pid: api.pid }
+      return false
+    }
+  }
+
+  /**
+   * Words any failure of the Vite start in a run that declares `apiServer` after the API launched: code and reason kept, the API group ended first, side effects `partial` (B5).
+   * Called by the `adapter.start` rejection handler of {@link prepareOwned}. The two port refusals already ended the API and carry `sideEffects: "partial"`, so they pass through; other runs, cancelled runs and non-refusal errors are rethrown unchanged.
+   * @param error - What the adapter's start threw.
+   * @returns The error to throw.
+   * @example throw await this.viteStartFailureAfterApi(error)
+   */
+  private async viteStartFailureAfterApi(error: unknown): Promise<unknown> {
+    const isViteApiRun =
+      this.definition.configuration.adapter === 'vite-dev' &&
+      this.apiServer !== undefined
+    if (!isViteApiRun || this.abort.signal.aborted) return error
+    if (!(error instanceof StudyError)) return error
+    // The port refusals of assertAppPortFree already ended the API and worded themselves.
+    if (error.details?.sideEffects === 'partial') return error
+    return viteApiRunStartFailure(error, await this.endApiForRefusal())
   }
 
   /**
