@@ -57,7 +57,7 @@ export class WebpackReportAttribution implements LibraryAttribution {
    * Faults of the whole report that make an observation unclaimable, for a run that observes the server.
    *
    * Called by {@link WebpackLibraryRoute.finalize} after the deferred scripts were judged. A react-scripts run has none of these lines, so it returns `undefined` there.
-   * @returns The first cause, in this order: `redirect-not-applied` (an `error` line, or a compilation of a compiler no `wrapped` line announced), `report-error: <message>` (a later compilation could not be described), `library-externalized: <request>` (Node loads some of the package from outside the report's sight, D23), `edge-unobserved` (the edge compiler holds a library resource, D24); `undefined` when none.
+   * @returns The first cause, in this order: `redirect-not-applied` (an `error` line, or a compilation of a compiler no `wrapped` line announced), `report-error: <message>` (a later compilation could not be described), `server-output-unknown: <compiler>` (a server-side compiler announced no output folder, so its scripts cannot be owned), `library-externalized: <request>` (Node loads some of the package from outside the report's sight, D23), `edge-unobserved` (the edge compiler holds a library resource, D24); `undefined` when none.
    * @example attribution.reportFaultCause() // => 'edge-unobserved'
    */
   reportFaultCause(): string | undefined {
@@ -71,6 +71,9 @@ export class WebpackReportAttribution implements LibraryAttribution {
       return 'redirect-not-applied'
     if (reader.reportErrorCause !== undefined)
       return `report-error: ${reader.reportErrorCause}`
+    const { serverOutputUnknownCause } = reader
+    if (serverOutputUnknownCause !== undefined)
+      return `server-output-unknown: ${serverOutputUnknownCause}`
     const [external] = reader.externalsOf()
     if (external !== undefined) return `library-externalized: ${external}`
     return reader.edgeLibraryAssets().length > 0 ? 'edge-unobserved' : undefined

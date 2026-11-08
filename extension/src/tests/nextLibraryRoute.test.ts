@@ -455,6 +455,30 @@ test('marks the observation unreadable when the preload reported it could not de
   )
 })
 
+// Value: protects=a server compiler announced without an output folder ends the observation unreadable with the compiler named; fails_when=its server scripts read not-owned and the observation ends complete; why_new=review F12; seam=none; no_claim=what the preload does when config.output.path is absent
+test('marks the observation unreadable when a server compiler announced no output folder', async (context) => {
+  // Arrange
+  const run = await stage(context)
+  const packed = await put(join(run.packedRoot, 'dist', 'rsc.mjs'))
+  await writeCompilations(run, [packed])
+  await appendFile(
+    run.reportPath,
+    '{"wrapped":true,"compiler":"edge-server","outputPath":""}\n',
+  )
+  // Act
+  run.route.serverAttached()
+  run.route.observeParsedScript(pageScript())
+  run.route.observeParsedScript(serverScript(run))
+  await run.route.finalize(true)
+  // Assert
+  assert.equal(run.route.view().observation, 'unreadable')
+  assert.deepEqual(
+    run.journal.find((entry) => entry.type === 'library.observation-unreadable')
+      ?.detail,
+    { cause: 'server-output-unknown: edge-server' },
+  )
+})
+
 // Value: protects=a truncated server compilation line makes the owned server script of that compilation unreadable; fails_when=a script of a torn compilation is ignored; why_new=server truncation; seam=none; no_claim=none beyond protects
 test('marks the observation unreadable for a server script of a truncated compilation', async (context) => {
   // Arrange

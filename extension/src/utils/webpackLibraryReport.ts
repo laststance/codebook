@@ -1,11 +1,13 @@
 import { closeSync, openSync, readSync, realpathSync, statSync } from 'node:fs'
-import { isAbsolute, relative, resolve, sep } from 'node:path'
+import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import {
   REACT_SCRIPTS_LIBRARY_REPORT_LIMIT_BYTES,
   REACT_SCRIPTS_LIBRARY_REPORT_LINE_LIMIT_BYTES,
 } from '../constants'
+
+import { isInsideFolder } from './isInsideFolder'
 
 /** One emitted `.js` asset of a compilation line: its name, the SHA-256 of its bytes and the real paths of the modules of its chunks that may be copies of the library. */
 export type WebpackLibraryReportAsset = {
@@ -109,17 +111,6 @@ function realFileOfUrl(url: string): string | undefined {
   } catch {
     return undefined
   }
-}
-
-/** Tells whether a real file path lies inside a real folder path. */
-function isInsideFolder(folder: string, file: string): boolean {
-  const fromFolder = relative(folder, file)
-  return (
-    fromFolder !== '' &&
-    fromFolder !== '..' &&
-    !fromFolder.startsWith('..' + sep) &&
-    !isAbsolute(fromFolder)
-  )
 }
 
 const NEWLINE_BYTE = 0x0a
@@ -303,6 +294,9 @@ export class WebpackLibraryReportReader {
   private readonly erroredCompilerNames = new Set<string>()
   private readonly compiledCompilerNames = new Set<string>()
   private readonly serverOutputPaths = new Set<string>()
+  /** Real paths of announced server output folders, kept once resolved; a folder that cannot be resolved yet is looked up again. */
+  private readonly realServerOutputPaths = new Map<string, string>()
+  private serverOutputUnknownCompiler: string | undefined
   private readonly externalRequests = new Set<string>()
   private readonly edgeAssets: WebpackLibraryReportMatch[] = []
 
@@ -328,6 +322,11 @@ export class WebpackLibraryReportReader {
   /** The message of the first `reportError` line (a later compilation could not be described), or `undefined`; unlike {@link errorCause} it does not mean the patch was not applied. */
   get reportErrorCause(): string | undefined {
     return this.reportErrorMessage
+  }
+
+  /** The first server-side compiler (not `client`) whose `wrapped` line carried no output folder, or `undefined`; its server scripts cannot be told apart from foreign ones, so the observation cannot be claimed. */
+  get serverOutputUnknownCause(): string | undefined {
+    return this.serverOutputUnknownCompiler
   }
 
   /** Why the report cannot be trusted, or `undefined` while it reads cleanly. */
@@ -514,12 +513,7 @@ export class WebpackLibraryReportReader {
   private record(line: WebpackLibraryReportLine): void {
     if ('wrapped' in line) {
       this.wrappedSeen = true
-      if (line.compiler !== undefined) {
-        this.wrappedCompilerNames.add(line.compiler)
-        if (!isPageCompiler(line.compiler) && line.outputPath !== undefined) {
-          this.serverOutputPaths.add(line.outputPath)
-        }
-      }
+      this.recordWrappedCompiler(line)
     } else if ('error' in line) {
       this.errorMessage ??= line.error
       if (line.compiler !== undefined)
@@ -529,6 +523,26 @@ export class WebpackLibraryReportReader {
     } else {
       this.recordCompilation(line)
     }
+  }
+
+  /**
+   * Remembers which compiler a `wrapped` line announced and where a server-side one writes.
+   *
+   * Called by {@link record}; a server-side compiler with no output folder is remembered as a fault, because its scripts could never be owned.
+   * @param line - The `wrapped` line.
+   * @example
+   * this.recordWrappedCompiler({ wrapped: true, compiler: 'server', outputPath: '/o/server' })
+   */
+  private recordWrappedCompiler(
+    line: Extract<WebpackLibraryReportLine, { wrapped: true }>,
+  ): void {
+    if (line.compiler === undefined) return
+    this.wrappedCompilerNames.add(line.compiler)
+    if (isPageCompiler(line.compiler)) return
+    if (line.outputPath === undefined) {
+      // A server-side compiler without an output folder: its scripts could never be owned
+      this.serverOutputUnknownCompiler ??= line.compiler
+    } else this.serverOutputPaths.add(line.outputPath)
   }
 
   /**
@@ -659,7 +673,7 @@ export class WebpackLibraryReportReader {
     const file = realFileOfUrl(url)
     if (file === undefined) return { kind: 'not-owned' }
     const isOwned = Array.from(this.serverOutputPaths).some((outputPath) =>
-      isInsideFolder(realPathOf(outputPath), file),
+      isInsideFolder(this.realServerOutputPath(outputPath), file),
     )
     if (!isOwned) return { kind: 'not-owned' }
     const candidates = hash ? (this.index.get(hash.toLowerCase()) ?? []) : []
@@ -667,11 +681,32 @@ export class WebpackLibraryReportReader {
       (entry) =>
         !isPageCompiler(entry.compiler) &&
         entry.outputPath !== undefined &&
-        resolve(realPathOf(entry.outputPath), entry.name) === file,
+        resolve(this.realServerOutputPath(entry.outputPath), entry.name) ===
+          file,
     )
     return found
       ? { kind: 'matched', asset: found }
       : { kind: 'unmatched-owned' }
+  }
+
+  /**
+   * The real path of an announced server output folder, resolved once.
+   *
+   * Called by {@link WebpackLibraryReportReader.matchServer} for each server script (the Next server announces about 1,700 per page). A folder that does not exist yet (the `wrapped` line precedes the first emit) is not cached, so it is resolved again on the next call.
+   * @param outputPath - The folder as the preload wrote it.
+   * @returns The real path, or the absolute path while the folder is absent.
+   */
+  private realServerOutputPath(outputPath: string): string {
+    const cached = this.realServerOutputPaths.get(outputPath)
+    if (cached !== undefined) return cached
+    try {
+      const real = realpathSync(outputPath)
+      this.realServerOutputPaths.set(outputPath, real)
+      return real
+    } catch {
+      // Not there yet: do not cache a path that will change
+      return resolve(outputPath)
+    }
   }
 
   /** The compilers a `wrapped` line named; the Next preload writes one per compiler (`client`, `server`, `edge-server`) when it builds the compiler's configuration. */
