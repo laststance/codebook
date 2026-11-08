@@ -426,6 +426,7 @@ test('killing a paused owned API first never lets the held handler write its mar
 
   // Act
   await api.killIfPaused()
+  // gstack-timing-ok: a negative check; killIfPaused already awaited the group's end, the bound only gives a resumed handler time to write the marker it must never write.
   await delay(300)
 
   // Assert
