@@ -283,6 +283,77 @@ test('refuses reverseProxy declared beside library', () => {
   )
 })
 
+// Value: protects=D8 item 13 a saved browser's HSTS cannot upgrade an http origin the run never proved; fails_when=an http origin without session fresh is accepted, session fresh is refused, or an https origin is affected; no_claim=the browser's HSTS behavior
+test('refuses an http origin unless session is fresh and leaves https unaffected', () => {
+  // Arrange
+  const sentence =
+    'reverseProxy.origin: reverseProxy with an http:// origin runs only with session: "fresh": a saved browser may switch the address to https (HSTS), which the run does not check. Declare the https:// origin your proxy serves, or session: "fresh" for a flow that needs no sign-in.'
+  const http = 'http://app.example.test:9080'
+  // Act
+  const withoutSession = issuesOf(withOrigin(http))
+  const fresh = issuesOf(
+    configuration({
+      reverseProxy: { ...DECLARATION, origin: http },
+      session: 'fresh',
+    }),
+  )
+  const https = issuesOf(withOrigin('https://app.example.test:8443'))
+  // Assert
+  assert.equal(withoutSession, sentence)
+  assert.equal(fresh, 'accepted')
+  assert.equal(https, 'accepted')
+})
+
+// Value: protects=N3 a host character Chrome's --host-resolver-rules would split on is refused, a punycode name is not; fails_when=a comma or * host is accepted or a punycode host is refused; no_claim=resolution of the host
+test('refuses a host with a comma or an asterisk and accepts a punycode host', () => {
+  // Arrange
+  const sentence =
+    'reverseProxy.origin: reverseProxy.origin must name a host made of letters, digits, hyphens and dots, such as app.example.test.'
+  // Act
+  const refused = ['https://a,b.example.test', 'https://*.example.test'].map(
+    (origin) => issuesOf(withOrigin(origin)),
+  )
+  const punycode = issuesOf(withOrigin('https://bücher.example.test'))
+  // Assert
+  assert.deepEqual(refused, [sentence, sentence])
+  assert.equal(punycode, 'accepted')
+})
+
+// Value: protects=N6 an oversized origin is refused by length without echoing it; fails_when=a 301-character origin is parsed or echoed; no_claim=the parser
+test('refuses an origin longer than 300 characters without echoing it', () => {
+  // Arrange
+  const origin = `https://${'a'.repeat(293)}.test`
+  // Act
+  const issues = issuesOf(withOrigin(origin))
+  // Assert
+  assert.equal(
+    issues,
+    'reverseProxy.origin: reverseProxy.origin is longer than 300 characters: declare only the scheme and host, such as https://app.example.test.',
+  )
+})
+
+// Value: protects=X6 format 22 refuses a press key that is not canonical exactly as format 21 does, and accepts a canonical one; fails_when=a retained reverseProxy configuration with a key spelled Meta+Shift+p is accepted; no_claim=the study format number
+test('a saved reverseProxy configuration refuses a non-canonical press key and accepts the canonical one', () => {
+  // Arrange
+  const press = (key: string) =>
+    configuration({
+      operations: [
+        {
+          kind: 'press',
+          title: 'Open palette',
+          key,
+          after: [{ kind: 'visible', selector: '#palette' }],
+        },
+      ],
+    })
+  // Act
+  const nonCanonical = studyConfigurationSchema.safeParse(press('Meta+Shift+p'))
+  const canonical = studyConfigurationSchema.safeParse(press('Shift+Meta+p'))
+  // Assert
+  assert.equal(nonCanonical.success, false)
+  assert.equal(canonical.success, true)
+})
+
 // Value: protects=AC1 D19 reverseProxy stays allowed with a nested packageRoot, signInPaths and session fresh; fails_when=one of them is refused; no_claim=the nested app's saved-session limit (the run)
 test('accepts reverseProxy beside packageRoot, signInPaths and session fresh', () => {
   // Arrange

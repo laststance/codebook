@@ -38,6 +38,7 @@ import { bookIdSchema } from './identitySchemas'
 import { libraryDeclarationSchema } from './libraryDeclarationSchema'
 import {
   REVERSE_PROXY_ADAPTER_MESSAGE,
+  REVERSE_PROXY_HTTP_SESSION_MESSAGE,
   REVERSE_PROXY_LIBRARY_MESSAGE,
   REVERSE_PROXY_ORIGIN_REFUSAL_MESSAGES,
   reverseProxyDeclarationSchema,
@@ -701,6 +702,13 @@ function validateReverseProxy(
       code: 'custom',
       path: ['reverseProxy', 'origin'],
       message: REVERSE_PROXY_ORIGIN_REFUSAL_MESSAGES[parsed.item],
+    })
+  // A saved profile may hold HSTS for the host and upgrade http to an https address the run never proved.
+  else if (parsed.scheme === 'http' && configuration.session !== 'fresh')
+    context.addIssue({
+      code: 'custom',
+      path: ['reverseProxy', 'origin'],
+      message: REVERSE_PROXY_HTTP_SESSION_MESSAGE,
     })
 }
 
@@ -1399,6 +1407,10 @@ function originIsCanonical(configuration: {
  */
 const reverseProxyRepositoryConfigSchema = operationsRepositoryConfigSchema
   .refine(declaresReverseProxy, 'A format 22 study declares a reverseProxy.')
+  .refine(
+    pressKeysAreCanonical,
+    'A format 22 study keeps each press key in canonical spelling.',
+  )
   .refine(
     originIsCanonical,
     'A format 22 study keeps the reverseProxy origin in canonical spelling.',

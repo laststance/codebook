@@ -108,7 +108,8 @@ export async function startSavedSessionServer(
     )
     throw reverseProxyRefusal(failure.reason, {
       ...failure.facts,
-      resourcesReleased,
+      // A gate refusal that already reports an unconfirmed release stays false whatever this cleanup confirms.
+      resourcesReleased: resourcesReleased && failure.facts.resourcesReleased,
     })
   }
   try {

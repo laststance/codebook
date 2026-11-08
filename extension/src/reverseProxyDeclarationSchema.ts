@@ -7,6 +7,12 @@ import {
 } from './constants'
 import type { ReverseProxyOriginRefusalItem } from './utils/parseReverseProxyOrigin'
 
+/** The longest `origin` accepted, in characters: far above any scheme, host and port, so an oversized value is refused before it is parsed. */
+const ORIGIN_MAX_LENGTH_CHARS = 300
+
+/** The message for an `origin` over {@link ORIGIN_MAX_LENGTH_CHARS}; never echoes the value. */
+const ORIGIN_TOO_LONG_MESSAGE = `reverseProxy.origin is longer than ${ORIGIN_MAX_LENGTH_CHARS} characters: declare only the scheme and host, such as https://app.example.test.`
+
 /** The message for a missing `origin`. */
 const ORIGIN_MISSING_MESSAGE =
   'reverseProxy needs origin: the address the learner types in the browser, such as https://app.example.test.'
@@ -25,6 +31,7 @@ export const reverseProxyDeclarationSchema = z
   .strictObject({
     origin: z
       .string(ORIGIN_MISSING_MESSAGE)
+      .max(ORIGIN_MAX_LENGTH_CHARS, ORIGIN_TOO_LONG_MESSAGE)
       .describe(
         'The address the learner types in the browser: scheme and host, plus the port when it is not 443 for https or 80 for http, for example https://app.example.test. No path (put the page in entryPath), no query, no fragment, no credentials, no IP address, and not localhost or a *.localhost host. The host must be a name this machine resolves only to loopback addresses.',
       ),
@@ -57,11 +64,16 @@ export const REVERSE_PROXY_ORIGIN_REFUSAL_MESSAGES = {
   4: 'reverseProxy.origin must not carry a query or a fragment: declare only the scheme and host.',
   5: 'reverseProxy.origin must not carry a user name or a password; Codebook takes no credentials in a URL.',
   6: "reverseProxy.origin must name a host, not an IP address: declare the host name the learner types, the one their hosts entry or local DNS maps to a loopback address. An app opened directly at its dev server's http://localhost:<port> address declares no reverseProxy.",
+  12: 'reverseProxy.origin must name a host made of letters, digits, hyphens and dots, such as app.example.test.',
   11: 'reverseProxy.origin must not name localhost or a *.localhost host: the browser resolves those itself, so Codebook cannot hold it to the address it checked. Declare the host name your hosts entry or local DNS maps to a loopback address.',
 } as const satisfies Record<ReverseProxyOriginRefusalItem, string>
 
 /** D8 item 10: `reverseProxy` on a run that is not a version 3 `next-dev-webpack` run. */
 export const REVERSE_PROXY_ADAPTER_MESSAGE = `reverseProxy is accepted on a version 3 next-dev-webpack run only (API ${REVERSE_PROXY_MINIMUM_API}). A Vite, Create React App or Expo run opens the app at the dev server's own localhost address.`
+
+/** D8 item 13: an `http:` origin without `session: "fresh"` (a saved browser profile may hold HSTS for the host and switch the address to https, which the run did not check). */
+export const REVERSE_PROXY_HTTP_SESSION_MESSAGE =
+  'reverseProxy with an http:// origin runs only with session: "fresh": a saved browser may switch the address to https (HSTS), which the run does not check. Declare the https:// origin your proxy serves, or session: "fresh" for a flow that needs no sign-in.'
 
 /** D19 item 12: `reverseProxy` beside `library`. */
 export const REVERSE_PROXY_LIBRARY_MESSAGE =

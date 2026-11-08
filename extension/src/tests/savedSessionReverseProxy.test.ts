@@ -334,6 +334,30 @@ test('a setup refused at the proof reports resourcesReleased false when the serv
   assert.equal(standIns.steps.filter((step) => step === 'close app').length, 1)
 })
 
+// Value: protects=X4 the setup refusal never claims a release the gate did not confirm; fails_when=resourcesReleased is true after the gate reported false, because the setup's own cleanup succeeded; no_claim=which resource the gate left behind
+test('a setup refused by a gate that reports resourcesReleased false stays false after a successful cleanup', async () => {
+  // Arrange
+  const standIns = serverStandIns()
+  const failure = failureOf('proof-timeout')
+  const gate = gateStandIn(standIns.steps, {
+    proveFailure: {
+      ...failure,
+      facts: { ...failure.facts, resourcesReleased: false },
+    },
+  })
+  const { startSavedSessionServer } = await loadServerModule()
+  // Act
+  const refusal = await startSavedSessionServer(
+    standIns.adapter,
+    { ...REQUEST, signal: new AbortController().signal },
+    standIns.dependencies(gate),
+  ).catch((error: unknown) => error)
+  // Assert
+  assert.ok(refusal instanceof StudyError)
+  assert.equal(refusal.details?.resourcesReleased, false)
+  assert.equal(standIns.steps.includes('close app'), true)
+})
+
 // Value: protects=the setup never opens its browser at an origin whose proof ended (the answering server process exited while the CLI lives); fails_when=the setup returns a server although the gate no longer admits the origin, or leaves the forwarder or server running; no_claim=the gate's own process checks
 test('a setup whose proof no longer admits the origin refuses with origin-not-proven and closes everything it started', async () => {
   // Arrange

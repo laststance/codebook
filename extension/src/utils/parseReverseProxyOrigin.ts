@@ -1,7 +1,7 @@
 import { isIP } from 'node:net'
 
-/** The D8 item numbers of the origin rules {@link parseReverseProxyOrigin} can refuse: 1 not a URL, 2 scheme, 3 path, 4 query or fragment, 5 credentials, 6 IP literal, 11 `localhost` or a `*.localhost` host. */
-export type ReverseProxyOriginRefusalItem = 1 | 2 | 3 | 4 | 5 | 6 | 11
+/** The D8 item numbers of the origin rules {@link parseReverseProxyOrigin} can refuse: 1 not a URL, 2 scheme, 3 path, 4 query or fragment, 5 credentials, 6 IP literal, 11 `localhost` or a `*.localhost` host, 12 a host label outside letters, digits and hyphens. */
+export type ReverseProxyOriginRefusalItem = 1 | 2 | 3 | 4 | 5 | 6 | 11 | 12
 
 /** What {@link parseReverseProxyOrigin} answers: the canonical origin with its parts, or the refused rule. */
 export type ParsedReverseProxyOrigin =
@@ -25,7 +25,7 @@ export type ParsedReverseProxyOrigin =
  * Why it exists: the schema refinement words the refusal from the item, `canonicalizeReverseProxy` rewrites the origin to the canonical form, and the gate reads the hostname and the effective port from it, so one parser serves all three. The live schema stays transform-free; normalization lives here.
  * Called by the repository configuration schemas, the gate and the run.
  * @param text - The origin as declared.
- * @returns The canonical origin and its parts, or `{ ok: false, item }` for the first rule broken (1, 2, 5, 3, 4, 6, 11 in that order).
+ * @returns The canonical origin and its parts, or `{ ok: false, item }` for the first rule broken (1, 2, 5, 3, 4, 6, 11, 12 in that order).
  * @example
  * parseReverseProxyOrigin('https://App.Example.test/') // => { ok: true, origin: 'https://app.example.test', hostname: 'app.example.test', port: '', effectivePort: 443, scheme: 'https' }
  * parseReverseProxyOrigin('https://app.example.test/login') // => { ok: false, item: 3 }
@@ -99,18 +99,22 @@ function refusalOfLocation(text: string, url: URL): 3 | 4 | undefined {
   return hasQueryOrFragment ? 4 : undefined
 }
 
+/** A host made of dot-separated labels of lower-case letters, digits and hyphens, as `URL` leaves it after its lowercase and punycode steps. */
+const PLAIN_HOST_PATTERN = /^[a-z0-9-]+(\.[a-z0-9-]+)*$/
+
 /**
- * Refuses an IP literal (D8 item 6) and `localhost` or a `*.localhost` host (D8 item 11).
+ * Refuses an IP literal (D8 item 6), `localhost` or a `*.localhost` host (D8 item 11) and a host with a character outside letters, digits, hyphens and dots (item 12: WHATWG parsing accepts `,` and `*`, and Chrome splits `--host-resolver-rules` at commas).
  * @param url - The parsed origin.
- * @returns `6`, `11`, or `undefined` when the host is a name other than `localhost`.
+ * @returns `6`, `11`, `12`, or `undefined` when the host is a plain name other than `localhost`.
  * @example refusalOfHost(new URL('https://0x7f.1')) // => 6
  */
-function refusalOfHost(url: URL): 6 | 11 | undefined {
+function refusalOfHost(url: URL): 6 | 11 | 12 | undefined {
   const hostname = bareHostnameOf(url)
   if (isIP(hostname) !== 0) return 6
   const namesLocalhost =
     hostname === 'localhost' || hostname.endsWith('.localhost')
-  return namesLocalhost ? 11 : undefined
+  if (namesLocalhost) return 11
+  return PLAIN_HOST_PATTERN.test(hostname) ? undefined : 12
 }
 
 /**
