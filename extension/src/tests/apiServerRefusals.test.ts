@@ -4,7 +4,6 @@ import { test } from 'node:test'
 import {
   API_SERVER_EXITED_VARIANT,
   apiServerExitedRefusal,
-  apiServerHelpAnchor,
   apiServerListenerNotOwnedRefusal,
   apiServerNotListeningRefusal,
   apiServerPortOwnerUnknownRefusal,
@@ -188,13 +187,17 @@ test('the other API refusals keep their code, participant, step, journal and anc
   for (const error of [foreign, unknown, silent, failed]) {
     assert.equal(error.details?.participant, 'apiServer')
     assert.equal(error.details?.sideEffects, 'partial')
-    assert.match(
-      recoveryOf(error),
-      new RegExp(
-        `See ${apiServerHelpAnchor(error.code as 'PORT_UNAVAILABLE').replaceAll('.', '\\.')}\\.$`,
-      ),
-    )
   }
+  // Literal anchors, one per code, so the helper that builds them is not its own oracle.
+  const anchors = [foreign, unknown, silent, failed].map(
+    (error) => /See (\S+)\.$/.exec(recoveryOf(error))?.[1],
+  )
+  assert.deepEqual(anchors, [
+    'codebook://help/repository-browser#api-server-LISTENER_NOT_OWNED',
+    'codebook://help/repository-browser#api-server-PORT_OWNER_UNKNOWN',
+    'codebook://help/repository-browser#api-server-SERVER_NOT_LISTENING',
+    'codebook://help/repository-browser#api-server-RUNTIME_FAILED',
+  ])
   assert.equal(silent.details?.step, 'api-server-listen')
   assert.equal(
     silent.message,

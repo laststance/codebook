@@ -24,6 +24,9 @@ export const API_ORIGIN = `http://localhost:${API_PORT}`
 /** When the API's entry pause (`--inspect-brk`) reaches the run: `at-start` as soon as the debug session starts (before the run selected it), `during-subscribe` while the run subscribes the inspector channel, `manual` never (the test sends it). */
 export type ApiEntryTiming = 'at-start' | 'during-subscribe' | 'manual'
 
+/** Whether the inspector-side entry pause (`Debugger.paused` `Break on start`) arrives while the run subscribes the channel, before it releases the entry (`before-release`); E1 observed it beside the debug adapter's entry `stopped`. A test sends it after the release with `sendEntryCdpPause`. */
+export type ApiEntryCdpPauseTiming = 'before-release'
+
 /** What the stand-in `OwnedApiServer` does and what the run asked of it. */
 export interface FakeApiServer {
   /** The ordered log of what the run did with the API and Metro: `check`, `launch`, `inspector-endpoint`, `verify`, `listen`, `kill-first`, `close`, `metro-start`. */
@@ -198,6 +201,7 @@ export async function apiServerRunHarness(
     stopOperations?: number[]
     operations?: RepositoryOperation[]
     entry?: ApiEntryTiming
+    entryCdpPause?: ApiEntryCdpPauseTiming
     fake?: Partial<Pick<FakeApiServer, 'listen' | 'closeFails'>>
     apiPort?: number
     extra?: Partial<Parameters<typeof configuredRuntimeHarness>[3]>
@@ -208,6 +212,7 @@ export async function apiServerRunHarness(
   const stopOperations = options.stopOperations ?? [1]
   const entry = options.entry ?? 'at-start'
   let entryStopper: (() => void) | undefined
+  let pausedListener: ((event: unknown) => void) | undefined
   const harness = await configuredRuntimeHarness(
     context,
     apiControl(context),
@@ -242,12 +247,52 @@ export async function apiServerRunHarness(
       ...options.extra,
     },
   )
+  // Keeps the run's `Debugger.paused` listener so the inspector-side entry pause can reach it.
+  const proxy = harness.serverProxy!
+  const registerListener = proxy.on.bind(proxy)
+  proxy.on = (event: string, listener: (event: unknown) => void): void => {
+    if (event === 'Debugger.paused') pausedListener = listener
+    registerListener(event, listener)
+  }
+  const sendEntryCdpPause = (): void => pausedListener?.(ENTRY_CDP_PAUSE)
   entryStopper = (): void => sendEntryStop(harness)
-  if (entry === 'during-subscribe')
-    harness.serverProxy!.subscribe = async (): Promise<void> => {
-      entryStopper?.()
+  // The listener exists only once the run selected the server, so the pause is sent while it subscribes.
+  if (options.entryCdpPause === 'before-release') {
+    const subscribe = proxy.subscribe.bind(proxy)
+    proxy.subscribe = async (): Promise<void> => {
+      sendEntryCdpPause()
+      await subscribe()
     }
-  return { ...harness, fake, sendEntryStop: (): void => sendEntryStop(harness) }
+  }
+  if (entry === 'during-subscribe') {
+    const subscribe = proxy.subscribe.bind(proxy)
+    proxy.subscribe = async (): Promise<void> => {
+      entryStopper?.()
+      await subscribe()
+    }
+  }
+  return {
+    ...harness,
+    fake,
+    sendEntryStop: (): void => sendEntryStop(harness),
+    sendEntryCdpPause,
+  }
+}
+
+/** The inspector's report of the API's entry: js-debug names the reason `Break on start`, which the protocol's list does not. */
+const ENTRY_CDP_PAUSE = {
+  reason: 'Break on start',
+  callFrames: [
+    {
+      callFrameId: 'api-entry-frame',
+      functionName: '',
+      location: {
+        scriptId: 'api-entry-script',
+        lineNumber: 0,
+        columnNumber: 0,
+      },
+    },
+  ],
 }
 
 /**
@@ -266,7 +311,11 @@ function sendEntryStop(harness: {
       type: 'event',
       seq: 1,
       event: 'stopped',
-      body: { threadId: 1, reason: 'step', description: 'Paused on entry' },
+      body: {
+        threadId: 1,
+        reason: 'pause',
+        description: 'Paused on debugger statement',
+      },
     } as never,
   )
 }

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { StudyError } from '../errors'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { apiServerRunHarness } from './utils/apiServerRunHarness'
 
@@ -178,8 +179,10 @@ test('cancelling while the API port is awaited ends the API group', async (conte
     () => 'prepared',
     () => 'cancelled',
   )
-  while (!harness.fake.events.includes('listen'))
-    await new Promise((resolve) => setTimeout(resolve, 5))
+  await waitUntil(
+    () => harness.fake.events.includes('listen'),
+    'the API listener wait',
+  )
   // Act
   await harness.run.stop()
   const outcome = await preparation
