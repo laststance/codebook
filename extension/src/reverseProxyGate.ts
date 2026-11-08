@@ -105,7 +105,7 @@ let issueProof: (facts: ProofFacts) => ReverseProxyProof
  *
  * Why it exists: the saved session and the owned-origin rule rely on one fact with one owner. It is built only by {@link ReverseProxyGate.prove} after the transport and the browser check passed (a private constructor and a `WeakSet` of issued instances), lives in the run's gate and is gone with the run. Never stored in a configuration, a request or the MCP surface.
  */
-export class ReverseProxyProof {
+class ReverseProxyProof {
   static {
     issueProof = (facts) => {
       const proof = new ReverseProxyProof(facts)
