@@ -555,6 +555,21 @@ test('ends incomplete when the page was observed but the server session was neve
   )
 })
 
+// Value: protects=a run that never prepared the library (nothing served) journals no missing server attach on Stop; fails_when=library.server-not-attached is journaled for an unprepared route; no_claim=the declined-confirmation prompt itself
+test('journals no missing server attach when the library was never prepared', async (context) => {
+  // Arrange
+  const run = await buildRoute(context)
+  await run.route.plan(run.controller.signal)
+  // Act
+  await run.route.finalize(true)
+  // Assert
+  assert.equal(
+    run.journal.some((entry) => entry.type === 'library.server-not-attached'),
+    false,
+  )
+  assert.equal(run.route.view().observation, 'pending')
+})
+
 // Value: protects=the redirect check passes only when the client, server and edge-server compilers each wrote a wrapped line, and a line that arrives within the bound is waited for; fails_when=the check passes with a compiler missing or refuses a line that arrives within the bound; why_new=D20 is new; seam=none; no_claim=Next's real timing (0.76 s after Ready per the E1 addendum)
 test('waits within the bound until every compiler wrote its wrapped line', async (context) => {
   // Arrange

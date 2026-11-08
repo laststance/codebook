@@ -233,10 +233,7 @@ export class WebpackReportAttribution implements LibraryAttribution {
   private verdictsOf(
     resources: readonly string[],
     scope: LibraryAttributionScope,
-    observed: (
-      verdict: LibraryScriptVerdict,
-      additionalVerdicts?: readonly LibraryScriptVerdict[],
-    ) => LibraryScriptAttribution,
+    observed: ObservedBuilder,
   ): LibraryScriptAttribution {
     const verdicts: LibraryScriptVerdict[] = []
     for (const file of resources) {

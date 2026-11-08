@@ -108,7 +108,10 @@ export class NextLibraryRoute extends WebpackLibraryRoute {
   /** Demands the server session was attached beside the closed page (decision D21); otherwise the observation reads `incomplete`. */
   protected override canComplete(isPageClosed: boolean): boolean {
     if (isPageClosed && !this.isServerAttached) {
-      this.input.record('library.server-not-attached')
+      const view = this.core.view()
+      // A library never prepared (declined confirmation, failed build) or an unreadable report is not judged by the core: no attach was owed, so journal nothing.
+      if (view.prepared && view.observation !== 'unreadable')
+        this.input.record('library.server-not-attached')
       return false
     }
     return isPageClosed
