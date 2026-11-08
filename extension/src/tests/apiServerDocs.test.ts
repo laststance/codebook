@@ -133,6 +133,13 @@ test('the apiServer help tells the chat to relay apiRequest.sentence and never n
     attribution.includes('Never name a request for an unattributed pause'),
   )
   assert.ok(attribution.includes('about 1 s after the debugger reports it'))
+  assert.ok(
+    attribution.includes(
+      'do not continue before its state reads paused-server',
+    ),
+  )
+  assert.ok(attribution.includes('the continueArguments it carries'))
+  assert.ok(!attribution.includes('reads ready'))
   assert.ok(section.studies.includes('study format 19 (.study.v19.json)'))
   assert.ok(
     section.studies.includes(
@@ -190,6 +197,33 @@ test('every refusal the API path raises points at an api-server anchor that the 
   )
 })
 
+// Value: protects=the RUNTIME_FAILED help lists all five api steps and tells which of them started nothing; fails_when=a step (api-server-check, api-server-listen) is missing or the none/partial split disappears; why_new=review F8; seam=none; no_claim=that each step raises it
+test('the RUNTIME_FAILED help lists every api-server step and what had started at each', async (context) => {
+  // Arrange
+  const { section } = await readApiServerHelp(context)
+  // Act
+  const meaning = section.refusals.RUNTIME_FAILED?.meaning ?? ''
+  // Assert
+  for (const step of [
+    'api-server-check',
+    'api-server-launch',
+    'api-server-attach',
+    'api-server-release',
+    'api-server-listen',
+  ])
+    assert.ok(meaning.includes(step), step)
+  assert.ok(
+    meaning.includes(
+      'At api-server-check nothing started (details.sideEffects: none)',
+    ),
+  )
+  assert.ok(
+    meaning.includes(
+      'the API was stopped first (details.sideEffects: partial)',
+    ),
+  )
+})
+
 // Value: protects=the help words the three new Expo reasons with the fix and what started; fails_when=api-port-conflict, source-drift or source-unverifiable keeps a placeholder or loses its side-effect sentence; why_new=API 1.37 adds the reasons; seam=none; no_claim=that the refusals fire
 test('the Expo help words api-port-conflict, source-drift and source-unverifiable with the fix and what started', () => {
   // Arrange
@@ -232,6 +266,9 @@ test('the skill and the README describe the Expo apiServer run, its gate and its
     'declare `apiServer`',
     'only when `codebook_status` reports API 1.37 or later',
     'never start the API yourself',
+    "Codebook starts the API's entry with the repository's own tsx",
+    "uses the repository's configured services",
+    'the declared operations can change its data',
   ])
     assert.ok(skill.includes(phrase), phrase)
   assert.ok(start > 0)
@@ -247,6 +284,9 @@ test('the skill and the README describe the Expo apiServer run, its gate and its
     '(`afterOperation` 0) is not',
     '`source-unverifiable`',
     'never starts databases or other services',
+    "The API's refusals reuse the node-server codes",
+    '`RUNTIME_FAILED`) with `details.participant: "apiServer"`',
+    'an anchor in `codebook://help/repository-browser`',
   ])
     assert.ok(section.includes(phrase), phrase)
   assert.ok(

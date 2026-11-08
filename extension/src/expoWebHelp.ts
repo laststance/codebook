@@ -133,7 +133,7 @@ const API_SERVER_REFUSAL_TEXTS = {
   SERVER_EXITED:
     "The API ended before it listened, or during the run (details.exitCode, details.signal, details.outputTail: the API's masked last output, project text and data). Tell the learner what the output names, such as a database that is not running or a missing setting; never start services, edit .env or run the API's scripts yourself. One new start after the learner says it is fixed. The API was started and has been stopped; a request in flight may have changed the application's data (details.sideEffects: partial).",
   RUNTIME_FAILED:
-    "An unexpected failure on the API path (details.step: api-server-launch, api-server-attach or api-server-release; details.journal: the run journal's address). Read the journal at that step; start again once only when it shows a transient cause, otherwise tell the learner. The API was stopped first (details.sideEffects: partial).",
+    "An unexpected failure on the API path (details.step: api-server-check, api-server-launch, api-server-attach, api-server-release or api-server-listen; details.journal: the run journal's address). Read the journal at that step; start again once only when it shows a transient cause, otherwise tell the learner. At api-server-check nothing started (details.sideEffects: none); at the later steps the API was stopped first (details.sideEffects: partial).",
 } as const
 
 /** The reused node-server codes an `apiServer` run raises, in help order. */
@@ -183,7 +183,7 @@ function expoWebApiServerHelp() {
       'Every server pause carries apiRequest: state attributed (method, path without its query, operation, basis), or unattributed with reason none or several (and count).',
       'Relay apiRequest.sentence as it is. It says the request was matched by time and not read inside the API; word nothing stronger.',
       'Never name a request for an unattributed pause: for none, Codebook cannot say what made the API reach the line; for several, it does not say which request did.',
-      `The pause is published about ${ROUTE_HANDLER_REQUEST_WAIT_MS / MILLISECONDS_PER_SECOND} s after the debugger reports it, so the attribution can settle; poll the run resource and do not continue before the pause reads ready.`,
+      `The pause is published about ${ROUTE_HANDLER_REQUEST_WAIT_MS / MILLISECONDS_PER_SECOND} s after the debugger reports it, so the attribution can settle; poll the run resource and do not continue before its state reads paused-server, then codebook_continue with the continueArguments it carries.`,
     ],
     limits: [
       "Codebook runs the entry once and without the script's watcher (tsx watch is not used). Edits to the source during a run are not reloaded; the run and the replay show the source that ran.",
