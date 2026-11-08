@@ -5,6 +5,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 /**
  * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ * 1.38 is additive: a version 3 `vite-dev` configuration may declare the same `apiServer` (plus the optional `proxyPaths`, the request prefixes the dev server forwards to the API), for a Vite app whose page reaches the repository's own Node API; Codebook starts the API beside the dev server, a server stop in the API pauses during the request the page sends (directly or through the dev server's proxy), the attribution sentence names the route, and the run is saved as format 20 ({@link VITE_API_SERVER_STUDY_VERSION}). A failed operation reports the API's output tail as `apiOutputTail`, and the refusals gain `api-port-conflict` and `api-folder-nesting` (`VITE_UNSUPPORTED`) and `VITE_SEAL_FAILED` for the API's source. A root run may also sign in within the run with `session: "fresh"`.
  * 1.37 is additive: a version 3 `expo-web-dev` configuration may declare `apiServer: { packageRoot, entry, loader?, port }`, the app's own Node API server. Codebook starts it beside Metro (`node` with an inspector and the repository's tsx), attaches the run's server participant to it, and a server stop in the API pauses during the request a page operation sends; every other adapter and version refuses the key as unknown. Such a study is saved as format 19 ({@link EXPO_WEB_API_SERVER_STUDY_VERSION}), whose server observations carry the `apiRequest` fact.
  * 1.36 is additive: a version 3 `next-dev-webpack` configuration with a nested `packageRoot` may declare `library: { packageRoot }` (the same shape as `node-script`'s since 1.33, `vite-dev`'s since 1.34 and `react-scripts-dev`'s since 1.35), for a Next Example below the repository root; such a study is saved as format 18 ({@link NEXT_LIBRARY_STUDY_VERSION}), which may hold the module-evaluation, preparation, route-handler and API-route evidence of formats 12 to 14. A root Next app that declares `library` is refused.
  * 1.35 is additive: a version 3 `react-scripts-dev` configuration may declare `library: { packageRoot }` (the same shape as `node-script`'s since 1.33 and `vite-dev`'s since 1.34), for a Create React App Example below the repository root; such a study is saved as format 17 ({@link REACT_SCRIPTS_LIBRARY_STUDY_VERSION}). The library facts may also carry `reachedThrough` and `reachedThroughCount` when the Example reaches the library through an installed direct dependency instead of listing it.
@@ -39,13 +40,16 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.9 is additive: a node-server run is saved as a Server replay. `codebook_explain_node_history` accepts a server history's material (steps citing the request, a stop, output, the response or the request failure), the server run resource gains `nodeServer.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing` and `captureMissing`, `nextActions` offers `save-node-learning`, and `codebook://help/node-server` has a save section.
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
-export const API_VERSION = '1.37'
+export const API_VERSION = '1.38'
 
 /** The API that first accepts the `expo-web-dev` adapter in a version 3 configuration (skill 1.0.79). */
 export const EXPO_WEB_MINIMUM_API = '1.30'
 
 /** The API that first accepts `apiServer` in a version 3 `expo-web-dev` configuration. */
 export const EXPO_WEB_API_SERVER_MINIMUM_API = '1.37'
+
+/** The API that first accepts `apiServer` (with optional `proxyPaths`) in a version 3 `vite-dev` configuration. */
+export const VITE_API_SERVER_MINIMUM_API = '1.38'
 
 /** The API that first accepts the `wxt-build` adapter in a `chrome-extension` configuration (skill 1.0.81). */
 export const WXT_BUILD_MINIMUM_API = '1.32'
@@ -279,7 +283,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.101'
+export const EXTENSION_VERSION = '0.2.102'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -2069,6 +2073,8 @@ export const REACT_SCRIPTS_LIBRARY_STUDY_VERSION = 17
 export const NEXT_LIBRARY_STUDY_VERSION = 18
 /** The format of a study saved from a version 3 `expo-web-dev` configuration that declares `apiServer` (API 1.37): the format 8 rules for its evidence (server stops, execution order), plus the `apiRequest` fact on every server observation. An `expo-web-dev` run without `apiServer` keeps {@link EXPO_WEB_STUDY_VERSION}; the suffix `.study.v19.json` makes Codebook 0.2.100 and older list such a study as saved by a newer Codebook and keep it. */
 export const EXPO_WEB_API_SERVER_STUDY_VERSION = 19
+/** The format of a study saved from a version 3 `vite-dev` configuration that declares `apiServer` (API 1.38): the format 8 rules for its evidence like {@link EXPO_WEB_API_SERVER_STUDY_VERSION}, plus the `route`, `proxyPath` and `watched` fields of the `apiRequest` fact. A `vite-dev` run without `apiServer` keeps its format 7, 8, 10 or 16; the suffix `.study.v20.json` makes Codebook 0.2.101 and older list such a study as saved by a newer Codebook and keep it. */
+export const VITE_API_SERVER_STUDY_VERSION = 20
 /** The longest HTTP method token an `apiRequest` fact may name. */
 export const API_REQUEST_METHOD_LIMIT_CHARS = 16
 /** The characters of an upper-cased HTTP method token an `apiRequest` fact may name: RFC 9110 `tchar` without lower-case letters (the producer upper-cases first). */
@@ -2088,7 +2094,7 @@ export const API_REQUEST_PATH_ELLIPSIS = '…'
 /** The fewest candidate requests an `unattributed` `several` fact may count. */
 export const API_REQUEST_SEVERAL_MIN_COUNT = 2
 /** The highest study format this Codebook reads; a saved study above it is listed as saved by a newer Codebook. */
-export const READABLE_STUDY_VERSION = EXPO_WEB_API_SERVER_STUDY_VERSION
+export const READABLE_STUDY_VERSION = VITE_API_SERVER_STUDY_VERSION
 /** The replay's operation marks closer than this many pixels stack vertically instead of overlapping. */
 export const OPERATION_MARK_STACK_PX = 24
 /** Below this webview width in pixels the operation marks show their numbers only. */
@@ -2100,6 +2106,12 @@ export const CONFIGURED_STUDY_METADATA_SUFFIX = '.study.meta.v3.json'
 // Highest existing version owns a logical study, including when its bytes are corrupt.
 // A change of the saved study format that an older Codebook cannot read takes the next format number and its own `.study.v<n>.json` suffix in this table; an older Codebook then lists such a study as saved by a newer one and keeps it, instead of failing on its schema.
 export const STUDY_STORAGE_FORMATS = [
+  {
+    version: VITE_API_SERVER_STUDY_VERSION,
+    format: 'v20',
+    archiveSuffix: '.study.v20.json',
+    metadataSuffix: '.study.meta.v20.json',
+  },
   {
     version: EXPO_WEB_API_SERVER_STUDY_VERSION,
     format: 'v19',
@@ -3575,3 +3587,16 @@ export const EXPO_WEB_ENV_FILES = [
   '.env.development',
   '.env',
 ] as const
+
+/** The most prefixes `apiServer.proxyPaths` may declare. */
+export const API_PROXY_PATHS_MAX_ENTRIES = 8
+/** The most characters one `apiServer.proxyPaths` entry may hold. */
+export const API_PROXY_PATH_MAX_CHARS = 256
+
+/**
+ * The routing rule for a question that starts from the repository's own web app and asks what its Node API does, shared word for word by the repository-browser help (`startHere`) and the node-server help (`entry`); the bundled skill paraphrases it and a test pins the key phrases.
+ *
+ * Why it exists: a question that names "the API server" matches the `node-server` profile first, which sends a request straight to the server and never operates the screen the learner asked about.
+ */
+export const API_SERVER_PAGE_ROUTE_RULE =
+  "A question that starts from the repository's own web app (what the server does when the learner signs in, opens a screen or presses something) uses a browser run of the app that declares `apiServer` when the app is a Vite or Expo app whose page reaches the repository's own Node API (`viteApiServer` for a Vite app from API 1.38, `expoWebQuickStart.apiServer` for an Expo app from API 1.37), so the server stop pauses during the request the page sends; a Next app's own server code (route handlers, server actions, API routes) pauses in its own browser run (see its help) and never declares `apiServer`; the `node-server` profile is for a server request asked on its own, with no screen, for an API that is not part of a Vite, Expo or Next app run, or when the app's adapter is not ready."

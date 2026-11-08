@@ -237,11 +237,25 @@ export async function configuredRuntimeHarness(
     /** Runs the configuration on the Vite adapter: its stand-in starts the stub server, serves the sealed module at its owned address and loads the entry page once. */
     adapter?: 'vite-dev' | 'expo-web-dev'
     /**
-     * A version 3 `expo-web-dev` run that declares `apiServer` (Cycle 0099): the declaration retained in the configuration and the stand-in of the `ownedApiServer` module the run loads, so no API process starts ({@link apiServerRunHarness}). Only with `adapter: "expo-web-dev"` and `packageRoot`.
+     * A version 3 `expo-web-dev` or `vite-dev` run that declares `apiServer` (Cycle 0099, 0100): the declaration retained in the configuration and the stand-in of the `ownedApiServer` module the run loads, so no API process starts ({@link apiServerRunHarness}). Only with `packageRoot`. The optional `vite` knob serves the Vite stand-in: the dev script's `--port` (`scriptPort`), the port the stand-in server listens on (`port`) and, when `declared` is set, the facts the launcher reports before Vite's own port check.
      */
     apiServer?: {
-      declaration: { packageRoot: string; entry: string; port: number }
+      declaration: {
+        packageRoot: string
+        entry: string
+        port: number
+        proxyPaths?: string[]
+      }
       module: unknown
+      vite?: {
+        scriptPort?: number
+        port?: number
+        declared?: { port: number; source: string }
+        /** Makes the mocked port check find the declared Vite port taken by this occupant, so the run's `refuse` path runs (the real check refuses only for a real listener). */
+        occupant?: { reason: 'in-use' | 'not-permitted' }
+        /** Makes the Vite stand-in's start throw this error after the facts, as an unsupported config, a config-load failure or a listen-time port race does. */
+        startFailure?: Error
+      }
     }
     /** Called with the scripted participant right after the run started the server debug session and before it selected it, so a test sends the API's entry pause at that moment. */
     onServerDebuggingStarted?: (
@@ -249,6 +263,8 @@ export async function configuredRuntimeHarness(
     ) => void
     /** Called when the stand-in adapter starts the app, so a test orders the app's start against the API's. */
     onApplicationStart?: () => void
+    /** Called when the Vite stand-in asserts the workspace, after the run read the stop sources and before the `apiServer` checks, so a test changes the repository at the one point a symbolic link can appear between the two (Cycle 0100). */
+    onWorkspaceAsserted?: () => void | Promise<void>
     /** Makes the stand-in adapter's start fail with this message, as an app that cannot start does. */
     applicationStartFails?: string
     // pregate-literal: API_VERSION=1.34 the Vite library route was added at API 1.34 (its minimum), not the current API
@@ -2333,7 +2349,14 @@ export async function configuredRuntimeHarness(
         },
       },
       './utils/assertDevelopmentPortFree': {
-        assertDevelopmentPortFree: async () => {
+        assertDevelopmentPortFree: async (
+          declared: { port: number },
+          check?: { refuse?: (refusal: unknown) => Error },
+        ) => {
+          const occupant = options.apiServer?.vite?.occupant
+          // The real check hands the occupant to the caller's wording; the run's wrapper then words it.
+          if (occupant && check?.refuse)
+            throw check.refuse({ port: declared.port, ...occupant })
           if (options.declaredPortTaken)
             throw new StudyError(
               'PREREQUISITE_MISSING',
@@ -2379,6 +2402,7 @@ export async function configuredRuntimeHarness(
               workspace,
               packageRoot: vitePackage?.packageRoot,
             })
+            await options.onWorkspaceAsserted?.()
           },
           start: async (request: {
             workspace: string
@@ -2387,6 +2411,11 @@ export async function configuredRuntimeHarness(
             prepareLibrary?: () => Promise<void>
             onApp(app: typeof fakeApplication): void
             onStep(step: string): void
+            onDeclaredPort(declared: { port: number; source: string }): void
+            assertPortFree(
+              declared: { port: number; source: string },
+              refuse?: (refusal: unknown) => Error,
+            ): Promise<void>
           }) => {
             viteRequests.started.push({
               workspace: request.workspace,
@@ -2400,6 +2429,18 @@ export async function configuredRuntimeHarness(
               request.onApp(fakeApplication)
               await request.prepareLibrary?.()
             }
+            // The real launcher reports the port its config resolved and checks it before it listens; an `apiServer` test scripts those facts.
+            const declared = options.apiServer?.vite?.declared
+            if (declared) {
+              request.onDeclaredPort(declared)
+              // The real launcher words a taken port itself; the run's wrapper replaces this for an `apiServer` run.
+              await request.assertPortFree(
+                declared,
+                () => new StudyError('VITE_PORT_UNAVAILABLE', 'Port is taken'),
+              )
+            }
+            if (options.apiServer?.vite?.startFailure)
+              throw options.apiServer.vite.startFailure
             request.onStep('starting Vite')
             setupSteps.push('starting Vite')
             request.onApp(fakeApplication)
@@ -2408,7 +2449,7 @@ export async function configuredRuntimeHarness(
               throw new Error(options.applicationStartFails)
             return {
               app: fakeApplication,
-              port: 4321,
+              port: options.apiServer?.vite?.port ?? 4321,
               viteVersion: '8.3.5',
               ...(options.maskedValues
                 ? {

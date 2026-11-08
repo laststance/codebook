@@ -163,7 +163,7 @@ test('the README and AGENTS.md document the Next library route', async () => {
   const agents = await readFile(join(__dirname, '../../../AGENTS.md'), 'utf8')
   // Act / Assert
   for (const phrase of [
-    'with **MCP API 1.37**',
+    'with **MCP API 1.38**',
     'Run the Example on the checked-out library (MCP API 1.36)',
     "the Example's own `next dev --webpack`",
     '`library-needs-package-root`',

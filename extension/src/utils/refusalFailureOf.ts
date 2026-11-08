@@ -1,4 +1,9 @@
 import {
+  apiSealFailureOf,
+  apiSealRecoveryOf,
+  type ApiSealFailureDetails,
+} from '../apiSealRefusals'
+import {
   API_SERVER_EXITED_RECOVERY,
   API_SERVER_EXITED_VARIANT,
   apiServerOutputTailOf,
@@ -10,8 +15,6 @@ import {
 import { PACKAGE_ROOT_FRESH_SESSION_RECOVERY, type ErrorCode } from '../errors'
 import {
   EXPO_WEB_REFUSAL_CODES,
-  expoWebApiSealFailureOf,
-  type ExpoWebApiSealFailureDetails,
   expoWebSetupDeadlineDetailsOf,
   type ExpoWebSetupDeadlineFailureDetails,
 } from '../expoWebRefusals'
@@ -92,7 +95,7 @@ export type RefusalFailure = {
     | ReactScriptsSetupDeadlineFailureDetails
     | ExpoWebSetupDeadlineFailureDetails
     | ApiServerExitedFailureDetails
-    | ExpoWebApiSealFailureDetails
+    | ApiSealFailureDetails
 }
 
 /** The fields an API exit failure text restores: the participant and the side effects (the API was started and stopped); the exit code, signal and output tail live in the message. */
@@ -166,9 +169,14 @@ export function refusalFailureOf(text: string): RefusalFailure | undefined {
   // The API server's exit carries its words and details as the variant (DX-6, E-6).
   if (code === 'SERVER_EXITED') return apiServerExitFailure(message)
   // An API seal refusal carries its reason and file as the variant.
-  const apiSeal =
-    code === 'EXPO_WEB_SEAL_FAILED' && expoWebApiSealFailureOf(variant)
-  if (apiSeal) return { code, message, libraryDetails: apiSeal }
+  const apiSeal = code === 'EXPO_WEB_SEAL_FAILED' && apiSealFailureOf(variant)
+  if (apiSeal)
+    return {
+      code,
+      message,
+      recoveryOverride: apiSealRecoveryOf(code, apiSeal.reason),
+      libraryDetails: apiSeal,
+    }
   if (code === 'SIGN_IN_REQUIRED')
     return signInRequiredFailure(message, variant)
   // A Pages entry redirect carries the Pages fields as its variant; any other variant restores the code alone.
@@ -304,8 +312,32 @@ function restoredViteFailure(text: string): RefusalFailure | undefined {
         sideEffects: 'unknown',
       },
     }
+  const apiSeal = restoredViteApiSealFailure(text)
+  if (apiSeal) return apiSeal
   // The react-scripts and Expo deadlines are read here too, so it is restored before the general Next and run codes.
   return viteFailureOf(text) ?? restoredSetupDeadline(text)
+}
+
+/**
+ * Restores the API seal failure of a Vite run (`VITE_SEAL_FAILED(api-seal:<reason>:<file>)`): its message, the API recovery and the reason, participant, file and side effects.
+ *
+ * Why it exists: the API seal is raised inside an event, so only its text survives to the service; plain `VITE_SEAL_FAILED: ` and the `lazy-import` variant are read elsewhere and stay as they were. Called by {@link restoredViteFailure}.
+ * @param text - A run's failure reason.
+ * @returns The refusal with {@link apiSealRecoveryOf} and the restored details; `undefined` for any other text.
+ * @example
+ * restoredViteApiSealFailure('VITE_SEAL_FAILED(api-seal:source-drift:api%2Fa.ts): Drift.')?.libraryDetails // => { reason: 'source-drift', participant: 'apiServer', file: 'api/a.ts', sideEffects: 'partial' }
+ */
+function restoredViteApiSealFailure(text: string): RefusalFailure | undefined {
+  const lead = CODED_FAILURE_LEAD.exec(text)
+  const details =
+    lead?.[1] === 'VITE_SEAL_FAILED' ? apiSealFailureOf(lead[2]) : undefined
+  if (!lead || !details) return undefined
+  return {
+    code: 'VITE_SEAL_FAILED',
+    message: text.slice(lead[0].length),
+    recoveryOverride: apiSealRecoveryOf('VITE_SEAL_FAILED', details.reason),
+    libraryDetails: details,
+  }
 }
 
 /**

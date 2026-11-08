@@ -122,3 +122,40 @@ test('a relative source with a sourceRoot is source-unverifiable', () => {
     'source-unverifiable',
   )
 })
+
+/** A minified, single-line CommonJS-shaped emit of the fixture (what a prebuilt `tsx`-style CJS module can look like), and a map whose two segments sit on that one generated line. */
+const MINIFIED_COMMONJS = `"use strict";Object.defineProperty(exports,"__esModule",{value:!0});exports.handle=async function(t){const e=t.id;return{id:e}};\n`
+const MINIFIED_MAPPINGS = 'AAEE,UACA'
+
+// Value: protects=AC 5 positive: a minified single-line CommonJS-shaped module whose inline map retains the declared file is sealed and the verifier accepts the declared line; fails_when=the seal depends on line count, module syntax or URL spelling; no_claim=tsx's real output (the E1 recording holds that)
+test('a minified single-line CommonJS module is sealed and the verifier accepts the declared line', () => {
+  // Arrange
+  const script = fixtureScript(
+    fixtureMap({ mappings: MINIFIED_MAPPINGS }),
+    MINIFIED_COMMONJS,
+  )
+  // Act
+  const result = seal(script)
+  // Assert
+  assert.equal(result.kind, 'bundle')
+  if (result.kind !== 'bundle') return
+  assert.equal(result.bundle.chunkPath, FIXTURE_STOP_PATH)
+  const verifier = createBundleVerifier(result.bundle)
+  assert.equal(verifier.mappedPositions(3, 3).positions.length, 1)
+})
+
+// Value: protects=AC 5 negative: the same CommonJS-shaped module whose map retains other text is source-drift; fails_when=a stale or edited original seals because the generated code is one line; no_claim=how the drift is worded to the learner
+test('a minified single-line CommonJS module whose map retains other text is source-drift', () => {
+  // Arrange
+  const script = fixtureScript(
+    fixtureMap({
+      mappings: MINIFIED_MAPPINGS,
+      sourcesContent: [`${FIXTURE_ORIGINAL}// edited\n`],
+    }),
+    MINIFIED_COMMONJS,
+  )
+  // Act
+  const result = seal(script)
+  // Assert
+  assert.equal(result.kind === 'refused' && result.reason, 'source-drift')
+})

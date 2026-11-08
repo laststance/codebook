@@ -27,6 +27,30 @@ async function readServerRuns(): Promise<string> {
   return paragraph
 }
 
+// Value: protects=a question that starts from the app's screen is routed to the page run that declares apiServer, not to node-server; fails_when=the Server runs paragraph loses the page-route sentence or its viteApiServer / Expo API versions; no_claim=how a chat words the answer
+test('the bundled skill routes a screen-to-own-API question to the app run that declares apiServer', async () => {
+  // Arrange / Act
+  const paragraph = await readServerRuns()
+
+  // Assert
+  assert.ok(
+    paragraph.indexOf('uses the page route instead') <
+      paragraph.indexOf('uses the `node-server` profile'),
+    'the page route comes before the node-server instructions',
+  )
+  for (const phrase of [
+    "A question that starts from the repository's own web app",
+    '(`repository-browser`) that declares `apiServer`',
+    '`viteApiServer` for a Vite app from API 1.38',
+    '`expoWebQuickStart.apiServer` for an Expo app from API 1.37',
+    'the server stop pauses during the request the page sends',
+    'asked on its own, with no screen',
+    "a Next app's own server code (route handlers, server actions, API routes) pauses in its own browser run",
+    'and never declares `apiServer`',
+  ])
+    assert.ok(paragraph.includes(phrase), phrase)
+})
+
 // protects=the chat routing a server or API question to node-server only when codebook_status lists it; fails_when=the skill sends the chat to a profile that is not listed, or hides that it is unavailable; no_claim=the wording
 test('the bundled skill routes server questions to node-server only when codebook_status lists it', async () => {
   // Arrange / Act

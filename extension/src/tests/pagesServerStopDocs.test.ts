@@ -551,7 +551,7 @@ test('API_VERSION is 1.25 and its 1.17 note names the Pages data-function fields
       .split('\n')
       .find((line) => line.startsWith(' * 1.17 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.37')
+  assert.equal(API_VERSION, '1.38')
   for (const phrase of [
     'Pages Router data-function server stops (configuration version 3)',
     '`nextVersion` and `attributionSummary`',
@@ -652,7 +652,7 @@ test('the README names the Pages server-stop refusals, the API 1.17 note and ski
   const readme = await readPackaged('README.md')
   // Act / Assert
   for (const phrase of [
-    'with **MCP API 1.37** (`codebook_status` reports the installed build). API 1.37 is additive:',
+    'with **MCP API 1.38** (`codebook_status` reports the installed build). API 1.38 is additive:',
     'API 1.17 is additive: it adds Pages Router data-function server stops in configuration version 3',
     'A saved Pages server run stays study format 8 with no new field.',
     'A server stop in `_document` is refused with this code before the development server starts (`details.sideEffects` is `none`).',

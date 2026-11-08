@@ -273,6 +273,7 @@ import { thrownMessage } from './utils/thrownMessage'
 import { vitestSearchField } from './utils/vitestSearchField'
 import { waitForNextRunState } from './utils/waitForNextRunState'
 import { waitWithin } from './utils/waitWithin'
+import { withApiOutputTail } from './utils/withApiOutputTail'
 import { withKnownNodeHistory } from './utils/withKnownNodeHistory'
 import { withRunStartRefusalDetails } from './utils/withRunStartRefusalDetails'
 import { withSetupDeadlineSideEffects } from './utils/withSetupDeadlineSideEffects'
@@ -3832,6 +3833,35 @@ export class StudyService {
     operationFailure?: OperationFailure,
     runUri?: string,
     run?: SignInRunFacts,
+    apiOutputTail?: string,
+  ): StudyError {
+    // A run with a live API quotes the API's masked output tail as data in `details.apiOutputTail` (D33); an empty tail changes nothing.
+    return withApiOutputTail(
+      this.codedRuntimeFailureError(
+        runtimeFailure,
+        operationFailure,
+        runUri,
+        run,
+      ),
+      apiOutputTail,
+    )
+  }
+
+  /**
+   * Makes the coded error of a runtime failure text, without the API's output tail.
+   * Called by {@link StudyService.runtimeFailureError}, which adds the tail; split out so each method stays within the complexity limit.
+   * @param runtimeFailure - The runtime's first failure text, sanitized.
+   * @param operationFailure - The run's first operation failure, if any.
+   * @param runUri - The run's resource address, when the caller has it.
+   * @param run - The sign-in facts of the run, when the caller has them.
+   * @returns The coded refusal, or `RUNTIME_FAILED` with the text as its cause.
+   * @example this.codedRuntimeFailureError('VITE_PAGE_RELOADED: The page reloaded …').code // => 'VITE_PAGE_RELOADED'
+   */
+  private codedRuntimeFailureError(
+    runtimeFailure: string,
+    operationFailure?: OperationFailure,
+    runUri?: string,
+    run?: SignInRunFacts,
   ): StudyError {
     const refusal = refusalFailureOf(runtimeFailure)
     // A page that asked for sign-in carries the reason, the profile the run used and the setup command (DES-3), also when no operation was sent yet.
@@ -4302,6 +4332,8 @@ export class StudyService {
       ...(runtime?.readinessRequest
         ? { readinessRequest: runtime.readinessRequest }
         : {}),
+      // The run's own API block (port, pid, steps, and the masked output tail only after a failure), which the view already sanitized.
+      ...(runtime?.apiServer ? { apiServer: runtime.apiServer } : {}),
       manifestUri:
         runtime?.manifest || record.nodePrepared
           ? this.uri(record.id, 'manifest')
@@ -4373,6 +4405,7 @@ export class StudyService {
                   session: runtime?.session,
                   savedSession: runtime?.savedSession,
                 },
+                runtime?.apiServer?.outputTail,
               ),
               runtime,
             ).describe()
@@ -5473,6 +5506,25 @@ export class StudyService {
    * // => "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: …" (the runtime's first failure "Error: ENOENT: …/snapshot.json.tmp")
    */
   private preparationError(record: StudyRecord, error: unknown): StudyError {
+    // A run with a live API quotes the API's masked output tail as data in `details.apiOutputTail` (D33).
+    return withApiOutputTail(
+      this.namedPreparationError(record, error),
+      record.runtime?.apiFailureOutputTail?.(),
+    )
+  }
+
+  /**
+   * Names why a run's preparation failed, without the API's output tail.
+   * Called by {@link StudyService.preparationError}, which adds the tail; split out so each method stays within the complexity limit.
+   * @param record - The run whose preparation rejected.
+   * @param error - What the preparation rejected with.
+   * @returns The error {@link StudyService.preparationError} describes.
+   * @example this.namedPreparationError(record, new Error('CDP disconnected')).message
+   */
+  private namedPreparationError(
+    record: StudyRecord,
+    error: unknown,
+  ): StudyError {
     const runtime = record.runtime?.view(),
       runtimeFailure = runtime?.failures[0]
     // A run's timer and event failures (a setup deadline, a Fast Refresh of a sealed module) lead with their refusal code, so the agent reads the code, recovery and anchor.

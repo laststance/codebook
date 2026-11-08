@@ -10,6 +10,7 @@ import {
   OPERATIONS_REPOSITORY_BROWSER_ADAPTERS,
   REPOSITORY_BROWSER_ADAPTERS,
   REPOSITORY_OPERATION_LIMIT,
+  VITE_API_SERVER_MINIMUM_API,
   SIGN_IN_PATH_LIMIT,
   BOOK_MAX_ANCHORS,
   BOOK_TITLE_LIMIT_CHARS,
@@ -38,6 +39,7 @@ import { repositoryHashSchema, repositoryPathSchema } from './sourceSchemas'
 import { isRepositoryPathInFolder } from './utils/isRepositoryPathInFolder'
 import { missingValueInspectionMessage } from './utils/missingValueInspectionMessage'
 import { normalizedSignInPathname } from './utils/normalizedSignInPathname'
+import { proxyPathIssueOf } from './utils/proxyPathIssueOf'
 
 /** A CSS selector as every profile declares one: 1 to the selector limit, no control characters. */
 export const selectorSchema = z
@@ -385,7 +387,7 @@ const operationsConfigurationShape = z.strictObject({
     ),
   // vite-dev (MCP API 1.34), react-scripts-dev (1.35) and next-dev-webpack (1.36), together with a nested packageRoot: other adapters refuse the key as unknown in validateOperations, and the service refuses a root run with the reason library-needs-package-root.
   library: libraryDeclarationSchema.optional(),
-  // expo-web-dev only (MCP API 1.37): the app's own Node API server; other adapters refuse the key as unknown in validateOperations.
+  // expo-web-dev (MCP API 1.37) and vite-dev (1.38): the app's own Node API server; other adapters refuse the key as unknown in validateOperations.
   apiServer: apiServerDeclarationSchema.optional(),
 })
 
@@ -456,11 +458,11 @@ function declaredStopLocations(
 }
 
 /**
- * Refuses the `apiServer` rules a field schema cannot state (API 1.37): the API folder and the app's folder must not contain one another, a server stop must lie inside the API folder and a browser stop inside the app's folder, and a server stop needs an operation to follow (`afterOperation` 1 or more).
- * Called by {@link validateOperations} for an `expo-web-dev` configuration; does nothing without `apiServer`.
+ * Refuses the `apiServer` rules a field schema cannot state: under `vite-dev` (API 1.38) the API folder may lie inside the app's folder but never equal it or contain it, and `library` is not declared beside it; under `expo-web-dev` (API 1.37) the two folders must not contain one another. `proxyPaths` follows {@link validateProxyPaths}; the stop rules are {@link validateApiServerStops}.
+ * Called by {@link validateOperations} for an `expo-web-dev` or `vite-dev` configuration; does nothing without `apiServer`. The check is lexical: symbolic links are resolved when the run starts.
  * @param configuration - A parsed version 3 configuration.
  * @param context - The refinement context that receives one issue per violation, each naming its field.
- * @example validateApiServer({ packageRoot: 'apps/app', apiServer: { packageRoot: 'apps/app/api', … }, … }, context) // adds an issue at ['apiServer', 'packageRoot']
+ * @example validateApiServer({ adapter: 'expo-web-dev', packageRoot: 'apps/app', apiServer: { packageRoot: 'apps/app/api', … }, … }, context) // adds an issue at ['apiServer', 'packageRoot']
  */
 function validateApiServer(
   configuration: z.infer<typeof operationsConfigurationShape>,
@@ -469,8 +471,23 @@ function validateApiServer(
   const { apiServer } = configuration
   if (apiServer === undefined) return
   const appRoot = configuration.packageRoot ?? '.'
-  // The participant of a stop follows from its folder, so neither folder may contain the other.
-  if (
+  if (configuration.adapter === 'vite-dev') {
+    if (configuration.library !== undefined)
+      context.addIssue({
+        code: 'custom',
+        path: ['apiServer'],
+        message:
+          'apiServer and library cannot be declared on one vite-dev run; declare the library run or the API run, not both.',
+      })
+    // The API may sit inside the app's folder (an app at the root with the API in a subfolder); equal folders and an app inside the API's folder leave a stop with no single owner.
+    if (isRepositoryPathInFolder(apiServer.packageRoot, appRoot))
+      context.addIssue({
+        code: 'custom',
+        path: ['apiServer', 'packageRoot'],
+        message: `apiServer.packageRoot "${apiServer.packageRoot}" equals or contains the app's packageRoot "${appRoot}"; declare the API's folder inside the app's folder or beside it, never around it.`,
+      })
+  } else if (
+    // The participant of a stop follows from its folder, so neither folder may contain the other.
     isRepositoryPathInFolder(appRoot, apiServer.packageRoot) ||
     isRepositoryPathInFolder(apiServer.packageRoot, appRoot)
   )
@@ -479,31 +496,119 @@ function validateApiServer(
       path: ['apiServer', 'packageRoot'],
       message: `apiServer.packageRoot "${apiServer.packageRoot}" and the app's packageRoot "${appRoot}" must not contain one another; declare the API's own package folder outside the app's folder.`,
     })
+  validateProxyPaths(configuration.adapter, apiServer.proxyPaths, context)
+  validateApiServerStops(configuration, context)
+}
+
+/**
+ * Refuses `apiServer.proxyPaths` under any adapter but `vite-dev` (Metro does not proxy), and applies the {@link proxyPathIssueOf} rules under `vite-dev`.
+ * Called by {@link validateApiServer}.
+ * @param adapter - The configuration's adapter.
+ * @param proxyPaths - The declared prefixes, or `undefined` when omitted.
+ * @param context - The refinement context that receives one issue per violation, each naming `apiServer.proxyPaths[i]` or the list.
+ * @example validateProxyPaths('expo-web-dev', ['/api'], context) // adds an issue at ['apiServer', 'proxyPaths']
+ */
+function validateProxyPaths(
+  adapter: string,
+  proxyPaths: readonly string[] | undefined,
+  context: z.RefinementCtx,
+): void {
+  if (proxyPaths === undefined) return
+  if (adapter !== 'vite-dev') {
+    context.addIssue({
+      code: 'custom',
+      path: ['apiServer', 'proxyPaths'],
+      message:
+        "apiServer.proxyPaths is accepted on vite-dev only: Metro does not proxy, and an Expo page calls the API's own origin.",
+    })
+    return
+  }
+  for (const { index, message } of proxyPathIssueOf(proxyPaths))
+    context.addIssue({
+      code: 'custom',
+      path:
+        index === undefined
+          ? ['apiServer', 'proxyPaths']
+          : ['apiServer', 'proxyPaths', index],
+      message,
+    })
+}
+
+/**
+ * Refuses a browser stop that lies outside the app's folder, or (under `vite-dev`, where the app's folder may contain the API's) inside the API's folder; both refusals name the `participant` to declare for a stop in the API folder.
+ * Called by {@link validateApiServerStops} for each browser stop.
+ * @param configuration - A parsed version 3 configuration that declares `apiServer`.
+ * @param file - The stop's source file, repository-relative.
+ * @param sourcePath - The configuration path of the stop's `source.path`, where the issue lands.
+ * @param isInsideApi - Whether `file` lies inside `apiServer.packageRoot`.
+ * @param context - The refinement context that receives the issue.
+ * @example validateBrowserStopFolder(configuration, 'server/src/page.ts', ['source', 'path'], true, context) // adds an issue at ['source', 'path'] (vite-dev)
+ */
+function validateBrowserStopFolder(
+  configuration: z.infer<typeof operationsConfigurationShape>,
+  file: string,
+  sourcePath: (string | number)[],
+  isInsideApi: boolean,
+  context: z.RefinementCtx,
+): void {
+  const apiRoot = configuration.apiServer?.packageRoot ?? '.'
+  const appRoot = configuration.packageRoot ?? '.'
+  const field = `configuration.${sourcePath.join('.')}`
+  const participantAdvice =
+    ' Declare participant "server" for a stop in the API folder.'
+  if (!isRepositoryPathInFolder(appRoot, file))
+    context.addIssue({
+      code: 'custom',
+      path: sourcePath,
+      message: `With apiServer, a browser stop must lie inside the app's packageRoot "${appRoot}"; ${file} is declared at ${field}.${isInsideApi ? participantAdvice : ''}`,
+    })
+  // The Vite app may contain the API folder, so the app-folder rule above cannot tell the two apart.
+  else if (configuration.adapter === 'vite-dev' && isInsideApi)
+    context.addIssue({
+      code: 'custom',
+      path: sourcePath,
+      message: `With apiServer, a browser stop must lie outside apiServer.packageRoot "${apiRoot}"; ${file} is declared at ${field}.${participantAdvice}`,
+    })
+}
+
+/**
+ * Refuses the stop rules of a configuration that declares `apiServer`: a server stop must lie inside the API folder, a browser stop inside the app's folder (and under `vite-dev` outside the API folder), and a server stop needs an operation to follow (`afterOperation` 1 or more). A wrong-folder refusal names the `participant` to declare.
+ * Called by {@link validateApiServer}.
+ * @param configuration - A parsed version 3 configuration that declares `apiServer`.
+ * @param context - The refinement context that receives one issue per violation.
+ * @example validateApiServerStops(configuration, context) // adds an issue at ['additionalStops', 0, 'source', 'path'] for a server stop outside the API folder
+ */
+function validateApiServerStops(
+  configuration: z.infer<typeof operationsConfigurationShape>,
+  context: z.RefinementCtx,
+): void {
+  const { apiServer } = configuration
+  if (apiServer === undefined) return
   for (const stop of declaredStopLocations(configuration)) {
     const field = `configuration.${stop.sourcePath.join('.')}`
-    if (
-      stop.participant === 'server' &&
-      !isRepositoryPathInFolder(apiServer.packageRoot, stop.file)
+    const isInsideApi = isRepositoryPathInFolder(
+      apiServer.packageRoot,
+      stop.file,
     )
+    if (stop.participant === 'server' && !isInsideApi)
       context.addIssue({
         code: 'custom',
         path: stop.sourcePath,
-        message: `A server stop must lie inside apiServer.packageRoot "${apiServer.packageRoot}"; ${stop.file} is declared at ${field}.`,
+        message: `A server stop must lie inside apiServer.packageRoot "${apiServer.packageRoot}"; ${stop.file} is declared at ${field}. Declare participant "browser" for a stop outside the API folder.`,
       })
-    if (
-      stop.participant === 'browser' &&
-      !isRepositoryPathInFolder(appRoot, stop.file)
-    )
-      context.addIssue({
-        code: 'custom',
-        path: stop.sourcePath,
-        message: `With apiServer, a browser stop must lie inside the app's packageRoot "${appRoot}"; ${stop.file} is declared at ${field}.`,
-      })
+    if (stop.participant === 'browser')
+      validateBrowserStopFolder(
+        configuration,
+        stop.file,
+        stop.sourcePath,
+        isInsideApi,
+        context,
+      )
     if (stop.participant === 'server' && stop.afterOperation === 0)
       context.addIssue({
         code: 'custom',
         path: stop.afterOperationPath,
-        message: `afterOperation 0 is declared at configuration.${stop.afterOperationPath.join('.')}, but an API server stop needs an operation: entry-load API stops are not supported (API ${EXPO_WEB_API_SERVER_MINIMUM_API}); declare the operation whose request reaches the API and afterOperation 1 or more.`,
+        message: `afterOperation 0 is declared at configuration.${stop.afterOperationPath.join('.')}, but an API server stop needs an operation: entry-load API stops are not supported (API ${apiServerMinimumApiOf(configuration.adapter)}); declare the operation whose request reaches the API and afterOperation 1 or more.`,
       })
   }
 }
@@ -531,10 +636,11 @@ function validateOperations(
       keys: ['library'],
       path: [],
     })
-  // Only an expo-web-dev configuration declares `apiServer` (API 1.37); every other adapter refuses it exactly as an unknown key of the strict shape.
+  // Only an expo-web-dev (API 1.37) or vite-dev (API 1.38) configuration declares `apiServer`; every other adapter refuses it exactly as an unknown key of the strict shape.
   if (
     configuration.apiServer !== undefined &&
-    configuration.adapter !== 'expo-web-dev'
+    configuration.adapter !== 'expo-web-dev' &&
+    configuration.adapter !== 'vite-dev'
   )
     context.addIssue({
       code: 'unrecognized_keys',
@@ -643,6 +749,34 @@ const BROWSER_ONLY_ADAPTERS: ReadonlySet<string> = new Set([
 const EXPO_API_ROUTE_FILE = /\+api\.(?:[cm]?[jt]s|[jt]sx)$/
 
 /**
+ * Names the API that first accepts `apiServer` under an adapter.
+ * Called by {@link apiServerWayOutOf} and {@link validateApiServerStops}.
+ * @param adapter - `expo-web-dev` or any other adapter that declares `apiServer`.
+ * @returns "1.37" for `expo-web-dev`, "1.38" otherwise (`vite-dev`).
+ * @example apiServerMinimumApiOf('vite-dev') // => '1.38'
+ */
+function apiServerMinimumApiOf(adapter: string): string {
+  return adapter === 'expo-web-dev'
+    ? EXPO_WEB_API_SERVER_MINIMUM_API
+    : VITE_API_SERVER_MINIMUM_API
+}
+
+/**
+ * Words the way out of a server participant refusal: the adapters that can start the app's own API name `apiServer` and the API that first accepts it.
+ * Called by {@link refuseBrowserOnlyServerParticipants}.
+ * @param adapter - The configuration's adapter.
+ * @param version - The configuration's version; only version 3 accepts `apiServer`.
+ * @returns A sentence starting with a space, or an empty string for an adapter with no API server or a configuration version that refuses `apiServer`.
+ * @example apiServerWayOutOf('vite-dev', 3) // => " To pause in the app's own Node API, declare apiServer (API 1.38)."
+ */
+function apiServerWayOutOf(adapter: string, version: number): string {
+  // Only a version 3 configuration accepts apiServer; a version 2 one refuses the key, so the sentence would point at a dead end.
+  if (version !== OPERATIONS_CONFIG_VERSION) return ''
+  if (adapter !== 'expo-web-dev' && adapter !== 'vite-dev') return ''
+  return ` To pause in the app's own Node API, declare apiServer (API ${apiServerMinimumApiOf(adapter)}).`
+}
+
+/**
  * Refuses a server participant under `adapter: "vite-dev"`, `"react-scripts-dev"` or `"expo-web-dev"`, which seal and debug browser modules only, and a stop in an Expo Router API route (`+api.ts`) under `"expo-web-dev"`, which is server code.
  * Called by {@link validateInspections} for both configuration versions, so the public schema, not a later start, rejects it.
  * @param configuration - A parsed configuration of either version.
@@ -668,9 +802,10 @@ function refuseBrowserOnlyServerParticipants(
       participant: stop.participant,
     })),
   ]
-  // An expo-web-dev run that declares apiServer (API 1.37) starts the app's own Node API, so a server stop is accepted there.
+  // An expo-web-dev (API 1.37) or vite-dev (API 1.38) run that declares apiServer starts the app's own Node API, so a server stop is accepted there.
   const hasApiServer =
-    configuration.adapter === 'expo-web-dev' &&
+    (configuration.adapter === 'expo-web-dev' ||
+      configuration.adapter === 'vite-dev') &&
     'apiServer' in configuration &&
     configuration.apiServer !== undefined
   for (const { path, participant } of declared)
@@ -678,11 +813,10 @@ function refuseBrowserOnlyServerParticipants(
       context.addIssue({
         code: 'custom',
         path,
-        message: `adapter "${configuration.adapter}" supports browser stops only; participant "server" is declared at configuration.${path.join('.')}.${
-          configuration.adapter === 'expo-web-dev'
-            ? ` To pause in the app's own Node API, declare apiServer (API ${EXPO_WEB_API_SERVER_MINIMUM_API}).`
-            : ''
-        }`,
+        message: `adapter "${configuration.adapter}" supports browser stops only; participant "server" is declared at configuration.${path.join('.')}.${apiServerWayOutOf(
+          configuration.adapter,
+          configuration.version,
+        )}`,
       })
   refuseExpoApiRouteStops(configuration, context)
 }
@@ -834,6 +968,23 @@ export const retainedRepositoryConfigSchema = liveRepositoryConfigSchema
       !('library' in configuration) || configuration.library === undefined,
     'Only a study of format 16, 17 or 18 keeps a library.',
   )
+  // A `vite-dev` run that declares `apiServer` is saved as format 20 only (API 1.38); the live shape accepts the key.
+  .refine(
+    declaresNoApiServer,
+    'Only a study of format 20 keeps a vite-dev apiServer.',
+  )
+/**
+ * Says whether a retained configuration declares no `apiServer` (an explicit `apiServer: undefined` declares nothing).
+ * Called by the refinements of the retained variants that can hold a `vite-dev` run (formats 3 to 8, 10 and 16), which an older Codebook reads without the key.
+ * @param configuration - A parsed configuration of any version.
+ * @returns `true` when `apiServer` is absent or undefined.
+ * @example declaresNoApiServer({ apiServer: undefined }) // => true
+ */
+function declaresNoApiServer(configuration: object): boolean {
+  return (
+    !('apiServer' in configuration) || configuration.apiServer === undefined
+  )
+}
 /**
  * Says whether a retained configuration declares no library (an explicit `library: undefined` declares nothing).
  * Called by the refinements of the retained variants that predate the library formats.
@@ -896,6 +1047,11 @@ const vitePackageRootRepositoryConfigSchema = operationsConfigurationShape
     declaresNoLibrary,
     'Only a study of format 16, 17 or 18 keeps a library.',
   )
+  // A `vite-dev` run that declares `apiServer` is saved as format 20 only.
+  .refine(
+    declaresNoApiServer,
+    'Only a study of format 20 keeps a vite-dev apiServer.',
+  )
 /**
  * The configuration a format 16 study retains: the version 3 `vite-dev` shape with a required `packageRoot` other than `"."` and a required `library` declaration (API 1.34).
  * Why it exists: an older Codebook refuses `library` under `vite-dev` as an unknown key, so a run that declares it takes its own format and is listed there as saved by a newer Codebook. Validated like the format 10 variant (inspections, operations).
@@ -914,6 +1070,11 @@ const viteLibraryRepositoryConfigSchema = operationsConfigurationShape
     validateInspections(configuration, context)
     validateOperations(configuration, context)
   })
+  // A `vite-dev` run that declares `apiServer` is saved as format 20 only; `library` beside it is refused by validateOperations.
+  .refine(
+    declaresNoApiServer,
+    'Only a study of format 20 keeps a vite-dev apiServer.',
+  )
 /**
  * The configuration a format 18 study retains: the version 3 `next-dev-webpack` shape with a required `packageRoot` other than `"."` and a required `library` declaration (API 1.36).
  * Why it exists: an older Codebook refuses `library` under `next-dev-webpack` as an unknown key, so a run that declares it takes its own format and is listed there as saved by a newer Codebook. Validated like the format 9 variant (inspections, operations). A root app never reaches a save: the run is refused with `library-needs-package-root` before anything starts.
@@ -986,7 +1147,22 @@ const expoWebApiServerRepositoryConfigSchema = operationsConfigurationShape
     validateInspections(configuration, context)
     validateOperations(configuration, context)
   })
-/** Every configuration a saved study can hold: the retained union of formats 3 to 8, the format 9 package-root variant (Next), the format 10 package-root variant (Vite), the format 11 variant (react-scripts), the format 15 variant (Expo web), the format 16 variant (Vite with a library), the format 17 variant (react-scripts with a library) the format 18 variant (Next with a library) or the format 19 variant (Expo web with an apiServer). */
+/**
+ * The configuration a format 20 study retains: the version 3 `vite-dev` shape with a required `apiServer` declaration (API 1.38), at the repository root or with a `packageRoot`.
+ * Why it exists: an older Codebook refuses `apiServer` under `vite-dev` as an unknown key, so a run that declares it takes its own format and is listed there as saved by a newer Codebook. Validated like the format 19 variant (inspections, operations, and the `apiServer` folder, `proxyPaths` and stop rules); `library` beside it is refused.
+ * Read by {@link studyConfigurationSchema}; no earlier format accepts an `apiServer` under this adapter.
+ */
+const viteApiServerRepositoryConfigSchema = operationsConfigurationShape
+  .extend({
+    adapter: z.literal('vite-dev'),
+    apiServer: apiServerDeclarationSchema,
+  })
+  .superRefine((configuration, context) => {
+    validateInspections(configuration, context)
+    validateOperations(configuration, context)
+  })
+  .refine(declaresNoLibrary, 'A format 20 study declares no library.')
+/** Every configuration a saved study can hold: the retained union of formats 3 to 8, the format 9 package-root variant (Next), the format 10 package-root variant (Vite), the format 11 variant (react-scripts), the format 15 variant (Expo web), the format 16 variant (Vite with a library), the format 17 variant (react-scripts with a library) the format 18 variant (Next with a library) the format 19 variant (Expo web with an apiServer) or the format 20 variant (Vite with an apiServer). */
 export const studyConfigurationSchema = z.union([
   retainedRepositoryConfigSchema,
   packageRootRepositoryConfigSchema,
@@ -997,6 +1173,7 @@ export const studyConfigurationSchema = z.union([
   nextLibraryRepositoryConfigSchema,
   expoWebRepositoryConfigSchema,
   expoWebApiServerRepositoryConfigSchema,
+  viteApiServerRepositoryConfigSchema,
 ])
 export type RepositoryConfiguration = z.infer<typeof repositoryConfigSchema>
 export type RetainedRepositoryConfiguration = z.infer<

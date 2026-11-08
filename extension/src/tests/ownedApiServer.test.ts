@@ -689,3 +689,208 @@ test('killing an owned API whose group identity cannot be confirmed fails and se
     },
   )
 })
+
+/**
+ * Replaces the repository's API entry with a script that prints each given chunk 300 ms apart, then stays alive.
+ * @param repository - The repository whose `api/server.cjs` is replaced.
+ * @param chunks - The text of each stdout write, in order.
+ * @example await chunkedEntry(repository, ['one ', 'two\n'])
+ */
+async function chunkedEntry(
+  repository: ApiRepository,
+  chunks: string[],
+): Promise<void> {
+  await writeFile(
+    join(repository.packageRoot, 'server.cjs'),
+    `const chunks = ${JSON.stringify(chunks)}
+let index = 0
+setInterval(() => {
+  if (index < chunks.length) process.stdout.write(chunks[index++])
+}, 300)
+`,
+  )
+}
+
+// Value: protects=a failed operation can show the API's output while the API still runs; fails_when=outputTailNow is empty or throws before the exit; no_claim=the view or error wiring
+test('an owned API shows its output tail while it is still running', async (t) => {
+  // Arrange
+  const repository = await apiRepository(t, { mode: 'api' })
+  await chunkedEntry(repository, ['first line\n'])
+  const { api } = await launchApi(t, repository)
+  const cdp = await connectInspector(t, api)
+
+  // Act
+  void cdp
+    .request('Runtime.runIfWaitingForDebugger', undefined)
+    .catch(() => undefined)
+  const tail = await waitUntil(
+    () =>
+      api.outputTailNow().includes('first line')
+        ? api.outputTailNow()
+        : undefined,
+    'the live tail',
+    10_000,
+  )
+
+  // Assert
+  // Node's inspector banner never reaches the tail, and the tail ends at the last line.
+  assert.equal(tail, 'first line')
+})
+
+// Value: protects=one redaction path for the live and the exit tail; fails_when=whenExited().outputTail differs from outputTailNow() after exit; no_claim=masking itself
+test('an owned API exit tail equals its output tail read after the exit', async (t) => {
+  // Arrange
+  const repository = await apiRepository(t, {
+    mode: 'exit-after-echo',
+    echo: 'plain',
+  })
+  const output: string[] = []
+  const { api } = await launchApi(t, repository, {
+    onOutput: (event) => void output.push(event.text),
+  })
+  const cdp = await connectInspector(t, api)
+  void cdp
+    .request('Runtime.runIfWaitingForDebugger', undefined)
+    .catch(() => undefined)
+  await waitUntil(
+    () =>
+      output.join('').includes('Waiting for the debugger to disconnect')
+        ? true
+        : undefined,
+    'the debugger-disconnect notice',
+    10_000,
+  )
+  cdp.close()
+
+  // Act
+  const exit = await api.whenExited()
+
+  // Assert
+  assert.equal(exit.outputTail, api.outputTailNow())
+  assert.match(exit.outputTail, /login failed for plain/)
+})
+
+// Value: protects=a learner secret typed after launch and split across two output chunks never reaches the tail; fails_when=either half of the secret, or the whole, appears in outputTailNow; no_claim=the view and details wiring
+test('a learner secret typed after launch and split across two output chunks never appears in the live tail', async (t) => {
+  // Arrange
+  const secrets = new Set<string>()
+  const repository = await apiRepository(t, { mode: 'api' })
+  await chunkedEntry(repository, [
+    'login failed for hunter2-pa',
+    'ssword done\n',
+  ])
+  const published: string[] = []
+  const { api } = await launchApi(t, repository, {
+    secrets: () => secrets,
+    onOutput: (event) => void published.push(event.text),
+  })
+  const cdp = await connectInspector(t, api)
+  // Node prints "Debugger attached." once the inspector connects, sometimes after connectInspector returned (Linux CI); the secret is added only after that line was published whole, so the live holdback never splits Node's banner around the app's line.
+  await waitUntil(
+    () =>
+      published.join('').includes('Debugger attached.') ? true : undefined,
+    'the inspector banner',
+    10_000,
+  )
+  secrets.add('hunter2-password')
+
+  // Act
+  void cdp
+    .request('Runtime.runIfWaitingForDebugger', undefined)
+    .catch(() => undefined)
+  const tails: string[] = []
+  await waitUntil(
+    () => {
+      tails.push(api.outputTailNow())
+      return api.outputTailNow().includes('done') ? true : undefined
+    },
+    'the second chunk',
+    10_000,
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      leaked: tails.some(
+        (tail) => tail.includes('hunter2') || tail.includes('ssword'),
+      ),
+      final: api.outputTailNow(),
+    },
+    { leaked: false, final: 'login failed for [masked] done' },
+  )
+})
+
+/**
+ * Launches an API whose entry prints the given chunks and returns its tail once the last chunk arrived.
+ * Called by the tail-boundary tests.
+ * @param context - The test.
+ * @param chunks - What the entry prints, one chunk every 300 ms.
+ * @param extra - Further input members.
+ * @param lastMarker - A text of the last chunk that tells it was printed.
+ * @returns The tail after the last chunk.
+ * @example const { tail } = await tailAfter(t, ['a\n'], {}, 'a')
+ */
+async function tailAfter(
+  context: TestContext,
+  chunks: string[],
+  extra: Partial<OwnedApiServerInput>,
+  lastMarker: string,
+) {
+  const repository = await apiRepository(context, { mode: 'api' })
+  await chunkedEntry(repository, chunks)
+  const { api } = await launchApi(context, repository, extra)
+  const cdp = await connectInspector(context, api)
+  void cdp
+    .request('Runtime.runIfWaitingForDebugger', undefined)
+    .catch(() => undefined)
+  const tail = await waitUntil(
+    () =>
+      api.outputTailNow().includes(lastMarker)
+        ? api.outputTailNow()
+        : undefined,
+    'the last chunk',
+    10_000,
+  )
+  return { tail }
+}
+
+// Value: protects=B1 a known value that the old 4096-character cut would have started inside never leaves a suffix in the tail, because the run's mask is applied to the whole output before the cut; fails_when=the tail is cut before maskText runs, so the end of the value stays; no_claim=which values the run masks
+test('a known value that the tail bound would cut in half is masked whole, never left as a suffix', async (t) => {
+  // Arrange
+  const value = 'db-password-ABCDEFGHIJ'
+  // The raw output is the value, a newline, then 4,070 filler characters: a raw cut at 4,096 characters starts inside the value.
+  const chunks = [`${value}\n`, `${'z'.repeat(4069)}\n`, 'end-marker\n']
+  // Act
+  const { tail } = await tailAfter(
+    t,
+    chunks,
+    { maskText: (text) => text.replaceAll(value, '[masked]') },
+    'end-marker',
+  )
+  // Assert
+  assert.deepEqual(
+    {
+      hasSuffix: tail.includes('ABCDEFGHIJ') || tail.includes('word-ABC'),
+      endsWithMarker: tail.endsWith('end-marker'),
+      fitsBound: tail.length <= 4096,
+    },
+    { hasSuffix: false, endsWithMarker: true, fitsBound: true },
+  )
+})
+
+// Value: protects=B1 Node's inspector endpoint (ws://...) never remains in the tail when the old bound would have cut inside the banner line; fails_when=the cut precedes the banner filter and leaves the end of the Debugger listening line; no_claim=the banner filter itself (withoutInspectorBanner tests)
+test('a tail bound inside the inspector banner never leaves the ws:// endpoint', async (t) => {
+  // Arrange
+  // The banner is about 150 characters; the filler makes the raw cut start inside its first line.
+  const chunks = [`${'f'.repeat(3990)}\n`, 'end-marker\n']
+  // Act
+  const { tail } = await tailAfter(t, chunks, {}, 'end-marker')
+  // Assert
+  assert.deepEqual(
+    {
+      hasEndpoint: tail.includes('ws://') || tail.includes('127.0.0.1:'),
+      endsWithMarker: tail.endsWith('end-marker'),
+    },
+    { hasEndpoint: false, endsWithMarker: true },
+  )
+})

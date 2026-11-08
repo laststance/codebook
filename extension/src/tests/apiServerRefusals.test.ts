@@ -2,6 +2,10 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import {
+  apiSourceDriftRefusal,
+  apiSourceUnverifiableRefusal,
+} from '../apiSealRefusals'
+import {
   API_SERVER_EXITED_VARIANT,
   apiServerExitedRefusal,
   apiServerListenerNotOwnedRefusal,
@@ -12,13 +16,15 @@ import {
   apiServerSourceRefusal,
 } from '../apiServerRefusals'
 import type { StudyError } from '../errors'
-import {
-  expoWebApiPortConflictRefusal,
-  expoWebApiSourceDriftRefusal,
-  expoWebApiSourceUnverifiableRefusal,
-} from '../expoWebRefusals'
+import { expoWebHelp } from '../expoWebHelp'
+import { expoWebApiPortConflictRefusal } from '../expoWebRefusals'
 import { formatRefusalFailure } from '../utils/formatRefusalFailure'
 import { refusalFailureOf } from '../utils/refusalFailureOf'
+import {
+  viteApiPortConflictRefusal,
+  viteApiRunPortUnavailableRefusal,
+} from '../viteApiServerRefusals'
+import { viteHelp } from '../viteHelp'
 
 /** Reads the recovery an agent would see from a refusal. */
 function recoveryOf(error: StudyError): string {
@@ -46,8 +52,12 @@ test('the API port conflict refusal names both ports and says nothing started', 
 // Value: protects=OV-4 a source drift and an unverifiable source are separate seal refusals for the API, each with the file, the apiServer participant and partial side effects; fails_when=either reason is missing, the participant is dropped, or the recovery says the file is the declared line; no_claim=how the seal reads the map
 test('the API seal refusals name the file, the apiServer participant and partial side effects', () => {
   // Arrange / Act
-  const drift = expoWebApiSourceDriftRefusal('apps/api/src/handler.ts')
-  const unverifiable = expoWebApiSourceUnverifiableRefusal(
+  const drift = apiSourceDriftRefusal(
+    'EXPO_WEB_SEAL_FAILED',
+    'apps/api/src/handler.ts',
+  )
+  const unverifiable = apiSourceUnverifiableRefusal(
+    'EXPO_WEB_SEAL_FAILED',
     'apps/api/src/handler.ts',
   )
   // Assert
@@ -234,4 +244,137 @@ test('refusalFailureOf restores SERVER_EXITED only with the api-server variant',
     /never start services, edit \.env/,
   )
   assert.equal(plain, undefined)
+})
+
+// Value: protects=D20: the VITE_SEAL_FAILED API refusal carries the whole contract (code, message, reason, participant, file, partial side effects) and an API-worded recovery that never says edit or build; fails_when=a detail is dropped, the Vite recovery for app stops is reused, or the anchor is not the Vite one; no_claim=when the seal raises it
+test('a Vite API source drift refusal carries code, details and an API-worded recovery', () => {
+  // Arrange / Act
+  const error = apiSourceDriftRefusal(
+    'VITE_SEAL_FAILED',
+    'apps/api/src/handler.ts',
+  )
+  // Assert
+  assert.deepEqual(error.describe(), {
+    code: 'VITE_SEAL_FAILED',
+    message:
+      "The API ran a different version of apps/api/src/handler.ts than the stop declares (the source its map carries is not the declared file), so the stop was not shown. The API and the app were stopped; an operation already sent may have changed the application's data.",
+    cause:
+      "The API ran a different version of apps/api/src/handler.ts than the stop declares (the source its map carries is not the declared file), so the stop was not shown. The API and the app were stopped; an operation already sent may have changed the application's data.",
+    recovery:
+      "Tell the learner the API ran another version of details.file than the repository's current one (a stale build, or an edit after the study was declared); never edit the project. Declare the stop again from the current file, then one new start. The API and the app were stopped; an operation already sent may have changed the application's data. Recovery: fix it, then one new start. See codebook://help/repository-browser#VITE_SEAL_FAILED.",
+    docs: 'codebook://help/errors',
+    details: {
+      reason: 'source-drift',
+      participant: 'apiServer',
+      file: 'apps/api/src/handler.ts',
+      sideEffects: 'partial',
+    },
+  })
+})
+
+// Value: protects=D20: an unverifiable Vite API source tells the chat to declare the TypeScript source run through tsx and never to edit or build; fails_when=the recovery loses the tsx remedy or allows a build; no_claim=how the seal reads the map
+test('a Vite API source unverifiable refusal tells the chat to declare the tsx source and never edit or build', () => {
+  // Arrange / Act
+  const error = apiSourceUnverifiableRefusal('VITE_SEAL_FAILED', 'api/a.ts')
+  // Assert
+  assert.equal(error.details?.reason, 'source-unverifiable')
+  assert.match(
+    recoveryOf(error),
+    /through tsx, then one new start; never edit or build the project\./,
+  )
+})
+
+// Value: protects=D21 D27: a port conflict from the dev script is refused with sideEffects none, one from the config or Vite default with partial side effects that say the API started and stopped; fails_when=the side effects, a port, the source or the started-and-stopped sentence is wrong; no_claim=where the ports are read
+test('a Vite API port conflict names both ports, the source and whether the API was started', () => {
+  // Arrange / Act
+  const fromScript = viteApiPortConflictRefusal({
+    apiPort: 5001,
+    vitePort: 5001,
+    portSource: 'dev-script',
+  })
+  const fromDefault = viteApiPortConflictRefusal({
+    apiPort: 5173,
+    vitePort: 5173,
+    portSource: 'vite-default',
+  })
+  // Assert
+  assert.equal(fromScript.code, 'VITE_UNSUPPORTED')
+  assert.equal(
+    fromScript.message,
+    "apiServer.port 5001 is the port the Vite dev script's --port declares (5001); declare the port the API's own code listens on, or tell the learner the API and the app cannot share a port. Nothing started.",
+  )
+  assert.deepEqual(fromScript.details, {
+    reason: 'api-port-conflict',
+    apiPort: 5001,
+    vitePort: 5001,
+    portSource: 'dev-script',
+    sideEffects: 'none',
+  })
+  assert.equal(
+    fromDefault.message,
+    "apiServer.port 5173 is Vite's default port, since neither the dev script nor the config declares one (5173); declare the port the API's own code listens on, or tell the learner the API and the app cannot share a port. The API was started and stopped and no input was sent.",
+  )
+  assert.deepEqual(fromDefault.details, {
+    reason: 'api-port-conflict',
+    apiPort: 5173,
+    vitePort: 5173,
+    portSource: 'vite-default',
+    sideEffects: 'partial',
+  })
+  assert.match(
+    recoveryOf(fromDefault),
+    /The API was started and stopped and no input was sent\. Recovery: fix it, then one new start\. See codebook:\/\/help\/repository-browser#VITE_UNSUPPORTED\.$/,
+  )
+})
+
+// Value: protects=D27c: a taken Vite port in an apiServer run says the API was started and stopped and carries partial side effects, not "nothing was started"; fails_when=the recovery still claims nothing started or the details lose the side effects; no_claim=the port probe
+test('a taken Vite port in an apiServer run is VITE_PORT_UNAVAILABLE with partial side effects', () => {
+  // Arrange / Act
+  const error = viteApiRunPortUnavailableRefusal(
+    { port: 5173, reason: 'in-use' },
+    'the Vite config',
+  )
+  // Assert
+  assert.equal(error.code, 'VITE_PORT_UNAVAILABLE')
+  assert.match(
+    error.message,
+    /^Port 5173 \(the Vite config\) is in use on this machine.* The API was started and stopped and no input was sent\.$/,
+  )
+  assert.deepEqual(error.details, { port: 5173, sideEffects: 'partial' })
+  assert.ok(!recoveryOf(error).includes('Nothing was started.'))
+  assert.match(
+    recoveryOf(error),
+    /The API was started and stopped and no input was sent\./,
+  )
+})
+
+// Value: protects=D30: both adapters' help words source-drift and source-unverifiable, the Vite rows under VITE_SEAL_FAILED with the shared reason anchors; fails_when=either adapter loses a row or the Vite row has another code or anchor; no_claim=the wording of the rows
+test('the Vite and Expo help both carry source-drift and source-unverifiable rows', () => {
+  // Arrange
+  const viteRows: Record<
+    string,
+    { code: string; anchor: string; meaning: string } | undefined
+  > = viteHelp().vitePackageRoot.refusals
+  const expoRows: Record<string, string | undefined> =
+    expoWebHelp().expoWebQuickStart.refusals.EXPO_WEB_SEAL_FAILED?.reasons ?? {}
+  // Act
+  const viteDrift = viteRows['source-drift']
+  const viteUnverifiable = viteRows['source-unverifiable']
+  // Assert
+  assert.equal(viteDrift?.code, 'VITE_SEAL_FAILED')
+  assert.equal(
+    viteDrift?.anchor,
+    'codebook://help/repository-browser#source-drift',
+  )
+  assert.equal(viteUnverifiable?.code, 'VITE_SEAL_FAILED')
+  assert.equal(
+    viteUnverifiable?.anchor,
+    'codebook://help/repository-browser#source-unverifiable',
+  )
+  assert.ok(expoRows['source-drift']?.includes('details.sideEffects: partial'))
+  assert.ok(
+    expoRows['source-unverifiable']?.includes('details.sideEffects: partial'),
+  )
+  assert.ok(viteDrift?.meaning.includes('details.sideEffects: partial'))
+  assert.ok(viteUnverifiable?.meaning.includes('details.sideEffects: partial'))
 })

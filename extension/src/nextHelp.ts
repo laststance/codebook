@@ -21,6 +21,7 @@ import {
   NEXT_SETUP_STEPS,
   NEXT_WEBPACK_COMPATIBILITY_SENTENCE,
   NODE_SCRIPT_LIBRARY_UNSUPPORTED_REASONS,
+  API_SERVER_PAGE_ROUTE_RULE,
   EXPO_WEB_APP_SELECTION_RULE,
   REACT_SCRIPTS_APP_SELECTION_RULE,
   REPOSITORY_DISCOVERY_TIMEOUT_MS,
@@ -54,7 +55,7 @@ const NEXT_SETUP_DEADLINE_SCOPE = `at its early steps (${NEXT_SETUP_STEPS.starti
  * The first key of `codebook://help/repository-browser`: one sentence that sends an agent from `codebook_status` to the quick start of its app's adapter.
  * Served before both quick starts, so an agent reads it before either.
  */
-export const REPOSITORY_BROWSER_START_HERE = `Read codebook_status first: profiles[].prerequisites.adapters names the adapter that is ready for this workspace, and the next-dev-webpack readiness names routerKind (app, pages, both or none), rootIsApp and packages (the Next apps below the repository root). ${NEXT_APP_SELECTION_RULE} For a Create React App app (react-scripts 5), the react-scripts-dev readiness (API 1.25 or later) names rootIsApp and packages the same way. ${REACT_SCRIPTS_APP_SELECTION_RULE} For an Expo app (SDK 57, served by Metro), the expo-web-dev readiness (API 1.30 or later) names rootIsApp and packages the same way. ${EXPO_WEB_APP_SELECTION_RULE} Then read the matching section of this help, nextQuickStart for a Next app (App Router or Pages Router), viteQuickStart for a Vite app, reactScriptsQuickStart for a Create React App app or expoWebQuickStart for an Expo app. For a flow of several steps (type, choose an option, click) or a secret typed by the learner, read operationsQuickStart (configuration version 3) after it. For code that runs on the server of a Next app (an App Router page's server render, or a Pages Router page's getServerSideProps or getStaticProps and the code they call), read serverRenderQuickStart, which opens with the router choice and each router's own minimums. For a Next app below the repository root, read nextPackageRoot (its examples, refusals and limits); for a Vite app below the repository root (API 1.20 or later), read vitePackageRoot.`
+export const REPOSITORY_BROWSER_START_HERE = `Read codebook_status first: profiles[].prerequisites.adapters names the adapter that is ready for this workspace, and the next-dev-webpack readiness names routerKind (app, pages, both or none), rootIsApp and packages (the Next apps below the repository root). ${NEXT_APP_SELECTION_RULE} For a Create React App app (react-scripts 5), the react-scripts-dev readiness (API 1.25 or later) names rootIsApp and packages the same way. ${REACT_SCRIPTS_APP_SELECTION_RULE} For an Expo app (SDK 57, served by Metro), the expo-web-dev readiness (API 1.30 or later) names rootIsApp and packages the same way. ${EXPO_WEB_APP_SELECTION_RULE} Then read the matching section of this help, nextQuickStart for a Next app (App Router or Pages Router), viteQuickStart for a Vite app, reactScriptsQuickStart for a Create React App app or expoWebQuickStart for an Expo app. For a flow of several steps (type, choose an option, click) or a secret typed by the learner, read operationsQuickStart (configuration version 3) after it. For code that runs on the server of a Next app (an App Router page's server render, or a Pages Router page's getServerSideProps or getStaticProps and the code they call), read serverRenderQuickStart, which opens with the router choice and each router's own minimums. For a Next app below the repository root, read nextPackageRoot (its examples, refusals and limits); for a Vite app below the repository root (API 1.20 or later), read vitePackageRoot. For a Vite app whose pages call a Node API in the same repository and a question about what that API does (API 1.38 or later), read viteApiServer. ${API_SERVER_PAGE_ROUTE_RULE}`
 
 /**
  * A minimal valid `next-dev-webpack` configuration, generic on purpose: every identity and hash is a placeholder the agent replaces with the value the step named in {@link NEXT_QUICK_START_COPY_FROM} returned.
@@ -369,7 +370,7 @@ export const PACKAGE_ROOT_REFUSALS = {
     code: 'SIGN_IN_REQUIRED',
     meaning:
       "A run below the repository root starts with a fresh browser and never loads the repository's saved sign-in session, which was set up for the root app, and the app asked for a sign-in.",
-    fix: 'Do not set up a saved session: this app cannot sign in below the root in this version. Tell the learner so and offer a question about code that needs no sign-in.',
+    fix: 'Do not set up a saved session: without apiServer this app cannot sign in below the root in this version. A Vite or Expo app can instead declare apiServer and sign in inside the run (viteApiServer.signInInRun, expoWebQuickStart.apiServer.signInInRun), which Next and react-scripts apps cannot; otherwise tell the learner so and offer a question about code that needs no sign-in.',
   },
   'nested-workspace': {
     code: 'PREREQUISITE_MISSING',

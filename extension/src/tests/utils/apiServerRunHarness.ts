@@ -66,6 +66,8 @@ export interface FakeApiServer {
   emitDisconnectNotice(): Promise<void>
   /** Whether the group was killed before anything else. */
   killedFirst: boolean
+  /** What the stand-in's `outputTailNow` answers: the launcher's masked live tail. */
+  outputTail: string
 }
 
 /**
@@ -95,6 +97,7 @@ export function createFakeApiServer() {
     closeFails: false,
     killFails: false,
     killedFirst: false,
+    outputTail: '',
     exit: (exitCode, signal = null, tail = '') =>
       settleExit({ exitCode, signal, outputTail: tail }),
     emitOutput: async (text, channel = 'stdout') => {
@@ -140,6 +143,7 @@ export function createFakeApiServer() {
       return { host: '127.0.0.1' as const, port }
     },
     whenExited: () => exited,
+    outputTailNow: () => fake.outputTail,
     exitError: async () =>
       new StudyError('SERVER_EXITED', 'The server exited.'),
     killIfPaused: async () => {
@@ -205,10 +209,10 @@ function apiControl(context: TestContext): RuntimeControl {
 }
 
 /**
- * Opens a version 3 `expo-web-dev` run that declares `apiServer` (`apps/api`, port 4100) beside an Expo app (`apps/app`), with one server stop in the API file after the given operations, one click operation, and the API's Node inspector scripted as a `pwa-node` session.
+ * Opens a version 3 run (`expo-web-dev` by default, `vite-dev` with `adapter`) that declares `apiServer` (`apps/api`, port 4100) beside an Expo app (`apps/app`), with one server stop in the API file after the given operations, one click operation, and the API's Node inspector scripted as a `pwa-node` session.
  * Why it exists: every run-level API test starts the same way; the options add what differs (the operations, the entry pause's timing, the stand-in API's behavior). The harness answers E1's recorded shapes: a `file://` script address, an inline map with an absolute source path, a pause on the declared line.
  * @param context - The test.
- * @param options - `stopOperations` names the `afterOperation` of each stop (default one stop after operation 1); `operations`; `entry` when the entry pause arrives (default `at-start`); `fake` preset behavior of the stand-in API; `apiPort` the declared API port; `extra` further harness options.
+ * @param options - `stopOperations` names the `afterOperation` of each stop (default one stop after operation 1); `operations`; `entry` when the entry pause arrives (default `at-start`); `fake` preset behavior of the stand-in API; `apiPort` the declared API port; `adapter`, `vite` and `proxyPaths` for a `vite-dev` run; `extra` further harness options.
  * @returns The harness (not prepared) with `fake`, the stand-in API handle.
  * @example const harness = await apiServerRunHarness(context); await harness.run.prepare()
  */
@@ -221,6 +225,17 @@ export async function apiServerRunHarness(
     entryCdpPause?: ApiEntryCdpPauseTiming
     fake?: Partial<Pick<FakeApiServer, 'listen' | 'closeFails'>>
     apiPort?: number
+    /** The adapter of the run (default `expo-web-dev`, so Cycle 0099 tests are unchanged). */
+    adapter?: 'expo-web-dev' | 'vite-dev'
+    /** The Vite stand-in's ports and `proxyPaths` of a `vite-dev` run (see `configuredRuntimeHarness`'s `apiServer.vite`). */
+    vite?: NonNullable<
+      NonNullable<
+        NonNullable<Parameters<typeof configuredRuntimeHarness>[3]>['apiServer']
+      >['vite']
+    >
+    proxyPaths?: string[]
+    /** Further stops after the first (an API stop), such as a browser stop declared after it; their operations and participants come from `extra.operations`. */
+    additionalStops?: Parameters<typeof configuredRuntimeHarness>[2]
     extra?: Partial<Parameters<typeof configuredRuntimeHarness>[3]>
   } = {},
 ) {
@@ -233,10 +248,10 @@ export async function apiServerRunHarness(
   const harness = await configuredRuntimeHarness(
     context,
     apiControl(context),
-    [],
+    options.additionalStops ?? [],
     {
       participant: 'server',
-      adapter: 'expo-web-dev',
+      adapter: options.adapter ?? 'expo-web-dev',
       packageRoot: API_APP_FOLDER,
       packageApp: { stopsOutside: true },
       serverRuntime: { route: null },
@@ -248,8 +263,10 @@ export async function apiServerRunHarness(
           packageRoot: 'apps/api',
           entry: 'src/server.ts',
           port: options.apiPort ?? API_PORT,
+          ...(options.proxyPaths ? { proxyPaths: options.proxyPaths } : {}),
         },
         module,
+        ...(options.vite ? { vite: options.vite } : {}),
       },
       operations: {
         operations: options.operations ?? [ADD],

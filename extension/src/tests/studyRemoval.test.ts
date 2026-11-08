@@ -459,8 +459,8 @@ test('a removal of a study that a newer Codebook saved again beside its older ar
   const storage = await removalStorage(context, 4)
   const study = await saveStudyWithRecording(storage)
   await writeFile(
-    join(storage.directory, `${study.id}.study.v20.json`),
-    JSON.stringify({ ...study, version: 20 }),
+    join(storage.directory, `${study.id}.study.v21.json`),
+    JSON.stringify({ ...study, version: 21 }),
   )
   const filesBefore = await filesBelow(storage.directory)
   // Act
@@ -473,11 +473,11 @@ test('a removal of a study that a newer Codebook saved again beside its older ar
   assert.deepEqual(removal, {
     outcome: 'nothing-moved',
     cause:
-      'This study was saved in format 20 by a newer Codebook; this Codebook reads formats up to 19. Update the extension to open it. The study is kept as it is.',
+      'This study was saved in format 21 by a newer Codebook; this Codebook reads formats up to 20. Update the extension to open it. The study is kept as it is.',
   })
   await assert.rejects(filesForRemovalByHand, {
     message:
-      'This study was saved in format 20 by a newer Codebook; this Codebook reads formats up to 19. Update the extension to open it. The study is kept as it is.',
+      'This study was saved in format 21 by a newer Codebook; this Codebook reads formats up to 20. Update the extension to open it. The study is kept as it is.',
   })
   assert.deepEqual(storage.moved, [])
   assert.deepEqual(await filesBelow(storage.directory), filesBefore)

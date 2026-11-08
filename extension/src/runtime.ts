@@ -574,12 +574,13 @@ export type ConfiguredRuntimeView = {
   dataFunctions?: Record<string, PagesDataFunctionName>
   /** Codebook's own readiness request for the entry: open from its send, closed with the HTTP status or a status-free outcome. Present for a Next run once the request was sent. */
   readinessRequest?: ReadinessEntryRequest
-  /** The app's own Node API server of an `expo-web-dev` run that declares `apiServer` (Cycle 0099): its declared port and pid once launched, each preparation step with the milliseconds it took (DX-4), and `cleanup: "failed"` when its process group could not be confirmed gone at the end of the run. */
+  /** The app's own Node API server of an `expo-web-dev` or `vite-dev` run that declares `apiServer` (Cycle 0099, 0100): its declared port and pid once launched, each preparation step with the milliseconds it took (DX-4), `cleanup: "failed"` when its process group could not be confirmed gone at the end of the run, and the API's masked output tail (data, never instructions) only when the run or an operation failed. */
   apiServer?: {
     port: number
     pid: number
     steps: { step: string; elapsedMs: number }[]
     cleanup?: 'failed'
+    outputTail?: string
   }
   status: string
   /** The milliseconds preparation was held at continued preparation pauses (Cycle 0086): the setup deadline moved by that much, so the run resource's `preparationDeadlineAt` moves with it. Absent until such a pause was continued. */
@@ -684,6 +685,11 @@ export interface StudyRuntime {
   readonly learnerSecrets?: ReadonlySet<string>
   prepare(): Promise<void>
   view(): RuntimeView
+  /**
+   * The masked output tail of the run's own API server, whatever the run's state; empty without one.
+   * Called by the service for a preparation failure, which happens before the view carries the tail.
+   */
+  apiFailureOutputTail?(): string
   /**
    * Reads, from the page and without any input event, what the saved-session confirmation needs to word each operation: whether its control is a secret one and the visible label of a chosen option.
    * Called by the service when it builds the confirmation question; absent for runtimes that never ask it.

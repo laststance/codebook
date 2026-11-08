@@ -13,10 +13,17 @@ import {
   RECORDED_LOCATION_STUDY_VERSION,
   ROUTE_HANDLER_STUDY_VERSION,
   SERVER_RENDER_STUDY_VERSION,
+  VITE_API_SERVER_STUDY_VERSION,
   VITE_LIBRARY_STUDY_VERSION,
   VITE_PACKAGE_ROOT_STUDY_VERSION,
 } from '../constants'
 import type { RetainedRepositoryConfiguration } from '../repositoryConfigSchemas'
+
+/** The version 3 shape of a retained configuration, the only one that can declare `library` or `apiServer`. */
+type OperationsConfiguration = Extract<
+  RetainedRepositoryConfiguration,
+  { version: 3 }
+>
 
 import { afterOperationOf } from './afterOperationOf'
 import { configuredStops } from './configuredStops'
@@ -37,6 +44,42 @@ function packageRootOf(
   // Only a version 3 configuration declares the field.
   return configuration.version === OPERATIONS_CONFIG_VERSION
     ? configuration.packageRoot
+    : undefined
+}
+
+/**
+ * Says whether a study format is one of the two that hold a run's `apiServer`: format 19 (`expo-web-dev`) and format 20 (`vite-dev`).
+ * The one place that names both formats; called by {@link evidenceFormatOfStudy}, {@link observationOfFormat}, {@link assertObservationFormatFields} and {@link configuredStudySchema}'s readers instead of comparing a study version with 19.
+ * @param version - The study's saved format.
+ * @returns `true` for 19 and 20.
+ * @example isApiServerStudyFormat(20) // => true
+ */
+export function isApiServerStudyFormat(version: number): boolean {
+  return (
+    version === EXPO_WEB_API_SERVER_STUDY_VERSION ||
+    version === VITE_API_SERVER_STUDY_VERSION
+  )
+}
+
+/**
+ * Gives the format of a run that declares `apiServer`, or `undefined` when the adapter or the declaration says otherwise.
+ * Why it exists: keeps {@link studyFormatOfConfiguration} within the Fallow limits; an explicit `apiServer: undefined` declares nothing.
+ * Called by {@link studyFormatOfConfiguration}.
+ * @param configuration - A version 3 configuration.
+ * @returns 19 for `expo-web-dev`, 20 for `vite-dev`, `undefined` for a run without `apiServer` or another adapter.
+ * @example apiServerFormatOf({ adapter: 'vite-dev', apiServer }) // => 20
+ */
+function apiServerFormatOf(
+  configuration: OperationsConfiguration,
+):
+  | typeof EXPO_WEB_API_SERVER_STUDY_VERSION
+  | typeof VITE_API_SERVER_STUDY_VERSION
+  | undefined {
+  if (configuration.apiServer === undefined) return undefined
+  if (configuration.adapter === 'expo-web-dev')
+    return EXPO_WEB_API_SERVER_STUDY_VERSION
+  return configuration.adapter === 'vite-dev'
+    ? VITE_API_SERVER_STUDY_VERSION
     : undefined
 }
 
@@ -70,6 +113,7 @@ function derivedEvidenceFormat(
  * Called by {@link captureStudy} when it writes a checkpoint and by {@link validateConfiguredStudyEvidence} when it reads one; {@link legacyStudyFormatOfConfiguration} keeps the mapping of archives saved before format 6.
  * @param configuration - The sealed configuration of the run.
  * @returns
+ * - {@link VITE_API_SERVER_STUDY_VERSION} (20) for a version 3 `vite-dev` configuration that declares `apiServer`
  * - {@link EXPO_WEB_API_SERVER_STUDY_VERSION} (19) for a version 3 `expo-web-dev` configuration that declares `apiServer`
  * - {@link NEXT_LIBRARY_STUDY_VERSION} (18) for a version 3 `next-dev-webpack` configuration that declares `library`
  * - {@link REACT_SCRIPTS_LIBRARY_STUDY_VERSION} (17) for a version 3 `react-scripts-dev` configuration that declares `library`
@@ -107,12 +151,9 @@ export function studyFormatOfConfiguration(
   // Every other react-scripts-dev run takes format 11, root or nested: an older Codebook refuses the adapter value, so it must list the study as saved by a newer Codebook.
   if (configuration.adapter === 'react-scripts-dev')
     return REACT_SCRIPTS_STUDY_VERSION
-  // An expo-web-dev run that declares `apiServer` takes format 19: an older Codebook refuses the key, so it must list the study as saved by a newer Codebook (an explicit `apiServer: undefined` declares nothing).
-  if (
-    configuration.adapter === 'expo-web-dev' &&
-    configuration.apiServer !== undefined
-  )
-    return EXPO_WEB_API_SERVER_STUDY_VERSION
+  // A run that declares `apiServer` takes format 19 (`expo-web-dev`) or 20 (`vite-dev`): an older Codebook refuses the key, so it must list the study as saved by a newer Codebook (an explicit `apiServer: undefined` declares nothing).
+  const apiServerFormat = apiServerFormatOf(configuration)
+  if (apiServerFormat !== undefined) return apiServerFormat
   // Every other expo-web-dev run takes format 15, root or nested, for the same reason.
   if (configuration.adapter === 'expo-web-dev') return EXPO_WEB_STUDY_VERSION
   // A Vite run that declares `library` takes format 16: an older Codebook refuses the key, so it must list the study as saved by a newer Codebook.
@@ -248,9 +289,9 @@ export function isModuleEvaluationUpgrade(
  * evidenceFormatOfStudy({ version: 10, configuration: viteBrowserStopConfiguration }) // => 7
  */
 export function evidenceFormatOfStudy(study: StudyFormatSubject): number {
-  // Format 19 (`expo-web-dev` with `apiServer`) always follows the format 8 rules: its server stops carry execution, declaredIndex and executionIndex so a mixed browser and API replay keeps the order the run paused in.
+  // Formats 19 and 20 (`apiServer`) always follow the format 8 rules: their server stops carry execution, declaredIndex and executionIndex so a mixed browser and API replay keeps the order the run paused in.
   if (
-    study.version === EXPO_WEB_API_SERVER_STUDY_VERSION &&
+    isApiServerStudyFormat(study.version) &&
     study.configuration.version === OPERATIONS_CONFIG_VERSION
   )
     return SERVER_RENDER_STUDY_VERSION
@@ -287,7 +328,7 @@ export function usesServerRenderEvidence(study: StudyFormatSubject): boolean {
 }
 
 /**
- * Says whether a saved format number is written only from a version 3 configuration (formats 7 to 19), which no study of version 1 or 2 may carry.
+ * Says whether a saved format number is written only from a version 3 configuration (formats 7 to 20), which no study of version 1 or 2 may carry.
  * Called by {@link validateConfiguredStudyEvidence} for the version 1 and 2 configurations.
  * @param version - The study's saved format.
  * @returns `true` for the formats written only from a version 3 configuration.
@@ -296,7 +337,27 @@ export function usesServerRenderEvidence(study: StudyFormatSubject): boolean {
 export function isOperationsStudyFormat(version: number): boolean {
   return (
     version >= OPERATIONS_STUDY_VERSION &&
-    version <= EXPO_WEB_API_SERVER_STUDY_VERSION
+    version <= VITE_API_SERVER_STUDY_VERSION
+  )
+}
+
+/**
+ * Says whether a version 3 configuration declares a key that only a format of its own keeps: `library` under `vite-dev` or `next-dev-webpack` (formats 16 and 18) or `apiServer` under `vite-dev` (format 20).
+ * Why it exists: {@link isReadableStudyFormatOfConfiguration} must refuse such a configuration in every older format; one helper keeps that function within the Fallow limits. An explicit `undefined` declares nothing.
+ * @param configuration - A version 3 configuration.
+ * @returns `true` when the configuration declares one of those keys.
+ * @example declaresFormatKeyOfItsOwn({ adapter: 'vite-dev', apiServer }) // => true
+ */
+function declaresFormatKeyOfItsOwn(
+  configuration: OperationsConfiguration,
+): boolean {
+  const isViteOrNext =
+    configuration.adapter === 'vite-dev' ||
+    configuration.adapter === 'next-dev-webpack'
+  return (
+    (isViteOrNext && configuration.library !== undefined) ||
+    (configuration.adapter === 'vite-dev' &&
+      configuration.apiServer !== undefined)
   )
 }
 
@@ -319,13 +380,8 @@ export function isReadableStudyFormatOfConfiguration(
   if (configuration.adapter === 'react-scripts-dev') return false
   // An expo-web-dev configuration is readable as format 15, or as 19 when it declares `apiServer` (the equality above), only.
   if (configuration.adapter === 'expo-web-dev') return false
-  // A configuration that declares `library` is readable as format 16, 17 or 18 only (the equality above), never through the older fallbacks (formats 12 to 14 included).
-  if (
-    (configuration.adapter === 'vite-dev' ||
-      configuration.adapter === 'next-dev-webpack') &&
-    configuration.library !== undefined
-  )
-    return false
+  // A configuration that declares `library` is readable as format 16, 17 or 18 only, and a `vite-dev` one that declares `apiServer` as format 20 only (the equality above), never through the older fallbacks (formats 12 to 14 included).
+  if (declaresFormatKeyOfItsOwn(configuration)) return false
   // Formats 12 to 14 hold a Next study with a server stop, at the repository root or in a package folder; they are what {@link studyFormatOfEvidence} gives once an observation needs them.
   if (
     version === MODULE_EVALUATION_STUDY_VERSION ||

@@ -9,7 +9,11 @@ import {
 } from '../nextRefusals'
 import { formatRefusalFailure } from '../utils/formatRefusalFailure'
 import { refusalFailureOf } from '../utils/refusalFailureOf'
-import { viteLibraryBuildChangedFailure } from '../viteLibraryRefusals'
+import {
+  viteLibraryBuildChangedFailure,
+  viteLibraryFailureText,
+  viteLibraryRefusal,
+} from '../viteLibraryRefusals'
 
 // Value: protects=a Vite run's timer failures keep restoring exactly as before the registry (code + message, no override); fails_when=the registry drops a Vite code, cuts the message differently or adds a recovery override; why_new=Cycle 0065 one refusal registry replaces viteFailureOf in the service; seam=none
 test('every Vite refusal code restores from a failure text with its code and message, as before the registry', () => {
@@ -464,3 +468,105 @@ test('a Pages library-not-in-build text still restores the server-compile recove
     /^The page's server code does not hold exactly one built file/,
   )
 })
+
+// Value: protects=OCR2-2 a restored EXPO_WEB_SEAL_FAILED api-seal text carries the API recovery like the live refusal and the Vite restore; fails_when=the Expo restore returns details without recoveryOverride; no_claim=the run raising the seal
+test('an EXPO_WEB_SEAL_FAILED api-seal text restores the API seal recovery', () => {
+  // Arrange
+  const sealText = formatRefusalFailure(
+    'EXPO_WEB_SEAL_FAILED',
+    'The API ran a different version.',
+    'api-seal:source-drift:apps%2Fapi%2Fsrc%2Fhandler.ts',
+  )
+  // Act
+  const restored = refusalFailureOf(sealText)
+  // Assert
+  assert.equal(restored?.code, 'EXPO_WEB_SEAL_FAILED')
+  assert.equal(restored?.libraryDetails?.reason, 'source-drift')
+  assert.match(
+    restored?.recoveryOverride ?? '',
+    /See codebook:\/\/help\/repository-browser#EXPO_WEB_SEAL_FAILED\.$/,
+  )
+})
+
+// Value: protects=test 52 (D30): a VITE_SEAL_FAILED api-seal text restores reason, participant, file, side effects and the API recovery, while the plain text and the lazy-import variant restore as before; fails_when=the api-seal variant degrades to the code alone, or the new branch captures a plain or lazy-import Vite seal text; no_claim=the run raising the seal
+test('a VITE_SEAL_FAILED api-seal text restores its details while the plain and lazy-import texts restore as before', () => {
+  // Arrange
+  const sealText = formatRefusalFailure(
+    'VITE_SEAL_FAILED',
+    'The API ran a different version.',
+    'api-seal:source-drift:apps%2Fapi%2Fsrc%2Fhandler.ts',
+  )
+  const lazyText = viteLibraryFailureText(
+    viteLibraryRefusal({
+      reason: 'library-build-unmapped',
+      cause: 'lazy-import',
+      packageRoot: 'app',
+      library: '@scope/core',
+      file: 'packages/core/src/a.ts',
+    }),
+  )
+  // Act
+  const restored = refusalFailureOf(sealText)
+  const plain = refusalFailureOf(
+    'VITE_SEAL_FAILED: Declared stop cannot be sealed.',
+  )
+  const lazy = refusalFailureOf(lazyText ?? '')
+  // Assert
+  assert.equal(
+    sealText,
+    'VITE_SEAL_FAILED(api-seal:source-drift:apps%2Fapi%2Fsrc%2Fhandler.ts): The API ran a different version.',
+  )
+  assert.equal(restored?.code, 'VITE_SEAL_FAILED')
+  assert.equal(restored?.message, 'The API ran a different version.')
+  assert.deepEqual(restored?.libraryDetails, {
+    reason: 'source-drift',
+    participant: 'apiServer',
+    file: 'apps/api/src/handler.ts',
+    sideEffects: 'partial',
+  })
+  assert.match(
+    restored?.recoveryOverride ?? '',
+    /See codebook:\/\/help\/repository-browser#VITE_SEAL_FAILED\.$/,
+  )
+  assert.deepEqual(plain, {
+    code: 'VITE_SEAL_FAILED',
+    message: 'Declared stop cannot be sealed.',
+  })
+  assert.deepEqual(lazy?.libraryDetails, {
+    reason: 'library-build-unmapped',
+    cause: 'lazy-import',
+    packageRoot: 'app',
+    library: '@scope/core',
+    file: 'packages/core/src/a.ts',
+    sideEffects: 'unknown',
+  })
+})
+
+const MALFORMED_API_SEAL_VARIANTS = [
+  'api-seal:source-drift',
+  'api-seal:bogus:x',
+  'api-seal:source-drift:',
+  'api-seal:source-drift:%E0%A4%A',
+] as const
+
+// A malformed variant of a Vite seal is not a coded failure of this version (the Vite registry reads only the plain `CODE: ` lead), so it keeps the uncoded handling; an Expo one restores the code alone.
+for (const [code, expectedRestore] of [
+  ['VITE_SEAL_FAILED', 'uncoded'],
+  ['EXPO_WEB_SEAL_FAILED', 'code alone'],
+] as const)
+  for (const variant of MALFORMED_API_SEAL_VARIANTS) {
+    // Value: protects=L4 a malformed api-seal variant never throws and never invents API seal details; fails_when=a malformed variant throws or restores reason, participant or recovery; no_claim=the run raising the seal
+    test(`${code}(${variant}) never throws and restores no API seal details (${expectedRestore})`, () => {
+      // Arrange
+      const text = `${code}(${variant}): The API ran a different version.`
+      // Act
+      const restored = refusalFailureOf(text)
+      // Assert
+      assert.deepEqual(
+        restored,
+        expectedRestore === 'uncoded'
+          ? undefined
+          : { code, message: 'The API ran a different version.' },
+      )
+    })
+  }

@@ -186,7 +186,7 @@ test('API_VERSION is 1.25 and its 1.18 note names the packageRoot fields', async
       .split('\n')
       .find((line) => line.startsWith(' * 1.18 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.37')
+  assert.equal(API_VERSION, '1.38')
   for (const phrase of [
     '`packageRoot`',
     '`rootIsApp`',
@@ -224,7 +224,7 @@ test('the README replaces the nested-app limitation with the root-open entry', a
   // Act / Assert
   assert.equal(readme.includes('cannot run yet'), false)
   assert.ok(readme.includes('## Run a Next app below the repository root'))
-  assert.ok(readme.includes('**MCP API 1.37**'))
+  assert.ok(readme.includes('**MCP API 1.38**'))
   assert.ok(readme.includes('format 9 (`.study.v9.json`)'))
   assert.ok(
     readme.includes(

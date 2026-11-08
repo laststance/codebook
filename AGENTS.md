@@ -68,6 +68,7 @@ Goal and visual target → gap audit → one observable increment → implementa
    - Inspect existing code, then freeze in Issue: AC IDs (primary, dependency, regression); gap and why now; starting action → expected result, failure behavior, modules, falsifying observation; procedure, target, host, evidence level, result location.
    - Changed assumption = new expectation version; keep old attempts.
    - E1 de-risking native route observes through product's adapter channels (browser route: js-debug `requestCDPProxy` on DAP session, journaling `Debugger.scriptParsed` there), not only direct CDP connection; harness fixtures copy URL spelling native journal shows.
+   - E1 probe runs in window opened on target repository (`zsh -lic "code --profile <QA profile> <target>"`), or its attach passes `resolveSourceMapLocations` covering target: js-debug's default (`${workspaceFolder}/**`, `!**/node_modules/**`) ignores source maps outside window's folder, leaving breakpoints unbound.
    - Gate: action follows from audit; checkable outcome. Open product gap overrides no documentation-only assignment. Repeated inconclusive attempts → smaller question or new hypothesis, never silent loss of required behavior.
 3. **Prove** normal user entry through its result, recovery and preservation included.
    - Reuse modules and real package scripts; mechanism tests for logic, declared native checks for product claims.
@@ -97,6 +98,7 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 - Outside review early: `/ship` Step 9 pass 1 also runs Step 11's Codex structured review (`codex review --base main`) on whole diff, findings part of pass 1; plan changing process signalling, process identity or stop/kill path also gets Codex review before implementation. Fix-range pass (pass 2 on) under 300 changed lines dispatches red team and specialists whose area range changes.
 - Step 11 FIXABLE promotion only for findings marked `Blocks: yes` or High and above. FIXABLE Low/Medium with `Blocks: no` follow defect rule (fixed when cheap in same fixing cycle, else named once in PR); never reopen loop after pass 1.
 - Targeted reader runs once: on release head after release commit, with classes `gstack-review-plan` prints at that head; not on each pass's tree.
+- Large-diff reader (targeted reader, review subagent): first message gives per-file chunk files and their list; reader answers `COVERED n of m`; collect only at m of m, else redispatch uncovered chunks. Fast `NO FINDINGS` on big diff = partial read.
 - Outside-voice size: before Codex outside voice, measure rendered brief in bytes (`wc -c`).
   - Over 900,000 → re-render with tests and fixtures excluded (`--exclude`).
   - Still over → split by directory, recursing to single files, into briefs ≤ 900,000 bytes; file alone over limit left out, named in PR.
@@ -153,6 +155,7 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 **Skills under the cycle rule** (each runs as installed):
 
 - `/spec`: plans feature increment from PRODUCT_GOAL.md + gap audit, or writes bug-fix Issue from previous closing comment (one task + acceptance criterion per carried defect, nothing ranked or selected).
+  - Cycle saving new observation fact (study field): AC + studyFormat unit test (pattern `extension/src/tests/studyFormat19.test.ts`) that replay reopened after window reload names and shows it.
 - Plan reviews may change how carried defect fixed; never remove, merge away or defer one.
 - `/review`, `/ship` review steps follow [Cycle rule](#cycle-rule)'s Delivery bullet; no automatic fixes of informational findings.
 - `/ship`: commit coverage audit's tests; plan completion audit counts open bug-fix task NOT DONE and stops (no ship anyway, defer or drop); TODOS step writes no TODOS.md; fix documentation-audit blockers before commit.
@@ -253,6 +256,7 @@ No decision log; delivery chain and ship limit: [Delivery](#delivery).
 - Exception (owner may revoke): library react-scripts Example run on the checked-out library (pack route), which `nextjs-dashboard` lacks, trialled on same pinned P03 clone's `examples/counter` (`/Users/lume/qa/c83/redux`, revision recorded in cycle Issue).
 - Exception (owner may revoke): library Next Example run on the checked-out library (pack route), which `nextjs-dashboard` lacks, trialled on same pinned P04 clone's `examples/publish-ci/rr-rsc-context` (`/Users/lume/qa/c86/react-redux`, revision recorded in cycle Issue).
 - Exception (owner may revoke): Expo web app run together with its own Node API server (`apiServer`), which `nextjs-dashboard` lacks, trialled on same pinned P08 clone's `apps/app` with `apps/api` (`/Users/lume/qa/c57/switch-time`, revision recorded in cycle Issue).
+- Exception (Cycle 0100 decision D2, Issue #261; owner may revoke): Vite app run together with its own Express API server through the dev-server proxy (`apiServer` with `proxyPaths`), which `nextjs-dashboard` lacks, trialled on pinned P07 clone's root app with `server/` (`/Users/lume/qa/c67/P07-nsx`, revision recorded in cycle Issue).
 - Never easier repo, never tenth acceptance target. Recheck revision, settings, dirty state; tell owner before occupying desktop; record unsupported behavior and missing setup. Docs-only work needs no native launch.
 - All development results, exceptions included, = development evidence only: no nine-project credit, no final row filled; fixture results likewise. Final acceptance freezes own targets and candidate; Stage 1 starts only when prerequisites hold.
 - Use real opened repos; isolated inputs verify mechanisms only, never as bundled demos or practical trials. Retired local trial resources removed; old records in Git = no current proof.
