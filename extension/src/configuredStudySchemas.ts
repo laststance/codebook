@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 import { citationContextSchema } from './citationSchemas'
 import {
+  API_REQUEST_COUNT_LIMIT,
   API_REQUEST_METHOD_LIMIT_CHARS,
   API_REQUEST_PATH_LIMIT_CHARS,
   API_REQUEST_SEVERAL_MIN_COUNT,
@@ -105,6 +106,11 @@ const apiRequestFactSchema = z.union([
       .regex(
         /^\/[^?#]*$/,
         'Use a request path that starts with "/" and has no query or fragment.',
+      )
+      // Control characters never belong in a request path.
+      .regex(
+        /^[^\u0000-\u001F\u007F]*$/,
+        'Use a request path without control characters.',
       ),
     operation: z.number().int().min(1).max(REPOSITORY_OPERATION_LIMIT),
     basis: z.literal('time-window'),
@@ -114,7 +120,7 @@ const apiRequestFactSchema = z.union([
     .strictObject({
       state: z.literal('unattributed'),
       reason: z.enum(['none', 'several']),
-      count: z.number().int().nonnegative(),
+      count: z.number().int().nonnegative().max(API_REQUEST_COUNT_LIMIT),
       sentence: z.string().min(1).max(MAX_UI_TEXT_CHARS),
     })
     // `none` counts no candidate; `several` counts at least two (one candidate is attributed).

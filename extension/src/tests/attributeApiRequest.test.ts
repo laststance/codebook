@@ -224,3 +224,17 @@ test('the tracker keeps at most its limit, dropping the oldest finished request 
   // Assert
   assert.equal(fact.state === 'unattributed' && fact.count, 2)
 })
+
+test('a 3000-character path is cut to the 2048-character limit with an ellipsis, in the fact and the sentence', () => {
+  // protects=R2 a long API path keeps the saved study valid; fails_when=the path is longer than 2048 or the sentence names another path; no_claim=masking
+  // Arrange
+  const tracker = new ApiRequestTracker(PORT)
+  start(tracker, 'a', 1005, `http://localhost:${PORT}/${'a'.repeat(2999)}`)
+  // Act
+  const fact = judge(tracker)
+  // Assert
+  const expectedPath = `/${'a'.repeat(2046)}…`
+  assert.equal(fact.state === 'attributed' && fact.path, expectedPath)
+  assert.equal(fact.state === 'attributed' && fact.path.length, 2048)
+  assert.match(fact.sentence, new RegExp(`POST ${expectedPath},`))
+})

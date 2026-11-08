@@ -15,6 +15,7 @@ import { operationsRepositoryConfigSchema } from '../repositoryConfigSchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { assertObservationFormatFields } from '../utils/assertObservationFormatFields'
 import { assertReadableStudyFormat } from '../utils/assertReadableStudyFormat'
+import { ApiRequestTracker } from '../utils/attributeApiRequest'
 import { citationContext } from '../utils/citationContext'
 import { configuredStops } from '../utils/configuredStops'
 import { decodeConfiguredStudy } from '../utils/decodeConfiguredStudy'
@@ -398,4 +399,39 @@ test('format 19 is stored and readable, format 20 is saved by a newer Codebook, 
   )
   assert.deepEqual({ ...archive }, { id: 'a_b', version: 19 })
   assert.equal(sidecar, undefined)
+})
+
+// Value: protects=R2 F13 a format 19 study with a producer-capped long path is accepted; a count above the tracker limit and a path with a control character are refused on read; fails_when=the cap and the schema disagree, or count/path control characters decode; no_claim=the wording of the refusal
+test('accepts the capped long path and refuses an oversized count or a control character in the path', () => {
+  // Arrange
+  const tracker = new ApiRequestTracker(4100)
+  tracker.requestWillBeSent({
+    requestId: 'long',
+    timestamp: 100,
+    wallTime: 1000,
+    request: {
+      method: 'POST',
+      url: `http://localhost:4100/${'a'.repeat(2999)}`,
+    },
+  })
+  const capped = tracker.attribute({
+    windowStartWallMs: 999_000,
+    cutoffWallMs: 1_010_000,
+    operation: 4,
+    title: 'Press',
+    maskText: (text) => text,
+  })
+  const tooMany: ApiRequestFact = {
+    state: 'unattributed',
+    reason: 'several',
+    count: 257,
+    sentence: 's',
+  }
+  const control: ApiRequestFact = { ...ATTRIBUTED, path: '/api/\u0007x' }
+  // Act
+  const results = [capped, tooMany, control].map(
+    (apiRequest) => refusalOf(apiServerStudy({ apiRequest })) === 'accepted',
+  )
+  // Assert
+  assert.deepEqual(results, [true, false, false])
 })

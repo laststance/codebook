@@ -1,5 +1,9 @@
 import type { ApiRequestFact } from '../configuredStudySchemas'
-import { ROUTE_HANDLER_REQUEST_LIMIT } from '../constants'
+import {
+  API_REQUEST_PATH_ELLIPSIS,
+  API_REQUEST_PATH_LIMIT_CHARS,
+  ROUTE_HANDLER_REQUEST_LIMIT,
+} from '../constants'
 
 import { describeApiRequestSentence } from './describeApiRequestSentence'
 
@@ -42,6 +46,17 @@ interface TrackedRequest {
   startTimestamp: number
   /** Monotonic end timestamp (seconds), when an end event arrived. */
   endTimestamp?: number
+}
+
+/** Keeps a masked path within {@link API_REQUEST_PATH_LIMIT_CHARS}, ending a cut path with {@link API_REQUEST_PATH_ELLIPSIS}. */
+function capPath(path: string): string {
+  if (path.length <= API_REQUEST_PATH_LIMIT_CHARS) return path
+  return (
+    path.slice(
+      0,
+      API_REQUEST_PATH_LIMIT_CHARS - API_REQUEST_PATH_ELLIPSIS.length,
+    ) + API_REQUEST_PATH_ELLIPSIS
+  )
 }
 
 const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]'])
@@ -118,7 +133,8 @@ export class ApiRequestTracker {
     if (candidates.length === 1) {
       const only = candidates[0]!
       const method = only.method.toUpperCase()
-      const path = pause.maskText(new URL(only.url).pathname)
+      // Cut at the producer so the saved study stays valid; the sentence names the same path.
+      const path = capPath(pause.maskText(new URL(only.url).pathname))
       return {
         state: 'attributed',
         method,

@@ -2073,6 +2073,8 @@ export const EXPO_WEB_API_SERVER_STUDY_VERSION = 19
 export const API_REQUEST_METHOD_LIMIT_CHARS = 16
 /** The longest request path (without query) an `apiRequest` fact may name. */
 export const API_REQUEST_PATH_LIMIT_CHARS = 2_048
+/** The marker that ends an `apiRequest` path cut to {@link API_REQUEST_PATH_LIMIT_CHARS}. */
+export const API_REQUEST_PATH_ELLIPSIS = '…'
 /** The fewest candidate requests an `unattributed` `several` fact may count. */
 export const API_REQUEST_SEVERAL_MIN_COUNT = 2
 /** The highest study format this Codebook reads; a saved study above it is listed as saved by a newer Codebook. */
@@ -3541,6 +3543,8 @@ export const ROUTE_HANDLER_REQUEST_POLL_MS = 50
 export const API_ROUTE_MAX_REQUEST_URL_CHARS = 2048
 /** The most app-origin API requests the run keeps for route-handler correlation; the oldest is dropped past it. */
 export const ROUTE_HANDLER_REQUEST_LIMIT = 256
+/** The most candidate requests an `unattributed` `apiRequest` fact may count: the tracker keeps at most {@link ROUTE_HANDLER_REQUEST_LIMIT} requests. */
+export const API_REQUEST_COUNT_LIMIT = ROUTE_HANDLER_REQUEST_LIMIT
 /** The file name of an App Router route handler (`route.ts|js|tsx|jsx`); the one pattern the route lookup and the stop judgement read. */
 export const ROUTE_HANDLER_FILE_NAME = /^route\.(?:ts|js|tsx|jsx)$/
 /** The HTTP method names a route handler exports; the one list the classifier and the help read. */
