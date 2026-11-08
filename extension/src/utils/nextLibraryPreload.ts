@@ -55,6 +55,8 @@ const describeCompilation = (compilation) => {
     const resources = resourcesOfChunk(compilation, chunk)
     for (const name of chunk.files) {
       if (seen.has(name) || !name.endsWith('.js')) continue
+      // A chunk file a plugin removed from the assets was never emitted, so no script can have parsed it.
+      if (!compilation.getAsset(name)) continue
       seen.add(name)
       assets.push({ name, sha256: sha256Of(compilation, name), resources })
     }
@@ -81,7 +83,7 @@ const reportCompilation = (compilation) => {
     if (Buffer.byteLength(text) + 1 > CONFIG.lineLimitBytes) {
       writeLine({ compilationHash: line.compilationHash, compiler: line.compiler, outputPath: line.outputPath, publicPath: line.publicPath, truncated: true })
     } else writeLine(line)
-  } catch (error) { writeLine({ reportError: String(error && error.message || error) }) }
+  } catch (error) { writeLine({ reportError: String(error && error.message || error), compiler: compilerNameOf(compilation), outputPath: outputPathOf(compilation) }) }
 }
 const createReporterPlugin = () => ({
   apply(compiler) {

@@ -44,6 +44,8 @@ type Scenario = {
   breakServer?: boolean
   /** Server compilation emits a `.js` asset that belongs to no chunk. */
   emitExtraAsset?: boolean
+  /** Server compilation has a plugin delete a chunk's asset while the chunk still lists the file. */
+  removeChunkAsset?: boolean
 }
 
 /**
@@ -78,6 +80,17 @@ async function getBaseWebpackConfig(dir, options) {
         compiler.hooks.thisCompilation.tap('StandInManifest', (compilation) => {
           compilation.hooks.processAssets.tap({ name: 'StandInManifest', stage: compiler.webpack.Compilation.PROCESS_ASSETS_STAGE_ADDITIONAL }, () => {
             compilation.emitAsset('server-reference-manifest.js', new compiler.webpack.sources.RawSource('self.manifest = {}'))
+          })
+        })
+      },
+    })
+  }
+  if (isServer && scenario.removeChunkAsset) {
+    config.plugins.push({
+      apply(compiler) {
+        compiler.hooks.thisCompilation.tap('StandInRemover', (compilation) => {
+          compilation.hooks.processAssets.tap({ name: 'StandInRemover', stage: compiler.webpack.Compilation.PROCESS_ASSETS_STAGE_OPTIMIZE_SIZE }, () => {
+            delete compilation.assets['main.js']
           })
         })
       },
@@ -538,5 +551,26 @@ test('a non-chunk script asset of the server compilation is listed with no resou
   assert.deepEqual(
     verdict.kind === 'matched' ? verdict.asset.resources : ['x'],
     [],
+  )
+})
+
+test('a chunk file a plugin removed from the assets does not cost the server compilation its report line', async () => {
+  // Value: protects=the compilation line still names its compiler when a plugin deletes a chunk's asset; fails_when=the line is replaced by a reportError line that names no compiler; no_claim=which plugins Next runs
+  // Arrange
+  const fixture = createFixture()
+
+  // Act
+  await runWithPreload(fixture, { removeChunkAsset: true })
+
+  // Assert
+  const lines = readReportLines(fixture.reportPath)
+  const serverLine = lines.find(
+    (line) => line.compiler === 'server' && 'compilationHash' in line,
+  )
+  assert.deepEqual(serverLine?.assets, [])
+  assert.equal(serverLine?.outputPath, join(fixture.outDir, 'server'))
+  assert.equal(
+    lines.some((line) => 'reportError' in line),
+    false,
   )
 })
