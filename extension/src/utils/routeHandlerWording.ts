@@ -48,7 +48,7 @@ export const API_ROUTE_NOT_REACHED_POSSIBILITIES = `For an API-route stop (detai
 
 /**
  * The possibilities a `SERVER_STOP_NOT_REACHED` of a stop in the app's own Node API server names (Cycle 0099), always as possibilities and never as the established cause.
- * Served in the error text; the API's group was ended with the run.
+ * Served in the error text; the API's group was ended with the run. The deadline possibility comes from the native checks: an app's own request deadline keeps running while an earlier stop holds the request, so a long pause ends the request before a later stop of it.
  */
 export const API_SERVER_NOT_REACHED_POSSIBILITIES =
-  "For a stop in the app's own API these are possibilities, never the established cause: after the operation the page sent no request that reached the line (client-side validation, a cached answer, a request to another handler); the line sits in a branch that did not run; or a request that reached it was answered before the line (an authentication or validation check)."
+  "For a stop in the app's own API these are possibilities, never the established cause: after the operation the page sent no request that reached the line (client-side validation, a cached answer, a request to another handler); the line sits in a branch that did not run; or a request that reached it ended before the line: an authentication or validation check answered it, or the app's own request deadline ran out while an earlier stop held the request (the API's output after the continue may say so)."

@@ -27,3 +27,26 @@ test('an API stop no request reaches fails SERVER_STOP_NOT_REACHED in the API ha
   )
   assert.equal(failure.includes('apiResolver'), false)
 })
+
+// Value: protects=the API not-reached wording names the cause the native checks met most: the app's own request deadline ran out while an earlier stop held the request; fails_when=the possibilities leave that cause out, so the chat guesses a client-side or branch cause; no_claim=that the deadline was the cause of this harness run (the stand-in has no deadline; the sentence is a possibility)
+test('an API stop no request reaches names the app deadline that ran out during an earlier stop as a possibility', async (context) => {
+  // Arrange
+  const harness = await apiServerRunHarness(context)
+  await harness.run.prepare()
+  await sendOperation(harness, 1)
+  // Act
+  harness.advance(ACTIVE_TIMEOUT_MS)
+  await waitUntil(
+    () => harness.run.view().failures.length > 0,
+    'the not-reached failure',
+  )
+  // Assert
+  assert.equal(
+    harness.run
+      .view()
+      .failures[0]!.includes(
+        "the app's own request deadline ran out while an earlier stop held the request (the API's output after the continue may say so)",
+      ),
+    true,
+  )
+})
