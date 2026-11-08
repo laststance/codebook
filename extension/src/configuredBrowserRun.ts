@@ -11,6 +11,7 @@ import { z } from 'zod'
 import {
   API_SERVER_EXITED_VARIANT,
   apiServerExitedRefusal,
+  apiStopFileMissingRefusal,
 } from './apiServerRefusals'
 import {
   OperationRefusal,
@@ -111,6 +112,7 @@ import {
 import { EXPO_WEB_DEV_ADAPTER } from './expoWebDevAdapter'
 import {
   expoWebApiPortConflictRefusal,
+  expoWebApiSealVariantOf,
   expoWebApiSourceDriftRefusal,
   expoWebApiSourceUnverifiableRefusal,
   expoWebNodeModulesRefusal,
@@ -11303,10 +11305,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     index: number,
     root: string,
   ): Promise<RouteHandlerStop> {
-    const sourcePath = await realpath(join(root, stop.source.path))
+    // A stop file deleted after the source check is refused before anything starts.
+    const sourcePath = await realpath(join(root, stop.source.path)).catch(
+      () => {
+        throw apiStopFileMissingRefusal(stop.source.path)
+      },
+    )
     const sourceText = await this.readStopSourceText(root, sourcePath)
     if (sourceText === undefined)
-      throw new Error(`The API stop file ${stop.source.path} cannot be read`)
+      throw apiStopFileMissingRefusal(stop.source.path)
     return {
       kind: 'node-api',
       stop,
@@ -11814,9 +11821,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       })
     } catch (error) {
       // The seal's refusal keeps its code; the API's group was killed before it was raised.
-      if (error instanceof StudyError && error.code === 'EXPO_WEB_SEAL_FAILED')
-        this.fail(formatRefusalFailure(error.code, error.message))
-      else throw error
+      if (
+        error instanceof StudyError &&
+        error.code === 'EXPO_WEB_SEAL_FAILED'
+      ) {
+        // The variant keeps the reason, participant and file for the restored details.
+        const variant = expoWebApiSealVariantOf(error)
+        this.fail(
+          variant === undefined
+            ? formatRefusalFailure(error.code, error.message)
+            : formatRefusalFailure(error.code, error.message, variant),
+        )
+      } else throw error
     }
     return true
   }

@@ -50,6 +50,11 @@ export function formatRefusalFailure(
   variant: typeof API_SERVER_EXITED_VARIANT,
 ): string
 export function formatRefusalFailure(
+  code: 'EXPO_WEB_SEAL_FAILED',
+  message: string,
+  variant: string,
+): string
+export function formatRefusalFailure(
   code: RefusalFailureCode,
   message: string,
 ): string
@@ -60,7 +65,8 @@ export function formatRefusalFailure(
     | NextSetupDeadlineVariant
     | SignInRequiredReason
     | NextPagesFailureVariant
-    | typeof API_SERVER_EXITED_VARIANT,
+    | typeof API_SERVER_EXITED_VARIANT
+    | string,
 ): string {
   return variant === undefined
     ? `${code}: ${message}`

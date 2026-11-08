@@ -227,6 +227,7 @@ test('refusalFailureOf restores SERVER_EXITED only with the api-server variant',
   assert.deepEqual(restored?.libraryDetails, {
     participant: 'apiServer',
     sideEffects: 'partial',
+    outputTail: '',
   })
   assert.match(
     restored?.recoveryOverride ?? '',

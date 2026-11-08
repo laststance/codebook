@@ -1,6 +1,7 @@
 import {
   API_SERVER_EXITED_RECOVERY,
   API_SERVER_EXITED_VARIANT,
+  apiServerOutputTailOf,
 } from '../apiServerRefusals'
 import {
   SIGN_IN_REQUIRED_REASONS,
@@ -9,6 +10,8 @@ import {
 import { PACKAGE_ROOT_FRESH_SESSION_RECOVERY, type ErrorCode } from '../errors'
 import {
   EXPO_WEB_REFUSAL_CODES,
+  expoWebApiSealFailureOf,
+  type ExpoWebApiSealFailureDetails,
   expoWebSetupDeadlineDetailsOf,
   type ExpoWebSetupDeadlineFailureDetails,
 } from '../expoWebRefusals'
@@ -89,12 +92,15 @@ export type RefusalFailure = {
     | ReactScriptsSetupDeadlineFailureDetails
     | ExpoWebSetupDeadlineFailureDetails
     | ApiServerExitedFailureDetails
+    | ExpoWebApiSealFailureDetails
 }
 
 /** The fields an API exit failure text restores: the participant and the side effects (the API was started and stopped); the exit code, signal and output tail live in the message. */
 type ApiServerExitedFailureDetails = {
   participant: 'apiServer'
   sideEffects: 'partial'
+  /** The API's masked last output, read back from the message; `''` when it printed nothing. */
+  outputTail: string
   /** Absent: lets code that reads `libraryDetails?.reason` keep one shape across the union. */
   reason?: undefined
 }
@@ -159,6 +165,10 @@ export function refusalFailureOf(text: string): RefusalFailure | undefined {
     variant = lead[2]
   // The API server's exit carries its words and details as the variant (DX-6, E-6).
   if (code === 'SERVER_EXITED') return apiServerExitFailure(message)
+  // An API seal refusal carries its reason and file as the variant.
+  const apiSeal =
+    code === 'EXPO_WEB_SEAL_FAILED' && expoWebApiSealFailureOf(variant)
+  if (apiSeal) return { code, message, libraryDetails: apiSeal }
   if (code === 'SIGN_IN_REQUIRED')
     return signInRequiredFailure(message, variant)
   // A Pages entry redirect carries the Pages fields as its variant; any other variant restores the code alone.
@@ -227,7 +237,11 @@ function apiServerExitFailure(message: string): RefusalFailure {
     code: 'SERVER_EXITED',
     message,
     recoveryOverride: API_SERVER_EXITED_RECOVERY,
-    libraryDetails: { participant: 'apiServer', sideEffects: 'partial' },
+    libraryDetails: {
+      participant: 'apiServer',
+      sideEffects: 'partial',
+      outputTail: apiServerOutputTailOf(message),
+    },
   }
 }
 

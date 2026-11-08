@@ -318,7 +318,7 @@ test('a seal that finds another version of the stop file fails the run and kills
     {
       failure: harness.run
         .view()
-        .failures[0]?.startsWith('EXPO_WEB_SEAL_FAILED:'),
+        .failures[0]?.startsWith('EXPO_WEB_SEAL_FAILED(api-seal:'),
       killedFirst: events.indexOf('kill-first') >= 0,
       killBeforeClose:
         events.indexOf('close') === -1 ||
@@ -353,7 +353,7 @@ test('a seal that finds no inline map fails the run and never resumes the handle
     {
       failure: harness.run
         .view()
-        .failures[0]?.startsWith('EXPO_WEB_SEAL_FAILED:'),
+        .failures[0]?.startsWith('EXPO_WEB_SEAL_FAILED(api-seal:'),
       killedFirst: harness.fake.events.includes('kill-first'),
       continues: harness.server!.continues.length,
     },

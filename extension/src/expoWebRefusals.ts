@@ -715,3 +715,73 @@ export function expoWebApiSourceUnverifiableRefusal(file: string): StudyError {
     },
   )
 }
+
+/** The fields an API seal failure text restores (API 1.37): the reason, the participant, the stop file and the side effects. */
+export type ExpoWebApiSealFailureDetails = {
+  reason: 'source-drift' | 'source-unverifiable'
+  participant: 'apiServer'
+  file: string
+  sideEffects: 'partial'
+}
+
+/** The prefix of an API seal failure variant: `api-seal:<reason>:<encoded file>`. */
+const API_SEAL_VARIANT_PREFIX = 'api-seal:'
+
+/**
+ * Writes the variant of an API seal failure text (`EXPO_WEB_SEAL_FAILED(api-seal:<reason>:<file>)`), so the reason and file survive the text a failed run records.
+ *
+ * Why it exists: the seal refusal is raised inside an event and passes through the run's failure string; without a variant {@link refusalFailureOf} would restore the code alone. Called by {@link ConfiguredBrowserRun} when the API seal fails.
+ * @param error - The seal refusal ({@link expoWebApiSourceDriftRefusal} or {@link expoWebApiSourceUnverifiableRefusal}).
+ * @returns The variant; `undefined` when the error carries no API seal details.
+ * @example
+ * expoWebApiSealVariantOf(expoWebApiSourceDriftRefusal('apps/api/a.ts')) // => 'api-seal:source-drift:apps%2Fapi%2Fa.ts'
+ */
+export function expoWebApiSealVariantOf(error: StudyError): string | undefined {
+  const details = error.details
+  if (
+    details?.participant !== 'apiServer' ||
+    typeof details.file !== 'string' ||
+    (details.reason !== 'source-drift' &&
+      details.reason !== 'source-unverifiable')
+  )
+    return undefined
+  // Parentheses would end the lead, so they are encoded too.
+  const file = encodeURIComponent(details.file)
+    .replaceAll('(', '%28')
+    .replaceAll(')', '%29')
+  return `${API_SEAL_VARIANT_PREFIX}${details.reason}:${file}`
+}
+
+/**
+ * Reads an API seal variant back into the details {@link expoWebApiSourceDriftRefusal} and {@link expoWebApiSourceUnverifiableRefusal} carry.
+ * Called by {@link refusalFailureOf}.
+ * @param variant - The lead's variant.
+ * @returns The details; `undefined` for any other variant or an undecodable file.
+ * @example
+ * expoWebApiSealFailureOf('api-seal:source-drift:apps%2Fapi%2Fa.ts') // => { reason: 'source-drift', participant: 'apiServer', file: 'apps/api/a.ts', sideEffects: 'partial' }
+ */
+export function expoWebApiSealFailureOf(
+  variant: string | undefined,
+): ExpoWebApiSealFailureDetails | undefined {
+  if (!variant?.startsWith(API_SEAL_VARIANT_PREFIX)) return undefined
+  const rest = variant.slice(API_SEAL_VARIANT_PREFIX.length)
+  const colon = rest.indexOf(':')
+  const reason = rest.slice(0, colon)
+  const encoded = rest.slice(colon + 1)
+  if (
+    colon < 0 ||
+    (reason !== 'source-drift' && reason !== 'source-unverifiable') ||
+    !encoded
+  )
+    return undefined
+  try {
+    return {
+      reason,
+      participant: 'apiServer',
+      file: decodeURIComponent(encoded),
+      sideEffects: 'partial',
+    }
+  } catch {
+    return undefined
+  }
+}
