@@ -12,7 +12,13 @@ import {
   apiSealVariantOf,
   apiSourceDriftRefusal,
   apiSourceUnverifiableRefusal,
+  type ApiSealCode,
 } from './apiSealRefusals'
+import type { apiServerDeclarationSchema } from './apiServerDeclarationSchema'
+import {
+  apiFolderNestingRefusal,
+  apiStopParticipantFolderRefusal,
+} from './apiServerRealPathRefusals'
 import {
   API_SERVER_EXITED_VARIANT,
   apiServerExitedRefusal,
@@ -229,6 +235,7 @@ import {
 import { appResolvedPathsOf } from './utils/appResolvedPathsOf'
 import { assertConfiguredDescriptor } from './utils/assertConfiguredDescriptor'
 import { assertConfiguredSourceDocuments } from './utils/assertConfiguredSourceDocuments'
+import type { PortRefusal } from './utils/assertDevelopmentPortFree'
 import { assertDevelopmentPortFree } from './utils/assertDevelopmentPortFree'
 import {
   assertDevelopmentWorkspace,
@@ -239,7 +246,10 @@ import { assertReactScriptsLibraryPortFree } from './utils/assertReactScriptsLib
 import { assertSavedSessionOrigin } from './utils/assertSavedSessionOrigin'
 import { assertViteLibraryNeedsPackageRoot } from './utils/assertViteLibraryNeedsPackageRoot'
 import { assessExpoWebWorkspace } from './utils/assessExpoWebWorkspace'
-import { refuseViteMisroute } from './utils/assessViteWorkspace'
+import {
+  assessViteWorkspace,
+  refuseViteMisroute,
+} from './utils/assessViteWorkspace'
 import { ApiRequestTracker } from './utils/attributeApiRequest'
 import { blankCommentsAndTemplates } from './utils/blankCommentsAndTemplates'
 import { boundColumnOfInstance } from './utils/boundColumnOfInstance'
@@ -315,6 +325,7 @@ import { isDebugTargetSession } from './utils/isDebugTargetSession'
 import { isEntryAnswerFailure } from './utils/isEntryAnswerFailure'
 import type { GeneratedPosition } from './utils/isGeneratedPositionBefore'
 import { isHotUpdateScriptUrl } from './utils/isHotUpdateScriptUrl'
+import { isInsideFolder } from './utils/isInsideFolder'
 import { isModuleEntryPause } from './utils/isModuleEntryPause'
 import { isModuleEvaluationStack } from './utils/isModuleEvaluationStack'
 import { isModuleInAnotherLayer } from './utils/isModuleInAnotherLayer'
@@ -487,10 +498,15 @@ import { thrownMessage } from './utils/thrownMessage'
 import { ViteLibraryRegistry } from './utils/viteLibraryRegistry'
 import { webpackImportPathOf } from './utils/webpackImportPathOf'
 import { withFinalPeriod } from './utils/withFinalPeriod'
+import { withoutInspectorBanner } from './utils/withoutInspectorBanner'
 import {
   withUnannouncedPauses,
   type UnannouncedPausePlace,
 } from './utils/withUnannouncedPauses'
+import {
+  viteApiPortConflictRefusal,
+  viteApiRunPortUnavailableRefusal,
+} from './viteApiServerRefusals'
 import { VITE_DEV_ADAPTER } from './viteDevAdapter'
 import type { ViteLauncherLibraryOptions } from './viteLauncherProtocol'
 import {
@@ -1123,12 +1139,35 @@ type ServerMatch = {
     ReturnType<ReturnType<typeof launchDevelopmentServer>['verifyInspector']>
   >
 }
+/** The parsed `apiServer` declaration of a run. */
+type ApiServerDeclaration = z.infer<typeof apiServerDeclarationSchema>
+
+/** The seal-failure code of an API stop, per adapter that can run `apiServer` (D30). */
+const API_SEAL_CODE_OF_ADAPTER: ReadonlyMap<string, ApiSealCode> = new Map([
+  ['vite-dev', 'VITE_SEAL_FAILED'],
+  ['expo-web-dev', 'EXPO_WEB_SEAL_FAILED'],
+])
+
+/**
+ * Tells whether a refusal code is the seal failure of an API stop on either adapter.
+ * Called by the API pause's catch, which fails the run with the refusal's own code.
+ * @param code - A refusal code.
+ * @returns `true` for `VITE_SEAL_FAILED` and `EXPO_WEB_SEAL_FAILED`.
+ * @example isApiSealCode('VITE_SEAL_FAILED') // => true
+ */
+function isApiSealCode(code: string): code is ApiSealCode {
+  return [...API_SEAL_CODE_OF_ADAPTER.values()].some(
+    (sealCode) => sealCode === code,
+  )
+}
 /** The Node process the run's server participant attaches to: where its inspector listens, the folder it runs in, how its inspector is proven to be that process's own, and the source map overrides of its debug configuration (Next only). */
 type ServerAttachTarget = {
   endpoint: (signal: AbortSignal) => Promise<string>
   cwd: string
   verify: (cdp: Cdp, signal: AbortSignal) => Promise<ServerMatch['identity']>
   sourceMapPathOverrides?: () => Record<string, string>
+  /** The folders js-debug may resolve source maps in (`resolveSourceMapLocations`); absent leaves js-debug's default, which ignores maps outside the window's folder. The app's own API supplies it (Cycle 0100). */
+  resolveSourceMapLocations?: () => string[]
 }
 type Continuation = {
   participant: Participant
@@ -1908,9 +1947,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         nodeModules: expoWebNodeModulesRefusal,
       },
       // With `apiServer` a server stop lies in the API's folder, outside the app by design; the schema keeps it inside `apiServer.packageRoot`.
-      async (stop) =>
-        stop.participant === 'server' &&
-        this.apiServerDeclaration() !== undefined,
+      async (stop) => this.isApiServerStop(stop),
     )
   }
 
@@ -1964,8 +2001,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
     if (vitePackage.isRoot) return vitePackage
     // A browser stop of a version 3 run in a workspace library the app reaches is sealed from the served library module; anything else outside stays refused.
-    const outside = await this.stopFilesOutside(vitePackage, (stop) =>
-      this.registerViteLibraryStop(stop, vitePackage),
+    // With `apiServer` a server stop lies in the API's folder, outside the app by design (the schema keeps it inside `apiServer.packageRoot`).
+    const outside = await this.stopFilesOutside(
+      vitePackage,
+      async (stop) =>
+        this.isApiServerStop(stop) ||
+        (await this.registerViteLibraryStop(stop, vitePackage)),
     )
     if (outside.length)
       throw viteOutsidePackageRefusal(vitePackage.packageRootRelative, outside)
@@ -2748,10 +2789,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       signal: this.abort.signal,
       alive: () => this.alive(),
       assertPortFree: (declared, refuse) =>
-        assertDevelopmentPortFree(declared, {
-          signal: this.abort.signal,
-          ...(refuse ? { refuse } : {}),
-        }),
+        this.assertAppPortFree(declared, refuse),
       onStep: (step) => {
         this.setupStep = step
       },
@@ -2762,6 +2800,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         this.app = app
       },
     })
+    // D40: the proxy classification needs the port before the browser opens, so no page request can precede it.
+    this.apiRequests?.bindDevServerPort(started.port)
     this.viteVersion = started.viteVersion
     this.expoVersion = started.expoVersion
     this.maskText = started.maskText
@@ -6897,6 +6937,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     for (const [index, stop] of configuredStops(
       this.definition.configuration,
     ).entries()) {
+      // An API stop is sealed at its pause from the script the API executed, never from the page's modules (Cycle 0100).
+      if (this.routeHandlerStops.some((entry) => entry.index === index))
+        continue
       const renewed = await this.sealDeclaredStop(
         stop,
         index,
@@ -11221,7 +11264,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   // ---------------------------------------------------------------------------
 
   /**
-   * Gives the `apiServer` declaration of a version 3 `expo-web-dev` configuration.
+   * Gives the `apiServer` declaration of a version 3 `expo-web-dev` or `vite-dev` configuration.
    * Called by the API preparation; every run without the key keeps its behavior.
    * @returns The declaration; `undefined` for every other run.
    * @example this.apiServerDeclaration()?.port // 4100
@@ -11232,29 +11275,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Runs the checks of an `apiServer` run that start nothing, before any process does: collects the API stops, refuses a port shared with the app's web script, checks both ports are free and checks the API's package root, entry and loader on disk.
+   * Runs the checks of an `apiServer` run that start nothing, before any process does: the real-path folder rule, the API stops, a port shared with the app's script, and the API's package root, entry, loader and port on disk.
    * Called by {@link prepareOwned} after the adapter's workspace check; does nothing without `apiServer`.
-   * @throws `EXPO_WEB_UNSUPPORTED` (`api-port-conflict`), the app's `EXPO_WEB_PORT_UNAVAILABLE`, and the `apiServer` refusals of {@link OwnedApiServer.check}, each with `details.sideEffects` `none`.
+   * @throws `INVALID_CONFIGURATION` (`api-folder-nesting`, stop folders), `EXPO_WEB_UNSUPPORTED` or `VITE_UNSUPPORTED` (`api-port-conflict`), Expo's `EXPO_WEB_PORT_UNAVAILABLE`, and the `apiServer` refusals of {@link OwnedApiServer.check}, each with `details.sideEffects` `none`.
    * @example await this.checkApiServer()
    */
   private async checkApiServer(): Promise<void> {
     const declaration = this.apiServerDeclaration()
     if (!declaration) return
+    await this.assertApiFolderNesting(declaration)
     await this.collectApiServerStops()
-    const workspace = await assessExpoWebWorkspace(this.expoWebPackage!)
-    this.alive()
-    if (declaration.port === workspace.port)
-      throw expoWebApiPortConflictRefusal(declaration.port, workspace.port)
-    // Both ports are free before anything starts: the app's port is the one the adapter checks again before its own launch.
-    await assertDevelopmentPortFree(
-      { port: workspace.port, source: workspace.portSource },
-      {
-        signal: this.abort.signal,
-        refuse: (refusal) =>
-          expoWebPortRefusal(refusal.port, 'pre-start-check'),
-      },
-    )
-    this.alive()
+    await this.refuseSharedApiPort(declaration)
     try {
       this.checkedApiServer = await OwnedApiServer.check({
         workspace: await realpath(this.options.workspace),
@@ -11286,7 +11317,149 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       )
     }
     this.alive()
-    this.apiRequests = new ApiRequestTracker(declaration.port)
+    // Only a `vite-dev` run proxies page requests through its dev server (D29): its tracker is proxy-aware, Expo's keeps Cycle 0099's facts byte for byte.
+    this.apiRequests =
+      this.definition.configuration.adapter === 'vite-dev'
+        ? new ApiRequestTracker(declaration.port, {
+            proxyPaths: declaration.proxyPaths ?? [],
+          })
+        : new ApiRequestTracker(declaration.port)
+  }
+
+  /**
+   * Refuses, before anything starts, an `apiServer.port` that equals the port the app's script declares, and (Expo) a taken app port.
+   * Called by {@link checkApiServer}. Expo reads its port statically; Vite's `--port` is the only app port known now, one from the Vite config or Vite's default is judged at the launcher's facts ({@link ConfiguredBrowserRun.refuseApiPortAtVitePort}, D27).
+   * @param declaration - The run's `apiServer` declaration.
+   * @throws `VITE_UNSUPPORTED` (`api-port-conflict`, `portSource: "dev-script"`), `EXPO_WEB_UNSUPPORTED` (`api-port-conflict`) or Expo's `EXPO_WEB_PORT_UNAVAILABLE`, each with `sideEffects` `none`.
+   * @example await this.refuseSharedApiPort(declaration)
+   */
+  private async refuseSharedApiPort(
+    declaration: ApiServerDeclaration,
+  ): Promise<void> {
+    if (this.definition.configuration.adapter === 'vite-dev') {
+      const { script } = await assessViteWorkspace(
+        this.packageRoot,
+        this.options.node,
+        this.abort.signal,
+        this.vitePackage && !this.vitePackage.isRoot
+          ? this.vitePackage.repositoryRoot
+          : undefined,
+      )
+      this.alive()
+      if (script.port === declaration.port)
+        throw viteApiPortConflictRefusal({
+          apiPort: declaration.port,
+          vitePort: script.port,
+          portSource: 'dev-script',
+        })
+      return
+    }
+    const workspace = await assessExpoWebWorkspace(this.expoWebPackage!)
+    this.alive()
+    if (declaration.port === workspace.port)
+      throw expoWebApiPortConflictRefusal(declaration.port, workspace.port)
+    // Both ports are free before anything starts: the app's port is the one the adapter checks again before its own launch.
+    await assertDevelopmentPortFree(
+      { port: workspace.port, source: workspace.portSource },
+      {
+        signal: this.abort.signal,
+        refuse: (refusal) =>
+          expoWebPortRefusal(refusal.port, 'pre-start-check'),
+      },
+    )
+    this.alive()
+  }
+
+  /**
+   * Refuses, on real paths, an API folder that equals or contains the app's folder (a symbolic link can make it so; the schema is lexical, D36).
+   * Called by {@link checkApiServer}; only a `vite-dev` run may nest the API inside the app, so an Expo run keeps its lexical rule.
+   * @param declaration - The run's `apiServer` declaration.
+   * @throws `INVALID_CONFIGURATION` (`api-folder-nesting`, naming `apiServer.packageRoot`, `sideEffects` `none`).
+   * @example await this.assertApiFolderNesting(declaration)
+   */
+  private async assertApiFolderNesting(
+    declaration: ApiServerDeclaration,
+  ): Promise<void> {
+    if (this.definition.configuration.adapter !== 'vite-dev') return
+    const repositoryRoot = await realpath(this.options.workspace)
+    const appRoot = await realpath(this.packageRoot)
+    // A missing API folder is the launcher check's refusal, not this one's.
+    const apiRoot = await realpath(
+      join(repositoryRoot, declaration.packageRoot),
+    ).catch(() => undefined)
+    // The app folder lies inside the API folder (or is it) by real path.
+    if (
+      apiRoot !== undefined &&
+      (appRoot === apiRoot || isInsideFolder(apiRoot, appRoot))
+    )
+      throw apiFolderNestingRefusal(declaration.packageRoot)
+  }
+
+  /**
+   * Ends the API group and refuses an API port that equals the port Vite reported at the launcher's facts (config or Vite's default).
+   * Called by {@link assertAppPortFree} before Vite's own port check; the API already started, so the refusal says so (`sideEffects` `partial`, D27b).
+   * @param declared - The app port the launcher reported and where it was declared.
+   * @param declared.port - The port Vite will use.
+   * @param declared.source - Where the launcher read it from.
+   * @throws `VITE_UNSUPPORTED` (`api-port-conflict`, `portSource` `config` or `vite-default`).
+   * @example await this.refuseApiPortAtVitePort({ port: 5000, source: 'the Vite config (vite.config.ts)' })
+   */
+  private async refuseApiPortAtVitePort(declared: {
+    port: number
+    source: string
+  }): Promise<void> {
+    const declaration = this.apiServerDeclaration()
+    if (!declaration || declaration.port !== declared.port) return
+    await this.killApiServerFirst().catch(() => undefined)
+    throw viteApiPortConflictRefusal({
+      apiPort: declaration.port,
+      vitePort: declared.port,
+      // The launcher words a script port as "the dev script --port"; the pre-start check already refused that, so it is a config or default port here.
+      portSource: declared.source.startsWith('the Vite config')
+        ? 'config'
+        : 'vite-default',
+    })
+  }
+
+  /**
+   * Checks the app's port at the launcher's facts: for a `vite-dev` run that declares `apiServer`, a port shared with the API is refused first and a taken port ends the API group and says the API was started and stopped.
+   * Called by the `assertPortFree` hook of {@link prepareOwned} for every adapter; other runs keep the plain check.
+   * @param declared - The app port and where it was declared.
+   * @param refuse - The adapter's wording of a taken port.
+   * @throws `VITE_UNSUPPORTED` (`api-port-conflict`) or `VITE_PORT_UNAVAILABLE` with `sideEffects` `partial` for an `apiServer` run; the plain refusal otherwise.
+   * @example await this.assertAppPortFree({ port: 5173, source: "Vite's default port" }, refuse)
+   */
+  private async assertAppPortFree(
+    declared: Parameters<
+      Parameters<DevelopmentServerAdapter['start']>[0]['assertPortFree']
+    >[0],
+    refuse: Parameters<
+      Parameters<DevelopmentServerAdapter['start']>[0]['assertPortFree']
+    >[1],
+  ): Promise<void> {
+    const isViteApiRun =
+      this.definition.configuration.adapter === 'vite-dev' &&
+      this.apiServerDeclaration() !== undefined
+    if (isViteApiRun) await this.refuseApiPortAtVitePort(declared)
+    let taken: PortRefusal | undefined
+    try {
+      await assertDevelopmentPortFree(declared, {
+        signal: this.abort.signal,
+        ...(refuse
+          ? {
+              refuse: (refusal: PortRefusal) => {
+                taken = refusal
+                return refuse(refusal)
+              },
+            }
+          : {}),
+      })
+    } catch (error) {
+      if (!isViteApiRun || !taken) throw error
+      // D27c: the API was started; end it, then word the refusal as partial.
+      await this.killApiServerFirst().catch(() => undefined)
+      throw viteApiRunPortUnavailableRefusal(taken, declared.source)
+    }
   }
 
   /**
@@ -11297,13 +11470,63 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    */
   private async collectApiServerStops(): Promise<void> {
     const root = await realpath(this.options.workspace)
+    const declaration = this.apiServerDeclaration()
+    // A missing API folder is the launcher check's refusal; without it no stop can be judged against the folder.
+    const apiRoot = declaration
+      ? await realpath(join(root, declaration.packageRoot)).catch(
+          () => undefined,
+        )
+      : undefined
     const found: RouteHandlerStop[] = []
     for (const [index, stop] of configuredStops(
       this.definition.configuration,
-    ).entries())
+    ).entries()) {
       if (stop.participant === 'server')
-        found.push(await this.apiServerStopOf(stop, index, root))
+        found.push(await this.apiServerStopOf(stop, index, root, apiRoot))
+      else await this.assertBrowserStopOutsideApi(stop, root, apiRoot)
+    }
     this.routeHandlerStops = found
+  }
+
+  /**
+   * Refuses a browser stop whose real path lies inside the API folder (a symbolic link in the app's folder to an API file, D47).
+   * Called by {@link collectApiServerStops} for each browser stop of an `apiServer` run.
+   * @param stop - The configured browser stop.
+   * @param root - The real path of the opened repository.
+   * @param apiRoot - The real path of `apiServer.packageRoot`, when it exists.
+   * @throws `INVALID_CONFIGURATION` naming the participant to declare, `sideEffects` `none`.
+   * @example await this.assertBrowserStopOutsideApi(stop, '/repo', '/repo/apps/api')
+   */
+  private async assertBrowserStopOutsideApi(
+    stop: ReturnType<typeof configuredStops>[number],
+    root: string,
+    apiRoot: string | undefined,
+  ): Promise<void> {
+    if (apiRoot === undefined) return
+    // A stop file that cannot be resolved is refused by the readers that open it, not here.
+    const sourcePath = await realpath(join(root, stop.source.path)).catch(
+      () => undefined,
+    )
+    if (sourcePath !== undefined && isInsideFolder(apiRoot, sourcePath))
+      throw apiStopParticipantFolderRefusal({
+        participant: 'browser',
+        file: stop.source.path,
+      })
+  }
+
+  /**
+   * Tells whether a stop is an API stop of this run: a server stop of a run that declares `apiServer`, which lies in the API's folder outside the app by design.
+   * Called by the package resolvers of the Expo and Vite runs, whose outside-the-app check must not refuse it.
+   * @param stop - A configured stop.
+   * @returns `true` for a server stop when `apiServer` is declared.
+   * @example this.isApiServerStop(serverStop) // => true in an apiServer run
+   */
+  private isApiServerStop(
+    stop: ReturnType<typeof configuredStops>[number],
+  ): boolean {
+    return (
+      stop.participant === 'server' && this.apiServerDeclaration() !== undefined
+    )
   }
 
   /**
@@ -11312,14 +11535,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @param stop - The configured server stop.
    * @param index - Its declared index.
    * @param root - The real path of the opened repository.
+   * @param apiRoot - The real path of `apiServer.packageRoot`, when it exists.
    * @returns The stop to arm.
-   * @throws When the file cannot be read within the bounds.
-   * @example await this.apiServerStopOf(stop, 0, '/repo') // { kind: 'node-api', route: 'apps/api/src/rpc/a.ts', … }
+   * @throws When the file cannot be read within the bounds; `INVALID_CONFIGURATION` when the file's real path lies outside the API folder (D47).
+   * @example await this.apiServerStopOf(stop, 0, '/repo', '/repo/apps/api') // { kind: 'node-api', route: 'apps/api/src/rpc/a.ts', … }
    */
   private async apiServerStopOf(
     stop: ReturnType<typeof configuredStops>[number],
     index: number,
     root: string,
+    apiRoot: string | undefined,
   ): Promise<RouteHandlerStop> {
     // A stop file deleted after the source check is refused before anything starts.
     const sourcePath = await realpath(join(root, stop.source.path)).catch(
@@ -11327,6 +11552,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         throw apiStopFileMissingRefusal(stop.source.path)
       },
     )
+    // A symbolic link in the API folder can point at an app file: that file is not the API's.
+    if (apiRoot !== undefined && !isInsideFolder(apiRoot, sourcePath))
+      throw apiStopParticipantFolderRefusal({
+        participant: 'server',
+        file: stop.source.path,
+      })
     const sourceText = await this.readStopSourceText(root, sourcePath)
     if (sourceText === undefined)
       throw apiStopFileMissingRefusal(stop.source.path)
@@ -11430,12 +11661,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @example await this.attachApiServer(api)
    */
   private async attachApiServer(api: OwnedApiServer): Promise<void> {
+    const repositoryRoot = await realpath(this.options.workspace)
     // js-debug's pause before each mapped script is Next's route compile; the API's modules are announced once the channel is subscribed before the release.
     await this.selectServer({
       target: {
         endpoint: (signal) => api.inspectorEndpoint(signal),
         cwd: api.packageRoot,
         verify: (candidate, signal) => api.verifyInspector(candidate, signal),
+        resolveSourceMapLocations: () => [
+          `${repositoryRoot}/**`,
+          '!**/node_modules/**',
+        ],
       },
       pauseForSourceMap: false,
     })
@@ -11629,7 +11865,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Gives the run resource's view of the API: the port, the pid, each preparation step with the milliseconds it took and `cleanup: "failed"` when its group could not be confirmed gone.
+   * Gives the run resource's view of the API: the port, the pid, each preparation step with the milliseconds it took and `cleanup: "failed"` when its group could not be confirmed gone, and `outputTail` (masked, without Node's inspector banner) only when the run or an operation failed.
    * Called by {@link view}.
    * @returns `{ apiServer }`, or an empty object for a run that did not launch one.
    * @example this.apiServerView() // { apiServer: { port: 4100, pid: 4242, steps: [{ step: 'api-server-launch', elapsedMs: 12 }] } }
@@ -11637,12 +11873,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private apiServerView(): Pick<ConfiguredRuntimeView, 'apiServer'> {
     const api = this.apiServer
     if (!api) return {}
+    // The tail is data for a failure only: a healthy run's view never carries it (D33).
+    const outputTail =
+      this.failures.length > 0 || this.operationFailure !== undefined
+        ? withoutInspectorBanner(api.outputTailNow())
+        : ''
     return {
       apiServer: {
         port: api.port,
         pid: api.pid,
         steps: this.apiSteps.map((entry) => ({ ...entry })),
         ...(this.apiCleanupFailure ? { cleanup: 'failed' as const } : {}),
+        ...(outputTail ? { outputTail } : {}),
       },
     }
   }
@@ -11865,10 +12107,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       })
     } catch (error) {
       // The seal's refusal keeps its code; the API's group was killed before it was raised.
-      if (
-        error instanceof StudyError &&
-        error.code === 'EXPO_WEB_SEAL_FAILED'
-      ) {
+      if (error instanceof StudyError && isApiSealCode(error.code)) {
         // The variant keeps the reason, participant and file for the restored details.
         const variant = apiSealVariantOf(error)
         this.fail(
@@ -11918,7 +12157,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @param event - The `stopped` event.
    * @param held - The held pause.
    * @param matched - The stop, the request fact, the paused script and how long a held stop kept the pause waiting.
-   * @throws The seal's `EXPO_WEB_SEAL_FAILED` refusal after the API's group was killed.
+   * @throws The seal's `VITE_SEAL_FAILED` or `EXPO_WEB_SEAL_FAILED` refusal after the API's group was killed.
    * @example await this.publishApiServerPause(session, event, held, { entry, apiRequest, scriptId, scriptUrl, heldMs: 0 })
    */
   private async publishApiServerPause(
@@ -11972,7 +12211,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @param scriptUrl - The `file://` address the script was announced under.
    * @param scriptSource - The paused script's text.
    * @returns The bundle.
-   * @throws `EXPO_WEB_SEAL_FAILED` with reason `source-drift` (the map carries another version of the file) or `source-unverifiable` (no inline map with the file's contents).
+   * @throws `VITE_SEAL_FAILED` (a `vite-dev` run) or `EXPO_WEB_SEAL_FAILED` with reason `source-drift` (the map carries another version of the file) or `source-unverifiable` (no inline map with the file's contents).
    * @example const bundle = this.apiServerBundleOf(entry, 'file:///repo/apps/api/src/a.ts', scriptSource)
    */
   private apiServerBundleOf(
@@ -11991,12 +12230,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       reason: seal.reason,
       detail: seal.detail,
     })
+    const code =
+      API_SEAL_CODE_OF_ADAPTER.get(this.definition.configuration.adapter) ??
+      'EXPO_WEB_SEAL_FAILED'
     throw seal.reason === 'source-drift'
-      ? apiSourceDriftRefusal('EXPO_WEB_SEAL_FAILED', entry.stop.source.path)
-      : apiSourceUnverifiableRefusal(
-          'EXPO_WEB_SEAL_FAILED',
-          entry.stop.source.path,
-        )
+      ? apiSourceDriftRefusal(code, entry.stop.source.path)
+      : apiSourceUnverifiableRefusal(code, entry.stop.source.path)
   }
 
   /**
@@ -12775,6 +13014,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           ...(pauseForSourceMap ? { pauseForSourceMap: true } : {}),
           ...(target.sourceMapPathOverrides
             ? { sourceMapPathOverrides: target.sourceMapPathOverrides() }
+            : {}),
+          // The API target allows maps of the whole opened repository (never node_modules), so a window opened on another folder still binds its breakpoints.
+          ...(target.resolveSourceMapLocations
+            ? {
+                resolveSourceMapLocations: target.resolveSourceMapLocations(),
+              }
             : {}),
           timeout: ACTIVE_TIMEOUT_MS,
         },

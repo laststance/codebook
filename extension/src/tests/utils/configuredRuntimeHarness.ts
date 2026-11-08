@@ -237,11 +237,21 @@ export async function configuredRuntimeHarness(
     /** Runs the configuration on the Vite adapter: its stand-in starts the stub server, serves the sealed module at its owned address and loads the entry page once. */
     adapter?: 'vite-dev' | 'expo-web-dev'
     /**
-     * A version 3 `expo-web-dev` run that declares `apiServer` (Cycle 0099): the declaration retained in the configuration and the stand-in of the `ownedApiServer` module the run loads, so no API process starts ({@link apiServerRunHarness}). Only with `adapter: "expo-web-dev"` and `packageRoot`.
+     * A version 3 `expo-web-dev` or `vite-dev` run that declares `apiServer` (Cycle 0099, 0100): the declaration retained in the configuration and the stand-in of the `ownedApiServer` module the run loads, so no API process starts ({@link apiServerRunHarness}). Only with `packageRoot`. The optional `vite` knob serves the Vite stand-in: the dev script's `--port` (`scriptPort`), the port the stand-in server listens on (`port`) and, when `declared` is set, the facts the launcher reports before Vite's own port check.
      */
     apiServer?: {
-      declaration: { packageRoot: string; entry: string; port: number }
+      declaration: {
+        packageRoot: string
+        entry: string
+        port: number
+        proxyPaths?: string[]
+      }
       module: unknown
+      vite?: {
+        scriptPort?: number
+        port?: number
+        declared?: { port: number; source: string }
+      }
     }
     /** Called with the scripted participant right after the run started the server debug session and before it selected it, so a test sends the API's entry pause at that moment. */
     onServerDebuggingStarted?: (
@@ -2387,6 +2397,11 @@ export async function configuredRuntimeHarness(
             prepareLibrary?: () => Promise<void>
             onApp(app: typeof fakeApplication): void
             onStep(step: string): void
+            onDeclaredPort(declared: { port: number; source: string }): void
+            assertPortFree(declared: {
+              port: number
+              source: string
+            }): Promise<void>
           }) => {
             viteRequests.started.push({
               workspace: request.workspace,
@@ -2400,6 +2415,12 @@ export async function configuredRuntimeHarness(
               request.onApp(fakeApplication)
               await request.prepareLibrary?.()
             }
+            // The real launcher reports the port its config resolved and checks it before it listens; an `apiServer` test scripts those facts.
+            const declared = options.apiServer?.vite?.declared
+            if (declared) {
+              request.onDeclaredPort(declared)
+              await request.assertPortFree(declared)
+            }
             request.onStep('starting Vite')
             setupSteps.push('starting Vite')
             request.onApp(fakeApplication)
@@ -2408,7 +2429,7 @@ export async function configuredRuntimeHarness(
               throw new Error(options.applicationStartFails)
             return {
               app: fakeApplication,
-              port: 4321,
+              port: options.apiServer?.vite?.port ?? 4321,
               viteVersion: '8.3.5',
               ...(options.maskedValues
                 ? {
