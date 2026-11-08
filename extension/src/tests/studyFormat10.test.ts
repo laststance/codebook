@@ -230,8 +230,8 @@ test('the 0.2.77.0 rule lists a .study.v10.json archive as saved by a newer Code
   )
 })
 
-// protects=format 10 stays a known format in the storage table and the schema, while this Codebook now reads up to format 15; fails_when=v10 is missing from the storage table or the schema, or format 15 is accepted; no_claim=archive contents
-test('storage names and schema keep format 10 and read nothing above format 20', () => {
+// protects=format 10 stays a known format in the storage table and the schema, while this Codebook now reads up to format 21; fails_when=v10 is missing from the storage table or the schema, or format 22 is accepted; no_claim=archive contents
+test('storage names and schema keep format 10 and read nothing above format 21', () => {
   // Arrange
   const row = STUDY_STORAGE_FORMATS.find((format) => format.version === 10)
   const schemaVersion = configuredStudySchema.shape.version

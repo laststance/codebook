@@ -455,11 +455,13 @@ test('the press help, skill paragraph and README sentences contain no trial valu
   const skillStart = skill.indexOf('**Operations (configuration version 3).**')
   const readmeStart = readme.indexOf('- **Press a key')
   const savedStart = readme.indexOf('A study of a run that declares a `press`')
+  const savedEnd = readme.indexOf('open it.', savedStart)
+  assert.ok(savedStart >= 0 && savedEnd > savedStart)
   const slices = [
     JSON.stringify(help.operationsPress),
     skill.slice(skillStart, skill.indexOf('\n', skillStart)),
     readme.slice(readmeStart, readme.indexOf('\n', readmeStart)),
-    readme.slice(savedStart, readme.indexOf('open it.', savedStart)),
+    readme.slice(savedStart, savedEnd),
   ]
   const banned = [
     'nsx',

@@ -458,6 +458,14 @@ test('executionOfObservation reads a format 7 pause from its participant and a f
   assert.deepEqual(kinds, ['server-action', 'browser', 'server-render'])
 })
 
+// protects=the newest storage format is the first row of the table, which the library lists first; fails_when=a newer format is appended after older rows instead of placed first; no_claim=the other rows' order
+test('the storage table lists the newest readable format first', () => {
+  // Arrange / Act
+  const newest = STUDY_STORAGE_FORMATS[0]
+  // Assert
+  assert.equal(newest?.version, READABLE_STUDY_VERSION)
+})
+
 // protects=0.2.72.0 lists a .study.v8.json file as saved by a newer Codebook and keeps it; fails_when=the 0.2.72.0 rule (readable up to 7) stops recognising the format 8 file name, or its sidecar is taken for an archive; no_claim=the 0.2.72.0 binary (its one function, newerStudyArchive, and its message run here over the constant 7)
 test('the 0.2.72.0 rule lists a .study.v8.json archive as saved by a newer Codebook, with its sidecar kept out of the listing', async () => {
   // Arrange

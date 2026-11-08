@@ -527,7 +527,7 @@ test('the replay mark of a press carries its canonical key and the marks of othe
   )
 })
 
-// Value: protects=AC 4/D36: a saved press record keeps its kind and title, takes its sent time from the dispatch receipt and gains no key field; fails_when=the record drops the kind, loses the time, or stores a key; no_claim=a real press run
+// Value: protects=AC 4/D36: a saved press record keeps its kind and title, takes its sent time from the dispatch receipt and gains no key field even when the incoming record carries one; fails_when=the record drops the kind, loses the time, or stores the key; no_claim=a real press run
 test('a press record is saved with its kind and sent time and without a key field', () => {
   // Arrange
   const events: RecordedEvent[] = [
@@ -539,21 +539,19 @@ test('a press record is saved with its kind and sent time and without a key fiel
       detail: { operationIndex: 1 },
     },
   ]
+  // A run resource may carry the pressed key beyond the declared record type; it is held in a variable so the extra field type-checks.
+  const pressRecord = {
+    index: 1,
+    kind: 'press' as const,
+    title: 'Open the sidebar',
+    state: 'done' as const,
+    ack: 'yes' as const,
+    valueCheck: 'n/a' as const,
+    effect: 'dispatched' as const,
+    key: 'Control+k',
+  }
   // Act
-  const saved = projectSavedOperations(
-    [
-      {
-        index: 1,
-        kind: 'press',
-        title: 'Open the sidebar',
-        state: 'done',
-        ack: 'yes',
-        valueCheck: 'n/a',
-        effect: 'dispatched',
-      },
-    ],
-    events,
-  )
+  const saved = projectSavedOperations([pressRecord], events)
   // Assert
   assert.deepEqual(saved, [
     {

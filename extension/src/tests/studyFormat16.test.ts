@@ -103,7 +103,7 @@ test('Codebook 0.2.97 lists a .study.v16.json archive as saved by a newer Codebo
   assert.equal(sidecar, undefined)
 })
 
-// protects=the storage format table has a row for format 16 with the v16 archive and metadata suffixes, and format 16 is an operations format that passes the readable check; fails_when=that row is missing, or changes its suffixes, or format 16 stops being an operations or readable format; no_claim=the order against format 17 or the library round trip of a run
+// protects=the storage format table has a row for format 16 with the v16 archive and metadata suffixes, and format 16 is an operations format that passes the readable check; fails_when=that row is missing, or changes its suffixes, or format 16 stops being an operations or readable format; no_claim=the table order or the library round trip of a run
 test('the storage table row for format 16 has its v16 suffixes and format 16 is readable', () => {
   // Arrange / Act
   const row = STUDY_STORAGE_FORMATS.find((format) => format.version === 16)

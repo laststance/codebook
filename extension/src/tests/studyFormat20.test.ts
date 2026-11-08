@@ -487,7 +487,7 @@ test('formats 7, 10, 16 and 19 refuse a Vite apiServer; format 20 refuses a conf
   assert.notEqual(atTwenty, 'accepted')
 })
 
-// Value: protects=D38 this Codebook reads format 20 second in the table (after format 21) and lists 22 as newer, and Codebook 0.2.101 (readable up to 19) lists a .study.v20.json file as saved by a newer Codebook; fails_when=the row is missing or not first, the readable limit stays 19, or the file name rule stops recognising v20; no_claim=the 0.2.101 binary
+// Value: protects=D38 this Codebook reads format 20 and lists 22 as newer, and Codebook 0.2.101 (readable up to 19) lists a .study.v20.json file as saved by a newer Codebook; fails_when=the row is missing, the readable limit stays 19, or the file name rule stops recognising v20; no_claim=the 0.2.101 binary
 test('Codebook 0.2.101 lists a .study.v20.json archive as saved by a newer Codebook; this one reads 20 and lists 22 as newer', async () => {
   // Arrange
   const frozenConstants = { READABLE_STUDY_VERSION: 19 }

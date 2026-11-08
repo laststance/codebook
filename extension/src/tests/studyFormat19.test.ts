@@ -378,7 +378,7 @@ test('the evidence check refuses a format 19 server observation outside apiServe
   )
 })
 
-// Value: protects=AC4 this Codebook reads format 19, stores it as .study.v19.json third in the table, refuses format 22 as saved by a newer Codebook, and Codebook 0.2.100 (readable up to 18) lists a .study.v19.json file as saved by a newer one; fails_when=the row is missing or not first, the readable limit stays 18, or the file name rule stops recognising v19; no_claim=the 0.2.100 binary
+// Value: protects=AC4 this Codebook reads format 19, stores it as .study.v19.json, refuses format 22 as saved by a newer Codebook, and Codebook 0.2.100 (readable up to 18) lists a .study.v19.json file as saved by a newer one; fails_when=the row is missing, the readable limit stays 18, or the file name rule stops recognising v19; no_claim=the 0.2.100 binary
 test('format 19 is stored and readable, format 22 is saved by a newer Codebook, and a reader limited to 18 lists v19 as newer', async () => {
   // Arrange
   const frozenConstants = { READABLE_STUDY_VERSION: 18 }
