@@ -1,3 +1,4 @@
+import { homedir } from 'node:os'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import {
@@ -5,6 +6,7 @@ import {
   NODE_SERVER_READY_TIMEOUT_MS,
   NODE_SERVER_STOP_DEADLINE_MS,
   OWNED_API_SERVER_OUTPUT_SETTLE_MS,
+  PROCESS_OUTPUT_EVENT_LIMIT_CHARS,
 } from './constants'
 import { StudyError } from './errors'
 import {
@@ -16,6 +18,7 @@ import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { assertNodeServerPortFree } from './utils/assertNodeServerPortFree'
 import type { ProcessOutputEvent } from './utils/captureProcessOutput'
 import {
+  hidePrivatePaths,
   serverExitedError,
   serverNotListeningError,
 } from './utils/describeNodeServerRunFailure'
@@ -71,13 +74,15 @@ export type OwnedApiServerInput = {
   privateRoots?: CauseRoots
   /** Cancels the checks. */
   signal?: AbortSignal
+  /** Delivers a signal to the API's group; {@link signalProcessGroup} unless a test names its own. */
+  signalGroup?: typeof signalProcessGroup
   /** How long the listener may take to appear, in running time; {@link NODE_SERVER_READY_TIMEOUT_MS} unless a test names its own. */
   readyTimeoutMs?: number
 }
 
 /** How the API process ended: the leader's exit and the masked last output. */
 export type OwnedApiServerExit = NodeServerExit & {
-  /** The server's last output, learner secrets masked; the failure words hide private paths ({@link OwnedApiServer.exitError}). */
+  /** The server's last output, learner secrets masked and private paths hidden ({@link hidePrivatePaths}), cut to {@link PROCESS_OUTPUT_EVENT_LIMIT_CHARS}. */
   outputTail: string
 }
 
@@ -162,6 +167,8 @@ export class OwnedApiServer {
   private exitFact?: Promise<OwnedApiServerExit>
   private closing?: Promise<OwnedApiServerExit>
   private killedFirst = false
+  /** Set once the group was observed gone: from then on its id may belong to an unrelated group, so nothing signals it. */
+  private groupObservedGone = false
 
   private constructor(
     private readonly launched: Awaited<ReturnType<typeof launchNodeServer>>,
@@ -304,7 +311,11 @@ export class OwnedApiServer {
         this.launched.whenExitEvent().then(() => 'exited' as const),
       ])
       if (outcome === 'exited') throw await this.exitError()
-      if (!outcome) throw await this.notListeningError()
+      if (!outcome) {
+        // The bound and the exit can coincide: a process that already exited is the failure, not a silent port.
+        if (this.launched.exitedEvent()) throw await this.exitError()
+        throw await this.notListeningError()
+      }
       const verdict = await verifyListenerOwnership({
         port: this.port,
         selectedHost: outcome.host,
@@ -318,6 +329,21 @@ export class OwnedApiServer {
       // Ends a probe round that lost the race.
       stopProbing.abort()
     }
+  }
+
+  /** Delivers a signal to the group through the input's {@link OwnedApiServerInput.signalGroup} or {@link signalProcessGroup}. */
+  private readonly signal = (group: number, signal: NodeJS.Signals): void =>
+    (this.input.signalGroup ?? signalProcessGroup)(group, signal)
+
+  /**
+   * Tells whether the launched group has ended, and remembers it: a group id is reusable only after its group is gone, so an observation of "gone" holds for good and no signal follows it.
+   * Called before every signal of {@link killIfPaused} and {@link close}.
+   * @returns `true` once the group was observed gone.
+   * @example if (!this.isGroupGone()) this.signal(this.processGroup, 'SIGKILL')
+   */
+  private isGroupGone(): boolean {
+    this.groupObservedGone ||= isProcessGroupGone(this.processGroup)
+    return this.groupObservedGone
   }
 
   /** Builds `SERVER_NOT_LISTENING`, naming a port the process listens on instead of the declared one. */
@@ -343,7 +369,14 @@ export class OwnedApiServer {
         this.launched.whenExited(),
         delay(OWNED_API_SERVER_OUTPUT_SETTLE_MS),
       ])
-      return { ...exit, outputTail: this.launched.output() }
+      return {
+        ...exit,
+        outputTail: hidePrivatePaths(
+          this.launched.output().slice(-PROCESS_OUTPUT_EVENT_LIMIT_CHARS),
+          this.input.workspace,
+          homedir(),
+        ),
+      }
     })()
     return this.exitFact
   }
@@ -368,10 +401,9 @@ export class OwnedApiServer {
   async killIfPaused(): Promise<OwnedApiServerExit> {
     this.killedFirst = true
     // A group that already ended may belong to another process now, so it is not signalled again.
-    if (!isProcessGroupGone(this.processGroup))
-      signalProcessGroup(this.processGroup, 'SIGKILL')
+    if (!this.isGroupGone()) this.signal(this.processGroup, 'SIGKILL')
     await waitUntil(
-      () => isProcessGroupGone(this.processGroup),
+      () => this.isGroupGone(),
       'owned API server process group exit',
       NODE_SERVER_STOP_DEADLINE_MS,
       undefined,
@@ -391,11 +423,19 @@ export class OwnedApiServer {
    */
   close(
     detachDebugger?: () => Promise<void>,
-    options?: NodeServerCloseOptions,
+    options: NodeServerCloseOptions = {},
   ): Promise<OwnedApiServerExit> {
     beginReleaseOfOwnedDevelopmentPort(this.claim)
     const attempt = (this.closing ??= (async () => {
-      await this.launched.close(detachDebugger, options)
+      await this.launched.close(detachDebugger, {
+        ...options,
+        // Every signal first checks that the group still exists: once it is gone its id may belong to another group.
+        signalGroup: (group, signal) => {
+          if (!this.isGroupGone())
+            (options.signalGroup ?? this.signal)(group, signal)
+        },
+        isGroupGone: () => this.isGroupGone(),
+      })
       releaseOwnedDevelopmentPort(this.claim)
       this.input.record('api-server.ended', {
         pid: this.pid,

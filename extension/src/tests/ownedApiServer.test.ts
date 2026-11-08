@@ -10,7 +10,7 @@ import {
 } from 'node:fs/promises'
 import { get } from 'node:http'
 import { createServer, type Server } from 'node:net'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -22,7 +22,6 @@ import {
 } from '../ownedApiServer'
 import { Cdp } from '../runtimeSupport/cdp'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
-import { buildNodeServerEnvironment } from '../utils/buildNodeServerEnvironment'
 import { isProcessGroupGone } from '../utils/isProcessGroupGone'
 
 import { freeLoopbackPort } from './utils/freeLoopbackPort'
@@ -224,10 +223,19 @@ test('an owned API launches with the inspector, the stand-in loader and the entr
     '<workspace>/node_modules/tsx/dist/loader.js',
     '<workspace>/api/server.cjs',
   ])
-  assert.deepEqual(
-    (started?.detail as { inheritedVariables: string[] }).inheritedVariables,
-    Object.keys(buildNodeServerEnvironment()).sort(),
+  // The child's real environment, read from the child itself.
+  const childEnvironment: Record<string, string> = JSON.parse(
+    (
+      await cdp.request('Runtime.evaluate', {
+        expression: 'JSON.stringify(process.env)',
+        returnByValue: true,
+      })
+    ).result.value as string,
   )
+  for (const [name, value] of Object.entries(childEnvironment))
+    assert.equal(process.env[name], value, `${name} differs from the parent`)
+  for (const name of ['NODE_OPTIONS', 'PORT', 'NODE_ENV', 'CI', 'HTTP_PROXY'])
+    assert.equal(name in childEnvironment, false, `${name} was added`)
   assert.equal(loaderRan.result.value, true)
 })
 
@@ -424,4 +432,123 @@ test('killing a paused owned API first never lets the held handler write its mar
   assert.equal(isProcessGroupGone(api.processGroup), true)
   assert.equal(existsSync(markerFile), false)
   assert.equal(await inFlight, undefined)
+})
+
+test('killing a live paused owned API signals its group once with SIGKILL and never ends it with a later SIGTERM', async (t) => {
+  // protects: no signal follows the group's observed end (R3: the id may belong to another group by then); fails_when: close() sends SIGTERM to the group killIfPaused() already ended; no_claim: real id reuse by the operating system.
+  // Arrange
+  const repository = await apiRepository(t, { mode: 'api' })
+  const signals: string[] = []
+  const { api } = await launchApi(t, repository, {
+    signalGroup: (group, signal) => {
+      signals.push(signal)
+      process.kill(-group, signal)
+    },
+  })
+
+  // Act
+  await api.killIfPaused()
+
+  // Assert
+  assert.deepEqual(signals, ['SIGKILL'])
+  assert.equal(isProcessGroupGone(api.processGroup), true)
+})
+
+test('closing an owned API whose group already ended sends no signal', async (t) => {
+  // protects: close() leaves a gone group alone (R3); fails_when: SIGTERM or SIGKILL is delivered to the id of a group that no longer exists; no_claim: real id reuse by the operating system.
+  // Arrange
+  const repository = await apiRepository(t, { mode: 'api' })
+  const signals: string[] = []
+  const { api } = await launchApi(t, repository, {
+    signalGroup: (_group, signal) => void signals.push(signal),
+  })
+  process.kill(-api.processGroup, 'SIGKILL')
+  await waitUntil(
+    () => (isProcessGroupGone(api.processGroup) ? true : undefined),
+    'the group exit',
+    10_000,
+  )
+
+  // Act
+  await api.close()
+  await api.killIfPaused()
+
+  // Assert
+  assert.deepEqual(signals, [])
+})
+
+test('an owned API exit tail hides the repository and home paths its output names', async (t) => {
+  // protects: whenExited() hands every consumer a tail without private paths (F1); fails_when: an absolute path inside the workspace or the home folder reaches outputTail; no_claim: paths outside both, which the failure words hide.
+  // Arrange
+  const repository = await apiRepository(t, { mode: 'exit-after-echo' })
+  // The echoed line names a path inside the repository and one inside the home folder.
+  await writeFile(
+    join(repository.packageRoot, 'fixture-server.json'),
+    JSON.stringify({
+      mode: 'exit-after-echo',
+      host: '127.0.0.1',
+      port: repository.port,
+      echo: `at ${join(repository.packageRoot, 'server.cjs')} and ${homedir()}/notes/private.txt`,
+    }),
+  )
+  const output: string[] = []
+  const { api } = await launchApi(t, repository, {
+    onOutput: (event) => void output.push(event.text),
+  })
+  const cdp = await connectInspector(t, api)
+
+  // Act
+  void cdp
+    .request('Runtime.runIfWaitingForDebugger', undefined)
+    .catch(() => undefined)
+  await waitUntil(
+    () =>
+      output.join('').includes('Waiting for the debugger to disconnect')
+        ? true
+        : undefined,
+    'the debugger-disconnect notice',
+    10_000,
+  )
+  cdp.close()
+  const exit = await api.whenExited()
+
+  // Assert
+  assert.equal(exit.outputTail.includes(repository.workspace), false)
+  assert.equal(exit.outputTail.includes(homedir()), false)
+  assert.match(
+    exit.outputTail,
+    /at <workspace>\/api\/server\.cjs and ~\/notes\/private\.txt/,
+  )
+})
+
+test('an owned API that has exited when the ready bound passes fails as SERVER_EXITED, not SERVER_NOT_LISTENING', async (t) => {
+  // protects: exit and ready bound coinciding report the exit (F2); fails_when: the wait throws SERVER_NOT_LISTENING for a process that already ended; no_claim: the 30 s product bound (a zero bound is injected).
+  // Arrange
+  const repository = await apiRepository(t, { mode: 'exit-before-listen' })
+  const output: string[] = []
+  const { api } = await launchApi(t, repository, {
+    readyTimeoutMs: 0,
+    onOutput: (event) => void output.push(event.text),
+  })
+  const cdp = await connectInspector(t, api)
+  void cdp
+    .request('Runtime.runIfWaitingForDebugger', undefined)
+    .catch(() => undefined)
+  // Node keeps an exiting program alive until its debugger lets go.
+  await waitUntil(
+    () =>
+      output.join('').includes('Waiting for the debugger to disconnect')
+        ? true
+        : undefined,
+    'the debugger-disconnect notice',
+    10_000,
+  )
+  cdp.close()
+  await api.whenExited()
+
+  // Act
+  const waiting = api.waitForListener(AbortSignal.timeout(10_000))
+
+  // Assert
+  await assert.rejects(waiting, { code: 'SERVER_EXITED' })
 })

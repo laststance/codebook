@@ -18,14 +18,14 @@ const ABSOLUTE_PATH = /(?<![\w~>.])(?:\/[^\s/'"`]+){2,}\/?/g
 
 /**
  * Hides the private paths of a text: the repository's root as `<workspace>`, the home directory as `~` (the repository-relative rest stays readable), and any other absolute path as `<path>`.
- * Called by {@link sanitizeRunCause} for causes and by {@link serverExitedError} for the server's output tail, whose stack traces carry the learner's paths.
+ * Called by {@link sanitizeRunCause} for causes and by {@link serverExitedError} and {@link OwnedApiServer.whenExited} for the server's output tail, whose stack traces carry the learner's paths.
  * @param text - Any text.
  * @param workspace - The opened repository's real root.
  * @param home - The user's home directory.
  * @returns The text with those paths replaced; newlines are kept.
  * @example hidePrivatePaths('at /work/repo/src/a.ts:3 and /Users/村上/x/y', '/work/repo', '/Users/ada') // => 'at <workspace>/src/a.ts:3 and <path>'
  */
-function hidePrivatePaths(
+export function hidePrivatePaths(
   text: string,
   workspace: string,
   home: string,
