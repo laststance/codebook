@@ -125,6 +125,40 @@ test('the repository-browser help serves the apiServer section with its version 
   assert.ok(section.order.join('\n').includes('api-server-listen'))
 })
 
+// Value: protects=a chat that reads help first meets the page-route rule in the repository-browser startHere and the node-server entry; fails_when=either help loses the shared routing sentence; no_claim=that the chat follows it
+test('the repository-browser startHere and the node-server entry both route a screen question to the apiServer run', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const readText = async (uri: string) => {
+    const resource = await readResource(harness.service, uri)
+    return 'text' in resource ? resource.text : ''
+  }
+  // Act
+  const repositoryBrowser = JSON.parse(
+    await readText('codebook://help/repository-browser'),
+  ) as { startHere: string }
+  const nodeServer = JSON.parse(
+    await readText('codebook://help/node-server'),
+  ) as { entry: string }
+  // Assert
+  assert.ok(
+    repositoryBrowser.startHere.includes(
+      'uses a browser run of the app that declares `apiServer`',
+    ),
+  )
+  assert.ok(
+    nodeServer.entry.startsWith(
+      "A question that starts from the repository's own web app",
+    ),
+  )
+  assert.ok(
+    nodeServer.entry.includes(
+      'the `node-server` profile is for a server request asked on its own, with no screen',
+    ),
+  )
+})
+
 // Value: protects=the chat relays the attribution sentence and never names a request for an unattributed pause; the pause publication delay is stated; fails_when=the relay rule, the never-name rule or the one-second delay disappears; why_new=API 1.37 adds apiRequest; seam=none; no_claim=how a chat words the sentence
 test('the apiServer help tells the chat to relay apiRequest.sentence and never name an unattributed request', async (context) => {
   // Arrange

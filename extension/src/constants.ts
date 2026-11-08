@@ -3592,3 +3592,11 @@ export const EXPO_WEB_ENV_FILES = [
 export const API_PROXY_PATHS_MAX_ENTRIES = 8
 /** The most characters one `apiServer.proxyPaths` entry may hold. */
 export const API_PROXY_PATH_MAX_CHARS = 256
+
+/**
+ * The routing rule for a question that starts from the repository's own web app and asks what its Node API does, shared word for word by the repository-browser help (`startHere`) and the node-server help (`entry`); the bundled skill paraphrases it and a test pins the key phrases.
+ *
+ * Why it exists: a question that names "the API server" matches the `node-server` profile first, which sends a request straight to the server and never operates the screen the learner asked about.
+ */
+export const API_SERVER_PAGE_ROUTE_RULE =
+  "A question that starts from the repository's own web app (what the server does when the learner signs in, opens a screen or presses something) uses a browser run of the app that declares `apiServer` (`viteApiServer` for a Vite app from API 1.38, `expoWebQuickStart.apiServer` for an Expo app from API 1.37), so the server stop pauses during the request the page sends; the `node-server` profile is for a server request asked on its own, with no screen, or when the app's adapter is not ready."

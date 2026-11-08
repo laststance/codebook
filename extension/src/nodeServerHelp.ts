@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 import {
   ACTIVE_TIMEOUT_MS,
+  API_SERVER_PAGE_ROUTE_RULE,
   ASK_LEARNER_SECRET,
   CONFIGURED_OBSERVATION_LIMIT,
   MILLISECONDS_PER_SECOND,
@@ -228,7 +229,8 @@ export function nodeServerHelp() {
   return {
     profile: NODE_SERVER_PROFILE,
     entry:
-      "Use codebook_start with profile node-server and one stable key to run the repository's own Node HTTP server, send one declared request, and stop in the route-handler source. Select the exact retained book revision/node that cites every stop, the server's entry file and the port its own code listens on. Codebook starts only `node [--import <the repository's tsx>] <entry>` in packageRoot: no command, environment, port assignment or node option can be declared.",
+      API_SERVER_PAGE_ROUTE_RULE +
+      " Use codebook_start with profile node-server and one stable key to run the repository's own Node HTTP server, send one declared request, and stop in the route-handler source. Select the exact retained book revision/node that cites every stop, the server's entry file and the port its own code listens on. Codebook starts only `node [--import <the repository's tsx>] <entry>` in packageRoot: no command, environment, port assignment or node option can be declared.",
     configurationSchema: z.toJSONSchema(nodeServerConfigSchema, {
       io: 'input',
     }),
