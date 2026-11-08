@@ -8,6 +8,7 @@ import type {
   RuntimeAction,
 } from '../../runtime'
 import { declaredOperationsOf } from '../../utils/declaredOperationsOf'
+import { operationHasValueCheck } from '../../utils/operationHasValueCheck'
 
 import { ControlledConfiguredRuntime } from './configuredServiceHarness'
 
@@ -53,7 +54,9 @@ export class ControlledOperationsRuntime extends ControlledConfiguredRuntime {
             title: operation.title,
             state: 'not-run',
             ack: 'pending',
-            valueCheck: operation.kind === 'click' ? 'n/a' : 'pending',
+            valueCheck: operationHasValueCheck(operation.kind)
+              ? 'pending'
+              : 'n/a',
             effect: 'pending',
           }))
         : []
@@ -105,7 +108,7 @@ export class ControlledOperationsRuntime extends ControlledConfiguredRuntime {
     const record = this.records[index - 1]!
     record.state = 'done'
     record.ack = 'yes'
-    if (record.kind !== 'click') record.valueCheck = 'passed'
+    if (operationHasValueCheck(record.kind)) record.valueCheck = 'passed'
     record.effect = 'dispatched'
     this.status = 'ready'
   }

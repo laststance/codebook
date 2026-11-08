@@ -4,10 +4,15 @@ import { test, type TestContext } from 'node:test'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
+import {
+  readOperationConfirmationFacts,
+  type OperationPort,
+} from '../configuredOperations'
 import type {
   OperationsConfirmationNotice,
   SavedSessionOperationsQuestion,
 } from '../operationsConfirmationTypes'
+import type { Cdp } from '../runtimeSupport/cdp'
 import { startServer } from '../server'
 
 import { configuredServiceHarness } from './utils/configuredServiceHarness'
@@ -532,6 +537,39 @@ test('the dialog names the page and each operation, hides a secret and shows a c
   assert.equal(second.questions[0]?.operations[0]?.value, '(chosen when sent)')
 })
 
+// Value: protects=AC 3/D36: the dialog a saved-session run asks lists a press by its title and canonical key without reading the page for it; fails_when=the press line shows no key, shows the declared selector or the typed spelling, or a failed page read blocks the dialog; no_claim=the real editor modal and the keystroke itself
+test('the dialog lists a press by its title and canonical key and never by its selector', async (context) => {
+  // Arrange
+  const { service, receipt, environment, runtime } = await startRun(context, {
+    session: 'saved',
+    operations: [
+      {
+        kind: 'press',
+        title: 'Open the sidebar',
+        key: 'Control+k',
+        selector: '#palette',
+        after: [{ kind: 'visible', selector: '#palette-open' }],
+      },
+      { kind: 'click', title: 'Pending', selector: '#pending' },
+    ] as never,
+  })
+  runtime.confirmationFactsFailure = new Error('page gone')
+  const hooks = recordHooks(environment)
+  // Act
+  await errorOf(() =>
+    service.performAction({
+      ...receipt,
+      key: 'op-1',
+      action: OPERATION_ACTION,
+    }),
+  )
+  // Assert
+  assert.deepEqual(hooks.questions[0]?.operations, [
+    { index: 1, kind: 'press', title: 'Open the sidebar', value: 'Control+k' },
+    { index: 2, kind: 'click', title: 'Pending' },
+  ])
+})
+
 // protects=X1 asked once per run + DX-3 order: the confirmation comes before the secret box, a declined secret keeps the run confirmed, and the next action asks only the secret; fails_when=the confirmation is asked twice or the secret first; no_claim=the real boxes
 test('a saved-session run asks the confirmation first, then the secret, and a declined secret does not ask the confirmation again', async (context) => {
   // Arrange
@@ -664,4 +702,44 @@ test('a declined confirmation reaches the chat as an error result', async (conte
   assert.equal(result.isError, true)
   assert.equal(structured.ok, false)
   assert.equal(structured.error.code, 'OPERATIONS_NOT_CONFIRMED')
+})
+
+// Value: protects=D36: a press is read like a click for the saved-session confirmation, so no page read carries its selector and it is never reported as a missing control; fails_when=a press selector reaches the page read or a press reads as not found; no_claim=the dialog wording (savedSessionConfirmationDialog.test.ts)
+test('the confirmation facts read a press like a click and send no press selector to the page', async () => {
+  // Arrange
+  const expressions: string[] = []
+  const port: OperationPort = {
+    pageCdp: async () =>
+      ({
+        request: async (_method: string, params: { expression: string }) => {
+          expressions.push(params.expression)
+          return { result: { value: [null, null, { found: true }] } }
+        },
+      }) as unknown as Cdp,
+    origins: () => ['http://127.0.0.1:1'],
+    assertCurrent: (): void => {},
+    millisecondsSinceNavigation: () => Number.POSITIVE_INFINITY,
+    isPagePaused: () => false,
+    sleep: async (): Promise<void> => {},
+    readClickPoint: async () => ({ x: 0, y: 0 }),
+  }
+  // Act
+  const facts = await readOperationConfirmationFacts(port, [
+    { kind: 'press', title: 'Open palette', key: 'Control+k' },
+    {
+      kind: 'press',
+      title: 'Open panel',
+      key: 'Enter',
+      selector: '#panel-opener',
+    },
+    { kind: 'text', title: 'Memo', selector: '#memo', text: 'hello' },
+  ])
+  // Assert
+  assert.deepEqual(facts, [
+    { index: 1, found: true, secret: false },
+    { index: 2, found: true, secret: false },
+    { index: 3, found: true, secret: false },
+  ])
+  assert.equal(expressions.length, 1)
+  assert.equal(expressions[0]!.includes('#panel-opener'), false)
 })

@@ -8,6 +8,7 @@ import {
   LIBRARY_BUILD_UNSUPPORTED_REASONS,
   MILLISECONDS_PER_SECOND,
   MIN_NODE_MAJOR_VERSION,
+  OPERATION_PRESS_REASONS,
   STUDY_ARCHIVE_UNAVAILABLE_MESSAGE,
   WXT_SUPPORTED_MAJOR_MINOR,
 } from './constants'
@@ -279,8 +280,7 @@ export const ERROR_RECOVERY = {
     "Audience: learner. The learner did not confirm an editor question, so nothing was sent and the run stays ready. details.question secret: the box for a secret was dismissed, left empty or not answered; ask whether to try again and send the operation once more after they agree. details.question saved-session-operations: the dialog listing the operations of a run with the saved session was cancelled, closed or not answered in time; every later operation is refused at once until the learner chooses Review again in the editor's notification or the saved-session status item; read the run resource at most every 10 s for at most 5 minutes and send the next operation only when confirmation reads confirmed. Never ask the learner to confirm in the chat. Recovery: ask the learner. Nothing was sent. See codebook://help/repository-browser#OPERATIONS_NOT_CONFIRMED.",
   OPTION_NOT_AVAILABLE:
     'Audience: chat. The select has no enabled option with the declared value, so nothing was sent. Read the page (the run resource and the app source) for the option values the select really offers, fix operations[n].value, then start one new run. Recovery: fix the configuration, then one new run. Side effects: none. See codebook://help/repository-browser#OPTION_NOT_AVAILABLE.',
-  INPUT_NOT_ACCEPTED:
-    "Audience: chat. The control is not the unique visible enabled control the operation names, or it refused the value by the app's own rules (min, max, step, pattern) after it was set. Fix operations[n].selector or the declared value, then start one new run. If the run says the operation was sent, never repeat it automatically: changes the app made are not undone, so ask the learner. Recovery: fix the configuration, then one new run. See codebook://help/repository-browser#INPUT_NOT_ACCEPTED.",
+  INPUT_NOT_ACCEPTED: `Audience: chat. The control is not the unique visible enabled control the operation names, or it refused the value by the app's own rules (min, max, step, pattern) after it was set. Fix operations[n].selector or the declared value, then start one new run. If the run says the operation was sent, never repeat it automatically: changes the app made are not undone, so ask the learner. Recovery: fix the configuration, then one new run. See codebook://help/repository-browser#INPUT_NOT_ACCEPTED. For a press, details.reason is one of ${OPERATION_PRESS_REASONS.join(', ')}: follow the fix in the message and codebook://help/repository-browser#press-refusals; when sideEffects is unknown the earlier operations were sent, so ask the learner before rerunning.`,
   CONTROL_KIND_NOT_SUPPORTED:
     'Audience: chat. A send cannot drive this kind of control (a multiple select, a date or range input, a checkbox or radio given text, contenteditable). Use a click operation where the control takes a click (a checkbox, a radio, a custom select), or declare another control; then start one new run. Recovery: fix the configuration, then one new run. Side effects: none. See codebook://help/repository-browser#CONTROL_KIND_NOT_SUPPORTED.',
   SECRET_INPUT_FROM_CHAT:

@@ -22,6 +22,7 @@ import { projectSavedOperations } from './projectSavedOperations'
 import { redactPreparedConfiguration } from './redactPreparedConfiguration'
 import {
   studyFormatOfEvidence,
+  studyRulesVersionOf,
   usesServerRenderEvidence,
 } from './studyFormatOfConfiguration'
 
@@ -239,6 +240,11 @@ export async function captureStudy(
     canonicalConfiguration,
     observations,
   )
+  // Format 21 (a press) keeps the library facts of the format its configuration takes without the press.
+  const rulesVersion = studyRulesVersionOf({
+    version: studyVersion,
+    configuration: canonicalConfiguration,
+  })
   const configured =
     record.profile === REPOSITORY_BROWSER_PROFILE
       ? {
@@ -260,9 +266,9 @@ export async function captureStudy(
             : {}),
           // A Vite, react-scripts or Next library study (format 16, 17 or 18) keeps the library facts as they stand at this checkpoint; no other study carries them.
           // A run that ended before the library route existed (a refusal in package resolution, admission, source preparation or workspace checks) has no facts yet: it saves the pending facts of the declared folder, so the preparation failure stays representable.
-          ...(studyVersion === VITE_LIBRARY_STUDY_VERSION ||
-          studyVersion === REACT_SCRIPTS_LIBRARY_STUDY_VERSION ||
-          studyVersion === NEXT_LIBRARY_STUDY_VERSION
+          ...(rulesVersion === VITE_LIBRARY_STUDY_VERSION ||
+          rulesVersion === REACT_SCRIPTS_LIBRARY_STUDY_VERSION ||
+          rulesVersion === NEXT_LIBRARY_STUDY_VERSION
             ? {
                 library:
                   (runtime?.profile === REPOSITORY_BROWSER_PROFILE

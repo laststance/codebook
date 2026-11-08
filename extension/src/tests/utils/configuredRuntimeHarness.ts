@@ -52,6 +52,7 @@ import {
   describeNextEntryResponse,
   type NextEntryResponse,
 } from '../../utils/describeNextEntryResponse'
+import type { PressFocusDescription } from '../../utils/describePressFocus'
 import { maskEnvValues, maskKnownValues } from '../../utils/maskKnownValues'
 import {
   readinessOutcomeOfError,
@@ -164,6 +165,18 @@ async function stageViteLibrary(input: {
   return { server, servedModule, moduleRoute }
 }
 
+/** What the stand-in page reports of a key's recipient unless a test says otherwise: the focused body, which is no text entry. */
+const DEFAULT_PRESS_FOCUS: PressFocusDescription = {
+  ready: true,
+  tagName: 'body',
+  type: '',
+  name: '',
+  id: '',
+  autocomplete: '',
+  isTextEntry: false,
+  isInFrame: false,
+  isFocused: true,
+}
 /** The source of a fixture that gives none: one statement on line 1 and an empty line 2, declared with `var` so that the stop on line 1, which requires value:nextTheme, stays on its declared line. */
 const FIXTURE_SOURCE = 'var nextTheme = "dark";\n'
 
@@ -453,6 +466,22 @@ export async function configuredRuntimeHarness(
       unappliedNativeValue?: string[]
       /** Makes the page's answer to resolving a control throw an error with this message, as a transport failure that quotes text does. */
       selectControlFailsWith?: string
+      /**
+       * How the stand-in page treats the keys of the version 3 `press` operations.
+       * `holdOn` (default `keyUp`) keeps the answer of that key event open until the stop that follows was continued; `effectOn` is the event after which the press's own `after` conditions hold (default `keyup`, as the app listens); `dropKeys` makes the page ignore every key, so the `after` never holds; `focus` is what the page reports of the key's recipient (default: the body).
+       */
+      press?: {
+        holdOn?: 'keyDown' | 'keyUp'
+        effectOn?: 'keydown' | 'keyup'
+        dropKeys?: boolean
+        /** Makes the press's own `after` hold from the start, as a result that is already on the page. */
+        afterHoldsFromStart?: boolean
+        /** Makes the press's own `after` hold once the send-time focus read ran (`focus: true`), as a focus handler that opens the declared UI. */
+        afterHoldsAfterFocus?: boolean
+        /** Makes the page pause over CDP only (no debugger `stopped`) as the key down is answered, as a handler paused by the adapter before its event arrives. */
+        pausesAfterKeyDown?: boolean
+        focus?: PressFocusDescription
+      }
       /** The configuration's `signInPaths`. */
       signInPaths?: string[]
       /** The configuration's `session: "fresh"`. */
@@ -803,6 +832,7 @@ export async function configuredRuntimeHarness(
   } = { assertedWorkspace: [], started: [], sealed: [] }
   const releases: string[] = [],
     mouse: { type?: string; timeout?: number }[] = [],
+    keys: { type?: string; key?: string }[] = [],
     commands: string[] = [],
     listeners = new Map<string, (event: unknown) => void>()
   const clock = createManualClock()
@@ -1256,6 +1286,70 @@ export async function configuredRuntimeHarness(
   // The version 3 operations the stand-in page received an input for, and the stops it reported.
   let inputsSeen = 0
   const operationsOption = options.operations
+  // The operations (1-based) whose key events the page acted on, by event.
+  const pressEffects = { keydown: new Set<number>(), keyup: new Set<number>() }
+  /** Whether the stand-in page's JavaScript is paused in the debugger, from the last `Debugger.paused` or `Debugger.resumed` the run's listener received. */
+  let isPageDebuggerPaused = false
+  /** The key events (`{ type, key }`) the page received while it was paused: a real page loses them, so they have no effect. */
+  const lostKeys: { type?: string; key?: string }[] = []
+  /** The own `after` read expression of each press operation, by its 1-based operation index. */
+  const pressAfterExpressions = new Map<number, string>(
+    (operationsOption?.operations ?? []).flatMap((operation, position) =>
+      operation.kind === 'press' && operation.after
+        ? [[position + 1, configuredDomExpression(operation.after)] as const]
+        : [],
+    ),
+  )
+  /** Finds the 1-based operation an `after` read now belongs to: the one whose input was last sent, or the next one once that one is done (the pre-send read of the next press). */
+  const operationOfAfterRead = (): number => {
+    const lastDone =
+      inputsSeen > 0 &&
+      run.view().operations?.[inputsSeen - 1]?.state === 'done'
+    return lastDone ? inputsSeen + 1 : Math.max(inputsSeen, 1)
+  }
+  /** Whether the page received the send-time focus read of a press. */
+  let isPressFocusApplied = false
+  /** Answers a press operation's own `after` read: not ready until the page saw the declared event, never when keys are dropped; `undefined` for any other expression. */
+  const pressAfterAnswer = (expression: string | undefined): unknown => {
+    const operationIndex = operationOfAfterRead()
+    if (
+      expression === undefined ||
+      pressAfterExpressions.get(operationIndex) !== expression
+    )
+      return undefined
+    const press = operationsOption?.press
+    const seen = pressEffects[press?.effectOn ?? 'keyup'].has(operationIndex)
+    return press?.afterHoldsFromStart ||
+      (press?.afterHoldsAfterFocus && isPressFocusApplied) ||
+      (!press?.dropKeys && seen)
+      ? { ready: true }
+      : { ready: false, failure: { conditionIndex: 0, reason: 'not-visible' } }
+  }
+  /** Answers one key event of a press: a keyDown counts as the operation's input; the event named by `holdOn` pauses inside the page's handler when a stop follows. */
+  const answerKeyEvent = async (
+    type: string,
+    key: string | undefined,
+  ): Promise<unknown> => {
+    if (type === 'keyDown') inputsSeen++
+    // A key that reaches a paused page is acknowledged and lost: no handler runs, so it has no effect.
+    if (isPageDebuggerPaused) {
+      lostKeys.push({ type, key })
+      return {}
+    }
+    const held =
+      (operationsOption?.press?.holdOn ?? 'keyUp') === type &&
+      stopPausesLatestInput()
+    if (held) {
+      emitFirstStopOfLatestInput()
+      await holdInputUntilContinued()
+    }
+    // The page's handlers ran once the event was answered.
+    pressEffects[type === 'keyDown' ? 'keydown' : 'keyup'].add(inputsSeen)
+    // The adapter's pause reaches the run over CDP before any `stopped` event.
+    if (type === 'keyDown' && operationsOption?.press?.pausesAfterKeyDown)
+      emitPause(1, 1, false)
+    return {}
+  }
   /** Tells whether the result of the action is visible: the single input was sent, or the last operation of a version 3 run was acknowledged. */
   const isResultVisible = (): boolean => {
     // A run with no operation shows its result once the entry page loaded: there is no input to wait for.
@@ -1365,6 +1459,12 @@ export async function configuredRuntimeHarness(
     if (expression === 'location.origin') return pageOrigin
     if (expression === scrollExpression)
       return { scrolled: clickTargetScrolled }
+    if (expression?.includes('describePressFocus')) {
+      if (expression.includes('"focus":true')) isPressFocusApplied = true
+      return operationsOption?.press?.focus ?? DEFAULT_PRESS_FOCUS
+    }
+    const pressAnswer = pressAfterAnswer(expression)
+    if (pressAnswer) return pressAnswer
     // An operation's own after conditions that a test chose never to hold.
     const operationAfterAnswer = operationAfterFailures.get(expression ?? '')
     if (operationAfterAnswer)
@@ -1416,7 +1516,18 @@ export async function configuredRuntimeHarness(
       onClose = listener
     },
     on(event: string, listener: (value: unknown) => void): void {
-      listeners.set(event, listener)
+      // The page's pause state follows every pause and resume the run's listener sees, whichever emitter sent it.
+      if (event === 'Debugger.paused')
+        listeners.set(event, (value) => {
+          isPageDebuggerPaused = true
+          listener(value)
+        })
+      else if (event === 'Debugger.resumed')
+        listeners.set(event, (value) => {
+          isPageDebuggerPaused = false
+          listener(value)
+        })
+      else listeners.set(event, listener)
     },
     async subscribe(): Promise<void> {},
     aggregateScreencastTelemetry(): void {},
@@ -1439,6 +1550,7 @@ export async function configuredRuntimeHarness(
         expression?: string
         url?: string
         type?: string
+        key?: string
         start?: ScriptPlace
         end?: ScriptPlace
         text?: string
@@ -1737,6 +1849,10 @@ export async function configuredRuntimeHarness(
         if (options.timedOutScreenshots?.includes(screenshotCount))
           throw new CdpRequestTimeoutError(method)
         return { data: screenshot }
+      }
+      if (method === 'Input.dispatchKeyEvent') {
+        keys.push({ type: parameters?.type, key: parameters?.key })
+        return answerKeyEvent(String(parameters?.type), parameters?.key)
       }
       if (method === 'Input.dispatchMouseEvent') {
         mouse.push({ type: parameters?.type, timeout })
@@ -2605,6 +2721,14 @@ export async function configuredRuntimeHarness(
       releases.push('captured source')
     },
   })
+  // Counts the run's reads of its own browser pause state: the press's release wait polls it, so a test waits on a number of polls instead of a fixed delay.
+  let pagePausedReadCount = 0
+  const readPagePaused: unknown = Reflect.get(owned, 'browserIsPaused')
+  if (typeof readPagePaused === 'function')
+    Reflect.set(owned, 'browserIsPaused', (): unknown => {
+      pagePausedReadCount++
+      return readPagePaused.call(owned)
+    })
   return {
     ...repository,
     run,
@@ -2613,12 +2737,22 @@ export async function configuredRuntimeHarness(
     breakpoints,
     userBreakpoint,
     mouse,
+    /** The `Input.dispatchKeyEvent` requests the run sent, in order, as `{ type, key }`. */
+    keys,
+    /** The key events (`{ type, key }`) the stand-in page received while paused and lost, in order. */
+    lostKeys,
     commands,
     /** Every expression the run evaluated in the owned page, in order. */
     evaluatedExpressions,
     releases,
     emitPause,
     emitCdpPause,
+    /** Sends the browser's CDP `Debugger.resumed`, as the page running again after a pause that no `stopped` announced. */
+    emitCdpResume: (): void => {
+      listeners.get('Debugger.resumed')?.({})
+    },
+    /** How many times the run has read its browser pause state so far (its press release polls it every 50 ms while the page is paused). */
+    pagePausedReads: (): number => pagePausedReadCount,
     /** The scripted Node participant of a run opened with `serverRuntime` (see {@link createServerParticipant}); `undefined` otherwise. */
     server: serverParticipant?.api,
     /** The folder each mocked Next reader received: `readDevelopmentBundle`, `assertDevelopmentWorkspace`, `readDeclaredDevelopmentPort` and the first argument of each `launchDevelopmentServer` call. */

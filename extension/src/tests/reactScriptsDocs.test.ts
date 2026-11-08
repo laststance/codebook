@@ -118,7 +118,7 @@ test('the MCP instructions name react-scripts-dev, its selection rule and the AP
       .split('\n')
       .find((line) => line.startsWith(' * 1.25 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.38')
+  assert.equal(API_VERSION, '1.39')
   assert.ok(protocol.includes('${REACT_SCRIPTS_APP_SELECTION_RULE}'))
   assert.ok(
     protocol.includes(
@@ -166,7 +166,7 @@ test('the README documents the react-scripts-dev adapter and its limits', async 
     'Codebook runs a Create React App app (react-scripts 5) at or below the repository root',
     "pauses at browser stops in the app's own source",
     'react-scripts 4 and a stop in `node_modules`',
-    'with **MCP API 1.38**',
+    'with **MCP API 1.39**',
     'study format 11 (`.study.v11.json`)',
   ])
     assert.ok(readme.includes(phrase), phrase)

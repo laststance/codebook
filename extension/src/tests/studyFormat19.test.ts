@@ -378,8 +378,8 @@ test('the evidence check refuses a format 19 server observation outside apiServe
   )
 })
 
-// Value: protects=AC4 this Codebook reads format 19, stores it as .study.v19.json second in the table, refuses format 21 as saved by a newer Codebook, and Codebook 0.2.100 (readable up to 18) lists a .study.v19.json file as saved by a newer one; fails_when=the row is missing or not first, the readable limit stays 18, or the file name rule stops recognising v19; no_claim=the 0.2.100 binary
-test('format 19 is stored and readable, format 21 is saved by a newer Codebook, and a reader limited to 18 lists v19 as newer', async () => {
+// Value: protects=AC4 this Codebook reads format 19, stores it as .study.v19.json, refuses format 22 as saved by a newer Codebook, and Codebook 0.2.100 (readable up to 18) lists a .study.v19.json file as saved by a newer one; fails_when=the row is missing, the readable limit stays 18, or the file name rule stops recognising v19; no_claim=the 0.2.100 binary
+test('format 19 is stored and readable, format 22 is saved by a newer Codebook, and a reader limited to 18 lists v19 as newer', async () => {
   // Arrange
   const frozenConstants = { READABLE_STUDY_VERSION: 18 }
   const newerStudyArchive = await loadModule<typeof NewerStudyArchiveModule>(
@@ -387,7 +387,7 @@ test('format 19 is stored and readable, format 21 is saved by a newer Codebook, 
     { '../constants': frozenConstants },
   )
   // Act
-  const row = STUDY_STORAGE_FORMATS[1]
+  const row = STUDY_STORAGE_FORMATS.find((format) => format.version === 19)
   const archive = newerStudyArchive.newerStudyArchive('a_b.study.v19.json')
   const sidecar = newerStudyArchive.newerStudyArchive('a_b.study.meta.v19.json')
   // Assert
@@ -398,11 +398,11 @@ test('format 19 is stored and readable, format 21 is saved by a newer Codebook, 
     metadataSuffix: '.study.meta.v19.json',
   })
   assert.equal(EXPO_WEB_API_SERVER_STUDY_VERSION, 19)
-  assert.equal(READABLE_STUDY_VERSION, 20)
+  assert.equal(READABLE_STUDY_VERSION, 21)
   assert.doesNotThrow(() => assertReadableStudyFormat({ version: 19 }))
   assert.throws(
-    () => assertReadableStudyFormat({ version: 21 }),
-    /saved in format 21 by a newer Codebook; this Codebook reads formats up to 20/,
+    () => assertReadableStudyFormat({ version: 22 }),
+    /saved in format 22 by a newer Codebook; this Codebook reads formats up to 21/,
   )
   assert.deepEqual({ ...archive }, { id: 'a_b', version: 19 })
   assert.equal(sidecar, undefined)

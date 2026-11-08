@@ -3,12 +3,14 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
+import { OPERATION_PRESS_REASONS } from '../constants'
 import { ERROR_RECOVERY } from '../errors'
 import {
   OPERATIONS_ERROR_CODES,
   OPERATIONS_QUICK_START_CONFIGURATION,
 } from '../operationsHelp'
 import {
+  liveRepositoryConfigSchema,
   operationsRepositoryConfigSchema,
   retainedRepositoryConfigSchema,
 } from '../repositoryConfigSchemas'
@@ -27,6 +29,12 @@ type OperationsHelp = {
     firstSuccess: string
   }
   operationsDeclare: Record<string, unknown>
+  operationsPress: {
+    anchor: string
+    summary: string
+    declaration: { example: unknown }
+    refusals: { reasons: Record<string, { fix: string; path: string }> }
+  }
   operationsSecrets: Record<string, unknown>
   operationsErrorCodes: {
     codes: Record<
@@ -96,7 +104,7 @@ test('the version 3 quick start gives the decision table, the call order, the ac
   const quickStart = help.operationsQuickStart
   const order = quickStart.callOrder.join('\n')
   // Assert
-  assert.equal(quickStart.decision.length, 3)
+  assert.equal(quickStart.decision.length, 4)
   assert.ok(quickStart.decision[0]?.use.includes('version 1'))
   assert.ok(quickStart.decision[1]?.use.includes('version 3'))
   for (const tool of [
@@ -250,7 +258,7 @@ test('the README names operations, ask-learner, the masking behavior change and 
   assert.ok(section.includes('`[pending]`'))
   assert.ok(section.includes('`isError: true`'))
   assert.ok(section.includes('`NAVIGATION_NOT_SETTLED`'))
-  assert.ok(readme.includes('**MCP API 1.38**'))
+  assert.ok(readme.includes('**MCP API 1.39**'))
 })
 
 // protects=DX-11/DES-4: the help says when a saved-session run asks, what a decline does, how Review again works, the confirmation values, the learner-only setting and why a fresh run shows no dialog; fails_when=a rule leaves the section; no_claim=the wording's quality
@@ -359,4 +367,148 @@ test('the help and the README say a recorded snapshot does not keep engine inter
       "debug session: the editor's own debugger shows the recorded source, scopes and call stack of the selected moment. A function's members and a prototype chain (`[[Prototype]]`, `__proto__`, `[[Scopes]]`, `[[FunctionLocation]]`) are not recorded in any run kind: such an entry keeps its preview, and its **Not recorded** row reads `Engine internals are not recorded.`",
     ),
   )
+})
+
+// Value: protects=the press example the help hands a chat is accepted by the live schema (needs the press member of the schema, so it passes only after lane A is integrated); fails_when=the schema changes the press shape and the help example keeps the old one; no_claim=that the placeholders name a real key or selector
+test('the press help example is a valid operation of the live schema', async (context) => {
+  // Arrange
+  const help = await readHelp(context)
+  const configuration = JSON.parse(
+    JSON.stringify(OPERATIONS_QUICK_START_CONFIGURATION),
+  )
+  configuration.afterOperation = 1
+  configuration.operations = [
+    configuration.operations[0],
+    help.operationsPress.declaration.example,
+  ]
+  // Act
+  const parsed = liveRepositoryConfigSchema.safeParse(configuration)
+  // Assert
+  assert.equal(parsed.success, true)
+  assert.equal(
+    help.operationsPress.anchor,
+    'codebook://help/repository-browser#press',
+  )
+})
+
+// Value: protects=the quick start tells a chat that a key-only screen needs press; fails_when=the decision row leaves the quick start; no_claim=the wording
+test('the quick-start decision table has a keyboard-shortcut row that points at the press section', async (context) => {
+  // Arrange
+  const help = await readHelp(context)
+  // Act
+  const row = help.operationsQuickStart.decision.find((entry) =>
+    entry.need.includes('keyboard shortcut'),
+  )
+  // Assert
+  assert.ok(row !== undefined)
+  assert.ok(row.use.includes('codebook://help/repository-browser#press'))
+  assert.ok(row.use.includes('API 1.39'))
+})
+
+// Value: protects=the refusals table, the recovery sentence and the closed reason list cannot drift apart; fails_when=a reason is added to OPERATION_PRESS_REASONS without a table row or without the INPUT_NOT_ACCEPTED recovery naming it (the recovery half passes only after lane B is integrated); no_claim=the wording of a fix (the engine tests pin the messages)
+test('the press refusals table has one row per reason and INPUT_NOT_ACCEPTED recovery names every reason', async (context) => {
+  // Arrange
+  const help = await readHelp(context)
+  // Act
+  const tableReasons = Object.keys(help.operationsPress.refusals.reasons)
+  const recovery = ERROR_RECOVERY.INPUT_NOT_ACCEPTED
+  // Assert
+  assert.deepEqual(tableReasons, [...OPERATION_PRESS_REASONS])
+  for (const reason of OPERATION_PRESS_REASONS) {
+    assert.ok(recovery.includes(reason), reason)
+    assert.ok(help.operationsPress.refusals.reasons[reason]?.fix)
+  }
+  assert.ok(
+    recovery.includes('codebook://help/repository-browser#press-refusals'),
+  )
+})
+
+// Value: protects=the press help states the API gate, the older-Codebook outcome, format 21 and the unrelated idempotency key; fails_when=one of these sentences leaves the help; no_claim=the behavior itself
+test('the press help gates on API 1.39 by whole number and names the older Codebook outcome and study format 21', async (context) => {
+  // Arrange
+  const help = await readHelp(context)
+  // Act
+  const section = JSON.stringify(help.operationsPress)
+  // Assert
+  assert.ok(section.includes('1.40 is later than 1.39'))
+  assert.ok(section.includes('INVALID_CONFIGURATION naming operations[i].kind'))
+  assert.ok(section.includes('study format 21'))
+  assert.ok(section.includes('has nothing to do with the idempotency key'))
+  assert.ok(section.includes('never fall back to version 2'))
+  assert.ok(section.includes('at operations[i].selector with no reason'))
+  assert.ok(section.includes('a keypress only for a printable key or Enter'))
+  assert.ok(section.includes('drops the release'))
+  assert.ok(section.includes('lands in the new document'))
+  assert.ok(section.includes('uppercase letter or a shifted symbol together'))
+  assert.ok(
+    section.includes('or operations[i].selector when the press declares'),
+  )
+  assert.ok(section.includes('never guess a key'))
+})
+
+// Value: protects=no value of a trial project appears in the press help, the skill sentence or the README sentences (no answer key); fails_when=a trial port, project name, selector or shortcut key is copied into those texts; no_claim=that the placeholders match any repository
+test('the press help, skill paragraph and README sentences contain no trial value', async (context) => {
+  // Arrange
+  const help = await readHelp(context)
+  const skill = await readPackaged('skills/codebook/SKILL.md')
+  const readme = await readPackaged('README.md')
+  const skillStart = skill.indexOf('**Operations (configuration version 3).**')
+  const readmeStart = readme.indexOf('- **Press a key')
+  const savedStart = readme.indexOf('A study of a run that declares a `press`')
+  const savedEnd = readme.indexOf('open it.', savedStart)
+  assert.ok(savedStart >= 0 && savedEnd > savedStart)
+  const slices = [
+    JSON.stringify(help.operationsPress),
+    skill.slice(skillStart, skill.indexOf('\n', skillStart)),
+    readme.slice(readmeStart, readme.indexOf('\n', readmeStart)),
+    readme.slice(savedStart, savedEnd),
+  ]
+  const banned = [
+    'nsx',
+    'stocklist',
+    '3010',
+    '4000',
+    'switch-time',
+    '4100',
+    '4101',
+    'setting-link',
+    '`x`',
+    '"x"',
+    'key: "x"',
+  ]
+  // Act
+  const hits = slices.flatMap((slice, index) =>
+    banned
+      .filter((value) => slice.includes(value))
+      .map((value) => `${index}:${value}`),
+  )
+  // Assert
+  assert.ok(skillStart > -1 && readmeStart > -1 && savedStart > -1)
+  assert.deepEqual(hits, [])
+})
+
+// Value: protects=the skill and README tell a chat and a learner about press, its API gate and the required after; fails_when=a sentence leaves them; no_claim=the behavior itself
+test('the skill and README state the press API gate, reading the handler, after on a non-last press and format 21', async () => {
+  // Arrange
+  const skill = await readPackaged('skills/codebook/SKILL.md')
+  const readme = await readPackaged('README.md')
+  // Act / Assert
+  for (const phrase of [
+    'declared as a `press` operation, only when `codebook_status` reports API 1.39 or later',
+    '1.40 is later than 1.39',
+    'never guess a key',
+    'Declare `after` for every press that is not the last operation',
+    'only when the learner asks',
+    'never fall back to version 2 for a keyboard-only screen',
+  ])
+    assert.ok(skill.includes(phrase), phrase)
+  for (const phrase of [
+    '**Press a key (MCP API 1.39).**',
+    'must declare its own `after` condition',
+    'saved as format 21 (`.study.v21.json`)',
+    'does not fall back to a version 2 configuration',
+    'API 1.39 is additive:',
+    'API 1.38 is additive:',
+  ])
+    assert.ok(readme.includes(phrase), phrase)
 })

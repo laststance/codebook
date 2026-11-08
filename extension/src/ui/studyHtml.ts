@@ -679,6 +679,19 @@ function studyClient(
     return { places, lineCount: lineEnds.length }
   }
   /**
+   * Names an operation's kind for its mark's tooltip and accessible name: a press names its key beside the kind ("press Control+k"); every other kind is its word alone.
+   * Called by {@link createOperationMark}.
+   * @param mark - The operation.
+   * @returns The kind phrase.
+   * @example operationKindPhrase({ kind: 'press', key: 'Control+k' }) // => 'press Control+k'
+   */
+  const operationKindPhrase = (
+    mark: Pick<
+      NonNullable<StudyViewMessage['recording']>['operations'][number],
+      'kind' | 'key'
+    >,
+  ): string => (mark.key === undefined ? mark.kind : `${mark.kind} ${mark.key}`)
+  /**
    * Builds one operation mark: a button with the operation's number (a cross and the word failed for a failed one, a question mark for one not finished), its tooltip and its accessible name.
    * @param mark - The operation.
    * @param place - Its pixel place and line.
@@ -696,7 +709,8 @@ function studyClient(
     control.dataset.state = mark.state
     control.style.left = `${place?.x ?? 0}px`
     control.style.top = `${(place?.line ?? 0) * options.operations.lineHeightPx}px`
-    control.title = `${mark.index} · ${mark.kind} · ${mark.title}`
+    const kindPhrase = operationKindPhrase(mark)
+    control.title = `${mark.index} · ${kindPhrase} · ${mark.title}`
     // A sent operation has a moment ("at 1.50 s"); one never sent has none, so its name says "not sent" alone.
     const momentPhrase =
       mark.atMs === undefined
@@ -704,7 +718,7 @@ function studyClient(
         : `at ${seconds(mark.atMs)}`
     control.setAttribute(
       'aria-label',
-      `Operation ${mark.index} of ${mark.total}, ${mark.kind}, ${mark.title}, ${momentPhrase}, ${stateWord}`,
+      `Operation ${mark.index} of ${mark.total}, ${kindPhrase}, ${mark.title}, ${momentPhrase}, ${stateWord}`,
     )
     const number = document.createElement('span')
     number.textContent = `${mark.index}${mark.state === 'failed' ? ' ✕' : mark.state === 'pending' ? ' ?' : ''}`

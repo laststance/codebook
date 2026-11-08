@@ -115,6 +115,9 @@
     "extension/fallow-health-baseline.json": [
       "extension/scripts/tests/staticHealth.test.mjs"
     ],
+    "extension/fallow-dupes-baseline.json": [
+      "extension/scripts/tests/workflowPins.test.mjs"
+    ],
     "extension/pnpm-workspace.yaml": [
       "extension/scripts/tests/workflowPins.test.mjs",
       "extension/scripts/tests/package.test.mjs"

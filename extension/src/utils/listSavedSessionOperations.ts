@@ -10,7 +10,7 @@ import type { RepositoryOperation } from '../repositoryConfigSchemas'
  * Called by {@link StudyService} when it builds the confirmation question; pure.
  * @param operations - The declared operations, in order.
  * @param facts - What the page said about each control; `undefined` when the read failed, which never blocks the dialog.
- * @returns One line per operation: a click has no value; a text shows its declared text or `(hidden)` for an ask-learner or secret control; a choose shows the enabled option's visible label, `(hidden)` for a secret select, or `(chosen when sent)`.
+ * @returns One line per operation: a click has no value; a press shows its canonical key; a text shows its declared text or `(hidden)` for an ask-learner or secret control; a choose shows the enabled option's visible label, `(hidden)` for a secret select, or `(chosen when sent)`.
  * @example
  * listSavedSessionOperations([{ kind: 'choose', title: 'Customer', selector: '#c', value: 'c1' }], [{ index: 1, found: true, secret: false, optionLabel: 'Alice' }])
  * // => [{ index: 1, kind: 'choose', title: 'Customer', value: 'Alice' }]
@@ -23,6 +23,8 @@ export function listSavedSessionOperations(
     const index = position + 1
     const base = { index, kind: operation.kind, title: operation.title }
     if (operation.kind === 'click') return base
+    // A press shows its canonical key; the declared selector is never read or shown.
+    if (operation.kind === 'press') return { ...base, value: operation.key }
     const fact = facts?.find((entry) => entry.index === index)
     if (operation.kind === 'text') {
       return { ...base, value: describeTextValue(operation, fact) }

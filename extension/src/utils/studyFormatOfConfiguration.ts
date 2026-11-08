@@ -8,6 +8,7 @@ import {
   NEXT_LIBRARY_STUDY_VERSION,
   OPERATIONS_STUDY_VERSION,
   PACKAGE_ROOT_STUDY_VERSION,
+  PRESS_STUDY_VERSION,
   REACT_SCRIPTS_LIBRARY_STUDY_VERSION,
   REACT_SCRIPTS_STUDY_VERSION,
   RECORDED_LOCATION_STUDY_VERSION,
@@ -27,6 +28,7 @@ type OperationsConfiguration = Extract<
 
 import { afterOperationOf } from './afterOperationOf'
 import { configuredStops } from './configuredStops'
+import { declaresPressOperation } from './declaresPressOperation'
 
 /** What the helpers here read of a saved study: its format number and its sealed configuration. */
 type StudyFormatSubject = Pick<ConfiguredStudy, 'version' | 'configuration'>
@@ -109,8 +111,8 @@ function derivedEvidenceFormat(
 }
 
 /**
- * Gives the study format a new save of a sealed configuration takes: a pure function of the configuration, so the format is fixed before the first checkpoint and never changes within a run.
- * Called by {@link captureStudy} when it writes a checkpoint and by {@link validateConfiguredStudyEvidence} when it reads one; {@link legacyStudyFormatOfConfiguration} keeps the mapping of archives saved before format 6.
+ * Gives the study format a sealed configuration takes when it declares no `press` operation: the format of its other features.
+ * Why it exists: format 21 ({@link PRESS_STUDY_VERSION}) keeps every fact this format keeps, so {@link studyRulesVersionOf} and {@link isReadableStudyFormatOfConfiguration} ask for it. Called by {@link studyFormatOfConfiguration} and those two; {@link legacyStudyFormatOfConfiguration} keeps the mapping of archives saved before format 6.
  * @param configuration - The sealed configuration of the run.
  * @returns
  * - {@link VITE_API_SERVER_STUDY_VERSION} (20) for a version 3 `vite-dev` configuration that declares `apiServer`
@@ -131,7 +133,7 @@ function derivedEvidenceFormat(
  * studyFormatOfConfiguration({ version: 3, packageRoot: 'apps/web', participant: 'browser', afterOperation: 1, operations: [op] }) // => 9
  * studyFormatOfConfiguration({ version: 3, adapter: 'vite-dev', packageRoot: 'apps/web', participant: 'browser', afterOperation: 1, operations: [op] }) // => 10
  */
-export function studyFormatOfConfiguration(
+function studyFormatWithoutPress(
   configuration: ConfiguredStudy['configuration'],
 ): ConfiguredStudy['version'] {
   if (configuration.version !== OPERATIONS_CONFIG_VERSION)
@@ -170,6 +172,40 @@ export function studyFormatOfConfiguration(
       ? VITE_PACKAGE_ROOT_STUDY_VERSION
       : PACKAGE_ROOT_STUDY_VERSION
   return derivedEvidenceFormat(configuration)
+}
+
+/**
+ * Gives the study format a new save of a sealed configuration takes: a pure function of the configuration, so the format is fixed before the first checkpoint and never changes within a run.
+ * Called by {@link captureStudy} when it writes a checkpoint and by {@link validateConfiguredStudyEvidence} when it reads one.
+ * @param configuration - The sealed configuration of the run.
+ * @returns {@link PRESS_STUDY_VERSION} (21) for a version 3 configuration that declares a `press` operation, whatever else it declares; otherwise the format {@link studyFormatWithoutPress} gives (6 to 20).
+ * @example
+ * studyFormatOfConfiguration({ version: 3, participant: 'browser', afterOperation: 1, operations: [clickOperation] }) // => 7
+ * studyFormatOfConfiguration({ version: 3, participant: 'browser', afterOperation: 1, operations: [pressOperation] }) // => 21
+ */
+export function studyFormatOfConfiguration(
+  configuration: ConfiguredStudy['configuration'],
+): ConfiguredStudy['version'] {
+  // A press makes an older Codebook list the study as saved by a newer one; the facts of the underlying run stay those of studyFormatWithoutPress.
+  return configuration.version === OPERATIONS_CONFIG_VERSION &&
+    declaresPressOperation(configuration)
+    ? PRESS_STUDY_VERSION
+    : studyFormatWithoutPress(configuration)
+}
+
+/**
+ * Gives the format whose configuration-derived rules a saved study follows: its own version, except that a format 21 study follows the rules of the format its configuration takes without the press.
+ * Why it exists: format 21 keeps every fact the underlying run's format keeps (`apiRequest`, library facts, evidence rules); the sites that compare a study version with a specific format for such a rule ask here instead of reading `study.version`. Called by {@link evidenceFormatOfStudy}, {@link assertObservationFormatFields}, {@link observationOfFormat}, {@link captureStudy} and {@link validateConfiguredStudyEvidence}.
+ * @param study - The saved study, or anything with its `version` and `configuration`.
+ * @returns `study.version`, or for format 21 the format {@link studyFormatWithoutPress} gives its configuration.
+ * @example
+ * studyRulesVersionOf({ version: 21, configuration: viteApiServerPressConfiguration }) // => 20
+ * studyRulesVersionOf({ version: 8, configuration }) // => 8
+ */
+export function studyRulesVersionOf(study: StudyFormatSubject): number {
+  return study.version === PRESS_STUDY_VERSION
+    ? studyFormatWithoutPress(study.configuration)
+    : study.version
 }
 
 /**
@@ -289,30 +325,32 @@ export function isModuleEvaluationUpgrade(
  * evidenceFormatOfStudy({ version: 10, configuration: viteBrowserStopConfiguration }) // => 7
  */
 export function evidenceFormatOfStudy(study: StudyFormatSubject): number {
+  // A format 21 study follows the rules of the format its configuration takes without the press.
+  const version = studyRulesVersionOf(study)
   // Formats 19 and 20 (`apiServer`) always follow the format 8 rules: their server stops carry execution, declaredIndex and executionIndex so a mixed browser and API replay keeps the order the run paused in.
   if (
-    isApiServerStudyFormat(study.version) &&
+    isApiServerStudyFormat(version) &&
     study.configuration.version === OPERATIONS_CONFIG_VERSION
   )
     return SERVER_RENDER_STUDY_VERSION
   if (
-    (study.version !== PACKAGE_ROOT_STUDY_VERSION &&
-      study.version !== VITE_PACKAGE_ROOT_STUDY_VERSION &&
-      study.version !== REACT_SCRIPTS_STUDY_VERSION &&
-      study.version !== MODULE_EVALUATION_STUDY_VERSION &&
-      study.version !== ROUTE_HANDLER_STUDY_VERSION &&
-      study.version !== API_ROUTE_STUDY_VERSION &&
+    (version !== PACKAGE_ROOT_STUDY_VERSION &&
+      version !== VITE_PACKAGE_ROOT_STUDY_VERSION &&
+      version !== REACT_SCRIPTS_STUDY_VERSION &&
+      version !== MODULE_EVALUATION_STUDY_VERSION &&
+      version !== ROUTE_HANDLER_STUDY_VERSION &&
+      version !== API_ROUTE_STUDY_VERSION &&
       // Format 16 (`vite-dev` with `library`) follows the format 7 rules derived from its configuration, like format 10.
-      study.version !== VITE_LIBRARY_STUDY_VERSION &&
+      version !== VITE_LIBRARY_STUDY_VERSION &&
       // Format 17 (`react-scripts-dev` with `library`) follows the format 7 rules derived from its configuration, like format 11.
-      study.version !== REACT_SCRIPTS_LIBRARY_STUDY_VERSION &&
+      version !== REACT_SCRIPTS_LIBRARY_STUDY_VERSION &&
       // Format 18 (`next-dev-webpack` with `library`) follows the format 7 or 8 rules derived from its configuration, like format 9.
-      study.version !== NEXT_LIBRARY_STUDY_VERSION &&
+      version !== NEXT_LIBRARY_STUDY_VERSION &&
       // Format 15 (`expo-web-dev`) follows the format 7 rules derived from its configuration, like format 11.
-      study.version !== EXPO_WEB_STUDY_VERSION) ||
+      version !== EXPO_WEB_STUDY_VERSION) ||
     study.configuration.version !== OPERATIONS_CONFIG_VERSION
   )
-    return study.version
+    return version
   return derivedEvidenceFormat(study.configuration)
 }
 
@@ -328,17 +366,14 @@ export function usesServerRenderEvidence(study: StudyFormatSubject): boolean {
 }
 
 /**
- * Says whether a saved format number is written only from a version 3 configuration (formats 7 to 20), which no study of version 1 or 2 may carry.
+ * Says whether a saved format number is written only from a version 3 configuration (formats 7 to 21), which no study of version 1 or 2 may carry.
  * Called by {@link validateConfiguredStudyEvidence} for the version 1 and 2 configurations.
  * @param version - The study's saved format.
  * @returns `true` for the formats written only from a version 3 configuration.
  * @example isOperationsStudyFormat(8) // => true
  */
 export function isOperationsStudyFormat(version: number): boolean {
-  return (
-    version >= OPERATIONS_STUDY_VERSION &&
-    version <= VITE_API_SERVER_STUDY_VERSION
-  )
+  return version >= OPERATIONS_STUDY_VERSION && version <= PRESS_STUDY_VERSION
 }
 
 /**
@@ -374,8 +409,13 @@ export function isReadableStudyFormatOfConfiguration(
   version: number,
   configuration: ConfiguredStudy['configuration'],
 ): boolean {
-  if (version === studyFormatOfConfiguration(configuration)) return true
-  if (configuration.version !== OPERATIONS_CONFIG_VERSION) return false
+  if (configuration.version !== OPERATIONS_CONFIG_VERSION)
+    return version === studyFormatWithoutPress(configuration)
+  // A configuration that declares a press is readable as format 21 only, and format 21 holds a configuration that declares one only.
+  if (declaresPressOperation(configuration))
+    return version === PRESS_STUDY_VERSION
+  if (version === PRESS_STUDY_VERSION) return false
+  if (version === studyFormatWithoutPress(configuration)) return true
   // A react-scripts-dev configuration is readable as format 11 (or 17 with `library`, the equality above) only, also without a packageRoot, so the format 7 fallback below never accepts it (DX-10).
   if (configuration.adapter === 'react-scripts-dev') return false
   // An expo-web-dev configuration is readable as format 15, or as 19 when it declares `apiServer` (the equality above), only.

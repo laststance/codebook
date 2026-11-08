@@ -159,6 +159,60 @@ test('listed values hide secrets, show a choice by its label and say chosen when
   )
 })
 
+// Value: protects=AC 3/D36: the confirmation dialog names a press with its canonical key and keeps the sentence that the run changes the app's real data; fails_when=the press line has no key, or the real-data sentence is lost; no_claim=how the editor draws the dialog
+test('the confirmation text shows a press as its title and canonical key beside the real-data sentence', () => {
+  // Arrange
+  const question = {
+    runId: 'r1',
+    repository: 'nextjs-dashboard',
+    entryPath: '/dashboard',
+    operations: [
+      { index: 1, kind: 'click', title: 'Pending' },
+      {
+        index: 2,
+        kind: 'press',
+        title: 'Open the sidebar',
+        value: 'Control+k',
+      },
+    ],
+  } as const
+  // Act
+  const text = describeSavedSessionOperations(question)
+  // Assert
+  assert.equal(
+    text.detail,
+    [
+      'Page already opened with your saved session: /dashboard',
+      "Changes this run makes to the app's data are real; the replay does not undo them.",
+      'The app keeps the data it already had.',
+      '1. click Pending',
+      '2. press Open the sidebar: Control+k',
+    ].join('\n'),
+  )
+})
+
+// Value: protects=AC 3/D36: a press line carries its stored key whatever the page said, even a secret read, and never its selector; fails_when=a press shows (hidden), a chosen-when-sent word or the selector; no_claim=the page read
+test('a press line shows its canonical key even when the page read the focused control as secret', () => {
+  // Arrange
+  const operations: RepositoryOperation[] = [
+    {
+      kind: 'press',
+      title: 'Open the sidebar',
+      key: 'Control+k',
+      selector: '#palette',
+    },
+    { kind: 'press', title: 'Confirm', key: 'Enter' },
+  ]
+  const facts = [{ index: 1, found: true, secret: true }]
+  // Act
+  const lines = listSavedSessionOperations(operations, facts)
+  // Assert
+  assert.deepEqual(lines, [
+    { index: 1, kind: 'press', title: 'Open the sidebar', value: 'Control+k' },
+    { index: 2, kind: 'press', title: 'Confirm', value: 'Enter' },
+  ])
+})
+
 // Value: protects=ENG-8/DX-1 a secret select stays hidden even when the page also returned an option label, and a fact of another operation is ignored; fails_when=the label of a secret select reaches the dialog or a neighbouring fact leaks onto an operation; why_new=the listed-values test never pairs a secret with a label; seam=listSavedSessionOperations; no_claim=the page read
 test("a secret select shows (hidden) even with an option label, and another operation's fact never applies", () => {
   // Arrange

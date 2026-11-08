@@ -302,6 +302,7 @@ import { declaresEdgeApiRuntime } from './utils/declaresEdgeApiRuntime'
 import { describeCdpPause } from './utils/describeCdpPause'
 import type { NextEntryResponse } from './utils/describeNextEntryResponse'
 import { describeNextLaunchFailure } from './utils/describeNextLaunchFailure'
+import { describePressRefusal } from './utils/describePressRefusal'
 import {
   describeRenderRunMessage,
   type RenderRunMessageInput,
@@ -368,6 +369,7 @@ import { nextServedChunkFetcher } from './utils/nextServedChunkFetcher'
 import { nextServerOnlyFileReasonOfStop } from './utils/nextServerOnlyFileReason'
 import { nextServerOnlyStopMessage } from './utils/nextServerOnlyStopMessage'
 import { OperationAfterTimeoutError } from './utils/operationAfterTimeoutError'
+import { operationHasValueCheck } from './utils/operationHasValueCheck'
 import { operationRefusalText } from './utils/operationRefusalText'
 import { OutstandingPageRequests } from './utils/outstandingPageRequests'
 import {
@@ -1123,6 +1125,8 @@ type DebugParticipant = {
   deferredRefresh?: PauseIdentity
   /** Every script this participant announced, by script id, so the journal can name the place of a pause in any of them. */
   scriptUrls: Map<string, string>
+  /** Set by every `Debugger.paused` of this participant's runtime and cleared by its `Debugger.resumed`: the raw fact that the runtime is paused, whatever the run made of the pause. {@link ConfiguredBrowserRun.browserIsPaused} reads it for a browser pause the run only holds while idle. */
+  runtimePaused?: boolean
   /** The journal clock when the last pause was observed; cleared by its resume. */
   pauseObservedAtMs?: number
   /** Whether the last observed pause was journaled or only counted; cleared by its resume. The resume of a pause nothing holds (an instrumentation pause, a pause from before the action) is journaled or counted with it. */
@@ -1633,7 +1637,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           title: operation.title,
           state: 'not-run',
           ack: 'pending',
-          valueCheck: operation.kind === 'click' ? 'n/a' : 'pending',
+          valueCheck: operationHasValueCheck(operation.kind)
+            ? 'pending'
+            : 'n/a',
           effect: 'pending',
         })
     }
@@ -12443,6 +12449,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (this.cleaning) return
     const participant = this.participants[name]
     participant.pauseObservedAtMs = this.evidence.elapsedMs()
+    participant.runtimePaused = true
     const isInstrumentation = event.reason === 'instrumentation'
     this.stampApiPauseReceipt(name, isInstrumentation)
     // A hook that pauses in a loop must not use up the journal: a declared stop's pause is always journaled, any other only up to a cap. The runtime's instrumentation pauses are counted before that cap, under one of their own, so they cannot use up the room of the pauses the debugger makes for itself.
@@ -13754,6 +13761,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       // A page that settled on a sign-in path ends the run before this operation is resolved or sent.
       await this.refuseSignInPageNow()
       await this.assertOperationConditions(index, total)
+      await this.assertPressEffectNotYetPresent(index, operation)
       const prepare = (): Promise<PreparedOperation> =>
         prepareOperation(port, { index, total, operation, learnerSecret })
       let prepared = await prepare()
@@ -13764,7 +13772,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       }
       const hooks = this.operationHooks(index, operation)
       // Every image path is gated from before the secret is typed (ENG-5); a control that is no safe password control gets no input.
-      if (prepared.isSecret)
+      if (prepared.isSecret && operation.kind === 'text')
         await this.armSecretGate(index, operation.selector, learnerSecret)
       await prepared.send({
         ...hooks,
@@ -13879,6 +13887,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         performance.now() - this.lastNavigationAtMs,
       sleep: (delayMs) =>
         sleep(delayMs, undefined, { signal: this.abort.signal }),
+      isPagePaused: () => this.browserIsPaused(),
       readClickPoint: async (selector) => {
         const scrolled = await this.scrollTargetIntoView(selector)
         const target = await this.readConditions([], selector)
@@ -13927,6 +13936,39 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Refuses a press whose own `after` conditions already hold on the page: a result that is true before the key cannot prove the key caused it.
+   * Called by {@link dispatchOperation} right after {@link assertOperationConditions} and again by the press's `beforeKey` hook right after its send-time focus step; it only reads.
+   * @param index - The operation about to be sent (1-based).
+   * @param operation - Its declaration; anything but a press that declares `after` passes.
+   * @throws {@link OperationRefusal} `INPUT_NOT_ACCEPTED` with reason `press-after-already-holds` and `sent: 'not-sent'` when the conditions hold.
+   * @example await this.assertPressEffectNotYetPresent(2, operation)
+   */
+  private async assertPressEffectNotYetPresent(
+    index: number,
+    operation: RepositoryOperation,
+  ): Promise<void> {
+    // Click, text and choose keep their checks unchanged.
+    if (operation.kind !== 'press' || !operation.after) return
+    const prior = await this.readConditions(operation.after)
+    this.alive()
+    if (!prior.ready) return
+    const { message, path } = describePressRefusal(
+      'press-after-already-holds',
+      {
+        index,
+        title: operation.title,
+        element: { tagName: 'body' },
+      },
+    )
+    throw new OperationRefusal('INPUT_NOT_ACCEPTED', message, {
+      operationIndex: index,
+      path,
+      reason: 'press-after-already-holds',
+      sent: 'not-sent',
+    })
+  }
+
+  /**
    * Builds the moments of one operation's input for the engine: the dispatch, the acknowledgement and the value check each move the operation's record forward and are journaled without any text.
    * @param index - The operation (1-based).
    * @param operation - Its declaration, of which only the kind and selector are journaled.
@@ -13936,6 +13978,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private operationHooks(index: number, operation: RepositoryOperation) {
     const record = this.operationRecords[index - 1]!
     return {
+      // A press's focus step can satisfy its own after conditions: they are read again right before the key (D30, after the focus).
+      beforeKey: (): Promise<void> =>
+        this.assertPressEffectNotYetPresent(index, operation),
       beforeInput: (): void => {
         this.assertServerRegistrationsHeld()
         this.operationsDispatched = index
@@ -15104,6 +15149,30 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Says whether the page is paused by the browser participant's own pause state, for the guard of a `press` operation that must not send a key into a paused page.
+   *
+   * Browser participant only: a server pause leaves the page running, and {@link adapterPausesRetired} is both too broad (the server participant) and incomplete (no announced gate, pending stop or awaited continuation). Called through {@link OperationPort.isPagePaused}.
+   * @returns `true` while the browser holds its own pause (including a CDP pause admitted or queued before the debugger's `stopped`), a transient pause, an unannounced pause or an instrumentation pause.
+   * @example
+   * ```ts
+   * this.browserIsPaused() // true while a declared browser stop is being inspected
+   * ```
+   */
+  private browserIsPaused(): boolean {
+    return (
+      this.browserHoldsOwnPause() ||
+      // A CDP pause the run admitted (or queued behind a continuation) holds the page before the debugger's `stopped` arrives; both clear when the runtime resumes.
+      this.participants.browser.stopped !== undefined ||
+      this.pendingCdpStop?.participant === 'browser' ||
+      this.transientBrowserPause !== undefined ||
+      Boolean(this.participants.browser.unannouncedPause) ||
+      this.participants.browser.instrumentationPaused === true ||
+      // A pause the run only holds while it waits for its first operation records nothing above, yet the page is stopped until its `Debugger.resumed`.
+      this.participants.browser.runtimePaused === true
+    )
+  }
+
+  /**
    * Says whether the browser holds a pause, a queued stop or an unacknowledged continuation of its own, for {@link serverStopOfBrowserPause}: a `stopped` that arrives then is never taken for a pause in a stub of a server module.
    * @returns `true` while the browser's gate holds a pause, its announced stop is queued, or its continuation still waits for the adapter's `continued`.
    * @example
@@ -15397,6 +15466,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const isPauseOnlyCounted = participant.pauseJournaled === false
     participant.pauseObservedAtMs = undefined
     participant.pauseJournaled = undefined
+    participant.runtimePaused = undefined
     // The runtime's own instrumentation pause ended; it never was a stop of this run. Its resume is journaled only when its pause was, so both stay under the cap.
     if (participant.instrumentationPaused) {
       participant.instrumentationPaused = false

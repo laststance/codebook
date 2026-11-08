@@ -73,10 +73,10 @@ test('refuses a library with an extra member, no package root or a path that lea
   )
 })
 
-// protects=the API version is 1.38 and the library build budget is 180 seconds; fails_when=either constant drifts from the plan; no_claim=that a build finishes in the budget (native check)
-test('serves API 1.38 with a 180 second library build budget', () => {
+// protects=the API version is 1.39 and the library build budget is 180 seconds; fails_when=either constant drifts from the plan; no_claim=that a build finishes in the budget (native check)
+test('serves API 1.39 with a 180 second library build budget', () => {
   // Arrange / Act / Assert
-  assert.equal(API_VERSION, '1.38')
+  assert.equal(API_VERSION, '1.39')
   assert.equal(LIBRARY_BUILD_TIMEOUT_MS, 180_000)
 })
 

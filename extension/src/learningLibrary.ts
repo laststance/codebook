@@ -9,6 +9,7 @@ import {
   LEARNING_SCHEMA_VERSION_V4,
   MAX_LEARNER_DECISIONS,
   MAX_STUDY_ARCHIVE_BYTES,
+  CONFIGURED_STUDY_VERSION,
   PLAYBACK_PREFERENCE_FILE,
   PLAYBACK_PREFERENCE_LIMIT_BYTES,
   PRIVATE_DIRECTORY_MODE,
@@ -763,29 +764,15 @@ export class LearningLibrary {
   /**
    * Says whether an archive format keeps a catalog checkpoint beside the archive, so {@link list} reads one and {@link reconcile} repairs one only for such a study.
    * @param format - The format of a study's newest archive.
-   * @returns `true` for `v3` to `v20`; `false` for the historical formats and for a newer Codebook's.
+   * @returns `true` for `v3` to the newest readable format; `false` for the historical formats and for a newer Codebook's.
    * @example this.keepsCheckpoint('v2') // => false
    */
   private keepsCheckpoint(format: LibraryEntry['format']): boolean {
-    return (
-      format === 'v3' ||
-      format === 'v4' ||
-      format === 'v5' ||
-      format === 'v6' ||
-      format === 'v7' ||
-      format === 'v8' ||
-      format === 'v9' ||
-      format === 'v10' ||
-      format === 'v11' ||
-      format === 'v12' ||
-      format === 'v13' ||
-      format === 'v14' ||
-      format === 'v15' ||
-      format === 'v16' ||
-      format === 'v17' ||
-      format === 'v18' ||
-      format === 'v19' ||
-      format === 'v20'
+    // The storage table owns the readable numbered formats, so the next format needs no edit here.
+    return STUDY_STORAGE_FORMATS.some(
+      (storage) =>
+        storage.format === format &&
+        storage.version >= CONFIGURED_STUDY_VERSION,
     )
   }
 

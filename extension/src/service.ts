@@ -115,7 +115,10 @@ import type {
 import type { RecordingSeal } from './recordingSchemas'
 import type { RecordingStore, RecordingWriter } from './recordingStore'
 import type { RepositoryBookStore } from './repositoryBook'
-import { dropDefaultPackageRoot } from './repositoryConfigSchemas'
+import {
+  canonicalizePressKeys,
+  dropDefaultPackageRoot,
+} from './repositoryConfigSchemas'
 import type {
   SourceListInput,
   SourceReadInput,
@@ -1933,7 +1936,9 @@ export class StudyService {
         parsed.data.profile === REPOSITORY_BROWSER_PROFILE
           ? {
               ...parsed.data,
-              configuration: dropDefaultPackageRoot(parsed.data.configuration),
+              configuration: canonicalizePressKeys(
+                dropDefaultPackageRoot(parsed.data.configuration),
+              ),
             }
           : parsed.data,
       signature = this.startSignature(intent)
