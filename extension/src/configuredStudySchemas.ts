@@ -87,6 +87,28 @@ export const configuredDescriptorSchema = z.strictObject({
   citationContext: citationContextSchema,
   sources: z.array(repositorySourceSchema).min(1).max(BOOK_MAX_ANCHORS),
 })
+/** Which path a request took to the API: straight to its origin, or through the dev server under a declared prefix. */
+const apiRequestRouteSchema = z.enum(['api-origin', 'dev-server-proxy'])
+/** A declared `apiServer.proxyPaths` prefix as an `apiRequest` fact keeps it. */
+const apiRequestProxyPathSchema = z
+  .string()
+  .min(1)
+  .max(256)
+  .regex(
+    /^\/[^?#*]*$/,
+    'Use a prefix that starts with "/" and has no "*", "?" or "#".',
+  )
+/**
+ * What an unattributed fact of a proxy-aware run watched: ports and declared prefixes only, never host strings.
+ * `devServerPort` is present only when `proxyPaths` is not empty.
+ */
+const apiRequestWatchedSchema = z.strictObject({
+  apiPort: z.number().int().min(1).max(65_535),
+  devServerPort: z.number().int().min(1).max(65_535).optional(),
+  proxyPaths: z.array(apiRequestProxyPathSchema).max(8),
+})
+export type ApiRequestWatched = z.infer<typeof apiRequestWatchedSchema>
+
 /**
  * The request a format 19 server pause was tied to: the one page request the API was serving when it paused (`attributed`, matched by time), or the reason no single request could be named (`unattributed`: none or several candidates).
  * Why it exists: a server stop in the app's own API pauses during a request the page sent, and the replay must say which request, or say that none could be named, without claiming a request it did not observe.
@@ -119,6 +141,9 @@ const apiRequestFactSchema = z.union([
     operation: z.number().int().min(1).max(REPOSITORY_OPERATION_LIMIT),
     basis: z.literal('time-window'),
     sentence: z.string().min(1).max(MAX_UI_TEXT_CHARS),
+    // Proxy-aware (`vite-dev`) runs only; which format admits them is checked by `assertObservationFormatFields`.
+    route: apiRequestRouteSchema.optional(),
+    proxyPath: apiRequestProxyPathSchema.optional(),
   }),
   z
     .strictObject({
@@ -126,6 +151,7 @@ const apiRequestFactSchema = z.union([
       reason: z.enum(['none', 'several']),
       count: z.number().int().nonnegative().max(API_REQUEST_COUNT_LIMIT),
       sentence: z.string().min(1).max(MAX_UI_TEXT_CHARS),
+      watched: apiRequestWatchedSchema.optional(),
     })
     // `none` counts no candidate; `several` counts at least two (one candidate is attributed).
     .refine(

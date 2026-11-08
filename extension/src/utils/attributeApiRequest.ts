@@ -1,4 +1,7 @@
-import type { ApiRequestFact } from '../configuredStudySchemas'
+import type {
+  ApiRequestFact,
+  ApiRequestWatched,
+} from '../configuredStudySchemas'
 import {
   API_REQUEST_EARLY_END_LIMIT,
   API_REQUEST_METHOD_LIMIT_CHARS,
@@ -9,7 +12,7 @@ import {
   ROUTE_HANDLER_REQUEST_LIMIT,
 } from '../constants'
 
-import { describeApiRequestSentence } from './describeApiRequestSentence'
+import { apiRequestFactOf, type ApiRequestDecision } from './apiRequestFactOf'
 
 /** The `Network.requestWillBeSent` fields {@link ApiRequestTracker} reads. */
 export interface ApiRequestWillBeSent {
@@ -51,6 +54,24 @@ interface TrackedHop {
   startTimestamp: number
   /** Monotonic end timestamp (seconds): the next redirect hop's start or an end event. */
   endTimestamp?: number
+  /** Which origin the hop went to. */
+  route: ApiRequestRoute
+  /** The declared prefix a dev-server hop matched. */
+  proxyPath?: string
+}
+
+/** Which origin one page request went to. */
+type ApiRequestRoute = 'api-origin' | 'dev-server-proxy'
+
+/** Turns the tracker proxy-aware: the declared `apiServer.proxyPaths`, possibly empty (D29). */
+export interface ApiProxyOptions {
+  proxyPaths: readonly string[]
+}
+
+/** Where one request URL points, when it is a candidate. */
+interface RequestClassification {
+  route: ApiRequestRoute
+  proxyPath?: string
 }
 
 /** Keeps a masked path within {@link API_REQUEST_PATH_LIMIT_CHARS}, ending a cut path with {@link API_REQUEST_PATH_ELLIPSIS}. */
@@ -65,6 +86,38 @@ function capPath(path: string): string {
 }
 
 const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]'])
+
+/** Parses a URL that is `http:` on a loopback host; `undefined` for anything else (including text that is no URL). */
+function loopbackHttpUrlOf(text: string): URL | undefined {
+  let url: URL
+  try {
+    url = new URL(text)
+  } catch {
+    return undefined
+  }
+  return url.protocol === 'http:' && LOOPBACK_HOSTNAMES.has(url.hostname)
+    ? url
+    : undefined
+}
+
+/**
+ * Finds the longest declared prefix a path equals or continues at a `/` boundary.
+ * @example matchedPrefixOf('/api/x', ['/api']) // => '/api'; matchedPrefixOf('/apiculture', ['/api']) // => undefined
+ */
+function matchedPrefixOf(
+  pathname: string,
+  prefixes: readonly string[],
+): string | undefined {
+  let best: string | undefined
+  for (const prefix of prefixes) {
+    const boundary = prefix.endsWith('/') ? prefix : `${prefix}/`
+    const isMatch = pathname === prefix || pathname.startsWith(boundary)
+    // The longest matching prefix names the route.
+    if (isMatch && (best === undefined || prefix.length > best.length))
+      best = prefix
+  }
+  return best
+}
 
 /**
  * Follows the page's requests to the API origin so one API pause can be matched to the request waiting for it (D7).
@@ -89,14 +142,37 @@ export class ApiRequestTracker {
   /** Latest end (wall ms, `Infinity` when still open) of any request dropped at the limit. */
   private evictedLatestEndWallMs = -Infinity
 
+  /** The port the run's dev server listens on; unset until {@link ApiRequestTracker.bindDevServerPort}. */
+  private devServerPort?: number
+  /** Declared prefixes of a proxy-aware tracker; `undefined` for an Expo tracker. */
+  private readonly proxyPaths?: readonly string[]
+  private readonly limit: number
+
   /**
    * @param port - The declared `apiServer.port`; requests to `localhost`, `127.0.0.1` and `[::1]` on it are tracked.
-   * @param limit - Most requests kept; the oldest finished ones go first.
+   * @param limitOrProxy - A number is the most requests kept (the oldest finished ones go first). `{ proxyPaths }` makes the tracker proxy-aware, even with an empty list.
+   * @param limit - Most requests kept when the proxy options are given.
    */
   constructor(
     private readonly port: number,
-    private readonly limit: number = ROUTE_HANDLER_REQUEST_LIMIT,
-  ) {}
+    limitOrProxy?: number | ApiProxyOptions,
+    limit?: number,
+  ) {
+    if (typeof limitOrProxy === 'object')
+      this.proxyPaths = limitOrProxy.proxyPaths
+    this.limit =
+      (typeof limitOrProxy === 'number' ? limitOrProxy : limit) ??
+      ROUTE_HANDLER_REQUEST_LIMIT
+  }
+
+  /**
+   * Tells the tracker which port the dev server listens on; called once, right after the server started and before the browser opens.
+   *
+   * A dev-server request seen before this call is never a candidate. Has no effect on an Expo tracker.
+   */
+  bindDevServerPort(port: number): void {
+    this.devServerPort = port
+  }
 
   /**
    * Records a request start or a redirect hop.
@@ -111,7 +187,8 @@ export class ApiRequestTracker {
       const previous = hops[hops.length - 1]!
       previous.endTimestamp ??= event.timestamp
     }
-    if (!this.isApiOrigin(event.request.url)) {
+    const classification = this.classify(event.request.url)
+    if (!classification) {
       this.rememberOutside(event.requestId)
       return
     }
@@ -123,6 +200,8 @@ export class ApiRequestTracker {
       startWallMs: event.wallTime * 1000,
       startTimestamp: event.timestamp,
       endTimestamp: early,
+      route: classification.route,
+      proxyPath: classification.proxyPath,
     }
     // A repeated start of the same id without a redirect response starts the request afresh.
     if (isRedirectHop && hops) hops.push(hop)
@@ -159,6 +238,7 @@ export class ApiRequestTracker {
       .filter((hop) => this.isCandidate(hop, pause))
     const only = candidates.length === 1 ? candidates[0]! : undefined
     const method = only?.method.toUpperCase()
+    let decision: ApiRequestDecision
     const mayHaveLostCandidate =
       this.evictedNewestStartWallMs >= pause.windowStartWallMs &&
       this.evictedLatestEndWallMs > pause.cutoffWallMs
@@ -170,38 +250,44 @@ export class ApiRequestTracker {
     ) {
       // Cut at the producer so the saved study stays valid; the sentence names the same path.
       const path = capPath(pause.maskText(new URL(only.url).pathname))
-      return {
+      decision = {
         state: 'attributed',
         method,
         path,
-        operation: pause.operation,
-        basis: 'time-window',
-        sentence: describeApiRequestSentence({
-          state: 'attributed',
-          method,
-          path,
-          operation: pause.operation,
-          title: pause.title,
-        }),
+        route: only.route,
+        proxyPath: only.proxyPath,
+      }
+    } else {
+      // A lone candidate that cannot be named, or whose neighbours may have been dropped, is not a unique match.
+      const count =
+        only && mayHaveLostCandidate
+          ? API_REQUEST_SEVERAL_MIN_COUNT
+          : candidates.length === 1
+            ? 0
+            : candidates.length
+      decision = {
+        state: 'unattributed',
+        reason: count === 0 ? 'none' : 'several',
+        count,
       }
     }
-    // A lone candidate that cannot be named, or whose neighbours may have been dropped, is not a unique match.
-    const count =
-      only && mayHaveLostCandidate
-        ? API_REQUEST_SEVERAL_MIN_COUNT
-        : candidates.length === 1
-          ? 0
-          : candidates.length
-    const reason = count === 0 ? 'none' : 'several'
+    return apiRequestFactOf(decision, {
+      operation: pause.operation,
+      title: pause.title,
+      watched: this.watched(),
+    })
+  }
+
+  /** What a proxy-aware tracker watches; `undefined` for an Expo tracker. */
+  private watched(): ApiRequestWatched | undefined {
+    if (!this.proxyPaths) return undefined
+    const hasPrefixes = this.proxyPaths.length > 0
     return {
-      state: 'unattributed',
-      reason,
-      count,
-      sentence: describeApiRequestSentence({
-        state: 'unattributed',
-        reason,
-        count,
-      }),
+      apiPort: this.port,
+      ...(hasPrefixes && this.devServerPort !== undefined
+        ? { devServerPort: this.devServerPort }
+        : {}),
+      proxyPaths: [...this.proxyPaths],
     }
   }
 
@@ -216,18 +302,23 @@ export class ApiRequestTracker {
     return hopEndWallMs(hop) > pause.cutoffWallMs
   }
 
-  private isApiOrigin(text: string): boolean {
-    let url: URL
-    try {
-      url = new URL(text)
-    } catch {
-      return false
-    }
-    return (
-      url.protocol === 'http:' &&
-      LOOPBACK_HOSTNAMES.has(url.hostname) &&
-      (url.port || '80') === String(this.port)
-    )
+  /**
+   * Decides whether a request URL is a candidate and which route it took.
+   *
+   * API origin first; then, in a proxy-aware tracker with a bound dev-server port, the dev-server origin under the longest declared prefix at a `/` boundary.
+   * @returns The route, or `undefined` for a request outside both.
+   */
+  private classify(text: string): RequestClassification | undefined {
+    const url = loopbackHttpUrlOf(text)
+    if (!url) return undefined
+    const port = url.port || '80'
+    if (port === String(this.port)) return { route: 'api-origin' }
+    if (this.devServerPort === undefined || port !== String(this.devServerPort))
+      return undefined
+    const proxyPath = matchedPrefixOf(url.pathname, this.proxyPaths ?? [])
+    return proxyPath === undefined
+      ? undefined
+      : { route: 'dev-server-proxy', proxyPath }
   }
 
   private rememberOutside(requestId: string): void {
