@@ -696,7 +696,10 @@ function studyClient(
     control.dataset.state = mark.state
     control.style.left = `${place?.x ?? 0}px`
     control.style.top = `${(place?.line ?? 0) * options.operations.lineHeightPx}px`
-    control.title = `${mark.index} · ${mark.kind} · ${mark.title}`
+    // A press names its key beside the kind ("press Control+k"); every other kind is its word alone.
+    const kindPhrase =
+      mark.key === undefined ? mark.kind : `${mark.kind} ${mark.key}`
+    control.title = `${mark.index} · ${kindPhrase} · ${mark.title}`
     // A sent operation has a moment ("at 1.50 s"); one never sent has none, so its name says "not sent" alone.
     const momentPhrase =
       mark.atMs === undefined
@@ -704,7 +707,7 @@ function studyClient(
         : `at ${seconds(mark.atMs)}`
     control.setAttribute(
       'aria-label',
-      `Operation ${mark.index} of ${mark.total}, ${mark.kind}, ${mark.title}, ${momentPhrase}, ${stateWord}`,
+      `Operation ${mark.index} of ${mark.total}, ${kindPhrase}, ${mark.title}, ${momentPhrase}, ${stateWord}`,
     )
     const number = document.createElement('span')
     number.textContent = `${mark.index}${mark.state === 'failed' ? ' ✕' : mark.state === 'pending' ? ' ?' : ''}`

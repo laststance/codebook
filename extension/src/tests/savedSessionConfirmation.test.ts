@@ -532,6 +532,39 @@ test('the dialog names the page and each operation, hides a secret and shows a c
   assert.equal(second.questions[0]?.operations[0]?.value, '(chosen when sent)')
 })
 
+// Value: protects=AC 3/D36: the dialog a saved-session run asks lists a press by its title and canonical key without reading the page for it; fails_when=the press line shows no key, shows the declared selector or the typed spelling, or a failed page read blocks the dialog; no_claim=the real editor modal and the keystroke itself
+test('the dialog lists a press by its title and canonical key and never by its selector', async (context) => {
+  // Arrange
+  const { service, receipt, environment, runtime } = await startRun(context, {
+    session: 'saved',
+    operations: [
+      {
+        kind: 'press',
+        title: 'Open the sidebar',
+        key: 'Control+k',
+        selector: '#palette',
+        after: [{ kind: 'visible', selector: '#palette-open' }],
+      },
+      { kind: 'click', title: 'Pending', selector: '#pending' },
+    ] as never,
+  })
+  runtime.confirmationFactsFailure = new Error('page gone')
+  const hooks = recordHooks(environment)
+  // Act
+  await errorOf(() =>
+    service.performAction({
+      ...receipt,
+      key: 'op-1',
+      action: OPERATION_ACTION,
+    }),
+  )
+  // Assert
+  assert.deepEqual(hooks.questions[0]?.operations, [
+    { index: 1, kind: 'press', title: 'Open the sidebar', value: 'Control+k' },
+    { index: 2, kind: 'click', title: 'Pending' },
+  ])
+})
+
 // protects=X1 asked once per run + DX-3 order: the confirmation comes before the secret box, a declined secret keeps the run confirmed, and the next action asks only the secret; fails_when=the confirmation is asked twice or the secret first; no_claim=the real boxes
 test('a saved-session run asks the confirmation first, then the secret, and a declined secret does not ask the confirmation again', async (context) => {
   // Arrange

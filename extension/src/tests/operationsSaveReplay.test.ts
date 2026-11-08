@@ -350,8 +350,8 @@ test('a study saved in a format one above the readable one is listed, refused wi
   context.after(() => removeTestFolder(directory))
   const study = createOperationsStudy()
   const library = new LearningLibrary(directory, study.workspaceKey)
-  const futurePath = join(directory, `${study.id}.study.v21.json`)
-  const futureBytes = JSON.stringify({ ...study, version: 21 })
+  const futurePath = join(directory, `${study.id}.study.v22.json`)
+  const futureBytes = JSON.stringify({ ...study, version: 22 })
   await writeFile(futurePath, futureBytes)
   // Act
   const listed = await library.list()
@@ -361,11 +361,11 @@ test('a study saved in a format one above the readable one is listed, refused wi
   assert.equal(listed[0]?.format, 'newer')
   assert.equal(
     listed[0]?.reason,
-    'This study was saved in format 21 by a newer Codebook; this Codebook reads formats up to 20. Update the extension to open it. The study is kept as it is.',
+    'This study was saved in format 22 by a newer Codebook; this Codebook reads formats up to 21. Update the extension to open it. The study is kept as it is.',
   )
   await assert.rejects(read, {
     message:
-      'This study was saved in format 21 by a newer Codebook; this Codebook reads formats up to 20. Update the extension to open it. The study is kept as it is.',
+      'This study was saved in format 22 by a newer Codebook; this Codebook reads formats up to 21. Update the extension to open it. The study is kept as it is.',
   })
   assert.equal(await readFile(futurePath, 'utf8'), futureBytes)
 })
@@ -477,6 +477,96 @@ test('the replay projects one mark per operation with its state and a time insid
       [4, 4, 'pending', undefined],
     ],
   )
+})
+
+// Value: protects=AC 4/D36: the replay mark of a press carries the canonical key the sealed configuration declared and every other kind carries none; fails_when=the press mark has no key, takes the key of another operation, or a click gains one; no_claim=how the Study page draws the mark (Reader DOM check)
+test('the replay mark of a press carries its canonical key and the marks of other kinds carry none', () => {
+  // Arrange
+  const study = createOperationsStudy()
+  const context = validateRecordingContext(
+    buildRecordingContext(
+      decodeConfiguredStudy(study, study.workspaceKey),
+      [],
+      1,
+    ),
+    study.workspaceKey,
+  )
+  const configuration = context.study.configuration
+  assert.ok('operations' in configuration && configuration.operations)
+  const pressContext = {
+    ...context,
+    study: {
+      ...context.study,
+      configuration: {
+        ...configuration,
+        operations: configuration.operations.map((operation, position) =>
+          position === 2
+            ? { kind: 'press' as const, title: 'Pending', key: 'Control+k' }
+            : operation,
+        ),
+      },
+      operations: context.study.operations?.map((record) =>
+        record.index === 3 ? { ...record, kind: 'press' as const } : record,
+      ),
+    },
+  }
+  // Act
+  const marks = projectReplayOperations(pressContext, {
+    startMs: 1200,
+    endMs: 3000,
+  })
+  // Assert
+  assert.deepEqual(
+    marks.map((mark) => [mark.index, mark.kind, mark.key]),
+    [
+      [1, 'choose', undefined],
+      [2, 'text', undefined],
+      [3, 'press', 'Control+k'],
+      [4, 'click', undefined],
+    ],
+  )
+})
+
+// Value: protects=AC 4/D36: a saved press record keeps its kind and title, takes its sent time from the dispatch receipt and gains no key field; fails_when=the record drops the kind, loses the time, or stores a key; no_claim=a real press run
+test('a press record is saved with its kind and sent time and without a key field', () => {
+  // Arrange
+  const events: RecordedEvent[] = [
+    {
+      sequence: 1,
+      type: 'input.dispatched',
+      elapsedMs: 410.5,
+      wallTime: '2026-09-20T00:00:00.000Z',
+      detail: { operationIndex: 1 },
+    },
+  ]
+  // Act
+  const saved = projectSavedOperations(
+    [
+      {
+        index: 1,
+        kind: 'press',
+        title: 'Open the sidebar',
+        state: 'done',
+        ack: 'yes',
+        valueCheck: 'n/a',
+        effect: 'dispatched',
+      },
+    ],
+    events,
+  )
+  // Assert
+  assert.deepEqual(saved, [
+    {
+      index: 1,
+      kind: 'press',
+      title: 'Open the sidebar',
+      atMs: 410.5,
+      state: 'done',
+      ack: 'yes',
+      valueCheck: 'n/a',
+      effect: 'dispatched',
+    },
+  ])
 })
 
 // protects=seeking to each operation's moment shows the last frame at or before it and the stop that begins exactly there, and seeking away and back returns the same frame, stop and values; fails_when=the moment shows a later frame, misses a pause starting at the moment, or a repeated seek differs; no_claim=the player's presentation of the frame (workspace tests)
