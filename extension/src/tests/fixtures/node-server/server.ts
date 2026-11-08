@@ -2,7 +2,7 @@
 // Like a repository's own server, it reads its settings from the folder it runs in (fixture-server.json there), never from Codebook.
 // The tests copy its compiled file into a new folder, so it imports only Node.js built-ins.
 import { fork, type ChildProcess } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import {
   createServer,
   type IncomingMessage,
@@ -30,6 +30,21 @@ const mode = String(setting('mode') ?? 'listen')
 if (mode === 'exit-before-listen') {
   console.error('fixture cannot start: exit-before-listen')
   process.exit(3)
+}
+
+// API-shaped modes, as a repository's own API server: `exit-after-echo` prints a line that carries the `echo` setting (a credential the learner typed after the launch) and exits with code 5.
+if (mode === 'exit-after-echo') {
+  console.error(`login failed for ${String(setting('echo'))}`)
+  process.exit(5)
+}
+// `api` mode with a `grandchildPidFile` starts a descendant in the server's own process group, as a worker or watcher child does.
+const isGrandchild = process.argv[2] === 'grandchild'
+const grandchildPidFile = setting('grandchildPidFile')
+if (typeof grandchildPidFile === 'string' && !isGrandchild) {
+  const grandchild = fork(process.argv[1] ?? '', ['grandchild'], {
+    execArgv: [],
+  })
+  writeFileSync(grandchildPidFile, String(grandchild.pid))
 }
 
 /** Request bytes received on each open connection, so `/received-bytes` can report what other connections sent. */
@@ -109,6 +124,12 @@ async function answer(
     process.stdout.write(`fixture cwd ${folder.slice(0, middle)}`)
     process.stdout.write(`${folder.slice(middle)}/src/server.ts\n`)
   }
+  // A handler that reaches a breakable line and then writes its marker file, as an API handler writes its row.
+  if (requestPath === '/marker') {
+    debugger
+    const markerFile = setting('markerFile')
+    if (typeof markerFile === 'string') writeFileSync(markerFile, 'written')
+  }
   if (requestPath === '/reset') {
     request.socket.destroy()
     return
@@ -119,6 +140,7 @@ async function answer(
     .reduce((sum, [, bytes]) => sum + bytes, 0)
   const replies: Record<string, () => Reply> = {
     '/health': () => jsonReply(200, { status: 'ok' }),
+    '/marker': () => jsonReply(200, { status: 'marked' }),
     '/log-credential': () => jsonReply(200, { status: 'ok' }),
     '/log-root': () => jsonReply(200, { status: 'ok' }),
     '/environment': () =>
@@ -182,7 +204,9 @@ const host = String(setting('host') ?? '127.0.0.1')
 // A "fork" parent starts a child that listens and does not listen itself, as a cluster or fork server does.
 const isForkChild = process.argv[2] === 'fork-child'
 let forkChild: ChildProcess | undefined
-if (mode === 'never-listen') setInterval(() => undefined, 60_000)
+// The descendant only stays alive; it listens on nothing.
+if (isGrandchild || mode === 'never-listen')
+  setInterval(() => undefined, 60_000)
 else if (mode === 'fork' && !isForkChild) {
   forkChild = fork(process.argv[1] ?? '', ['fork-child'])
   setInterval(() => undefined, 60_000)

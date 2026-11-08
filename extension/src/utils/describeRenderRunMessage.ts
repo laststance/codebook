@@ -1,8 +1,12 @@
+import type { ApiRequestFact } from '../configuredStudySchemas'
+
 import { describeApiRoutePauseMessage } from './describeApiRoutePauseMessage'
 import { describeRouteHandlerPauseMessage } from './describeRouteHandlerPauseMessage'
 
 /** What the run knows about a render in progress, for {@link describeRenderRunMessage}. */
 export type RenderRunMessageInput = {
+  /** An API server pause is held now: the fact that ties it to the page's request, or says why none could be named (Cycle 0099). */
+  apiRequest?: ApiRequestFact
   /** An entry-render pause is held now: a server-render pause with no operation, `entry-load` or `unconfirmed`. */
   isEntryRenderPaused: boolean
   /** The run waits for the next stop of a set after a continue: the place of the awaited stop among the set's stops and the set's size. */
@@ -31,6 +35,7 @@ export type RenderRunMessageInput = {
  * @param input - The render's state.
  * @returns
  * - `The server render of the entry page is paused; the page finishes loading after you continue. Stop it with codebook_stop if you do not continue.` while an entry-render pause is held
+ * - the API pause's ready sentence (what request it waited for, or why none is named) while an API server pause is held
  * - `Paused in the route handler <METHOD> <route> (request <path>), observed after operation <k>. …` while a route-handler pause is held
  * - `Waiting for the next stop of this render (<n> of <m>).` after a continue inside a set of render stops
  * - for a held Pages pause that is unconfirmed, a sentence that says Codebook could not establish that the pause is inside the entry page's data function, with the reason, before the sentence above when both apply
@@ -41,6 +46,11 @@ export type RenderRunMessageInput = {
 export function describeRenderRunMessage(
   input: RenderRunMessageInput,
 ): string | undefined {
+  if (input.apiRequest)
+    // Only an attributed pause is known to hold the page's request; an unattributed one may not.
+    return input.apiRequest.state === 'attributed'
+      ? `${input.apiRequest.sentence} The paused API handler holds the page's request; continue to let it answer, or stop it with codebook_stop.`
+      : `${input.apiRequest.sentence} Continue to let the handler run on, or stop it with codebook_stop.`
   if (input.apiRoute) {
     const { operationIndex, ...apiRoute } = input.apiRoute
     return `${describeApiRoutePauseMessage({ apiRoute, operationIndex })}. The page's request waits for the handler; continue to let it answer, or stop it with codebook_stop.`

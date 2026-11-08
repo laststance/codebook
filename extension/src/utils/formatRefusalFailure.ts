@@ -1,3 +1,4 @@
+import type { API_SERVER_EXITED_VARIANT } from '../apiServerRefusals'
 import type { SignInRequiredReason } from '../constants'
 import type {
   NextPagesFailureVariant,
@@ -44,6 +45,16 @@ export function formatRefusalFailure(
   variant: NextPagesFailureVariant,
 ): string
 export function formatRefusalFailure(
+  code: 'SERVER_EXITED',
+  message: string,
+  variant: typeof API_SERVER_EXITED_VARIANT,
+): string
+export function formatRefusalFailure(
+  code: 'EXPO_WEB_SEAL_FAILED',
+  message: string,
+  variant: string,
+): string
+export function formatRefusalFailure(
   code: RefusalFailureCode,
   message: string,
 ): string
@@ -51,7 +62,11 @@ export function formatRefusalFailure(
   code: RefusalFailureCode,
   message: string,
   variant?:
-    NextSetupDeadlineVariant | SignInRequiredReason | NextPagesFailureVariant,
+    | NextSetupDeadlineVariant
+    | SignInRequiredReason
+    | NextPagesFailureVariant
+    | typeof API_SERVER_EXITED_VARIANT
+    | string,
 ): string {
   return variant === undefined
     ? `${code}: ${message}`

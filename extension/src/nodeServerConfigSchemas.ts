@@ -3,64 +3,30 @@ import { z } from 'zod'
 import {
   ASK_LEARNER_SECRET,
   CONFIGURED_OBSERVATION_LIMIT,
-  NODE_SERVER_PORT_MAX,
-  NODE_SERVER_PORT_MIN,
   NODE_SERVER_SIGN_IN_FIELD_LIMIT_CHARS,
   NODE_SERVER_SIGN_IN_FIELDS_MAX,
   NODE_SERVER_SIGN_IN_SECRET_FIELD_LIMIT_CHARS,
   REPOSITORY_CONFIG_LIMIT_BYTES,
 } from './constants'
+import {
+  addNodeLoaderIssue,
+  nodeEntrySchema,
+  nodeLoaderSchema,
+  nodePackageRootSchema,
+  nodeServerPortSchema,
+  withDefaultNodeLoader,
+} from './nodeLaunchSchemas'
 import { nodeTestStopSchema } from './nodeTestConfigSchemas'
 import {
   nodeTestStopInspectionsSchema,
   repositoryBookSelectionSchema,
   repositorySourceStopSchema,
 } from './repositoryConfigSchemas'
-import { repositoryPathSchema } from './sourceSchemas'
 import { addStopInspectionIssues } from './utils/addStopInspectionIssues'
 import { describeNodeServerRequestBodyIssues } from './utils/describeNodeServerRequestBodyIssues'
 import { isSecretName } from './utils/isSecretName'
 import { nodeServerRequestPathProblem } from './utils/nodeServerRequestPathProblem'
 import { redactSecretText } from './utils/redactSecretText'
-
-/** The entry files node runs: TypeScript ones through the repository's own tsx, JavaScript ones directly. */
-const ENTRY_EXTENSION = /\.(?:ts|mts|cts|js|mjs|cjs)$/
-/** The entry extensions that need tsx, since plain node runs JavaScript only. */
-const TYPESCRIPT_ENTRY_EXTENSION = /\.(?:ts|mts|cts)$/
-const PORT_EXPECTATION = `expected an integer from ${NODE_SERVER_PORT_MIN} to ${NODE_SERVER_PORT_MAX}, the port the server's own code listens on.`
-const CONTENT_TYPES = [
-  'application/json',
-  'text/plain',
-  'application/x-www-form-urlencoded',
-] as const
-
-/** The entry file of a repository Node run, shared by {@link nodeServerConfigSchema} and the node-script configuration. */
-export const nodeEntrySchema = repositoryPathSchema
-  .refine(
-    (path) => ENTRY_EXTENSION.test(path),
-    'expected a .ts, .mts, .cts, .js, .mjs or .cjs file relative to packageRoot.',
-  )
-  // node receives the entry as a bare argument; a leading dash would be read as an option such as --inspect.
-  .refine(
-    (path) => !path.startsWith('-'),
-    'expected an entry that does not begin with "-", which node would read as an option.',
-  )
-
-/** The folder a repository Node run executes in: `"."` or a package folder; shared with the node-script configuration. */
-export const nodePackageRootSchema = z
-  .union([z.literal('.'), repositoryPathSchema])
-  .default('.')
-  .describe(
-    'The folder the process runs in, relative to the repository: "." or a package folder such as "apps/api".',
-  )
-
-/** How node runs the entry (`tsx` or `node`); shared with the node-script configuration. */
-export const nodeLoaderSchema = z
-  .enum(['tsx', 'node'])
-  .optional()
-  .describe(
-    'How node runs the entry: "tsx" through the repository\'s own tsx, "node" for a JavaScript entry. Defaults from the entry\'s extension.',
-  )
 
 /** The extra stops of a Node profile run, capped at the configured observation limit; shared with the node-script configuration. */
 export const nodeAdditionalStopsSchema = z
@@ -70,51 +36,6 @@ export const nodeAdditionalStopsSchema = z
     `expected at most ${CONFIGURED_OBSERVATION_LIMIT - 1} additional stops.`,
   )
   .optional()
-
-/**
- * Refuses a TypeScript entry declared with the plain `node` loader, which runs JavaScript only.
- *
- * Called from the `superRefine` of {@link nodeServerConfigSchema} and the node-script configuration schema.
- *
- * @param configuration - The parsed entry and optional loader.
- * @param context - The refinement context that receives the issue.
- */
-function addNodeLoaderIssue(
-  configuration: { entry: string; loader?: 'tsx' | 'node' | undefined },
-  context: z.RefinementCtx,
-): void {
-  if (
-    configuration.loader === 'node' &&
-    TYPESCRIPT_ENTRY_EXTENSION.test(configuration.entry)
-  )
-    context.addIssue({
-      code: 'custom',
-      path: ['loader'],
-      message:
-        'expected "tsx" for a TypeScript entry; plain node runs JavaScript entries only.',
-    })
-}
-
-/**
- * Fills the loader from the entry's extension: TypeScript runs through tsx, JavaScript through node.
- *
- * @param configuration - A parsed configuration with an entry and an optional loader.
- * @returns The configuration with a concrete loader.
- */
-export function withDefaultNodeLoader<
-  Configuration extends { entry: string; loader?: 'tsx' | 'node' | undefined },
->(
-  configuration: Configuration,
-): Omit<Configuration, 'loader'> & { loader: 'tsx' | 'node' } {
-  return {
-    ...configuration,
-    loader:
-      configuration.loader ??
-      (TYPESCRIPT_ENTRY_EXTENSION.test(configuration.entry)
-        ? ('tsx' as const)
-        : ('node' as const)),
-  }
-}
 
 /**
  * Adds the issues every Node profile declaration shares: a TypeScript entry with the node loader, a stop without a required value inspection, and a declaration over the byte limit.
@@ -151,6 +72,20 @@ const serverPathSchema = z.string().superRefine((path, context) => {
       message: `expected a path on the server starting with "/", ${problem}.`,
     })
 })
+
+const CONTENT_TYPES = [
+  'application/json',
+  'text/plain',
+  'application/x-www-form-urlencoded',
+] as const
+
+// The launch fields moved to nodeLaunchSchemas (shared with the `apiServer` declaration); the node-script configuration still imports them from here.
+export {
+  nodeEntrySchema,
+  nodeLoaderSchema,
+  nodePackageRootSchema,
+  withDefaultNodeLoader,
+}
 
 const SIGN_IN_FIELD_TEXT = `expected a non-empty string of at most ${NODE_SERVER_SIGN_IN_FIELD_LIMIT_CHARS} characters.`
 
@@ -300,14 +235,7 @@ export const nodeServerConfigSchema = z
       'The server entry file, relative to packageRoot, as its package runs it (for example "src/server.ts").',
     ),
     loader: nodeLoaderSchema,
-    port: z
-      .number(PORT_EXPECTATION)
-      .int(PORT_EXPECTATION)
-      .min(NODE_SERVER_PORT_MIN, PORT_EXPECTATION)
-      .max(NODE_SERVER_PORT_MAX, PORT_EXPECTATION)
-      .describe(
-        "The port the server's own code listens on. Codebook never sets PORT or any variable; it only checks this port.",
-      ),
+    port: nodeServerPortSchema,
     request: requestSchema,
     signIn: signInSchema
       .optional()

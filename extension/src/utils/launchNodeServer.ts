@@ -14,7 +14,11 @@ import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { buildNodeServerEnvironment } from './buildNodeServerEnvironment'
-import type { KnownValueMask, ProcessOutputEvent } from './captureProcessOutput'
+import type {
+  KnownValueMask,
+  ProcessOutputEvent,
+  ProcessOutputOptions,
+} from './captureProcessOutput'
 import {
   confirmLaunchedGroup,
   type LaunchedGroupVerdict,
@@ -43,6 +47,8 @@ export type NodeServerLaunchRequest = ResolvedNodeServerLaunch & {
   privateRoots?: CauseRoots
   /** The run's known secret values; masked statefully in the server's output, across chunk boundaries, before it is journaled or stored ({@link captureProcessOutput}). */
   knownValues?: KnownValueMask
+  /** Sees the server's raw decoded output per channel before hiding and masking, to read the runtime's own fixed notices ({@link ProcessOutputOptions.onRawText}). */
+  onRawText?: ProcessOutputOptions['onRawText']
 }
 
 /** How an owned server process ended. */
@@ -261,6 +267,7 @@ export async function launchNodeServer(
       failurePrefix: 'Node server output capture failed',
       ...(launch.privateRoots ? { privateRoots: launch.privateRoots } : {}),
       ...(launch.knownValues ? { knownValues: launch.knownValues } : {}),
+      ...(launch.onRawText ? { onRawText: launch.onRawText } : {}),
     })
   const exitOf = (): NodeServerExit => ({
     exitCode: child.exitCode,

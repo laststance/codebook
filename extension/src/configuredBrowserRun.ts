@@ -9,6 +9,11 @@ import * as vscode from 'vscode'
 import { z } from 'zod'
 
 import {
+  API_SERVER_EXITED_VARIANT,
+  apiServerExitedRefusal,
+  apiStopFileMissingRefusal,
+} from './apiServerRefusals'
+import {
   OperationRefusal,
   prepareOperation,
   readOperationConfirmationFacts,
@@ -18,6 +23,7 @@ import {
 } from './configuredOperations'
 import {
   configuredDefinitionSchema,
+  type ApiRequestFact,
   type ConfiguredDefinition,
 } from './configuredStudySchemas'
 import type {
@@ -62,6 +68,7 @@ import {
   SERVER_RENDER_PAUSE_POLL_MS,
   SERVER_RENDER_RESUMED_HIT_JOURNAL_LIMIT,
   SERVER_RENDER_ROUTE_EXPRESSION,
+  OWNED_API_SERVER_LOSS_ARBITER_MS,
   ROUTE_HANDLER_REQUEST_POLL_MS,
   ROUTE_HANDLER_REQUEST_WAIT_MS,
   REPOSITORY_RUN_TIMEOUT_MS,
@@ -103,8 +110,13 @@ import {
 } from './errors'
 import { EXPO_WEB_DEV_ADAPTER } from './expoWebDevAdapter'
 import {
+  expoWebApiPortConflictRefusal,
+  expoWebApiSealVariantOf,
+  expoWebApiSourceDriftRefusal,
+  expoWebApiSourceUnverifiableRefusal,
   expoWebNodeModulesRefusal,
   expoWebOutsidePackageRefusal,
+  expoWebPortRefusal,
   expoWebSetupDeadlineRefusal,
   expoWebSetupDeadlineText,
 } from './expoWebRefusals'
@@ -130,6 +142,7 @@ import {
 } from './nextRefusals'
 import type { LibraryRunView } from './nodeScriptRuntimeTypes'
 import type { OperationConfirmationFact } from './operationsConfirmationTypes'
+import { OwnedApiServer, type CheckedApiServer } from './ownedApiServer'
 import {
   OwnedBreakpointMovedError,
   OwnedBreakpointRemovedError,
@@ -206,6 +219,11 @@ import {
   type SourceMapLimits,
 } from './sourceMapLimits'
 import { afterOperationOf } from './utils/afterOperationOf'
+import { ApiEntryGate } from './utils/apiEntryGate'
+import {
+  apiServerRefusalOf,
+  type ApiServerStep,
+} from './utils/apiServerRefusalOf'
 import { appResolvedPathsOf } from './utils/appResolvedPathsOf'
 import { assertConfiguredDescriptor } from './utils/assertConfiguredDescriptor'
 import { assertConfiguredSourceDocuments } from './utils/assertConfiguredSourceDocuments'
@@ -218,7 +236,9 @@ import { assertFrameAtBoundPosition } from './utils/assertFrameAtBoundPosition'
 import { assertReactScriptsLibraryPortFree } from './utils/assertReactScriptsLibraryPortFree'
 import { assertSavedSessionOrigin } from './utils/assertSavedSessionOrigin'
 import { assertViteLibraryNeedsPackageRoot } from './utils/assertViteLibraryNeedsPackageRoot'
+import { assessExpoWebWorkspace } from './utils/assessExpoWebWorkspace'
 import { refuseViteMisroute } from './utils/assessViteWorkspace'
+import { ApiRequestTracker } from './utils/attributeApiRequest'
 import { blankCommentsAndTemplates } from './utils/blankCommentsAndTemplates'
 import { boundColumnOfInstance } from './utils/boundColumnOfInstance'
 import {
@@ -226,6 +246,7 @@ import {
   type BreakLocationsOnTheWay,
   type MappedBreakLocation,
 } from './utils/breakLocationLinesOnTheWay'
+import { bundleOfExecutedNodeModule } from './utils/bundleOfExecutedNodeModule'
 import {
   canonicalDefinition,
   withCanonicalPackageRoot,
@@ -242,6 +263,7 @@ import { configuredScrollExpression } from './utils/configuredScrollExpression'
 import { configuredStopFields } from './utils/configuredStopFields'
 import { configuredStops } from './utils/configuredStops'
 import { continuationReceipts } from './utils/continuationReceipts'
+import { createApiServerOutputJournal } from './utils/createApiServerOutputJournal'
 import { createBindingLineRule } from './utils/createBindingLineRule'
 import {
   createBundleVerifier,
@@ -374,6 +396,7 @@ import {
 import { readNextRouteManifests } from './utils/readNextRouteManifests'
 import { readNextRouterKind } from './utils/readNextRouterKind'
 import { readNextServerOnlyReason } from './utils/readNextServerOnlyReason'
+import { readNodeVersion } from './utils/readNodeVersion'
 import { readPagesApiRequest } from './utils/readPagesApiRequest'
 import { readPagesDevelopmentBundle } from './utils/readPagesDevelopmentBundle'
 import { readNextInstallation } from './utils/readRepositoryAdapterReadiness'
@@ -386,6 +409,7 @@ import { redactNextEntryPath } from './utils/redactNextEntryPath'
 import { redactPreparedConfiguration } from './utils/redactPreparedConfiguration'
 import type { PreparedTextState } from './utils/redactPreparedTexts'
 import { renderedRouteOf } from './utils/renderedRouteOf'
+import { resolveApiLoss } from './utils/resolveApiLoss'
 import { resolveArmedPlace } from './utils/resolveArmedPlace'
 import { resolveExpoWebPackage } from './utils/resolveExpoWebPackage'
 import { resolveNextClientManifest } from './utils/resolveNextClientManifest'
@@ -413,7 +437,9 @@ import {
 import { routeHandlerMethodsOf } from './utils/routeHandlerMethodsOf'
 import { routeHandlerPathMatches } from './utils/routeHandlerPathMatches'
 import {
-  ROUTE_HANDLER_PROFILES,
+  isNodeApiHit,
+  routeHandlerAcceptsLine,
+  webpackProfileOf,
   type RouteHandlerKind,
 } from './utils/routeHandlerProfile'
 import { RouteHandlerRequests } from './utils/routeHandlerRequests'
@@ -427,6 +453,7 @@ import {
 } from './utils/routeHandlerStackOf'
 import {
   API_ROUTE_NOT_REACHED_POSSIBILITIES,
+  API_SERVER_NOT_REACHED_POSSIBILITIES,
   ROUTE_HANDLER_NOT_REACHED_POSSIBILITIES,
 } from './utils/routeHandlerWording'
 import { sameScriptUrl } from './utils/sameScriptUrl'
@@ -741,6 +768,12 @@ type RouteHandlerHitResumeVerdict = {
   reason: RouteHandlerResumeReason
   declaredIndex: number
 }
+/** The verdict for a hit of an armed API stop that came before its operation's input was dispatched (background polling, an earlier request, another client): resumed and journaled, the stop stays armed for the real input. */
+type ApiBeforeInputVerdict = {
+  action: 'resume'
+  event: 'breakpoint.api-before-input'
+  declaredIndex: number
+}
 /** The verdict for a server pause in a server library stop's file that is nobody's stop: another layer's copy of the module (the `(ssr)` one) or a line only a browser stop declares; resumed and journaled with the script address, never counted and never observed. */
 type LibraryCopyVerdict = {
   action: 'resume'
@@ -761,7 +794,7 @@ const EDGE_RUNTIME_DECLARATION =
  * Called by {@link ConfiguredBrowserRun.pauseLabelFields}.
  * @param stop - The stop that paused.
  * @param group - The stop's `afterOperation`.
- * @returns `attribution`, `operationIndex` and `routeHandler` or `apiRoute`; empty for every other stop.
+ * @returns `attribution`, `operationIndex` and `routeHandler` or `apiRoute`; `apiRequest` alone for an API server stop; empty for every other stop.
  * @example requestPauseFieldsOf(apiStop, 1) // { attribution: 'after-operation', operationIndex: 1, apiRoute: { method: 'GET', … } }
  */
 function requestPauseFieldsOf(
@@ -769,9 +802,11 @@ function requestPauseFieldsOf(
   group: number | undefined,
 ): Pick<
   ConfiguredRuntimeSnapshot,
-  'attribution' | 'operationIndex' | 'routeHandler' | 'apiRoute'
+  'attribution' | 'operationIndex' | 'routeHandler' | 'apiRoute' | 'apiRequest'
 > {
   if (group === undefined) return {}
+  // An API server pause names its request in `apiRequest` (format 19); it carries no operation index of its own.
+  if (stop.apiRequest) return { apiRequest: stop.apiRequest }
   const observed = {
     attribution: 'after-operation' as const,
     operationIndex: group,
@@ -789,7 +824,8 @@ function requestPauseFieldsOf(
  */
 function heldRequestPauseOf(
   held: ConfiguredRuntimeSnapshot | undefined,
-): Pick<RenderRunMessageInput, 'routeHandler' | 'apiRoute'> {
+): Pick<RenderRunMessageInput, 'routeHandler' | 'apiRoute' | 'apiRequest'> {
+  if (held?.apiRequest) return { apiRequest: held.apiRequest }
   if (held?.operationIndex === undefined) return {}
   const operationIndex = held.operationIndex
   if (held.execution === 'api-route' && held.apiRoute)
@@ -893,6 +929,8 @@ type PreparedStop = ReturnType<typeof configuredStops>[number] & {
   routeHandler?: { method: string; route: string; path: string }
   /** Set for an API-route stop once it paused: the method and path of the request the handler holds (or of the matched browser request), and the route pattern from the file path. */
   apiRoute?: { method: string; route: string; path: string }
+  /** Set for a stop in the app's own Node API server once it paused: the page request it was tied to by time, or why none was (Cycle 0099). */
+  apiRequest?: ApiRequestFact
   /** Set for a stop in a workspace library: `source.line` and `armed` are built-file lines, and {@link LibraryStopState} translates them. */
   library?: LibraryStopState
   /** The stop's place in the declared stop list, fixed when it was sealed; the run reorders the stops of a server set into the order they pause, so this index names the declaration, never the position in {@link ConfiguredBrowserRun.stops}. */
@@ -1083,6 +1121,13 @@ type ServerMatch = {
     ReturnType<ReturnType<typeof launchDevelopmentServer>['verifyInspector']>
   >
 }
+/** The Node process the run's server participant attaches to: where its inspector listens, the folder it runs in, how its inspector is proven to be that process's own, and the source map overrides of its debug configuration (Next only). */
+type ServerAttachTarget = {
+  endpoint: (signal: AbortSignal) => Promise<string>
+  cwd: string
+  verify: (cdp: Cdp, signal: AbortSignal) => Promise<ServerMatch['identity']>
+  sourceMapPathOverrides?: () => Record<string, string>
+}
 type Continuation = {
   participant: Participant
   pause: PauseIdentity
@@ -1224,6 +1269,28 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private routeHandlerStops: RouteHandlerStop[] = []
   /** The app-origin API requests the page sent that match a declared route handler; created with the stops. */
   private routeHandlerRequests?: RouteHandlerRequests
+  /** The API check that passed before anything started (Cycle 0099); present from the check until the launch. */
+  private checkedApiServer?: CheckedApiServer
+  /** The app's own Node API server this run launched (Cycle 0099, `apiServer`); it fills the run's one server participant. */
+  private apiServer?: OwnedApiServer
+  /** Holds the API's entry pause from before the editor attaches until the run released it once (E-3). */
+  private apiEntryGate?: ApiEntryGate
+  /** The page's requests to the API origin, for the time-window attribution of an API pause (D7). */
+  private apiRequests?: ApiRequestTracker
+  /** The preparation steps of the API start and how long each took (DX-4). */
+  private readonly apiSteps: { step: ApiServerStep; elapsedMs: number }[] = []
+  /** The API step being run, which names `details.step` of an unexpected failure (DX-10). */
+  private apiStepNow: ApiServerStep = 'api-server-launch'
+  /** Wall time at which each operation's input was sent, the start of the attribution window of the API stop that follows it. */
+  private readonly operationDispatchedAtMs = new Map<number, number>()
+  /** Wall time of the first receipt of the current API pause on either channel; the cutoff of its attribution. */
+  private apiPauseReceivedAtMs?: number
+  /** Set once the run ends the API's group itself, so the exit that follows is no failure. */
+  private isApiEnding = false
+  /** Set while the failure arbiter decides whether a lost API connection is the API's exit. */
+  private isApiLossPending = false
+  /** Set when the API's group could not be confirmed gone at cleanup; the run keeps its state and code and reports it (E-4). */
+  private apiCleanupFailure?: { pid: number }
   /** The time preparation was held at continued preparation pauses, by which the setup deadline moved; the run resource's deadline adds it. */
   private preparationHeldMs = 0
   /** Whether the viewport was attached, so a warm-up pause cannot be drawn before it. */
@@ -1832,10 +1899,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @example this.expoWebPackage = await this.resolveExpoWebPackageOfRun()
    */
   private resolveExpoWebPackageOfRun(): Promise<ResolvedPackage> {
-    return this.resolveAppPackageOfRun(resolveExpoWebPackage, {
-      outside: expoWebOutsidePackageRefusal,
-      nodeModules: expoWebNodeModulesRefusal,
-    })
+    return this.resolveAppPackageOfRun(
+      resolveExpoWebPackage,
+      {
+        outside: expoWebOutsidePackageRefusal,
+        nodeModules: expoWebNodeModulesRefusal,
+      },
+      // With `apiServer` a server stop lies in the API's folder, outside the app by design; the schema keeps it inside `apiServer.packageRoot`.
+      async (stop) =>
+        stop.participant === 'server' &&
+        this.apiServerDeclaration() !== undefined,
+    )
   }
 
   /**
@@ -2631,6 +2705,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.expoWebPackage,
     )
     this.alive()
+    // Cycle 0099: the checks of a run that declares `apiServer` come before any process starts.
+    await this.checkApiServer()
+    this.alive()
     const needsServer = configuredStops(this.definition.configuration).some(
       (stop) => stop.participant === 'server',
     )
@@ -2644,6 +2721,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     // Seam 1 of the Vite library route: checks, learner confirmation and the private folder, before any server exists.
     const { viteLibrary, reactScriptsLibrary, nextLibrary } =
       await this.planLibrary()
+    // The app's own API starts, is attached to and listens before Metro starts, so the page's first request already finds it.
+    await this.startApiServer()
+    this.alive()
     // The app runs on the port the project declares (its auth origin points there); a busy port refuses the start instead of moving the app.
     const started = await adapter.start({
       ...(viteLibrary
@@ -3280,7 +3360,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private async selectServerUnlessAttached(
     needsServer: boolean,
   ): Promise<void> {
-    if (needsServer && !this.serverSelectedEarly) await this.selectServer()
+    // The API run's server participant was attached before Metro started.
+    if (needsServer && !this.serverSelectedEarly && !this.apiServer)
+      await this.selectServer()
   }
 
   /**
@@ -3652,7 +3734,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           scriptId,
           scriptUrl!,
           window.request,
-          layerOf(entry)!,
+          layerOf(entry),
         ),
       adopt: (prepared) => {
         entry.prepared = prepared
@@ -3683,6 +3765,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     steps: {
       seal: () => Promise<PreparedStop>
       adopt: (prepared: PreparedStop) => void
+      /** Set for an API server stop: a failed seal never resumes the handler, the API's group is killed first (E-4). */
+      killApiFirst?: boolean
     },
   ): Promise<void> {
     const participant = this.participants.server
@@ -3690,12 +3774,20 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     try {
       prepared = await steps.seal()
     } catch (error) {
-      // The bytes that ran are not the declared ones: nothing is shown, the runtime goes on and the stop is refused.
+      // The bytes that ran are not the declared ones: nothing is shown and the stop is refused.
       this.dropCopyPause()
       participant.unannouncedPause = undefined
-      await this.sendOwnedResume(session, event.body?.threadId).catch(
-        () => undefined,
-      )
+      // The runtime goes on, except an API handler, which must never run on: its group is killed before anything resumes or detaches.
+      if (steps.killApiFirst) {
+        // A group that outlives the stop bound is recorded; the seal's refusal still wins and the API is never claimed stopped.
+        const api = this.apiServer
+        await this.killApiServerFirst().catch(() => {
+          if (api) this.apiCleanupFailure = { pid: api.pid }
+        })
+      } else
+        await this.sendOwnedResume(session, event.body?.threadId).catch(
+          () => undefined,
+        )
       throw error
     }
     steps.adopt(prepared)
@@ -3790,7 +3882,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): Promise<boolean> {
     const participant = this.participants.server
     const { entry, held, scriptId, scriptUrl, hitIds, heldMs } = hit
-    const profile = ROUTE_HANDLER_PROFILES[entry.kind]
+    // An API server stop is matched to the page's request by time, never resumed for lack of a match (D7).
+    if (entry.kind === 'node-api')
+      return this.judgeApiServerHit(session, event, hit)
+    const profile = webpackProfileOf(entry.kind)
     // After an await Next's caller is only on the async stack (E2), so the classifier reads both.
     const handler = routeHandlerStackOf(
       held.event.callFrames,
@@ -3966,10 +4061,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         candidate.breakpoint !== undefined &&
         !candidate.prepared &&
         scriptUrl !== undefined &&
-        sameScriptUrl(
-          `webpack-internal:///(${ROUTE_HANDLER_PROFILES[candidate.kind].layer})/./${candidate.packageRelative}`,
-          scriptUrl,
-        ),
+        this.isScriptOfRouteHandlerStop(session, candidate, scriptUrl, hitIds),
     )
     // The breakpoint the adapter names is the one that hit; a pause that names others (a learner's own breakpoint) is not the stop's. Only a pause that names none takes a lone candidate.
     if (hitIds.length)
@@ -3978,6 +4070,55 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         return id !== undefined && hitIds.includes(id)
       })
     return inFile.length === 1 ? inFile[0] : undefined
+  }
+
+  /**
+   * Gives a sealed route-handler, API-route or API server pause its place among the run's stops.
+   * Called by the publish of each kind, from the seal's `adopt` step, before the pause is announced to the stop machinery.
+   * @param entry - The route-handler stop that paused.
+   * @param prepared - The stop sealed from the paused script.
+   * @example this.adoptRouteHandlerPause(entry, prepared)
+   */
+  private adoptRouteHandlerPause(
+    entry: RouteHandlerStop,
+    prepared: PreparedStop,
+  ): void {
+    entry.prepared = prepared
+    // The hit now has its place in the order; the replay of its own `stopped` is judged against it.
+    this.judgingRouteHandler = false
+    // Every stop before this one was continued: it takes the place of the first stop still ahead.
+    this.stops.splice(this.stopIndex, 0, prepared)
+    // A run whose only stops are route handlers freezes its manifest at the first of their pauses.
+    if (!this.sealedManifest) this.freezeSealedStops()
+  }
+
+  /**
+   * Tells whether a paused script is the module of a route-handler stop: Next's webpack address for a route handler or a Pages API route, the `file://` URL of the real file together with the stop's own acknowledged breakpoint for an API server stop (D19).
+   * Called by {@link armedRouteHandlerOf} for each armed stop.
+   * @param session - The server session.
+   * @param candidate - An armed stop.
+   * @param scriptUrl - The address of the paused script.
+   * @param hitIds - The breakpoint ids the adapter's `stopped` names.
+   * @returns `true` when the script is the stop's module (and, for an API server stop, the pause names its breakpoint).
+   * @example this.isScriptOfRouteHandlerStop(session, entry, 'file:///repo/apps/api/src/a.ts', [41])
+   */
+  private isScriptOfRouteHandlerStop(
+    session: vscode.DebugSession,
+    candidate: RouteHandlerStop,
+    scriptUrl: string,
+    hitIds: readonly number[],
+  ): boolean {
+    if (candidate.kind === 'node-api')
+      return isNodeApiHit({
+        realSourcePath: candidate.sourcePath,
+        scriptUrl,
+        acknowledgedId: candidate.breakpoint?.acknowledgedId(session),
+        hitIds,
+      })
+    return sameScriptUrl(
+      `webpack-internal:///(${webpackProfileOf(candidate.kind).layer})/./${candidate.packageRelative}`,
+      scriptUrl,
+    )
   }
 
   /**
@@ -4007,7 +4148,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     },
   ): Promise<void> {
     const { entry, verdict, hitRequest, scriptId, scriptUrl, heldMs } = matched
-    const profile = ROUTE_HANDLER_PROFILES[entry.kind]
+    const profile = webpackProfileOf(entry.kind)
     const observedAtMs =
       Date.now() -
       this.heldForMs('heldAtMs' in held ? held.heldAtMs : undefined)
@@ -4033,13 +4174,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         }
         if (profile.field === 'apiRoute') prepared.apiRoute = request
         else prepared.routeHandler = request
-        entry.prepared = prepared
-        // The hit now has its place in the order; the replay of its own `stopped` is judged against it.
-        this.judgingRouteHandler = false
-        // Every stop before this one was continued: it takes the place of the first stop still ahead.
-        this.stops.splice(this.stopIndex, 0, prepared)
-        // A run whose only stops are route handlers freezes its manifest at the first of their pauses.
-        if (!this.sealedManifest) this.freezeSealedStops()
+        this.adoptRouteHandlerPause(entry, prepared)
       },
     })
     // A run that failed meanwhile published nothing.
@@ -4139,7 +4274,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       routeHandlerHitVerdictOf({
         stopRoute: entry.route,
         hitRoute,
-        kind: entry.kind,
+        // An API server stop never reaches this verdict: it is matched by time ({@link judgeApiServerHit}).
+        kind: entry.kind === 'pages-api' ? 'pages-api' : 'app-route',
         ...(hitRequest && target
           ? {
               hitRequest: {
@@ -4210,43 +4346,47 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     breakpoint: OwnedRepositoryBreakpoint,
     scriptId: string,
     scriptUrl: string,
-    origin: 'readiness' | 'warm-load' | 'route-handler',
-    layer: DevelopmentServerLayer,
+    origin: 'readiness' | 'warm-load' | 'route-handler' | 'api-server',
+    layer: DevelopmentServerLayer | undefined,
   ): Promise<PreparedStop> {
     const executed = await this.participants.server.cdp!.request(
       'Debugger.getScriptSource',
       { scriptId },
     )
     this.alive()
-    const bundle = bundleOfEvaluatedModule(
-      executed.scriptSource,
-      {
-        sourcePath: entry.sourcePath,
-        source: entry.sourceText,
-        chunkPath: scriptUrl,
-        chunkHash: sha256(executed.scriptSource),
-      },
-      scriptUrl,
-    )
+    // An API handler runs from the executed script's own inline map; a Next module is cut from its webpack chunk.
+    const bundle =
+      origin === 'api-server'
+        ? this.apiServerBundleOf(entry, scriptUrl, executed.scriptSource)
+        : bundleOfEvaluatedModule(
+            executed.scriptSource,
+            {
+              sourcePath: entry.sourcePath,
+              source: entry.sourceText,
+              chunkPath: scriptUrl,
+              chunkHash: sha256(executed.scriptSource),
+            },
+            scriptUrl,
+          )
     if (!bundle)
       throw new Error('The paused script does not hold the declared module')
+    // A route handler's or an API handler's pause is a pause of the learner's operation, not of a preparation request.
+    const isHandlerPause = origin === 'route-handler' || origin === 'api-server'
     const prepared = this.assemblePreparedStop(
       entry.stop,
       entry.index,
       {
         bundle,
-        discovery:
-          origin === 'route-handler'
-            ? { routeHandler: true }
-            : { preparation: origin },
-        layer,
+        discovery: isHandlerPause
+          ? { routeHandler: true }
+          : { preparation: origin },
+        ...(layer ? { layer } : {}),
       },
       undefined,
       true,
     )
     prepared.breakpoint = breakpoint
-    // A route-handler pause is no preparation pause: it is a pause of the learner's operation.
-    if (origin !== 'route-handler') prepared.preparationRequest = origin
+    if (!isHandlerPause) prepared.preparationRequest = origin
     prepared.script = {
       scriptId,
       url: scriptUrl,
@@ -4258,16 +4398,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       hash: '',
       buildId: '',
     }
-    const fileStem =
-      origin === 'route-handler'
-        ? `sealed-${entry.index}-route-handler`
-        : `sealed-${entry.index}-preparation`
+    const fileStem = isHandlerPause
+      ? `sealed-${entry.index}-${origin}`
+      : `sealed-${entry.index}-preparation`
     const archivedModule = await this.saveSealedEvidence(fileStem, bundle)
     this.evidence.record('source.sealed', {
       index: entry.index,
-      ...(origin === 'route-handler'
-        ? { routeHandler: true }
-        : { preparation: origin }),
+      ...(isHandlerPause ? { routeHandler: true } : { preparation: origin }),
       redacted: archivedModule.redacted,
       participant: 'server',
       scriptUrl,
@@ -5326,7 +5463,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       | BrowserLibraryCopyVerdict
       | LibraryCopyVerdict
       | PreparationHitVerdict
-      | RouteHandlerHitResumeVerdict,
+      | RouteHandlerHitResumeVerdict
+      | ApiBeforeInputVerdict,
   ): Promise<void> {
     const participant = this.participants.server
     this.journalResumedHit(verdict)
@@ -5458,7 +5596,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     event: Protocol.Debugger.PausedEvent,
   ): Promise<ServerHitVerdict | undefined> {
     // A route-handler stop was matched to the page's request when it paused, before it was sealed; it is judged first so a Pages entry's rules never rerun on it.
-    if (stop.routeHandler || stop.apiRoute)
+    // An API server stop was matched to the page's request by time before it was sealed, and no route is read in the API.
+    if (stop.routeHandler || stop.apiRoute || stop.apiRequest)
       return { action: 'pause', attribution: 'after-operation' }
     if (this.isPagesServerStop(stop)) return this.classifyPagesHit(stop, event)
     // A module evaluation of an entry-render stop runs outside any render: no route can be read, and the pause is the stop's own first evaluation ({@link isModuleEvaluationPause} leaves after-operation stops to today's route read).
@@ -5978,7 +6117,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       | BrowserLibraryCopyVerdict
       | LibraryCopyVerdict
       | PreparationHitVerdict
-      | RouteHandlerHitResumeVerdict,
+      | RouteHandlerHitResumeVerdict
+      | ApiBeforeInputVerdict,
   ): void {
     const count = (this.resumedHitCounts.get(verdict.event) ?? 0) + 1
     this.resumedHitCounts.set(verdict.event, count)
@@ -6032,6 +6172,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     | 'preparationRequest'
     | 'routeHandler'
     | 'apiRoute'
+    | 'apiRequest'
   > {
     const group = afterOperationOf(stop)
     // An entry-render stop (group 0) is a page-load pause whichever layer it paused in, and a server pause of a Pages run is a server render also after an operation; otherwise the script's layer says what ran.
@@ -10931,7 +11072,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       cdp = participant.cdp
     if (!cdp) throw new Error('Selected native proxy unavailable')
     cdp.onClose = (): void => {
-      if (!this.cleaning) this.fail(`Selected ${name} CDP closed`)
+      if (this.cleaning) return
+      // A closed API inspector may be the API's own exit, which the arbiter prefers (E-6).
+      if (name === 'server' && this.apiServer)
+        this.failOnApiLoss(`Selected ${name} CDP closed`)
+      else this.fail(`Selected ${name} CDP closed`)
     }
     let observedScripts = 0
     cdp.on('Debugger.scriptParsed', (event) => {
@@ -11009,10 +11154,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const tracksRouteRequests =
       name === 'browser' && this.routeHandlerRequests !== undefined
     if (tracksRouteRequests) events.push(...this.trackRouteHandlerRequests(cdp))
+    // A run with an API server follows the page's requests to the API origin: they name the request an API pause waited for (Cycle 0099).
+    const tracksApiRequests =
+      name === 'browser' && this.apiRequests !== undefined
+    if (tracksApiRequests) events.push(...this.trackApiRequests(cdp))
     await cdp.subscribe([...new Set(events)])
     this.alive()
     // The page's network events flow only when its Network domain is enabled; a refusal leaves the page read to the stack.
-    if (tracksPageRequests || tracksRouteRequests)
+    if (tracksPageRequests || tracksRouteRequests || tracksApiRequests)
       await cdp.request('Network.enable', {}).catch(() => undefined)
     this.alive()
   }
@@ -11065,6 +11214,786 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     return ['Network.requestWillBeSent']
   }
 
+  // ---------------------------------------------------------------------------
+  // The app's own Node API server (Cycle 0099, `apiServer`)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Gives the `apiServer` declaration of a version 3 `expo-web-dev` configuration.
+   * Called by the API preparation; every run without the key keeps its behavior.
+   * @returns The declaration; `undefined` for every other run.
+   * @example this.apiServerDeclaration()?.port // 4100
+   */
+  private apiServerDeclaration() {
+    const { configuration } = this.definition
+    return 'apiServer' in configuration ? configuration.apiServer : undefined
+  }
+
+  /**
+   * Runs the checks of an `apiServer` run that start nothing, before any process does: collects the API stops, refuses a port shared with the app's web script, checks both ports are free and checks the API's package root, entry and loader on disk.
+   * Called by {@link prepareOwned} after the adapter's workspace check; does nothing without `apiServer`.
+   * @throws `EXPO_WEB_UNSUPPORTED` (`api-port-conflict`), the app's `EXPO_WEB_PORT_UNAVAILABLE`, and the `apiServer` refusals of {@link OwnedApiServer.check}, each with `details.sideEffects` `none`.
+   * @example await this.checkApiServer()
+   */
+  private async checkApiServer(): Promise<void> {
+    const declaration = this.apiServerDeclaration()
+    if (!declaration) return
+    await this.collectApiServerStops()
+    const workspace = await assessExpoWebWorkspace(this.expoWebPackage!)
+    this.alive()
+    if (declaration.port === workspace.port)
+      throw expoWebApiPortConflictRefusal(declaration.port, workspace.port)
+    // Both ports are free before anything starts: the app's port is the one the adapter checks again before its own launch.
+    await assertDevelopmentPortFree(
+      { port: workspace.port, source: workspace.portSource },
+      {
+        signal: this.abort.signal,
+        refuse: (refusal) =>
+          expoWebPortRefusal(refusal.port, 'pre-start-check'),
+      },
+    )
+    this.alive()
+    try {
+      this.checkedApiServer = await OwnedApiServer.check({
+        workspace: await realpath(this.options.workspace),
+        declaration,
+        node: {
+          executable: this.options.node,
+          version: await readNodeVersion(this.options.node, this.abort.signal),
+        },
+        record: (type, detail) => this.evidence.record(type, detail),
+        onOutput: (event) => this.apiOutputJournal(event),
+        // Read on the raw stderr lines, so a notice split by the live mask is still found; the launcher confirms the API is ending before this runs.
+        onDebuggerDisconnectNotice: () => this.onApiDebuggerNotice(),
+        // Streamed output and the exit tail hide the repository, home and storage paths, as the node-server run's do.
+        privateRoots: causeRootsFor(
+          [this.options.directory],
+          this.options.workspace,
+        ),
+        // Read at every output chunk: the password the learner types after the launch is masked from then on (E-8).
+        secrets: () => this.learnerSecretValues,
+        onWithheld: (bytes) =>
+          this.evidence.record('api-server.output-withheld', { bytes }),
+        signal: this.abort.signal,
+      })
+    } catch (error) {
+      throw await this.apiServerRefusalOfError(
+        error,
+        'api-server-check',
+        declaration.port,
+      )
+    }
+    this.alive()
+    this.apiRequests = new ApiRequestTracker(declaration.port)
+  }
+
+  /**
+   * Finds the run's API stops, every `participant: "server"` stop of an `apiServer` run, and keeps them as route-handler stops of the `node-api` kind: armed by source in their operation's turn and sealed at the pause.
+   * Called by {@link checkApiServer}.
+   * @throws When a stop file cannot be read.
+   * @example await this.collectApiServerStops() // this.routeHandlerStops now holds the API stops
+   */
+  private async collectApiServerStops(): Promise<void> {
+    const root = await realpath(this.options.workspace)
+    const found: RouteHandlerStop[] = []
+    for (const [index, stop] of configuredStops(
+      this.definition.configuration,
+    ).entries())
+      if (stop.participant === 'server')
+        found.push(await this.apiServerStopOf(stop, index, root))
+    this.routeHandlerStops = found
+  }
+
+  /**
+   * Builds the route-handler stop of one API stop: the real path of its file, its declared text and the line its breakpoint is requested on.
+   * Called by {@link collectApiServerStops}. The stop's route is its source path, which the schema keeps inside `apiServer.packageRoot`.
+   * @param stop - The configured server stop.
+   * @param index - Its declared index.
+   * @param root - The real path of the opened repository.
+   * @returns The stop to arm.
+   * @throws When the file cannot be read within the bounds.
+   * @example await this.apiServerStopOf(stop, 0, '/repo') // { kind: 'node-api', route: 'apps/api/src/rpc/a.ts', … }
+   */
+  private async apiServerStopOf(
+    stop: ReturnType<typeof configuredStops>[number],
+    index: number,
+    root: string,
+  ): Promise<RouteHandlerStop> {
+    // A stop file deleted after the source check is refused before anything starts.
+    const sourcePath = await realpath(join(root, stop.source.path)).catch(
+      () => {
+        throw apiStopFileMissingRefusal(stop.source.path)
+      },
+    )
+    const sourceText = await this.readStopSourceText(root, sourcePath)
+    if (sourceText === undefined)
+      throw apiStopFileMissingRefusal(stop.source.path)
+    return {
+      kind: 'node-api',
+      stop,
+      index,
+      route: stop.source.path,
+      operationIndex: afterOperationOf(stop) ?? 0,
+      sourcePath,
+      sourceText,
+      packageRelative: stop.source.path,
+      requestedLine: this.windowRequestedLine(stop, sourceText),
+      resumed: new Map(),
+    }
+  }
+
+  /**
+   * Words an error of the API path as the `apiServer` refusal of its code, or leaves a cancellation as it is.
+   * Called by every step of the API start.
+   * @param error - What the step threw.
+   * @param step - The step that failed.
+   * @param port - The declared `apiServer.port`.
+   * @returns The refusal to throw.
+   * @example throw await this.apiServerRefusalOfError(error, 'api-server-attach', 4100)
+   */
+  private async apiServerRefusalOfError(
+    error: unknown,
+    step: ApiServerStep,
+    port: number,
+  ): Promise<unknown> {
+    // A cancelled run keeps the cancellation as its cause.
+    if (this.abort.signal.aborted || this.cleaning) return error
+    const isExit = error instanceof StudyError && error.code === 'SERVER_EXITED'
+    return apiServerRefusalOf(error, {
+      port,
+      step,
+      cause: this.journalCauseOf(error),
+      journalUri: "the run resource's eventsUri",
+      ...(isExit && this.apiServer
+        ? { exit: await this.apiServer.whenExited() }
+        : {}),
+    })
+  }
+
+  /**
+   * Runs one API preparation step, journals it with the milliseconds it took (also when it failed) and keeps its name for an unexpected failure's `details.step` (DX-4, DX-10).
+   * Called by {@link startApiServer}.
+   * @param step - The step.
+   * @param work - What the step does.
+   * @returns What `work` returned.
+   * @example await this.apiStep('api-server-launch', () => checked.launch())
+   */
+  private async apiStep<Value>(
+    step: ApiServerStep,
+    work: () => Promise<Value>,
+  ): Promise<Value> {
+    this.apiStepNow = step
+    const startedAt = performance.now()
+    try {
+      return await work()
+    } finally {
+      const elapsedMs = Math.round(performance.now() - startedAt)
+      this.apiSteps.push({ step, elapsedMs })
+      this.evidence.record('api-server.step', { step, elapsedMs })
+    }
+  }
+
+  /**
+   * Starts the app's own API before Metro: launches it under an inspector, attaches the run's server participant to it, releases its entry pause once, and waits until the started process listens on the declared port.
+   * Called by {@link prepareOwned} before the adapter starts the app; does nothing without `apiServer`. Any failure ends the API's process group first (`details.sideEffects` `partial`).
+   * @throws The `apiServer` refusals of the failed step; `RUNTIME_FAILED` with `details.step` for an unexpected failure.
+   * @example await this.startApiServer()
+   */
+  private async startApiServer(): Promise<void> {
+    const checked = this.checkedApiServer
+    const declaration = this.apiServerDeclaration()
+    if (!checked || !declaration) return
+    this.apiEntryGate = new ApiEntryGate()
+    try {
+      const api = await this.apiStep('api-server-launch', () =>
+        checked.launch(),
+      )
+      this.apiServer = api
+      this.alive()
+      await this.apiStep('api-server-attach', () => this.attachApiServer(api))
+      await this.apiStep('api-server-listen', () =>
+        api.waitForListener(this.abort.signal),
+      )
+    } catch (error) {
+      throw await this.refuseAfterApiLaunch(error, declaration.port)
+    }
+    this.alive()
+    this.watchApiExit(this.apiServer)
+  }
+
+  /**
+   * Attaches the run's server participant to the launched API, proves the inspector is its own, subscribes the inspector channel and only then releases the entry pause.
+   * Called by {@link startApiServer} inside the `api-server-attach` step.
+   * @param api - The launched API, paused at its entry.
+   * @example await this.attachApiServer(api)
+   */
+  private async attachApiServer(api: OwnedApiServer): Promise<void> {
+    // js-debug's pause before each mapped script is Next's route compile; the API's modules are announced once the channel is subscribed before the release.
+    await this.selectServer({
+      target: {
+        endpoint: (signal) => api.inspectorEndpoint(signal),
+        cwd: api.packageRoot,
+        verify: (candidate, signal) => api.verifyInspector(candidate, signal),
+      },
+      pauseForSourceMap: false,
+    })
+    this.alive()
+    this.apiStepNow = 'api-server-release'
+    await this.releaseApiEntry()
+  }
+
+  /**
+   * Continues the API's entry pause exactly once, through the gate (E-3).
+   * Called by {@link attachApiServer} once the session is selected, verified and subscribed.
+   * @throws When no entry pause arrives or the debugger refuses the continuation.
+   * @example await this.releaseApiEntry()
+   */
+  private async releaseApiEntry(): Promise<void> {
+    const session = this.participants.server.selected!
+    await this.apiEntryGate!.release(
+      session.id,
+      async (threadId) => {
+        // The continuation is the run's own: the resume it causes is an expected one.
+        this.participants.server.expectedResumeRequests++
+        await awaitResponse(
+          session.customRequest('continue', { threadId }),
+          'the API entry continuation',
+          this.abort.signal,
+        )
+        this.alive()
+        this.evidence.record('api-server.entry-released', { threadId })
+      },
+      this.abort.signal,
+    )
+  }
+
+  /**
+   * Ends the API's process group and words the failure of the step that failed (E-4, D22).
+   * Called by {@link startApiServer}; the group is killed, not asked, because the API may still be paused at its entry or in a handler.
+   * @param error - What the step threw.
+   * @param port - The declared `apiServer.port`.
+   * @returns The refusal to throw.
+   * @example throw await this.refuseAfterApiLaunch(error, 4100)
+   */
+  private async refuseAfterApiLaunch(
+    error: unknown,
+    port: number,
+  ): Promise<unknown> {
+    await this.killApiServerFirst().catch(() => undefined)
+    return this.apiServerRefusalOfError(error, this.apiStepNow, port)
+  }
+
+  /**
+   * Kills the API's whole process group before anything resumes or detaches, so a handler that is paused or in flight never runs on (E-4, D22).
+   * Called when a seal fails, when the start is refused after the launch, and by the cleanup of a run with a held API pause.
+   * @throws When the group outlives the stop deadline.
+   * @example await this.killApiServerFirst()
+   */
+  private async killApiServerFirst(): Promise<void> {
+    if (!this.apiServer) return
+    this.isApiEnding = true
+    this.apiEntryGate?.cancel()
+    await this.apiServer.killIfPaused()
+  }
+
+  /**
+   * Tells whether the API may be paused in a handler or about to be: its entry pause is not released yet, an API pause is held, or an API stop is armed and its operation was sent.
+   * Called by {@link cleanupOwned} to choose between the kill-first stop and the normal one.
+   * @returns `true` when a normal stop could let a handler or the API's startup code run on.
+   * @example if (this.mustKillApiFirst()) await this.killApiServerFirst()
+   */
+  private mustKillApiFirst(): boolean {
+    const server = this.participants.server
+    // A launched API whose entry pause is still held (also before the server participant is selected): a detach would release Node before its first statement.
+    const isEntryHeld = Boolean(
+      this.apiEntryGate && !this.apiEntryGate.isReleased,
+    )
+    const isPauseHeld = Boolean(
+      isEntryHeld ||
+      server.stopped ||
+      server.unannouncedPause ||
+      server.copyPause ||
+      server.discovering ||
+      this.status === 'paused-server',
+    )
+    const isHitAwaited = this.routeHandlerStops.some(
+      (entry) =>
+        entry.kind === 'node-api' &&
+        entry.breakpoint !== undefined &&
+        !entry.prepared &&
+        this.operationsDispatched >= entry.operationIndex,
+    )
+    return isPauseHeld || isHitAwaited
+  }
+
+  /**
+   * Starts the kill-first stop of the cleanup when the API may be paused, and records a group that could not be confirmed gone.
+   * Called first by {@link cleanupOwned}, before the participants' channels close and the debuggers stop. A retried Stop whose earlier kill failed tries the kill again.
+   * @returns `true` when the kill failed: the API may survive, so the cleanup must neither detach from it nor retire its breakpoints.
+   * @example const isApiKept = await this.killApiServerBeforeDetach()
+   */
+  private async killApiServerBeforeDetach(): Promise<boolean> {
+    const api = this.apiServer
+    if (!api || !(this.mustKillApiFirst() || this.apiCleanupFailure))
+      return false
+    try {
+      await this.killApiServerFirst()
+      this.apiCleanupFailure = undefined
+      return false
+    } catch {
+      this.apiCleanupFailure = { pid: api.pid }
+      return true
+    }
+  }
+
+  /**
+   * Tells whether a debug session is the API's own root session.
+   * Called by {@link cleanupOwned} to keep the API's session attached while its kill is unconfirmed.
+   * @param session - A known debug session.
+   * @returns `true` for the root session of the API server.
+   * @example this.isApiDebugSession(session) // => true for 'codebook server <id>'
+   */
+  private isApiDebugSession(session: vscode.DebugSession): boolean {
+    return (
+      !session.parentSession &&
+      session.configuration.name === `codebook server ${this.id}`
+    )
+  }
+
+  /**
+   * Stops the API normally after Metro's stop: its group ends and its port is released. A group that cannot be confirmed gone is recorded and does not change the run's state or code.
+   * Called by {@link cleanupOwned}.
+   * @example await this.closeApiServer()
+   */
+  private async closeApiServer(): Promise<void> {
+    const api = this.apiServer
+    if (!api) return
+    this.isApiEnding = true
+    try {
+      await api.close()
+      this.apiCleanupFailure = undefined
+    } catch {
+      this.apiCleanupFailure = { pid: api.pid }
+    }
+  }
+
+  /**
+   * Stamps the first receipt of an API pause on the inspector channel: the cutoff of its request attribution (D7, OV-1).
+   * Called by {@link onCdpPaused} for every pause; only a pause of the API's participant that is no instrumentation pause is stamped.
+   * @param name - The participant whose runtime paused.
+   * @param isInstrumentation - Whether the pause is the runtime's own instrumentation pause.
+   * @example this.stampApiPauseReceipt('server', false)
+   */
+  private stampApiPauseReceipt(
+    name: Participant,
+    isInstrumentation: boolean,
+  ): void {
+    if (name === 'server' && this.apiServer && !isInstrumentation)
+      this.apiPauseReceivedAtMs ??= Date.now()
+  }
+
+  /**
+   * Forgets the stamped receipt of the API pause that ended; the next pause is stamped on its own receipt.
+   * Called by {@link onCdpResumed}.
+   * @param name - The participant whose runtime resumed.
+   * @example this.clearApiPauseReceipt('server')
+   */
+  private clearApiPauseReceipt(name: Participant): void {
+    if (name === 'server') this.apiPauseReceivedAtMs = undefined
+  }
+
+  /**
+   * Tells whether the cleanup released every resource: no release failed and the API's group is confirmed gone.
+   * Called by {@link cleanupOwned}.
+   * @param failures - The release failures of the cleanup.
+   * @returns `true` when nothing is left running.
+   * @example this.isCleanupComplete([]) // true
+   */
+  private isCleanupComplete(failures: readonly string[]): boolean {
+    return failures.length === 0 && this.apiCleanupFailure === undefined
+  }
+
+  /**
+   * Fails a Stop whose API process group could not be confirmed gone, so the retried Stop closes it again; the run keeps its state and code.
+   * Called last by {@link cleanupOwned}.
+   * @throws When the API's group is not confirmed gone.
+   * @example this.assertApiCleanupComplete()
+   */
+  private assertApiCleanupComplete(): void {
+    if (this.apiCleanupFailure)
+      throw new Error(
+        `owned API server stop: process ${this.apiCleanupFailure.pid} could not be confirmed gone (cleanup failed)`,
+      )
+  }
+
+  /**
+   * Gives the run resource's view of the API: the port, the pid, each preparation step with the milliseconds it took and `cleanup: "failed"` when its group could not be confirmed gone.
+   * Called by {@link view}.
+   * @returns `{ apiServer }`, or an empty object for a run that did not launch one.
+   * @example this.apiServerView() // { apiServer: { port: 4100, pid: 4242, steps: [{ step: 'api-server-launch', elapsedMs: 12 }] } }
+   */
+  private apiServerView(): Pick<ConfiguredRuntimeView, 'apiServer'> {
+    const api = this.apiServer
+    if (!api) return {}
+    return {
+      apiServer: {
+        port: api.port,
+        pid: api.pid,
+        steps: this.apiSteps.map((entry) => ({ ...entry })),
+        ...(this.apiCleanupFailure ? { cleanup: 'failed' as const } : {}),
+      },
+    }
+  }
+
+  /** Journals the API's masked output within a fixed bound ({@link createApiServerOutputJournal}), so a chatty API cannot use up the run's shared evidence. */
+  private readonly apiOutputJournal = createApiServerOutputJournal(
+    (type, detail) => this.evidence.record(type, detail),
+    (text) => this.maskRunText(text),
+  )
+
+  /**
+   * Lets go of the debugger when Node says it waits for it and the launcher confirmed the API is ending.
+   * Why: an API that calls `process.exit` does not exit while a debugger is attached; Node prints a notice and waits, so the run detaches and the exit follows, and `SERVER_EXITED` wins (E-6).
+   * Called by {@link OwnedApiServer} through `onDebuggerDisconnectNotice`.
+   * @example await this.onApiDebuggerNotice()
+   */
+  private async onApiDebuggerNotice(): Promise<void> {
+    if (!this.cleaning && !this.isApiEnding) await this.detachApiDebugger()
+  }
+
+  /**
+   * Ends the debug session the run attached to the API, which lets a finished program exit.
+   * Called by {@link onApiDebuggerNotice}.
+   * @example await this.detachApiDebugger()
+   */
+  private async detachApiDebugger(): Promise<void> {
+    for (const session of this.sessions.values())
+      if (
+        !session.parentSession &&
+        session.configuration.name === `codebook server ${this.id}`
+      )
+        await awaitResponse(
+          vscode.debug.stopDebugging(session),
+          'API debugger detach',
+        ).catch(() => undefined)
+  }
+
+  /**
+   * Fails the run when the API exits after it was ready; the exit fact is the cause of every connection it takes with it.
+   * Called by {@link startApiServer} once the API listens.
+   * @param api - The listening API.
+   * @example this.watchApiExit(api)
+   */
+  private watchApiExit(api: OwnedApiServer): void {
+    void api.whenExited().then(() => {
+      if (!this.cleaning && !this.isApiEnding)
+        this.failOnApiLoss('The API server exited')
+    })
+  }
+
+  /**
+   * The one place a loss correlated with the API (its session ended, its inspector channel closed, its process exited) becomes a failure: the API's exit fact, when it arrives within the arbiter's bound, wins over the transport error that arrived first (E-6, D24).
+   * Called by the session and channel hooks and by the exit watcher.
+   * @param fallbackReason - The failure to report when the API did not exit.
+   * @example this.failOnApiLoss('Selected server CDP closed')
+   */
+  private failOnApiLoss(fallbackReason: string): void {
+    // The run itself is ending the API: the refusal that caused it is the cause, not the loss it produces.
+    if (this.isApiEnding) return
+    const api = this.apiServer
+    if (!api) {
+      this.fail(fallbackReason)
+      return
+    }
+    if (this.isApiLossPending) return
+    this.isApiLossPending = true
+    this.track(this.arbitrateApiLoss(api, fallbackReason))
+  }
+
+  /**
+   * Waits for the API's exit fact within the arbiter's bound and fails the run with the cause it finds.
+   * Called by {@link failOnApiLoss}.
+   * @param api - The API process.
+   * @param fallbackReason - The failure to report when the API is still running.
+   * @example await this.arbitrateApiLoss(api, 'Selected server CDP closed')
+   */
+  private async arbitrateApiLoss(
+    api: OwnedApiServer,
+    fallbackReason: string,
+  ): Promise<void> {
+    const exit = await resolveApiLoss(api, OWNED_API_SERVER_LOSS_ARBITER_MS)
+    if (this.cleaning || this.isApiEnding) return
+    this.fail(
+      exit
+        ? formatRefusalFailure(
+            'SERVER_EXITED',
+            apiServerExitedRefusal(exit, exit.outputTail).message,
+            API_SERVER_EXITED_VARIANT,
+          )
+        : fallbackReason,
+    )
+  }
+
+  /**
+   * Holds the API's entry pause (DAP) before its session is a participant, and stamps the receipt of every later API pause.
+   * Called first by {@link onEvent}.
+   * @param session - The session that sent the event.
+   * @param event - The event.
+   * @returns `true` when the event was the entry pause and the gate holds it.
+   * @example if (this.consumesApiServerEvent(session, event)) return
+   */
+  private consumesApiServerEvent(
+    session: vscode.DebugSession,
+    event: DebugProtocol.Event,
+  ): boolean {
+    if (event.event !== 'stopped' || !this.apiServer) return false
+    if (
+      this.apiEntryGate &&
+      this.serverSession(session) &&
+      this.apiEntryGate.capture(session.id, event.body?.threadId)
+    ) {
+      this.evidence.record('api-server.entry-held', { sessionId: session.id })
+      return true
+    }
+    // The first receipt of an API pause on either channel is the cutoff of its request attribution (D7, OV-1).
+    if (this.participantName(session) === 'server')
+      this.apiPauseReceivedAtMs ??= Date.now()
+    return false
+  }
+
+  /**
+   * Tells whether a server pause of the inspector channel is the API's entry pause, which the gate owns and the run never takes for a stop.
+   * Called by {@link onCdpPausedOrDiscover}.
+   * @param event - The paused event.
+   * @returns `true` before the entry was released, and for any pause the runtime reports as the break on start.
+   * @example if (this.isApiEntryCdpPause(event)) return
+   */
+  private isApiEntryCdpPause(event: Protocol.Debugger.PausedEvent): boolean {
+    if (!this.apiServer) return false
+    // js-debug reports the entry as "Break on start", a reason the protocol's list does not name.
+    const reason: string = event.reason
+    const isEntry =
+      reason === 'Break on start' || !this.apiEntryGate?.isReleased
+    if (isEntry)
+      this.evidence.record('api-server.entry-cdp-pause', {
+        reason: event.reason,
+      })
+    return isEntry
+  }
+
+  /**
+   * Listens to the page's requests to the API origin: starts, ends and failures, the inputs of the time-window attribution (D7).
+   * Called by {@link observeParticipant} for the browser of a run with an API server.
+   * @param cdp - The page's channel.
+   * @returns The event names to subscribe.
+   * @example this.trackApiRequests(cdp) // ['Network.requestWillBeSent', 'Network.loadingFinished', 'Network.loadingFailed']
+   */
+  private trackApiRequests(cdp: Cdp): string[] {
+    cdp.on('Network.requestWillBeSent', (event) =>
+      this.apiRequests?.requestWillBeSent({
+        requestId: event.requestId,
+        timestamp: event.timestamp,
+        wallTime: event.wallTime,
+        request: { method: event.request.method, url: event.request.url },
+        redirectResponse: event.redirectResponse,
+      }),
+    )
+    for (const ending of [
+      'Network.loadingFinished',
+      'Network.loadingFailed',
+    ] as const)
+      cdp.on(ending, (event) =>
+        this.apiRequests?.requestEnded({
+          requestId: event.requestId,
+          timestamp: event.timestamp,
+        }),
+      )
+    return [
+      'Network.requestWillBeSent',
+      'Network.loadingFinished',
+      'Network.loadingFailed',
+    ]
+  }
+
+  /**
+   * Settles a hit of an armed API stop: ties the pause to the page's request by time, seals the stop from the paused script and publishes the pause. The pause is never resumed for lack of a match (D7).
+   * Called by {@link judgeRouteHandlerHit} for a stop of the `node-api` kind.
+   * @param session - The server session.
+   * @param event - The `stopped` event.
+   * @param hit - The stop the pause belongs to, the held pause, its script and how long a held stop kept it waiting.
+   * @returns `true`: the pause was published or the run failed with the seal's refusal.
+   * @throws Failures other than the seal's refusal.
+   * @example if (await this.judgeApiServerHit(session, event, hit)) return true
+   */
+  private async judgeApiServerHit(
+    session: vscode.DebugSession,
+    event: DebugProtocol.Event,
+    hit: {
+      entry: RouteHandlerStop
+      held: NonNullable<DebugParticipant['copyPause' | 'unannouncedPause']>
+      scriptId: string
+      scriptUrl: string | undefined
+      heldMs: number
+    },
+  ): Promise<boolean> {
+    const { entry, held, scriptId, scriptUrl, heldMs } = hit
+    // A hit before the operation's input was dispatched is nobody's stop: it is resumed and the breakpoint stays armed for the real input.
+    const dispatchedAtMs = this.operationDispatchedAtMs.get(
+      entry.operationIndex,
+    )
+    if (
+      dispatchedAtMs === undefined ||
+      (this.apiPauseReceivedAtMs ?? Date.now()) < dispatchedAtMs
+    ) {
+      await this.resumeUnexpectedHit(session, event, {
+        action: 'resume',
+        event: 'breakpoint.api-before-input',
+        declaredIndex: entry.index,
+      })
+      return true
+    }
+    const apiRequest = await this.attributeApiPause(entry, dispatchedAtMs)
+    try {
+      await this.publishApiServerPause(session, event, held, {
+        entry,
+        apiRequest,
+        scriptId,
+        scriptUrl: scriptUrl!,
+        heldMs,
+      })
+    } catch (error) {
+      // The seal's refusal keeps its code; the API's group was killed before it was raised.
+      if (
+        error instanceof StudyError &&
+        error.code === 'EXPO_WEB_SEAL_FAILED'
+      ) {
+        // The variant keeps the reason, participant and file for the restored details.
+        const variant = expoWebApiSealVariantOf(error)
+        this.fail(
+          variant === undefined
+            ? formatRefusalFailure(error.code, error.message)
+            : formatRefusalFailure(error.code, error.message, variant),
+        )
+      } else throw error
+    }
+    return true
+  }
+
+  /**
+   * Ties an API pause to the one page request it waited for: waits until the fixed wait after the pause's first receipt has passed, then judges the requests that started in the stop's operation window and were still open at that receipt.
+   * Called by {@link judgeApiServerHit}.
+   * @param entry - The stop that paused.
+   * @param dispatchedAtMs - When the stop's operation sent its input; the window opens here.
+   * @returns The fact: `attributed` for exactly one candidate, else `unattributed` with `none` or `several`.
+   * @example await this.attributeApiPause(entry, 1700000000000) // { state: 'attributed', method: 'POST', path: '/api/rpc/x', operation: 2, … }
+   */
+  private async attributeApiPause(
+    entry: RouteHandlerStop,
+    dispatchedAtMs: number,
+  ): Promise<ApiRequestFact> {
+    const receivedAtMs = this.apiPauseReceivedAtMs ?? Date.now()
+    // The pause and the page's events come on different connections: events with a start before the receipt may still be on their way.
+    await sleep(
+      Math.max(0, receivedAtMs + ROUTE_HANDLER_REQUEST_WAIT_MS - Date.now()),
+      undefined,
+      { signal: this.abort.signal },
+    ).catch(() => undefined)
+    this.alive()
+    this.apiPauseReceivedAtMs = undefined
+    return this.apiRequests!.attribute({
+      windowStartWallMs: dispatchedAtMs,
+      cutoffWallMs: receivedAtMs,
+      operation: entry.operationIndex,
+      title: this.operationRecords[entry.operationIndex - 1]!.title,
+      maskText: this.maskRunText,
+    })
+  }
+
+  /**
+   * Seals an API stop from the paused script and publishes its pause with the request fact.
+   * Called by {@link judgeApiServerHit}. A failed seal kills the API's group before anything resumes (E-4).
+   * @param session - The server session.
+   * @param event - The `stopped` event.
+   * @param held - The held pause.
+   * @param matched - The stop, the request fact, the paused script and how long a held stop kept the pause waiting.
+   * @throws The seal's `EXPO_WEB_SEAL_FAILED` refusal after the API's group was killed.
+   * @example await this.publishApiServerPause(session, event, held, { entry, apiRequest, scriptId, scriptUrl, heldMs: 0 })
+   */
+  private async publishApiServerPause(
+    session: vscode.DebugSession,
+    event: DebugProtocol.Event,
+    held: NonNullable<DebugParticipant['copyPause' | 'unannouncedPause']>,
+    matched: {
+      entry: RouteHandlerStop
+      apiRequest: ApiRequestFact
+      scriptId: string
+      scriptUrl: string
+      heldMs: number
+    },
+  ): Promise<void> {
+    const { entry, apiRequest, scriptId, scriptUrl, heldMs } = matched
+    const observedAtMs =
+      Date.now() -
+      this.heldForMs('heldAtMs' in held ? held.heldAtMs : undefined)
+    await this.settleSealedPause(session, event, held, {
+      killApiFirst: true,
+      seal: () =>
+        this.sealPausedStop(
+          entry,
+          entry.breakpoint!,
+          scriptId,
+          scriptUrl,
+          'api-server',
+          undefined,
+        ),
+      adopt: (prepared) => {
+        prepared.apiRequest = apiRequest
+        this.adoptRouteHandlerPause(entry, prepared)
+      },
+    })
+    // A run that failed meanwhile published nothing.
+    if (this.status === 'failed' || this.cleaning) return
+    this.evidence.record('api-server.published', {
+      declaredIndex: entry.index,
+      operationIndex: entry.operationIndex,
+      requestState: apiRequest.state,
+      pausedAt: new Date(observedAtMs).toISOString(),
+      publishedAt: new Date().toISOString(),
+      heldMs,
+    })
+  }
+
+  /**
+   * Seals the executed API module as a bundle the verifier accepts: the script's own inline map must carry the declared file, or the stop is refused.
+   * Called by {@link sealPausedStop} for an API stop.
+   * @param entry - The stop.
+   * @param scriptUrl - The `file://` address the script was announced under.
+   * @param scriptSource - The paused script's text.
+   * @returns The bundle.
+   * @throws `EXPO_WEB_SEAL_FAILED` with reason `source-drift` (the map carries another version of the file) or `source-unverifiable` (no inline map with the file's contents).
+   * @example const bundle = this.apiServerBundleOf(entry, 'file:///repo/apps/api/src/a.ts', scriptSource)
+   */
+  private apiServerBundleOf(
+    entry: Pick<ProvisionalStop, 'stop' | 'sourcePath'>,
+    scriptUrl: string,
+    scriptSource: string,
+  ): BundleSource {
+    const seal = bundleOfExecutedNodeModule({
+      scriptSource,
+      scriptUrl,
+      stopPath: entry.sourcePath,
+      declaredHash: entry.stop.source.hash,
+    })
+    if (seal.kind === 'bundle') return seal.bundle
+    this.evidence.record('api-server.seal-refused', {
+      reason: seal.reason,
+      detail: seal.detail,
+    })
+    throw seal.reason === 'source-drift'
+      ? expoWebApiSourceDriftRefusal(entry.stop.source.path)
+      : expoWebApiSourceUnverifiableRefusal(entry.stop.source.path)
+  }
+
   /**
    * Hands a server pause to {@link onCdpPaused} once the address of its script is known: a server module Next evaluated before the debugger attached is never announced by the proxy (it forwards only scripts parsed after its subscription), so the pause is held while the script's text is read once and its address bound like an announced script ({@link discoverUnannouncedScript}).
    * Why it exists: without the address the pause cannot be matched to the stop's module, the copy hold cannot recognise a pre-attach React copy, and a saved-session run (whose warm-up load renders the entry route before the attach) fails with the source-bound wait. Called for every `Debugger.paused` of {@link observeParticipant}.
@@ -11076,6 +12005,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     name: Participant,
     event: Protocol.Debugger.PausedEvent,
   ): void {
+    // The API's entry pause is the gate's, never a stop and never worth a script read.
+    if (name === 'server' && this.isApiEntryCdpPause(event)) return
     const participant = this.participants[name],
       scriptId = event.callFrames[0]?.location.scriptId
     if (
@@ -11176,6 +12107,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const participant = this.participants[name]
     participant.pauseObservedAtMs = this.evidence.elapsedMs()
     const isInstrumentation = event.reason === 'instrumentation'
+    this.stampApiPauseReceipt(name, isInstrumentation)
     // A hook that pauses in a loop must not use up the journal: a declared stop's pause is always journaled, any other only up to a cap. The runtime's instrumentation pauses are counted before that cap, under one of their own, so they cannot use up the room of the pauses the debugger makes for itself.
     const journaled = isInstrumentation
       ? this.instrumentationPauseCount++ <
@@ -11810,12 +12742,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @example await this.selectServer({ pauseForSourceMap: true }) // the preparation window
    */
   private async selectServer(
-    options: { pauseForSourceMap?: boolean } = {},
+    options: { pauseForSourceMap?: boolean; target?: ServerAttachTarget } = {},
   ): Promise<void> {
+    // The Next server unless the caller names another Node process (the app's own API, Cycle 0099).
+    const target = options.target ?? this.nextServerTarget()
     // A run that declares a route-handler stop binds its provisional breakpoint before the route's first compile runs: the route is compiled on the request of its operation.
     const pauseForSourceMap =
       options.pauseForSourceMap ?? this.routeHandlerStops.length > 0
-    const endpoint = await this.app!.inspectorEndpoint(this.abort.signal)
+    const endpoint = await target.endpoint(this.abort.signal)
     this.alive()
     const launched = await this.acquire(
       vscode.debug.startDebugging(
@@ -11827,18 +12761,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           type: 'pwa-node',
           request: 'attach',
           websocketAddress: endpoint,
-          cwd: this.packageRoot,
+          cwd: target.cwd,
           restart: false,
           autoAttachChildProcesses: false,
           continueOnAttach: false,
           sourceMaps: true,
           // Only a run with a preparation window pays for the pause before each mapped script: its module-scope stops must be bound before their module runs.
           ...(pauseForSourceMap ? { pauseForSourceMap: true } : {}),
-          sourceMapPathOverrides: {
-            'webpack://_N_E/./*': `${this.packageRoot}/*`,
-            // Exact keys only: one per server library stop file of an App Router app.
-            ...this.appLibraryOverrides('server'),
-          },
+          ...(target.sourceMapPathOverrides
+            ? { sourceMapPathOverrides: target.sourceMapPathOverrides() }
+            : {}),
           timeout: ACTIVE_TIMEOUT_MS,
         },
         // Without this the editor saves every modified editor of the learner as the session starts, and a cited source written then no longer is the file the run sealed.
@@ -11855,23 +12787,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
             if (!this.isActiveServerSession(session)) continue
             let candidate: Cdp | undefined
             try {
-              const proxy: { host: string; port: number; path: string } =
-                await awaitResponse(
-                  session.customRequest('requestCDPProxy'),
-                  'owned server proxy',
-                  this.abort.signal,
-                )
-              candidate = await this.acquire(
-                Cdp.connect(
-                  `ws://${proxy.host}:${proxy.port}${proxy.path}`,
-                  (type, detail) => this.evidence.record(type, detail),
-                ),
+              candidate = await this.connectDebugProxy(
+                session,
+                'owned server proxy',
               )
               this.alive()
-              const identity = await this.app!.verifyInspector(
-                candidate,
-                this.abort.signal,
-              )
+              const identity = await target.verify(candidate, this.abort.signal)
               this.alive()
               this.recordVerifiedServerCandidate(session, identity)
               matches.push({ session, cdp: candidate, identity })
@@ -11891,6 +12812,53 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.abort.signal,
     )
     await this.observeParticipant('server')
+  }
+
+  /**
+   * Connects to the inspector proxy js-debug offers for one session, for the discoveries of {@link selectServer} and {@link selectPage}.
+   * The connection is kept as an acquisition, so a cancelled run still closes it; the caller checks the run is alive after assigning the result, so a failure there still closes it.
+   * @param session - The debug session whose proxy is asked for.
+   * @param description - What the proxy is called in a timeout sentence.
+   * @returns The connected channel.
+   * @throws When the session offers no proxy or the connection fails.
+   * @example candidate = await this.connectDebugProxy(session, 'owned server proxy')
+   */
+  private async connectDebugProxy(
+    session: vscode.DebugSession,
+    description: string,
+  ): Promise<Cdp> {
+    const proxy: { host: string; port: number; path: string } =
+      await awaitResponse(
+        session.customRequest('requestCDPProxy'),
+        description,
+        this.abort.signal,
+      )
+    return this.acquire(
+      Cdp.connect(
+        `ws://${proxy.host}:${proxy.port}${proxy.path}`,
+        (type, detail) => this.evidence.record(type, detail),
+      ),
+    )
+  }
+
+  /**
+   * Gives the Next server as the process {@link selectServer} attaches to: its inspector, its app folder and the webpack source map overrides of its debug configuration.
+   * Called by {@link selectServer} when the caller names no other target, so a run without `apiServer` attaches exactly as before.
+   * @returns The Next server target; the overrides are read when the debug configuration is built.
+   * @example await this.selectServer({ target: this.nextServerTarget() })
+   */
+  private nextServerTarget(): ServerAttachTarget {
+    return {
+      endpoint: (signal) => this.app!.inspectorEndpoint(signal),
+      cwd: this.packageRoot,
+      verify: (candidate, signal) =>
+        this.app!.verifyInspector(candidate, signal),
+      sourceMapPathOverrides: () => ({
+        'webpack://_N_E/./*': `${this.packageRoot}/*`,
+        // Exact keys only: one per server library stop file of an App Router app.
+        ...this.appLibraryOverrides('server'),
+      }),
+    }
   }
 
   /**
@@ -12050,18 +13018,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
             if (!this.isActivePageSession(session)) continue
             let candidate: Cdp | undefined
             try {
-              const proxy: { host: string; port: number; path: string } =
-                await awaitResponse(
-                  session.customRequest('requestCDPProxy'),
-                  'owned proxy',
-                  this.abort.signal,
-                )
-              candidate = await this.acquire(
-                Cdp.connect(
-                  `ws://${proxy.host}:${proxy.port}${proxy.path}`,
-                  (type, detail) => this.evidence.record(type, detail),
-                ),
-              )
+              candidate = await this.connectDebugProxy(session, 'owned proxy')
               this.alive()
               const result = await awaitResponse(
                 candidate.request('Runtime.evaluate', {
@@ -12322,21 +13279,67 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           .filter((other) => afterOperationOf(other) === entry.operationIndex)
           .map((other) => this.declaredAt(other)),
         notReachedStops: [place],
-        ...(isApi
-          ? { apiRoute: { route: entry.route, resumedHits } }
-          : {
-              routeHandler: {
-                route: entry.route,
-                ...(sent ? { method: sent.method } : {}),
-                resumedHits,
-              },
-            }),
+        ...this.notReachedHandlerFacts(entry, isApi, resumedHits, sent),
       },
     }
     return formatRefusalFailure(
       'SERVER_STOP_NOT_REACHED',
-      `Declared stop ${place} (${isApi ? 'API route' : 'route handler'} ${entry.route}) was not reached within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s after operation ${entry.operationIndex}. ${isApi ? API_ROUTE_NOT_REACHED_POSSIBILITIES : ROUTE_HANDLER_NOT_REACHED_POSSIBILITIES} The inputs were sent and their side effects are unknown: explain what ran, offer the partial replay and do not start again unasked.`,
+      `Declared stop ${place} (${this.handlerKindWords(entry)} ${entry.route}) was not reached within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s after operation ${entry.operationIndex}. ${this.notReachedPossibilities(entry)} The inputs were sent and their side effects are unknown: explain what ran, offer the partial replay and do not start again unasked.`,
     )
+  }
+
+  /**
+   * Gives the `serverRender` fields that name the unreached handler: the Pages API route's, the route handler's with the method the page used, or none for an API server stop (its route is the file).
+   * Called by {@link routeHandlerNotReachedText}.
+   * @param entry - The unreached stop.
+   * @param isApi - Whether it is a Pages API route.
+   * @param resumedHits - The hits the run resumed, by reason.
+   * @param sent - The page's request in the operation's window, when one matched the route.
+   * @returns `{ apiRoute }`, `{ routeHandler }` or an empty object.
+   * @example this.notReachedHandlerFacts(entry, false, [], undefined) // { routeHandler: { route: '/api/todos', resumedHits: [] } }
+   */
+  private notReachedHandlerFacts(
+    entry: RouteHandlerStop,
+    isApi: boolean,
+    resumedHits: { reason: string; count: number }[],
+    sent: { method: string } | undefined,
+  ): Pick<
+    NonNullable<OperationFailure['serverRender']>,
+    'apiRoute' | 'routeHandler'
+  > {
+    if (entry.kind === 'node-api') return {}
+    if (isApi) return { apiRoute: { route: entry.route, resumedHits } }
+    return {
+      routeHandler: {
+        route: entry.route,
+        ...(sent ? { method: sent.method } : {}),
+        resumedHits,
+      },
+    }
+  }
+
+  /**
+   * Names the kind of handler an unreached stop sits in, for the failure sentence.
+   * @param entry - The unreached stop.
+   * @returns `API server handler`, `API route` or `route handler`.
+   * @example this.handlerKindWords(entry) // 'route handler'
+   */
+  private handlerKindWords(entry: RouteHandlerStop): string {
+    if (entry.kind === 'node-api') return 'API server handler'
+    return entry.kind === 'pages-api' ? 'API route' : 'route handler'
+  }
+
+  /**
+   * Gives the possibilities a failure sentence names for an unreached handler stop of this kind.
+   * @param entry - The unreached stop.
+   * @returns The kind's possibilities text.
+   * @example this.notReachedPossibilities(entry) // ROUTE_HANDLER_NOT_REACHED_POSSIBILITIES
+   */
+  private notReachedPossibilities(entry: RouteHandlerStop): string {
+    if (entry.kind === 'node-api') return API_SERVER_NOT_REACHED_POSSIBILITIES
+    return entry.kind === 'pages-api'
+      ? API_ROUTE_NOT_REACHED_POSSIBILITIES
+      : ROUTE_HANDLER_NOT_REACHED_POSSIBILITIES
   }
 
   /**
@@ -12595,6 +13598,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         this.operationsDispatched = index
         // The request's window is decided by when the page sent it against this moment (E-3).
         this.routeHandlerRequests?.noteDispatch(index, Date.now())
+        // The attribution window of an API stop of this operation opens here, inclusive (E-12).
+        this.operationDispatchedAtMs.set(index, Date.now())
         this.operation!.inputDispatched = true
         this.evidence.record('input.dispatched', {
           key: this.operationKeys.at(index - 1),
@@ -12656,8 +13661,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         entry.requestedLine === entry.stop.source.line
           ? entry.stop.source.column
           : 1,
-        // js-debug binds a pending breakpoint when its module compiles; any line of the citation from the declared one is a place of this stop.
-        (line) => line >= entry.stop.source.line && line <= citationEndLine,
+        // js-debug binds a pending breakpoint when its module compiles; a route handler accepts any line of the citation from the declared one, an API server stop only its requested line.
+        (line) =>
+          routeHandlerAcceptsLine(entry.kind, line, {
+            declaredLine: entry.stop.source.line,
+            requestedLine: entry.requestedLine,
+            citationEndLine,
+          }),
       )
       await entry.breakpoint.registered(session, this.abort.signal)
       this.alive()
@@ -13428,6 +14438,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /** Reserves stops in declared order, retaining per-session generations across participant transitions. An accepted stop starts the pause hold and its inspection; the status becomes `paused-<participant>` only when {@link inspect} commits the observation. @example run.onEvent(selected, stopped) */
   onEvent(session: vscode.DebugSession, event: DebugProtocol.Event): void {
+    // The API's entry pause is held before its session is a participant, and its later pauses are stamped on receipt (Cycle 0099).
+    if (this.consumesApiServerEvent(session, event)) return
     const name = this.participantName(session)
     if (this.cleaning || !name) return
     const participant = this.participants[name]
@@ -14026,6 +15038,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /** Matches each CDP resume to its own captured generation; a queued next stop cannot resume unobserved. A resume of a pause no debugger stop announced is not a continuation: {@link retireUnannouncedPause} retires it (and the transient browser pause of a run without browser stops is retired here), journaling its place and duration. The resume of a pause nothing holds (an instrumentation pause, a pause from before the action) is journaled when that pause was, otherwise counted. @example this.onCdpResumed('server') */
   private onCdpResumed(name: Participant): void {
     if (this.cleaning) return
+    this.clearApiPauseReceipt(name)
     // A pause resumed while its script's address was read is judged now, as it would have been on arrival, so its resume finds it.
     const resumedWhileDiscovering = this.participants[name].discovering
     if (resumedWhileDiscovering) {
@@ -14127,8 +15140,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.hasBrowserSessionEnded = true
       this.browserSessionEnded?.()
     }
-    if (!this.cleaning && this.participantName(session))
-      this.fail('Selected debugger terminated')
+    if (!this.cleaning && this.participantName(session)) {
+      // A lost API session may be the API's own exit, which the arbiter prefers (E-6).
+      if (this.apiServer && this.participantName(session) === 'server')
+        this.failOnApiLoss('Selected debugger terminated')
+      else this.fail('Selected debugger terminated')
+    }
   }
 
   /**
@@ -16096,6 +17113,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       resourcesReleased: this.resourcesReleased,
       browserProfileLeft: this.browser.profileLeft,
       ...this.sessionView(),
+      ...this.apiServerView(),
       runtimeOutcome,
       captureOutcome,
       finalOutcome: !this.cleaned
@@ -16365,13 +17383,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.options.control?.signal.removeEventListener('abort', this.cancel)
     if (!['failed', 'completed'].includes(this.status))
       this.status = 'cancelled'
+    // An API handler that is paused or about to run is killed with its group before anything closes, resumes or detaches (E-4, D22).
+    // A kill that failed keeps the API's session, channel and breakpoints for the retried Stop: letting go would release a paused API.
+    const isApiKept = await this.killApiServerBeforeDetach()
     const failures = await settleCleanup(
-      Object.entries(this.participants).map(([name, participant]) => ({
-        description: `${name} CDP close`,
-        release: () => participant.cdp?.close(),
-      })),
+      Object.entries(this.participants)
+        .filter(([name]) => !(isApiKept && name === 'server'))
+        .map(([name, participant]) => ({
+          description: `${name} CDP close`,
+          release: () => participant.cdp?.close(),
+        })),
     )
-    failures.push(...(await this.stopKnownDebuggers()))
+    failures.push(...(await this.stopKnownDebuggers(isApiKept)))
     failures.push(
       ...(await settleCleanup([
         {
@@ -16394,16 +17417,20 @@ export class ConfiguredBrowserRun implements StudyRuntime {
               'repository preparation',
             ),
         },
-        ...this.stops.map((stop) => ({
-          description: 'owned breakpoint',
-          release: () => stop.breakpoint?.remove(),
-        })),
+        ...this.stops
+          .filter((stop) => !(isApiKept && this.isApiStop(stop)))
+          .map((stop) => ({
+            description: 'owned breakpoint',
+            release: () => stop.breakpoint?.remove(),
+          })),
         ...(this.preparationWindow?.provisional ?? []).map((entry) => ({
           description: 'provisional breakpoint',
           release: (): void => entry.breakpoint.remove(),
         })),
         ...this.routeHandlerStops.flatMap((entry) =>
-          entry.breakpoint && !entry.prepared
+          entry.breakpoint &&
+          !entry.prepared &&
+          !(isApiKept && entry.kind === 'node-api')
             ? [
                 {
                   description: 'route-handler breakpoint',
@@ -16414,7 +17441,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         ),
       ])),
     )
-    failures.push(...(await this.stopKnownDebuggers()))
+    failures.push(...(await this.stopKnownDebuggers(isApiKept)))
     // Whether the owned application stop succeeded: a server that may still run keeps the library's private folder.
     let didServerStop = true
     failures.push(
@@ -16430,6 +17457,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
             await this.app?.close()
             didServerStop = true
           },
+        },
+        // The API ends after Metro; a group that cannot be confirmed gone is reported in the run resource, never as another code.
+        {
+          description: 'owned API server stop',
+          // A failed kill-first is retried by the next Stop; a normal close here would only repeat it and could clear its record.
+          release: (): Promise<void> =>
+            isApiKept ? Promise.resolve() : this.closeApiServer(),
         },
         {
           description: 'protocol activities settle',
@@ -16462,7 +17496,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     await this.libraryRoute?.dispose({ serverStopped: didServerStop })
     failures.push(...libraryFailures)
     this.failures.push(...failures)
-    this.resourcesReleased = failures.length === 0
+    this.resourcesReleased = this.isCleanupComplete(failures)
     this.cleaned = this.resourcesReleased
     // A released run names no further pause; its script maps can be as large as the application.
     if (this.cleaned)
@@ -16482,14 +17516,29 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       if (!this.resourcesReleased) throw error
     }
     if (failures.length) throw new Error(failures.join('; '))
+    this.assertApiCleanupComplete()
   }
-  /** Stops only acquired active roots before and after late acquisition draining. @example await this.stopKnownDebuggers() */
-  private stopKnownDebuggers(): Promise<string[]> {
+  /**
+   * Tells whether a prepared stop belongs to the API server's handler.
+   * Called by {@link cleanupOwned} to keep the breakpoints of a surviving API.
+   * @param stop - A prepared stop.
+   * @returns `true` for an API handler stop.
+   * @example this.isApiStop(stop) // => false for a Next route stop
+   */
+  private isApiStop(stop: PreparedStop): boolean {
+    return this.routeHandlerStops.some(
+      (entry) => entry.kind === 'node-api' && entry.prepared === stop,
+    )
+  }
+  /** Stops only acquired active roots before and after late acquisition draining; the API's own session stays when its kill is unconfirmed. @example await this.stopKnownDebuggers(false) */
+  private stopKnownDebuggers(isApiKept = false): Promise<string[]> {
     return settleCleanup(
       [...this.sessions.values()]
         .filter(
           (session) =>
-            !session.parentSession && this.activeSessions.has(session.id),
+            !session.parentSession &&
+            this.activeSessions.has(session.id) &&
+            !(isApiKept && this.isApiDebugSession(session)),
         )
         .map((session) => ({
           description: 'owned debugger stop',

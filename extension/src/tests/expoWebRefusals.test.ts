@@ -7,6 +7,7 @@ import {
   EXPO_WEB_REFUSAL_CODES,
   EXPO_WEB_REFUSAL_REASONS,
   expoWebAmbiguousSourceRefusal,
+  expoWebApiPortConflictRefusal,
   expoWebBundleFailedRefusal,
   expoWebDependenciesRefusal,
   expoWebDynamicConfigRefusal,
@@ -51,6 +52,7 @@ function unsupportedRefusals(): StudyError[] {
     expoWebServerOutputRefusal(),
     expoWebScriptFormRefusal('the command word cross-env'),
     expoWebPreScriptRefusal('preweb'),
+    expoWebApiPortConflictRefusal(8081, 8081),
   ]
 }
 

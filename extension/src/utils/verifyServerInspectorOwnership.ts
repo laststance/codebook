@@ -34,6 +34,44 @@ const THREAD_IDENTITY_PROBE =
   '(() => { const threads = typeof process.getBuiltinModule === "function" ? process.getBuiltinModule("node:worker_threads") : (typeof require === "function" ? require("node:worker_threads") : undefined); return threads === undefined ? {nodeVersion:process.version} : {isMainThread:threads.isMainThread,threadId:threads.threadId}; })()'
 
 /**
+ * Asks a server inspector which JavaScript thread it is, so the caller can exclude a background worker that shares the server's PID.
+ * Called by {@link verifyServerInspectorOwnership} and by the owned API server's inspector verification ({@link OwnedApiServer.verifyInspector}).
+ * @param inspector - The proxy for this specific JavaScript target.
+ * @param signal - Revokes the probe when the launch is abandoned.
+ * @param assertRunning - Rechecks launch ownership around the asynchronous reply.
+ * @returns Node's thread identity; `threadId` is not a DAP thread id.
+ * @throws When the evaluation fails, the answer is malformed or inconsistent, or the target's Node.js offers the inspector no loader of `node:worker_threads` (the refusal names its release).
+ * @example await readInspectorThreadIdentity(cdp, signal, assertRunning) // => { isMainThread: true, threadId: 0 }
+ */
+export async function readInspectorThreadIdentity(
+  inspector: Pick<Cdp, 'request'>,
+  signal: AbortSignal,
+  assertRunning: () => void,
+) {
+  // The console scope's require is the loader on a Node.js before process.getBuiltinModule.
+  const threadResponse = await inspector.request('Runtime.evaluate', {
+    expression: THREAD_IDENTITY_PROBE,
+    includeCommandLineAPI: true,
+    returnByValue: true,
+  })
+  signal.throwIfAborted()
+  assertRunning()
+  if (threadResponse.exceptionDetails)
+    throw new Error('Server inspector thread evaluation failed')
+  const unreadable = unreadableThreadSchema.safeParse(
+    threadResponse.result.value,
+  )
+  // A Node.js that could load no module names its release, so the refusal says which one it is.
+  if (unreadable.success)
+    throw new Error(
+      `Server inspector cannot name its thread on Node.js ${unreadable.data.nodeVersion}: neither process.getBuiltinModule nor require is offered to the inspector`,
+    )
+  signal.throwIfAborted()
+  assertRunning()
+  return threadIdentitySchema.parse(threadResponse.result.value)
+}
+
+/**
  * Verifies process and thread ownership when {@link launchDevelopmentServer} supplies a native inspector.
  * {@link ConfiguredBrowserRun.selectServer} excludes its background threads before granting control.
  * @param inspector - The proxy for this specific JavaScript target.
@@ -82,27 +120,11 @@ export async function verifyServerInspectorOwnership(
   if (!/^\s*\d+\s*$/.test(stdout) || Number(stdout.trim()) !== processGroup)
     throw new Error('Server inspector belongs to a different process group')
   // Workers inherit the launch marker and share the PID; identify the JavaScript target separately.
-  // The console scope's require is the loader on a Node.js before process.getBuiltinModule.
-  const threadResponse = await inspector.request('Runtime.evaluate', {
-    expression: THREAD_IDENTITY_PROBE,
-    includeCommandLineAPI: true,
-    returnByValue: true,
-  })
-  signal.throwIfAborted()
-  assertRunning()
-  if (threadResponse.exceptionDetails)
-    throw new Error('Server inspector thread evaluation failed')
-  const unreadable = unreadableThreadSchema.safeParse(
-    threadResponse.result.value,
+  const thread = await readInspectorThreadIdentity(
+    inspector,
+    signal,
+    assertRunning,
   )
-  // A Node.js that could load no module names its release, so the refusal says which one it is.
-  if (unreadable.success)
-    throw new Error(
-      `Server inspector cannot name its thread on Node.js ${unreadable.data.nodeVersion}: neither process.getBuiltinModule nor require is offered to the inspector`,
-    )
-  const thread = threadIdentitySchema.parse(threadResponse.result.value)
-  signal.throwIfAborted()
-  assertRunning()
   return {
     pid: identity.pid,
     processGroup,

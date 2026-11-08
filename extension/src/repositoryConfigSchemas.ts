@@ -1,8 +1,10 @@
 import { z } from 'zod'
 
+import { apiServerDeclarationSchema } from './apiServerDeclarationSchema'
 import {
   ASK_LEARNER_SECRET,
   CONFIGURED_OBSERVATION_LIMIT,
+  EXPO_WEB_API_SERVER_MINIMUM_API,
   CROSS_RUNTIME_CONFIG_VERSION,
   OPERATIONS_CONFIG_VERSION,
   OPERATIONS_REPOSITORY_BROWSER_ADAPTERS,
@@ -33,6 +35,7 @@ import {
 import { bookIdSchema } from './identitySchemas'
 import { libraryDeclarationSchema } from './libraryDeclarationSchema'
 import { repositoryHashSchema, repositoryPathSchema } from './sourceSchemas'
+import { isRepositoryPathInFolder } from './utils/isRepositoryPathInFolder'
 import { missingValueInspectionMessage } from './utils/missingValueInspectionMessage'
 import { normalizedSignInPathname } from './utils/normalizedSignInPathname'
 
@@ -382,6 +385,8 @@ const operationsConfigurationShape = z.strictObject({
     ),
   // vite-dev (MCP API 1.34), react-scripts-dev (1.35) and next-dev-webpack (1.36), together with a nested packageRoot: other adapters refuse the key as unknown in validateOperations, and the service refuses a root run with the reason library-needs-package-root.
   library: libraryDeclarationSchema.optional(),
+  // expo-web-dev only (MCP API 1.37): the app's own Node API server; other adapters refuse the key as unknown in validateOperations.
+  apiServer: apiServerDeclarationSchema.optional(),
 })
 
 /**
@@ -423,6 +428,87 @@ function validateSignInPaths(
 }
 
 /**
+ * Lists every declared stop of a version 3 configuration with the configuration path of its source file and of its `afterOperation`, in declared order.
+ * Called by {@link validateApiServer}.
+ * @param configuration - A parsed version 3 configuration.
+ * @returns One entry per stop: participant, source file, `afterOperation` and the two configuration paths.
+ * @example declaredStopLocations(configuration)[0]?.sourcePath // => ['source', 'path']
+ */
+function declaredStopLocations(
+  configuration: z.infer<typeof operationsConfigurationShape>,
+) {
+  return [
+    {
+      participant: configuration.participant,
+      file: configuration.source.path,
+      afterOperation: configuration.afterOperation,
+      sourcePath: ['source', 'path'],
+      afterOperationPath: ['afterOperation'],
+    },
+    ...(configuration.additionalStops ?? []).map((stop, index) => ({
+      participant: stop.participant,
+      file: stop.source.path,
+      afterOperation: stop.afterOperation,
+      sourcePath: ['additionalStops', index, 'source', 'path'],
+      afterOperationPath: ['additionalStops', index, 'afterOperation'],
+    })),
+  ]
+}
+
+/**
+ * Refuses the `apiServer` rules a field schema cannot state (API 1.37): the API folder and the app's folder must not contain one another, a server stop must lie inside the API folder and a browser stop inside the app's folder, and a server stop needs an operation to follow (`afterOperation` 1 or more).
+ * Called by {@link validateOperations} for an `expo-web-dev` configuration; does nothing without `apiServer`.
+ * @param configuration - A parsed version 3 configuration.
+ * @param context - The refinement context that receives one issue per violation, each naming its field.
+ * @example validateApiServer({ packageRoot: 'apps/app', apiServer: { packageRoot: 'apps/app/api', … }, … }, context) // adds an issue at ['apiServer', 'packageRoot']
+ */
+function validateApiServer(
+  configuration: z.infer<typeof operationsConfigurationShape>,
+  context: z.RefinementCtx,
+): void {
+  const { apiServer } = configuration
+  if (apiServer === undefined) return
+  const appRoot = configuration.packageRoot ?? '.'
+  // The participant of a stop follows from its folder, so neither folder may contain the other.
+  if (
+    isRepositoryPathInFolder(appRoot, apiServer.packageRoot) ||
+    isRepositoryPathInFolder(apiServer.packageRoot, appRoot)
+  )
+    context.addIssue({
+      code: 'custom',
+      path: ['apiServer', 'packageRoot'],
+      message: `apiServer.packageRoot "${apiServer.packageRoot}" and the app's packageRoot "${appRoot}" must not contain one another; declare the API's own package folder outside the app's folder.`,
+    })
+  for (const stop of declaredStopLocations(configuration)) {
+    const field = `configuration.${stop.sourcePath.join('.')}`
+    if (
+      stop.participant === 'server' &&
+      !isRepositoryPathInFolder(apiServer.packageRoot, stop.file)
+    )
+      context.addIssue({
+        code: 'custom',
+        path: stop.sourcePath,
+        message: `A server stop must lie inside apiServer.packageRoot "${apiServer.packageRoot}"; ${stop.file} is declared at ${field}.`,
+      })
+    if (
+      stop.participant === 'browser' &&
+      !isRepositoryPathInFolder(appRoot, stop.file)
+    )
+      context.addIssue({
+        code: 'custom',
+        path: stop.sourcePath,
+        message: `With apiServer, a browser stop must lie inside the app's packageRoot "${appRoot}"; ${stop.file} is declared at ${field}.`,
+      })
+    if (stop.participant === 'server' && stop.afterOperation === 0)
+      context.addIssue({
+        code: 'custom',
+        path: stop.afterOperationPath,
+        message: `afterOperation 0 is declared at configuration.${stop.afterOperationPath.join('.')}, but an API server stop needs an operation: entry-load API stops are not supported (API ${EXPO_WEB_API_SERVER_MINIMUM_API}); declare the operation whose request reaches the API and afterOperation 1 or more.`,
+      })
+  }
+}
+
+/**
  * Refuses the version 3 rules a field schema cannot state: distinct operation titles, distinct sign-in paths none of which is the entry path, and an `afterOperation` on every stop that names a declared operation and never decreases along the declared stop order.
  * Called by {@link operationsRepositoryConfigSchema}.
  * @param configuration - A parsed version 3 configuration.
@@ -445,6 +531,17 @@ function validateOperations(
       keys: ['library'],
       path: [],
     })
+  // Only an expo-web-dev configuration declares `apiServer` (API 1.37); every other adapter refuses it exactly as an unknown key of the strict shape.
+  if (
+    configuration.apiServer !== undefined &&
+    configuration.adapter !== 'expo-web-dev'
+  )
+    context.addIssue({
+      code: 'unrecognized_keys',
+      keys: ['apiServer'],
+      path: [],
+    })
+  else validateApiServer(configuration, context)
   const titles = new Set<string>()
   for (const [index, operation] of (configuration.operations ?? []).entries()) {
     // A repeated title makes two operations indistinguishable in the run resource and the replay.
@@ -571,12 +668,21 @@ function refuseBrowserOnlyServerParticipants(
       participant: stop.participant,
     })),
   ]
+  // An expo-web-dev run that declares apiServer (API 1.37) starts the app's own Node API, so a server stop is accepted there.
+  const hasApiServer =
+    configuration.adapter === 'expo-web-dev' &&
+    'apiServer' in configuration &&
+    configuration.apiServer !== undefined
   for (const { path, participant } of declared)
-    if (participant === 'server')
+    if (participant === 'server' && !hasApiServer)
       context.addIssue({
         code: 'custom',
         path,
-        message: `adapter "${configuration.adapter}" supports browser stops only; participant "server" is declared at configuration.${path.join('.')}.`,
+        message: `adapter "${configuration.adapter}" supports browser stops only; participant "server" is declared at configuration.${path.join('.')}.${
+          configuration.adapter === 'expo-web-dev'
+            ? ` To pause in the app's own Node API, declare apiServer (API ${EXPO_WEB_API_SERVER_MINIMUM_API}).`
+            : ''
+        }`,
       })
   refuseExpoApiRouteStops(configuration, context)
 }
@@ -861,7 +967,26 @@ const expoWebRepositoryConfigSchema = operationsConfigurationShape
     validateInspections(configuration, context)
     validateOperations(configuration, context)
   })
-/** Every configuration a saved study can hold: the retained union of formats 3 to 8, the format 9 package-root variant (Next), the format 10 package-root variant (Vite), the format 11 variant (react-scripts), the format 15 variant (Expo web), the format 16 variant (Vite with a library), the format 17 variant (react-scripts with a library) or the format 18 variant (Next with a library). */
+  // A run that declares `apiServer` is saved as format 19 only.
+  .refine(
+    (configuration) => configuration.apiServer === undefined,
+    'Only a study of format 19 keeps an apiServer.',
+  )
+/**
+ * The configuration a format 19 study retains: the version 3 `expo-web-dev` shape with a required `apiServer` declaration (API 1.37).
+ * Why it exists: an older Codebook refuses `apiServer` as an unknown key, so a run that declares it takes its own format and is listed there as saved by a newer Codebook. Validated like the format 15 variant (inspections, operations, and the `apiServer` folder and stop rules).
+ * Read by {@link studyConfigurationSchema}; no earlier format accepts an `apiServer`.
+ */
+const expoWebApiServerRepositoryConfigSchema = operationsConfigurationShape
+  .extend({
+    adapter: z.literal('expo-web-dev'),
+    apiServer: apiServerDeclarationSchema,
+  })
+  .superRefine((configuration, context) => {
+    validateInspections(configuration, context)
+    validateOperations(configuration, context)
+  })
+/** Every configuration a saved study can hold: the retained union of formats 3 to 8, the format 9 package-root variant (Next), the format 10 package-root variant (Vite), the format 11 variant (react-scripts), the format 15 variant (Expo web), the format 16 variant (Vite with a library), the format 17 variant (react-scripts with a library) the format 18 variant (Next with a library) or the format 19 variant (Expo web with an apiServer). */
 export const studyConfigurationSchema = z.union([
   retainedRepositoryConfigSchema,
   packageRootRepositoryConfigSchema,
@@ -871,6 +996,7 @@ export const studyConfigurationSchema = z.union([
   reactScriptsLibraryRepositoryConfigSchema,
   nextLibraryRepositoryConfigSchema,
   expoWebRepositoryConfigSchema,
+  expoWebApiServerRepositoryConfigSchema,
 ])
 export type RepositoryConfiguration = z.infer<typeof repositoryConfigSchema>
 export type RetainedRepositoryConfiguration = z.infer<

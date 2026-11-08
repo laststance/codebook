@@ -39,6 +39,7 @@ export const EXPO_WEB_REFUSAL_REASONS = {
     'server-output',
     'web-script-form',
     'pre-script',
+    'api-port-conflict',
   ],
   EXPO_WEB_LAUNCHER_FAILED: ['bundle-failed', 'exited'],
   EXPO_WEB_PORT_UNAVAILABLE: ['port-in-use'],
@@ -51,6 +52,8 @@ export const EXPO_WEB_REFUSAL_REASONS = {
     'map-limit',
     'map-unreadable',
     'not-in-entry-bundle',
+    'source-drift',
+    'source-unverifiable',
   ],
 } as const satisfies Record<ExpoWebRefusalCode, readonly string[]>
 
@@ -639,4 +642,146 @@ export function expoWebNotInEntryBundleRefusal(file: string): StudyError {
     `Tell the learner that this version seals only files the entry bundle includes (details.file is not one of them); put the stop in a file the entry imports, or tell the learner this file cannot be observed in this version. Never edit the project. ${STOPPED_NO_INPUT} ${recoveryEnd('EXPO_WEB_SEAL_FAILED')}`,
     { reason: 'not-in-entry-bundle', file, sideEffects: 'partial' },
   )
+}
+
+/**
+ * Builds the `EXPO_WEB_UNSUPPORTED` refusal of an `apiServer.port` that equals the port the app's web script declares (API 1.37), found before anything started.
+ *
+ * Why it exists: Metro and the API cannot listen on one port, and Codebook sets no variable to move either. Called by the run's preparation after the schema and the launch resolution, before any port is checked.
+ * @param port - The declared `apiServer.port`.
+ * @param appPort - The port the app's web script declares (else the Expo default).
+ * @returns The refusal: `details.reason: "api-port-conflict"`, `port`, `appPort` and `sideEffects: "none"`.
+ * @example
+ * expoWebApiPortConflictRefusal(8081, 8081).details?.appPort // => 8081
+ */
+export function expoWebApiPortConflictRefusal(
+  port: number,
+  appPort: number,
+): StudyError {
+  return expoWebRefusal(
+    'EXPO_WEB_UNSUPPORTED',
+    `apiServer.port ${port} is the port the app's web script declares (${appPort}); declare the port the API's own code listens on, or tell the learner the API and the app cannot share a port. ${NOTHING_STARTED}`,
+    `Correct apiServer.port (details.port) to the port the API's own code listens on, which must differ from details.appPort, or tell the learner the API and the app cannot share a port; never edit the project or its scripts. ${recoveryEnd('EXPO_WEB_UNSUPPORTED')}`,
+    { reason: 'api-port-conflict', port, appPort, sideEffects: 'none' },
+  )
+}
+
+/** The sentence an API seal refusal carries: the API and the app's servers were stopped, and the operations already sent are not undone. */
+const API_SERVER_STOPPED =
+  "The API and the app were stopped; an operation already sent may have changed the application's data."
+
+/**
+ * Builds the `EXPO_WEB_SEAL_FAILED` refusal of an API script whose executed source differs from the stop file's declared hash (API 1.37).
+ *
+ * Why it exists: the source map the API ran carries the file's contents, and those must equal the hash the stop declares; a stale prebuilt file or an edit after the declaration would otherwise show the declared line on code that did not run. Called by the API stop's seal at the script's announcement or at the pause; the API's process group is ended first.
+ * @param file - The repository-relative stop file.
+ * @returns The refusal: `details.reason: "source-drift"`, `details.participant: "apiServer"`, `file` and `sideEffects: "partial"`.
+ * @example
+ * expoWebApiSourceDriftRefusal('apps/api/src/handler.ts').details?.participant // => 'apiServer'
+ */
+export function expoWebApiSourceDriftRefusal(file: string): StudyError {
+  return expoWebRefusal(
+    'EXPO_WEB_SEAL_FAILED',
+    `The API ran a different version of ${file} than the stop declares (the source its map carries is not the declared file), so the stop was not shown. ${API_SERVER_STOPPED}`,
+    `Tell the learner the API ran another version of details.file than the repository's current one (a stale build, or an edit after the study was declared); never edit the project. Declare the stop again from the current file, then one new start. ${API_SERVER_STOPPED} ${recoveryEnd('EXPO_WEB_SEAL_FAILED')}`,
+    {
+      reason: 'source-drift',
+      participant: 'apiServer',
+      file,
+      sideEffects: 'partial',
+    },
+  )
+}
+
+/**
+ * Builds the `EXPO_WEB_SEAL_FAILED` refusal of an API script that no source map ties to the stop file (API 1.37): a prebuilt entry without inline source contents, an external map, or no map.
+ *
+ * Why it exists: without the executed source Codebook cannot prove which code ran, and the current file on disk is never taken as proof. Called by the API stop's seal; the API's process group is ended first.
+ * @param file - The repository-relative stop file.
+ * @returns The refusal: `details.reason: "source-unverifiable"`, `details.participant: "apiServer"`, `file` and `sideEffects: "partial"`.
+ * @example
+ * expoWebApiSourceUnverifiableRefusal('apps/api/src/handler.ts').details?.reason // => 'source-unverifiable'
+ */
+export function expoWebApiSourceUnverifiableRefusal(file: string): StudyError {
+  return expoWebRefusal(
+    'EXPO_WEB_SEAL_FAILED',
+    `Codebook cannot tell which source the API ran for ${file} (no inline source map with the file's contents), so the stop was not shown. ${API_SERVER_STOPPED}`,
+    `Tell the learner the API's executed script carries no inline source map with the contents of details.file (a prebuilt dist entry, an external map or no map); declare apiServer.entry as the TypeScript source the package's own dev script runs through tsx, then one new start; never edit the project. ${API_SERVER_STOPPED} ${recoveryEnd('EXPO_WEB_SEAL_FAILED')}`,
+    {
+      reason: 'source-unverifiable',
+      participant: 'apiServer',
+      file,
+      sideEffects: 'partial',
+    },
+  )
+}
+
+/** The fields an API seal failure text restores (API 1.37): the reason, the participant, the stop file and the side effects. */
+export type ExpoWebApiSealFailureDetails = {
+  reason: 'source-drift' | 'source-unverifiable'
+  participant: 'apiServer'
+  file: string
+  sideEffects: 'partial'
+}
+
+/** The prefix of an API seal failure variant: `api-seal:<reason>:<encoded file>`. */
+const API_SEAL_VARIANT_PREFIX = 'api-seal:'
+
+/**
+ * Writes the variant of an API seal failure text (`EXPO_WEB_SEAL_FAILED(api-seal:<reason>:<file>)`), so the reason and file survive the text a failed run records.
+ *
+ * Why it exists: the seal refusal is raised inside an event and passes through the run's failure string; without a variant {@link refusalFailureOf} would restore the code alone. Called by {@link ConfiguredBrowserRun} when the API seal fails.
+ * @param error - The seal refusal ({@link expoWebApiSourceDriftRefusal} or {@link expoWebApiSourceUnverifiableRefusal}).
+ * @returns The variant; `undefined` when the error carries no API seal details.
+ * @example
+ * expoWebApiSealVariantOf(expoWebApiSourceDriftRefusal('apps/api/a.ts')) // => 'api-seal:source-drift:apps%2Fapi%2Fa.ts'
+ */
+export function expoWebApiSealVariantOf(error: StudyError): string | undefined {
+  const details = error.details
+  if (
+    details?.participant !== 'apiServer' ||
+    typeof details.file !== 'string' ||
+    (details.reason !== 'source-drift' &&
+      details.reason !== 'source-unverifiable')
+  )
+    return undefined
+  // Parentheses would end the lead, so they are encoded too.
+  const file = encodeURIComponent(details.file)
+    .replaceAll('(', '%28')
+    .replaceAll(')', '%29')
+  return `${API_SEAL_VARIANT_PREFIX}${details.reason}:${file}`
+}
+
+/**
+ * Reads an API seal variant back into the details {@link expoWebApiSourceDriftRefusal} and {@link expoWebApiSourceUnverifiableRefusal} carry.
+ * Called by {@link refusalFailureOf}.
+ * @param variant - The lead's variant.
+ * @returns The details; `undefined` for any other variant or an undecodable file.
+ * @example
+ * expoWebApiSealFailureOf('api-seal:source-drift:apps%2Fapi%2Fa.ts') // => { reason: 'source-drift', participant: 'apiServer', file: 'apps/api/a.ts', sideEffects: 'partial' }
+ */
+export function expoWebApiSealFailureOf(
+  variant: string | undefined,
+): ExpoWebApiSealFailureDetails | undefined {
+  if (!variant?.startsWith(API_SEAL_VARIANT_PREFIX)) return undefined
+  const rest = variant.slice(API_SEAL_VARIANT_PREFIX.length)
+  const colon = rest.indexOf(':')
+  const reason = rest.slice(0, colon)
+  const encoded = rest.slice(colon + 1)
+  if (
+    colon < 0 ||
+    (reason !== 'source-drift' && reason !== 'source-unverifiable') ||
+    !encoded
+  )
+    return undefined
+  try {
+    return {
+      reason,
+      participant: 'apiServer',
+      file: decodeURIComponent(encoded),
+      sideEffects: 'partial',
+    }
+  } catch {
+    return undefined
+  }
 }

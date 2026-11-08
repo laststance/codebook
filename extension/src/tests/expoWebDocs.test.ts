@@ -125,7 +125,7 @@ test('the Expo help states its limits, the line rule, the sign-in note and the f
   const limitText = section.limits.join('\n')
   // Assert
   for (const phrase of [
-    'Browser stops only: participant "server" and a stop in an Expo Router API route (`+api.*`, such as `+api.ts`) are refused',
+    'Browser stops only unless apiServer is declared (API 1.37, see apiServer): participant "server" without it and a stop in an Expo Router API route (`+api.*`, such as `+api.ts`) are refused',
     'Only Expo SDK 57 is supported',
     'Only app.json is read',
     'exactly expo start --web, optionally with --port N or -p N and NAME=value assignments',
@@ -134,7 +134,7 @@ test('the Expo help states its limits, the line rule, the sign-in note and the f
     'It does not reload the app during a run',
     "declare it on a statement inside the handler's body",
     'React Compiler names such as t6',
-    "A screen behind sign-in needs the app's own API running, which Codebook does not start",
+    "A screen behind sign-in needs the app's own API: declare apiServer when the API is a Node server in the repository; otherwise tell the learner to start it",
     "never as Codebook's failure",
     'not-in-entry-bundle',
     'binds Metro to the loopback address only (--localhost)',
@@ -197,7 +197,7 @@ test('the MCP instructions and the API note name expo-web-dev, its selection rul
       .split('\n')
       .find((line) => line.startsWith(' * 1.30 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.36')
+  assert.equal(API_VERSION, '1.37')
   assert.ok(protocol.includes('${EXPO_WEB_APP_SELECTION_RULE}'))
   assert.ok(
     protocol.includes(
@@ -243,7 +243,7 @@ test('the README documents the Expo web adapter, its limits, format 15 and the A
     'Only browser stops are supported',
     "Declare a stop on a statement inside a handler's body",
     'React Compiler names such as `t6`',
-    "A screen behind sign-in needs the app's own API running, which Codebook does not start",
+    "a screen behind sign-in needs the app's own API running, which Codebook does not start",
     'Codebook does not reload the app during a run',
   ])
     assert.ok(section.includes(phrase), phrase)

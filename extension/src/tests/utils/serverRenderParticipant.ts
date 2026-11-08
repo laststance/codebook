@@ -1180,6 +1180,11 @@ export function createServerParticipant(parts: ServerParticipantParts) {
      * @example harness.server.hit({ scriptId: '5036', route: '/dashboard/invoices' })
      */
     hit(hit: ServerHit = {}, order: ServerHitOrder = 'cdp-first'): number {
+      // The adapter's `stopped` names the breakpoint it hit, also when it arrives before the inspector's pause.
+      if (hit.hitBreakpoints && order.startsWith('dap'))
+        currentHitBreakpointIds = hit.hitBreakpoints.map((id) =>
+          adapterId({ id }),
+        )
       if (order === 'dap-only') {
         stopDap()
         return currentHit

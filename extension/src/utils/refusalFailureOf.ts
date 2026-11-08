@@ -1,10 +1,17 @@
 import {
+  API_SERVER_EXITED_RECOVERY,
+  API_SERVER_EXITED_VARIANT,
+  apiServerOutputTailOf,
+} from '../apiServerRefusals'
+import {
   SIGN_IN_REQUIRED_REASONS,
   type SignInRequiredReason,
 } from '../constants'
 import { PACKAGE_ROOT_FRESH_SESSION_RECOVERY, type ErrorCode } from '../errors'
 import {
   EXPO_WEB_REFUSAL_CODES,
+  expoWebApiSealFailureOf,
+  type ExpoWebApiSealFailureDetails,
   expoWebSetupDeadlineDetailsOf,
   type ExpoWebSetupDeadlineFailureDetails,
 } from '../expoWebRefusals'
@@ -59,6 +66,8 @@ const CODED_FAILURE_CODES = [
   'ENTRY_LOAD_TIMEOUT',
   // A library stop's build that changed after the freeze, only with its `library-build-changed` variant ({@link refusalFailureOf}).
   'RUNTIME_FAILED',
+  // The app's own API server that exited during an `expo-web-dev` run, only with its `api-server` variant ({@link refusalFailureOf}).
+  'SERVER_EXITED',
 ] as const satisfies readonly ErrorCode[]
 
 /** A code a run's failure text can lead with, so the service restores it as a coded error. */
@@ -82,6 +91,18 @@ export type RefusalFailure = {
     // The service forwards this slot as the error's `details`, so the react-scripts setup deadline's fields ride here too.
     | ReactScriptsSetupDeadlineFailureDetails
     | ExpoWebSetupDeadlineFailureDetails
+    | ApiServerExitedFailureDetails
+    | ExpoWebApiSealFailureDetails
+}
+
+/** The fields an API exit failure text restores: the participant and the side effects (the API was started and stopped); the exit code, signal and output tail live in the message. */
+type ApiServerExitedFailureDetails = {
+  participant: 'apiServer'
+  sideEffects: 'partial'
+  /** The API's masked last output, read back from the message; `''` when it printed nothing. */
+  outputTail: string
+  /** Absent: lets code that reads `libraryDetails?.reason` keep one shape across the union. */
+  reason?: undefined
 }
 
 /** The fields a Vite library failure text restores: the reason (and cause) with `sideEffects: "unknown"`, and the package root, library and file its variant carries. */
@@ -107,6 +128,9 @@ function codedFailureCodeOf(
   lead: RegExpExecArray | null,
 ): (typeof CODED_FAILURE_CODES)[number] | undefined {
   const code = CODED_FAILURE_CODES.find((known) => known === lead?.[1])
+  // `SERVER_EXITED` is coded only as the API server's exit (the node-server profile restores its own through its error).
+  if (code === 'SERVER_EXITED')
+    return lead?.[2] === API_SERVER_EXITED_VARIANT ? code : undefined
   return code === 'RUNTIME_FAILED' && !libraryDetailsOfFailure(code, lead?.[2])
     ? undefined
     : code
@@ -123,6 +147,7 @@ function codedFailureCodeOf(
  * - `{ code, message, recoveryOverride }` for a `NEXT_SETUP_DEADLINE` led by a known variant
  * - `{ code, message, pagesDetails }` for a `NEXT_ENTRY_REDIRECTED` led by the `pages` variant
  * - `{ code, message, libraryDetails }` for a `REACT_SCRIPTS_SETUP_DEADLINE` whose message names its step: `libraryDetails` holds `{ reason: 'setup-deadline', step, sideEffects: 'partial' }`, which the service forwards as `details`
+ * - `{ code: 'SERVER_EXITED', message, recoveryOverride, libraryDetails }` for `SERVER_EXITED(api-server)`: the API server's exit words and `{ participant: 'apiServer', sideEffects: 'partial' }`
  * - `undefined` for any other text
  * @example
  * refusalFailureOf('VITE_PAGE_RELOADED: The page reloaded') // => { code: 'VITE_PAGE_RELOADED', message: 'The page reloaded' }
@@ -138,20 +163,14 @@ export function refusalFailureOf(text: string): RefusalFailure | undefined {
   if (!lead || !code) return undefined
   const message = text.slice(lead[0].length),
     variant = lead[2]
-  // A sign-in refusal carries its reason as the variant; an unknown reason restores the code alone.
-  if (code === 'SIGN_IN_REQUIRED') {
-    const reason = SIGN_IN_REQUIRED_REASONS.find((known) => known === variant)
-    if (reason === undefined) return { code, message }
-    // A run of a package below the root has no saved session to set up: its own recovery replaces the setup one.
-    return reason === 'package-root-fresh-session'
-      ? {
-          code,
-          message,
-          recoveryOverride: PACKAGE_ROOT_FRESH_SESSION_RECOVERY,
-          details: { reason },
-        }
-      : { code, message, details: { reason } }
-  }
+  // The API server's exit carries its words and details as the variant (DX-6, E-6).
+  if (code === 'SERVER_EXITED') return apiServerExitFailure(message)
+  // An API seal refusal carries its reason and file as the variant.
+  const apiSeal =
+    code === 'EXPO_WEB_SEAL_FAILED' && expoWebApiSealFailureOf(variant)
+  if (apiSeal) return { code, message, libraryDetails: apiSeal }
+  if (code === 'SIGN_IN_REQUIRED')
+    return signInRequiredFailure(message, variant)
   // A Pages entry redirect carries the Pages fields as its variant; any other variant restores the code alone.
   if (code === 'NEXT_ENTRY_REDIRECTED')
     return variant === NEXT_PAGES_FAILURE_VARIANT
@@ -178,6 +197,52 @@ export function refusalFailureOf(text: string): RefusalFailure | undefined {
   return recoveryOverride === undefined
     ? { code, message }
     : { code, message, recoveryOverride }
+}
+
+/**
+ * Restores a sign-in refusal: the reason is the variant, and an unknown reason restores the code alone.
+ * Called by {@link refusalFailureOf}.
+ * @param message - The text after the lead.
+ * @param variant - The lead's variant, a sign-in reason when known.
+ * @returns The refusal with `details.reason`; a run of a package below the root gets its own recovery.
+ * @example signInRequiredFailure('The app asked for sign-in.', 'redirected-to-sign-in').details // => { reason: 'redirected-to-sign-in' }
+ */
+function signInRequiredFailure(
+  message: string,
+  variant: string | undefined,
+): RefusalFailure {
+  const code = 'SIGN_IN_REQUIRED'
+  const reason = SIGN_IN_REQUIRED_REASONS.find((known) => known === variant)
+  if (reason === undefined) return { code, message }
+  // A run of a package below the root has no saved session to set up: its own recovery replaces the setup one.
+  return reason === 'package-root-fresh-session'
+    ? {
+        code,
+        message,
+        recoveryOverride: PACKAGE_ROOT_FRESH_SESSION_RECOVERY,
+        details: { reason },
+      }
+    : { code, message, details: { reason } }
+}
+
+/**
+ * Restores the API server's exit failure (`SERVER_EXITED(api-server)`): its message, the API recovery and the participant and side effects its text implies.
+ * Called by {@link refusalFailureOf}.
+ * @param message - The text after the lead.
+ * @returns The refusal with the API recovery and `{ participant: 'apiServer', sideEffects: 'partial' }`.
+ * @example apiServerExitFailure('The API exited with code 1.').libraryDetails // => { participant: 'apiServer', sideEffects: 'partial' }
+ */
+function apiServerExitFailure(message: string): RefusalFailure {
+  return {
+    code: 'SERVER_EXITED',
+    message,
+    recoveryOverride: API_SERVER_EXITED_RECOVERY,
+    libraryDetails: {
+      participant: 'apiServer',
+      sideEffects: 'partial',
+      outputTail: apiServerOutputTailOf(message),
+    },
+  }
 }
 
 /**

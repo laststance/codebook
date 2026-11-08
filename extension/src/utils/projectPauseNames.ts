@@ -14,6 +14,7 @@ type PauseFields = {
   scope?: unknown
   routeHandler?: unknown
   apiRoute?: unknown
+  apiRequest?: unknown
   operationIndex?: unknown
   declaredIndex?: unknown
   executionIndex?: unknown
@@ -112,6 +113,52 @@ function apiRouteOf(fields: PauseFields): {
     : {}
 }
 
+/**
+ * Reads the API request fact of a format 19 server observation from its loosely typed fields.
+ * Called by {@link nameOf}; other observations carry none.
+ * @param fields - The observation's fields.
+ * @returns `{ apiRequest: { method, path, operation } }` for an attributed fact, `{ apiRequest: {} }` for an unattributed one, else an empty object.
+ * @example apiRequestOf({ apiRequest: { state: 'attributed', method: 'POST', path: '/api/x', operation: 6 } }) // => { apiRequest: { method: 'POST', path: '/api/x', operation: 6 } }
+ */
+function apiRequestOf(fields: PauseFields): {
+  apiRequest?: { method?: string; path?: string; operation?: number }
+} {
+  const fact = fields.apiRequest as
+    | { state?: unknown; method?: unknown; path?: unknown; operation?: unknown }
+    | undefined
+  if (fact?.state === 'unattributed') return { apiRequest: {} }
+  return fact?.state === 'attributed' &&
+    typeof fact.method === 'string' &&
+    typeof fact.path === 'string'
+    ? {
+        apiRequest: {
+          method: fact.method,
+          path: fact.path,
+          operation: numberOf(fact.operation),
+        },
+      }
+    : {}
+}
+
+/**
+ * Reads the saved attribution sentence of a format 19 API server observation.
+ * Called by {@link StudyWorkspace} when it lists the Observed moments, so the replay shows which page request a stop was tied to.
+ * @param observation - The observation as saved.
+ * @returns `{ apiRequestSentence }` when the observation holds a non-empty sentence, else an empty object.
+ * @example apiRequestSentenceOf({ apiRequest: { sentence: 'No request was waiting.' } }) // => { apiRequestSentence: 'No request was waiting.' }
+ */
+export function apiRequestSentenceOf(observation: object): {
+  apiRequestSentence?: string
+} {
+  const sentence = (
+    (observation as PauseFields).apiRequest as
+      { sentence?: unknown } | undefined
+  )?.sentence
+  return typeof sentence === 'string' && sentence !== ''
+    ? { apiRequestSentence: sentence }
+    : {}
+}
+
 /** Names the pause of one observation. @example nameOf({ participant: 'server' }, stops) // the Server action name */
 function nameOf(
   fields: PauseFields,
@@ -135,6 +182,7 @@ function nameOf(
     ...(fields.scope === 'module' && { scope: 'module' as const }),
     ...routeHandlerOf(fields),
     ...apiRouteOf(fields),
+    ...apiRequestOf(fields),
     operationIndex: numberOf(fields.operationIndex),
     path: pathOfStop(stops, fields, position),
     line: lineOf(fields) ?? 1,

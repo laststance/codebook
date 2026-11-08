@@ -1,10 +1,8 @@
 {
   "kind": "dupes",
   "clone_groups": [
-    "src/studyWorkspace.ts:20188-20206|src/studyWorkspace.ts:6916-6932",
     "src/utils/requestCursorWikiText.ts:148-164|src/utils/runCursorWikiUpdate.ts:188-204",
     "src/utils/pinCitedBookNode.ts:49-61|src/utils/prepareRepositoryStudy.ts:70-82",
-    "src/configuredBrowserRun.ts:3732-3745|src/configuredBrowserRun.ts:3917-3934",
     "src/studyWorkspace.ts:21826-21831|src/studyWorkspace.ts:7188-7194",
     "src/utils/pinCitedBookNode.ts:65-74|src/utils/prepareRepositoryStudy.ts:89-98",
     "src/studyWorkspace.ts:16012-16024|src/studyWorkspace.ts:16039-16052",
@@ -13,15 +11,11 @@
     "src/recordingStore.ts:1084-1091|src/recordingStore.ts:1105-1112",
     "src/repositorySource.ts:321-330|src/utils/readRepositoryBuildText.ts:45-51",
     "src/studyWorkspace.ts:6195-6204|src/utils/focusWebview.ts:57-66",
-    "src/studyWorkspace.ts:2358-2366|src/studyWorkspace.ts:2571-2579",
-    "src/replayDebugAdapter.ts:251-258|src/replayDebugAdapter.ts:496-503",
     "src/configuredBrowserRun.ts:6654-6660|src/runtimeSupport/hostBrowser.ts:602-608"
   ],
   "clone_fingerprints": [
-    "dup:35ea6ae9:2",
     "dup:08e7eb1c:2",
     "dup:54327013:2",
-    "dup:5031a5b9:2",
     "dup:89d72826:2",
     "dup:5a3d2f42:2",
     "dup:8b095a99:2",
@@ -30,15 +24,11 @@
     "dup:89d62ffa:2",
     "dup:8b11753b:2",
     "dup:67021b83:2",
-    "dup:f8126a7b:2",
-    "dup:5aa71335:2",
     "dup:62d530ae:2"
   ],
   "normalized_clone_fingerprints": [
-    "dup:1194cf34:2",
     "dup:735ea1b8:2",
     "dup:73415e44:2",
-    "dup:34e56c1d:2",
     "dup:fae71542:2",
     "dup:29d832a2:2",
     "dup:0f749fce:2",
@@ -47,8 +37,6 @@
     "dup:46ede390:2",
     "dup:65271dba:2",
     "dup:2ef33145:2",
-    "dup:5e9090b7:2",
-    "dup:4b62d6fa:2",
     "dup:d556d75f:2"
   ]
 }

@@ -574,6 +574,13 @@ export type ConfiguredRuntimeView = {
   dataFunctions?: Record<string, PagesDataFunctionName>
   /** Codebook's own readiness request for the entry: open from its send, closed with the HTTP status or a status-free outcome. Present for a Next run once the request was sent. */
   readinessRequest?: ReadinessEntryRequest
+  /** The app's own Node API server of an `expo-web-dev` run that declares `apiServer` (Cycle 0099): its declared port and pid once launched, each preparation step with the milliseconds it took (DX-4), and `cleanup: "failed"` when its process group could not be confirmed gone at the end of the run. */
+  apiServer?: {
+    port: number
+    pid: number
+    steps: { step: string; elapsedMs: number }[]
+    cleanup?: 'failed'
+  }
   status: string
   /** The milliseconds preparation was held at continued preparation pauses (Cycle 0086): the setup deadline moved by that much, so the run resource's `preparationDeadlineAt` moves with it. Absent until such a pause was continued. */
   preparationHeldMs?: number

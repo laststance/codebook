@@ -44,6 +44,8 @@ export type ProcessOutputOptions = {
   scheduleRootRelease?: RootHoldTimer['schedule']
   /** The run's known secret values; when given, every channel masks them statefully after the roots are hidden and before anything is redacted, cut, delivered or kept, so a value split over two chunks is still masked. Read at call time; absent, output is unchanged. */
   knownValues?: KnownValueMask
+  /** Sees each channel's decoded text exactly as the process wrote it, before roots are hidden or values masked; only for a caller that reads a fixed notice of the runtime itself (the API's debugger-disconnect line) and publishes none of it. */
+  onRawText?: (channel: ProcessOutputEvent['channel'], text: string) => void
 }
 
 /** Real-timer {@link RootHoldTimer}`.schedule`: unref'd so a pending release never keeps the process alive. */
@@ -186,6 +188,7 @@ export function captureProcessOutput(
         })
       : undefined
     const accept = (text: string): void => {
+      if (text) options.onRawText?.(channel, text)
       if (text && Buffer.byteLength(announcement) < PROCESS_OUTPUT_LIMIT_BYTES)
         announcement = Buffer.from(announcement + text)
           .subarray(0, PROCESS_OUTPUT_LIMIT_BYTES)

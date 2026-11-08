@@ -237,15 +237,15 @@ test('a format 12 study with a packageRoot validates and a preparation pause aft
   })
 })
 
-// Value: protects=R7 a study of format 19 (above the readable 18) is listed as saved by a newer Codebook and kept; fails_when=READABLE_STUDY_VERSION stays 11 or the file is read; no_claim=the 0.2.85 binary
-test('a study saved in format 19 is listed as saved by a newer Codebook', async (context) => {
+// Value: protects=R7 a study of format 20 (above the readable 19) is listed as saved by a newer Codebook and kept; fails_when=READABLE_STUDY_VERSION stays 11 or the file is read; no_claim=the 0.2.85 binary
+test('a study saved in format 20 is listed as saved by a newer Codebook', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-format-13-'))
   context.after(() => removeTestFolder(directory))
   const study = entryRenderStudy(12, MODULE_PREPARATION)
   await writeFile(
-    join(directory, `${study.id}.study.v19.json`),
-    JSON.stringify({ ...study, version: 19 }),
+    join(directory, `${study.id}.study.v20.json`),
+    JSON.stringify({ ...study, version: 20 }),
   )
   const library = new LearningLibrary(directory, study.workspaceKey)
   // Act
@@ -254,7 +254,7 @@ test('a study saved in format 19 is listed as saved by a newer Codebook', async 
   assert.equal(listed[0]?.format, 'newer')
   assert.equal(
     listed[0]?.reason,
-    'This study was saved in format 19 by a newer Codebook; this Codebook reads formats up to 18. Update the extension to open it. The study is kept as it is.',
+    'This study was saved in format 20 by a newer Codebook; this Codebook reads formats up to 19. Update the extension to open it. The study is kept as it is.',
   )
 })
 
