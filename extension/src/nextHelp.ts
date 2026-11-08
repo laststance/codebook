@@ -28,8 +28,11 @@ import {
   REPOSITORY_GIT_TIMEOUT_MS,
   REPOSITORY_MAP_LIMIT_BYTES,
   REPOSITORY_SETUP_TIMEOUT_MS,
+  REVERSE_PROXY_MINIMUM_API,
+  REVERSE_PROXY_REFUSAL_REASONS,
+  type ReverseProxyRefusalReason,
 } from './constants'
-import { ERROR_RECOVERY } from './errors'
+import { ERROR_RECOVERY, REVERSE_PROXY_REFUSAL_RECOVERY } from './errors'
 import {
   NEXT_REFUSAL_CODES,
   nextHelpAnchor,
@@ -55,7 +58,7 @@ const NEXT_SETUP_DEADLINE_SCOPE = `at its early steps (${NEXT_SETUP_STEPS.starti
  * The first key of `codebook://help/repository-browser`: one sentence that sends an agent from `codebook_status` to the quick start of its app's adapter.
  * Served before both quick starts, so an agent reads it before either.
  */
-export const REPOSITORY_BROWSER_START_HERE = `Read codebook_status first: profiles[].prerequisites.adapters names the adapter that is ready for this workspace, and the next-dev-webpack readiness names routerKind (app, pages, both or none), rootIsApp and packages (the Next apps below the repository root). ${NEXT_APP_SELECTION_RULE} For a Create React App app (react-scripts 5), the react-scripts-dev readiness (API 1.25 or later) names rootIsApp and packages the same way. ${REACT_SCRIPTS_APP_SELECTION_RULE} For an Expo app (SDK 57, served by Metro), the expo-web-dev readiness (API 1.30 or later) names rootIsApp and packages the same way. ${EXPO_WEB_APP_SELECTION_RULE} Then read the matching section of this help, nextQuickStart for a Next app (App Router or Pages Router), viteQuickStart for a Vite app, reactScriptsQuickStart for a Create React App app or expoWebQuickStart for an Expo app. For a flow of several steps (type, choose an option, click) or a secret typed by the learner, read operationsQuickStart (configuration version 3) after it. For code that runs on the server of a Next app (an App Router page's server render, or a Pages Router page's getServerSideProps or getStaticProps and the code they call), read serverRenderQuickStart, which opens with the router choice and each router's own minimums. For a Next app below the repository root, read nextPackageRoot (its examples, refusals and limits); for a Vite app below the repository root (API 1.20 or later), read vitePackageRoot. For a Vite app whose pages call a Node API in the same repository and a question about what that API does (API 1.38 or later), read viteApiServer. ${API_SERVER_PAGE_ROUTE_RULE}`
+export const REPOSITORY_BROWSER_START_HERE = `Read codebook_status first: profiles[].prerequisites.adapters names the adapter that is ready for this workspace, and the next-dev-webpack readiness names routerKind (app, pages, both or none), rootIsApp and packages (the Next apps below the repository root). ${NEXT_APP_SELECTION_RULE} For a Create React App app (react-scripts 5), the react-scripts-dev readiness (API 1.25 or later) names rootIsApp and packages the same way. ${REACT_SCRIPTS_APP_SELECTION_RULE} For an Expo app (SDK 57, served by Metro), the expo-web-dev readiness (API 1.30 or later) names rootIsApp and packages the same way. ${EXPO_WEB_APP_SELECTION_RULE} Then read the matching section of this help, nextQuickStart for a Next app (App Router or Pages Router), viteQuickStart for a Vite app, reactScriptsQuickStart for a Create React App app or expoWebQuickStart for an Expo app. For a flow of several steps (type, choose an option, click) or a secret typed by the learner, read operationsQuickStart (configuration version 3) after it. For code that runs on the server of a Next app (an App Router page's server render, or a Pages Router page's getServerSideProps or getStaticProps and the code they call), read serverRenderQuickStart, which opens with the router choice and each router's own minimums. For a Next app below the repository root, read nextPackageRoot (its examples, refusals and limits); for a Vite app below the repository root (API 1.20 or later), read vitePackageRoot. For a Next app the learner opens through their own local reverse proxy instead of directly at the dev server's localhost address (API 1.40 or later), read nextReverseProxy. For a Vite app whose pages call a Node API in the same repository and a question about what that API does (API 1.38 or later), read viteApiServer. ${API_SERVER_PAGE_ROUTE_RULE}`
 
 /**
  * A minimal valid `next-dev-webpack` configuration, generic on purpose: every identity and hash is a placeholder the agent replaces with the value the step named in {@link NEXT_QUICK_START_COPY_FROM} returned.
@@ -468,6 +471,202 @@ function nextPackageRootHelp() {
 }
 
 /**
+ * A complete version 3 configuration for a Next app the learner opens through their own local reverse proxy: a root app (no `packageRoot`), the sign-in page as the entry and `reverseProxy` declaring the origin the learner opens and the port their proxy forwards to.
+ * Served as `nextReverseProxy.configuration.example` and parsed by a test with {@link liveRepositoryConfigSchema}. Every value is a neutral placeholder (the host is a reserved `.test` name): the agent replaces the origin and the port with the learner's own answers, the book identity and the hash with the values the earlier steps returned.
+ */
+export const NEXT_REVERSE_PROXY_CONFIGURATION = {
+  version: 3,
+  adapter: 'next-dev-webpack',
+  book: NEXT_NESTED_SERVER_STOP_CONFIGURATION.book,
+  source: {
+    path: 'pages/login.tsx',
+    hash: '0000000000000000000000000000000000000000000000000000000000000000',
+    line: 18,
+    column: 5,
+  },
+  participant: 'server',
+  afterOperation: 0,
+  entryPath: '/login',
+  before: NEXT_NESTED_SERVER_STOP_CONFIGURATION.before,
+  after: NEXT_NESTED_SERVER_STOP_CONFIGURATION.after,
+  inspections: NEXT_NESTED_SERVER_STOP_CONFIGURATION.inspections,
+  reverseProxy: { origin: 'https://app.example.test', upstreamPort: 4310 },
+} as const
+
+/** What the help says about one `REVERSE_PROXY_REFUSED` reason: what Codebook observed, the learner's fix and what reached a server. */
+type ReverseProxyRefusalHelpRow = {
+  observed: string
+  fix: string
+  sideEffects: string
+}
+
+/** Shared by the four reasons whose proof request may have reached a responder Codebook does not control. */
+const PROOF_REACHED_RESPONDER =
+  "unknown: the proof's single GET of an unguessable path (no cookies, no-store) reached a responder Codebook does not control, and no operation was sent."
+
+/** Shared by the reasons that fail before any HTTP request is written. */
+const NOTHING_REACHED_A_SERVER =
+  'none: the handshake failed before any HTTP request; nothing was sent to the origin and no browser opened.'
+
+/** Shared by the two reasons the throwaway or run browser reports at its first handshake. */
+const BROWSER_HANDSHAKE_FAILED =
+  'none: the browser failed at the handshake, before any operation and any request to the app.'
+
+/**
+ * One row per reason of {@link REVERSE_PROXY_REFUSAL_REASONS}: the observation, the learner's fix and what reached a server.
+ * Keyed by reason so the compiler holds the table complete; {@link nextReverseProxyHelp} serves it in the order of the reason list, with each reason's recovery from {@link REVERSE_PROXY_REFUSAL_RECOVERY}.
+ */
+const REVERSE_PROXY_REFUSAL_ROWS: Record<
+  ReverseProxyRefusalReason,
+  ReverseProxyRefusalHelpRow
+> = {
+  'not-resolved': {
+    observed: 'The host has no address on this machine.',
+    fix: 'Map the host to a loopback address with a hosts entry or local DNS, then ask for a new run.',
+    sideEffects: 'none: nothing was started.',
+  },
+  'not-loopback': {
+    observed:
+      'The host resolves to an address that is not a loopback address (the first such address is named); Codebook trusts only a proxy on this machine.',
+    fix: 'Codebook supports a proxy on this machine only; map the host to a loopback address.',
+    sideEffects: 'none: nothing was started.',
+  },
+  'same-socket': {
+    observed:
+      "The origin's address and port are the address the development server needs, so the proxy and the server cannot share it.",
+    fix: 'Declare the port your proxy forwards to, which differs from the port the proxy itself listens on.',
+    sideEffects: 'none: nothing was started.',
+  },
+  'proof-unreachable': {
+    observed:
+      'No request completed at the origin (connection refused, no route or connection reset).',
+    fix: 'Start your proxy and check that the host maps to the address it listens on.',
+    sideEffects:
+      'none when no request was written; unknown when the connection was reset after the proof request was written (details.sideEffects says which).',
+  },
+  'proof-wrong-server': {
+    observed:
+      'The origin answered (details.status) but not with the identity of the development server Codebook started.',
+    fix: "Check the port in your proxy's configuration (proxy_pass, reverse_proxy) and that it forwards this path to the app's dev server without requiring sign-in.",
+    sideEffects: PROOF_REACHED_RESPONDER,
+  },
+  'proof-redirected': {
+    observed:
+      'The origin answered with a redirect (details.status); Codebook follows none.',
+    fix: 'Declare the scheme and port your proxy serves directly.',
+    sideEffects: PROOF_REACHED_RESPONDER,
+  },
+  'proof-timeout': {
+    observed: 'The origin did not answer within details.timeoutMs.',
+    fix: 'Check that your proxy and the server behind it respond.',
+    sideEffects: PROOF_REACHED_RESPONDER,
+  },
+  'proof-unclassified': {
+    observed:
+      'The proof request failed in a way Codebook does not classify (details.logId names one line in Output > Codebook).',
+    fix: 'Look up the log id in Output > Codebook.',
+    sideEffects: PROOF_REACHED_RESPONDER,
+  },
+  'certificate-untrusted': {
+    observed:
+      'This system does not trust the certificate chain of the origin (details.tlsCode).',
+    fix: 'Add the issuer of your local certificate to the system trust store (the tool that created the certificate has an install command).',
+    sideEffects: NOTHING_REACHED_A_SERVER,
+  },
+  'certificate-expired': {
+    observed:
+      'The certificate of the origin has expired or is not yet valid (details.tlsCode).',
+    fix: "Renew the proxy's certificate.",
+    sideEffects: NOTHING_REACHED_A_SERVER,
+  },
+  'certificate-host-mismatch': {
+    observed:
+      'The certificate of the origin does not name its host (details.tlsCode).',
+    fix: 'Use a certificate that names this host.',
+    sideEffects: NOTHING_REACHED_A_SERVER,
+  },
+  'certificate-invalid': {
+    observed:
+      'This system rejected the certificate of the origin (details.tlsCode).',
+    fix: "Check the proxy's certificate; Codebook never bypasses certificate checks.",
+    sideEffects: NOTHING_REACHED_A_SERVER,
+  },
+  'browser-certificate-untrusted': {
+    observed:
+      'The browser rejected the certificate of the origin (details.browserError) although the proof accepted it.',
+    fix: 'Make the browser trust the same certificate issuer; some systems keep a separate browser trust store.',
+    sideEffects: BROWSER_HANDSHAKE_FAILED,
+  },
+  'browser-certificate-rejected': {
+    observed:
+      'The browser rejected the certificate of the origin (details.browserError) although the proof accepted it.',
+    fix: "Check the proxy's certificate in the browser; Codebook never bypasses certificate checks.",
+    sideEffects: BROWSER_HANDSHAKE_FAILED,
+  },
+  'browser-address-mismatch': {
+    observed:
+      'A throwaway browser reached an address other than the one Codebook checked (details.address is the checked address, details.browserAddress the one the browser used).',
+    fix: 'Let the browser reach the host directly: a system proxy, a PAC file or a VPN routes it elsewhere, so add a proxy bypass for the host.',
+    sideEffects:
+      'none: the throwaway browser sent no cookie and the target server saw no request.',
+  },
+}
+
+/**
+ * Builds the `nextReverseProxy` key of `codebook://help/repository-browser`: how to run a Next app the learner opens through their own local reverse proxy (API 1.40).
+ *
+ * Why it exists: before API 1.40 such an app could run only at its dev server's localhost address, and a chat that meets a reverse proxy (an nginx or Caddy file, a host name in `allowedDevOrigins`) needs to know when to declare `reverseProxy`, how to find the origin and the port without guessing, what Codebook checks, what each refusal means and what stays outside the guarantee. Called by {@link nextHelp}, which serves its result as one key.
+ *
+ * @returns The section: `summary`, `whenToDeclare`, `findingTheOriginAndPort`, `configuration` (the example of {@link NEXT_REVERSE_PROXY_CONFIGURATION} and its note), `whatCodebookDoes`, `refusals` (one row per reason of {@link REVERSE_PROXY_REFUSAL_REASONS}), `signIn` and `limits`.
+ * @example
+ * nextReverseProxyHelp().refusals.reasons['not-loopback'].anchor // => 'codebook://help/repository-browser#not-loopback'
+ */
+function nextReverseProxyHelp() {
+  return {
+    anchor: packageRootAnchor('next-reverse-proxy'),
+    minimumApi: REVERSE_PROXY_MINIMUM_API,
+    summary:
+      'A Next app the learner opens through their own local reverse proxy (nginx, Caddy or Traefik), at a host name such as https://app.example.test, runs with a version 3 next-dev-webpack configuration that declares reverseProxy: { origin, upstreamPort } (API 1.40 or later). Codebook starts next dev on upstreamPort, proves that the origin reaches that server and only this machine, and opens the entry at the origin.',
+    whenToDeclare:
+      "Declare reverseProxy only when the learner opens the app through a reverse proxy: they say so, or the repository shows it (a proxy configuration such as nginx.conf, a Caddyfile or Traefik files, a docker-compose file that runs a proxy, a host name in next.config allowedDevOrigins, setup notes that name a local host name). An app the learner opens directly at its dev server's http://localhost:<port> address never declares it. Do not declare it to reach a deployed site, a tunnel or another machine: Codebook refuses any host that does not resolve only to loopback addresses.",
+    findingTheOriginAndPort:
+      'What you find is a candidate, not a fact. 1. Origin: read the README and setup notes, the proxy and compose files, and next.config (allowedDevOrigins names a host but not its scheme or port). Read .env file key names only (AUTH_URL, NEXTAUTH_URL or NEXT_PUBLIC_*_URL show that the app expects another origin); never open or quote a value. 2. Port: the port the proxy forwards to on this machine (nginx proxy_pass, Caddy reverse_proxy, a Traefik service URL). The proxy\'s own files may lie outside the opened repository, and a proxy in a container may name a container service or host.docker.internal instead of a port on this machine. Do not assume it equals the dev script\'s port, Next\'s default port or the origin\'s port. 3. Ask the learner one question whenever the learner did not state both values in their own words, naming what you found: "I found <origin> and port <port> in <where>; is that the address you open the app at, and the port your local proxy forwards it to (the proxy_pass or reverse_proxy line)?" When you found nothing, ask: "Which address do you open the app at in the browser, and which port does your local proxy forward it to?" Ask for no certificate, password or file contents. 4. Before the start, tell the learner the origin and the port you will declare and that Codebook starts the development server on that port itself, so their own dev server must not be running on it. A port that is wrong costs a refused start with details.sideEffects none or unknown as the refusal says, not a broken run; the budget is two starts per learner request.',
+    configuration: {
+      example: NEXT_REVERSE_PROXY_CONFIGURATION,
+      note: "configuration.example is a complete version 3 next-dev-webpack configuration with a server stop in a Pages Router page and reverseProxy declared; the file, line and inspection are placeholders: replace them, the book and the hash with the app the question is about (copyFrom of serverRenderQuickStart), and the origin and upstreamPort with the learner's own answers. The origin is a scheme and a host (and a port when it is not 443 for https or 80 for http), never a path, query, fragment or credentials; upstreamPort is an integer from 1024 to 65535. reverseProxy is accepted on a version 3 next-dev-webpack configuration only, and reverseProxy beside library is refused. A host named localhost or ending in .localhost, and an IP literal, are refused as origin.",
+    },
+    whatCodebookDoes:
+      "In order: (1) it resolves the origin's host through this machine's resolver; every address must be a loopback address (127.0.0.0/8 or ::1) and Codebook uses the first; (2) it refuses when that address and port are the ones the development server needs; (3) it starts next dev on upstreamPort, bound to 127.0.0.1; (4) it sends one proof request, a GET of an unguessable path, to the origin, only to the validated address, with no cookies, following no redirect, trusting only certificates the operating system trusts; the proof passes only when the answer carries a one-time value that only the server Codebook started knows; (5) it starts a throwaway browser with the same pin and checks, without any cookie, that it reaches that address and port and trusts the certificate; only then it opens the app's browser pinned the same way and loads the entry there. The proof is the only request Codebook sends to the origin before the browser opens. The run resource's reverseProxy block reports state (resolving, proving, proved or refused), the address used and the proof time; applicationPortSource says the port was declared. While the state is resolving or proving, the run resource's message says so: read the run resource again and start no other run. A refusal is the run's error, with the reason and a Fix line.",
+    refusals: {
+      anchor: packageRootAnchor('REVERSE_PROXY_REFUSED'),
+      code: 'REVERSE_PROXY_REFUSED',
+      reasons: Object.fromEntries(
+        REVERSE_PROXY_REFUSAL_REASONS.map((reason) => [
+          reason,
+          {
+            anchor: packageRootAnchor(reason),
+            ...REVERSE_PROXY_REFUSAL_ROWS[reason],
+            recovery: REVERSE_PROXY_REFUSAL_RECOVERY[reason],
+          },
+        ]),
+      ),
+      portTaken:
+        "A taken upstream port keeps Next's own port refusal; the learner stops the process the message names. The budget is two starts per learner request in total.",
+    },
+    signIn:
+      "A root app's saved session of such a run is used and set up at the declared origin only. When the run answers SIGN_IN_REQUIRED, the editor's notice offers Set Up Saved Session… for that origin: relay the step to the learner as SIGN_IN_REQUIRED says, and never send them to the command palette for it. A Next app below the repository root keeps the existing limit: it uses no saved session, so only flows that need no sign-in run. The app's own sign-in settings (AUTH_URL or similar) must name the origin the learner opens; Codebook never changes the app's environment. When sign-in fails or loops at the origin, tell the learner the app's settings may still name another address. A saved session holds cookies by host name: one set up at localhost does not apply at the declared host, and one set up for the declared host also applies to that host on another port and to a Domain cookie's subdomains.",
+    limits: [
+      "The proof shows the proxy reaches the development server Codebook started at that moment. Codebook then trusts the whole origin, including paths the learner's proxy forwards to their own backend, which Codebook neither starts nor observes: a stop in that backend is not available, and the learner's backend must be running for operations that call it. Later changes to the proxy's routing are outside the guarantee.",
+      'Loopback only: a proxy on another machine, a tunnel or a host that resolves elsewhere is refused. A host named localhost or ending in .localhost is refused: the browser resolves those names itself.',
+      "Certificates are never bypassed: the operating system and the browser must both trust the proxy's certificate. Codebook does not start, configure or install the proxy, the certificate or the hosts entry.",
+      "A system proxy, a PAC file or a VPN that routes the host elsewhere is refused before any browser of the run opens (browser-address-mismatch); the check covers the host and port a browser uses for Codebook's proof path at launch. Codebook asks the development server it started at its loopback address for its own readiness check, so an app that must see its public host name or https to answer at all can be refused there.",
+      'Next 16.1 only warns about a host missing from allowedDevOrigins in next.config, and a later Next major blocks such dev requests; Codebook never edits next.config, so tell the learner to add the host when the page does not load. The hot-reload connection is not checked.',
+      'next-dev-webpack and configuration version 3 only; basePath and i18n stay refused.',
+    ],
+  }
+}
+
+/**
  * What each Next refusal code means, keyed by code so the compiler holds it complete; the help lists the codes in the order of {@link NEXT_REFUSAL_CODES}, never in this record's.
  * Each text names fields and limits, never a value from a run.
  */
@@ -492,7 +691,7 @@ const NEXT_REFUSAL_MEANINGS: Record<NextRefusalCode, string> = {
  *
  * Why it exists: an agent that meets a Next app, App Router or Pages Router, needs the minimal route, the stoppable code and the limits before it reads the long contract sections. Called by the resource reader for the repository-browser help, which spreads these keys after the Vite ones, as it does with {@link viteHelp}.
  *
- * @returns Keys to spread into the help object: `nextQuickStart`, `nextSupport`, `nextRefusals` and `nextPackageRoot` (the Next app below the repository root, API 1.18), `nextRefusals` being derived from {@link NEXT_REFUSAL_CODES} with each code's recovery from {@link ERROR_RECOVERY}.
+ * @returns Keys to spread into the help object: `nextQuickStart`, `nextSupport`, `nextRefusals`, `nextPackageRoot` (the Next app below the repository root, API 1.18) and `nextReverseProxy` (the Next app behind the learner's own local proxy, API 1.40), `nextRefusals` being derived from {@link NEXT_REFUSAL_CODES} with each code's recovery from {@link ERROR_RECOVERY}.
  * @example
  * const help = { startHere: REPOSITORY_BROWSER_START_HERE, ...viteHelp(), ...nextHelp() }
  * help.nextRefusals.NEXT_ROUTE_NOT_FOUND.anchor // => 'codebook://help/repository-browser#NEXT_ROUTE_NOT_FOUND'
@@ -564,5 +763,6 @@ export function nextHelp() {
       ]),
     ),
     nextPackageRoot: nextPackageRootHelp(),
+    nextReverseProxy: nextReverseProxyHelp(),
   }
 }
