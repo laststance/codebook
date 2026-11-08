@@ -1125,6 +1125,8 @@ type DebugParticipant = {
   deferredRefresh?: PauseIdentity
   /** Every script this participant announced, by script id, so the journal can name the place of a pause in any of them. */
   scriptUrls: Map<string, string>
+  /** Set by every `Debugger.paused` of this participant's runtime and cleared by its `Debugger.resumed`: the raw fact that the runtime is paused, whatever the run made of the pause. {@link ConfiguredBrowserRun.browserIsPaused} reads it for a browser pause the run only holds while idle. */
+  runtimePaused?: boolean
   /** The journal clock when the last pause was observed; cleared by its resume. */
   pauseObservedAtMs?: number
   /** Whether the last observed pause was journaled or only counted; cleared by its resume. The resume of a pause nothing holds (an instrumentation pause, a pause from before the action) is journaled or counted with it. */
@@ -12447,6 +12449,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (this.cleaning) return
     const participant = this.participants[name]
     participant.pauseObservedAtMs = this.evidence.elapsedMs()
+    participant.runtimePaused = true
     const isInstrumentation = event.reason === 'instrumentation'
     this.stampApiPauseReceipt(name, isInstrumentation)
     // A hook that pauses in a loop must not use up the journal: a declared stop's pause is always journaled, any other only up to a cap. The runtime's instrumentation pauses are counted before that cap, under one of their own, so they cannot use up the room of the pauses the debugger makes for itself.
@@ -15163,7 +15166,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.pendingCdpStop?.participant === 'browser' ||
       this.transientBrowserPause !== undefined ||
       Boolean(this.participants.browser.unannouncedPause) ||
-      this.participants.browser.instrumentationPaused === true
+      this.participants.browser.instrumentationPaused === true ||
+      // A pause the run only holds while it waits for its first operation records nothing above, yet the page is stopped until its `Debugger.resumed`.
+      this.participants.browser.runtimePaused === true
     )
   }
 
@@ -15461,6 +15466,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const isPauseOnlyCounted = participant.pauseJournaled === false
     participant.pauseObservedAtMs = undefined
     participant.pauseJournaled = undefined
+    participant.runtimePaused = undefined
     // The runtime's own instrumentation pause ended; it never was a stop of this run. Its resume is journaled only when its pause was, so both stay under the cap.
     if (participant.instrumentationPaused) {
       participant.instrumentationPaused = false

@@ -258,21 +258,32 @@ test('a paused page at the press refuses the key as RUN_FAILED_UNEXPECTEDLY with
 // Value: protects=D25/E1 d: a browser pause the run received over CDP before the debugger's stopped event keeps the key release waiting until the page runs again, so no key is lost into a paused page; fails_when=the keyUp is sent while the page is paused by such a pause (the stand-in page then records it as lost); no_claim=a real debugger (harness)
 test('a browser pause received before the debugger stopped event keeps the key release waiting', async (context) => {
   // Arrange
-  const { run, suppressInputPause, keys, lostKeys, emitDapStopOnly } =
-    await configuredRuntimeHarness(context, undefined, [], {
-      operations: {
-        operations: [palette],
-        stopOperations: [1],
-        press: { pausesAfterKeyDown: true },
-      },
-    })
+  const {
+    run,
+    suppressInputPause,
+    keys,
+    lostKeys,
+    emitDapStopOnly,
+    pagePausedReads,
+  } = await configuredRuntimeHarness(context, undefined, [], {
+    operations: {
+      operations: [palette],
+      stopOperations: [1],
+      press: { pausesAfterKeyDown: true },
+    },
+  })
   await run.prepare()
   // The declared stop is only the run's requirement: the page pauses itself after the key down.
   suppressInputPause()
   // Act: the page pauses over CDP only, so the key release has time to be sent.
   run.action('op-1', OPERATION_ACTION)
   await waitUntil(() => keys.length >= 1, 'the key down')
-  await new Promise((resolve) => setTimeout(resolve, 300))
+  // The release wait polls the pause state; three more polls prove it saw the pause and still held the key.
+  const readsAtKeyDown = pagePausedReads()
+  await waitUntil(
+    () => pagePausedReads() >= readsAtKeyDown + 3,
+    'three pause polls of the key release wait',
+  )
   const keysWhilePaused = keys.length
   emitDapStopOnly()
   const stop = await waitUntil(
@@ -288,6 +299,46 @@ test('a browser pause received before the debugger stopped event keeps the key r
     { type: 'keyUp', key: 'k' },
   ])
   assert.deepEqual(plain(lostKeys), [])
+})
+
+// Value: protects=D25/E1 d (B1): a browser pause received over CDP while the run waits for its first operation, with no debugger stopped event, still refuses the press as RUN_FAILED_UNEXPECTEDLY with nothing sent; fails_when=browserIsPaused ignores a pause held only while idle, so the key goes into the paused page; no_claim=a real debugger (harness)
+test('a browser pause held while the run is idle refuses the first press as RUN_FAILED_UNEXPECTEDLY with nothing sent', async (context) => {
+  // Arrange
+  const { run, suppressInputPause, keys, emitPause } =
+    await configuredRuntimeHarness(context, undefined, [], {
+      operations: { operations: [palette, submit], stopOperations: [2] },
+    })
+  await run.prepare()
+  suppressInputPause()
+  // Act: the page pauses before operation 1; no stopped event ever follows.
+  emitPause(1, 1, false)
+  run.action('op-1', OPERATION_ACTION)
+  await waitUntil(() => run.view().status === 'failed', 'the refusal')
+  // Assert
+  assert.match(run.view().failures[0] ?? '', /^RUN_FAILED_UNEXPECTEDLY: /)
+  assert.equal(run.view().operationFailure?.sent, 'not-sent')
+  assert.deepEqual(keys, [])
+})
+
+// Value: protects=B1: the idle browser pause stops blocking the press once the page resumes; fails_when=the pause flag is never cleared by Debugger.resumed and the press stalls or fails; no_claim=a real debugger (harness)
+test('a press is sent after the page resumed from a browser pause held while the run was idle', async (context) => {
+  // Arrange
+  const { run, suppressInputPause, keys, emitPause, emitCdpResume } =
+    await configuredRuntimeHarness(context, undefined, [], {
+      operations: { operations: [palette, submit], stopOperations: [2] },
+    })
+  await run.prepare()
+  suppressInputPause()
+  emitPause(1, 1, false)
+  // Act
+  emitCdpResume()
+  run.action('op-1', OPERATION_ACTION)
+  await waitUntil(() => run.view().operations?.[0]?.state === 'done', 'op 1')
+  // Assert
+  assert.deepEqual(plain(keys), [
+    { type: 'keyDown', key: 'k' },
+    { type: 'keyUp', key: 'k' },
+  ])
 })
 
 // Value: protects=OCR1-4 c: two presses with an identical after condition each complete on their own key; fails_when=the stand-in page answers both presses' after reads for one operation, so the first press never meets its after; no_claim=a real browser (harness)

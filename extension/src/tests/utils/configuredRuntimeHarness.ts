@@ -2721,6 +2721,14 @@ export async function configuredRuntimeHarness(
       releases.push('captured source')
     },
   })
+  // Counts the run's reads of its own browser pause state: the press's release wait polls it, so a test waits on a number of polls instead of a fixed delay.
+  let pagePausedReadCount = 0
+  const readPagePaused: unknown = Reflect.get(owned, 'browserIsPaused')
+  if (typeof readPagePaused === 'function')
+    Reflect.set(owned, 'browserIsPaused', (): unknown => {
+      pagePausedReadCount++
+      return readPagePaused.call(owned)
+    })
   return {
     ...repository,
     run,
@@ -2739,6 +2747,12 @@ export async function configuredRuntimeHarness(
     releases,
     emitPause,
     emitCdpPause,
+    /** Sends the browser's CDP `Debugger.resumed`, as the page running again after a pause that no `stopped` announced. */
+    emitCdpResume: (): void => {
+      listeners.get('Debugger.resumed')?.({})
+    },
+    /** How many times the run has read its browser pause state so far (its press release polls it every 50 ms while the page is paused). */
+    pagePausedReads: (): number => pagePausedReadCount,
     /** The scripted Node participant of a run opened with `serverRuntime` (see {@link createServerParticipant}); `undefined` otherwise. */
     server: serverParticipant?.api,
     /** The folder each mocked Next reader received: `readDevelopmentBundle`, `assertDevelopmentWorkspace`, `readDeclaredDevelopmentPort` and the first argument of each `launchDevelopmentServer` call. */
