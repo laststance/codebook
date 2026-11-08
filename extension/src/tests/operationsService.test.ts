@@ -8,6 +8,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { StudyError } from '../errors'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { startServer } from '../server'
+import { declaredOperationsOf } from '../utils/declaredOperationsOf'
 
 import { configuredServiceHarness } from './utils/configuredServiceHarness'
 import { ControlledOperationsRuntime } from './utils/controlledOperationsRuntime'
@@ -652,4 +653,21 @@ test('an input box that throws answers PREREQUISITE_MISSING and one that resolve
   assert.equal(faulted.code, 'PREREQUISITE_MISSING')
   assert.match(faulted.message, /input box crashed/)
   assert.equal(declined.code, 'OPERATIONS_NOT_CONFIRMED')
+})
+
+// Value: protects=one stored spelling for a press chord, so the signature, the run and the saved study hold the canonical key; fails_when=a start stores the key as written, or the service skips the canonicaliser; no_claim=what the run sends to the page
+test('a start with Meta+Shift+p stores the press key as Shift+Meta+p', async (context) => {
+  // Arrange
+  const { runtime } = await startOperationsRun(context, 'press-canonical', [
+    { kind: 'click', title: 'First', selector: '#first' },
+    { kind: 'press', title: 'Open', key: 'Meta+Shift+p' },
+  ])
+  const { configuration } = runtime.definition
+  assert.equal(configuration.version, 3)
+  // Act
+  const keys = declaredOperationsOf(configuration).map((operation) =>
+    operation.kind === 'press' ? operation.key : undefined,
+  )
+  // Assert
+  assert.deepEqual(keys, [undefined, 'Shift+Meta+p'])
 })

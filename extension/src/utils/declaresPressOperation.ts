@@ -1,4 +1,3 @@
-// fallow-ignore-file unused-file -- Wave 0 leaf; remove this line when the format lane first imports it
 /** The part of a version 3 configuration that tells whether it declares a press: the operations' kinds. */
 type ConfigurationWithOperations = {
   readonly operations?: readonly { readonly kind: string }[]

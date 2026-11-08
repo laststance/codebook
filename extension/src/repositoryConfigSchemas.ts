@@ -8,6 +8,7 @@ import {
   CROSS_RUNTIME_CONFIG_VERSION,
   OPERATIONS_CONFIG_VERSION,
   OPERATIONS_REPOSITORY_BROWSER_ADAPTERS,
+  PRESS_KEY_LIMIT_CHARS,
   REPOSITORY_BROWSER_ADAPTERS,
   REPOSITORY_OPERATION_LIMIT,
   VITE_API_SERVER_MINIMUM_API,
@@ -36,9 +37,11 @@ import {
 import { bookIdSchema } from './identitySchemas'
 import { libraryDeclarationSchema } from './libraryDeclarationSchema'
 import { repositoryHashSchema, repositoryPathSchema } from './sourceSchemas'
+import { declaresPressOperation } from './utils/declaresPressOperation'
 import { isRepositoryPathInFolder } from './utils/isRepositoryPathInFolder'
 import { missingValueInspectionMessage } from './utils/missingValueInspectionMessage'
 import { normalizedSignInPathname } from './utils/normalizedSignInPathname'
+import { parsePressKey } from './utils/pressKey'
 import { proxyPathIssueOf } from './utils/proxyPathIssueOf'
 
 /** A CSS selector as every profile declares one: 1 to the selector limit, no control characters. */
@@ -296,7 +299,7 @@ const operationAfterSchema = { after: conditionsSchema.optional() }
 /** The title every operation carries: 1 to the book title limit, distinct within a run. */
 const operationTitleSchema = z.string().min(1).max(BOOK_TITLE_LIMIT_CHARS)
 /**
- * One declared operation of a version 3 run: `text` into a text-like or number input (its `text`, or `secret: "ask-learner"` for a secret control, never both), `choose` an option of a native single `<select>`, or `click` a unique visible enabled target.
+ * One declared operation of a version 3 run: `text` into a text-like or number input (its `text`, or `secret: "ask-learner"` for a secret control, never both), `choose` an option of a native single `<select>`, `click` a unique visible enabled target, or `press` one key (its `key` spelling is checked by {@link validatePressOperations}; `selector` optionally names the element to focus first).
  * Read by {@link operationsConfigurationShape}; {@link ConfiguredBrowserRun} sends each one through its own `repository-operation` action.
  */
 const repositoryOperationSchema = z.discriminatedUnion('kind', [
@@ -325,6 +328,13 @@ const repositoryOperationSchema = z.discriminatedUnion('kind', [
     kind: z.literal('click'),
     title: operationTitleSchema,
     selector: selectorSchema,
+    ...operationAfterSchema,
+  }),
+  z.strictObject({
+    kind: z.literal('press'),
+    title: operationTitleSchema,
+    key: z.string().min(1).max(PRESS_KEY_LIMIT_CHARS),
+    selector: selectorSchema.optional(),
     ...operationAfterSchema,
   }),
 ])
@@ -614,6 +624,38 @@ function validateApiServerStops(
 }
 
 /**
+ * Refuses a press whose `key` is outside the grammar, and a press that is not the last operation and declares no `after`.
+ * Called by {@link validateOperations}; the issues sit at `operations[i].key` and `operations[i].after`, and each message stands alone (the path is the issue's `path`).
+ * @param configuration - A parsed version 3 configuration.
+ * @param context - The refinement context that receives one issue per violation.
+ * @example validatePressOperations(configuration, context) // adds an issue at ['operations', 2, 'key'] for "Ctrl+k"
+ */
+function validatePressOperations(
+  configuration: z.infer<typeof operationsConfigurationShape>,
+  context: z.RefinementCtx,
+): void {
+  const operations = configuration.operations ?? []
+  for (const [index, operation] of operations.entries()) {
+    if (operation.kind !== 'press') continue
+    const parsed = parsePressKey(operation.key)
+    if (!parsed.ok)
+      context.addIssue({
+        code: 'custom',
+        path: ['operations', index, 'key'],
+        message: parsed.message,
+      })
+    // The last operation may rely on the run-level `after`; an earlier press has no other proof that the key worked.
+    if (operation.after === undefined && index < operations.length - 1)
+      context.addIssue({
+        code: 'custom',
+        path: ['operations', index, 'after'],
+        message:
+          "A press must say how the run knows the key worked: add an after condition that only the opened UI satisfies, derived from the app's own source.",
+      })
+  }
+}
+
+/**
  * Refuses the version 3 rules a field schema cannot state: distinct operation titles, distinct sign-in paths none of which is the entry path, and an `afterOperation` on every stop that names a declared operation and never decreases along the declared stop order.
  * Called by {@link operationsRepositoryConfigSchema}.
  * @param configuration - A parsed version 3 configuration.
@@ -659,6 +701,7 @@ function validateOperations(
       })
     titles.add(operation.title)
   }
+  validatePressOperations(configuration, context)
   validateSignInPaths(configuration, context)
   validateStopAfterOperations(configuration, context)
 }
@@ -867,6 +910,34 @@ export function dropDefaultPackageRoot<
   return rest as unknown as Configuration
 }
 
+/**
+ * Rewrites each press `key` of a parsed version 3 configuration to its canonical spelling, so `Meta+Shift+p` and `Shift+Meta+p` are one configuration for the idempotency key, the run, the saved study and the replay.
+ * Called by {@link StudyService.start} beside {@link dropDefaultPackageRoot}; a key outside the grammar is left as written (the schema already refused it).
+ * @param configuration - Any parsed repository configuration.
+ * @returns The same object when no press key changes, else a copy with canonical keys.
+ * @example canonicalizePressKeys({ version: 3, operations: [{ kind: 'press', key: 'Meta+Shift+p', … }] }) // => key 'Shift+Meta+p'
+ */
+export function canonicalizePressKeys<
+  Configuration extends { version: number },
+>(configuration: Configuration): Configuration {
+  if (
+    !('operations' in configuration) ||
+    !Array.isArray(configuration.operations)
+  )
+    return configuration
+  const operations: RepositoryOperation[] = configuration.operations
+  let didChange = false
+  const rewritten = operations.map((operation) => {
+    if (operation.kind !== 'press') return operation
+    const parsed = parsePressKey(operation.key)
+    // An unparseable key stays as written; an already canonical key is not copied.
+    if (!parsed.ok || parsed.canonical === operation.key) return operation
+    didChange = true
+    return { ...operation, key: parsed.canonical }
+  })
+  return didChange ? { ...configuration, operations: rewritten } : configuration
+}
+
 /** Applies shared bounded fact requirements to both retained intent versions without changing their serialized fields. @example validateInspections(configuration, context) */
 function validateInspections(
   configuration:
@@ -973,6 +1044,8 @@ export const retainedRepositoryConfigSchema = liveRepositoryConfigSchema
     declaresNoApiServer,
     'Only a study of format 20 keeps a vite-dev apiServer.',
   )
+  // A run that declares a press is saved as format 21 only.
+  .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
 /**
  * Says whether a retained configuration declares no `apiServer` (an explicit `apiServer: undefined` declares nothing).
  * Called by the refinements of the retained variants that can hold a `vite-dev` run (formats 3 to 8, 10 and 16), which an older Codebook reads without the key.
@@ -984,6 +1057,36 @@ function declaresNoApiServer(configuration: object): boolean {
   return (
     !('apiServer' in configuration) || configuration.apiServer === undefined
   )
+}
+/**
+ * Says whether a retained configuration declares no `press` operation.
+ * Called by the refinements of every retained variant of formats 7 to 20, which an older Codebook reads without the `press` kind.
+ * @param configuration - A parsed configuration of any version.
+ * @returns `true` when no operation has `kind: 'press'`.
+ * @example declaresNoPress({ operations: [{ kind: 'click' }] }) // => true
+ */
+function declaresNoPress(configuration: object): boolean {
+  return (
+    !('operations' in configuration) ||
+    !Array.isArray(configuration.operations) ||
+    !declaresPressOperation({ operations: configuration.operations })
+  )
+}
+/**
+ * Says whether every press key of a configuration is already in canonical spelling.
+ * Called by {@link pressRepositoryConfigSchema}: a saved format 21 study holds the spelling the start stored.
+ * @param configuration - A parsed version 3 configuration.
+ * @returns `true` when every press key parses and equals its canonical spelling.
+ * @example pressKeysAreCanonical({ operations: [{ kind: 'press', key: 'Ctrl+k' }] }) // => false
+ */
+function pressKeysAreCanonical(configuration: {
+  operations?: readonly RepositoryOperation[]
+}): boolean {
+  return (configuration.operations ?? []).every((operation) => {
+    if (operation.kind !== 'press') return true
+    const parsed = parsePressKey(operation.key)
+    return parsed.ok && parsed.canonical === operation.key
+  })
 }
 /**
  * Says whether a retained configuration declares no library (an explicit `library: undefined` declares nothing).
@@ -1028,6 +1131,8 @@ const packageRootRepositoryConfigSchema = operationsConfigurationShape
   })
   // A Next run that declares `library` is saved as format 18 only (API 1.36); the shape above would otherwise accept the key.
   .refine(declaresNoLibrary, 'Only a study of format 18 keeps a library.')
+  // A run that declares a press is saved as format 21 only.
+  .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
 /**
  * The configuration a format 10 study retains: the version 3 `vite-dev` shape with a required `packageRoot` other than `"."`.
  * Why it exists: 0.2.77.0 validates a format 9 configuration with {@link packageRootRepositoryConfigSchema}, which accepts `next-dev-webpack` only, so a nested Vite run needs its own format to be listed as saved by a newer Codebook. Validated like the format 9 variant (inspections, operations; {@link validateInspections} also refuses a server participant under `vite-dev`).
@@ -1052,6 +1157,8 @@ const vitePackageRootRepositoryConfigSchema = operationsConfigurationShape
     declaresNoApiServer,
     'Only a study of format 20 keeps a vite-dev apiServer.',
   )
+  // A run that declares a press is saved as format 21 only.
+  .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
 /**
  * The configuration a format 16 study retains: the version 3 `vite-dev` shape with a required `packageRoot` other than `"."` and a required `library` declaration (API 1.34).
  * Why it exists: an older Codebook refuses `library` under `vite-dev` as an unknown key, so a run that declares it takes its own format and is listed there as saved by a newer Codebook. Validated like the format 10 variant (inspections, operations).
@@ -1075,6 +1182,8 @@ const viteLibraryRepositoryConfigSchema = operationsConfigurationShape
     declaresNoApiServer,
     'Only a study of format 20 keeps a vite-dev apiServer.',
   )
+  // A run that declares a press is saved as format 21 only.
+  .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
 /**
  * The configuration a format 18 study retains: the version 3 `next-dev-webpack` shape with a required `packageRoot` other than `"."` and a required `library` declaration (API 1.36).
  * Why it exists: an older Codebook refuses `library` under `next-dev-webpack` as an unknown key, so a run that declares it takes its own format and is listed there as saved by a newer Codebook. Validated like the format 9 variant (inspections, operations). A root app never reaches a save: the run is refused with `library-needs-package-root` before anything starts.
@@ -1093,6 +1202,8 @@ const nextLibraryRepositoryConfigSchema = operationsConfigurationShape
     validateInspections(configuration, context)
     validateOperations(configuration, context)
   })
+  // A run that declares a press is saved as format 21 only.
+  .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
 /**
  * The configuration a format 11 study retains: the version 3 `react-scripts-dev` shape, root (`packageRoot` absent or `"."`) or nested.
  * Why it exists: an older Codebook refuses the adapter value, so every `react-scripts-dev` run takes its own format and is listed there as saved by a newer Codebook (D5). Validated like the format 9 and 10 variants (inspections, operations; {@link validateInspections} also refuses a server participant under `react-scripts-dev`).
@@ -1103,6 +1214,8 @@ const reactScriptsRepositoryConfigSchema = operationsConfigurationShape
   .superRefine(validateRetainedStudyConfiguration)
   // A run that declares `library` is saved as format 17 only.
   .refine(declaresNoLibrary, 'Only a study of format 17 keeps a library.')
+  // A run that declares a press is saved as format 21 only.
+  .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
 /**
  * The configuration a format 17 study retains: the version 3 `react-scripts-dev` shape with a required `library` declaration (API 1.35).
  * Why it exists: an older Codebook refuses `library` under `react-scripts-dev` as an unknown key, so a run that declares it takes its own format and is listed there as saved by a newer Codebook. Validated like the format 11 variant (inspections, operations).
@@ -1117,6 +1230,8 @@ const reactScriptsLibraryRepositoryConfigSchema = operationsConfigurationShape
     validateInspections(configuration, context)
     validateOperations(configuration, context)
   })
+  // A run that declares a press is saved as format 21 only.
+  .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
 /**
  * The configuration a format 15 study retains: the version 3 `expo-web-dev` shape, root (`packageRoot` absent or `"."`) or nested.
  * Why it exists: an older Codebook refuses the adapter value, so every `expo-web-dev` run takes its own format and is listed there as saved by a newer Codebook (DX-16). Validated like the format 11 variant (inspections, operations; {@link validateInspections} also refuses a server participant under `expo-web-dev`).
@@ -1133,6 +1248,8 @@ const expoWebRepositoryConfigSchema = operationsConfigurationShape
     (configuration) => configuration.apiServer === undefined,
     'Only a study of format 19 keeps an apiServer.',
   )
+  // A run that declares a press is saved as format 21 only.
+  .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
 /**
  * The configuration a format 19 study retains: the version 3 `expo-web-dev` shape with a required `apiServer` declaration (API 1.37).
  * Why it exists: an older Codebook refuses `apiServer` as an unknown key, so a run that declares it takes its own format and is listed there as saved by a newer Codebook. Validated like the format 15 variant (inspections, operations, and the `apiServer` folder and stop rules).
@@ -1147,6 +1264,8 @@ const expoWebApiServerRepositoryConfigSchema = operationsConfigurationShape
     validateInspections(configuration, context)
     validateOperations(configuration, context)
   })
+  // A run that declares a press is saved as format 21 only.
+  .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
 /**
  * The configuration a format 20 study retains: the version 3 `vite-dev` shape with a required `apiServer` declaration (API 1.38), at the repository root or with a `packageRoot`.
  * Why it exists: an older Codebook refuses `apiServer` under `vite-dev` as an unknown key, so a run that declares it takes its own format and is listed there as saved by a newer Codebook. Validated like the format 19 variant (inspections, operations, and the `apiServer` folder, `proxyPaths` and stop rules); `library` beside it is refused.
@@ -1162,7 +1281,23 @@ const viteApiServerRepositoryConfigSchema = operationsConfigurationShape
     validateOperations(configuration, context)
   })
   .refine(declaresNoLibrary, 'A format 20 study declares no library.')
-/** Every configuration a saved study can hold: the retained union of formats 3 to 8, the format 9 package-root variant (Next), the format 10 package-root variant (Vite), the format 11 variant (react-scripts), the format 15 variant (Expo web), the format 16 variant (Vite with a library), the format 17 variant (react-scripts with a library) the format 18 variant (Next with a library) the format 19 variant (Expo web with an apiServer) or the format 20 variant (Vite with an apiServer). */
+  // A run that declares a press is saved as format 21 only.
+  .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
+/**
+ * The configuration a format 21 study retains: a version 3 configuration that declares at least one press, every press key in canonical spelling.
+ * Why it exists: an older Codebook refuses the `press` kind, so a run that declares one takes its own format and is listed there as saved by a newer Codebook.
+ * Read by {@link studyConfigurationSchema} as the eleventh member.
+ */
+const pressRepositoryConfigSchema = operationsRepositoryConfigSchema
+  .refine(
+    declaresPressOperation,
+    'A format 21 study declares a press operation.',
+  )
+  .refine(
+    pressKeysAreCanonical,
+    'A format 21 study keeps each press key in canonical spelling.',
+  )
+/** Every configuration a saved study can hold: the retained union of formats 3 to 8, the format 9 package-root variant (Next), the format 10 package-root variant (Vite), the format 11 variant (react-scripts), the format 15 variant (Expo web), the format 16 variant (Vite with a library), the format 17 variant (react-scripts with a library) the format 18 variant (Next with a library) the format 19 variant (Expo web with an apiServer) the format 20 variant (Vite with an apiServer) or the format 21 variant (a press). */
 export const studyConfigurationSchema = z.union([
   retainedRepositoryConfigSchema,
   packageRootRepositoryConfigSchema,
@@ -1174,6 +1309,7 @@ export const studyConfigurationSchema = z.union([
   expoWebRepositoryConfigSchema,
   expoWebApiServerRepositoryConfigSchema,
   viteApiServerRepositoryConfigSchema,
+  pressRepositoryConfigSchema,
 ])
 export type RepositoryConfiguration = z.infer<typeof repositoryConfigSchema>
 export type RetainedRepositoryConfiguration = z.infer<
