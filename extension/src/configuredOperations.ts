@@ -1226,6 +1226,7 @@ function identityOfPressReading(
   reading: PressFocusReading,
 ): Required<PressElementIdentity> {
   return {
+    hostTagName: reading.hostTagName ?? '',
     tagName: reading.tagName ?? '',
     type: reading.type ?? '',
     id: reading.id ?? '',
@@ -1257,6 +1258,35 @@ function refusalReasonOfPressReading(
 }
 
 /**
+ * Builds the refusal of a press whose page or named target is unusable (no press `reason`).
+ * Called by {@link pressRefusalOf}. With a selector the sentence names it and the path is `operations[k].selector`; without one the page itself is the problem (it left the application's origin), at `operations[k]`.
+ * @param context - The press operation and its 1-based index.
+ * @param reading - The page's reading, whose `reason` says what is wrong.
+ * @returns The `INPUT_NOT_ACCEPTED` refusal.
+ * @example throw pressTargetRefusalOf(context, { ready: false, reason: 'wrong-origin' })
+ */
+function pressTargetRefusalOf(
+  context: PressContext,
+  reading: PressFocusReading,
+): OperationRefusal {
+  const { index, operation } = context
+  const path = `operations[${index - 1}]`
+  const reason = reading.reason ?? 'unavailable'
+  const what =
+    operation.selector === undefined
+      ? `the page left the application's origin (${reason})`
+      : `${operation.selector} is not a unique visible enabled target on the page (${reason})`
+  return new OperationRefusal(
+    'INPUT_NOT_ACCEPTED',
+    `Operation ${index} (${operation.title}) was not sent: ${what}.`,
+    {
+      operationIndex: index,
+      path: operation.selector === undefined ? path : `${path}.selector`,
+    },
+  )
+}
+
+/**
  * Builds the refusal of a press (nothing was sent) for a reason of {@link refusalReasonOfPressReading}.
  * @param context - The press operation and its 1-based index.
  * @param refusal - `'target'` or a closed reason.
@@ -1272,12 +1302,7 @@ function pressRefusalOf(
   focusBefore?: PressElementIdentity,
 ): OperationRefusal {
   const { index, operation } = context
-  if (refusal === 'target')
-    return new OperationRefusal(
-      'INPUT_NOT_ACCEPTED',
-      `Operation ${index} (${operation.title}) was not sent: ${operation.selector} is not a unique visible enabled target on the page (${reading.reason ?? 'unavailable'}).`,
-      { operationIndex: index, path: `operations[${index - 1}].selector` },
-    )
+  if (refusal === 'target') return pressTargetRefusalOf(context, reading)
   const identity = identityOfPressReading(reading)
   const { message, path } = describePressRefusal(refusal, {
     index,

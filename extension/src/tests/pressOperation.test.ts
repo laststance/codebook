@@ -27,6 +27,8 @@ const FIXTURE = `<!doctype html><html><body>
 <iframe id="frame" srcdoc="<input id='inner'>"></iframe>
 <div id="panel" tabindex="0">Panel</div>
 <div id="host"></div>
+<svg id="icon" tabindex="0" width="20" height="20"><rect width="20" height="20"></rect></svg>
+<div id="stubborn" tabindex="0" onfocus="this.blur()">Stubborn</div>
 <script>
 window.events = [];
 window.pauseOnKeydown = false;
@@ -332,6 +334,36 @@ test('a press naming a missing element is refused at its selector without a pres
   assert.equal(refusal.code, 'INPUT_NOT_ACCEPTED')
   assert.equal(refusal.reason, undefined)
   assert.equal(refusal.path, 'operations[0].selector')
+})
+
+// Value: protects=a focusable SVG element named by a selector receives the focus and the key instead of the earlier focus; fails_when=focus is skipped for SVG elements and the key goes to the text input that held focus; no_claim=SVG elements without a tabindex
+test('a press naming a focusable SVG element sends the key to it', async (context) => {
+  // Arrange
+  const page = await openRealChromePage(context, FIXTURE)
+  if (!page) return
+  await focusOn(page, '#search')
+  // Act
+  await press(page, open('x', '#icon'))
+  // Assert
+  assert.deepEqual(
+    (await seenEvents(page)).map((event) => event.target),
+    ['icon', 'icon', 'icon'],
+  )
+})
+
+// Value: protects=a named target that refuses focus is refused as not focusable and named itself, not as the password input that held focus before; fails_when=the earlier focus owner is classified or named instead of the target; no_claim=targets that take focus
+test('a press naming an element that refuses focus is refused as not focusable while a password input holds focus', async (context) => {
+  // Arrange
+  const page = await openRealChromePage(context, FIXTURE)
+  if (!page) return
+  await focusOn(page, '#pass')
+  // Act
+  const refusal = await refusalOf(page, open('x', '#stubborn'))
+  // Assert
+  assert.equal(refusal.reason, 'press-target-not-focusable')
+  assert.equal(refusal.path, 'operations[0].selector')
+  assert.match(refusal.message, /#stubborn names <div id="stubborn">, which/)
+  assert.deepEqual(await seenEvents(page), [])
 })
 
 // Value: protects=a stop inside the key handler holds keyDown pending, keyUp follows only after the resume and the page sees keyup last; fails_when=keyUp is sent while the page is paused or the key is lost; no_claim=js-debug's own stop handling (run tests)

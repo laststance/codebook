@@ -1,4 +1,7 @@
-import type { PressRefusalReason } from '../constants'
+import {
+  ELEMENT_VALUE_LIMIT_CHARS,
+  type PressRefusalReason,
+} from '../constants'
 
 /** The attributes that name an element in a refusal: tag, type, id and name only, never a value or text. */
 export type PressElementIdentity = {
@@ -6,6 +9,8 @@ export type PressElementIdentity = {
   type?: string
   id?: string
   name?: string
+  /** The tag of the element the page resolved, when the recipient lives in an open shadow root below it (D27). */
+  hostTagName?: string
 }
 
 /** What {@link describePressRefusal} words a refusal from. */
@@ -24,11 +29,8 @@ export type PressRefusalInput = {
   focusAfter?: PressElementIdentity
 }
 
-/** Longest attribute value an element description keeps, in characters. */
-const ELEMENT_VALUE_LIMIT_CHARS = 64
-
 /**
- * Words an element as `<tag type="…" id="…" name="…">` with only its non-empty attributes, each JSON-quoted and cut.
+ * Words an element as `<tag type="…" id="…" name="…">` with only its non-empty attributes, each JSON-quoted and cut, followed by ` inside <host>` when the recipient sits in a shadow root below another element.
  * Called by {@link describePressRefusal}.
  * @param element - The element's tag and identifying attributes.
  * @returns The description; never a value or text of the element.
@@ -42,7 +44,11 @@ function describePressElement(element: PressElementIdentity): string {
       ([attribute, value]) =>
         ` ${attribute}=${JSON.stringify((value ?? '').slice(0, ELEMENT_VALUE_LIMIT_CHARS))}`,
     )
-  return `<${element.tagName}${attributes.join('')}>`
+  const host =
+    element.hostTagName === undefined || element.hostTagName === ''
+      ? ''
+      : ` inside <${element.hostTagName.slice(0, ELEMENT_VALUE_LIMIT_CHARS)}>`
+  return `<${element.tagName}${attributes.join('')}>${host}`
 }
 
 /**

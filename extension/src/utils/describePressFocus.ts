@@ -23,7 +23,7 @@ export type PressFocusDescription = {
  * Why it exists: a press goes to whatever holds the focus, so Codebook classifies that recipient (secret, text entry, frame) before the run and again right before the key is sent. Sent by `Runtime.evaluate` from `preparePressOperation` (`focus: false`: classify only) and from the press send (`focus: true`: focus the target, then classify the actual recipient); exported so a Node test runs it against a fake page.
  * With `selector` it resolves the unique target on an owned origin, which must be visible, enabled, outside `[inert]` and focusable; without it, the document's active element. The subject it classifies is the recipient: the focused element resolved through open shadow roots, so a `delegatesFocus` host is judged by the control inside it. A closed shadow root hides its focus, so the host is the subject then.
  * @param input - The optional selector, the loopback origins the page may be at and whether to apply the focus to the target first.
- * @returns The {@link PressFocusDescription}; with `focus: true` and a target that did not take focus, `reason: 'target-not-focusable'`.
+ * @returns The {@link PressFocusDescription}; with `focus: true` and a target that did not take focus, `reason: 'target-not-focusable'` and the attributes of the target itself.
  * @example
  * describePressFocus({ selector: '#menu', origins: ['http://localhost:3000'], focus: false }) // => { ready: true, tagName: 'button', type: '', name: '', id: 'menu', autocomplete: '', isTextEntry: false, isInFrame: false, isFocused: false }
  */
@@ -83,7 +83,12 @@ export function describePressFocus(input: {
   /** The reason the target cannot take the key's focus (verified after a focus applied here), or nothing. */
   const focusBlockerOf = (element: Element): string | undefined => {
     if (!isFocusable(element)) return 'target-not-focusable'
-    if (!input.focus || !(element instanceof HTMLElement)) return undefined
+    // Both HTML and SVG elements take focus (an SVG element with a `tabindex`).
+    if (
+      !input.focus ||
+      !(element instanceof HTMLElement || element instanceof SVGElement)
+    )
+      return undefined
     element.focus()
     return isWithin(recipientOf(), element) ? undefined : 'target-not-focusable'
   }
@@ -141,7 +146,10 @@ export function describePressFocus(input: {
   const resolved = resolveTarget(input.selector)
   if (typeof resolved === 'string') return { ready: false, reason: resolved }
   const blocker = focusBlockerOf(resolved)
-  // Classified as the target before the focus is applied, as the recipient after.
-  const subject = input.focus ? (recipientOf() ?? document.body) : resolved
+  // Classified as the target before the focus is applied; after it, as the recipient when the focus landed, else still as the target (never the element that held focus before).
+  const subject =
+    input.focus && blocker === undefined
+      ? (recipientOf() ?? document.body)
+      : resolved
   return describeSubject(subject, resolved, blocker)
 }

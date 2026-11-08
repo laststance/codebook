@@ -333,3 +333,42 @@ test('press refusal messages name elements without values and point at the field
     'Operation 1 (Open) was not sent: #panel names <div id="panel">, which cannot take focus. Omit selector to send the key to the page, or name a focusable element.',
   )
 })
+
+// Value: protects=a press without a selector on a page that left the application's origin is worded as the page's problem at the operation path; fails_when=the sentence prints an undefined selector or points at operations[k].selector; no_claim=the real origin check (real Chrome tests)
+test('a press on a page outside the application origin is refused without naming a selector', async () => {
+  // Arrange
+  const page = fakePage({
+    reading: () => ({ ready: false, reason: 'wrong-origin' }),
+  })
+  // Act
+  const failure = await prepareOperation(
+    portOf(page.cdp, { isPaused: () => false }),
+    { index: 2, total: 2, operation: PRESS },
+  ).catch((error) => error)
+  // Assert
+  assert.ok(failure instanceof OperationRefusal)
+  assert.equal(
+    failure.message,
+    "Operation 2 (Open palette) was not sent: the page left the application's origin (wrong-origin).",
+  )
+  assert.equal(failure.path, 'operations[1]')
+  assert.deepEqual(page.keyRequests, [])
+})
+
+// Value: protects=a refusal names the shadow host when it differs from the recipient, still without a value; fails_when=the host is dropped from the sentence or a value appears; no_claim=the page's shadow tree detection (real Chrome tests)
+test('a secret control inside a shadow host is refused naming the host', () => {
+  // Arrange
+  const element = { tagName: 'input', type: 'password', hostTagName: 'x-field' }
+  // Act
+  const refusal = describePressRefusal('press-secret-control', {
+    index: 1,
+    title: 'Open',
+    element,
+    classification: 'type=password',
+  })
+  // Assert
+  assert.equal(
+    refusal.message,
+    'Operation 1 (Open) was not sent: the key would go to <input type="password"> inside <x-field>, which reads as a secret control (type=password). A key never goes to a secret control: click the submit control, or use secret: "ask-learner" on a text operation.',
+  )
+})
