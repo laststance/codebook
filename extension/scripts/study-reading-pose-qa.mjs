@@ -683,6 +683,43 @@ async function check(page, options, collected) {
       names[3] ===
         'Operation 4 of 4, click, Create Invoice, not sent, not finished',
   })
+  // Cycle 0101: a press mark names its key beside its kind in the tooltip and the accessible name; its visible number is unchanged.
+  await render(
+    operationReplay(0, {
+      operations: [
+        fourMarks[0],
+        {
+          index: 2,
+          total: 4,
+          kind: 'press',
+          key: 'Control+k',
+          title: 'Open the palette',
+          atMs: 1500,
+          state: 'done',
+        },
+        fourMarks[2],
+        fourMarks[3],
+      ],
+    }),
+  )
+  const pressMark = await page.evaluate(() => {
+    const mark = document.querySelector('[data-operation-mark="2"]')
+    return {
+      name: mark.getAttribute('aria-label'),
+      tooltip: mark.title,
+      text: mark.textContent,
+    }
+  })
+  // protects=a replayed press is read and hovered with the key that was sent; fails_when=the mark names only "press", so the learner cannot tell which key ran; no_claim=how a real screen reader speaks the name, or that the host projects the key (stand-ins: the Study message the host posts)
+  cases.push({
+    name: 'a press mark names its key beside its kind in its accessible name and tooltip',
+    actual: pressMark,
+    passed:
+      pressMark.name ===
+        'Operation 2 of 4, press Control+k, Open the palette, at 1.50 s, done' &&
+      pressMark.tooltip === '2 · press Control+k · Open the palette' &&
+      pressMark.text === '2',
+  })
   // Done, failed and pending differ by shape and text, not colour alone; a mark that was never sent has no moment to move to.
   const shapes = await page.evaluate(() =>
     [...document.querySelectorAll('[data-operation-mark]')].map(
