@@ -23,7 +23,8 @@ const OPENING_BEFORE_START =
   'Codebook did not trust the reverse proxy this run declared (origin https://app.example.test, upstream port 4310), so nothing was started.'
 const OPENING_AFTER_START =
   'Codebook did not trust the reverse proxy this run declared (origin https://app.example.test, upstream port 4310), so no run browser opened and the development server it started was stopped.'
-const SENT = 'Codebook sent one GET of its proof path and no operation.'
+const SENT =
+  "Codebook sent its proof request and, when the browser check ran, the throwaway browser's one request (no cookie), and no operation."
 
 // Value: protects=AC 2 not-resolved wording; fails_when=the opening claims a stop for a run that started nothing, the host is missing or the Fix line changes; no_claim=the run's cleanup
 test('not-resolved says nothing was started and names the host with its Fix', () => {

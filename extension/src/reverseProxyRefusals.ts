@@ -153,7 +153,7 @@ const REASONS_THAT_REACHED_A_RESPONDER: ReadonlySet<ReverseProxyRefusalReason> =
 
 /** The sentence a refusal adds when something may have been sent. */
 const PROOF_GET_SENTENCE =
-  'Codebook sent one GET of its proof path and no operation.'
+  "Codebook sent its proof request and, when the browser check ran, the throwaway browser's one request (no cookie), and no operation."
 
 /** The `proof-unclassified` Fix when no log id exists: the saved-session setup refuses without one, so the learner is sent to the reverse proxy line of the Output instead. */
 const PROOF_UNCLASSIFIED_FIX_WITHOUT_LOG_ID =
