@@ -3771,8 +3771,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.dropCopyPause()
       participant.unannouncedPause = undefined
       // The runtime goes on, except an API handler, which must never run on: its group is killed before anything resumes or detaches.
-      if (steps.killApiFirst) await this.killApiServerFirst()
-      else
+      if (steps.killApiFirst) {
+        // A group that outlives the stop bound is recorded; the seal's refusal still wins and the API is never claimed stopped.
+        const api = this.apiServer
+        await this.killApiServerFirst().catch(() => {
+          if (api) this.apiCleanupFailure = { pid: api.pid }
+        })
+      } else
         await this.sendOwnedResume(session, event.body?.threadId).catch(
           () => undefined,
         )
@@ -11659,6 +11664,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @example this.failOnApiLoss('Selected server CDP closed')
    */
   private failOnApiLoss(fallbackReason: string): void {
+    // The run itself is ending the API: the refusal that caused it is the cause, not the loss it produces.
+    if (this.isApiEnding) return
     const api = this.apiServer
     if (!api) {
       this.fail(fallbackReason)
@@ -11681,7 +11688,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     fallbackReason: string,
   ): Promise<void> {
     const exit = await resolveApiLoss(api, OWNED_API_SERVER_LOSS_ARBITER_MS)
-    if (this.cleaning) return
+    if (this.cleaning || this.isApiEnding) return
     this.fail(
       exit
         ? formatRefusalFailure(
