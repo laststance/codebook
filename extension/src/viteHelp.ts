@@ -11,6 +11,7 @@ import {
   REPOSITORY_GIT_TIMEOUT_MS,
   REPOSITORY_SETUP_TIMEOUT_MS,
   VITE_API_SERVER_MINIMUM_API,
+  VITE_API_SERVER_STUDY_VERSION,
   VITE_APP_SELECTION_RULE,
   VITE_LIBRARY_MINIMUM_API,
   VITE_LIBRARY_STOP_MINIMUM_API,
@@ -106,12 +107,6 @@ export const VITE_NESTED_CONFIGURATION = {
   ],
   inspections: [{ path: 'count', mode: 'value', required: true }],
 } as const
-
-/**
- * The study format a `vite-dev` run that declares `apiServer` is saved as.
- * W2-E adds the same constant to `constants.ts` as `VITE_API_SERVER_STUDY_VERSION`; the driving agent replaces this local copy with that import at integration.
- */
-const VITE_API_SERVER_HELP_STUDY_VERSION = 20
 
 /** The server stop shared by both `apiServer` examples: a statement in the handler the page's request reaches, inside the API folder, armed after operation 1. */
 const VITE_API_SERVER_STOP = {
@@ -519,7 +514,7 @@ function viteApiServerHelp() {
       devServer: 'Vite',
       runLabel: 'A vite-dev run',
       minimumApi: VITE_API_SERVER_MINIMUM_API,
-      studyVersion: VITE_API_SERVER_HELP_STUDY_VERSION,
+      studyVersion: VITE_API_SERVER_STUDY_VERSION,
       configuration: VITE_API_SERVER_CONFIGURATION,
       packageRootFolderRule:
         ", inside the app's folder or beside it, never around it",
