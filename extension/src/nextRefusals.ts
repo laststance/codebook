@@ -1,5 +1,6 @@
 import {
   MILLISECONDS_PER_SECOND,
+  NEXT_LIBRARY_REDIRECT_CAUSE_MAX_CHARS,
   NEXT_SETUP_STEPS,
   type NextSetupStep,
 } from './constants'
@@ -99,6 +100,10 @@ export function outsidePackageRefusal(
   })
 }
 
+/** The static recovery of a `LIBRARY_BUILD_UNSUPPORTED` whose `details.reason` is `library-needs-package-root`: it names fields, never values, because a recovery override reaches MCP unsanitized. */
+const NEXT_LIBRARY_NEEDS_PACKAGE_ROOT_RECOVERY =
+  "Declare the Example's folder as configuration.packageRoot beside library, or drop library to run the root app on its installed copy of the library, saying so to the learner; never edit the project. Recovery: fix the configuration, then one new start. Nothing was built or started (details.sideEffects is none). See codebook://help/repository-browser#library-needs-package-root."
+
 /**
  * Builds the refusal of a Next app at the repository root that declares `library`, raised before anything is built or started.
  *
@@ -114,7 +119,7 @@ export function nextLibraryNeedsPackageRootRefusal(): StudyError {
     'LIBRARY_BUILD_UNSUPPORTED',
     message,
     message,
-    undefined,
+    NEXT_LIBRARY_NEEDS_PACKAGE_ROOT_RECOVERY,
     undefined,
     { reason: 'library-needs-package-root', sideEffects: 'none' },
   )
@@ -132,7 +137,7 @@ const LIBRARY_STOP_UNSUPPORTED_RECOVERY =
  * @param file - The repository-relative stop file inside the library folder.
  * @returns The `NEXT_STOP_NOT_SEALED` error: `details.reason: "library-stop-unsupported"`, `library`, `file` and `sideEffects: "none"`.
  * @example
- * throw nextLibraryStopUnsupportedRefusal('react-redux', 'src/hooks/useSelector.ts')
+ * throw nextLibraryStopUnsupportedRefusal('widgets', 'src/components/Toggle.tsx')
  */
 export function nextLibraryStopUnsupportedRefusal(
   libraryName: string,
@@ -154,26 +159,23 @@ export function nextLibraryStopUnsupportedRefusal(
 const LIBRARY_REDIRECT_NOT_APPLIED_RECOVERY =
   "Tell the learner this Next installation cannot take the library route in this version (details.compilers names the compilers whose redirect was not confirmed, details.cause the preload's error when it wrote one), then start again once without library, saying the Example then runs its installed copy of the library; never retry with library and never edit the project. Recovery: learner decision, then one new start. The library was built and packed and the owned server was started and stopped; no request was sent and no browser was opened (details.sideEffects is partial). See codebook://help/repository-browser#NEXT_UNSUPPORTED_SETTING."
 
-/** The most characters of the preload's error message a refusal quotes. */
-const LIBRARY_REDIRECT_CAUSE_MAX_CHARS = 300
-
 /**
  * Builds the refusal of a Next library run whose preload did not confirm the redirect for every compiler, raised after the owned server started and before any request.
  *
  * Why it exists: a Next installation that builds its webpack configuration another way would serve the Example's installed copy while the run reads complete, so the run is refused instead (decision D20). Called by {@link ConfiguredBrowserRun} after the server start returns.
  * @param libraryName - The library's package name.
  * @param compilers - The compilers that wrote no `wrapped` line within the bound (`client`, `server`, `edge-server`); empty when the preload wrote its error line instead.
- * @param cause - The preload's error message, when it wrote one; cut to {@link LIBRARY_REDIRECT_CAUSE_MAX_CHARS}.
+ * @param cause - The preload's error message, when it wrote one; cut to {@link NEXT_LIBRARY_REDIRECT_CAUSE_MAX_CHARS}.
  * @returns The `NEXT_UNSUPPORTED_SETTING` error: `details.reason: "library-redirect-not-applied"`, `library`, `compilers`, `cause` (when known) and `sideEffects: "partial"`.
  * @example
- * nextLibraryRedirectNotAppliedRefusal('react-redux', ['server']).details?.compilers // => ['server']
+ * nextLibraryRedirectNotAppliedRefusal('widgets', ['server']).details?.compilers // => ['server']
  */
 export function nextLibraryRedirectNotAppliedRefusal(
   libraryName: string,
   compilers: readonly string[],
   cause?: string,
 ): StudyError {
-  const quoted = cause?.slice(0, LIBRARY_REDIRECT_CAUSE_MAX_CHARS)
+  const quoted = cause?.slice(0, NEXT_LIBRARY_REDIRECT_CAUSE_MAX_CHARS)
   const missing =
     compilers.length === 0
       ? ''

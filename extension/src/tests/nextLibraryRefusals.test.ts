@@ -3,6 +3,7 @@ import { test } from 'node:test'
 
 import { ERROR_RECOVERY } from '../errors'
 import {
+  nextLibraryNeedsPackageRootRefusal,
   nextLibraryRedirectNotAppliedRefusal,
   nextLibraryStopUnsupportedRefusal,
 } from '../nextRefusals'
@@ -126,4 +127,24 @@ test('both Next library refusals survive the failure-text round trip with their 
     restored.map((failure) => failure?.message),
     errors.map((error) => error.message),
   )
+})
+
+// Value: protects=the chat reads the library-needs-package-root fix and its help anchor, not the node-script recovery; fails_when=the refusal falls back to the shared LIBRARY_BUILD_UNSUPPORTED recovery; no_claim=that the chat follows it
+test('a Next library refusal for a root app tells the chat to declare packageRoot or drop library', () => {
+  // Arrange
+  const error = nextLibraryNeedsPackageRootRefusal()
+  // Act
+  const described = error.describe()
+  // Assert
+  assert.ok(
+    described.recovery.includes(
+      "Declare the Example's folder as configuration.packageRoot beside library, or drop library",
+    ),
+  )
+  assert.ok(
+    described.recovery.includes(
+      'See codebook://help/repository-browser#library-needs-package-root.',
+    ),
+  )
+  assert.ok(!described.recovery.includes('node-script'))
 })

@@ -7,6 +7,7 @@ import {
   REACT_SCRIPTS_REFUSAL_CODES,
   reactScriptsCompileFailedRefusal,
   reactScriptsExitedRefusal,
+  reactScriptsLibraryNeedsPackageRootRefusal,
   reactScriptsAmbiguousSourceRefusal,
   reactScriptsMapLimitRefusal,
   reactScriptsNodeModulesRefusal,
@@ -359,4 +360,24 @@ test('the general busy-port recovery names the start script PORT= assignment', (
   // Act / Assert
   assert.match(recovery, /PORT= assignment in the start script of the app/)
   assert.equal(recovery.includes('set another port in the app;'), false)
+})
+
+// Value: protects=the chat reads the library-needs-package-root fix and its help anchor, not the node-script recovery; fails_when=the refusal falls back to the shared LIBRARY_BUILD_UNSUPPORTED recovery; no_claim=that the chat follows it
+test('a react-scripts library refusal for a root app tells the chat to declare packageRoot or drop library', () => {
+  // Arrange
+  const error = reactScriptsLibraryNeedsPackageRootRefusal()
+  // Act
+  const described = error.describe()
+  // Assert
+  assert.ok(
+    described.recovery.includes(
+      "Declare the Example's folder as configuration.packageRoot beside library, or drop library",
+    ),
+  )
+  assert.ok(
+    described.recovery.includes(
+      'See codebook://help/repository-browser#library-needs-package-root.',
+    ),
+  )
+  assert.ok(!described.recovery.includes('node-script'))
 })
