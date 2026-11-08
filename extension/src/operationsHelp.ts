@@ -152,13 +152,13 @@ const PRESS_REFUSAL_ROWS: Record<
   { when: string; path: string; fix: string }
 > = {
   'press-focus-in-text-entry': {
-    when: 'The key would go to the focused text-entry control (a text, search or number input, a textarea, a select or a contenteditable element), where it would be typed.',
+    when: 'The press declares no selector and the key would go to the focused text-entry control, where it would be typed: a textarea, a select, a contenteditable element, or an input of any type except button, submit, reset, checkbox, radio, range, image, file, color and hidden.',
     path: 'operations[i]',
     fix: 'Declare operations[i].selector as that control if the key is meant for it; otherwise add an earlier click on a non-text element to move focus away.',
   },
   'press-secret-control': {
     when: 'The key would go to a control that reads as a secret.',
-    path: 'operations[i]',
+    path: 'operations[i], or operations[i].selector when the press declares a selector',
     fix: `A key never goes to a secret control: click the submit control, or use secret: "${ASK_LEARNER_SECRET}" on a text operation.`,
   },
   'press-target-not-focusable': {
@@ -168,12 +168,12 @@ const PRESS_REFUSAL_ROWS: Record<
   },
   'press-focus-changed': {
     when: 'Focus moved between the check and the send, so nothing was sent.',
-    path: 'operations[i]',
+    path: 'operations[i], or operations[i].selector when the press declares a selector',
     fix: 'Start one new run, and ask the learner first when earlier operations ran.',
   },
   'press-focus-in-frame': {
     when: 'The focus or the declared target is a frame (iframe, frame, object or embed) whose content Codebook cannot read.',
-    path: 'operations[i]',
+    path: 'operations[i], or operations[i].selector when the press declares a selector',
     fix: 'Click an element of the top document to move focus out of the frame, or name a top-document element with operations[i].selector.',
   },
   'press-after-already-holds': {
@@ -302,7 +302,7 @@ export function operationsHelp() {
     },
     operationsPress: {
       anchor: 'codebook://help/repository-browser#press',
-      summary: `A press operation sends one keyboard key (optionally with Control, Alt, Shift or Meta) to the page, for a screen or menu that only a key opens. It needs codebook_status to report API ${PRESS_MINIMUM_API} or later: compare the number after the dot as a whole number (1.40 is later than ${PRESS_MINIMUM_API}); on an older API say press is not available, then use version 2 or tell the learner to update Codebook.`,
+      summary: `A press operation sends one keyboard key (optionally with Control, Alt, Shift or Meta) to the page, for a screen or menu that only a key opens. It needs codebook_status to report API ${PRESS_MINIMUM_API} or later: compare the number after the dot as a whole number (1.40 is later than ${PRESS_MINIMUM_API}); on an older API say press is not available and tell the learner to update Codebook; never fall back to version 2 for a keyboard-only screen, because version 2 cannot send a key.`,
       choosing: [
         'Prefer entryPath for a screen that has its own URL (and is not a sign-in path).',
         'Then a click operation on a visible link or button.',
@@ -325,14 +325,15 @@ export function operationsHelp() {
         'Modifiers are Control, Alt, Shift and Meta, each at most once and in any order, each followed by +; then exactly one key. Codebook sends them in the order Control, Alt, Shift, Meta and shows that canonical spelling everywhere.',
         'The key is one ASCII character from ! to ~ except +, or a name: Enter, Escape, Tab, Backspace, Delete, Space, Plus, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Home, End, PageUp, PageDown, F1 to F12. A trailing + after a modifier is the plus key (Control++ is Control+Plus); a bare + is refused, write Plus.',
         'Aliases are refused, not accepted: the INVALID_CONFIGURATION cause names the canonical spelling (Ctrl, Cmd, Command, Option, Esc, Return, Del, Up, Down, Left, Right and a literal space).',
-        'Codebook sends what a US-layout keyboard sends. A lowercase letter or a digit sends key as written. An uppercase letter alone and a shifted symbol alone (for example ? or !) are sent with Shift, key as written and code of the unshifted US key. An uppercase letter together with Control, Alt or Meta is refused: write the lowercase letter, or add Shift.',
+        'Codebook sends what a US-layout keyboard sends. A lowercase letter or a digit sends key as written. An uppercase letter alone and a shifted symbol alone (for example ? or !) are sent with Shift, key as written and code of the unshifted US key. An uppercase letter or a shifted symbol together with Control, Alt or Meta is refused: write the unshifted key and add Shift when the handler needs it.',
         'Platform shortcuts: an app may accept Control on one system and Meta on macOS (ctrlKey || metaKey, or a mod helper); declare the modifier the handler accepts on this machine.',
       ],
       pageSees:
-        'The page sees key, code, keyCode and which of a US layout and the four modifier flags, as one keydown and one keyup. Read which of them the handler tests.',
+        'The page sees key, code, keyCode and which of a US layout and the four modifier flags, as one keydown, a keypress only for a printable key or Enter without Control, Alt or Meta, and one keyup. Read which of them the handler tests.',
       focus: [
         'Omit selector to send the key to the page: it goes to the element that has focus, and the page-level listeners see it.',
         'Name selector to send it to that control: Codebook focuses it first. It must match one visible enabled focusable element in the top document.',
+        "A declared selector that does not match exactly one visible enabled element (outside [inert], on the application's origin) is INPUT_NOT_ACCEPTED at operations[i].selector with no reason: fix the selector.",
         'A key never goes to a secret control, and without a selector it never goes to a text-entry control, where it would be typed (see the refusals table).',
       ],
       afterRequired:
@@ -362,6 +363,8 @@ export function operationsHelp() {
         'A text field that receives the key types it.',
         'A login form whose only submit is Enter inside the password field cannot be driven, because a key never goes to a secret control.',
         "A stop inside the target's own focus handler is not attributed to the press.",
+        "A pause that begins after Codebook's last check and before the key-up reaches the page drops the release; nothing can detect it, and after proves the key's effect, not the release. Only an app that tracks held keys is affected.",
+        'A key-up sent after a navigation lands in the new document.',
       ],
       olderCodebook: `Before API ${PRESS_MINIMUM_API}, a configuration with kind "press" fails with INVALID_CONFIGURATION naming operations[i].kind, so check the API version first. A run that declares a press is saved as study format 21 whatever else it declares, and an older Codebook lists it as saved by a newer Codebook and keeps it.`,
     },

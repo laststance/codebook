@@ -434,6 +434,15 @@ test('the press help gates on API 1.39 by whole number and names the older Codeb
   assert.ok(section.includes('INVALID_CONFIGURATION naming operations[i].kind'))
   assert.ok(section.includes('study format 21'))
   assert.ok(section.includes('has nothing to do with the idempotency key'))
+  assert.ok(section.includes('never fall back to version 2'))
+  assert.ok(section.includes('at operations[i].selector with no reason'))
+  assert.ok(section.includes('a keypress only for a printable key or Enter'))
+  assert.ok(section.includes('drops the release'))
+  assert.ok(section.includes('lands in the new document'))
+  assert.ok(section.includes('uppercase letter or a shifted symbol together'))
+  assert.ok(
+    section.includes('or operations[i].selector when the press declares'),
+  )
   assert.ok(section.includes('never guess a key'))
 })
 
@@ -488,12 +497,14 @@ test('the skill and README state the press API gate, reading the handler, after 
     'never guess a key',
     'Declare `after` for every press that is not the last operation',
     'only when the learner asks',
+    'never fall back to version 2 for a keyboard-only screen',
   ])
     assert.ok(skill.includes(phrase), phrase)
   for (const phrase of [
     '**Press a key (MCP API 1.39).**',
     'must declare its own `after` condition',
     'saved as format 21 (`.study.v21.json`)',
+    'does not fall back to a version 2 configuration',
     'API 1.39 is additive:',
     'API 1.38 is additive:',
   ])
