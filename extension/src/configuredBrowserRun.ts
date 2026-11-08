@@ -11497,14 +11497,19 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Tells whether the API may be paused in a handler or about to be: an API pause is held, or an API stop is armed and its operation was sent.
+   * Tells whether the API may be paused in a handler or about to be: its entry pause is not released yet, an API pause is held, or an API stop is armed and its operation was sent.
    * Called by {@link cleanupOwned} to choose between the kill-first stop and the normal one.
-   * @returns `true` when a normal stop could let a handler run on.
+   * @returns `true` when a normal stop could let a handler or the API's startup code run on.
    * @example if (this.mustKillApiFirst()) await this.killApiServerFirst()
    */
   private mustKillApiFirst(): boolean {
     const server = this.participants.server
+    // A launched API whose entry pause is still held (also before the server participant is selected): a detach would release Node before its first statement.
+    const isEntryHeld = Boolean(
+      this.apiEntryGate && !this.apiEntryGate.isReleased,
+    )
     const isPauseHeld = Boolean(
+      isEntryHeld ||
       server.stopped ||
       server.unannouncedPause ||
       server.copyPause ||
@@ -11523,17 +11528,36 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Starts the kill-first stop of the cleanup when the API may be paused, and records a group that could not be confirmed gone.
-   * Called first by {@link cleanupOwned}, before the participants' channels close and the debuggers stop.
-   * @example await this.killApiServerBeforeDetach()
+   * Called first by {@link cleanupOwned}, before the participants' channels close and the debuggers stop. A retried Stop whose earlier kill failed tries the kill again.
+   * @returns `true` when the kill failed: the API may survive, so the cleanup must neither detach from it nor retire its breakpoints.
+   * @example const isApiKept = await this.killApiServerBeforeDetach()
    */
-  private async killApiServerBeforeDetach(): Promise<void> {
+  private async killApiServerBeforeDetach(): Promise<boolean> {
     const api = this.apiServer
-    if (!api || !this.mustKillApiFirst()) return
+    if (!api || !(this.mustKillApiFirst() || this.apiCleanupFailure))
+      return false
     try {
       await this.killApiServerFirst()
+      this.apiCleanupFailure = undefined
+      return false
     } catch {
       this.apiCleanupFailure = { pid: api.pid }
+      return true
     }
+  }
+
+  /**
+   * Tells whether a debug session is the API's own root session.
+   * Called by {@link cleanupOwned} to keep the API's session attached while its kill is unconfirmed.
+   * @param session - A known debug session.
+   * @returns `true` for the root session of the API server.
+   * @example this.isApiDebugSession(session) // => true for 'codebook server <id>'
+   */
+  private isApiDebugSession(session: vscode.DebugSession): boolean {
+    return (
+      !session.parentSession &&
+      session.configuration.name === `codebook server ${this.id}`
+    )
   }
 
   /**
@@ -17360,14 +17384,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (!['failed', 'completed'].includes(this.status))
       this.status = 'cancelled'
     // An API handler that is paused or about to run is killed with its group before anything closes, resumes or detaches (E-4, D22).
-    await this.killApiServerBeforeDetach()
+    // A kill that failed keeps the API's session, channel and breakpoints for the retried Stop: letting go would release a paused API.
+    const isApiKept = await this.killApiServerBeforeDetach()
     const failures = await settleCleanup(
-      Object.entries(this.participants).map(([name, participant]) => ({
-        description: `${name} CDP close`,
-        release: () => participant.cdp?.close(),
-      })),
+      Object.entries(this.participants)
+        .filter(([name]) => !(isApiKept && name === 'server'))
+        .map(([name, participant]) => ({
+          description: `${name} CDP close`,
+          release: () => participant.cdp?.close(),
+        })),
     )
-    failures.push(...(await this.stopKnownDebuggers()))
+    failures.push(...(await this.stopKnownDebuggers(isApiKept)))
     failures.push(
       ...(await settleCleanup([
         {
@@ -17390,16 +17417,20 @@ export class ConfiguredBrowserRun implements StudyRuntime {
               'repository preparation',
             ),
         },
-        ...this.stops.map((stop) => ({
-          description: 'owned breakpoint',
-          release: () => stop.breakpoint?.remove(),
-        })),
+        ...this.stops
+          .filter((stop) => !(isApiKept && this.isApiStop(stop)))
+          .map((stop) => ({
+            description: 'owned breakpoint',
+            release: () => stop.breakpoint?.remove(),
+          })),
         ...(this.preparationWindow?.provisional ?? []).map((entry) => ({
           description: 'provisional breakpoint',
           release: (): void => entry.breakpoint.remove(),
         })),
         ...this.routeHandlerStops.flatMap((entry) =>
-          entry.breakpoint && !entry.prepared
+          entry.breakpoint &&
+          !entry.prepared &&
+          !(isApiKept && entry.kind === 'node-api')
             ? [
                 {
                   description: 'route-handler breakpoint',
@@ -17410,7 +17441,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         ),
       ])),
     )
-    failures.push(...(await this.stopKnownDebuggers()))
+    failures.push(...(await this.stopKnownDebuggers(isApiKept)))
     // Whether the owned application stop succeeded: a server that may still run keeps the library's private folder.
     let didServerStop = true
     failures.push(
@@ -17430,7 +17461,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         // The API ends after Metro; a group that cannot be confirmed gone is reported in the run resource, never as another code.
         {
           description: 'owned API server stop',
-          release: (): Promise<void> => this.closeApiServer(),
+          // A failed kill-first is retried by the next Stop; a normal close here would only repeat it and could clear its record.
+          release: (): Promise<void> =>
+            isApiKept ? Promise.resolve() : this.closeApiServer(),
         },
         {
           description: 'protocol activities settle',
@@ -17485,13 +17518,27 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (failures.length) throw new Error(failures.join('; '))
     this.assertApiCleanupComplete()
   }
-  /** Stops only acquired active roots before and after late acquisition draining. @example await this.stopKnownDebuggers() */
-  private stopKnownDebuggers(): Promise<string[]> {
+  /**
+   * Tells whether a prepared stop belongs to the API server's handler.
+   * Called by {@link cleanupOwned} to keep the breakpoints of a surviving API.
+   * @param stop - A prepared stop.
+   * @returns `true` for an API handler stop.
+   * @example this.isApiStop(stop) // => false for a Next route stop
+   */
+  private isApiStop(stop: PreparedStop): boolean {
+    return this.routeHandlerStops.some(
+      (entry) => entry.kind === 'node-api' && entry.prepared === stop,
+    )
+  }
+  /** Stops only acquired active roots before and after late acquisition draining; the API's own session stays when its kill is unconfirmed. @example await this.stopKnownDebuggers(false) */
+  private stopKnownDebuggers(isApiKept = false): Promise<string[]> {
     return settleCleanup(
       [...this.sessions.values()]
         .filter(
           (session) =>
-            !session.parentSession && this.activeSessions.has(session.id),
+            !session.parentSession &&
+            this.activeSessions.has(session.id) &&
+            !(isApiKept && this.isApiDebugSession(session)),
         )
         .map((session) => ({
           description: 'owned debugger stop',

@@ -18,6 +18,10 @@ import type { Cdp } from './runtimeSupport/cdp'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { assertNodeServerPortFree } from './utils/assertNodeServerPortFree'
 import type { ProcessOutputEvent } from './utils/captureProcessOutput'
+import {
+  confirmLaunchedGroup,
+  type LaunchedGroupVerdict,
+} from './utils/confirmLaunchedGroup'
 import { createNoticeLineDetector } from './utils/createNoticeLineDetector'
 import {
   hidePrivatePaths,
@@ -26,6 +30,7 @@ import {
 } from './utils/describeNodeServerRunFailure'
 import { expandLearnerSecretForms } from './utils/expandLearnerSecretForms'
 import { findPortOccupant } from './utils/findPortOccupant'
+import { isProcessGone } from './utils/isProcessGone'
 import { isProcessGroupGone } from './utils/isProcessGroupGone'
 import {
   launchNodeServer,
@@ -40,6 +45,8 @@ import {
   type OwnedDevelopmentPortClaim,
 } from './utils/ownedDevelopmentPorts'
 import { readListeningPortsOfProcess } from './utils/readListeningPortsOfProcess'
+import { readProcessCwd } from './utils/readProcessCwd'
+import { readProcessStart } from './utils/readProcessStart'
 import {
   resolveNodeServerLaunch,
   type ResolvedNodeServerLaunch,
@@ -83,6 +90,8 @@ export type OwnedApiServerInput = {
   signal?: AbortSignal
   /** Delivers a signal to the API's group; {@link signalProcessGroup} unless a test names its own. */
   signalGroup?: typeof signalProcessGroup
+  /** Tells whether the group id still belongs to the launched server, before every signal; {@link confirmLaunchedGroup} on the launch's start time unless a test names its own. */
+  confirmGroup?: () => Promise<LaunchedGroupVerdict>
   /** How long the listener may take to appear, in running time; {@link NODE_SERVER_READY_TIMEOUT_MS} unless a test names its own. */
   readyTimeoutMs?: number
 }
@@ -176,6 +185,8 @@ export class OwnedApiServer {
   private killedFirst = false
   /** Set once the group was observed gone: from then on its id may belong to an unrelated group, so nothing signals it. */
   private groupObservedGone = false
+  /** The leader's start as read at launch, for the identity check before every signal. */
+  private readonly launchedStart: Promise<string | undefined>
 
   private constructor(
     private readonly launched: Awaited<ReturnType<typeof launchNodeServer>>,
@@ -189,6 +200,7 @@ export class OwnedApiServer {
     this.processGroup = launched.pid
     this.packageRoot = resolved.packageRoot
     this.port = input.declaration.port
+    this.launchedStart = readProcessStart(launched.pid).catch(() => undefined)
   }
 
   /**
@@ -390,6 +402,30 @@ export class OwnedApiServer {
     return this.groupObservedGone
   }
 
+  /**
+   * Confirms the group id is still the launched server's before a signal: a leader that exited may have left its id to an unrelated group.
+   * Called by {@link killIfPaused} before its SIGKILL and by every signal of {@link close}, retries included.
+   * @returns `launched` to signal; any other verdict leaves the group alone.
+   * @example if ((await this.confirmGroup()) === 'launched') this.signal(this.processGroup, 'SIGKILL')
+   */
+  private async confirmGroup(): Promise<LaunchedGroupVerdict> {
+    const verdict = this.input.confirmGroup
+      ? await this.input.confirmGroup()
+      : await confirmLaunchedGroup({
+          pid: this.pid,
+          startedAt: await this.launchedStart,
+          leaderExited: this.launched.exitedEvent() !== undefined,
+          readProcessStart,
+          readProcessCwd,
+          isGroupGone: (group) => isProcessGroupGone(group),
+          isProcessGone,
+        })
+    // A gone or replaced group is no longer the launched one: from now on nothing signals the id and the stop's waits end.
+    if (verdict === 'gone' || verdict === 'replaced')
+      this.groupObservedGone = true
+    return verdict
+  }
+
   /** Builds `SERVER_NOT_LISTENING`, naming a port the process listens on instead of the declared one. */
   private async notListeningError(): Promise<StudyError> {
     const ports = await readListeningPortsOfProcess(this.pid).catch(() => [])
@@ -445,7 +481,15 @@ export class OwnedApiServer {
   async killIfPaused(): Promise<OwnedApiServerExit> {
     this.killedFirst = true
     // A group that already ended may belong to another process now, so it is not signalled again.
-    if (!this.isGroupGone()) this.signal(this.processGroup, 'SIGKILL')
+    if (!this.isGroupGone()) {
+      const verdict = await this.confirmGroup()
+      // A gone or replaced group is not signalled; an unconfirmed one fails the kill.
+      if (verdict === 'unverifiable')
+        throw new Error(
+          'Owned API server process group could not be confirmed as the launched one, so it was not signalled.',
+        )
+      if (verdict === 'launched') this.signal(this.processGroup, 'SIGKILL')
+    }
     await waitUntil(
       () => this.isGroupGone(),
       'owned API server process group exit',
@@ -473,6 +517,9 @@ export class OwnedApiServer {
     const attempt = (this.closing ??= (async () => {
       await this.launched.close(detachDebugger, {
         ...options,
+        // Every signal, the first included, is preceded by the identity check.
+        retried: true,
+        confirmGroup: () => this.confirmGroup(),
         // Every signal first checks that the group still exists: once it is gone its id may belong to another group.
         signalGroup: (group, signal) => {
           if (!this.isGroupGone())

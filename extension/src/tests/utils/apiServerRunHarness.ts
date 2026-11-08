@@ -52,6 +52,8 @@ export interface FakeApiServer {
   listen: 'ok' | 'never' | StudyError
   /** Makes the normal close fail, as a group that outlives the stop deadline does. */
   closeFails: boolean
+  /** Makes the kill-first fail, as a group that outlives the kill or whose identity cannot be confirmed does; the process keeps running. */
+  killFails: boolean
   /** Ends the API process as the operating system reports it: the exit fact settles. */
   exit(
     exitCode: number | null,
@@ -91,6 +93,7 @@ export function createFakeApiServer() {
     checkInputs: [],
     listen: 'ok',
     closeFails: false,
+    killFails: false,
     killedFirst: false,
     exit: (exitCode, signal = null, tail = '') =>
       settleExit({ exitCode, signal, outputTail: tail }),
@@ -141,6 +144,7 @@ export function createFakeApiServer() {
       new StudyError('SERVER_EXITED', 'The server exited.'),
     killIfPaused: async () => {
       fake.events.push('kill-first')
+      if (fake.killFails) throw new Error('The API group could not be killed')
       fake.killedFirst = fake.events.indexOf('close') === -1
       fake.exit(null, 'SIGKILL')
       return exited

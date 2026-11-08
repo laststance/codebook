@@ -635,3 +635,53 @@ test('an application line that repeats the debugger-disconnect notice while the 
   // Assert
   assert.equal(notices, 0)
 })
+
+// Value: protects=kill-first never signals a group id that is not confirmed as the launched one; fails_when=SIGKILL is delivered after the identity check answered replaced; no_claim=real id reuse by the operating system (the confirmGroup seam answers replaced)
+test('killing an owned API whose group id was replaced sends no signal', async (t) => {
+  // Arrange
+  const repository = await apiRepository(t, { mode: 'api' })
+  const signals: string[] = []
+  let processGroup = 0
+  const { api } = await launchApi(t, repository, {
+    signalGroup: (_group, signal) => void signals.push(signal),
+    // The original group ends on its own while the id is checked, as a leader that exited before the probe does; the id then reads as another group's.
+    confirmGroup: async () => {
+      process.kill(-processGroup, 'SIGKILL')
+      return 'replaced'
+    },
+  })
+  processGroup = api.processGroup
+
+  // Act
+  await api.killIfPaused()
+
+  // Assert
+  assert.deepEqual(signals, [])
+})
+
+// Value: protects=an unverifiable group is never signalled and the kill fails so the run records the cleanup failure; fails_when=SIGKILL is sent or the kill resolves; no_claim=real id reuse by the operating system (the confirmGroup seam answers unverifiable)
+test('killing an owned API whose group identity cannot be confirmed fails and sends no signal', async (t) => {
+  // Arrange
+  const repository = await apiRepository(t, { mode: 'api' })
+  const signals: string[] = []
+  const { api } = await launchApi(t, repository, {
+    signalGroup: (_group, signal) => void signals.push(signal),
+    confirmGroup: async () => 'unverifiable',
+  })
+
+  // Act
+  const outcome = await api.killIfPaused().then(
+    () => 'killed',
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.deepEqual(
+    { outcome, signals },
+    {
+      outcome:
+        'Owned API server process group could not be confirmed as the launched one, so it was not signalled.',
+      signals: [],
+    },
+  )
+})
