@@ -500,7 +500,7 @@ type ReverseProxyRefusalHelpRow = {
   sideEffects: string
 }
 
-/** Shared by the four reasons whose proof request may have reached a responder Codebook does not control. */
+/** Shared by the three reasons whose proof request may have reached a responder Codebook does not control. */
 const PROOF_REACHED_RESPONDER =
   "unknown: the proof's single GET of an unguessable path (no cookies, no-store) reached a responder Codebook does not control, and no operation was sent."
 
@@ -564,8 +564,9 @@ const REVERSE_PROXY_REFUSAL_ROWS: Record<
   'proof-unclassified': {
     observed:
       'The proof request failed in a way Codebook does not classify (details.logId names one line in Output > Codebook).',
-    fix: 'Look up the log id in Output > Codebook.',
-    sideEffects: PROOF_REACHED_RESPONDER,
+    fix: 'Look up the log id in Output > Codebook; a saved-session setup names none, so look for the reverse proxy line there.',
+    sideEffects:
+      "none when the proof request was not started (the system trust store could not be read); otherwise unknown: the proof's single GET of an unguessable path (no cookies, no-store) reached a responder Codebook does not control, and no operation was sent (details.sideEffects says which).",
   },
   'certificate-untrusted': {
     observed:
@@ -606,9 +607,9 @@ const REVERSE_PROXY_REFUSAL_ROWS: Record<
   'browser-address-mismatch': {
     observed:
       'A throwaway browser reached an address other than the one Codebook checked (details.address is the checked address, details.browserAddress the one the browser used).',
-    fix: 'Let the browser reach the host directly: a system proxy, a PAC file or a VPN routes it elsewhere, so add a proxy bypass for the host.',
+    fix: 'Let the browser reach your host name directly: add it to your system proxy bypass list.',
     sideEffects:
-      'none: the throwaway browser sent no cookie and the target server saw no request.',
+      "unknown: the throwaway browser's one request (no cookie) may have reached a responder Codebook does not control, and no operation was sent.",
   },
 }
 

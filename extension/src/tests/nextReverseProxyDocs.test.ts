@@ -218,7 +218,7 @@ test('the skill and the README carry the reverse proxy paragraph and the format 
   )
   const readmeItem = paragraphAfter(
     readme,
-    '6. **A Next app behind your own local proxy (MCP API 1.40).**',
+    'This applies to a Next app at the repository root and to one below it.',
   )
   // Assert
   for (const phrase of [
@@ -259,7 +259,7 @@ test('the reverse proxy help, skill paragraph and README item carry no trial val
     ),
     paragraphAfter(
       readme,
-      '6. **A Next app behind your own local proxy (MCP API 1.40).**',
+      'This applies to a Next app at the repository root and to one below it.',
     ),
   ]
   // Act
