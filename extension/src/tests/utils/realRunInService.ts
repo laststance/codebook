@@ -18,6 +18,9 @@ type HarnessOptions = NonNullable<
   Parameters<typeof configuredRuntimeHarness>[3]
 >
 
+/** The harness a hosted run needs: the run itself and the folder, sources and definition the service publishes a book for. */
+type HostedHarness = Awaited<ReturnType<typeof configuredRuntimeHarness>>
+
 /**
  * Hosts a real ConfiguredBrowserRun (driven through the controlled CDP harness, with a fake saved-session store of the real port) in a {@link StudyService}, so the run itself decides `session` and no stand-in view does; used by the saved-session tests that join the run's decision to the confirmation dialog.
  *
@@ -26,9 +29,13 @@ type HarnessOptions = NonNullable<
  * @returns The service, the receipt of the started and prepared run, and the CDP harness whose `inputRequests` lists the `Input.*` calls.
  * @example const { service, receipt, harness } = await realRunInService(context, { savedSession: { admission: 'saved' } })
  */
-export async function realRunInService(
+export async function realRunInService<
+  Harness extends HostedHarness = HostedHarness,
+>(
   context: TestContext,
   options: {
+    /** Opens the harness to host instead of the default one (an `apiServer` run's harness); called after the service's cleanup hook is registered. */
+    openHarness?: (context: TestContext) => Promise<Harness>
     savedSession?: HarnessOptions['savedSession']
     session?: 'fresh'
     extraVariables?: HarnessOptions['extraVariables']
@@ -44,27 +51,29 @@ export async function realRunInService(
     await service?.shutdown()
     books?.dispose()
   })
-  const harness = await configuredRuntimeHarness(
-    context,
-    {
-      signal: abort.signal,
-      deadlineAt: Date.now() + 300_000,
-      preparationDeadlineAt: Date.now() + 300_000,
-      outputLog: (line) => options.outputLines?.push(line.text),
-    },
-    [],
-    {
-      savedSession: options.savedSession,
-      extraVariables: options.extraVariables,
-      operations: {
-        operations: REAL_RUN_OPERATIONS,
-        stopOperations: [2],
-        signInPaths: ['/login'],
-        ...(options.session ? { session: options.session } : {}),
-        controls: { '#amount': { tagName: 'input', type: 'text' } },
-      },
-    },
-  )
+  const harness = options.openHarness
+    ? await options.openHarness(context)
+    : ((await configuredRuntimeHarness(
+        context,
+        {
+          signal: abort.signal,
+          deadlineAt: Date.now() + 300_000,
+          preparationDeadlineAt: Date.now() + 300_000,
+          outputLog: (line) => options.outputLines?.push(line.text),
+        },
+        [],
+        {
+          savedSession: options.savedSession,
+          extraVariables: options.extraVariables,
+          operations: {
+            operations: REAL_RUN_OPERATIONS,
+            stopOperations: [2],
+            signInPaths: ['/login'],
+            ...(options.session ? { session: options.session } : {}),
+            controls: { '#amount': { tagName: 'input', type: 'text' } },
+          },
+        },
+      )) as Harness)
   const library = new LearningLibrary(
     join(harness.directory, '.learning'),
     '0'.repeat(64),
