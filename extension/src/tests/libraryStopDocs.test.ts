@@ -136,7 +136,7 @@ test('API_VERSION is 1.25 and its note names the five library-stop reasons', asy
       .split('\n')
       .find((line) => line.startsWith(' * 1.19 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.38')
+  assert.equal(API_VERSION, '1.39')
   for (const [reason] of LIBRARY_REASONS)
     assert.ok(note.includes(`\`${reason}\``), reason)
   assert.ok(note.includes('`details.cause`'))
@@ -185,7 +185,7 @@ test('the README states the library-stop rule in the nested-app section with API
     ...LIBRARY_REASONS.map(([reason]) => `\`${reason}\``),
   ])
     assert.ok(section.includes(phrase), phrase)
-  assert.ok(readme.includes('with **MCP API 1.38**'))
+  assert.ok(readme.includes('with **MCP API 1.39**'))
   assert.ok(readme.includes('(1.0.68).**'))
   assert.ok(readme.includes('updates to **1.0.82**'))
 })
@@ -397,7 +397,7 @@ test('API_VERSION is 1.25 and its 1.23 note adds browser library stops of a nest
       .split('\n')
       .find((line) => line.startsWith(' * 1.23 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.38')
+  assert.equal(API_VERSION, '1.39')
   for (const phrase of [
     'of an App Router app may lie in the checked-out source of a workspace library',
     "The native debugger shows the checked-out library file with the library's values",
@@ -463,7 +463,7 @@ test('API_VERSION is 1.25 and its note adds server library stops of a nested App
       .split('\n')
       .find((line) => line.startsWith(' * 1.24 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.38')
+  assert.equal(API_VERSION, '1.39')
   for (const phrase of [
     'a server stop under `next-dev-webpack` with a nested `packageRoot`',
     'of an App Router app may lie in the checked-out source of a workspace library',
