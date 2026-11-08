@@ -10,7 +10,7 @@
  * hostResolverRuleOf('app.example.test', '::1') // => '--host-resolver-rules=MAP app.example.test [::1]'
  */
 export function hostResolverRuleOf(hostname: string, address: string): string {
-  void hostname
-  void address
-  throw new Error('not implemented')
+  // Chrome reads an IPv6 literal in a rule only inside brackets.
+  const target = address.includes(':') ? `[${address}]` : address
+  return `--host-resolver-rules=MAP ${hostname} ${target}`
 }
