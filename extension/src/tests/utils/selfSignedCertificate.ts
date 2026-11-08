@@ -1,8 +1,10 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+
+import { removeTestFolder } from './removeTestFolder'
 
 const execFileAsync = promisify(execFile)
 
@@ -62,7 +64,7 @@ export async function createSelfSignedCertificate(
       privateKey: await readFile(join(folder, 'key.pem'), 'utf8'),
     }
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 }
 

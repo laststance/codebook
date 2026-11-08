@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { readSystemCertificates } from '../utils/readSystemCertificates'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** Makes a fake Node executable (a shell script) and runs {@link readSystemCertificates} against it. */
 async function readWithFakeNode(script: string, timeoutMs = 5_000) {
@@ -18,7 +20,7 @@ async function readWithFakeNode(script: string, timeoutMs = 5_000) {
       new AbortController().signal,
     )
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 }
 
@@ -100,6 +102,6 @@ test('a run cancelled while the child runs rejects with the signal reason', asyn
     // Assert
     await assert.rejects(pending, { message: 'run cancelled' })
   } finally {
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })

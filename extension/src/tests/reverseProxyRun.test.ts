@@ -246,17 +246,21 @@ test('the proof and the browser check come before the structured entry check of 
 // Value: protects=AC 4 the run resource's states: resolving while the host is looked up, proving while the proof holds, proved after, each readable while the run prepares; fails_when=the view shows no state or a late one; no_claim=the service's message sentence (reverseProxyService.test)
 test('the run view shows resolving, proving and proved while the check holds', async (context) => {
   // Arrange
+  const lookupEntered = defer<void>()
   const lookupGate = defer<void>()
+  const proveEntered = defer<void>()
   const proveGate = defer<void>()
   const harness = await proxyHarness(context, {
     reverseProxy: {
       declaration: DECLARATION,
       dependencies: {
         lookup: async () => {
+          lookupEntered.resolve()
           await lookupGate.promise
           return [{ address: '127.0.0.1', family: 4 }]
         },
         prove: async () => {
+          proveEntered.resolve()
           await proveGate.promise
           return { ok: true, serverPid: 5151 }
         },
@@ -266,10 +270,11 @@ test('the run view shows resolving, proving and proved while the check holds', a
 
   // Act
   const preparing = harness.run.prepare()
-  await new Promise((resolve) => setImmediate(resolve))
+  // Each stand-in announces that the run reached it, so a loaded run never reads the view too early.
+  await lookupEntered.promise
   const whileResolving = harness.run.view().reverseProxy?.state
   lookupGate.resolve()
-  await new Promise((resolve) => setTimeout(resolve, 20))
+  await proveEntered.promise
   const whileProving = harness.run.view().reverseProxy?.state
   proveGate.resolve()
   await preparing

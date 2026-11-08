@@ -5,7 +5,6 @@ import {
   mkdtemp,
   readdir,
   readFile,
-  rm,
   stat,
   writeFile,
 } from 'node:fs/promises'
@@ -27,6 +26,8 @@ import {
   type BrowserAddressProbeInput,
 } from '../utils/probeBrowserAddress'
 import { resolveChromeExecutable } from '../utils/resolveChromeExecutable'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const run = promisify(execFile)
 
@@ -170,7 +171,7 @@ async function proxiedChrome(
   proxyPort: number,
 ): Promise<string> {
   const folder = await mkdtemp(join(tmpdir(), 'codebook-proxied-chrome-'))
-  context.after(() => rm(folder, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(folder))
   const script = join(folder, 'chrome.sh')
   await writeFile(
     script,
@@ -361,7 +362,7 @@ test('probe reports browser-certificate-untrusted for a self-signed https server
   const chrome = await chromeOf(context)
   if (chrome === undefined) return
   const folder = await mkdtemp(join(tmpdir(), 'codebook-probe-cert-'))
-  context.after(() => rm(folder, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(folder))
   const keyFile = join(folder, 'server.pem')
   const certFile = join(folder, 'server.crt')
   await run('openssl', [
