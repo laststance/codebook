@@ -54,3 +54,35 @@ test('a failed stop still removes the files the server left behind and reports t
   assert.equal(outcome.message, 'signal delivery failed')
   assert.equal(afterCloseCalls, 1)
 })
+
+// Value: protects=a child killed by a signal (OOM kill) is reported as exited with its signal; fails_when=assertRunning keeps returning while exitCode is null; no_claim=the Next library redirect wait or the real OOM killer
+test('a server killed by a signal is reported as exited naming the signal', async (context) => {
+  // Arrange
+  const app = launchWaiting(async () => undefined)
+  const heldPids = (): number[] => (app.pid === undefined ? [] : [app.pid])
+  endProcessesAfter(context, heldPids, { group: true, held: heldPids })
+  app.assertRunning()
+  // Act
+  process.kill(app.pid!, 'SIGKILL')
+  const deadline = Date.now() + 10_000
+  let failure: unknown
+  while (failure === undefined && Date.now() < deadline) {
+    try {
+      app.assertRunning()
+      await new Promise((resolve) => setImmediate(resolve))
+    } catch (cause) {
+      failure = cause
+    }
+  }
+  const listenerFailure = await app
+    .listening(new AbortController().signal)
+    .then(
+      () => undefined,
+      (cause: unknown) => cause,
+    )
+  // Assert
+  assert.ok(failure instanceof Error)
+  assert.match(failure.message, /^Application exited: signal SIGKILL: /)
+  assert.ok(listenerFailure instanceof Error)
+  assert.match(listenerFailure.message, /^Application exited: signal SIGKILL: /)
+})

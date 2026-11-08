@@ -1,4 +1,4 @@
-import { mkdir, realpath, writeFile } from 'node:fs/promises'
+import { mkdir, realpath, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import {
@@ -19,7 +19,10 @@ import {
 import type { LibraryRunView } from './nodeScriptRuntimeTypes'
 import type { LibraryDependencyRelation } from './utils/assertLibraryRouteSupported'
 import type { WebpackLibraryPreloadConfiguration } from './utils/webpackLibraryPreloadBody'
-import type { WebpackLibraryReportReader } from './utils/webpackLibraryReport'
+import type {
+  WebpackLibraryReportReader,
+  WebpackLibraryReportUnreadableCause,
+} from './utils/webpackLibraryReport'
 import { WebpackReportAttribution } from './webpackLibraryAttribution'
 
 /** The text of the private folder's `package.json`: webpack's `ModuleScopePlugin` needs a description file above the anchor (Cycle 0097 E1). */
@@ -252,11 +255,14 @@ export class WebpackLibraryRoute implements LibraryRunRoute {
         `report-read-failed: ${error instanceof Error ? error.message : String(error)}`,
       )
     }
-    const cause = this.attribution.reader.unreadableCause
-    // A report that is only missing says nothing yet (the run may have ended before the first compile); every other fault cannot be trusted.
+    let cause = this.attribution.reader.unreadableCause
+    // The reader treats an absent file as "no lines yet", so a report that vanished after the server was attached is detected here.
+    if (cause === undefined && this.isMissingReportAFault())
+      cause = await this.missingReportCause()
+    // A report that is only missing says nothing yet (the run may have ended before the first compile), unless the server was observed: its scripts were ignored while the report was absent, so "not loaded" must never be claimed; every other fault cannot be trusted.
     if (
       cause !== undefined &&
-      cause !== 'report-missing' &&
+      (cause !== 'report-missing' || this.isMissingReportAFault()) &&
       this.core.view().prepared
     )
       this.core.markUnreadable(cause)
@@ -279,6 +285,29 @@ export class WebpackLibraryRoute implements LibraryRunRoute {
    */
   protected canComplete(isPageClosed: boolean): boolean {
     return isPageClosed
+  }
+
+  /** Returns `report-missing` when the report file no longer exists, else `undefined`. */
+  private async missingReportCause(): Promise<
+    WebpackLibraryReportUnreadableCause | undefined
+  > {
+    const reportPath = this.attribution.reportPath()
+    if (reportPath === undefined) return undefined
+    try {
+      await stat(reportPath)
+      return undefined
+    } catch {
+      return 'report-missing'
+    }
+  }
+
+  /**
+   * Tells whether a report that is missing at finalization makes the observation unreadable.
+   * The shell never does (react-scripts has no server scripts to judge); {@link NextLibraryRoute} does once its server session was attached.
+   * @returns `true` when the missing report must end the observation `unreadable`.
+   */
+  protected isMissingReportAFault(): boolean {
+    return false
   }
 
   /** Tells whether finalization has started; a route that stops counting scripts then (Next, decision D12) asks it. */

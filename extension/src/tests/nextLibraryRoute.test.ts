@@ -5,6 +5,7 @@ import {
   mkdtemp,
   readFile,
   realpath,
+  rm,
   stat,
   writeFile,
 } from 'node:fs/promises'
@@ -307,6 +308,62 @@ test('ignores server scripts outside the server output folder', async (context) 
   assert.equal(run.route.view().loaded, false)
 })
 
+// Value: protects=a copy of the library the server loads outside webpack (through an external dependency) reads as another copy; fails_when=a not-owned server script inside an installed copy is ignored and the run claims no other copy; why_new=D23 covered only external requests naming the library; seam=none; no_claim=which dependencies a real Next externalizes
+test('reports an installed copy the server loaded outside webpack as another copy', async (context) => {
+  // Arrange
+  const run = await stage(context)
+  const packed = await put(join(run.packedRoot, 'dist', 'rsc.mjs'))
+  await writeCompilations(run, [packed])
+  const installed = await put(
+    join(run.appRoot, 'node_modules', 'react-redux', 'dist', 'index.cjs'),
+  )
+  // Act
+  run.route.serverAttached()
+  run.route.observeParsedScript(pageScript())
+  run.route.observeParsedScript(serverScript(run))
+  run.route.observeParsedScript({
+    url: pathToFileURL(installed).href,
+    participant: 'server',
+    scriptId: '9',
+    hash: OTHER_HASH,
+    isOwnedOrigin: hasNoOrigin,
+  })
+  await run.route.finalize(true)
+  // Assert
+  const view = run.route.view()
+  assert.equal(view.observation, 'complete')
+  assert.equal(view.loaded, true)
+  assert.equal(view.publishedCopyLoaded, true)
+  assert.equal(view.publishedCopyPath, installed)
+})
+
+// Value: protects=a real server script under next/dist stays ignored; fails_when=every real file under node_modules reads as another copy; why_new=guards the other-copy check for not-owned server scripts; seam=none; no_claim=none
+test('ignores a real server script of another package under node_modules', async (context) => {
+  // Arrange
+  const run = await stage(context)
+  const packed = await put(join(run.packedRoot, 'dist', 'rsc.mjs'))
+  await writeCompilations(run, [packed])
+  const nextFile = await put(
+    join(run.appRoot, 'node_modules', 'next', 'dist', 'server.js'),
+  )
+  // Act
+  run.route.serverAttached()
+  run.route.observeParsedScript(pageScript())
+  run.route.observeParsedScript(serverScript(run))
+  run.route.observeParsedScript({
+    url: pathToFileURL(nextFile).href,
+    participant: 'server',
+    scriptId: '9',
+    hash: OTHER_HASH,
+    isOwnedOrigin: hasNoOrigin,
+  })
+  await run.route.finalize(true)
+  // Assert
+  const view = run.route.view()
+  assert.equal(view.observation, 'complete')
+  assert.equal(view.publishedCopyLoaded, false)
+})
+
 // Value: protects=a server chunk holding both the packed copy and an installed copy reports the published copy and the packed count; fails_when=the other copy of a server asset is not classified; why_new=C97 states table has no server case; seam=none; no_claim=real module resolution
 test('reports an installed copy inside a matched server chunk beside the packed copy', async (context) => {
   // Arrange
@@ -505,6 +562,74 @@ test('marks the observation unreadable for a server script of a truncated compil
   )
 })
 
+/** Finalizes a Next run whose `truncatedCompiler` wrote a truncated line while the client line serves the packed copy; returns the observation and the unreadable detail. */
+async function finalizeWithTruncatedLine(
+  context: TestContext,
+  truncatedCompiler: string,
+) {
+  const run = await stage(context)
+  const packed = await put(join(run.packedRoot, 'dist', 'rsc.mjs'))
+  await writeWrappedLines(run)
+  const outputs: Record<string, string> = {
+    server: run.serverOutput,
+    'edge-server': run.edgeOutput,
+  }
+  const clientLine = compilationLine(
+    'client',
+    run.clientOutput,
+    [{ name: PAGE_ASSET, sha256: PAGE_HASH, resources: [packed] }],
+    truncatedCompiler === 'client'
+      ? { truncated: true, assets: undefined }
+      : {},
+  )
+  const serverLines = ['server', 'edge-server'].map((compiler) =>
+    compiler === truncatedCompiler
+      ? `${JSON.stringify({ compiler, outputPath: outputs[compiler] ?? '', compilationHash: `h-${compiler}`, truncated: true })}\n`
+      : compilationLine(compiler, outputs[compiler] ?? '', []),
+  )
+  await appendFile(run.reportPath, clientLine + serverLines.join(''))
+  run.route.serverAttached()
+  run.route.observeParsedScript(pageScript())
+  await run.route.finalize(true)
+  return {
+    observation: run.route.view().observation,
+    detail: run.journal.find(
+      (entry) => entry.type === 'library.observation-unreadable',
+    )?.detail,
+  }
+}
+
+// Value: protects=a truncated edge-server line (assets dropped, edge never observed by a script) ends unreadable even when the client serves the packed copy; fails_when=complete and loaded is claimed with unknown edge assets; no_claim=a real edge runtime
+test('marks the observation unreadable when the edge compilation line was truncated', async (context) => {
+  // Act
+  const result = await finalizeWithTruncatedLine(context, 'edge-server')
+  // Assert
+  assert.equal(result.observation, 'unreadable')
+  assert.deepEqual(result.detail, {
+    cause: 'compilation-truncated: edge-server',
+  })
+})
+
+// Value: protects=a truncated server line (externals dropped) ends unreadable even when no server script was observed; fails_when=externals of a torn server compilation count as none; no_claim=a real server run
+test('marks the observation unreadable when the server compilation line was truncated', async (context) => {
+  // Act
+  const result = await finalizeWithTruncatedLine(context, 'server')
+  // Assert
+  assert.equal(result.observation, 'unreadable')
+  assert.deepEqual(result.detail, { cause: 'compilation-truncated: server' })
+})
+
+// Value: protects=a truncated client line adds no server-level cause (only an owned page script of it reads unmatched); fails_when=a page compiler's truncation is reported as a server fault; no_claim=that the observation is complete
+test('adds no report-level cause for a truncated client compilation line', async (context) => {
+  // Act
+  const result = await finalizeWithTruncatedLine(context, 'client')
+  // Assert
+  assert.notEqual(
+    (result.detail as { cause?: string } | undefined)?.cause,
+    'compilation-truncated: client',
+  )
+})
+
 // Value: protects=a page script whose name the report lists but whose hash differs (a torn or stale chunk) ends unreadable; fails_when=a known name with an unknown hash is ignored; why_new=A7 rule for Next; seam=none; no_claim=none beyond protects
 test('marks the observation unreadable for a page script whose name is reported with another hash', async (context) => {
   // Arrange
@@ -577,6 +702,22 @@ test('ends incomplete when the page was observed but the server session was neve
   assert.ok(
     run.journal.some((entry) => entry.type === 'library.server-not-attached'),
   )
+})
+
+// Value: protects=a report that disappeared after the server was attached never ends complete with "not loaded" from unjudged server scripts; fails_when=complete is claimed after the report file is gone; no_claim=real Next deleting its report
+test('ends unreadable when the compilation report disappeared after the server was attached', async (context) => {
+  // Arrange
+  const run = await stage(context)
+  const packed = await put(join(run.packedRoot, 'dist', 'rsc.mjs'))
+  await writeCompilations(run, [packed])
+  run.route.serverAttached()
+  run.route.observeParsedScript(pageScript())
+  await rm(run.reportPath)
+  run.route.observeParsedScript(serverScript(run))
+  // Act
+  await run.route.finalize(true)
+  // Assert
+  assert.equal(run.route.view().observation, 'unreadable')
 })
 
 // Value: protects=a run that never prepared the library (nothing served) journals no missing server attach on Stop; fails_when=library.server-not-attached is journaled for an unprepared route; no_claim=the declined-confirmation prompt itself

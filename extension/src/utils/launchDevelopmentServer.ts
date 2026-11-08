@@ -235,6 +235,25 @@ export function launchDevelopmentServer(
   let declaredPort: number | undefined = spec?.ipc ? undefined : port
   let claim = spec?.ipc ? undefined : claimOwnedDevelopmentPort(port)
   /**
+   * Throws the launcher error, or the process's own exit (by code or by signal, e.g. an OOM kill) with its output tail; returns while it runs.
+   *
+   * Called by {@link waitForListener} on each poll and by the app's `assertRunning`, so a signal-killed child (`exitCode` null, `signalCode` set) is reported at once.
+   * @throws The launcher error, `Application exited: <code>: <tail>` or `Application exited: signal <name>: <tail>`.
+   * @example throwWhenExited() // returns while the process runs
+   */
+  const throwWhenExited = (): void => {
+    if (error) throw error
+    // A signal kill leaves exitCode null, so the signal is the exit evidence
+    if (child.exitCode !== null)
+      throw new Error(
+        `Application exited: ${child.exitCode}: ${publishedTail()}`,
+      )
+    if (child.signalCode !== null)
+      throw new Error(
+        `Application exited: signal ${child.signalCode}: ${publishedTail()}`,
+      )
+  }
+  /**
    * Waits for the owned listener on the declared port and keeps its origin; the first step of every readiness check (`ready`, `readyEntry`).
    * @param signal - Ends the wait when the run is cancelled.
    * @returns The origin `http://127.0.0.1:<port>`.
@@ -245,13 +264,7 @@ export function launchDevelopmentServer(
       throw new Error('The launcher declared no port')
     const listening = await waitUntil(
       () => {
-        if (error || child.exitCode !== null)
-          throw (
-            error ??
-            new Error(
-              `Application exited: ${child.exitCode}: ${publishedTail()}`,
-            )
-          )
+        throwWhenExited()
         // A launcher with an IPC channel reports its verified listening port before `ready` is called, so its origin never depends on printed URLs (a project's logLevel can silence them).
         if (spec?.ipc) return `http://127.0.0.1:${declaredPort}`
         // A launcher that knows its own listening evidence says so; the origin is still the declared port.
@@ -425,11 +438,7 @@ export function launchDevelopmentServer(
      * @example app.assertRunning() // returns while the process runs
      */
     assertRunning(): void {
-      if (error || child.exitCode !== null)
-        throw (
-          error ??
-          new Error(`Application exited: ${child.exitCode}: ${publishedTail()}`)
-        )
+      throwWhenExited()
     },
     /** Waits for the listener on the declared port, then proves readiness through the configured entry page (the root page only when entryPath is "/"); called during preparation. @param entryPath - Configured first page; a non-root entry must answer 200 without a redirect. @param observer - A Next run's record of its readiness request: told at the send and at the end ({@link ReadinessObserver}); absent for a Vite run. @example await app.ready(signal, '/login') */
     async ready(

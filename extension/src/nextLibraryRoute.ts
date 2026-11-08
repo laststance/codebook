@@ -109,6 +109,11 @@ export class NextLibraryRoute extends WebpackLibraryRoute {
     super.observeParsedScript(script)
   }
 
+  /** A report that vanished after the server was attached leaves its server scripts unjudged (they were ignored while it was absent): the observation cannot claim "not loaded". */
+  protected override isMissingReportAFault(): boolean {
+    return this.isServerAttached
+  }
+
   /** Demands the server session was attached beside the closed page (decision D21); otherwise the observation reads `incomplete`. */
   protected override canComplete(isPageClosed: boolean): boolean {
     if (isPageClosed && !this.isServerAttached) {

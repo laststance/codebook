@@ -189,6 +189,22 @@ test('a script of a truncated compilation is unmatched but owned', () => {
   assert.equal(reader.truncatedCompilations, 1)
 })
 
+test('names the compilers that wrote a truncated compilation line', () => {
+  // Arrange
+  const reader = new WebpackLibraryReportReader()
+  reader.append(
+    Buffer.from(
+      '{"compilationHash":"c1","compiler":"edge-server","outputPath":"/out","truncated":true}\n{"compilationHash":"c2","compiler":"client","publicPath":"/","assets":[]}\n',
+    ),
+  )
+
+  // Act
+  const compilers = Array.from(reader.truncatedCompilers())
+
+  // Assert
+  assert.deepEqual(compilers, ['edge-server'])
+})
+
 test('a script matches by URL path without query or fragment and by hash', () => {
   // Arrange
   const reader = new WebpackLibraryReportReader()

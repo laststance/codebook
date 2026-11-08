@@ -129,6 +129,8 @@ export type LibraryAttributionScope = {
   privateFolder: string
   /** The library's package name. */
   packageName: string
+  /** The library's real checked-out folder, once planned; lets an attribution skip paths that cannot be another copy before resolving them. */
+  libraryRoot?: string
   /** Tells whether a real file belongs to a copy of the library other than the packed one. */
   isOtherCopyFile(realFile: string): boolean
 }
@@ -525,6 +527,7 @@ export class LibraryRoute {
         packedRoot,
         privateFolder,
         packageName,
+        libraryRoot: this.libraryRoot,
         isOtherCopyFile: (realFile) => this.isOtherCopyFile(realFile),
       })
     if (pageObserved) this.pageObserved = true

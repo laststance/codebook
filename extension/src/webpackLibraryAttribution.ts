@@ -1,3 +1,7 @@
+import { realpathSync } from 'node:fs'
+import { sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import { REACT_SCRIPTS_LIBRARY_REPORT_SETTLE_MS } from './constants'
 import type {
   LibraryAttribution,
@@ -7,7 +11,10 @@ import type {
   LibraryScriptVerdict,
 } from './libraryRoute'
 import { isInsideFolder } from './utils/isInsideFolder'
-import { WebpackLibraryReportReader } from './utils/webpackLibraryReport'
+import {
+  isPageCompiler,
+  WebpackLibraryReportReader,
+} from './utils/webpackLibraryReport'
 
 /** How often the run looks again at a report whose last line is still being written. */
 const REPORT_SETTLE_POLL_MS = 50
@@ -57,7 +64,7 @@ export class WebpackReportAttribution implements LibraryAttribution {
    * Faults of the whole report that make an observation unclaimable, for a run that observes the server.
    *
    * Called by {@link WebpackLibraryRoute.finalize} after the deferred scripts were judged. A react-scripts run has none of these lines, so it returns `undefined` there.
-   * @returns The first cause, in this order: `redirect-not-applied` (an `error` line, or a compilation of a compiler no `wrapped` line announced), `report-error: <message>` (a later compilation could not be described), `server-output-unknown: <compiler>` (a server-side compiler announced no output folder, so its scripts cannot be owned), `library-externalized: <request>` (Node loads some of the package from outside the report's sight, D23), `edge-unobserved` (the edge compiler holds a library resource, D24); `undefined` when none.
+   * @returns The first cause, in this order: `redirect-not-applied` (an `error` line, or a compilation of a compiler no `wrapped` line announced), `report-error: <message>` (a later compilation could not be described), `compilation-truncated: <compiler>` (a server or edge compilation line was too long and lost its externals and assets), `server-output-unknown: <compiler>` (a server-side compiler announced no output folder, so its scripts cannot be owned), `library-externalized: <request>` (Node loads some of the package from outside the report's sight, D23), `edge-unobserved` (the edge compiler holds a library resource, D24); `undefined` when none.
    * @example attribution.reportFaultCause() // => 'edge-unobserved'
    */
   reportFaultCause(): string | undefined {
@@ -73,6 +80,12 @@ export class WebpackReportAttribution implements LibraryAttribution {
       return `report-error: ${reader.reportErrorCause}`
     if (reader.serverOutputUnknownCause !== undefined)
       return `server-output-unknown: ${reader.serverOutputUnknownCause}`
+    // A truncated server or edge line dropped its externals and assets: unknown, not empty (a page compiler keeps the script-level rule)
+    const truncatedCompiler = Array.from(reader.truncatedCompilers()).find(
+      (compiler) => !isPageCompiler(compiler),
+    )
+    if (truncatedCompiler !== undefined)
+      return `compilation-truncated: ${truncatedCompiler}`
     const [external] = reader.externalsOf()
     if (external !== undefined) return `library-externalized: ${external}`
     return reader.edgeLibraryAssets().length > 0 ? 'edge-unobserved' : undefined
@@ -140,7 +153,13 @@ export class WebpackReportAttribution implements LibraryAttribution {
     if (this.reader.unreadableCause !== undefined)
       return observed({ kind: 'ignore' })
     const match = this.reader.matchServer(script.url, script.hash)
-    if (match.kind === 'not-owned') return observed({ kind: 'ignore' })
+    if (match.kind === 'not-owned') {
+      const verdict = this.otherCopyVerdictOfServerScript(script, scope)
+      // Only a counted copy is marked judged: a script ignored now may become owned once its wrapped line is read.
+      if (verdict.kind === 'other-copy' && identity !== undefined)
+        this.judgedScriptIds.add(identity)
+      return observed(verdict)
+    }
     // An owned script the debugger gave no hash for cannot be tied to an asset.
     if (script.hash === undefined)
       return observed({ kind: 'unreadable', cause: 'script-without-hash' })
@@ -149,6 +168,43 @@ export class WebpackReportAttribution implements LibraryAttribution {
       return this.verdictsOf(match.asset.resources, scope, observed)
     }
     return this.unmatchedOwnedScript(script, observed)
+  }
+
+  /**
+   * Judges a server script the report does not own: a file the server loaded outside webpack (through a dependency webpack left external) that lies in another copy of the library is an `other-copy`; anything else is ignored.
+   * @param script - The not-owned server script.
+   * @param scope - What the core knows about the run.
+   * @returns An `other-copy` verdict for a `file:` script inside another copy, `ignore` otherwise (also for a path that does not resolve).
+   * @example this.otherCopyVerdictOfServerScript({ participant: 'server', url: 'file:///ex/node_modules/lib/dist/a.js', isOwnedOrigin }, scope) // => { kind: 'other-copy', file: '/ex/node_modules/lib/dist/a.js' }
+   */
+  private otherCopyVerdictOfServerScript(
+    script: LibraryScript,
+    scope: LibraryAttributionScope,
+  ): LibraryScriptVerdict {
+    const ignore: LibraryScriptVerdict = { kind: 'ignore' }
+    if (!script.url.startsWith('file:')) return ignore
+    let file: string
+    try {
+      file = fileURLToPath(script.url)
+    } catch {
+      return ignore
+    }
+    // Cheap prefilter: the server announces ~1,700 scripts, most of them Node internals and next/dist.
+    const slashed = file.split(sep).join('/')
+    const { libraryRoot } = scope
+    const mayBeCopy =
+      slashed.includes(`/node_modules/${scope.packageName}/`) ||
+      (libraryRoot !== undefined && isInsideFolder(libraryRoot, file))
+    if (!mayBeCopy) return ignore
+    let realFile: string
+    try {
+      realFile = realpathSync(file)
+    } catch {
+      return ignore
+    }
+    return scope.isOtherCopyFile(realFile)
+      ? { kind: 'other-copy', file: realFile }
+      : ignore
   }
 
   /**

@@ -91,7 +91,7 @@ const EDGE_COMPILER = 'edge-server'
  * isPageCompiler('client') // => true
  * isPageCompiler('server') // => false
  */
-function isPageCompiler(compiler: string | undefined): boolean {
+export function isPageCompiler(compiler: string | undefined): boolean {
   return compiler === undefined || compiler === 'client'
 }
 
@@ -289,6 +289,7 @@ export class WebpackLibraryReportReader {
   private reportErrorMessage: string | undefined
   private unreadable: WebpackLibraryReportUnreadableCause | undefined
   private truncatedCount = 0
+  private readonly truncatedCompilerNames = new Set<string>()
   private compilationCount = 0
   private readonly wrappedCompilerNames = new Set<string>()
   private readonly erroredCompilerNames = new Set<string>()
@@ -564,6 +565,8 @@ export class WebpackLibraryReportReader {
     }
     if ('truncated' in line) {
       this.truncatedCount += 1
+      if (line.compiler !== undefined)
+        this.truncatedCompilerNames.add(line.compiler)
       return
     }
     for (const request of line.externals ?? [])
@@ -722,6 +725,16 @@ export class WebpackLibraryReportReader {
   /** The compilers a compilation line (complete or truncated) named; a server script of a compiler missing here was parsed without a report. */
   compiledCompilers(): ReadonlySet<string> {
     return this.compiledCompilerNames
+  }
+
+  /**
+   * The compilers that wrote a truncated compilation line (kept `compiler` and `outputPath`, dropped `assets` and `externals`).
+   *
+   * Called by {@link WebpackReportAttribution.reportFaultCause}: a truncated server or edge compilation is never observed by a script, so only this set shows that its externals and edge assets are unknown.
+   * @example reader.truncatedCompilers() // => Set { 'edge-server' }
+   */
+  truncatedCompilers(): ReadonlySet<string> {
+    return this.truncatedCompilerNames
   }
 
   /** The requests of external modules that name the package, over all compilations, sorted; any means Node loads some of the package from outside the report's sight. */
