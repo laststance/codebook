@@ -200,6 +200,24 @@ const VITE_PACKAGE_ROOT_REFUSALS = {
       'A stop file lies outside packageRoot (a shared package the app imports, for example); details.files lists every such stop and details.packageRoot the app folder. Refused before the server starts: nothing ran (details.sideEffects none). The anchor is shared with the Next app, whose code for this reason is NEXT_STOP_NOT_SEALED.',
     fix: 'Declare stops only in files inside details.packageRoot or in a workspace library the app imports through links inside the repository (API 1.21 or later; see libraryStops), or tell the learner that code outside the app folder cannot be observed in this version: this refusal means no workspace library the app reaches holds the stop file. Do not start another run with the same stops.',
   },
+  'source-drift': {
+    code: 'VITE_SEAL_FAILED',
+    meaning:
+      'The API ran a different version of the stop file than the stop declares (details.participant: apiServer, details.file): the source its inline map carries is not the declared file, usually because the file changed after the book cited it or a stale build ran. The anchor is shared with the Expo app, whose code for this reason is EXPO_WEB_SEAL_FAILED. The API and the app were stopped (details.sideEffects: partial).',
+    fix: 'Read the current file with codebook_source, publish the book again from it and declare the stop again; never edit the project. Then one new start.',
+  },
+  'source-unverifiable': {
+    code: 'VITE_SEAL_FAILED',
+    meaning:
+      "No inline source map with the contents of the stop file ties the API's executed script to the declared source (details.participant: apiServer, details.file): a prebuilt entry (dist), an external map, relative sources, a sourceRoot map or no map. The anchor is shared with the Expo app, whose code for this reason is EXPO_WEB_SEAL_FAILED. The API and the app were stopped (details.sideEffects: partial).",
+    fix: "Declare apiServer.entry as the TypeScript source the package's own dev script runs through tsx; if the package has no such script, tell the learner this API cannot be observed in this version, and never edit the project or build it yourself. Then one new start.",
+  },
+  'api-port-conflict': {
+    code: 'VITE_UNSUPPORTED',
+    meaning:
+      'apiServer.port equals the port Vite serves the app on (details.apiPort, details.vitePort, details.portSource: dev-script, config or vite-default). A dev script port is found before anything starts (details.sideEffects: none); a config or default port is found after the API started, which was then stopped, and no input was sent (details.sideEffects: partial). The anchor is shared with the Expo app, whose code for this reason is EXPO_WEB_UNSUPPORTED.',
+    fix: "Declare the port the API's own code listens on (read it from the API's source, never guess), or tell the learner the API and the app cannot share a port; never edit the project or its scripts.",
+  },
 } as const
 
 /** What a refused library stop under `vite-dev` says about side effects: the owned Vite server started, but no browser opened and no page or app code ran. */

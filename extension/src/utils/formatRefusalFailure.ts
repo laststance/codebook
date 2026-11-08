@@ -50,7 +50,7 @@ export function formatRefusalFailure(
   variant: typeof API_SERVER_EXITED_VARIANT,
 ): string
 export function formatRefusalFailure(
-  code: 'EXPO_WEB_SEAL_FAILED',
+  code: 'EXPO_WEB_SEAL_FAILED' | 'VITE_SEAL_FAILED',
   message: string,
   variant: string,
 ): string

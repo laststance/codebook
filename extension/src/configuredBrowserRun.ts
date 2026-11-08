@@ -9,6 +9,11 @@ import * as vscode from 'vscode'
 import { z } from 'zod'
 
 import {
+  apiSealVariantOf,
+  apiSourceDriftRefusal,
+  apiSourceUnverifiableRefusal,
+} from './apiSealRefusals'
+import {
   API_SERVER_EXITED_VARIANT,
   apiServerExitedRefusal,
   apiStopFileMissingRefusal,
@@ -111,9 +116,6 @@ import {
 import { EXPO_WEB_DEV_ADAPTER } from './expoWebDevAdapter'
 import {
   expoWebApiPortConflictRefusal,
-  expoWebApiSealVariantOf,
-  expoWebApiSourceDriftRefusal,
-  expoWebApiSourceUnverifiableRefusal,
   expoWebNodeModulesRefusal,
   expoWebOutsidePackageRefusal,
   expoWebPortRefusal,
@@ -11868,7 +11870,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         error.code === 'EXPO_WEB_SEAL_FAILED'
       ) {
         // The variant keeps the reason, participant and file for the restored details.
-        const variant = expoWebApiSealVariantOf(error)
+        const variant = apiSealVariantOf(error)
         this.fail(
           variant === undefined
             ? formatRefusalFailure(error.code, error.message)
@@ -11990,8 +11992,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       detail: seal.detail,
     })
     throw seal.reason === 'source-drift'
-      ? expoWebApiSourceDriftRefusal(entry.stop.source.path)
-      : expoWebApiSourceUnverifiableRefusal(entry.stop.source.path)
+      ? apiSourceDriftRefusal('EXPO_WEB_SEAL_FAILED', entry.stop.source.path)
+      : apiSourceUnverifiableRefusal(
+          'EXPO_WEB_SEAL_FAILED',
+          entry.stop.source.path,
+        )
   }
 
   /**

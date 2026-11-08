@@ -19,6 +19,10 @@ const VITE_REASONS = [
   'unreadable',
   'not-a-vite-app',
   'outside-package',
+  // apiServer reasons (Cycle 0100, D30 D21)
+  'source-drift',
+  'source-unverifiable',
+  'api-port-conflict',
   // Library reasons (API 1.21); library-place-ambiguous does not occur under vite-dev
   'library-build-stale',
   'library-build-unmapped',

@@ -9,7 +9,11 @@ import {
 } from '../nextRefusals'
 import { formatRefusalFailure } from '../utils/formatRefusalFailure'
 import { refusalFailureOf } from '../utils/refusalFailureOf'
-import { viteLibraryBuildChangedFailure } from '../viteLibraryRefusals'
+import {
+  viteLibraryBuildChangedFailure,
+  viteLibraryFailureText,
+  viteLibraryRefusal,
+} from '../viteLibraryRefusals'
 
 // Value: protects=a Vite run's timer failures keep restoring exactly as before the registry (code + message, no override); fails_when=the registry drops a Vite code, cuts the message differently or adds a recovery override; why_new=Cycle 0065 one refusal registry replaces viteFailureOf in the service; seam=none
 test('every Vite refusal code restores from a failure text with its code and message, as before the registry', () => {
@@ -463,4 +467,58 @@ test('a Pages library-not-in-build text still restores the server-compile recove
     restored?.recoveryOverride ?? '',
     /^The page's server code does not hold exactly one built file/,
   )
+})
+
+// Value: protects=test 52 (D30): a VITE_SEAL_FAILED api-seal text restores reason, participant, file, side effects and the API recovery, while the plain text and the lazy-import variant restore as before; fails_when=the api-seal variant degrades to the code alone, or the new branch captures a plain or lazy-import Vite seal text; no_claim=the run raising the seal
+test('a VITE_SEAL_FAILED api-seal text restores its details while the plain and lazy-import texts restore as before', () => {
+  // Arrange
+  const sealText = formatRefusalFailure(
+    'VITE_SEAL_FAILED',
+    'The API ran a different version.',
+    'api-seal:source-drift:apps%2Fapi%2Fsrc%2Fhandler.ts',
+  )
+  const lazyText = viteLibraryFailureText(
+    viteLibraryRefusal({
+      reason: 'library-build-unmapped',
+      cause: 'lazy-import',
+      packageRoot: 'app',
+      library: '@scope/core',
+      file: 'packages/core/src/a.ts',
+    }),
+  )
+  // Act
+  const restored = refusalFailureOf(sealText)
+  const plain = refusalFailureOf(
+    'VITE_SEAL_FAILED: Declared stop cannot be sealed.',
+  )
+  const lazy = refusalFailureOf(lazyText ?? '')
+  // Assert
+  assert.equal(
+    sealText,
+    'VITE_SEAL_FAILED(api-seal:source-drift:apps%2Fapi%2Fsrc%2Fhandler.ts): The API ran a different version.',
+  )
+  assert.equal(restored?.code, 'VITE_SEAL_FAILED')
+  assert.equal(restored?.message, 'The API ran a different version.')
+  assert.deepEqual(restored?.libraryDetails, {
+    reason: 'source-drift',
+    participant: 'apiServer',
+    file: 'apps/api/src/handler.ts',
+    sideEffects: 'partial',
+  })
+  assert.match(
+    restored?.recoveryOverride ?? '',
+    /See codebook:\/\/help\/repository-browser#VITE_SEAL_FAILED\.$/,
+  )
+  assert.deepEqual(plain, {
+    code: 'VITE_SEAL_FAILED',
+    message: 'Declared stop cannot be sealed.',
+  })
+  assert.deepEqual(lazy?.libraryDetails, {
+    reason: 'library-build-unmapped',
+    cause: 'lazy-import',
+    packageRoot: 'app',
+    library: '@scope/core',
+    file: 'packages/core/src/a.ts',
+    sideEffects: 'unknown',
+  })
 })
