@@ -328,7 +328,7 @@ Formatting: `pnpm --dir extension format` / `format:check` and lint-staged hook 
 **Fallow.**
 
 - **Lower the scores actively**, any cycle. Finding behaviour-neutral refactor can remove = refactored: tests unchanged and green, native path rechecked when natively verified. Fixed findings then dropped from baseline. Prefer hotspots and targets `fallow health --hotspots --targets` ranks, and `fallow fix --dry-run` for dead code.
-- `pnpm --dir extension dupes` / `dead-code` fail on clones or dead code beyond `fallow-dupes-baseline.json` / `fallow-dead-code-baseline.json` (Fallow 3.40.0). `.fallowrc.json` also keeps excluded tests and scripts as entry points (`ignoreFindings`), so code they call counts as used.
+- `pnpm --dir extension dupes` / `dead-code` fail on clones or dead code beyond `fallow-dupes-baseline.json` / `fallow-dead-code-baseline.json` (Fallow 3.41.0). `.fallowrc.json` also keeps excluded tests and scripts as entry points (`ignoreFindings`), so code they call counts as used.
 - `pnpm --dir extension health` (`scripts/checkHealth.mjs`, 20-min job; header: exit codes, options `--format json` + sharded form below, never writes baseline) scores health with this run's coverage against `fallow-health-measured-baseline.json` (cyclomatic 20, cognitive 15, CRAP 30). Exit 2 = refused/no verdict (e.g. pins differing from `fallow-health-reference.json`, runner option in `NODE_OPTIONS`).
   - Baselines = current codebase at retake, not one fixed old revision: fix findings above committed baseline in source.
   - Changing pinned producer or one of three settings → retake on current code in separate worktree with new pins, record revision and hashes in reference (`health.test.mjs` pins it), state in PR.
