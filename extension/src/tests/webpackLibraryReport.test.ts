@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { ReactScriptsReportReader } from '../utils/reactScriptsLibraryReport'
+import { WebpackLibraryReportReader } from '../utils/webpackLibraryReport'
 
 const HASH_A = 'a'.repeat(64)
 const HASH_B = 'b'.repeat(64)
@@ -22,7 +22,7 @@ function compilationLine(hash: string, name = 'static/js/bundle.js'): string {
 
 test('a wrapped line marks the configuration as patched', () => {
   // Arrange
-  const reader = new ReactScriptsReportReader()
+  const reader = new WebpackLibraryReportReader()
 
   // Act
   reader.append(Buffer.from('{"wrapped":true}\n'))
@@ -34,7 +34,7 @@ test('a wrapped line marks the configuration as patched', () => {
 
 test('an error line gives the cause and leaves the run unwrapped', () => {
   // Arrange
-  const reader = new ReactScriptsReportReader()
+  const reader = new WebpackLibraryReportReader()
 
   // Act
   reader.append(Buffer.from('{"error":"boom"}\n'))
@@ -46,7 +46,7 @@ test('an error line gives the cause and leaves the run unwrapped', () => {
 
 test('a trailing line without a newline stays pending until its newline arrives', () => {
   // Arrange
-  const reader = new ReactScriptsReportReader()
+  const reader = new WebpackLibraryReportReader()
   const line = compilationLine(HASH_A)
 
   // Act
@@ -70,7 +70,7 @@ test('a trailing line without a newline stays pending until its newline arrives'
 
 test('a malformed complete line makes the report unreadable', () => {
   // Arrange
-  const reader = new ReactScriptsReportReader()
+  const reader = new WebpackLibraryReportReader()
 
   // Act
   reader.append(Buffer.from('{not json\n'))
@@ -84,7 +84,7 @@ test('a report past the whole bound is unreadable and is not read', () => {
   const directory = mkdtempSync(join(tmpdir(), 'codebook-rs-report-'))
   const file = join(directory, 'report.jsonl')
   writeFileSync(file, '{"wrapped":true}\n'.repeat(10))
-  const reader = new ReactScriptsReportReader(50)
+  const reader = new WebpackLibraryReportReader(50)
 
   // Act
   reader.refresh(file)
@@ -97,8 +97,8 @@ test('a report past the whole bound is unreadable and is not read', () => {
 
 test('a missing report is unreadable only when it is required', () => {
   // Arrange
-  const optional = new ReactScriptsReportReader()
-  const required = new ReactScriptsReportReader()
+  const optional = new WebpackLibraryReportReader()
+  const required = new WebpackLibraryReportReader()
 
   // Act
   optional.refresh('/nonexistent/report.jsonl')
@@ -117,7 +117,7 @@ test('refresh reads only the bytes appended since the previous call', () => {
     file,
     '{"compilationHash":"c0","publicPath":"/","truncated":true}\n',
   )
-  const reader = new ReactScriptsReportReader()
+  const reader = new WebpackLibraryReportReader()
   reader.refresh(file)
 
   // Act
@@ -138,7 +138,7 @@ test('a line past the line bound without a newline makes the report unreadable',
   const directory = mkdtempSync(join(tmpdir(), 'codebook-rs-report-'))
   const file = join(directory, 'report.jsonl')
   writeFileSync(file, '')
-  const reader = new ReactScriptsReportReader(1000, 20)
+  const reader = new WebpackLibraryReportReader(1000, 20)
 
   // Act
   appendFileSync(file, 'x'.repeat(30))
@@ -154,7 +154,7 @@ test('a report rewritten shorter than what was read is unreadable', () => {
   const directory = mkdtempSync(join(tmpdir(), 'codebook-rs-report-'))
   const file = join(directory, 'report.jsonl')
   writeFileSync(file, '{"wrapped":true}\n'.repeat(3))
-  const reader = new ReactScriptsReportReader()
+  const reader = new WebpackLibraryReportReader()
   reader.refresh(file)
 
   // Act
@@ -168,7 +168,7 @@ test('a report rewritten shorter than what was read is unreadable', () => {
 
 test('a script of a truncated compilation is unmatched but owned', () => {
   // Arrange
-  const reader = new ReactScriptsReportReader()
+  const reader = new WebpackLibraryReportReader()
   reader.append(
     Buffer.from('{"compilationHash":"c1","publicPath":"/","truncated":true}\n'),
   )
@@ -183,7 +183,7 @@ test('a script of a truncated compilation is unmatched but owned', () => {
 
 test('a script matches by URL path without query or fragment and by hash', () => {
   // Arrange
-  const reader = new ReactScriptsReportReader()
+  const reader = new WebpackLibraryReportReader()
   reader.append(Buffer.from(compilationLine(HASH_A)))
 
   // Act
@@ -203,7 +203,7 @@ test('a script matches by URL path without query or fragment and by hash', () =>
 
 test('a script with the right URL but another hash is unmatched, with no fallback by name', () => {
   // Arrange
-  const reader = new ReactScriptsReportReader()
+  const reader = new WebpackLibraryReportReader()
   reader.append(Buffer.from(compilationLine(HASH_A)))
 
   // Act
@@ -215,7 +215,7 @@ test('a script with the right URL but another hash is unmatched, with no fallbac
 
 test('a script reported without a hash matches nothing', () => {
   // Arrange
-  const reader = new ReactScriptsReportReader()
+  const reader = new WebpackLibraryReportReader()
   reader.append(Buffer.from(compilationLine(HASH_A)))
 
   // Act
@@ -227,7 +227,7 @@ test('a script reported without a hash matches nothing', () => {
 
 test('a rebuild appends a line and the parsed bundle of either compilation still matches', () => {
   // Arrange
-  const reader = new ReactScriptsReportReader()
+  const reader = new WebpackLibraryReportReader()
   reader.append(Buffer.from(compilationLine(HASH_A)))
   reader.append(Buffer.from(compilationLine(HASH_B)))
   reader.append(Buffer.from(compilationLine(HASH_B)))
@@ -243,7 +243,7 @@ test('a rebuild appends a line and the parsed bundle of either compilation still
 
 test('a reportError line is kept apart from errorCause so a later compilation failure does not read as an unapplied patch', () => {
   // Arrange
-  const reader = new ReactScriptsReportReader()
+  const reader = new WebpackLibraryReportReader()
 
   // Act
   reader.append(
@@ -259,7 +259,7 @@ test('a reportError line is kept apart from errorCause so a later compilation fa
 
 test('an empty or auto public path never makes a script unmatched-owned', () => {
   // Arrange
-  const reader = new ReactScriptsReportReader()
+  const reader = new WebpackLibraryReportReader()
   const line = (publicPath: string) =>
     `${JSON.stringify({ compilationHash: 'c1', publicPath, assets: [] })}\n`
 
@@ -275,7 +275,7 @@ test('an empty or auto public path never makes a script unmatched-owned', () => 
 
 test('a script whose URL percent-encodes a space matches the asset named with the space', () => {
   // Arrange
-  const reader = new ReactScriptsReportReader()
+  const reader = new WebpackLibraryReportReader()
   reader.append(Buffer.from(compilationLine(HASH_A, 'static/js/my bundle.js')))
 
   // Act
@@ -287,7 +287,7 @@ test('a script whose URL percent-encodes a space matches the asset named with th
 
 test('a script URL with a malformed percent escape matches nothing but stays owned', () => {
   // Arrange
-  const reader = new ReactScriptsReportReader()
+  const reader = new WebpackLibraryReportReader()
   reader.append(Buffer.from(compilationLine(HASH_A)))
 
   // Act
@@ -299,7 +299,7 @@ test('a script URL with a malformed percent escape matches nothing but stays own
 
 test('an inline script reported with the document URL is ignored while a js script under the public path with no asset stays unmatched', () => {
   // Arrange
-  const reader = new ReactScriptsReportReader()
+  const reader = new WebpackLibraryReportReader()
   reader.append(Buffer.from(compilationLine(HASH_A)))
 
   // Act

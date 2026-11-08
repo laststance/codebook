@@ -6,50 +6,50 @@ import {
 } from '../constants'
 
 /** One emitted `.js` asset of a compilation line: its name, the SHA-256 of its bytes and the real paths of the modules of its chunks that may be copies of the library. */
-export type ReactScriptsReportAsset = {
+export type WebpackLibraryReportAsset = {
   name: string
   sha256: string
   resources: string[]
 }
 
 /** The first line of a report: the preload wrapped the react-scripts webpack configuration factory and patched it. */
-type ReactScriptsWrappedLine = { wrapped: true }
+type WebpackLibraryWrappedLine = { wrapped: true }
 
 /** The preload could not patch the configuration; it ran unpatched. */
-type ReactScriptsErrorLine = { error: string }
+type WebpackLibraryErrorLine = { error: string }
 
 /** The preload patched the configuration but failed to describe a later compilation; the patch itself is in place. */
-type ReactScriptsReportErrorLine = { reportError: string }
+type WebpackLibraryReportErrorLine = { reportError: string }
 
 /** One compilation: written at webpack's `emit`, before the assets are served. */
-type ReactScriptsCompilationLine = {
+type WebpackLibraryCompilationLine = {
   compilationHash: string
   publicPath: string
-  assets: ReactScriptsReportAsset[]
+  assets: WebpackLibraryReportAsset[]
 }
 
 /** A compilation whose line would have exceeded the per-line bound; its scripts match nothing. `publicPath` lets the reader still tell its scripts are owned. */
-type ReactScriptsTruncatedLine = {
+type WebpackLibraryTruncatedLine = {
   compilationHash: string
   publicPath?: string
   truncated: true
 }
 
 /** Every line the generated preload (see {@link buildReactScriptsLibraryPreloadSource}) can write. */
-type ReactScriptsReportLine =
-  | ReactScriptsWrappedLine
-  | ReactScriptsErrorLine
-  | ReactScriptsReportErrorLine
-  | ReactScriptsCompilationLine
-  | ReactScriptsTruncatedLine
+type WebpackLibraryReportLine =
+  | WebpackLibraryWrappedLine
+  | WebpackLibraryErrorLine
+  | WebpackLibraryReportErrorLine
+  | WebpackLibraryCompilationLine
+  | WebpackLibraryTruncatedLine
 
 /** A matched asset together with the public path it is served under. */
-export type ReactScriptsReportMatch = ReactScriptsReportAsset & {
+export type WebpackLibraryReportMatch = WebpackLibraryReportAsset & {
   publicPath: string
 }
 
 /** Why a report cannot be trusted. */
-export type ReactScriptsReportUnreadableCause =
+export type WebpackLibraryReportUnreadableCause =
   | 'malformed-line'
   | 'line-too-long'
   | 'report-too-large'
@@ -57,9 +57,9 @@ export type ReactScriptsReportUnreadableCause =
   | 'report-missing'
   | 'report-unreadable'
 
-/** The verdict {@link ReactScriptsReportReader.match} gives for one script. */
-export type ReactScriptsScriptMatch =
-  | { kind: 'matched'; asset: ReactScriptsReportMatch }
+/** The verdict {@link WebpackLibraryReportReader.match} gives for one script. */
+export type WebpackLibraryScriptMatch =
+  | { kind: 'matched'; asset: WebpackLibraryReportMatch }
   | { kind: 'unmatched-owned' }
   | { kind: 'not-owned' }
 
@@ -76,7 +76,7 @@ function isStringArray(value: unknown): value is string[] {
 }
 
 /** Reads one asset entry of a compilation line, or `undefined` when its shape is wrong. */
-function readAsset(value: unknown): ReactScriptsReportAsset | undefined {
+function readAsset(value: unknown): WebpackLibraryReportAsset | undefined {
   if (!isRecord(value)) return undefined
   const { name, sha256, resources } = value
   if (typeof name !== 'string' || typeof sha256 !== 'string') return undefined
@@ -87,16 +87,16 @@ function readAsset(value: unknown): ReactScriptsReportAsset | undefined {
 /**
  * Parses one complete report line.
  *
- * Used by {@link ReactScriptsReportReader} for every complete line; the shapes are the ones the generated preload writes.
+ * Used by {@link WebpackLibraryReportReader} for every complete line; the shapes are the ones the generated preload writes.
  * @param text - The line without its newline.
  * @returns The typed line, or `undefined` when the text is not valid JSON or has no known shape.
  * @example
- * parseReactScriptsReportLine('{"wrapped":true}') // => { wrapped: true }
- * parseReactScriptsReportLine('{oops') // => undefined
+ * parseWebpackLibraryReportLine('{"wrapped":true}') // => { wrapped: true }
+ * parseWebpackLibraryReportLine('{oops') // => undefined
  */
-function parseReactScriptsReportLine(
+function parseWebpackLibraryReportLine(
   text: string,
-): ReactScriptsReportLine | undefined {
+): WebpackLibraryReportLine | undefined {
   let parsed: unknown
   try {
     parsed = JSON.parse(text)
@@ -135,7 +135,7 @@ function pathOf(urlOrPath: string): string {
 /**
  * Decodes the percent escapes of a path so it can be compared with a raw asset name.
  *
- * Used by {@link ReactScriptsReportReader.match}: `new URL(...).pathname` of `/a b.js` is `/a%20b.js`, while the report names the asset `a b.js`.
+ * Used by {@link WebpackLibraryReportReader.match}: `new URL(...).pathname` of `/a b.js` is `/a%20b.js`, while the report names the asset `a b.js`.
  * @param path - A path as {@link pathOf} returns it.
  * @returns The decoded path, or `undefined` when an escape is malformed (such a path matches nothing).
  * @example
@@ -167,21 +167,21 @@ function isUsablePublicPath(publicPath: string): boolean {
 /**
  * Reads the compilation report the generated react-scripts preload appends to, and answers which emitted asset a script the page parsed came from.
  *
- * The run creates one per report file and calls {@link ReactScriptsReportReader.refresh} whenever it wants current facts (before judging a script, at the end of the run). Bytes are read from where the last call stopped, so rebuilds append lines the reader keeps in an index by SHA-256. Classification of resources (packed copy or another copy) is not done here.
+ * The run creates one per report file and calls {@link WebpackLibraryReportReader.refresh} whenever it wants current facts (before judging a script, at the end of the run). Bytes are read from where the last call stopped, so rebuilds append lines the reader keeps in an index by SHA-256. Classification of resources (packed copy or another copy) is not done here.
  * @example
- * const reader = new ReactScriptsReportReader()
+ * const reader = new WebpackLibraryReportReader()
  * reader.refresh('/p/report.jsonl')
  * reader.match('http://localhost:3000/static/js/bundle.js', hashOfScript) // => { kind: 'matched', asset }
  */
-export class ReactScriptsReportReader {
+export class WebpackLibraryReportReader {
   private offset = 0
   private pending = Buffer.alloc(0)
-  private readonly index = new Map<string, ReactScriptsReportMatch[]>()
+  private readonly index = new Map<string, WebpackLibraryReportMatch[]>()
   private readonly publicPaths = new Set<string>()
   private wrappedSeen = false
   private errorMessage: string | undefined
   private reportErrorMessage: string | undefined
-  private unreadable: ReactScriptsReportUnreadableCause | undefined
+  private unreadable: WebpackLibraryReportUnreadableCause | undefined
   private truncatedCount = 0
   private compilationCount = 0
 
@@ -210,7 +210,7 @@ export class ReactScriptsReportReader {
   }
 
   /** Why the report cannot be trusted, or `undefined` while it reads cleanly. */
-  get unreadableCause(): ReactScriptsReportUnreadableCause | undefined {
+  get unreadableCause(): WebpackLibraryReportUnreadableCause | undefined {
     return this.unreadable
   }
 
@@ -355,7 +355,7 @@ export class ReactScriptsReportReader {
    * @example
    * this.markUnreadable('malformed-line')
    */
-  private markUnreadable(cause: ReactScriptsReportUnreadableCause): void {
+  private markUnreadable(cause: WebpackLibraryReportUnreadableCause): void {
     this.unreadable ??= cause
   }
 
@@ -374,7 +374,7 @@ export class ReactScriptsReportReader {
     }
     const text = bytes.toString('utf8')
     if (text.trim() === '') return
-    const line = parseReactScriptsReportLine(text)
+    const line = parseWebpackLibraryReportLine(text)
     if (line === undefined) {
       this.markUnreadable('malformed-line')
       return
@@ -390,7 +390,7 @@ export class ReactScriptsReportReader {
    * @example
    * this.record({ wrapped: true })
    */
-  private record(line: ReactScriptsReportLine): void {
+  private record(line: WebpackLibraryReportLine): void {
     if ('wrapped' in line) {
       this.wrappedSeen = true
     } else if ('error' in line) {
@@ -423,7 +423,10 @@ export class ReactScriptsReportReader {
    * @example
    * this.addToIndex('/', { name: 'static/js/bundle.js', sha256: 'ab…', resources: [] })
    */
-  private addToIndex(publicPath: string, asset: ReactScriptsReportAsset): void {
+  private addToIndex(
+    publicPath: string,
+    asset: WebpackLibraryReportAsset,
+  ): void {
     const entries = this.index.get(asset.sha256) ?? []
     const kept = entries.filter(
       (entry) => entry.name !== asset.name || entry.publicPath !== publicPath,
@@ -441,7 +444,7 @@ export class ReactScriptsReportReader {
    * @example
    * reader.match('http://localhost:3000/static/js/bundle.js?x=1', 'ab12…') // => { kind: 'matched', asset: { … } }
    */
-  match(url: string, hash: string | undefined): ReactScriptsScriptMatch {
+  match(url: string, hash: string | undefined): WebpackLibraryScriptMatch {
     const rawPath = pathOf(url)
     // A malformed escape decodes to nothing: it can still be owned but never matches an asset.
     const urlPath = decodePath(rawPath)

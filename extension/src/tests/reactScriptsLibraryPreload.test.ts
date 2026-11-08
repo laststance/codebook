@@ -18,7 +18,7 @@ import { promisify } from 'node:util'
 
 import { REACT_SCRIPTS_LIBRARY_REPORT_LINE_LIMIT_BYTES } from '../constants'
 import { buildReactScriptsLibraryPreloadSource } from '../utils/reactScriptsLibraryPreload'
-import { ReactScriptsReportReader } from '../utils/reactScriptsLibraryReport'
+import { WebpackLibraryReportReader } from '../utils/webpackLibraryReport'
 
 const run = promisify(execFile)
 /** The longest a child that compiles with webpack may run. */
@@ -372,7 +372,7 @@ test('report starts with the wrapped line and then names the emitted script by i
   assert.ok(asset?.resources.includes(join(fixture.packedRoot, 'index.js')))
   assert.ok(asset?.resources.includes(join(fixture.packedRoot, 'sub.js')))
   // The reader agrees with the generator about the line format.
-  const reader = new ReactScriptsReportReader()
+  const reader = new WebpackLibraryReportReader()
   reader.refresh(fixture.reportPath, true)
   assert.equal(reader.wrapped, true)
   assert.equal(reader.unreadableCause, undefined)

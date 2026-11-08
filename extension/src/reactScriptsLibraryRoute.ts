@@ -25,7 +25,7 @@ import type { LibraryRunView } from './nodeScriptRuntimeTypes'
 import { reactScriptsLibraryRedirectNotAppliedRefusal } from './reactScriptsRefusals'
 import { isInsideFolder } from './utils/isInsideFolder'
 import { buildReactScriptsLibraryPreloadSource } from './utils/reactScriptsLibraryPreload'
-import { ReactScriptsReportReader } from './utils/reactScriptsLibraryReport'
+import { WebpackLibraryReportReader } from './utils/webpackLibraryReport'
 
 /** How often the run looks again at a report whose last line is still being written. */
 const REPORT_SETTLE_POLL_MS = 50
@@ -50,7 +50,7 @@ function isOwnedScriptUrl(script: LibraryScript): boolean {
  */
 class ReactScriptsAttribution implements LibraryAttribution {
   /** Reads the report incrementally; the run asks it for the applied marker too. */
-  readonly reader = new ReactScriptsReportReader()
+  readonly reader = new WebpackLibraryReportReader()
   /** The ids of the scripts already judged, so a script announced twice counts once. */
   private readonly judgedScriptIds = new Set<string>()
   /** The scripts that matched nothing while the report ended in a line not yet terminated. */

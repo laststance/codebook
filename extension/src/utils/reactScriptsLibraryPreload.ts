@@ -12,7 +12,7 @@ export type ReactScriptsLibraryPreloadConfiguration = {
   libraryRoot: string
   /** The packed package's `peerDependencies` names. */
   peers: readonly string[]
-  /** The file the preload appends one JSON line per event to (see {@link ReactScriptsReportReader}). */
+  /** The file the preload appends one JSON line per event to (see {@link WebpackLibraryReportReader}). */
   reportPath: string
   /** The folder the webpack, babel-loader, ESLint and TypeScript caches are redirected into. */
   cacheFolder: string
