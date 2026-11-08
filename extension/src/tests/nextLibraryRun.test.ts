@@ -132,6 +132,7 @@ async function nextLibraryHarness(
       | 'listeningAfterMs'
       | 'exitedWith'
       | 'runtimeConstants'
+      | 'declaredPortTaken'
     >
   > = {},
 ) {
@@ -530,4 +531,26 @@ test('a library-source stop of a run without library still freezes and arms', as
   assert.equal(harness.developmentServerLaunches(), 1)
   assert.equal(harness.run.view().failures.length, 0)
   await harness.run.stop()
+})
+
+// Value: protects=a Next library run whose declared port is taken is refused before the learner's confirmation and the build, so the refusal's "nothing was built" is true; fails_when=the port check moves after the confirmation or the build, or the Next route skips it; why_new=planNextLibrary checks the port first and no other test pins the order; seam=none; no_claim=the real port probe (assertDevelopmentPortFree has its own tests)
+test('a Next library run on a taken port is refused before the confirmation and the build', async (context) => {
+  // Arrange
+  const library = await libraryDependencies(context)
+  const harness = await nextLibraryHarness(context, library, {
+    declaredPortTaken: true,
+  })
+  // Act
+  const failure = await harness.run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    String(Reflect.get(Object(failure), 'message')),
+    'Port 4321 is in use on this machine',
+  )
+  assert.deepEqual(library.calls, [])
+  assert.equal(harness.developmentServerLaunches(), 0)
 })

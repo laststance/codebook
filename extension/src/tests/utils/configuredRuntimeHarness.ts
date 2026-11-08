@@ -230,6 +230,8 @@ export async function configuredRuntimeHarness(
     browserProfileLeft?: ProfileLeft
     /** How the stand-in `[::1]` forwarder starts: its own (default), absent on a host without IPv6 loopback, or refused because another process holds `[::1]`. */
     ipv6Loopback?: 'owned' | 'absent' | 'held'
+    /** Makes the mocked port check refuse as a taken declared port does, so a test can prove what happens before it. */
+    declaredPortTaken?: boolean
     /** Runs the configuration on the Vite adapter: its stand-in starts the stub server, serves the sealed module at its owned address and loads the entry page once. */
     adapter?: 'vite-dev'
     // pregate-literal: API_VERSION=1.34 the Vite library route was added at API 1.34 (its minimum), not the current API
@@ -2298,7 +2300,13 @@ export async function configuredRuntimeHarness(
         },
       },
       './utils/assertDevelopmentPortFree': {
-        assertDevelopmentPortFree: async () => undefined,
+        assertDevelopmentPortFree: async () => {
+          if (options.declaredPortTaken)
+            throw new StudyError(
+              'PREREQUISITE_MISSING',
+              'Port 4321 is in use on this machine',
+            )
+        },
       },
       './utils/startIpv6LoopbackForwarder': {
         startIpv6LoopbackForwarder: async (port: number) => {
