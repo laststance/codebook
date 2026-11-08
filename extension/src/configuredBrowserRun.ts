@@ -15146,7 +15146,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Says whether the page is paused by the browser participant's own pause state, for the guard of a `press` operation that must not send a key into a paused page.
    *
    * Browser participant only: a server pause leaves the page running, and {@link adapterPausesRetired} is both too broad (the server participant) and incomplete (no announced gate, pending stop or awaited continuation). Called through {@link OperationPort.isPagePaused}.
-   * @returns `true` while the browser holds its own pause, a transient pause, an unannounced pause or an instrumentation pause.
+   * @returns `true` while the browser holds its own pause (including a CDP pause admitted or queued before the debugger's `stopped`), a transient pause, an unannounced pause or an instrumentation pause.
    * @example
    * ```ts
    * this.browserIsPaused() // true while a declared browser stop is being inspected
@@ -15155,6 +15155,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private browserIsPaused(): boolean {
     return (
       this.browserHoldsOwnPause() ||
+      // A CDP pause the run admitted (or queued behind a continuation) holds the page before the debugger's `stopped` arrives; both clear when the runtime resumes.
+      this.participants.browser.stopped !== undefined ||
+      this.pendingCdpStop?.participant === 'browser' ||
       this.transientBrowserPause !== undefined ||
       Boolean(this.participants.browser.unannouncedPause) ||
       this.participants.browser.instrumentationPaused === true

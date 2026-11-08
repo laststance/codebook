@@ -254,3 +254,68 @@ test('a paused page at the press refuses the key as RUN_FAILED_UNEXPECTEDLY with
   assert.equal(run.view().operationFailure?.sent, 'not-sent')
   assert.deepEqual(keys, [])
 })
+
+// Value: protects=D25/E1 d: a browser pause the run received over CDP before the debugger's stopped event keeps the key release waiting until the page runs again, so no key is lost into a paused page; fails_when=the keyUp is sent while the page is paused by such a pause (the stand-in page then records it as lost); no_claim=a real debugger (harness)
+test('a browser pause received before the debugger stopped event keeps the key release waiting', async (context) => {
+  // Arrange
+  const { run, suppressInputPause, keys, lostKeys, emitDapStopOnly } =
+    await configuredRuntimeHarness(context, undefined, [], {
+      operations: {
+        operations: [palette],
+        stopOperations: [1],
+        press: { pausesAfterKeyDown: true },
+      },
+    })
+  await run.prepare()
+  // The declared stop is only the run's requirement: the page pauses itself after the key down.
+  suppressInputPause()
+  // Act: the page pauses over CDP only, so the key release has time to be sent.
+  run.action('op-1', OPERATION_ACTION)
+  await waitUntil(() => keys.length >= 1, 'the key down')
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  const keysWhilePaused = keys.length
+  emitDapStopOnly()
+  const stop = await waitUntil(
+    () => run.view().participants.browser.snapshot,
+    'the stop of the key handler',
+  )
+  await run.continue('browser', stop.pause)
+  await waitUntil(() => run.view().operations?.[0]?.state === 'done', 'op 1')
+  // Assert
+  assert.equal(keysWhilePaused, 1)
+  assert.deepEqual(plain(keys), [
+    { type: 'keyDown', key: 'k' },
+    { type: 'keyUp', key: 'k' },
+  ])
+  assert.deepEqual(plain(lostKeys), [])
+})
+
+// Value: protects=OCR1-4 c: two presses with an identical after condition each complete on their own key; fails_when=the stand-in page answers both presses' after reads for one operation, so the first press never meets its after; no_claim=a real browser (harness)
+test('two presses with the same after condition both complete', async (context) => {
+  // Arrange
+  const { run, suppressInputPause } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    {
+      operations: {
+        operations: [
+          palette,
+          { ...palette, title: 'Open palette again' },
+          submit,
+        ],
+        stopOperations: [3],
+      },
+    },
+  )
+  await run.prepare()
+  // The declared stop is only the run's requirement: the page runs past it.
+  suppressInputPause()
+  // Act
+  run.action('op-1', OPERATION_ACTION)
+  await waitUntil(() => run.view().operations?.[0]?.state === 'done', 'op 1')
+  run.action('op-2', OPERATION_ACTION)
+  await waitUntil(() => run.view().operations?.[1]?.state === 'done', 'op 2')
+  // Assert
+  assert.equal(run.view().operations?.[1]?.effect, 'after-verified')
+})

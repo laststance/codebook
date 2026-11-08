@@ -165,7 +165,6 @@ async function stageViteLibrary(input: {
   return { server, servedModule, moduleRoute }
 }
 
-/** The source of a fixture that gives none: one statement on line 1 and an empty line 2, declared with `var` so that the stop on line 1, which requires value:nextTheme, stays on its declared line. */
 /** What the stand-in page reports of a key's recipient unless a test says otherwise: the focused body, which is no text entry. */
 const DEFAULT_PRESS_FOCUS: PressFocusDescription = {
   ready: true,
@@ -178,6 +177,7 @@ const DEFAULT_PRESS_FOCUS: PressFocusDescription = {
   isInFrame: false,
   isFocused: true,
 }
+/** The source of a fixture that gives none: one statement on line 1 and an empty line 2, declared with `var` so that the stop on line 1, which requires value:nextTheme, stays on its declared line. */
 const FIXTURE_SOURCE = 'var nextTheme = "dark";\n'
 
 /**
@@ -476,6 +476,8 @@ export async function configuredRuntimeHarness(
         dropKeys?: boolean
         /** Makes the press's own `after` hold from the start, as a result that is already on the page. */
         afterHoldsFromStart?: boolean
+        /** Makes the page pause over CDP only (no debugger `stopped`) as the key down is answered, as a handler paused by the adapter before its event arrives. */
+        pausesAfterKeyDown?: boolean
         focus?: PressFocusDescription
       }
       /** The configuration's `signInPaths`. */
@@ -1284,18 +1286,33 @@ export async function configuredRuntimeHarness(
   const operationsOption = options.operations
   // The operations (1-based) whose key events the page acted on, by event.
   const pressEffects = { keydown: new Set<number>(), keyup: new Set<number>() }
-  /** The own `after` read expression of each press operation, with its 1-based index. */
-  const pressAfterExpressions = new Map<string, number>(
+  /** Whether the stand-in page's JavaScript is paused in the debugger, from the last `Debugger.paused` or `Debugger.resumed` the run's listener received. */
+  let isPageDebuggerPaused = false
+  /** The key events (`{ type, key }`) the page received while it was paused: a real page loses them, so they have no effect. */
+  const lostKeys: { type?: string; key?: string }[] = []
+  /** The own `after` read expression of each press operation, by its 1-based operation index. */
+  const pressAfterExpressions = new Map<number, string>(
     (operationsOption?.operations ?? []).flatMap((operation, position) =>
       operation.kind === 'press' && operation.after
-        ? [[configuredDomExpression(operation.after), position + 1] as const]
+        ? [[position + 1, configuredDomExpression(operation.after)] as const]
         : [],
     ),
   )
+  /** Finds the 1-based operation an `after` read now belongs to: the one whose input was last sent, or the next one once that one is done (the pre-send read of the next press). */
+  const operationOfAfterRead = (): number => {
+    const lastDone =
+      inputsSeen > 0 &&
+      run.view().operations?.[inputsSeen - 1]?.state === 'done'
+    return lastDone ? inputsSeen + 1 : Math.max(inputsSeen, 1)
+  }
   /** Answers a press operation's own `after` read: not ready until the page saw the declared event, never when keys are dropped; `undefined` for any other expression. */
   const pressAfterAnswer = (expression: string | undefined): unknown => {
-    const operationIndex = pressAfterExpressions.get(expression ?? '')
-    if (operationIndex === undefined) return undefined
+    const operationIndex = operationOfAfterRead()
+    if (
+      expression === undefined ||
+      pressAfterExpressions.get(operationIndex) !== expression
+    )
+      return undefined
     const press = operationsOption?.press
     const seen = pressEffects[press?.effectOn ?? 'keyup'].has(operationIndex)
     return press?.afterHoldsFromStart || (!press?.dropKeys && seen)
@@ -1303,8 +1320,16 @@ export async function configuredRuntimeHarness(
       : { ready: false, failure: { conditionIndex: 0, reason: 'not-visible' } }
   }
   /** Answers one key event of a press: a keyDown counts as the operation's input; the event named by `holdOn` pauses inside the page's handler when a stop follows. */
-  const answerKeyEvent = async (type: string): Promise<unknown> => {
+  const answerKeyEvent = async (
+    type: string,
+    key: string | undefined,
+  ): Promise<unknown> => {
     if (type === 'keyDown') inputsSeen++
+    // A key that reaches a paused page is acknowledged and lost: no handler runs, so it has no effect.
+    if (isPageDebuggerPaused) {
+      lostKeys.push({ type, key })
+      return {}
+    }
     const held =
       (operationsOption?.press?.holdOn ?? 'keyUp') === type &&
       stopPausesLatestInput()
@@ -1314,6 +1339,9 @@ export async function configuredRuntimeHarness(
     }
     // The page's handlers ran once the event was answered.
     pressEffects[type === 'keyDown' ? 'keydown' : 'keyup'].add(inputsSeen)
+    // The adapter's pause reaches the run over CDP before any `stopped` event.
+    if (type === 'keyDown' && operationsOption?.press?.pausesAfterKeyDown)
+      emitPause(1, 1, false)
     return {}
   }
   /** Tells whether the result of the action is visible: the single input was sent, or the last operation of a version 3 run was acknowledged. */
@@ -1480,7 +1508,18 @@ export async function configuredRuntimeHarness(
       onClose = listener
     },
     on(event: string, listener: (value: unknown) => void): void {
-      listeners.set(event, listener)
+      // The page's pause state follows every pause and resume the run's listener sees, whichever emitter sent it.
+      if (event === 'Debugger.paused')
+        listeners.set(event, (value) => {
+          isPageDebuggerPaused = true
+          listener(value)
+        })
+      else if (event === 'Debugger.resumed')
+        listeners.set(event, (value) => {
+          isPageDebuggerPaused = false
+          listener(value)
+        })
+      else listeners.set(event, listener)
     },
     async subscribe(): Promise<void> {},
     aggregateScreencastTelemetry(): void {},
@@ -1805,7 +1844,7 @@ export async function configuredRuntimeHarness(
       }
       if (method === 'Input.dispatchKeyEvent') {
         keys.push({ type: parameters?.type, key: parameters?.key })
-        return answerKeyEvent(String(parameters?.type))
+        return answerKeyEvent(String(parameters?.type), parameters?.key)
       }
       if (method === 'Input.dispatchMouseEvent') {
         mouse.push({ type: parameters?.type, timeout })
@@ -2684,6 +2723,8 @@ export async function configuredRuntimeHarness(
     mouse,
     /** The `Input.dispatchKeyEvent` requests the run sent, in order, as `{ type, key }`. */
     keys,
+    /** The key events (`{ type, key }`) the stand-in page received while paused and lost, in order. */
+    lostKeys,
     commands,
     /** Every expression the run evaluated in the owned page, in order. */
     evaluatedExpressions,
