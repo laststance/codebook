@@ -2075,6 +2075,12 @@ export const API_REQUEST_METHOD_LIMIT_CHARS = 16
 export const API_REQUEST_METHOD_TOKEN_PATTERN = /^[A-Z0-9!#$%&'*+.^_`|~-]+$/
 /** The most early request ends (and ids already seen) an API request tracker remembers; separate from the request limit so they cannot evict a needed start. */
 export const API_REQUEST_EARLY_END_LIMIT = 256
+/** The most API output events one run journals; beyond it one `api-server.output-truncated` marker is written. */
+export const API_SERVER_OUTPUT_JOURNAL_MAX_EVENTS = 500
+/** The most API output text, in bytes, one run journals; beyond it one `api-server.output-truncated` marker is written. */
+export const API_SERVER_OUTPUT_JOURNAL_MAX_BYTES = 262_144
+/** The longest unfinished stderr line the debugger-notice detector keeps; a longer one cannot be the notice and is dropped up to its newline. */
+export const NOTICE_PARTIAL_LINE_LIMIT_CHARS = 512
 /** The longest request path (without query) an `apiRequest` fact may name. */
 export const API_REQUEST_PATH_LIMIT_CHARS = 2_048
 /** The marker that ends an `apiRequest` path cut to {@link API_REQUEST_PATH_LIMIT_CHARS}. */

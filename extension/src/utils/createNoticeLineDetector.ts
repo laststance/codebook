@@ -1,5 +1,4 @@
-/** The longest unfinished line the detector keeps; a longer one cannot be the notice and is dropped up to its newline. */
-const NOTICE_PARTIAL_LINE_LIMIT_CHARS = 512
+import { NOTICE_PARTIAL_LINE_LIMIT_CHARS } from '../constants'
 
 /**
  * Makes a detector that finds a fixed notice as a complete line in text that arrives in arbitrary pieces.

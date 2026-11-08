@@ -1,10 +1,9 @@
+import {
+  API_SERVER_OUTPUT_JOURNAL_MAX_BYTES,
+  API_SERVER_OUTPUT_JOURNAL_MAX_EVENTS,
+} from '../constants'
+
 import type { ProcessOutputEvent } from './captureProcessOutput'
-
-/** The most API output events one run journals; beyond it one truncation marker is written. */
-const API_SERVER_OUTPUT_JOURNAL_MAX_EVENTS = 500
-
-/** The most API output text, in bytes, one run journals; beyond it one truncation marker is written. */
-const API_SERVER_OUTPUT_JOURNAL_MAX_BYTES = 262_144
 
 /**
  * Makes the sink that journals the API's output into the run's shared evidence within a fixed bound.
