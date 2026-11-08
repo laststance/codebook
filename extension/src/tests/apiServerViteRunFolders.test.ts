@@ -21,6 +21,7 @@ import {
   sendApiRequest,
   type ApiServerRunHarness,
 } from './utils/apiServerRunHarness'
+import { removeTestFolder } from './utils/removeTestFolder'
 import {
   ADD,
   publishedPause,
@@ -67,7 +68,7 @@ async function canLink(context: TestContext): Promise<boolean> {
     context.skip('This platform cannot create symbolic links.')
     return false
   } finally {
-    await rm(scratch, { recursive: true, force: true })
+    await removeTestFolder(scratch)
   }
 }
 
@@ -226,6 +227,7 @@ test('an API folder that resolves around the app folder through a symbolic link 
       packageRoot: APP_FOLDER,
       onWorkspaceAsserted: async () => {
         // The API folder becomes a link to the repository root, which contains the app folder.
+        // not cleanup: the Arrange replaces the API folder with a link before the apiServer checks run.
         await rm(join(directory, 'apps/api'), { recursive: true })
         await symlink(directory, join(directory, 'apps/api'))
       },
