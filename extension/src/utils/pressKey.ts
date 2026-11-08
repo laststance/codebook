@@ -267,7 +267,10 @@ function splitSpelling(
 function readKey(
   token: string,
 ): { facts: KeyFacts; didFoldAlias: boolean } | string {
-  const alias = KEY_NAME_ALIASES[token]
+  // Own properties only: "constructor" or "__proto__" must not read inherited members.
+  const alias = Object.hasOwn(KEY_NAME_ALIASES, token)
+    ? KEY_NAME_ALIASES[token]
+    : undefined
   const name = alias ?? token
   if (/\s/.test(name))
     return `"${token}" contains whitespace; write "Space" for the space key.`
@@ -292,7 +295,10 @@ function readModifiers(
   const modifiers = new Set<ModifierName>()
   let didFoldAlias = false
   for (const token of tokens) {
-    const alias = MODIFIER_ALIASES[token]
+    // Own properties only: "constructor" or "__proto__" must not read inherited members.
+    const alias = Object.hasOwn(MODIFIER_ALIASES, token)
+      ? MODIFIER_ALIASES[token]
+      : undefined
     const modifier = alias ?? MODIFIER_ORDER.find((name) => name === token)
     if (modifier === undefined)
       return `"${token}" in "${spelling}" is not a modifier. ${ALLOWED_FORM}`

@@ -230,3 +230,22 @@ test('spellings outside the grammar are refused with a message that names the pr
     /Write optional modifiers \(Control, Alt, Shift, Meta, each at most once\) each followed by "\+", then one key/,
   )
 })
+
+// Value: protects=the ordinary refusal for spellings that match Object.prototype member names; fails_when=the alias tables are read through inherited properties so the refusal names the wrong problem; no_claim=any accepted spelling
+test('prototype member names are refused as unknown modifiers or keys, not as aliases', () => {
+  // Arrange
+  const expected: [string, string][] = [
+    ['constructor+k', '"constructor" in "constructor+k" is not a modifier. '],
+    ['toString', '"toString" is not a key. '],
+    ['__proto__', '"__proto__" is not a key. '],
+  ]
+  // Act
+  const messages = expected.map(([spelling]) => messageOf(spelling))
+  // Assert
+  for (const [index, [spelling, start]] of expected.entries()) {
+    assert.ok(
+      messages[index]?.startsWith(start),
+      `${spelling} -> ${messages[index]}`,
+    )
+  }
+})
