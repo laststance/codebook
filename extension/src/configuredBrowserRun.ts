@@ -1611,6 +1611,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private savedSessionSkipped?: 'package-root'
   /** Whether the readiness check found the entry redirected to a sign-in path, so a saved run loads it once in its browser before sealing ({@link warmEntryBehindSignIn}). */
   private entryBehindSignIn = false
+  /** Whether the saved session's warm load of the entry is under way ({@link warmEntryBehindSignIn}): a landing on a sign-in path then is the refusal of the entry, even for a run that declares no operation, not a sign-out flow's end. */
+  private warmingEntry = false
   /** The entry answer of a workspace with a Pages folder whose entry is behind sign-in: its route manifests are read only after the saved session's browser loaded the entry, which compiles the route ({@link resolvePagesCapableRoute}). */
   private entryAnswerBehindSignIn?: NextEntryResponse
   /** The declared sign-in path the page reached after the last operation was sent; it fails the run only when the run-level `after` does not hold. */
@@ -4919,14 +4921,20 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (!this.entryBehindSignIn) return
     await this.launchOwnedBrowser(adapter)
     const window = this.preparationWindow
-    // A module-evaluation pause holds the page's answer until the last continue: the navigation's own timer must not bound the wait, and the load waits for that answer, because until the server answers the page still shows the document before it, which would read as settled.
-    await this.navigateToEntry(
-      this.requireCdp(),
-      window ? { answerMayBeHeld: true, awaitHeldAnswer: true } : {},
-    )
-    await this.settleWarmedPage(window)
-    this.alive()
-    await this.refuseSignInPageNow()
+    // A landing on a sign-in path during this load refuses the run whatever its operation count (a run that declares none would otherwise read it as a sign-out flow's end).
+    this.warmingEntry = true
+    try {
+      // A module-evaluation pause holds the page's answer until the last continue: the navigation's own timer must not bound the wait, and the load waits for that answer, because until the server answers the page still shows the document before it, which would read as settled.
+      await this.navigateToEntry(
+        this.requireCdp(),
+        window ? { answerMayBeHeld: true, awaitHeldAnswer: true } : {},
+      )
+      await this.settleWarmedPage(window)
+      this.alive()
+      await this.refuseSignInPageNow()
+    } finally {
+      this.warmingEntry = false
+    }
     this.evidence.record('application.entry-warmed-with-saved-session')
     // The real entry load is the first navigation of the run again.
     this.navigationRequested = false
@@ -6908,7 +6916,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const sent = this.operationsDispatched
     const total = declaredOperationsOf(this.operationsConfiguration!).length
     // The entry load is no sign-out flow: a run with no operation lands on sign-in before its entry page loaded, which is the refusal and releases the armed stops (X22).
-    if (sent >= total && !this.entryLoad) {
+    if (sent >= total && !this.entryLoad && !this.warmingEntry) {
       // A sign-out flow ends on its sign-in page: the run-level after decides (D13).
       this.signInLandingAfterLast = landedOn
       this.evidence.record('page.sign-in-after-last-operation')

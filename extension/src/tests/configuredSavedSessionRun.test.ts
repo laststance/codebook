@@ -262,6 +262,41 @@ test('a saved run that lands on the sign-in page is refused before sealing, with
   }
 })
 
+// Value: protects=the saved-session warm load of a run that declares no operation (an entry-render stop): a landing on the sign-in page there refuses the run with SIGN_IN_REQUIRED before sealing, as for a run with operations; fails_when=the landing is read as a sign-out flow's end and the run goes on to seal a route that never compiled (RUNTIME_FAILED "no unique compiled Next page", seen natively in Cycle 0102 behind a reverse proxy); why_new=the existing landing test declares two operations, so sent < total hid the zero-operation branch; seam=none; no_claim=a real sign-in page (the harness stands in for the browser and the redirect)
+test('a saved run with no operation that lands on the sign-in page during the warm load is refused with SIGN_IN_REQUIRED before sealing', async (context) => {
+  // Arrange
+  const harness = await signInHarness(
+    context,
+    {
+      savedSession: { admission: 'saved', appCookies: 'persistent' },
+      entryAnswer: REDIRECT_TO_LOGIN,
+      navigationLandsOn: '/login',
+      participant: 'server',
+      serverRuntime: { route: '/dashboard/invoices' },
+    },
+    [],
+  )
+  // Act
+  await assert.rejects(harness.run.prepare())
+  // Assert
+  const view = harness.run.view()
+  assert.match(
+    view.failures[0]!,
+    /^SIGN_IN_REQUIRED\(redirected-to-sign-in\): /,
+  )
+  assert.equal(
+    view.events.some((event) => event.type === 'source.sealed'),
+    false,
+  )
+  assert.equal(
+    view.events.some(
+      (event) => event.type === 'page.sign-in-after-last-operation',
+    ),
+    false,
+  )
+  assert.deepEqual(plain(harness.signInNotices), ['redirected-to-sign-in'])
+})
+
 // Value: protects=E6 after-operation detection and DX-5 fields: a client-side redirect to the sign-in page after operation 1 fails the run naming operation 1 as sent, and operation 2 is never sent; fails_when=operation 2 receives an Input request, the failure lacks reason or sent, or NAVIGATION_BEFORE_LAST_OPERATION wins; no_claim=a real router push
 test('a client-side redirect to the sign-in page after operation 1 fails the run with SIGN_IN_REQUIRED naming operation 1 as sent', async (context) => {
   // Arrange
