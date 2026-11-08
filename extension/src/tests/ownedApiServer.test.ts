@@ -779,8 +779,19 @@ test('a learner secret typed after launch and split across two output chunks nev
     'login failed for hunter2-pa',
     'ssword done\n',
   ])
-  const { api } = await launchApi(t, repository, { secrets: () => secrets })
+  const published: string[] = []
+  const { api } = await launchApi(t, repository, {
+    secrets: () => secrets,
+    onOutput: (event) => void published.push(event.text),
+  })
   const cdp = await connectInspector(t, api)
+  // Node prints "Debugger attached." once the inspector connects, sometimes after connectInspector returned (Linux CI); the secret is added only after that line was published whole, so the live holdback never splits Node's banner around the app's line.
+  await waitUntil(
+    () =>
+      published.join('').includes('Debugger attached.') ? true : undefined,
+    'the inspector banner',
+    10_000,
+  )
   secrets.add('hunter2-password')
 
   // Act
@@ -798,17 +809,14 @@ test('a learner secret typed after launch and split across two output chunks nev
   )
 
   // Assert
-  // Node's own "Debugger attached." stderr line can be printed after the secret was added; the stderr holdback then publishes its pieces around the app's line (seen on Linux CI), so the app's words and the mask are checked, not the whole text.
-  const final = api.outputTailNow()
   assert.deepEqual(
     {
       leaked: tails.some(
         (tail) => tail.includes('hunter2') || tail.includes('ssword'),
       ),
-      saysLoginFailed: final.includes('login failed for'),
-      endsMasked: final.endsWith('[masked] done'),
+      final: api.outputTailNow(),
     },
-    { leaked: false, saysLoginFailed: true, endsMasked: true },
+    { leaked: false, final: 'login failed for [masked] done' },
   )
 })
 
