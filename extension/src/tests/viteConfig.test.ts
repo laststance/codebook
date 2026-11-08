@@ -79,14 +79,14 @@ test('vite-dev refuses a server participant on the primary stop and on an additi
   assert.deepEqual(
     primary.error?.issues.map((issue) => issue.message),
     [
-      `adapter "vite-dev" supports browser stops only; participant "server" is declared at configuration.participant. To pause in the app's own Node API, declare apiServer (API 1.38).`,
+      'adapter "vite-dev" supports browser stops only; participant "server" is declared at configuration.participant.',
     ],
   )
   assert.equal(additional.success, false)
   assert.deepEqual(
     additional.error?.issues.map((issue) => issue.message),
     [
-      `adapter "vite-dev" supports browser stops only; participant "server" is declared at configuration.additionalStops.1.participant. To pause in the app's own Node API, declare apiServer (API 1.38).`,
+      'adapter "vite-dev" supports browser stops only; participant "server" is declared at configuration.additionalStops.1.participant.',
     ],
   )
 })

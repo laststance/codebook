@@ -3587,3 +3587,8 @@ export const EXPO_WEB_ENV_FILES = [
   '.env.development',
   '.env',
 ] as const
+
+/** The most prefixes `apiServer.proxyPaths` may declare. */
+export const API_PROXY_PATHS_MAX_ENTRIES = 8
+/** The most characters one `apiServer.proxyPaths` entry may hold. */
+export const API_PROXY_PATH_MAX_CHARS = 256

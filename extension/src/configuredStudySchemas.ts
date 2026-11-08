@@ -39,6 +39,8 @@ import {
   REPOSITORY_BROWSER_PROFILE,
   REPOSITORY_INSPECTION_LIMIT,
   REPOSITORY_LITERAL_LIMIT_CHARS,
+  API_PROXY_PATHS_MAX_ENTRIES,
+  API_PROXY_PATH_MAX_CHARS,
 } from './constants'
 import { repositoryItemSchema } from './identitySchemas'
 import { savedLearningSummarySchema } from './learningSummarySchemas'
@@ -94,20 +96,33 @@ const apiRequestRouteSchema = z.enum(['api-origin', 'dev-server-proxy'])
 const apiRequestProxyPathSchema = z
   .string()
   .min(1)
-  .max(256)
+  .max(API_PROXY_PATH_MAX_CHARS)
   .regex(
     /^\/[^?#*]*$/,
     'Use a prefix that starts with "/" and has no "*", "?" or "#".',
   )
+  // A control character would reach the saved text and sentences.
+  .refine((value) => !/\p{Cc}/u.test(value), {
+    message: 'Use a prefix without control characters.',
+  })
 /**
  * What an unattributed fact of a proxy-aware run watched: ports and declared prefixes only, never host strings.
  * `devServerPort` is present only when `proxyPaths` is not empty.
  */
-const apiRequestWatchedSchema = z.strictObject({
-  apiPort: z.number().int().min(1).max(65_535),
-  devServerPort: z.number().int().min(1).max(65_535).optional(),
-  proxyPaths: z.array(apiRequestProxyPathSchema).max(8),
-})
+const apiRequestWatchedSchema = z
+  .strictObject({
+    apiPort: z.number().int().min(1).max(65_535),
+    devServerPort: z.number().int().min(1).max(65_535).optional(),
+    proxyPaths: z
+      .array(apiRequestProxyPathSchema)
+      .max(API_PROXY_PATHS_MAX_ENTRIES),
+  })
+  // A dev server port names the proxy route, so it only goes with declared prefixes.
+  .refine(
+    (watched) =>
+      watched.devServerPort === undefined || watched.proxyPaths.length > 0,
+    { message: 'devServerPort is kept only with a non-empty proxyPaths.' },
+  )
 export type ApiRequestWatched = z.infer<typeof apiRequestWatchedSchema>
 
 /**

@@ -350,7 +350,10 @@ test('refuses apiRequest outside format 19 and a format that disagrees with the 
   // Act
   const results = [nextStudy, asFifteen, asNineteenWithout].map(refusalOf)
   // Assert
-  assert.equal(results[0], 'Only a study of format 19 keeps an apiRequest.')
+  assert.equal(
+    results[0],
+    'Only a study of format 19 or 20 keeps an apiRequest.',
+  )
   assert.equal(results[1], 'Configured archive and intent versions disagree.')
   assert.equal(results[2], 'Configured archive and intent versions disagree.')
 })

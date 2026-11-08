@@ -201,10 +201,11 @@ test('proxyPaths accepts one to eight well-formed prefixes', () => {
     '/x/y/z',
     '/uploads',
   ])
+  const encoded = withProxyPaths(['/api%20v1', '/api/v1'])
   // Act
-  const issues = [one, eight].map(issuesOf)
+  const issues = [one, eight, encoded].map(issuesOf)
   // Assert
-  assert.deepEqual(issues, ['accepted', 'accepted'])
+  assert.deepEqual(issues, ['accepted', 'accepted', 'accepted'])
 })
 
 const PROXY_PATH_REFUSALS: ReadonlyArray<{
@@ -258,6 +259,36 @@ const PROXY_PATH_REFUSALS: ReadonlyArray<{
     rule: 'an entry of 257 characters',
     proxyPaths: [`/${'a'.repeat(256)}`],
     expected: `apiServer.proxyPaths.0: apiServer.proxyPaths[0] "/${'a'.repeat(256)}" is 257 characters long; a prefix holds at most 256.`,
+  },
+  {
+    rule: 'a space in the prefix',
+    proxyPaths: ['/api v1'],
+    expected:
+      'apiServer.proxyPaths.0: apiServer.proxyPaths[0] "/api v1" holds " ", which a URL path does not; write the path as the page sends it (percent-encoded, for example "%20" for a space).',
+  },
+  {
+    rule: 'a newline in the prefix',
+    proxyPaths: ['/api\n'],
+    expected:
+      'apiServer.proxyPaths.0: apiServer.proxyPaths[0] "/api\\n" holds "\\n", which a URL path does not; write the path as the page sends it (percent-encoded, for example "%20" for a space).',
+  },
+  {
+    rule: 'a backslash in the prefix',
+    proxyPaths: ['/a\\b'],
+    expected:
+      'apiServer.proxyPaths.0: apiServer.proxyPaths[0] "/a\\\\b" holds "\\\\", which a URL path does not; write the path as the page sends it (percent-encoded, for example "%20" for a space).',
+  },
+  {
+    rule: 'a malformed percent escape',
+    proxyPaths: ['/a%zz'],
+    expected:
+      'apiServer.proxyPaths.0: apiServer.proxyPaths[0] "/a%zz" holds "%", which a URL path does not; write the path as the page sends it (percent-encoded, for example "%20" for a space).',
+  },
+  {
+    rule: 'only slashes names no corrected value',
+    proxyPaths: ['//'],
+    expected:
+      'apiServer.proxyPaths.0: apiServer.proxyPaths[0] "//" must not end with "/"; declare the API\'s own prefix, for example "/api".',
   },
   {
     rule: 'a duplicate names both indexes',

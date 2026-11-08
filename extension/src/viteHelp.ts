@@ -474,7 +474,7 @@ const VITE_PROXY_PATHS_HELP = {
     'Copy a key only when it is a string whose target is http: on a loopback host (localhost, 127.0.0.1 or ::1) and the port apiServer.port declares: protocol, host and port, never the port alone. A regular-expression key that is a literal prefix counts as that prefix (^/api is /api).',
   omit: 'Omit an entry whose destination cannot be established: another host, https, a function or environment-variable target, a context array, or a regular-expression key that is not a literal prefix. Tell the learner those requests cannot be tied to the API.',
   shape:
-    'Write /api, not /api/ (a trailing slash is refused and the message names the corrected value). 1 to 8 entries, at most 256 characters each, no *, ? or #, not /, no duplicates. Every entry starts with /.',
+    'Write /api, not /api/ (a trailing slash is refused and the message names the corrected value). 1 to 8 entries, at most 256 characters each, no *, ? or #, not /, no duplicates. Every entry starts with / and holds only URL path characters, written as the page sends them (a space is %20).',
   limits: [
     'Vite forwards a key as a plain string prefix, so /api also forwards /apiculture, while Codebook attributes a request only at a / boundary (/api and /api/items, not /apiculture).',
     'Websocket and other non-http traffic is never attributed.',

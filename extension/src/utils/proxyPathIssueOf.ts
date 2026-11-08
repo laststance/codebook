@@ -1,11 +1,30 @@
-/** The most prefixes `apiServer.proxyPaths` may declare. */
-const PROXY_PATH_LIMIT = 8
-
-/** The most characters one `apiServer.proxyPaths` entry may hold. */
-const PROXY_PATH_MAX_LENGTH = 256
+import {
+  API_PROXY_PATH_MAX_CHARS,
+  API_PROXY_PATHS_MAX_ENTRIES,
+} from '../constants'
 
 /** The characters a prefix cannot hold: a wildcard, a query and a fragment would make it a pattern, not a literal prefix. */
 const FORBIDDEN_PROXY_PATH_CHARACTER = /[*?#]/
+
+/** One character of a URL path (RFC 3986 `pchar` without `%`, plus "/"); a `%` is checked apart because it must start a well-formed `%XX`. */
+const URL_PATH_CHARACTER = /[A-Za-z0-9\-._~!$&'()+,;=:@/]/
+
+/**
+ * Finds the first character a path prefix may not hold: not a URL path character, or a `%` not followed by two hex digits.
+ * @returns The character as {@link JSON.stringify} shows it (so a space or newline is visible), or `undefined` when every character is allowed.
+ * @example firstForbiddenPathCharacterOf('/api v1') // => '" "'
+ */
+function firstForbiddenPathCharacterOf(value: string): string | undefined {
+  for (const [index, character] of Array.from(value).entries()) {
+    // A "%" is allowed only as the start of "%XX".
+    if (character === '%') {
+      if (!/^%[0-9A-Fa-f]{2}/.test(value.slice(index))) return '"%"'
+      continue
+    }
+    if (!URL_PATH_CHARACTER.test(character)) return JSON.stringify(character)
+  }
+  return undefined
+}
 
 /** One refusal of `apiServer.proxyPaths`. */
 export interface ProxyPathIssue {
@@ -43,14 +62,19 @@ const PROXY_PATH_RULES: readonly ProxyPathRule[] = [
       'is the root, which matches every request; declare the API\'s own prefix, for example "/api".',
   },
   {
-    isBroken: (value) => value.length > PROXY_PATH_MAX_LENGTH,
+    isBroken: (value) => value.length > API_PROXY_PATH_MAX_CHARS,
     describe: (value) =>
-      `is ${value.length} characters long; a prefix holds at most ${PROXY_PATH_MAX_LENGTH}.`,
+      `is ${value.length} characters long; a prefix holds at most ${API_PROXY_PATH_MAX_CHARS}.`,
   },
   {
     isBroken: (value) => FORBIDDEN_PROXY_PATH_CHARACTER.test(value),
     describe: () =>
       'holds "*", "?" or "#"; declare a literal path prefix without a wildcard, query or fragment.',
+  },
+  {
+    isBroken: (value) => firstForbiddenPathCharacterOf(value) !== undefined,
+    describe: (value) =>
+      `holds ${firstForbiddenPathCharacterOf(value)}, which a URL path does not; write the path as the page sends it (percent-encoded, for example "%20" for a space).`,
   },
   {
     isBroken: (value) => !value.startsWith('/'),
@@ -59,8 +83,11 @@ const PROXY_PATH_RULES: readonly ProxyPathRule[] = [
   },
   {
     isBroken: (value) => value.endsWith('/'),
+    // Slashes only (for example "//") strip to nothing: no corrected value can be named.
     describe: (value) =>
-      `must not end with "/"; declare ${JSON.stringify(withoutTrailingSlashes(value))}.`,
+      withoutTrailingSlashes(value) === ''
+        ? 'must not end with "/"; declare the API\'s own prefix, for example "/api".'
+        : `must not end with "/"; declare ${JSON.stringify(withoutTrailingSlashes(value))}.`,
   },
 ]
 
@@ -80,12 +107,12 @@ export function proxyPathIssueOf(
   if (proxyPaths.length === 0)
     issues.push({
       index: undefined,
-      message: `apiServer.proxyPaths is empty; declare 1 to ${PROXY_PATH_LIMIT} prefixes or omit it.`,
+      message: `apiServer.proxyPaths is empty; declare 1 to ${API_PROXY_PATHS_MAX_ENTRIES} prefixes or omit it.`,
     })
-  else if (proxyPaths.length > PROXY_PATH_LIMIT)
+  else if (proxyPaths.length > API_PROXY_PATHS_MAX_ENTRIES)
     issues.push({
       index: undefined,
-      message: `apiServer.proxyPaths declares ${proxyPaths.length} entries; declare at most ${PROXY_PATH_LIMIT}.`,
+      message: `apiServer.proxyPaths declares ${proxyPaths.length} entries; declare at most ${API_PROXY_PATHS_MAX_ENTRIES}.`,
     })
   const firstIndexOf = new Map<string, number>()
   for (const [index, value] of proxyPaths.entries()) {

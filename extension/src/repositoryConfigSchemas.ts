@@ -765,10 +765,13 @@ function apiServerMinimumApiOf(adapter: string): string {
  * Words the way out of a server participant refusal: the adapters that can start the app's own API name `apiServer` and the API that first accepts it.
  * Called by {@link refuseBrowserOnlyServerParticipants}.
  * @param adapter - The configuration's adapter.
- * @returns A sentence starting with a space, or an empty string for an adapter with no API server.
- * @example apiServerWayOutOf('vite-dev') // => " To pause in the app's own Node API, declare apiServer (API 1.38)."
+ * @param version - The configuration's version; only version 3 accepts `apiServer`.
+ * @returns A sentence starting with a space, or an empty string for an adapter with no API server or a configuration version that refuses `apiServer`.
+ * @example apiServerWayOutOf('vite-dev', 3) // => " To pause in the app's own Node API, declare apiServer (API 1.38)."
  */
-function apiServerWayOutOf(adapter: string): string {
+function apiServerWayOutOf(adapter: string, version: number): string {
+  // Only a version 3 configuration accepts apiServer; a version 2 one refuses the key, so the sentence would point at a dead end.
+  if (version !== OPERATIONS_CONFIG_VERSION) return ''
   if (adapter !== 'expo-web-dev' && adapter !== 'vite-dev') return ''
   return ` To pause in the app's own Node API, declare apiServer (API ${apiServerMinimumApiOf(adapter)}).`
 }
@@ -812,6 +815,7 @@ function refuseBrowserOnlyServerParticipants(
         path,
         message: `adapter "${configuration.adapter}" supports browser stops only; participant "server" is declared at configuration.${path.join('.')}.${apiServerWayOutOf(
           configuration.adapter,
+          configuration.version,
         )}`,
       })
   refuseExpoApiRouteStops(configuration, context)

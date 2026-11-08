@@ -353,6 +353,39 @@ test('format 20 refuses route fields that disagree: proxyPath not a member of ap
   ])
 })
 
+// Value: protects=CR-7 an unattributed fact whose watched names a devServerPort but no proxyPaths is not a saved shape; fails_when=such a watched decodes; no_claim=the wording outside the refinement sentence
+test('format 20 refuses a watched with a devServerPort and an empty proxyPaths', () => {
+  // Arrange
+  const study = viteApiServerStudy({
+    apiRequest: {
+      ...UNATTRIBUTED,
+      watched: { apiPort: 8787, devServerPort: 5173, proxyPaths: [] },
+    } as ApiRequestFact,
+  })
+  // Act
+  const refusal = refusalOf(study)
+  // Assert
+  assert.match(
+    refusal,
+    /devServerPort is kept only with a non-empty proxyPaths/,
+  )
+})
+
+// Value: protects=OCR3-1 a stored proxyPath holds no control character; fails_when=a newline in a watched prefix decodes; no_claim=the wording
+test('format 20 refuses a watched proxy prefix that holds a control character', () => {
+  // Arrange
+  const study = viteApiServerStudy({
+    apiRequest: {
+      ...UNATTRIBUTED,
+      watched: { apiPort: 8787, devServerPort: 5173, proxyPaths: ['/api\n'] },
+    } as ApiRequestFact,
+  })
+  // Act
+  const refusal = refusalOf(study)
+  // Assert
+  assert.match(refusal, /Use a prefix without control characters/)
+})
+
 // Value: protects=D48 a prefix that equals a masked env value attributes, saves and reopens with the masked stored path; fails_when=format 20 demands the stored path continue the unmasked prefix; no_claim=the real masking of an environment value
 test('a prefix equal to a masked env value attributes, saves and reopens with the masked path', async (context) => {
   // Arrange

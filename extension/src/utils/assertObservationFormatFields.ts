@@ -185,7 +185,7 @@ function assertApiRequestFacts(
       : undefined
   for (const observation of study.observations) {
     if (!keepsApiRequest && observation.apiRequest !== undefined)
-      throw new Error('Only a study of format 19 keeps an apiRequest.')
+      throw new Error('Only a study of format 19 or 20 keeps an apiRequest.')
     if (study.version === EXPO_WEB_API_SERVER_STUDY_VERSION)
       assertFormat19Observation(observation, stops, apiServer)
     if (study.version === VITE_API_SERVER_STUDY_VERSION)
