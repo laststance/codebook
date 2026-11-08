@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.2.101.0] - 2026-11-08 (development candidate)
+
+Cycle 0099 ([Issue #258](https://github.com/laststance/codebook/issues/258)), a feature cycle. **An Expo web app and its own Node API now run and pause together.** When a web app calls an API that is a separate Node process in the same repository, the learner used to see only the page side, or only a Node server started on its own. Codebook now starts the app's API beside Metro in one run, pauses in the API handler during the request the page operation sends, says which page request the pause belongs to, and saves the browser and API stops in one replay.
+
+### Added
+- **Expo API server route (MCP API 1.37):** a version 3 `expo-web-dev` run may declare `apiServer: { packageRoot, entry, loader?, port }`. Codebook checks both ports before anything starts, starts the API with Node's inspector and the repository's own tsx in `apiServer.packageRoot` (setting no variable), attaches the editor's debugger to it as the run's server participant, waits until it listens on the declared port, then starts Metro. A server stop in the API's source pauses during the request the page operation sends, with native Variables and call stack; it is armed only after its own operation, so an earlier request to the same handler does not stop it.
+- **Which request the pause belongs to:** each API pause names the page request it was tied to by time (method and path without the query, and the operation that sent it), or says that it could not be tied to exactly one page request; Codebook never reads the request inside the API. The reopened replay names the pause `After operation <n> · API handler <METHOD> <path>` and shows that sentence for the selected stop.
+- **What ran in the API:** an API stop is checked against tsx's inline source map at the pause; a differing source is refused with `source-drift` and a script whose map holds no content for the stop file with `source-unverifiable`, so the declared line is never shown for code that may not have run.
+- **Signing in within the run:** the help and the skill tell the chat to reach a screen behind sign-in through the app's own form inside the run, with the password typed by the learner into Codebook's masked box (`secret: "ask-learner"`), instead of a saved session.
+- **Study format 19:** a saved Expo run that declares `apiServer` keeps the request fact of each API pause; Codebook 0.2.100 and older list it as saved by a newer Codebook.
+- **Refusals:** the node-server codes (`PORT_UNAVAILABLE`, `LISTENER_NOT_OWNED`, `SERVER_NOT_LISTENING`, `SERVER_EXITED`, `RUNTIME_FAILED` and the others) with `details.participant: "apiServer"`, an API port equal to the web port (`api-port-conflict`), overlapping folders, a stop outside its participant's folder, a server stop at operation 0, and a TypeScript entry with the plain `node` loader.
+
+### Changed
+- **The API's processes end with the run:** on completion, failure or cancellation Codebook ends the API's process group, killing a paused API before its debugger detaches; a group that cannot be confirmed gone fails the Stop with `cleanup: "failed"` until a retried Stop ends it, and a process group whose id now belongs to another process is never signalled.
+- **API output:** the API's output is journaled within a fixed bound with the learner's secrets masked; the debugger-disconnect notice is read from whole output lines.
+- **A stop the API never reaches:** `SERVER_STOP_NOT_REACHED` for an API stop lists its possibilities, among them the app's own request deadline running out while an earlier stop held the request.
+- **Development target (AGENTS.md):** an Expo web app run together with its own Node API server is trialled on the pinned P08 clone's `apps/app` with `apps/api`.
+
 ## [0.2.100.0] - 2026-11-08 (development candidate)
 
 Cycle 0098 ([Issue #256](https://github.com/laststance/codebook/issues/256)), a feature cycle. **A library's Next.js Example now runs on the checked-out library.** When an Example of a library repository installs the library's published package, as `reduxjs/react-redux`'s `examples/publish-ci/rr-rsc-context` does for a React Server Component page, the learner used to read one release while another ran. Codebook now builds and packs the checked-out library, has the Example's own `next dev --webpack` serve the packed copy in every compilation, and says which copy the server and the page actually loaded.
