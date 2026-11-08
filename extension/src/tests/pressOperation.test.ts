@@ -417,3 +417,30 @@ test('a real pause inside the keydown handler holds the release until the page i
     ['keydown', 'keypress', 'keyup'],
   )
 })
+
+// Value: protects=B3: a key never goes to another element that merely shares every attribute with the classified recipient; fails_when=focus moved between two attribute-identical buttons after the check and the key is still sent; no_claim=elements removed and re-created by a framework
+test('a press is refused when focus moved to an attribute-identical button after the check', async (context) => {
+  // Arrange
+  const page = await openRealChromePage(
+    context,
+    `<!doctype html><body><button type="button">Same</button><button type="button">Same</button><script>
+window.events = [];
+document.addEventListener('keydown', (event) => window.events.push({ type: 'keydown', key: event.key, target: event.target.tagName.toLowerCase() }), true);
+</script></body>`,
+  )
+  if (!page) return
+  await read(page, 'document.querySelectorAll("button")[0].focus()')
+  const prepared = await prepareOperation(portOf(page), {
+    index: 1,
+    total: 1,
+    operation: open('Enter'),
+  })
+  await read(page, 'document.querySelectorAll("button")[1].focus()')
+  // Act
+  const failure = await prepared.send(HOOKS).catch((error) => error)
+  // Assert
+  assert.ok(failure instanceof OperationRefusal)
+  assert.equal(failure.reason, 'press-focus-changed')
+  assert.equal(failure.sent, 'not-sent')
+  assert.deepEqual(await read(page, 'window.events'), [])
+})

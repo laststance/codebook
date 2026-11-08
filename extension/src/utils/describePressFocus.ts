@@ -15,12 +15,15 @@ export type PressFocusDescription = {
   isTextEntry?: boolean
   isInFrame?: boolean
   isFocused?: boolean
+  /** Only on a read with `focus: true` and no selector: whether the recipient is the very element the earlier `focus: false` read classified; `false` when none was remembered or it is gone. */
+  isSameRecipient?: boolean
 }
 
 /**
  * Describes, inside the owned page, the element a key press would reach; serialized with `toString()`, so everything it uses is declared inside it.
  *
  * Why it exists: a press goes to whatever holds the focus, so Codebook classifies that recipient (secret, text entry, frame) before the run and again right before the key is sent. Sent by `Runtime.evaluate` from `preparePressOperation` (`focus: false`: classify only) and from the press send (`focus: true`: focus the target, then classify the actual recipient); exported so a Node test runs it against a fake page.
+ * Without a selector the `focus: false` read remembers the recipient as a `WeakRef` under `Symbol.for('codebook.press.recipient')` on `globalThis` (no DOM change), and the `focus: true` read reports whether the recipient is that same element (`isSameRecipient`), since two elements can share every attribute.
  * With `selector` it resolves the unique target on an owned origin, which must be visible, enabled, outside `[inert]` and focusable; without it, the document's active element. The subject it classifies is the recipient: the focused element resolved through open shadow roots, so a `delegatesFocus` host is judged by the control inside it. A closed shadow root hides its focus, so the host is the subject then.
  * @param input - The optional selector, the loopback origins the page may be at and whether to apply the focus to the target first.
  * @returns The {@link PressFocusDescription}; with `focus: true` and a target that did not take focus, `reason: 'target-not-focusable'` and the attributes of the target itself.
@@ -142,13 +145,32 @@ export function describePressFocus(input: {
       isFocused: recipientOf() === subject,
     }
   }
+  /** Remembers the recipient on a classify-only read; on the send read says whether it is still the remembered element (a missing or collected one is not). */
+  const sameRecipientAs = (subject: Element): boolean | undefined => {
+    const holder = globalThis as unknown as Record<
+      symbol,
+      WeakRef<Element> | undefined
+    >
+    const slot = Symbol.for('codebook.press.recipient')
+    if (!input.focus) {
+      holder[slot] = new WeakRef(subject)
+      return undefined
+    }
+    return holder[slot]?.deref() === subject
+  }
   /** Describes the recipient of a press without a selector: the focused element, or the body when nothing has focus. */
-  const describeFocusedElement = (): PressFocusDescription =>
-    describeSubject(
-      recipientOf() ?? document.body,
+  const describeFocusedElement = (): PressFocusDescription => {
+    const subject = recipientOf() ?? document.body
+    const description = describeSubject(
+      subject,
       document.activeElement,
       undefined,
     )
+    const isSameRecipient = sameRecipientAs(subject)
+    return isSameRecipient === undefined
+      ? description
+      : { ...description, isSameRecipient }
+  }
   /** Describes the named target of a press, focusing it first when asked. */
   const describeTarget = (selector: string): PressFocusDescription => {
     const resolved = resolveTarget(selector)

@@ -4,10 +4,15 @@ import { test, type TestContext } from 'node:test'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
+import {
+  readOperationConfirmationFacts,
+  type OperationPort,
+} from '../configuredOperations'
 import type {
   OperationsConfirmationNotice,
   SavedSessionOperationsQuestion,
 } from '../operationsConfirmationTypes'
+import type { Cdp } from '../runtimeSupport/cdp'
 import { startServer } from '../server'
 
 import { configuredServiceHarness } from './utils/configuredServiceHarness'
@@ -697,4 +702,44 @@ test('a declined confirmation reaches the chat as an error result', async (conte
   assert.equal(result.isError, true)
   assert.equal(structured.ok, false)
   assert.equal(structured.error.code, 'OPERATIONS_NOT_CONFIRMED')
+})
+
+// Value: protects=D36: a press is read like a click for the saved-session confirmation, so no page read carries its selector and it is never reported as a missing control; fails_when=a press selector reaches the page read or a press reads as not found; no_claim=the dialog wording (savedSessionConfirmationDialog.test.ts)
+test('the confirmation facts read a press like a click and send no press selector to the page', async () => {
+  // Arrange
+  const expressions: string[] = []
+  const port: OperationPort = {
+    pageCdp: async () =>
+      ({
+        request: async (_method: string, params: { expression: string }) => {
+          expressions.push(params.expression)
+          return { result: { value: [null, null, { found: true }] } }
+        },
+      }) as unknown as Cdp,
+    origins: () => ['http://127.0.0.1:1'],
+    assertCurrent: (): void => {},
+    millisecondsSinceNavigation: () => Number.POSITIVE_INFINITY,
+    isPagePaused: () => false,
+    sleep: async (): Promise<void> => {},
+    readClickPoint: async () => ({ x: 0, y: 0 }),
+  }
+  // Act
+  const facts = await readOperationConfirmationFacts(port, [
+    { kind: 'press', title: 'Open palette', key: 'Control+k' },
+    {
+      kind: 'press',
+      title: 'Open panel',
+      key: 'Enter',
+      selector: '#panel-opener',
+    },
+    { kind: 'text', title: 'Memo', selector: '#memo', text: 'hello' },
+  ])
+  // Assert
+  assert.deepEqual(facts, [
+    { index: 1, found: true, secret: false },
+    { index: 2, found: true, secret: false },
+    { index: 3, found: true, secret: false },
+  ])
+  assert.equal(expressions.length, 1)
+  assert.equal(expressions[0]!.includes('#panel-opener'), false)
 })

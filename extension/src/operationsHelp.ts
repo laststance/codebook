@@ -335,6 +335,7 @@ export function operationsHelp() {
         'Name selector to send it to that control: Codebook focuses it first. It must match one visible enabled focusable element in the top document.',
         "A declared selector that does not match exactly one visible enabled element (outside [inert], on the application's origin) is INPUT_NOT_ACCEPTED at operations[i].selector with no reason: fix the selector.",
         'A key never goes to a secret control, and without a selector it never goes to a text-entry control, where it would be typed (see the refusals table).',
+        'Focusing the declared selector runs the app\'s own focus handlers, so a refusal after that step (for example press-after-already-holds) still sent no key, with sent "not-sent", but reports sideEffects "unknown": ask the learner before starting a new run.',
       ],
       afterRequired:
         "A press that is not the last operation must declare its own after: a condition only the opened UI satisfies, derived from the app's own source. Omitting it is INVALID_CONFIGURATION at start, naming operations[i].after. For the last press the run-level after applies. A condition that already holds before the key proves nothing, and the press is refused with press-after-already-holds.",

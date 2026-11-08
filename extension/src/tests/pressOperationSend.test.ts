@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
+import { mock, test } from 'node:test'
 
 import {
   OperationRefusal,
@@ -371,4 +371,212 @@ test('a secret control inside a shadow host is refused naming the host', () => {
     refusal.message,
     'Operation 1 (Open) was not sent: the key would go to <input type="password"> inside <x-field>, which reads as a secret control (type=password). A key never goes to a secret control: click the submit control, or use secret: "ask-learner" on a text operation.',
   )
+})
+
+const PRESS_WITH_SELECTOR = {
+  kind: 'press',
+  title: 'Open palette',
+  key: 'Control+k',
+  selector: '#opener',
+} as const
+
+/** The refusal a run's `beforeKey` hook raises when the press's own after already holds. */
+function afterAlreadyHolds(): OperationRefusal {
+  return new OperationRefusal(
+    'INPUT_NOT_ACCEPTED',
+    'The after already holds.',
+    {
+      operationIndex: 1,
+      path: 'operations[0].after',
+      reason: 'press-after-already-holds',
+    },
+  )
+}
+
+/** Prepares a press on a fake body page and sends it with the hooks, returning what it threw. */
+async function sendFailureOf(
+  operation: typeof PRESS | typeof PRESS_WITH_SELECTOR,
+  hooks: OperationSendHooks,
+  state: { isPaused: () => boolean } = { isPaused: () => false },
+) {
+  const prepared = await prepareOperation(portOf(fakePage({}).cdp, state), {
+    index: 1,
+    total: 1,
+    operation,
+  })
+  return prepared.send(hooks).catch((error) => error)
+}
+
+// Value: protects=B2: the press's own after is read again after the send-time focus step, before any key, so a focus handler that satisfies it cannot let an ignored key pass as verified; fails_when=the key is sent although the beforeKey hook refused, or the input moment is reported; no_claim=the run's reading of the conditions (pressOperationRun.test.ts)
+test('a press whose after holds once its target took focus sends no key and reports no input', async () => {
+  // Arrange
+  const page = fakePage({})
+  const recorded = recordingHooks()
+  const prepared = await prepareOperation(
+    portOf(page.cdp, { isPaused: () => false }),
+    { index: 1, total: 1, operation: PRESS_WITH_SELECTOR },
+  )
+  // Act
+  const failure = await prepared
+    .send({
+      ...recorded.hooks,
+      beforeKey: async () => {
+        throw afterAlreadyHolds()
+      },
+    })
+    .catch((error) => error)
+  // Assert
+  assert.ok(failure instanceof OperationRefusal)
+  assert.equal(failure.reason, 'press-after-already-holds')
+  assert.deepEqual(page.keyRequests, [])
+  assert.deepEqual(recorded.moments, [])
+})
+
+// Value: protects=B4: once the send-time focus step ran on a declared target (the app's focus handlers executed), a refusal still sent no key but reports side effects unknown; fails_when=the refusal claims side effects none after the focus step, or turns unknown for a press that never focused anything; no_claim=which refusals the page raises
+test('a refusal after the focus step of a declared selector reports side effects unknown, and none without a selector', async () => {
+  // Arrange
+  const hooks: OperationSendHooks = {
+    ...recordingHooks().hooks,
+    beforeKey: async () => {
+      throw afterAlreadyHolds()
+    },
+  }
+  // Act
+  const withSelector = await sendFailureOf(PRESS_WITH_SELECTOR, hooks)
+  const withoutSelector = await sendFailureOf(PRESS, hooks)
+  // Assert
+  assert.deepEqual(
+    [withSelector.sent, withSelector.sideEffects],
+    ['not-sent', 'unknown'],
+  )
+  assert.deepEqual(
+    [withoutSelector.sent, withoutSelector.sideEffects],
+    ['not-sent', 'none'],
+  )
+})
+
+// Value: protects=B4: a page paused right before the key, after the focus step, is refused with side effects unknown; fails_when=the late pause claims none although the focus handlers ran; no_claim=the run's pause state
+test('a pause that begins after the focus step reports side effects unknown', async () => {
+  // Arrange
+  let pauseReads = 0
+  // The check at the start of the send passes; the guard right before the key sees the pause.
+  const isPaused = (): boolean => {
+    pauseReads += 1
+    return pauseReads >= 2
+  }
+  // Act
+  const failure = await sendFailureOf(
+    PRESS_WITH_SELECTOR,
+    recordingHooks().hooks,
+    { isPaused },
+  )
+  // Assert
+  assert.equal(failure.code, 'RUN_FAILED_UNEXPECTEDLY')
+  assert.deepEqual([failure.sent, failure.sideEffects], ['not-sent', 'unknown'])
+})
+
+// Value: protects=L3: a page that is paused when the press is sent is refused before the focus read, which would wait for the request timeout on a paused page; fails_when=the focus read is still issued on a paused page; no_claim=the wording of the refusal
+test('a press into a page paused before the send issues no focus read', async () => {
+  // Arrange
+  let isPaused = false
+  let focusReads = 0
+  const page = fakePage({
+    reading: () => {
+      focusReads += 1
+      return BODY_READING
+    },
+  })
+  const prepared = await prepareOperation(
+    portOf(page.cdp, { isPaused: () => isPaused }),
+    { index: 1, total: 1, operation: PRESS },
+  )
+  isPaused = true
+  // Act
+  const failure = await prepared
+    .send(recordingHooks().hooks)
+    .catch((error) => error)
+  // Assert
+  assert.equal(failure.code, 'RUN_FAILED_UNEXPECTEDLY')
+  assert.deepEqual([failure.sent, failure.sideEffects], ['not-sent', 'none'])
+  assert.equal(focusReads, 1)
+})
+
+// Value: protects=L2: an unready reading with a reason no rule lists never falls through to a send; fails_when=a key is sent although the page said the target is not ready; no_claim=the reasons the page can give
+test('a press is refused as an unusable target when the page reports not ready with an unlisted reason', async () => {
+  // Arrange
+  const page = fakePage({
+    reading: () => ({ ...BODY_READING, ready: false, reason: 'unlisted' }),
+  })
+  // Act
+  const failure = await prepareOperation(
+    portOf(page.cdp, { isPaused: () => false }),
+    { index: 1, total: 1, operation: PRESS },
+  ).catch((error) => error)
+  // Assert
+  assert.ok(failure instanceof OperationRefusal)
+  assert.equal(failure.code, 'INPUT_NOT_ACCEPTED')
+  assert.equal(failure.reason, undefined)
+  assert.equal(failure.path, 'operations[0]')
+  assert.deepEqual(page.keyRequests, [])
+})
+
+// Value: protects=B3: a recipient the page says is another element than the classified one is refused as moved focus although every attribute matches; fails_when=an attribute-identical other element receives the key; no_claim=how the page decides identity (pressOperation.test.ts, real Chrome)
+test('a press is refused when the page reports another recipient with the same attributes', async () => {
+  // Arrange
+  let isSend = false
+  const page = fakePage({
+    reading: () =>
+      isSend ? { ...BODY_READING, isSameRecipient: false } : BODY_READING,
+  })
+  const prepared = await prepareOperation(
+    portOf(page.cdp, { isPaused: () => false }),
+    { index: 1, total: 1, operation: PRESS },
+  )
+  isSend = true
+  // Act
+  const failure = await prepared
+    .send(recordingHooks().hooks)
+    .catch((error) => error)
+  // Assert
+  assert.ok(failure instanceof OperationRefusal)
+  assert.equal(failure.reason, 'press-focus-changed')
+  assert.deepEqual(page.keyRequests, [])
+})
+
+// Value: protects=L4: the wait for a paused page ends by elapsed time, so slow polls cannot stretch the bound past the run timeout; fails_when=the wait counts nominal poll intervals and keeps polling after the clock passed the bound; no_claim=the wait before the first poll
+test('a key release waiting on a paused page gives up by elapsed time, not by counted polls', async () => {
+  // Arrange
+  let nowMs = 0
+  let sleeps = 0
+  let isAfterKeyDown = false
+  const clock = mock.method(performance, 'now', () => nowMs)
+  const page = fakePage({
+    onKeyRequest: (type) => {
+      if (type === 'keyDown') isAfterKeyDown = true
+    },
+  })
+  const port: OperationPort = {
+    ...portOf(page.cdp, { isPaused: () => isAfterKeyDown }),
+    sleep: async (): Promise<void> => {
+      sleeps += 1
+      // Each real poll takes far longer than its nominal interval.
+      nowMs += 400_000
+    },
+  }
+  const prepared = await prepareOperation(port, {
+    index: 1,
+    total: 1,
+    operation: PRESS,
+  })
+  // Act
+  const failure = await prepared
+    .send(recordingHooks().hooks)
+    .catch((error) => error)
+  clock.mock.restore()
+  // Assert
+  assert.equal(
+    failure.message,
+    'The page stayed paused before the key was released.',
+  )
+  assert.equal(sleeps, 2)
 })

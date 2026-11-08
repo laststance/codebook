@@ -13934,7 +13934,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Refuses a press whose own `after` conditions already hold on the page: a result that is true before the key cannot prove the key caused it.
-   * Called by {@link dispatchOperation} right after {@link assertOperationConditions}; it only reads.
+   * Called by {@link dispatchOperation} right after {@link assertOperationConditions} and again by the press's `beforeKey` hook right after its send-time focus step; it only reads.
    * @param index - The operation about to be sent (1-based).
    * @param operation - Its declaration; anything but a press that declares `after` passes.
    * @throws {@link OperationRefusal} `INPUT_NOT_ACCEPTED` with reason `press-after-already-holds` and `sent: 'not-sent'` when the conditions hold.
@@ -13975,6 +13975,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private operationHooks(index: number, operation: RepositoryOperation) {
     const record = this.operationRecords[index - 1]!
     return {
+      // A press's focus step can satisfy its own after conditions: they are read again right before the key (D30, after the focus).
+      beforeKey: (): Promise<void> =>
+        this.assertPressEffectNotYetPresent(index, operation),
       beforeInput: (): void => {
         this.assertServerRegistrationsHeld()
         this.operationsDispatched = index

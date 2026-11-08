@@ -319,3 +319,49 @@ test('two presses with the same after condition both complete', async (context) 
   // Assert
   assert.equal(run.view().operations?.[1]?.effect, 'after-verified')
 })
+
+// Value: protects=B2/B4: a press whose own after only holds once the focus step ran is refused before the key, with no key sent and side effects unknown; fails_when=the run sends the key, or reports side effects none after the app's focus handlers ran; no_claim=the page's real conditions (harness)
+test('a press whose after is satisfied by its own focus step is refused with nothing sent and side effects unknown', async (context) => {
+  // Arrange
+  const { run, suppressInputPause, keys } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    {
+      operations: {
+        operations: [
+          open,
+          {
+            kind: 'press',
+            title: 'Open palette',
+            key: 'Control+k',
+            selector: '#opener',
+            after: [{ kind: 'visible', selector: '#palette' }],
+          },
+          submit,
+        ],
+        stopOperations: [3],
+        press: { afterHoldsAfterFocus: true },
+      },
+    },
+  )
+  await run.prepare()
+  // The declared stop is only the run's requirement: the page runs past it.
+  suppressInputPause()
+  run.action('op-1', OPERATION_ACTION)
+  await waitUntil(() => run.view().operations?.[0]?.state === 'done', 'op 1')
+  // Act
+  run.action('op-2', OPERATION_ACTION)
+  await waitUntil(() => run.view().status === 'failed', 'the refusal')
+  // Assert
+  assert.deepEqual(plain(run.view().operationFailure), {
+    code: 'INPUT_NOT_ACCEPTED',
+    operationIndex: 2,
+    path: 'operations[1].after',
+    reason: 'press-after-already-holds',
+    sent: 'not-sent',
+    sideEffects: 'unknown',
+    logId: `${run.id}#2`,
+  })
+  assert.deepEqual(keys, [])
+})

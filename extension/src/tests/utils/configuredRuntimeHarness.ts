@@ -476,6 +476,8 @@ export async function configuredRuntimeHarness(
         dropKeys?: boolean
         /** Makes the press's own `after` hold from the start, as a result that is already on the page. */
         afterHoldsFromStart?: boolean
+        /** Makes the press's own `after` hold once the send-time focus read ran (`focus: true`), as a focus handler that opens the declared UI. */
+        afterHoldsAfterFocus?: boolean
         /** Makes the page pause over CDP only (no debugger `stopped`) as the key down is answered, as a handler paused by the adapter before its event arrives. */
         pausesAfterKeyDown?: boolean
         focus?: PressFocusDescription
@@ -1305,6 +1307,8 @@ export async function configuredRuntimeHarness(
       run.view().operations?.[inputsSeen - 1]?.state === 'done'
     return lastDone ? inputsSeen + 1 : Math.max(inputsSeen, 1)
   }
+  /** Whether the page received the send-time focus read of a press. */
+  let isPressFocusApplied = false
   /** Answers a press operation's own `after` read: not ready until the page saw the declared event, never when keys are dropped; `undefined` for any other expression. */
   const pressAfterAnswer = (expression: string | undefined): unknown => {
     const operationIndex = operationOfAfterRead()
@@ -1315,7 +1319,9 @@ export async function configuredRuntimeHarness(
       return undefined
     const press = operationsOption?.press
     const seen = pressEffects[press?.effectOn ?? 'keyup'].has(operationIndex)
-    return press?.afterHoldsFromStart || (!press?.dropKeys && seen)
+    return press?.afterHoldsFromStart ||
+      (press?.afterHoldsAfterFocus && isPressFocusApplied) ||
+      (!press?.dropKeys && seen)
       ? { ready: true }
       : { ready: false, failure: { conditionIndex: 0, reason: 'not-visible' } }
   }
@@ -1453,8 +1459,10 @@ export async function configuredRuntimeHarness(
     if (expression === 'location.origin') return pageOrigin
     if (expression === scrollExpression)
       return { scrolled: clickTargetScrolled }
-    if (expression?.includes('describePressFocus'))
+    if (expression?.includes('describePressFocus')) {
+      if (expression.includes('"focus":true')) isPressFocusApplied = true
       return operationsOption?.press?.focus ?? DEFAULT_PRESS_FOCUS
+    }
     const pressAnswer = pressAfterAnswer(expression)
     if (pressAnswer) return pressAnswer
     // An operation's own after conditions that a test chose never to hold.
