@@ -18,14 +18,21 @@ export type SignInRequiredFacts = {
  * Words the learner's step that sets up the saved session, for a run that opens the app at localhost or at a declared reverse-proxy origin.
  * Why it exists: the palette's Set Up Saved Session… always opens localhost, where the cookies of a run at a declared host do not apply, so the chat must name the notice's button instead. Called by {@link signInRequiredMessage}.
  * @param declaredOrigin - The origin a `reverseProxy` run declared, when it did.
+ * @param repeated - The step repeats an earlier setup (an expired session), so `again` joins the verb phrase before any parenthesis.
  * @returns The step as a verb phrase that follows `Ask the learner to`.
  * @example
  * setUpStepOf(undefined) // => 'run Codebook: Set Up Saved Session…'
+ * setUpStepOf(undefined, true) // => 'run Codebook: Set Up Saved Session… again'
  * setUpStepOf('https://app.example.test') // => "press Set Up Saved Session… in the editor's notice for this run, which sets it up at https://app.example.test (the command palette entry opens localhost, where it would not apply)"
  */
-function setUpStepOf(declaredOrigin: string | undefined): string {
-  if (declaredOrigin === undefined) return 'run Codebook: Set Up Saved Session…'
-  return `press Set Up Saved Session… in the editor's notice for this run, which sets it up at ${declaredOrigin} (the command palette entry opens localhost, where it would not apply)`
+function setUpStepOf(
+  declaredOrigin: string | undefined,
+  repeated = false,
+): string {
+  const again = repeated ? ' again' : ''
+  if (declaredOrigin === undefined)
+    return `run Codebook: Set Up Saved Session…${again}`
+  return `press Set Up Saved Session…${again} in the editor's notice for this run, which sets it up at ${declaredOrigin} (the command palette entry opens localhost, where it would not apply)`
 }
 
 /**
@@ -65,7 +72,7 @@ export function signInRequiredMessage(
     case 'setup-not-finished':
       return `${asked}; the saved-session setup of ${repositoryName} was closed before Done, so the run used a fresh profile and stopped ${when}. Ask the learner to ${setUp} and finish it with Done, then start one new run.`
     case 'redirected-to-sign-in':
-      return `${asked} although the run used the saved session of ${repositoryName}, so the saved session may have expired. The run stopped ${when}. Ask the learner to ${setUp} again, then start one new run.`
+      return `${asked} although the run used the saved session of ${repositoryName}, so the saved session may have expired. The run stopped ${when}. Ask the learner to ${setUpStepOf(facts.declaredOrigin, true)}, then start one new run.`
     case 'session-cookie-only':
       return `${asked}: ${repositoryName} keeps its sign-in only while the browser stays open, so a saved session cannot keep it. The run stopped ${when}. Only when the app's sign-in page offers to keep the learner signed in (such as Remember me), ask the learner to set up the saved session again with that choice; otherwise this flow cannot run with a saved session, so do not start another run for it.`
   }

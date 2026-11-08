@@ -1509,3 +1509,75 @@ test('a listed Vite app reads not ready with the shared Chrome gap', async (cont
   assert.equal(entry?.ready, false)
   assert.match(entry?.missing.join(' ') ?? '', /Chrome/i)
 })
+
+// Value: protects=a saved-session setup at a declared origin on a machine without a working Chrome fails with the usual prerequisite code and the lookup's own cause; fails_when=the setup throws a plain Error (no PREREQUISITE_MISSING code) or drops the lookup's sentence; no_claim=the throwaway browser check itself
+test('a saved session setup at a declared origin without a usable Chrome fails with PREREQUISITE_MISSING', async (context) => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-setup-chrome-'))
+  context.after(() => removeTestFolder(directory))
+  await writeFile(
+    join(directory, 'product.json'),
+    JSON.stringify({ version: '1.140.0', commit: 'fixture' }),
+  )
+  await mkdir(join(directory, 'dist'))
+  await writeFile(
+    join(directory, 'dist/build.json'),
+    JSON.stringify({
+      revision: 'fixture',
+      dirty: false,
+      sourceHash: 'fixture',
+    }),
+  )
+  const disposable = { dispose(): void {} }
+  const boundary = await loadModule<typeof EnvironmentModule>(
+    resolve(__dirname, '../environment.js'),
+    {
+      './configuredBrowserRun': {},
+      './utils/resolveExternalNodeExecutable': {
+        resolveExternalNodeExecutable: async () => '/external/node',
+      },
+      vscode: {
+        workspace: {
+          isTrusted: true,
+          workspaceFolders: [{ uri: { scheme: 'file', fsPath: directory } }],
+          getConfiguration: () => ({
+            get: (key: string, fallback: string) =>
+              key === 'chromeExecutable'
+                ? join(directory, 'missing-chrome')
+                : fallback,
+          }),
+        },
+        env: { appRoot: directory, appName: 'Visual Studio Code' },
+        version: '1.140.0',
+        extensions: { getExtension: () => ({}) },
+        debug: {
+          registerDebugAdapterTrackerFactory: () => disposable,
+          onDidTerminateDebugSession: () => disposable,
+          onDidChangeActiveDebugSession: () => disposable,
+        },
+      },
+    },
+  )
+  const environment = await boundary.createEnvironment({
+    extensionPath: directory,
+  })
+  context.after(() => environment.dispose())
+  // Act
+  const failure = await environment
+    .startSavedSessionServer?.(
+      'next-dev-webpack',
+      '/login',
+      new AbortController().signal,
+      { origin: 'https://app.example.test', upstreamPort: 4310 },
+    )
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+  // Assert
+  assert.equal(
+    (failure as { code?: string } | undefined)?.code,
+    'PREREQUISITE_MISSING',
+  )
+  assert.match(String(failure), /codebook\.chromeExecutable/)
+})

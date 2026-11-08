@@ -433,6 +433,9 @@ export function installSavedSessions(
     return undefined
   }
 
+  /** The origin the setup started last opened (`undefined` for localhost); meaningful only while that setup is active. */
+  let activeSetupOrigin: string | undefined
+
   /**
    * Starts the setup, at localhost or, with a declaration, at the origin a refused run declared.
    * Why it exists: the palette command and the notice's button share the whole start (adapter, sign-in path, Chrome) but differ in the origin; the declaration is a parameter and not registered-command input, so no other extension can pass one through `executeCommand`.
@@ -443,7 +446,15 @@ export function installSavedSessions(
   ): Promise<void> => {
     const root = options.workspaceRoot()
     const name = basename(root)
-    if (setup.isActive) return reofferSetup(name)
+    if (setup.isActive) {
+      // A notice for another address must not silently re-offer the open setup of this one.
+      if (declaration?.origin !== activeSetupOrigin)
+        return void showNotice(
+          'information',
+          `A saved session setup at another address is open for ${name}. Finish it with Done or close it first, then set up again here.`,
+        )
+      return reofferSetup(name)
+    }
     const environment = await options.ensureEnvironment()
     const inputs = await environment.savedSessionSetupInputs?.()
     if (!inputs)
@@ -469,6 +480,8 @@ export function installSavedSessions(
     ]
     const signInPath = await pickSignInPath(name, candidates)
     if (!signInPath) return
+    // Remembered for the comparison above; read only while a setup is active.
+    activeSetupOrigin = declaration?.origin
     await setup.start({
       repositoryRoot: root,
       repositoryName: name,

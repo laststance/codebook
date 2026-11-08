@@ -425,6 +425,40 @@ test('the notice of a run at a declared origin names that origin, and the plain 
   )
 })
 
+// Value: protects=a session-cookie-only app at a declared origin is not invited to a setup the next run refuses again; fails_when=the notice for that reason drops the origin or the keep-me-signed-in condition; no_claim=the editor's notification rendering
+test('the notice of a session-cookie-only run at a declared origin keeps the origin and the keep-me-signed-in condition', () => {
+  // Arrange
+  const reason = 'session-cookie-only'
+  // Act
+  const declared = signInRequiredNotice(reason, 'shop', ORIGIN)
+  // Assert
+  assert.equal(
+    declared,
+    'This run opens the app at https://app.example.test, but the app keeps your sign-in only while the browser stays open. Set up the saved session at that address only if the sign-in page offers a keep-me-signed-in choice, and select it.',
+  )
+})
+
+// Value: protects=the chat repeats the setup step as a whole, not after a parenthesis; fails_when=again trails the palette parenthesis again or a run without a declaration changes its sentence; no_claim=the other reasons' wording
+test('the sign-in message for an expired session at a declared origin puts again with the step it repeats', () => {
+  // Arrange
+  const facts = { repositoryName: 'shop' }
+  // Act
+  const declared = signInRequiredMessage('redirected-to-sign-in', {
+    ...facts,
+    declaredOrigin: ORIGIN,
+  })
+  const plain = signInRequiredMessage('redirected-to-sign-in', facts)
+  // Assert
+  assert.equal(
+    declared,
+    `The page landed on a sign-in page although the run used the saved session of shop, so the saved session may have expired. The run stopped before it sent anything. Ask the learner to press Set Up Saved Session… again in the editor's notice for this run, which sets it up at ${ORIGIN} (the command palette entry opens localhost, where it would not apply), then start one new run.`,
+  )
+  assert.equal(
+    plain,
+    'The page landed on a sign-in page although the run used the saved session of shop, so the saved session may have expired. The run stopped before it sent anything. Ask the learner to run Codebook: Set Up Saved Session… again, then start one new run.',
+  )
+})
+
 // Value: protects=the chat is never sent to the palette entry for a run at a declared origin; fails_when=the run's message for such a run still says to run the palette command, or a run without a declaration changes its message; no_claim=the run's own wording of other facts
 test('the sign-in message of a run at a declared origin sends the learner to the notice button, not the palette', () => {
   // Arrange
@@ -609,6 +643,7 @@ type StartRequest = {
  */
 async function loadCommands(
   answer: (message: string) => string | undefined | Promise<string | undefined>,
+  holdStart?: Promise<never>,
 ) {
   const startRequests: StartRequest[] = []
   const notices: { severity: string; message: string; actions: string[] }[] = []
@@ -660,6 +695,8 @@ async function loadCommands(
       reverseProxy?: ReverseProxyDeclaration,
     ) => {
       startRequests.push({ adapter, signInPath, reverseProxy })
+      // A held start keeps the setup open, so a second notice meets an active setup.
+      if (holdStart) return holdStart
       throw new Error('stop after recording')
     },
   }
@@ -851,4 +888,31 @@ test('the status item Set Up entry no longer uses the declaration after a setup 
     startRequests.map((request) => request.reverseProxy?.origin),
     [ORIGIN, undefined],
   )
+})
+
+// Value: protects=a notice for one address never silently re-offers the open setup of another; fails_when=pressing a declared-origin notice while a localhost setup is open re-offers the localhost setup with no word about the address; no_claim=the open setup's own Done and Close buttons
+test('pressing a declared-origin notice while a setup at another address is open says so instead of re-offering that setup', async () => {
+  // Arrange
+  const held = defer<never>()
+  const { installed, handlers, notices, startRequests } = await loadCommands(
+    pressesDeclaredNotices,
+    held.promise,
+  )
+  void handlers.get('codebook.setUpSavedSession')?.()
+  await waitUntil(() => startRequests.length > 0)
+  // Act
+  installed.showSignInRequired('no-saved-session', DECLARATION)
+  await waitUntil(() =>
+    notices.some((notice) =>
+      notice.message.startsWith('A saved session setup'),
+    ),
+  )
+  // Assert
+  assert.equal(
+    notices.at(-1)?.message,
+    'A saved session setup at another address is open for shop. Finish it with Done or close it first, then set up again here.',
+  )
+  assert.equal(startRequests.length, 1)
+  held.reject(new Error('stop after recording'))
+  await settle()
 })

@@ -955,9 +955,15 @@ export async function createEnvironment(
     async startSavedSessionServer(adapter, signInPath, signal, reverseProxy) {
       const node = await requireNodeRunPrerequisites('the saved session setup')
       // A setup at a declared origin starts the throwaway browser check with the same Chrome the setup browser uses.
-      const chrome = reverseProxy ? (await resolveChrome()).chrome : undefined
+      const { chrome, chromeMissing } = reverseProxy
+        ? await resolveChrome()
+        : { chrome: undefined, chromeMissing: [] }
+      // The lookup's own sentence says whether no binary was found or its --version failed.
       if (reverseProxy && !chrome)
-        throw new Error(missingChromeText(process.platform))
+        throw new StudyError(
+          'PREREQUISITE_MISSING',
+          chromeMissing.join('; ') || missingChromeText(process.platform),
+        )
       return startSavedSessionServer(developmentServerAdapterOf(adapter), {
         workspace,
         node,
