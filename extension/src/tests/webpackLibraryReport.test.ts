@@ -1,8 +1,16 @@
 import assert from 'node:assert/strict'
-import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { after, test } from 'node:test'
+import { pathToFileURL } from 'node:url'
 
 import { WebpackLibraryReportReader } from '../utils/webpackLibraryReport'
 
@@ -312,4 +320,209 @@ test('an inline script reported with the document URL is ignored while a js scri
   // Assert
   assert.equal(inline.kind, 'not-owned')
   assert.equal(missing.kind, 'unmatched-owned')
+})
+
+/** A compilation line of the Next preload. */
+function nextLine(
+  compiler: string,
+  outputPath: string,
+  assets: { name: string; sha256: string; resources: string[] }[],
+  externals: string[] = [],
+): string {
+  return `${JSON.stringify({
+    compilationHash: 'c1',
+    compiler,
+    outputPath,
+    publicPath: '/_next/',
+    assets,
+    externals,
+  })}\n`
+}
+
+const serverFolders: string[] = []
+
+after(() => {
+  for (const folder of serverFolders)
+    rmSync(folder, { recursive: true, force: true })
+})
+
+/** A temporary folder holding a real server output file; returns the folder's real path. */
+function serverOutputFolder(): string {
+  const folder = realpathSync(mkdtempSync(join(tmpdir(), 'codebook-report-')))
+  serverFolders.push(folder)
+  mkdirSync(join(folder, 'server/vendor-chunks'), { recursive: true })
+  writeFileSync(join(folder, 'server/vendor-chunks/lib.js'), 'x')
+  return folder
+}
+
+test('wrapped and error lines name their compilers', () => {
+  // Value: protects=the reader can tell which compilers were patched and which failed; fails_when=a per-compiler line is folded into one global flag; no_claim=that the preload wrote the lines
+  // Arrange
+  const reader = new WebpackLibraryReportReader()
+
+  // Act
+  reader.append(
+    Buffer.from(
+      '{"wrapped":true,"compiler":"client","outputPath":"/o/client"}\n{"wrapped":true,"compiler":"server","outputPath":"/o/server"}\n{"error":"boom","compiler":"edge-server"}\n',
+    ),
+  )
+
+  // Assert
+  assert.deepEqual([...reader.wrappedCompilers()].sort(), ['client', 'server'])
+  assert.deepEqual([...reader.erroredCompilers()], ['edge-server'])
+  assert.equal(reader.errorCause, 'boom')
+})
+
+test('a server script matches by real path under the compiler output folder and by hash', () => {
+  // Value: protects=a server script is tied to its emitted asset by file path plus SHA-256 and to nothing by script id; fails_when=a wrong hash, a path outside the announced output folder or a page compiler's asset matches a server script; no_claim=js-debug URL spelling
+  // Arrange
+  const folder = serverOutputFolder()
+  const outputPath = join(folder, 'server')
+  const reader = new WebpackLibraryReportReader()
+  reader.append(
+    Buffer.from(
+      `{"wrapped":true,"compiler":"server","outputPath":${JSON.stringify(outputPath)}}\n` +
+        nextLine('server', outputPath, [
+          {
+            name: 'vendor-chunks/lib.js',
+            sha256: HASH_A,
+            resources: ['/p/lib/rsc.js'],
+          },
+        ]) +
+        nextLine('client', join(folder, 'static'), [
+          { name: 'vendor-chunks/lib.js', sha256: HASH_B, resources: [] },
+        ]),
+    ),
+  )
+  const url = pathToFileURL(join(outputPath, 'vendor-chunks/lib.js')).href
+
+  // Act
+  const matched = reader.matchServer(url, HASH_A)
+  const wrongHash = reader.matchServer(url, HASH_B)
+  const outside = reader.matchServer(
+    pathToFileURL(join(folder, 'elsewhere.js')).href,
+    HASH_A,
+  )
+  const nodeInternal = reader.matchServer(
+    'node:internal/main/run_main_module',
+    undefined,
+  )
+
+  // Assert
+  assert.equal(matched.kind, 'matched')
+  assert.equal(
+    matched.kind === 'matched' ? matched.asset.compiler : '',
+    'server',
+  )
+  assert.equal(wrongHash.kind, 'unmatched-owned')
+  assert.equal(outside.kind, 'not-owned')
+  assert.equal(nodeInternal.kind, 'not-owned')
+})
+
+test('a page script matches a client line by path without its query and ignores server lines for ownership', () => {
+  // Value: protects=page scripts match under the client public path regardless of ?v=, and a server line's public path owns no page script; fails_when=a query defeats the match or a server compilation's public path makes foreign scripts unmatched-owned; no_claim=the real Next script list
+  // Arrange
+  const reader = new WebpackLibraryReportReader()
+  reader.append(
+    Buffer.from(
+      nextLine('client', '/o/client', [
+        { name: 'static/chunks/main-app.js', sha256: HASH_A, resources: [] },
+      ]) +
+        nextLine('server', '/o/server', [
+          { name: 'app/page.js', sha256: HASH_B, resources: [] },
+        ]),
+    ),
+  )
+
+  // Act
+  const withQuery = reader.matchPage(
+    'http://localhost:3000/_next/static/chunks/main-app.js?v=17',
+    HASH_A,
+  )
+  const serverNameOnPage = reader.matchPage(
+    'http://localhost:3000/_next/app/page.js',
+    HASH_B,
+  )
+
+  // Assert
+  assert.equal(withQuery.kind, 'matched')
+  assert.equal(serverNameOnPage.kind, 'unmatched-owned')
+})
+
+test('the same hash and name from two compilers stay two entries', () => {
+  // Value: protects=an asset of one compiler never replaces the same-named asset of another; fails_when=the rebuild replacement is keyed by name and public path alone; no_claim=script id handling (the route keys scripts by participant and id)
+  // Arrange
+  const folder = serverOutputFolder()
+  const outputPath = join(folder, 'server')
+  const reader = new WebpackLibraryReportReader()
+  reader.append(
+    Buffer.from(
+      `{"wrapped":true,"compiler":"server","outputPath":${JSON.stringify(outputPath)}}\n` +
+        nextLine('client', '/o/client', [
+          { name: 'vendor-chunks/lib.js', sha256: HASH_A, resources: [] },
+        ]) +
+        nextLine('server', outputPath, [
+          {
+            name: 'vendor-chunks/lib.js',
+            sha256: HASH_A,
+            resources: ['/p/lib/rsc.js'],
+          },
+        ]),
+    ),
+  )
+
+  // Act
+  const page = reader.matchPage(
+    'http://localhost:3000/_next/vendor-chunks/lib.js',
+    HASH_A,
+  )
+  const server = reader.matchServer(
+    pathToFileURL(join(outputPath, 'vendor-chunks/lib.js')).href,
+    HASH_A,
+  )
+
+  // Assert
+  assert.equal(page.kind === 'matched' ? page.asset.compiler : '', 'client')
+  assert.equal(server.kind === 'matched' ? server.asset.compiler : '', 'server')
+})
+
+test('externals of the package and edge assets with library resources are exposed', () => {
+  // Value: protects=the route can refuse an observation that Node or the edge runtime loads outside; fails_when=externals or edge library assets are dropped while parsing; no_claim=how the route words the refusal
+  // Arrange
+  const reader = new WebpackLibraryReportReader()
+
+  // Act
+  reader.append(
+    Buffer.from(
+      nextLine('server', '/o/server', [], ['lib', 'lib/sub']) +
+        nextLine('edge-server', '/o/edge', [
+          { name: 'edge.js', sha256: HASH_A, resources: ['/p/lib/index.js'] },
+          { name: 'plain.js', sha256: HASH_B, resources: [] },
+        ]),
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(reader.externalsOf(), ['lib', 'lib/sub'])
+  assert.deepEqual(
+    reader.edgeLibraryAssets().map((asset) => asset.name),
+    ['edge.js'],
+  )
+  assert.deepEqual([...reader.compiledCompilers()].sort(), [
+    'edge-server',
+    'server',
+  ])
+})
+
+test('a compiler field of the wrong type makes the line malformed', () => {
+  // Value: protects=a torn or foreign line is not trusted; fails_when=a numeric compiler is accepted as a name; no_claim=none beyond protects
+  // Arrange
+  const reader = new WebpackLibraryReportReader()
+
+  // Act
+  reader.append(Buffer.from('{"wrapped":true,"compiler":3}\n'))
+
+  // Assert
+  assert.equal(reader.unreadableCause, 'malformed-line')
+  assert.equal(reader.wrapped, false)
 })

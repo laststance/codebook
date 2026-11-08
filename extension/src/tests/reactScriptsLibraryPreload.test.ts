@@ -608,3 +608,31 @@ test('Example import of lib with a query string is served from the packed copy',
     false,
   )
 })
+
+test('the react-scripts preload text is byte-identical to the text written before the shared body was split', () => {
+  // Value: protects=the shared-body split leaves the react-scripts preload file unchanged; fails_when=a piece shared with the Next tail changes any byte of the react-scripts file; no_claim=that the react-scripts text itself is correct (the compile tests above cover that)
+  // Arrange
+  const expected = readFileSync(
+    join(
+      __dirname,
+      '../../src/tests/fixtures/webpack-library-preload/react-scripts-preload.expected.txt',
+    ),
+    'utf8',
+  )
+
+  // Act
+  const actual = buildReactScriptsLibraryPreloadSource({
+    packageName: 'lib',
+    packedRoot: '/p/node_modules/lib',
+    privateFolder: '/p',
+    exampleRoot: '/r/ex',
+    libraryRoot: '/r/lib',
+    peers: ['react'],
+    reportPath: '/p/report.jsonl',
+    cacheFolder: '/p/cache',
+    lineLimitBytes: 1048576,
+  })
+
+  // Assert
+  assert.equal(actual, expected)
+})

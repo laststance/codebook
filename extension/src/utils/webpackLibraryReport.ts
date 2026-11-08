@@ -1,4 +1,6 @@
-import { closeSync, openSync, readSync, statSync } from 'node:fs'
+import { closeSync, openSync, readSync, realpathSync, statSync } from 'node:fs'
+import { isAbsolute, relative, resolve, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import {
   REACT_SCRIPTS_LIBRARY_REPORT_LIMIT_BYTES,
@@ -12,11 +14,16 @@ export type WebpackLibraryReportAsset = {
   resources: string[]
 }
 
-/** The first line of a report: the preload wrapped the react-scripts webpack configuration factory and patched it. */
-type WebpackLibraryWrappedLine = { wrapped: true }
+/** Which compilation a line speaks of and where it writes. The react-scripts preload writes neither; the Next preload writes both (`compiler` is webpack's name: `client`, `server` or `edge-server`). */
+type WebpackLibraryCompilerFields = { compiler?: string; outputPath?: string }
 
-/** The preload could not patch the configuration; it ran unpatched. */
-type WebpackLibraryErrorLine = { error: string }
+/** A line of the preload: it wrapped a webpack configuration factory's result (for one compiler, when the line names it) and patched it. */
+type WebpackLibraryWrappedLine = {
+  wrapped: true
+} & WebpackLibraryCompilerFields
+
+/** The preload could not patch the configuration (of the named compiler, when the line names one); it ran unpatched. */
+type WebpackLibraryErrorLine = { error: string; compiler?: string }
 
 /** The preload patched the configuration but failed to describe a later compilation; the patch itself is in place. */
 type WebpackLibraryReportErrorLine = { reportError: string }
@@ -26,14 +33,16 @@ type WebpackLibraryCompilationLine = {
   compilationHash: string
   publicPath: string
   assets: WebpackLibraryReportAsset[]
-}
+  /** Requests of external modules that name the package: Node loads them at run time, so no resource shows which copy they are. */
+  externals?: string[]
+} & WebpackLibraryCompilerFields
 
 /** A compilation whose line would have exceeded the per-line bound; its scripts match nothing. `publicPath` lets the reader still tell its scripts are owned. */
 type WebpackLibraryTruncatedLine = {
   compilationHash: string
   publicPath?: string
   truncated: true
-}
+} & WebpackLibraryCompilerFields
 
 /** Every line the generated preload (see {@link buildReactScriptsLibraryPreloadSource}) can write. */
 type WebpackLibraryReportLine =
@@ -46,6 +55,10 @@ type WebpackLibraryReportLine =
 /** A matched asset together with the public path it is served under. */
 export type WebpackLibraryReportMatch = WebpackLibraryReportAsset & {
   publicPath: string
+  /** The compiler that emitted the asset, when its line names one. */
+  compiler?: string
+  /** The folder the compiler writes to, when its line names one. */
+  outputPath?: string
 }
 
 /** Why a report cannot be trusted. */
@@ -62,6 +75,52 @@ export type WebpackLibraryScriptMatch =
   | { kind: 'matched'; asset: WebpackLibraryReportMatch }
   | { kind: 'unmatched-owned' }
   | { kind: 'not-owned' }
+
+/** The name webpack gives the compiler of Next's edge runtime. */
+const EDGE_COMPILER = 'edge-server'
+
+/**
+ * Tells whether a compiler's output is served to the page: the client compiler, or one that names none (react-scripts).
+ *
+ * Used by the reader to keep server-side lines out of page matching and of the public-path ownership check.
+ * @param compiler - The `compiler` of a report line, if any.
+ * @returns True for `undefined` and `client`.
+ * @example
+ * isPageCompiler('client') // => true
+ * isPageCompiler('server') // => false
+ */
+function isPageCompiler(compiler: string | undefined): boolean {
+  return compiler === undefined || compiler === 'client'
+}
+
+/** The real path of a path that may not exist yet; an absent path stays as given, made absolute. */
+function realPathOf(path: string): string {
+  try {
+    return realpathSync(path)
+  } catch {
+    return resolve(path)
+  }
+}
+
+/** The real path of the file a `file:` URL names, or `undefined` for any other URL. */
+function realFileOfUrl(url: string): string | undefined {
+  try {
+    return realPathOf(fileURLToPath(url))
+  } catch {
+    return undefined
+  }
+}
+
+/** Tells whether a real file path lies inside a real folder path. */
+function isInsideFolder(folder: string, file: string): boolean {
+  const fromFolder = relative(folder, file)
+  return (
+    fromFolder !== '' &&
+    fromFolder !== '..' &&
+    !fromFolder.startsWith('..' + sep) &&
+    !isAbsolute(fromFolder)
+  )
+}
 
 const NEWLINE_BYTE = 0x0a
 
@@ -85,13 +144,73 @@ function readAsset(value: unknown): WebpackLibraryReportAsset | undefined {
 }
 
 /**
+ * Reads the optional `compiler` and `outputPath` of a report line.
+ *
+ * Used by {@link parseWebpackLibraryReportLine} for every line kind; an empty string (what the preload writes when webpack gives no name) counts as absent.
+ * @param record - The parsed JSON line.
+ * @returns The fields that are present, or `undefined` when one has the wrong type (the line is then malformed).
+ * @example
+ * readCompilerFields({ compiler: 'server', outputPath: '/x/server' }) // => { compiler: 'server', outputPath: '/x/server' }
+ * readCompilerFields({ compiler: 3 }) // => undefined
+ */
+function readCompilerFields(
+  record: Record<string, unknown>,
+): WebpackLibraryCompilerFields | undefined {
+  const { compiler, outputPath } = record
+  if (compiler !== undefined && typeof compiler !== 'string') return undefined
+  if (outputPath !== undefined && typeof outputPath !== 'string') {
+    return undefined
+  }
+  return {
+    ...(compiler ? { compiler } : {}),
+    ...(outputPath ? { outputPath } : {}),
+  }
+}
+
+/**
+ * Parses a compilation line (complete or truncated).
+ *
+ * Called by {@link parseWebpackLibraryReportLine} when a line is none of the marker lines.
+ * @param record - The parsed JSON line.
+ * @param fields - The line's compiler fields.
+ * @returns The typed line, or `undefined` when its shape is wrong.
+ * @example
+ * parseCompilationLine({ compilationHash: 'h', publicPath: '/', assets: [] }, {}) // => { compilationHash: 'h', publicPath: '/', assets: [] }
+ */
+function parseCompilationLine(
+  record: Record<string, unknown>,
+  fields: WebpackLibraryCompilerFields,
+): WebpackLibraryReportLine | undefined {
+  const { compilationHash, publicPath, assets, externals } = record
+  if (typeof compilationHash !== 'string') return undefined
+  if (record.truncated === true) {
+    return typeof publicPath === 'string'
+      ? { compilationHash, publicPath, truncated: true, ...fields }
+      : { compilationHash, truncated: true, ...fields }
+  }
+  if (typeof publicPath !== 'string' || !Array.isArray(assets)) return undefined
+  if (externals !== undefined && !isStringArray(externals)) return undefined
+  const readAssets = assets.map(readAsset)
+  const valid = readAssets.filter((asset) => asset !== undefined)
+  if (valid.length !== readAssets.length) return undefined
+  return {
+    compilationHash,
+    publicPath,
+    assets: valid,
+    ...(externals ? { externals } : {}),
+    ...fields,
+  }
+}
+
+/**
  * Parses one complete report line.
  *
- * Used by {@link WebpackLibraryReportReader} for every complete line; the shapes are the ones the generated preload writes.
+ * Used by {@link WebpackLibraryReportReader} for every complete line; the shapes are the ones the generated preloads write.
  * @param text - The line without its newline.
  * @returns The typed line, or `undefined` when the text is not valid JSON or has no known shape.
  * @example
  * parseWebpackLibraryReportLine('{"wrapped":true}') // => { wrapped: true }
+ * parseWebpackLibraryReportLine('{"wrapped":true,"compiler":"server","outputPath":"/x"}') // => { wrapped: true, compiler: 'server', outputPath: '/x' }
  * parseWebpackLibraryReportLine('{oops') // => undefined
  */
 function parseWebpackLibraryReportLine(
@@ -104,23 +223,19 @@ function parseWebpackLibraryReportLine(
     return undefined
   }
   if (!isRecord(parsed)) return undefined
-  if (parsed.wrapped === true) return { wrapped: true }
-  if (typeof parsed.error === 'string') return { error: parsed.error }
+  const fields = readCompilerFields(parsed)
+  if (fields === undefined) return undefined
+  if (parsed.wrapped === true) return { wrapped: true, ...fields }
+  if (typeof parsed.error === 'string') {
+    return {
+      error: parsed.error,
+      ...(fields.compiler ? { compiler: fields.compiler } : {}),
+    }
+  }
   if (typeof parsed.reportError === 'string') {
     return { reportError: parsed.reportError }
   }
-  const { compilationHash, publicPath, assets } = parsed
-  if (typeof compilationHash !== 'string') return undefined
-  if (parsed.truncated === true) {
-    return typeof publicPath === 'string'
-      ? { compilationHash, publicPath, truncated: true }
-      : { compilationHash, truncated: true }
-  }
-  if (typeof publicPath !== 'string' || !Array.isArray(assets)) return undefined
-  const readAssets = assets.map(readAsset)
-  const valid = readAssets.filter((asset) => asset !== undefined)
-  if (valid.length !== readAssets.length) return undefined
-  return { compilationHash, publicPath, assets: valid }
+  return parseCompilationLine(parsed, fields)
 }
 
 /** The path part of a script URL or public path, without query or fragment; percent escapes are kept. */
@@ -184,6 +299,12 @@ export class WebpackLibraryReportReader {
   private unreadable: WebpackLibraryReportUnreadableCause | undefined
   private truncatedCount = 0
   private compilationCount = 0
+  private readonly wrappedCompilerNames = new Set<string>()
+  private readonly erroredCompilerNames = new Set<string>()
+  private readonly compiledCompilerNames = new Set<string>()
+  private readonly serverOutputPaths = new Set<string>()
+  private readonly externalRequests = new Set<string>()
+  private readonly edgeAssets: WebpackLibraryReportMatch[] = []
 
   /**
    * @param wholeLimitBytes - The most bytes of the report that are read.
@@ -393,20 +514,47 @@ export class WebpackLibraryReportReader {
   private record(line: WebpackLibraryReportLine): void {
     if ('wrapped' in line) {
       this.wrappedSeen = true
+      if (line.compiler !== undefined) {
+        this.wrappedCompilerNames.add(line.compiler)
+        if (!isPageCompiler(line.compiler) && line.outputPath !== undefined) {
+          this.serverOutputPaths.add(line.outputPath)
+        }
+      }
     } else if ('error' in line) {
       this.errorMessage ??= line.error
+      if (line.compiler !== undefined)
+        this.erroredCompilerNames.add(line.compiler)
     } else if ('reportError' in line) {
       this.reportErrorMessage ??= line.reportError
-    } else if ('truncated' in line) {
-      this.compilationCount += 1
-      this.truncatedCount += 1
-      if (line.publicPath !== undefined)
-        this.rememberPublicPath(line.publicPath)
     } else {
-      this.compilationCount += 1
-      this.rememberPublicPath(line.publicPath)
-      for (const asset of line.assets) this.addToIndex(line.publicPath, asset)
+      this.recordCompilation(line)
     }
+  }
+
+  /**
+   * Applies a compilation line (complete or truncated) to the reader's facts.
+   *
+   * Called by {@link record}; a public path counts for the owned-script check only on a line of a page compiler (the client, or one that names no compiler), because a server compilation's public path says nothing about which page scripts are the preload's.
+   * @param line - The compilation line.
+   * @example
+   * this.recordCompilation({ compilationHash: 'h', publicPath: '/_next/', compiler: 'client', assets: [] })
+   */
+  private recordCompilation(
+    line: WebpackLibraryCompilationLine | WebpackLibraryTruncatedLine,
+  ): void {
+    this.compilationCount += 1
+    if (line.compiler !== undefined)
+      this.compiledCompilerNames.add(line.compiler)
+    if (line.publicPath !== undefined && isPageCompiler(line.compiler)) {
+      this.rememberPublicPath(line.publicPath)
+    }
+    if ('truncated' in line) {
+      this.truncatedCount += 1
+      return
+    }
+    for (const request of line.externals ?? [])
+      this.externalRequests.add(request)
+    for (const asset of line.assets) this.addToIndex(line, asset)
   }
 
   /** Remembers a public path for the owned-script check unless it is unusable (see {@link isUsablePublicPath}). */
@@ -415,36 +563,48 @@ export class WebpackLibraryReportReader {
   }
 
   /**
-   * Adds an asset to the index; a repeated name under the same public path (a rebuild) replaces the older entry of the same hash.
+   * Adds an asset to the index; a repeated name of the same compiler under the same public path (a rebuild) replaces the older entry of the same hash.
    *
-   * Called by {@link record} for every asset of a compilation line.
-   * @param publicPath - The public path of the compilation.
+   * Called by {@link recordCompilation} for every asset of a compilation line. An asset of the edge compiler that holds a library resource is also kept for {@link edgeLibraryAssets}.
+   * @param line - The compilation line.
    * @param asset - The emitted asset.
    * @example
-   * this.addToIndex('/', { name: 'static/js/bundle.js', sha256: 'ab…', resources: [] })
+   * this.addToIndex({ compilationHash: 'h', publicPath: '/', assets: [] }, { name: 'static/js/bundle.js', sha256: 'ab…', resources: [] })
    */
   private addToIndex(
-    publicPath: string,
+    line: WebpackLibraryCompilationLine,
     asset: WebpackLibraryReportAsset,
   ): void {
     const entries = this.index.get(asset.sha256) ?? []
     const kept = entries.filter(
-      (entry) => entry.name !== asset.name || entry.publicPath !== publicPath,
+      (entry) =>
+        entry.name !== asset.name ||
+        entry.publicPath !== line.publicPath ||
+        entry.compiler !== line.compiler,
     )
-    kept.push({ ...asset, publicPath })
+    const entry: WebpackLibraryReportMatch = {
+      ...asset,
+      publicPath: line.publicPath,
+      ...(line.compiler ? { compiler: line.compiler } : {}),
+      ...(line.outputPath ? { outputPath: line.outputPath } : {}),
+    }
+    kept.push(entry)
     this.index.set(asset.sha256, kept)
+    if (line.compiler === EDGE_COMPILER && asset.resources.length > 0) {
+      this.edgeAssets.push(entry)
+    }
   }
 
   /**
    * Judges one script the page parsed.
    *
-   * A script matches only when its URL path equals an asset's `publicPath + name` and the asset's SHA-256 equals the script's hash; there is no fallback by name. A script under a known public path whose path ends in `.js` and that matches nothing (including every script of a truncated compilation, and any script given no hash) is `unmatched-owned`.
+   * A script matches only when its URL path equals an asset's `publicPath + name` and the asset's SHA-256 equals the script's hash; there is no fallback by name. Only the assets of page compilers (the client, or a compiler that names none) can match. A script under a known public path whose path ends in `.js` and that matches nothing (including every script of a truncated compilation, and any script given no hash) is `unmatched-owned`.
    * @param url - The script URL (query and fragment are ignored).
    * @param hash - The SHA-256 the debugger reports for the script, or `undefined` when it reported none.
    * @example
-   * reader.match('http://localhost:3000/static/js/bundle.js?x=1', 'ab12…') // => { kind: 'matched', asset: { … } }
+   * reader.matchPage('http://localhost:3000/static/js/bundle.js?x=1', 'ab12…') // => { kind: 'matched', asset: { … } }
    */
-  match(url: string, hash: string | undefined): WebpackLibraryScriptMatch {
+  matchPage(url: string, hash: string | undefined): WebpackLibraryScriptMatch {
     const rawPath = pathOf(url)
     // A malformed escape decodes to nothing: it can still be owned but never matches an asset.
     const urlPath = decodePath(rawPath)
@@ -452,8 +612,9 @@ export class WebpackLibraryReportReader {
       const candidates = this.index.get(hash.toLowerCase()) ?? []
       const found = candidates.find(
         (entry) =>
+          isPageCompiler(entry.compiler) &&
           (decodePath(pathOf(entry.publicPath)) ?? '\0') + entry.name ===
-          urlPath,
+            urlPath,
       )
       if (found) return { kind: 'matched', asset: found }
     }
@@ -466,5 +627,75 @@ export class WebpackLibraryReportReader {
       }
     }
     return { kind: 'not-owned' }
+  }
+
+  /**
+   * Judges one script the page parsed, under the react-scripts route's name; the same as {@link matchPage}.
+   *
+   * Called by the react-scripts library route, whose report names no compiler.
+   * @param url - The script URL (query and fragment are ignored).
+   * @param hash - The SHA-256 the debugger reports for the script, or `undefined`.
+   * @example
+   * reader.match('http://localhost:3000/static/js/bundle.js', 'ab12…') // => { kind: 'matched', asset: { … } }
+   */
+  match(url: string, hash: string | undefined): WebpackLibraryScriptMatch {
+    return this.matchPage(url, hash)
+  }
+
+  /**
+   * Judges one script the server inspector parsed.
+   *
+   * The script is owned when its URL is a `file:` URL whose real path lies inside the `outputPath` of a server-side compiler (any compiler but the client) that a `wrapped` line announced; other server scripts (Node's own, `next/dist`) are `not-owned`. An owned script matches when its real path equals the real `outputPath` of a server-side asset joined with the asset's name and the asset's SHA-256 equals the script's hash. The script's debugger `scriptId` is deliberately no input: ids repeat across the page and server sessions.
+   * @param url - The `file:` URL the debugger reports.
+   * @param hash - The SHA-256 the debugger reports for the script, or `undefined`.
+   * @example
+   * reader.matchServer('file:///app/.next/dev/server/app/page.js', 'ab12…') // => { kind: 'matched', asset: { … } }
+   * reader.matchServer('node:internal/main', undefined) // => { kind: 'not-owned' }
+   */
+  matchServer(
+    url: string,
+    hash: string | undefined,
+  ): WebpackLibraryScriptMatch {
+    const file = realFileOfUrl(url)
+    if (file === undefined) return { kind: 'not-owned' }
+    const isOwned = Array.from(this.serverOutputPaths).some((outputPath) =>
+      isInsideFolder(realPathOf(outputPath), file),
+    )
+    if (!isOwned) return { kind: 'not-owned' }
+    const candidates = hash ? (this.index.get(hash.toLowerCase()) ?? []) : []
+    const found = candidates.find(
+      (entry) =>
+        !isPageCompiler(entry.compiler) &&
+        entry.outputPath !== undefined &&
+        resolve(realPathOf(entry.outputPath), entry.name) === file,
+    )
+    return found
+      ? { kind: 'matched', asset: found }
+      : { kind: 'unmatched-owned' }
+  }
+
+  /** The compilers a `wrapped` line named; the Next preload writes one per compiler (`client`, `server`, `edge-server`) when it builds the compiler's configuration. */
+  wrappedCompilers(): ReadonlySet<string> {
+    return this.wrappedCompilerNames
+  }
+
+  /** The compilers an `error` line named (their patch was not applied). */
+  erroredCompilers(): ReadonlySet<string> {
+    return this.erroredCompilerNames
+  }
+
+  /** The compilers a compilation line (complete or truncated) named; a server script of a compiler missing here was parsed without a report. */
+  compiledCompilers(): ReadonlySet<string> {
+    return this.compiledCompilerNames
+  }
+
+  /** The requests of external modules that name the package, over all compilations, sorted; any means Node loads some of the package from outside the report's sight. */
+  externalsOf(): readonly string[] {
+    return Array.from(this.externalRequests).sort()
+  }
+
+  /** The assets of the edge compiler that hold a library resource; the edge runtime is not observed, so any makes the observation unreadable. */
+  edgeLibraryAssets(): readonly WebpackLibraryReportMatch[] {
+    return this.edgeAssets
   }
 }
