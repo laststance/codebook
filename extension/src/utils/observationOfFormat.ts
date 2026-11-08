@@ -2,9 +2,11 @@ import type {
   ConfiguredObservation,
   ConfiguredStudy,
 } from '../configuredStudySchemas'
-import { EXPO_WEB_API_SERVER_STUDY_VERSION } from '../constants'
 
-import { usesServerRenderEvidence } from './studyFormatOfConfiguration'
+import {
+  isApiServerStudyFormat,
+  usesServerRenderEvidence,
+} from './studyFormatOfConfiguration'
 
 /**
  * Shapes a pause snapshot's observation for the study format being written: format 8 keeps `execution`, `attribution`, `operationIndex`, `declaredIndex` and `executionIndex`, every earlier format drops them so a browser-only study stays the 0.2.72.0 shape.
@@ -19,9 +21,9 @@ export function observationOfFormat(
   study: Pick<ConfiguredStudy, 'version' | 'configuration'>,
 ): ConfiguredObservation {
   if (usesServerRenderEvidence(study)) {
-    // `apiRequest` exists in format 19 only; another format 8 rules study never keeps it.
+    // `apiRequest` (with the `route`, `proxyPath` and `watched` of format 20) exists in formats 19 and 20 only; another format 8 rules study never keeps it.
     if (
-      study.version === EXPO_WEB_API_SERVER_STUDY_VERSION ||
+      isApiServerStudyFormat(study.version) ||
       observation.apiRequest === undefined
     )
       return observation

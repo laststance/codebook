@@ -964,6 +964,23 @@ export const retainedRepositoryConfigSchema = liveRepositoryConfigSchema
       !('library' in configuration) || configuration.library === undefined,
     'Only a study of format 16, 17 or 18 keeps a library.',
   )
+  // A `vite-dev` run that declares `apiServer` is saved as format 20 only (API 1.38); the live shape accepts the key.
+  .refine(
+    declaresNoApiServer,
+    'Only a study of format 20 keeps a vite-dev apiServer.',
+  )
+/**
+ * Says whether a retained configuration declares no `apiServer` (an explicit `apiServer: undefined` declares nothing).
+ * Called by the refinements of the retained variants that can hold a `vite-dev` run (formats 3 to 8, 10 and 16), which an older Codebook reads without the key.
+ * @param configuration - A parsed configuration of any version.
+ * @returns `true` when `apiServer` is absent or undefined.
+ * @example declaresNoApiServer({ apiServer: undefined }) // => true
+ */
+function declaresNoApiServer(configuration: object): boolean {
+  return (
+    !('apiServer' in configuration) || configuration.apiServer === undefined
+  )
+}
 /**
  * Says whether a retained configuration declares no library (an explicit `library: undefined` declares nothing).
  * Called by the refinements of the retained variants that predate the library formats.
@@ -1026,6 +1043,11 @@ const vitePackageRootRepositoryConfigSchema = operationsConfigurationShape
     declaresNoLibrary,
     'Only a study of format 16, 17 or 18 keeps a library.',
   )
+  // A `vite-dev` run that declares `apiServer` is saved as format 20 only.
+  .refine(
+    declaresNoApiServer,
+    'Only a study of format 20 keeps a vite-dev apiServer.',
+  )
 /**
  * The configuration a format 16 study retains: the version 3 `vite-dev` shape with a required `packageRoot` other than `"."` and a required `library` declaration (API 1.34).
  * Why it exists: an older Codebook refuses `library` under `vite-dev` as an unknown key, so a run that declares it takes its own format and is listed there as saved by a newer Codebook. Validated like the format 10 variant (inspections, operations).
@@ -1044,6 +1066,11 @@ const viteLibraryRepositoryConfigSchema = operationsConfigurationShape
     validateInspections(configuration, context)
     validateOperations(configuration, context)
   })
+  // A `vite-dev` run that declares `apiServer` is saved as format 20 only; `library` beside it is refused by validateOperations.
+  .refine(
+    declaresNoApiServer,
+    'Only a study of format 20 keeps a vite-dev apiServer.',
+  )
 /**
  * The configuration a format 18 study retains: the version 3 `next-dev-webpack` shape with a required `packageRoot` other than `"."` and a required `library` declaration (API 1.36).
  * Why it exists: an older Codebook refuses `library` under `next-dev-webpack` as an unknown key, so a run that declares it takes its own format and is listed there as saved by a newer Codebook. Validated like the format 9 variant (inspections, operations). A root app never reaches a save: the run is refused with `library-needs-package-root` before anything starts.
@@ -1116,7 +1143,22 @@ const expoWebApiServerRepositoryConfigSchema = operationsConfigurationShape
     validateInspections(configuration, context)
     validateOperations(configuration, context)
   })
-/** Every configuration a saved study can hold: the retained union of formats 3 to 8, the format 9 package-root variant (Next), the format 10 package-root variant (Vite), the format 11 variant (react-scripts), the format 15 variant (Expo web), the format 16 variant (Vite with a library), the format 17 variant (react-scripts with a library) the format 18 variant (Next with a library) or the format 19 variant (Expo web with an apiServer). */
+/**
+ * The configuration a format 20 study retains: the version 3 `vite-dev` shape with a required `apiServer` declaration (API 1.38), at the repository root or with a `packageRoot`.
+ * Why it exists: an older Codebook refuses `apiServer` under `vite-dev` as an unknown key, so a run that declares it takes its own format and is listed there as saved by a newer Codebook. Validated like the format 19 variant (inspections, operations, and the `apiServer` folder, `proxyPaths` and stop rules); `library` beside it is refused.
+ * Read by {@link studyConfigurationSchema}; no earlier format accepts an `apiServer` under this adapter.
+ */
+const viteApiServerRepositoryConfigSchema = operationsConfigurationShape
+  .extend({
+    adapter: z.literal('vite-dev'),
+    apiServer: apiServerDeclarationSchema,
+  })
+  .superRefine((configuration, context) => {
+    validateInspections(configuration, context)
+    validateOperations(configuration, context)
+  })
+  .refine(declaresNoLibrary, 'A format 20 study declares no library.')
+/** Every configuration a saved study can hold: the retained union of formats 3 to 8, the format 9 package-root variant (Next), the format 10 package-root variant (Vite), the format 11 variant (react-scripts), the format 15 variant (Expo web), the format 16 variant (Vite with a library), the format 17 variant (react-scripts with a library) the format 18 variant (Next with a library) the format 19 variant (Expo web with an apiServer) or the format 20 variant (Vite with an apiServer). */
 export const studyConfigurationSchema = z.union([
   retainedRepositoryConfigSchema,
   packageRootRepositoryConfigSchema,
@@ -1127,6 +1169,7 @@ export const studyConfigurationSchema = z.union([
   nextLibraryRepositoryConfigSchema,
   expoWebRepositoryConfigSchema,
   expoWebApiServerRepositoryConfigSchema,
+  viteApiServerRepositoryConfigSchema,
 ])
 export type RepositoryConfiguration = z.infer<typeof repositoryConfigSchema>
 export type RetainedRepositoryConfiguration = z.infer<

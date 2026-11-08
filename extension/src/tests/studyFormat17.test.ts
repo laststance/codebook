@@ -108,7 +108,7 @@ test('Codebook 0.2.98 lists a .study.v17.json archive as saved by a newer Codebo
 // protects=this Codebook reads format 17, stores it as .study.v17.json second in the table (after formats 19 and 18) and still reads it; fails_when=the row is missing or moves, or the readable limit drops below 17; no_claim=a run's round trip
 test('format 17 is a stored and readable format', () => {
   // Arrange / Act
-  const row = STUDY_STORAGE_FORMATS[2]
+  const row = STUDY_STORAGE_FORMATS[3]
   // Assert
   assert.deepEqual(row, {
     version: 17,
@@ -116,7 +116,7 @@ test('format 17 is a stored and readable format', () => {
     archiveSuffix: '.study.v17.json',
     metadataSuffix: '.study.meta.v17.json',
   })
-  assert.equal(READABLE_STUDY_VERSION, 19)
+  assert.equal(READABLE_STUDY_VERSION, 20)
   assert.equal(isOperationsStudyFormat(17), true)
   assert.doesNotThrow(() => assertReadableStudyFormat({ version: 17 }))
 })

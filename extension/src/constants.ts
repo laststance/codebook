@@ -2072,6 +2072,8 @@ export const REACT_SCRIPTS_LIBRARY_STUDY_VERSION = 17
 export const NEXT_LIBRARY_STUDY_VERSION = 18
 /** The format of a study saved from a version 3 `expo-web-dev` configuration that declares `apiServer` (API 1.37): the format 8 rules for its evidence (server stops, execution order), plus the `apiRequest` fact on every server observation. An `expo-web-dev` run without `apiServer` keeps {@link EXPO_WEB_STUDY_VERSION}; the suffix `.study.v19.json` makes Codebook 0.2.100 and older list such a study as saved by a newer Codebook and keep it. */
 export const EXPO_WEB_API_SERVER_STUDY_VERSION = 19
+/** The format of a study saved from a version 3 `vite-dev` configuration that declares `apiServer` (API 1.38): the format 8 rules for its evidence like {@link EXPO_WEB_API_SERVER_STUDY_VERSION}, plus the `route`, `proxyPath` and `watched` fields of the `apiRequest` fact. A `vite-dev` run without `apiServer` keeps its format 7, 8, 10 or 16; the suffix `.study.v20.json` makes Codebook 0.2.101 and older list such a study as saved by a newer Codebook and keep it. */
+export const VITE_API_SERVER_STUDY_VERSION = 20
 /** The longest HTTP method token an `apiRequest` fact may name. */
 export const API_REQUEST_METHOD_LIMIT_CHARS = 16
 /** The characters of an upper-cased HTTP method token an `apiRequest` fact may name: RFC 9110 `tchar` without lower-case letters (the producer upper-cases first). */
@@ -2091,7 +2093,7 @@ export const API_REQUEST_PATH_ELLIPSIS = '…'
 /** The fewest candidate requests an `unattributed` `several` fact may count. */
 export const API_REQUEST_SEVERAL_MIN_COUNT = 2
 /** The highest study format this Codebook reads; a saved study above it is listed as saved by a newer Codebook. */
-export const READABLE_STUDY_VERSION = EXPO_WEB_API_SERVER_STUDY_VERSION
+export const READABLE_STUDY_VERSION = VITE_API_SERVER_STUDY_VERSION
 /** The replay's operation marks closer than this many pixels stack vertically instead of overlapping. */
 export const OPERATION_MARK_STACK_PX = 24
 /** Below this webview width in pixels the operation marks show their numbers only. */
@@ -2103,6 +2105,12 @@ export const CONFIGURED_STUDY_METADATA_SUFFIX = '.study.meta.v3.json'
 // Highest existing version owns a logical study, including when its bytes are corrupt.
 // A change of the saved study format that an older Codebook cannot read takes the next format number and its own `.study.v<n>.json` suffix in this table; an older Codebook then lists such a study as saved by a newer one and keeps it, instead of failing on its schema.
 export const STUDY_STORAGE_FORMATS = [
+  {
+    version: VITE_API_SERVER_STUDY_VERSION,
+    format: 'v20',
+    archiveSuffix: '.study.v20.json',
+    metadataSuffix: '.study.meta.v20.json',
+  },
   {
     version: EXPO_WEB_API_SERVER_STUDY_VERSION,
     format: 'v19',
