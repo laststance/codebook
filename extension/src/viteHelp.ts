@@ -397,7 +397,7 @@ function vitePackageRoot() {
       "A nested Vite run is saved as study format 10 (.study.v10.json) with packageRoot in its configuration; recorded sources and book citations stay repository-relative. A root Vite run keeps the format it takes today. Codebook 0.2.77.0 lists a format 10 study as saved by a newer Codebook; update Codebook to open it. Format 10 replays from recorded evidence, also after the app's folder is removed.",
     limits: [
       "Codebook starts the app's own Vite from its folder and reads its dev script without running it (the same dev script forms as a root app). Vite resolves as Node would from the app's folder: the first node_modules/vite from packageRoot up to the repository root, never above it, whose real path is inside the repository (a pnpm link and a hoisted install inside the repository qualify; Yarn PnP and NODE_PATH count as not installed).",
-      "Stops must lie in the app's own files or, since API 1.21, in the checked-out source of a workspace library the app reaches through links inside the repository (see libraryStops); a stop in any other file outside the app is refused with VITE_SEAL_FAILED (outside-package). Browser stops only, and server stops inside the API folder of a declared apiServer (API ${VITE_API_SERVER_MINIMUM_API}, see viteApiServer).",
+      `Stops must lie in the app's own files or, since API 1.21, in the checked-out source of a workspace library the app reaches through links inside the repository (see libraryStops); a stop in any other file outside the app is refused with VITE_SEAL_FAILED (outside-package). Browser stops only, and server stops inside the API folder of a declared apiServer (API ${VITE_API_SERVER_MINIMUM_API}, see viteApiServer).`,
       "The app's own environment files are read and their values are masked, as for a root app. A Vite config temp file left in the app's own node_modules/.vite-temp or beside its config is removed; one in a shared ancestor node_modules/.vite-temp is never touched.",
       'One run at a time per window: a root run beside a nested run is refused with BUSY.',
     ],
@@ -496,6 +496,7 @@ const VITE_API_SERVER_LIMITS = [
   "The app's folder and the API's folder: the API folder may lie inside the app's folder or beside it, never around it or equal to it, and a browser stop must lie outside apiServer.packageRoot while a server stop lies inside it.",
   "Codebook binds Vite to 127.0.0.1; the dev script's --port and the Vite config's server.port must differ from apiServer.port (a clash is refused as api-port-conflict).",
   'The API starts before Vite: a refusal found after the API started ends it and sends no input.',
+  'apiServer and library cannot be declared on one vite-dev run: the configuration is refused.Run the library flow and the API flow as separate runs.',
 ] as const
 
 /**
@@ -529,7 +530,7 @@ function viteApiServerHelp() {
     configurationNested: VITE_API_SERVER_NESTED_CONFIGURATION,
     proxyPaths: VITE_PROXY_PATHS_HELP,
     viteRefusals:
-      'The Vite reasons that belong to apiServer: VITE_UNSUPPORTED api-port-conflict (the API port equals the app port; nothing started for a dev script port, the API stopped for a config or default port), VITE_SEAL_FAILED source-drift and source-unverifiable (the API ran source the stop does not match; the API and the app were stopped), VITE_PORT_UNAVAILABLE (the app port is taken after the API started; the API was stopped). Their anchors are in vitePackageRoot.refusals.',
+      'The Vite reasons that belong to apiServer: VITE_UNSUPPORTED api-port-conflict (the API port equals the app port; nothing started for a dev script port, the API stopped for a config or default port), VITE_SEAL_FAILED source-drift and source-unverifiable (the API ran source the stop does not match; the API and the app were stopped), VITE_PORT_UNAVAILABLE (the app port is taken after the API started; the API was stopped). VITE_PORT_UNAVAILABLE anchors are in viteRefusals; the api-port-conflict, source-drift and source-unverifiable anchors are in vitePackageRoot.refusals.',
   }
 }
 

@@ -469,6 +469,25 @@ test('a Pages library-not-in-build text still restores the server-compile recove
   )
 })
 
+// Value: protects=OCR2-2 a restored EXPO_WEB_SEAL_FAILED api-seal text carries the API recovery like the live refusal and the Vite restore; fails_when=the Expo restore returns details without recoveryOverride; no_claim=the run raising the seal
+test('an EXPO_WEB_SEAL_FAILED api-seal text restores the API seal recovery', () => {
+  // Arrange
+  const sealText = formatRefusalFailure(
+    'EXPO_WEB_SEAL_FAILED',
+    'The API ran a different version.',
+    'api-seal:source-drift:apps%2Fapi%2Fsrc%2Fhandler.ts',
+  )
+  // Act
+  const restored = refusalFailureOf(sealText)
+  // Assert
+  assert.equal(restored?.code, 'EXPO_WEB_SEAL_FAILED')
+  assert.equal(restored?.libraryDetails?.reason, 'source-drift')
+  assert.match(
+    restored?.recoveryOverride ?? '',
+    /See codebook:\/\/help\/repository-browser#EXPO_WEB_SEAL_FAILED\.$/,
+  )
+})
+
 // Value: protects=test 52 (D30): a VITE_SEAL_FAILED api-seal text restores reason, participant, file, side effects and the API recovery, while the plain text and the lazy-import variant restore as before; fails_when=the api-seal variant degrades to the code alone, or the new branch captures a plain or lazy-import Vite seal text; no_claim=the run raising the seal
 test('a VITE_SEAL_FAILED api-seal text restores its details while the plain and lazy-import texts restore as before', () => {
   // Arrange

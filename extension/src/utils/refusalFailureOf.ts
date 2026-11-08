@@ -170,7 +170,13 @@ export function refusalFailureOf(text: string): RefusalFailure | undefined {
   if (code === 'SERVER_EXITED') return apiServerExitFailure(message)
   // An API seal refusal carries its reason and file as the variant.
   const apiSeal = code === 'EXPO_WEB_SEAL_FAILED' && apiSealFailureOf(variant)
-  if (apiSeal) return { code, message, libraryDetails: apiSeal }
+  if (apiSeal)
+    return {
+      code,
+      message,
+      recoveryOverride: apiSealRecoveryOf(code, apiSeal.reason),
+      libraryDetails: apiSeal,
+    }
   if (code === 'SIGN_IN_REQUIRED')
     return signInRequiredFailure(message, variant)
   // A Pages entry redirect carries the Pages fields as its variant; any other variant restores the code alone.

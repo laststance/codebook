@@ -144,7 +144,7 @@ test('the package-root sign-in refusal carries its own recovery and no setup com
     sent: 'not-sent',
     sideEffects: 'none',
     retry:
-      'Do not set up a saved session: without apiServer this app cannot sign in below the root in this version. Change the flow to one that needs no sign-in, or declare apiServer and sign in inside the run (apiServer.signInInRun), then start one new run.',
+      'Do not set up a saved session: without apiServer this app cannot sign in below the root in this version. Change the flow to one that needs no sign-in; a Vite or Expo app can instead declare apiServer and sign in inside the run (viteApiServer.signInInRun, expoWebQuickStart.apiServer.signInInRun). Then start one new run.',
     logId: 'r1#start',
   })
 })

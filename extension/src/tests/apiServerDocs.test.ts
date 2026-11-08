@@ -270,7 +270,7 @@ test('the skill and the README describe the Expo apiServer run, its gate and its
     'declare `apiServer`',
     'only when `codebook_status` reports API 1.37 or later',
     'never start the API yourself',
-    "Codebook starts the API's entry with the repository's own tsx",
+    "Codebook starts the API's entry with node, through the repository's own tsx for a TypeScript entry",
     "uses the repository's configured services",
     'the declared operations can change its data',
   ])
@@ -454,6 +454,35 @@ test('the Vite help declares apiServer with one parsed example, derivation, prox
   )
   for (const value of trialValues)
     assert.equal(serialized.includes(value), false, value)
+})
+
+// Value: protects=CR-2/OCR4-1/2/3 the served Vite help interpolates the API version everywhere, points the sign-in recovery at real help paths, names the refusal anchors' true locations and says apiServer and library cannot share a run; fails_when=a literal placeholder is served, the retry names apiServer.signInInRun, the anchor locations are wrong or the limit line is gone; no_claim=that a run succeeds
+test('the served Vite help has no uninterpolated placeholder and words the sign-in way out, anchor locations and the library limit', async (context) => {
+  // Arrange
+  const { section, text } = await readViteApiServerHelp(context)
+  const retry = PACKAGE_ROOT_FRESH_SESSION_RECOVERY
+  // Act
+  const limits = section.limits.join('\n')
+  // Assert
+  // A shell default such as ${PORT:-N} is legitimate help text; an interpolation constant has no colon.
+  assert.doesNotMatch(text, /\$\{[A-Z_]+\}/)
+  assert.ok(
+    text.includes(
+      'Browser stops only, and server stops inside the API folder of a declared apiServer (API 1.38, see viteApiServer).',
+    ),
+  )
+  assert.ok(
+    section.viteRefusals.includes(
+      'VITE_PORT_UNAVAILABLE anchors are in viteRefusals; the api-port-conflict, source-drift and source-unverifiable anchors are in vitePackageRoot.refusals.',
+    ),
+  )
+  assert.ok(
+    limits.includes(
+      'apiServer and library cannot be declared on one vite-dev run',
+    ),
+  )
+  assert.ok(retry.includes('viteApiServer.signInInRun'))
+  assert.ok(retry.includes('expoWebQuickStart.apiServer.signInInRun'))
 })
 
 // Value: protects=the Vite support table, the quick-start summary and the participant server refusal agree that a server stop needs apiServer from API 1.38; fails_when=viteSupport still says browser stops only or the refusal does not name apiServer and 1.38; why_new=the help contradicted itself once vite-dev accepted apiServer; seam=none; no_claim=that a run with apiServer succeeds
