@@ -1,6 +1,6 @@
 /** Node's own inspector lines: the listening address (with the session's socket path), its help pointer and the attach notice. */
 const INSPECTOR_BANNER_LINE =
-  /^(Debugger listening on |Debugger attached\.|For help, see: https:\/\/nodejs\.org\/en\/docs\/inspector)/
+  /^(Debugger listening on |Debugger attached\.|For help, see: https:\/\/nodejs\.org\/)/
 
 /**
  * Drops Node's inspector banner lines from an API output tail.

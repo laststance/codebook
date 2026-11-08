@@ -686,6 +686,11 @@ export interface StudyRuntime {
   prepare(): Promise<void>
   view(): RuntimeView
   /**
+   * The masked output tail of the run's own API server, whatever the run's state; empty without one.
+   * Called by the service for a preparation failure, which happens before the view carries the tail.
+   */
+  apiFailureOutputTail?(): string
+  /**
    * Reads, from the page and without any input event, what the saved-session confirmation needs to word each operation: whether its control is a secret one and the visible label of a chosen option.
    * Called by the service when it builds the confirmation question; absent for runtimes that never ask it.
    */

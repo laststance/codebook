@@ -733,7 +733,8 @@ test('an owned API shows its output tail while it is still running', async (t) =
   )
 
   // Assert
-  assert.match(tail, /Debugger attached\.\nfirst line\n$/)
+  // Node's inspector banner never reaches the tail, and the tail ends at the last line.
+  assert.equal(tail, 'first line')
 })
 
 // Value: protects=one redaction path for the live and the exit tail; fails_when=whenExited().outputTail differs from outputTailNow() after exit; no_claim=masking itself
@@ -800,9 +801,83 @@ test('a learner secret typed after launch and split across two output chunks nev
   assert.deepEqual(
     {
       leaked: tails.some((tail) => tail.includes('hunter2')),
-      // Node's own inspector banner precedes the entry's output.
-      final: api.outputTailNow().replace(/^[\s\S]*Debugger attached\.\n/, ''),
+      final: api.outputTailNow(),
     },
-    { leaked: false, final: 'login failed for [masked] done\n' },
+    { leaked: false, final: 'login failed for [masked] done' },
+  )
+})
+
+/**
+ * Launches an API whose entry prints the given chunks and returns its tail once the last chunk arrived.
+ * Called by the tail-boundary tests.
+ * @param context - The test.
+ * @param chunks - What the entry prints, one chunk every 300 ms.
+ * @param extra - Further input members.
+ * @param lastMarker - A text of the last chunk that tells it was printed.
+ * @returns The tail after the last chunk.
+ * @example const { tail } = await tailAfter(t, ['a\n'], {}, 'a')
+ */
+async function tailAfter(
+  context: TestContext,
+  chunks: string[],
+  extra: Partial<OwnedApiServerInput>,
+  lastMarker: string,
+) {
+  const repository = await apiRepository(context, { mode: 'api' })
+  await chunkedEntry(repository, chunks)
+  const { api } = await launchApi(context, repository, extra)
+  const cdp = await connectInspector(context, api)
+  void cdp
+    .request('Runtime.runIfWaitingForDebugger', undefined)
+    .catch(() => undefined)
+  const tail = await waitUntil(
+    () =>
+      api.outputTailNow().includes(lastMarker)
+        ? api.outputTailNow()
+        : undefined,
+    'the last chunk',
+    10_000,
+  )
+  return { tail }
+}
+
+// Value: protects=B1 a known value that the old 4096-character cut would have started inside never leaves a suffix in the tail, because the run's mask is applied to the whole output before the cut; fails_when=the tail is cut before maskText runs, so the end of the value stays; no_claim=which values the run masks
+test('a known value that the tail bound would cut in half is masked whole, never left as a suffix', async (t) => {
+  // Arrange
+  const value = 'db-password-ABCDEFGHIJ'
+  // The raw output is the value, a newline, then 4,070 filler characters: a raw cut at 4,096 characters starts inside the value.
+  const chunks = [`${value}\n`, `${'z'.repeat(4069)}\n`, 'end-marker\n']
+  // Act
+  const { tail } = await tailAfter(
+    t,
+    chunks,
+    { maskText: (text) => text.replaceAll(value, '[masked]') },
+    'end-marker',
+  )
+  // Assert
+  assert.deepEqual(
+    {
+      hasSuffix: tail.includes('ABCDEFGHIJ') || tail.includes('word-ABC'),
+      endsWithMarker: tail.endsWith('end-marker'),
+      fitsBound: tail.length <= 4096,
+    },
+    { hasSuffix: false, endsWithMarker: true, fitsBound: true },
+  )
+})
+
+// Value: protects=B1 Node's inspector endpoint (ws://...) never remains in the tail when the old bound would have cut inside the banner line; fails_when=the cut precedes the banner filter and leaves the end of the Debugger listening line; no_claim=the banner filter itself (withoutInspectorBanner tests)
+test('a tail bound inside the inspector banner never leaves the ws:// endpoint', async (t) => {
+  // Arrange
+  // The banner is about 150 characters; the filler makes the raw cut start inside its first line.
+  const chunks = [`${'f'.repeat(3990)}\n`, 'end-marker\n']
+  // Act
+  const { tail } = await tailAfter(t, chunks, {}, 'end-marker')
+  // Assert
+  assert.deepEqual(
+    {
+      hasEndpoint: tail.includes('ws://') || tail.includes('127.0.0.1:'),
+      endsWithMarker: tail.endsWith('end-marker'),
+    },
+    { hasEndpoint: false, endsWithMarker: true },
   )
 })

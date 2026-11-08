@@ -265,6 +265,7 @@ import {
 } from './utils/canonicalDefinition'
 import { captureReplayDebugSnapshot } from './utils/captureReplayDebugSnapshot'
 import { causeRootsFor } from './utils/causeRootsFor'
+import { collectApiEnvFileValues } from './utils/collectApiEnvFileValues'
 import {
   completeBindingPlace,
   type CompletedBindingPlace,
@@ -350,6 +351,7 @@ import {
   appLibraryPathConflictOf,
   libraryMapOverridesFor,
 } from './utils/libraryMapOverrides'
+import { maskEnvValues } from './utils/maskKnownValues'
 import { maskLearnerSecretText } from './utils/maskLearnerSecretText'
 import { maskNextServerOutput } from './utils/maskNextServerOutput'
 import { maskSourceMapText } from './utils/maskSourceMapText'
@@ -1508,9 +1510,23 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    */
   private readonly maskRunText = (text: string): string =>
     maskLearnerSecretText(
-      this.maskText?.(text) ?? text,
+      this.maskApiEnvValues(this.maskText?.(text) ?? text),
       this.learnerSecretValues,
     )
+  /** The values of the API package's and the repository root's `.env` files, read before the API launches; empty for a run without `apiServer`. */
+  private apiEnvValues: readonly string[] = []
+  /**
+   * Hides the API's env-file values in a text (an API prints what its own code reads from its `.env`).
+   * Called by {@link maskRunText}.
+   * @param text - Any text the run stores or serves.
+   * @returns The text with each value masked; unchanged for a run with none.
+   * @example this.maskApiEnvValues('db s3cr3t-db-pass') // => 'db [masked]'
+   */
+  private maskApiEnvValues(text: string): string {
+    return this.apiEnvValues.length > 0
+      ? maskEnvValues(text, this.apiEnvValues)
+      : text
+  }
   /** Masks only env-file and script values in the module text a Vite run keeps ({@link archivedModuleText}); absent for a Next run. */
   private maskModuleText?: (text: string) => string
   /** The masked copy of each bundle, kept so a read does not mask the same module again; a re-sealed bundle is a new object, so its entry is never stale. */
@@ -11294,6 +11310,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     await this.assertApiFolderNesting(declaration)
     await this.collectApiServerStops()
     await this.refuseSharedApiPort(declaration)
+    // The API's own env files (its package and the repository root) are masked in its output, journal and tails.
+    this.apiEnvValues = await collectApiEnvFileValues([
+      resolve(this.options.workspace, declaration.packageRoot),
+      this.options.workspace,
+    ])
     try {
       this.checkedApiServer = await OwnedApiServer.check({
         workspace: await realpath(this.options.workspace),
@@ -11312,7 +11333,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           this.options.workspace,
         ),
         // Read at every output chunk: the password the learner types after the launch is masked from then on (E-8).
-        secrets: () => this.learnerSecretValues,
+        secrets: () => this.apiMaskedSecrets(),
+        // The tail is masked with the whole run mask before it is cut (a bound never falls inside a hidden value).
+        maskText: this.maskRunText,
         onWithheld: (bytes) =>
           this.evidence.record('api-server.output-withheld', { bytes }),
         signal: this.abort.signal,
@@ -11922,8 +11945,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     // The tail is data for a failure only: a healthy run's view never carries it (D33).
     const outputTail =
       this.failures.length > 0 || this.operationFailure !== undefined
-        ? // The launcher masks learner secrets live; the run's mask adds the app's env-file values (idempotent).
-          this.maskRunText(withoutInspectorBanner(api.outputTailNow()))
+        ? this.apiFailureOutputTail()
         : ''
     return {
       apiServer: {
@@ -11934,6 +11956,30 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         ...(outputTail ? { outputTail } : {}),
       },
     }
+  }
+
+  /**
+   * Gives the API's masked output tail whatever the run's state, for the error of a preparation that failed before the run recorded any failure.
+   * Called by {@link apiServerView} once a failure is set and by the service's preparation error.
+   * @returns The masked, banner-free tail; empty without a launched API or output.
+   * @example this.apiFailureOutputTail() // => 'boom: connect ECONNREFUSED'
+   */
+  apiFailureOutputTail(): string {
+    // The launcher's own mask and the API object already masked it; the run's mask is applied again (idempotent) for any API object that did not.
+    const tail = this.apiServer?.outputTailNow()
+    return tail ? this.maskRunText(withoutInspectorBanner(tail)) : ''
+  }
+
+  /**
+   * The values the API launcher masks live: the learner's secrets and the API's env-file values.
+   * Called at every API output chunk by the launcher.
+   * @returns A new set; the learner's set grows after the launch.
+   * @example this.apiMaskedSecrets().has('s3cr3t-db-pass') // => true
+   */
+  private apiMaskedSecrets(): ReadonlySet<string> {
+    return this.apiEnvValues.length === 0
+      ? this.learnerSecretValues
+      : new Set([...this.apiEnvValues, ...this.learnerSecretValues])
   }
 
   /** Journals the API's masked output within a fixed bound ({@link createApiServerOutputJournal}), so a chatty API cannot use up the run's shared evidence. */

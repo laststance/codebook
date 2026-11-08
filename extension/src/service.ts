@@ -4332,6 +4332,8 @@ export class StudyService {
       ...(runtime?.readinessRequest
         ? { readinessRequest: runtime.readinessRequest }
         : {}),
+      // The run's own API block (port, pid, steps, and the masked output tail only after a failure), which the view already sanitized.
+      ...(runtime?.apiServer ? { apiServer: runtime.apiServer } : {}),
       manifestUri:
         runtime?.manifest || record.nodePrepared
           ? this.uri(record.id, 'manifest')
@@ -5507,7 +5509,7 @@ export class StudyService {
     // A run with a live API quotes the API's masked output tail as data in `details.apiOutputTail` (D33).
     return withApiOutputTail(
       this.namedPreparationError(record, error),
-      record.runtime?.view().apiServer?.outputTail,
+      record.runtime?.apiFailureOutputTail?.(),
     )
   }
 

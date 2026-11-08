@@ -57,6 +57,7 @@ import { verifyListenerOwnership } from './utils/verifyListenerOwnership'
 import { verifyNodeTestInspectorOwnership } from './utils/verifyNodeTestInspectorOwnership'
 import { readInspectorThreadIdentity } from './utils/verifyServerInspectorOwnership'
 import { waitForServerReadiness } from './utils/waitForServerReadiness'
+import { withoutInspectorBanner } from './utils/withoutInspectorBanner'
 
 /** The declaration fields an owned API server needs: where it runs, what it runs, how it is loaded and the port its own code listens on. */
 export type OwnedApiServerDeclaration = Pick<
@@ -77,6 +78,11 @@ export type OwnedApiServerInput = {
   onOutput?: (event: ProcessOutputEvent) => void | Promise<void>
   /** The values the learner typed during the run, read at every output chunk (the set grows after the launch); they are masked in every form a server may echo. */
   secrets?: () => ReadonlySet<string>
+  /**
+   * The run's full masking, applied to the whole captured output before {@link OwnedApiServer.outputTailNow} cuts it, so a bound never falls inside a value the mask hides.
+   * Absent: the launcher's live mask alone has masked the capture.
+   */
+  maskText?: (text: string) => string
   /**
    * Called when Node's debugger-disconnect notice appeared as a complete stderr line (read on the raw stream, before masking) and the process is confirmed to be ending: it listens on nothing but its inspector.
    * An application line that merely repeats the notice while the API still listens never calls it (`api-server.notice-ignored` is journaled instead).
@@ -458,20 +464,32 @@ export class OwnedApiServer {
   }
 
   /**
-   * The API's last output right now: learner secrets masked, private paths hidden, cut to {@link PROCESS_OUTPUT_EVENT_LIMIT_CHARS}.
+   * The API's last output right now: masked ({@link OwnedApiServerInput.maskText} and the learner secrets), private paths hidden, Node's inspector banner dropped, then cut to {@link PROCESS_OUTPUT_EVENT_LIMIT_CHARS} at a line start.
    *
    * Readable while the API runs and after it exits, so a failed operation can show what the API printed without waiting for the exit.
    * It reads the launcher's live redacted capture, so output held back for a secret is excluded and the tail is never longer than what the live mask published.
    * Called by {@link OwnedApiServer.whenExited} for the exit tail and by the run's view and error builders on a failure.
    * @returns The masked, path-hidden tail; empty when the API printed nothing.
-   * @example api.outputTailNow() // => 'listening on 4100\n'
+   * @example api.outputTailNow() // => 'listening on 4100'
    */
   outputTailNow(): string {
-    return hidePrivatePaths(
-      this.launched.output().slice(-PROCESS_OUTPUT_EVENT_LIMIT_CHARS),
+    // Mask, hide paths and drop the inspector banner over everything captured, and only then cut: a bound inside a value or the banner would leave a suffix the mask can no longer recognize.
+    const raw = this.launched.output()
+    // The banner goes before paths are hidden: hiding rewrites its https:// pointer line, which the filter would then no longer recognize.
+    const whole = hidePrivatePaths(
+      withoutInspectorBanner(
+        this.input.maskText ? this.input.maskText(raw) : raw,
+      ),
       this.input.workspace,
       homedir(),
     )
+    if (whole.length <= PROCESS_OUTPUT_EVENT_LIMIT_CHARS) return whole
+    const cut = whole.slice(-PROCESS_OUTPUT_EVENT_LIMIT_CHARS)
+    // The cut began inside a line unless it began right after a line break; that partial line is dropped.
+    if (whole[whole.length - PROCESS_OUTPUT_EVENT_LIMIT_CHARS - 1] === '\n')
+      return cut
+    const firstBreak = cut.indexOf('\n')
+    return firstBreak === -1 ? cut : cut.slice(firstBreak + 1)
   }
 
   /**
