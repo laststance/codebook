@@ -2,6 +2,12 @@ import assert from 'node:assert/strict'
 import type { LookupAddress } from 'node:dns'
 import { test } from 'node:test'
 
+import {
+  REPOSITORY_SETUP_TIMEOUT_MS,
+  REVERSE_PROXY_PROBE_TIMEOUT_MS,
+  REVERSE_PROXY_PROOF_TIMEOUT_MS,
+  REVERSE_PROXY_RESOLVE_TIMEOUT_MS,
+} from '../constants'
 import { resolveReverseProxyHost } from '../utils/resolveReverseProxyHost'
 
 /** A stand-in resolver that answers with the given addresses. */
@@ -43,8 +49,8 @@ test('a failing resolver is refused as not-resolved', async () => {
   assert.deepEqual(result, { ok: false, reason: 'not-resolved' })
 })
 
-// Value: protects=a stalled getaddrinfo cannot hold the run beyond 5 s; fails_when=the timeout is removed or longer than 5000 ms; no_claim=the late answer (it is dropped)
-test('a resolver that never answers is refused as not-resolved after 5 seconds', async (context) => {
+// Value: protects=a stalled getaddrinfo cannot hold the run beyond 15 s; fails_when=the timeout is removed or longer than 15000 ms; no_claim=the late answer (it is dropped)
+test('a resolver that never answers is refused as not-resolved after 15 seconds', async (context) => {
   // Arrange
   context.mock.timers.enable({ apis: ['setTimeout'] })
   const dependencies = {
@@ -56,7 +62,7 @@ test('a resolver that never answers is refused as not-resolved after 5 seconds',
     dependencies,
     neverCancelled,
   )
-  context.mock.timers.tick(4_999)
+  context.mock.timers.tick(14_999)
   context.mock.timers.tick(1)
   const result = await pending
   // Assert
@@ -207,4 +213,42 @@ test('127.0.0.1 at a different port than the upstream port is accepted', async (
   )
   // Assert
   assert.deepEqual(result, { ok: true, address: '127.0.0.1', family: 4 })
+})
+
+// Value: protects=a hosts-file-only host that the system resolver answers after its 5 s AAAA wait is still resolved; fails_when=the bound is back at 5000 ms; no_claim=the real resolver
+test('a host the resolver answers after 5.1 seconds is still resolved', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const dependencies = {
+    lookup: () =>
+      new Promise<LookupAddress[]>((resolve) =>
+        setTimeout(() => resolve([{ address: '127.0.0.1', family: 4 }]), 5_100),
+      ),
+  }
+  // Act
+  const pending = resolveReverseProxyHost(
+    'app.example.test',
+    dependencies,
+    neverCancelled,
+  )
+  context.mock.timers.tick(5_100)
+  const result = await pending
+  // Assert
+  assert.deepEqual(result, { ok: true, address: '127.0.0.1', family: 4 })
+})
+
+// Value: protects=resolve, proof and probe bounds fit the setup budget; fails_when=a bound grows so the three together reach the setup timeout; no_claim=the real durations
+test('the reverse proxy bounds together stay below the repository setup timeout', () => {
+  // Arrange
+  const bounds = [
+    REVERSE_PROXY_RESOLVE_TIMEOUT_MS,
+    REVERSE_PROXY_PROOF_TIMEOUT_MS,
+    REVERSE_PROXY_PROBE_TIMEOUT_MS,
+  ]
+  // Act
+  const total = bounds.reduce((sum, bound) => sum + bound, 0)
+  // Assert
+  assert.equal(REVERSE_PROXY_RESOLVE_TIMEOUT_MS, 15_000)
+  assert.equal(total, 35_000)
+  assert.ok(total < REPOSITORY_SETUP_TIMEOUT_MS)
 })

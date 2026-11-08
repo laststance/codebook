@@ -92,8 +92,8 @@ export const REVERSE_PROXY_PROOF_PATH_PREFIX = '/__codebook_proof__/'
 /** The environment variable that carries one run's identity secret to the development server's process; without it the identity preload is inert. */
 export const REVERSE_PROXY_PROOF_SECRET_ENV = 'CODEBOOK_PROOF_SECRET'
 
-/** How long the resolution of the declared host may take before it is `not-resolved`. */
-export const REVERSE_PROXY_RESOLVE_TIMEOUT_MS = 5_000
+/** How long the resolution of the declared host may take before it is `not-resolved`. Measured on macOS 26 with Node 24: `dns.promises.lookup(host, { all: true, verbatim: true })` for a host only the hosts file maps took 5006 to 5010 ms (the AAAA query waits for its 5 s timeout), so the bound sits well above that; resolve, proof and probe bounds together stay below {@link REPOSITORY_SETUP_TIMEOUT_MS}. */
+export const REVERSE_PROXY_RESOLVE_TIMEOUT_MS = 15_000
 /** How long the proof request, handshake and body included, may take before it is `proof-timeout`. */
 export const REVERSE_PROXY_PROOF_TIMEOUT_MS = 10_000
 /** How long the throwaway browser's address check may take before it is `proof-timeout`. */

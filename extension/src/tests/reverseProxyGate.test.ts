@@ -4,6 +4,8 @@ import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 
 import {
+  processGroupFromStat,
+  readProcessGroup,
   ReverseProxyGate,
   type ReverseProxyDependencies,
 } from '../reverseProxyGate'
@@ -471,4 +473,165 @@ test('dispose ends the admission of a proved origin', async () => {
   // Assert
   assert.equal(before, true)
   assert.equal(gate.admits(ORIGIN), false)
+})
+
+// Value: protects=a certificate failure keeps its TLS code in the refusal facts; fails_when=tlsCode is dropped between the transport and the refusal; no_claim=how the transport classifies
+test('an untrusted certificate refuses with the TLS code in the facts', async () => {
+  // Arrange
+  const overrides = {
+    prove: async () =>
+      ({
+        ok: false,
+        reason: 'certificate-untrusted',
+        requestWritten: false,
+        tlsCode: 'SELF_SIGNED_CERT_IN_CHAIN',
+      }) as const,
+  }
+  // Act
+  const { failure } = await provedGate(overrides)
+  // Assert
+  assert.equal(failure?.reason, 'certificate-untrusted')
+  assert.equal(failure?.facts.tlsCode, 'SELF_SIGNED_CERT_IN_CHAIN')
+})
+
+// Value: protects=X2 an answering process that exits while the browser check runs never yields a proof; fails_when=prove() sets proved without checking the server again; no_claim=which process replaced it
+test('a server process that exits while the browser check runs is refused as proof-unclassified and admits nothing', async () => {
+  // Arrange
+  const alive = { value: true }
+  const overrides = {
+    isProcessAlive: () => alive.value,
+    probe: async () => {
+      alive.value = false
+      return {
+        ok: true,
+        address: '127.0.0.1',
+        port: 443,
+        cleanupConfirmed: true,
+      } as const
+    },
+  }
+  // Act
+  const { gate, failure } = await provedGate(overrides)
+  // Assert
+  assert.equal(failure?.reason, 'proof-unclassified')
+  assert.equal(failure?.facts.resourcesReleased, true)
+  assert.equal(gate.admits(ORIGIN), false)
+  assert.equal(gate.view().state, 'refused')
+})
+
+// Value: protects=X2 the spawned CLI ending during the browser check is refused too; fails_when=only the answering process is rechecked; no_claim=the stop of the server
+test('a spawned CLI that exits while the browser check runs is refused as proof-unclassified with the probe cleanup', async () => {
+  // Arrange
+  const state = { running: true }
+  const overrides = {
+    probe: async () => {
+      state.running = false
+      return {
+        ok: true,
+        address: '127.0.0.1',
+        port: 443,
+        cleanupConfirmed: false,
+      } as const
+    },
+  }
+  // Act
+  const { gate, failure } = await provedGate(overrides, state)
+  // Assert
+  assert.equal(failure?.reason, 'proof-unclassified')
+  assert.equal(failure?.facts.resourcesReleased, false)
+  assert.equal(gate.admits(ORIGIN), false)
+})
+
+// Value: protects=X3 a correct pass whose cleanup was not confirmed continues and dispose retries it; fails_when=the pass is refused or the retry is never called; no_claim=the real Chrome cleanup
+test('a pass with unconfirmed cleanup is proved and dispose retries the release', async () => {
+  // Arrange
+  let retries = 0
+  const overrides = {
+    probe: async (input: Parameters<ReverseProxyDependencies['probe']>[0]) => {
+      input.onUnreleased?.(async () => {
+        retries += 1
+        return true
+      })
+      return {
+        ok: true,
+        address: '127.0.0.1',
+        port: 443,
+        cleanupConfirmed: false,
+      } as const
+    },
+  }
+  // Act
+  const { gate, failure } = await provedGate(overrides)
+  const before = retries
+  await gate.dispose()
+  // Assert
+  assert.equal(failure, undefined)
+  assert.equal(gate.view().state, 'proved')
+  assert.equal(before, 0)
+  assert.equal(retries, 1)
+})
+
+// Value: protects=X3 a release that still fails rejects dispose and is tried again later; fails_when=a failed retry is swallowed; no_claim=the real Chrome cleanup
+test('a dispose whose release retry fails rejects and a later dispose tries it again', async () => {
+  // Arrange
+  let attempts = 0
+  const overrides = {
+    probe: async (input: Parameters<ReverseProxyDependencies['probe']>[0]) => {
+      input.onUnreleased?.(async () => {
+        attempts += 1
+        return attempts > 1
+      })
+      return {
+        ok: true,
+        address: '127.0.0.1',
+        port: 443,
+        cleanupConfirmed: false,
+      } as const
+    },
+  }
+  const { gate } = await provedGate(overrides)
+  // Act
+  await assert.rejects(gate.dispose(), /still not closed/)
+  await gate.dispose()
+  // Assert
+  assert.equal(attempts, 2)
+})
+
+// Value: protects=X5 the probe failure's requestWritten reaches the refusal facts; fails_when=the flag is dropped so a written request reads as nothing sent; no_claim=the wording
+test('a browser check failure forwards requestWritten to the refusal facts', async () => {
+  // Arrange
+  const overrides: Partial<ReverseProxyDependencies> = {
+    probe: async () => ({
+      ok: false,
+      reason: 'proof-unreachable',
+      requestWritten: true,
+      cleanupConfirmed: true,
+    }),
+  }
+  // Act
+  const { failure } = await provedGate(overrides)
+  // Assert
+  assert.equal(failure?.facts.requestWritten, true)
+})
+
+// Value: protects=N4 the process group is read from /proc where Linux has no ps; fails_when=a missing ps makes every Linux run proof-unclassified; no_claim=the real /proc
+test('without ps on Linux the process group comes from the stat line', async () => {
+  // Arrange
+  const seams = {
+    platform: 'linux' as const,
+    psProgram: async (): Promise<string> => {
+      throw new Error('no ps')
+    },
+    readStat: async () =>
+      '5001 (next-server (v16)) S 5000 5000 5000 0 -1 4194560',
+  }
+  // Act
+  const group = await readProcessGroup(5001, seams)
+  // Assert
+  assert.equal(group, 5000)
+  assert.equal(processGroupFromStat('7 (a b) R 1 42 42 0'), 42)
+  await assert.rejects(
+    readProcessGroup(5001, { ...seams, platform: 'darwin' }),
+    { message: 'no ps' },
+  )
 })

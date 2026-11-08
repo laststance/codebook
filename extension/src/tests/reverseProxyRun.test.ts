@@ -135,12 +135,16 @@ test('a page at the declared origin is the owned application, so the operations 
 
   // Assert
   assert.equal(harness.run.view().status, 'ready')
-  assert.deepEqual(plain(harness.run.view().reverseProxy), {
+  const view = plain(harness.run.view().reverseProxy)!
+  assert.equal(typeof view.proofMs, 'number')
+  assert.ok(view.proofMs! >= 0)
+  const { proofMs, ...rest } = view
+  void proofMs
+  assert.deepEqual(rest, {
     origin: DECLARED_ORIGIN,
     upstreamPort: UPSTREAM_PORT,
     state: 'proved',
     address: '127.0.0.1',
-    proofMs: plain(harness.run.view().reverseProxy)!.proofMs,
   })
   await harness.run.stop()
 })

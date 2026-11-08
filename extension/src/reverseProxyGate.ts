@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { lookup } from 'node:dns/promises'
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -132,22 +132,65 @@ class ReverseProxyProof {
 }
 
 /**
- * Reads the process group of a process with `ps`, started by an absolute path.
+ * Reads the process group out of the text of a Linux `/proc/<pid>/stat` file.
+ *
+ * Why it exists: Linux without procps has no `ps`, and the proof must still be bound to the spawned group. Called by {@link readProcessGroup} as its fallback.
+ * @param stat - The file's content, `pid (command) state ppid pgrp …`; the command may hold spaces and parentheses, so the fields are read after the last closing parenthesis.
+ * @returns The group id (field 5).
+ * @throws When the text has no such field.
+ * @example
+ * processGroupFromStat('4242 (next-server (v1)) S 4200 4200 4200 0 -1') // => 4200
+ */
+export function processGroupFromStat(stat: string): number {
+  // Fields after the command name: state, ppid, pgrp.
+  const fields = stat
+    .slice(stat.lastIndexOf(')') + 1)
+    .trim()
+    .split(/\s+/)
+  if (!/^\d+$/.test(fields[2] ?? ''))
+    throw new Error('The process group of the proof is unreadable')
+  return Number(fields[2])
+}
+
+/** What {@link readProcessGroup} reads through; each is the real one unless a test names its own. */
+type ReadProcessGroupSeams = {
+  platform?: NodeJS.Platform
+  psProgram?: typeof psProgramPath
+  readStat?: (processId: number) => Promise<string>
+}
+
+/**
+ * Reads the process group of a process with `ps`, started by an absolute path; on Linux without `ps`, from `/proc/<pid>/stat`.
  *
  * Why it exists: the proof's answering process is Next's forked server child, so the answer is bound to the spawned group, not to the parent alone. Called by the gate's default {@link ReverseProxyDependencies.processGroupOf}.
  * @param processId - The answering process.
+ * @param seams - The platform, the `ps` lookup and the stat read ({@link ReadProcessGroupSeams}); the real ones when left out.
  * @returns The group id, or `undefined` on Windows, which has no `ps`.
- * @throws When `ps` is missing, fails or prints something else than a number.
+ * @throws When no source of the group works, `ps` fails, or the output is not a number.
  * @example
  * await readProcessGroup(process.pid) // => 4242
  */
-async function readProcessGroup(
+export async function readProcessGroup(
   processId: number,
+  seams: ReadProcessGroupSeams = {},
 ): Promise<number | undefined> {
+  const platform = seams.platform ?? process.platform
   // No `ps` on Windows: the spawned CLI's liveness alone binds the answer there.
-  if (process.platform === 'win32') return undefined
+  if (platform === 'win32') return undefined
+  let program: string
+  try {
+    program = await (seams.psProgram ?? psProgramPath)(
+      'The process group check of the proof',
+    )
+  } catch (error) {
+    // Linux without procps: the kernel's own record gives the same group.
+    if (platform !== 'linux') throw error
+    const readStat =
+      seams.readStat ?? ((pid) => readFile(`/proc/${pid}/stat`, 'utf8'))
+    return processGroupFromStat(await readStat(processId))
+  }
   const { stdout } = await promisify(execFile)(
-    await psProgramPath('The process group check of the proof'),
+    program,
     ['-o', 'pgid=', '-p', String(processId)],
     { timeout: REVERSE_PROXY_PROCESS_QUERY_TIMEOUT_MS },
   )
@@ -227,6 +270,8 @@ export class ReverseProxyGate {
   private proof: ReverseProxyProof | undefined
   private proofMs: number | undefined
   private app: Pick<DevelopmentApp, 'isRunning'> | undefined
+  /** The probe's cleanup retries whose first attempt was not confirmed; {@link ReverseProxyGate.dispose} calls them again. */
+  private readonly unreleased: Array<() => Promise<boolean>> = []
 
   constructor(private readonly options: ReverseProxyGateOptions) {
     this.parts = originPartsOf(options.declaration.origin)
@@ -326,14 +371,32 @@ export class ReverseProxyGate {
     this.state = 'proving'
     const startedAt = Date.now()
     await app.listening(signal)
-    const failure =
-      (await this.proveWithNode(app, this.address, signal)) ??
-      (await this.probeBrowser(this.address, signal))
-    if (failure !== undefined) return failure
+    const nodeFailure = await this.proveWithNode(app, this.address, signal)
+    if (nodeFailure !== undefined) return nodeFailure
+    const probed = await this.probeBrowser(this.address, signal)
+    if (probed.failure !== undefined) return probed.failure
+    // The probe took time: the server must still be the one the proof named.
+    if (!this.proofStillHolds(app)) {
+      this.proof = undefined
+      return this.failure('proof-unclassified', {
+        address: this.address,
+        resourcesReleased: probed.cleanupConfirmed,
+      })
+    }
     this.proofMs = Date.now() - startedAt
     this.app = app
     this.state = 'proved'
     return undefined
+  }
+
+  /** Whether the spawned CLI and the answering server process the proof named both still run (the rule {@link ReverseProxyGate.admits} uses). */
+  private proofStillHolds(app: Pick<DevelopmentApp, 'isRunning'>): boolean {
+    const proof = this.proof
+    return (
+      proof !== undefined &&
+      app.isRunning() &&
+      this.dependencies.isProcessAlive(proof.serverPid)
+    )
   }
 
   /** The Node proof and the process binding; records the proof's pids on success. */
@@ -409,7 +472,10 @@ export class ReverseProxyGate {
   private async probeBrowser(
     address: string,
     signal: AbortSignal,
-  ): Promise<ReverseProxyFailure | undefined> {
+  ): Promise<{
+    failure?: ReverseProxyFailure
+    cleanupConfirmed: boolean
+  }> {
     const result = await this.dependencies.probe(
       {
         chromeBinary: this.options.chromeBinary,
@@ -418,22 +484,30 @@ export class ReverseProxyGate {
         expectedAddress: address,
         expectedPort: this.parts.effectivePort,
         timeoutMs: REVERSE_PROXY_PROBE_TIMEOUT_MS,
+        // Keep every retry the probe hands over; dispose() calls them again.
+        onUnreleased: (release) => {
+          this.unreleased.push(release)
+        },
       },
       signal,
     )
-    if (result.ok) return undefined
+    // A correct pass with unconfirmed cleanup lets the run continue; dispose() retries the cleanup.
+    if (result.ok) return { cleanupConfirmed: result.cleanupConfirmed }
     this.proof = undefined
     const { ok, reason, cleanupConfirmed, ...facts } = result
     void ok
-    return this.failure(reason, {
-      address,
-      ...(reason === 'proof-timeout'
-        ? { timeoutMs: REVERSE_PROXY_PROBE_TIMEOUT_MS }
-        : {}),
-      ...facts,
-      // The probe's real cleanup (process group ended, profile folder removed), never a constant.
-      resourcesReleased: cleanupConfirmed,
-    })
+    return {
+      cleanupConfirmed,
+      failure: this.failure(reason, {
+        address,
+        ...(reason === 'proof-timeout'
+          ? { timeoutMs: REVERSE_PROXY_PROBE_TIMEOUT_MS }
+          : {}),
+        ...facts,
+        // The probe's real cleanup (process group ended, profile folder removed), never a constant.
+        resourcesReleased: cleanupConfirmed,
+      }),
+    }
   }
 
   /**
@@ -484,19 +558,30 @@ export class ReverseProxyGate {
   }
 
   /**
-   * Removes the preload folder and invalidates the proof.
+   * Removes the preload folder, retries the probe cleanups that were not confirmed and invalidates the proof.
    *
-   * The folder is forgotten only after the removal succeeded, so a failing `rm` rejects (the run collects it) and a later call tries again; a call after success does nothing.
-   * @throws When the folder cannot be removed.
+   * The folder is forgotten only after the removal succeeded, and a retry stays listed until it confirms, so a failing step rejects (the run collects it) and a later call tries again; a call after success does nothing.
+   * @throws When the folder cannot be removed or a probe cleanup still cannot be confirmed.
    * @example
    * await gate.dispose()
    */
   async dispose(): Promise<void> {
     this.proof = undefined
     this.app = undefined
+    const pending = this.unreleased.splice(0)
+    const stillOpen: Array<() => Promise<boolean>> = []
+    for (const release of pending) {
+      // A retry that throws or answers false stays listed.
+      const confirmed = await release().catch(() => false)
+      if (!confirmed) stillOpen.push(release)
+    }
+    this.unreleased.push(...stillOpen)
     const folder = this.preloadFolder
-    if (folder === undefined) return
-    await rm(folder, { recursive: true, force: true })
-    this.preloadFolder = undefined
+    if (folder !== undefined) {
+      await rm(folder, { recursive: true, force: true })
+      this.preloadFolder = undefined
+    }
+    if (stillOpen.length > 0)
+      throw new Error('The throwaway browser of the proof is still not closed')
   }
 }
