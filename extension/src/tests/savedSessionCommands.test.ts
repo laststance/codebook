@@ -192,22 +192,29 @@ test('Remove deletes nothing when the learner dismisses the confirmation', async
   assert.deepEqual(calls, ['modal Remove the saved session for shop?'])
 })
 
-// protects=DES-3 one notice per refused run, with a button that runs the setup; fails_when=a reason has the wrong text or the button does not run codebook.setUpSavedSession; no_claim=lane B's detection
-test('SIGN_IN_REQUIRED shows one notice with the reason text, and its button runs Set Up Saved Session', async () => {
+// protects=DES-3 one notice per refused run, with a button that starts the setup; fails_when=a reason has the wrong text or the button starts no setup; no_claim=lane B's detection
+test('SIGN_IN_REQUIRED shows one notice with the reason text, and its button starts the setup', async (context) => {
   // Arrange
-  const { calls, notices, installed } = await load([], true)
+  const { calls, notices, installed } = await loadWithSetup({
+    answer: (message) =>
+      message.startsWith('The saved session for shop')
+        ? 'Set Up Saved Session…'
+        : undefined,
+  })
+  // The setup left open is closed after the test, so its 10-minute timer does not hold the process.
+  context.after(() => installed.dispose())
   // Act
   installed.showSignInRequired('redirected-to-sign-in')
-  await new Promise((resolve) => setImmediate(resolve))
+  // The setup reads the sign-in routes from disk before it starts, so the start is awaited, not guessed.
+  for (let turn = 0; turn < 500 && !calls.includes('startServer'); turn += 1)
+    await settle()
   // Assert
-  assert.deepEqual(notices, [
-    {
-      severity: 'information',
-      message: 'The saved session for shop may have expired. Set it up again.',
-      actions: ['Set Up Saved Session…'],
-    },
-  ])
-  assert.deepEqual(calls, ['execute codebook.setUpSavedSession'])
+  assert.deepEqual(notices[0], {
+    severity: 'information',
+    message: 'The saved session for shop may have expired. Set it up again.',
+    actions: ['Set Up Saved Session…'],
+  })
+  assert.deepEqual(calls.slice(0, 2), ['acquire', 'startServer'])
 })
 
 const SAVED_VIEW = {

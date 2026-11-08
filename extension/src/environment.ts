@@ -953,14 +953,24 @@ export async function createEnvironment(
       }
     },
     async startSavedSessionServer(adapter, signInPath, signal, reverseProxy) {
-      // Wave 0 signature only: the declared-origin setup server lands in the saved-session lane.
-      void reverseProxy
       const node = await requireNodeRunPrerequisites('the saved session setup')
+      // A setup at a declared origin starts the throwaway browser check with the same Chrome the setup browser uses.
+      const chrome = reverseProxy ? (await resolveChrome()).chrome : undefined
+      if (reverseProxy && !chrome)
+        throw new Error(missingChromeText(process.platform))
       return startSavedSessionServer(developmentServerAdapterOf(adapter), {
         workspace,
         node,
         signInPath,
         signal,
+        ...(reverseProxy && chrome
+          ? {
+              reverseProxy: {
+                declaration: reverseProxy,
+                chromeBinary: chrome.binary,
+              },
+            }
+          : {}),
       })
     },
     dispose(): void {

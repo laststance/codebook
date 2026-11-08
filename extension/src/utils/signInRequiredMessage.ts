@@ -10,6 +10,22 @@ export type SignInRequiredFacts = {
   operationIndex?: number
   /** The configuration declared `session: "fresh"`, so the run did not use the saved session whether or not one exists. */
   declaredFresh?: boolean
+  /** The origin a `reverseProxy` run declared (API 1.40): the saved session of such a run is set up at that origin by the editor's notice, never by the command palette, which opens localhost. */
+  declaredOrigin?: string
+}
+
+/**
+ * Words the learner's step that sets up the saved session, for a run that opens the app at localhost or at a declared reverse-proxy origin.
+ * Why it exists: the palette's Set Up Saved Session… always opens localhost, where the cookies of a run at a declared host do not apply, so the chat must name the notice's button instead. Called by {@link signInRequiredMessage}.
+ * @param declaredOrigin - The origin a `reverseProxy` run declared, when it did.
+ * @returns The step as a verb phrase that follows `Ask the learner to`.
+ * @example
+ * setUpStepOf(undefined) // => 'run Codebook: Set Up Saved Session…'
+ * setUpStepOf('https://app.example.test') // => "press Set Up Saved Session… in the editor's notice for this run, which sets it up at https://app.example.test (the command palette entry opens localhost, where it would not apply)"
+ */
+function setUpStepOf(declaredOrigin: string | undefined): string {
+  if (declaredOrigin === undefined) return 'run Codebook: Set Up Saved Session…'
+  return `press Set Up Saved Session… in the editor's notice for this run, which sets it up at ${declaredOrigin} (the command palette entry opens localhost, where it would not apply)`
 }
 
 /**
@@ -30,6 +46,7 @@ export function signInRequiredMessage(
   facts: SignInRequiredFacts,
 ): string {
   const { repositoryName } = facts
+  const setUp = setUpStepOf(facts.declaredOrigin)
   const where = facts.landedOn ?? 'a sign-in page'
   const when =
     facts.operationIndex === undefined
@@ -44,11 +61,11 @@ export function signInRequiredMessage(
     return `${asked}; the run declared session: "fresh", so it did not use the saved session of ${repositoryName}, and it stopped ${when}. For a flow behind sign-in, remove session: "fresh" from the configuration, then start one new run.`
   switch (reason) {
     case 'no-saved-session':
-      return `${asked} and ${repositoryName} has no saved session, so the run stopped ${when}. Ask the learner to run Codebook: Set Up Saved Session…, then start one new run.`
+      return `${asked} and ${repositoryName} has no saved session, so the run stopped ${when}. Ask the learner to ${setUp}, then start one new run.`
     case 'setup-not-finished':
-      return `${asked}; the saved-session setup of ${repositoryName} was closed before Done, so the run used a fresh profile and stopped ${when}. Ask the learner to run Codebook: Set Up Saved Session… and finish it with Done, then start one new run.`
+      return `${asked}; the saved-session setup of ${repositoryName} was closed before Done, so the run used a fresh profile and stopped ${when}. Ask the learner to ${setUp} and finish it with Done, then start one new run.`
     case 'redirected-to-sign-in':
-      return `${asked} although the run used the saved session of ${repositoryName}, so the saved session may have expired. The run stopped ${when}. Ask the learner to run Codebook: Set Up Saved Session… again, then start one new run.`
+      return `${asked} although the run used the saved session of ${repositoryName}, so the saved session may have expired. The run stopped ${when}. Ask the learner to ${setUp} again, then start one new run.`
     case 'session-cookie-only':
       return `${asked}: ${repositoryName} keeps its sign-in only while the browser stays open, so a saved session cannot keep it. The run stopped ${when}. Only when the app's sign-in page offers to keep the learner signed in (such as Remember me), ask the learner to set up the saved session again with that choice; otherwise this flow cannot run with a saved session, so do not start another run for it.`
   }

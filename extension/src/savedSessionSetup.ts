@@ -200,15 +200,17 @@ async function unconfirmedStopOf(
  * Says how a first finishing attempt ends the setup: the ending asked for and, for Done, the kind of the app's cookies (read while the browser still runs).
  * @param browser - The open setup browser.
  * @param ending - The ending asked for.
+ * @param cookieHost - The host the setup's app was opened at: `localhost`, or the declared host of a `reverseProxy` setup (API 1.40), so a session-cookie app behind the proxy is not recorded as `none`.
  * @example
- * await firstEndingOf(browser, 'closed') // => { ending: 'closed', appCookies: 'unknown' }
+ * await firstEndingOf(browser, 'closed', 'localhost') // => { ending: 'closed', appCookies: 'unknown' }
  */
 async function firstEndingOf(
   browser: SignInBrowser,
   ending: SetupEnding,
+  cookieHost: string,
 ): Promise<FirstEnding> {
   const appCookies =
-    ending === 'done' ? await browser.readAppCookieKind('localhost') : 'unknown'
+    ending === 'done' ? await browser.readAppCookieKind(cookieHost) : 'unknown'
   return { ending, appCookies }
 }
 
@@ -363,6 +365,8 @@ export class SavedSessionSetup {
         profile: lease.profile,
         url: `${server.origin}${input.signInPath}`,
         signal,
+        // A setup at a declared origin pins the host to the address its start proved.
+        hostResolverRules: server.hostResolverRules,
         recordBrowser: (marker) => lease.recordBrowser(marker),
       })
       // A cancel that came while the browser opened closes it like any failed start.
@@ -483,9 +487,14 @@ export class SavedSessionSetup {
   ): void {
     const { ui } = this.ports
     const cause = causeOf(error, profile)
+    // A refusal of a declared reverse proxy names its reason in the log line (the message holds the Fix line for the learner).
+    const reason =
+      error instanceof StudyError && typeof error.details?.reason === 'string'
+        ? ` reason=${error.details.reason}`
+        : ''
     ui.log(
       'error',
-      `Saved session setup: could not start for ${input.repositoryName}: ${cause}`,
+      `Saved session setup: could not start for ${input.repositoryName}: ${cause}${reason}`,
     )
     // A coded refusal (setup open elsewhere, folder in use or unusable) gets the learner's next step instead of the log.
     if (error instanceof StudyError) {
@@ -545,7 +554,11 @@ export class SavedSessionSetup {
     try {
       // A retry after `stuck` finishes the way the first attempt ended the setup, with the cookie kind read then: a Done stays a Done.
       if (open.first === undefined)
-        open.first = await firstEndingOf(open.browser, requested)
+        open.first = await firstEndingOf(
+          open.browser,
+          requested,
+          open.server?.cookieHost ?? 'localhost',
+        )
       const { first } = open
       ui.log('info', `Saved session setup: ${first.ending} for ${name}.`)
       const closeResult = await open.browser.close()
