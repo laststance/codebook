@@ -618,12 +618,17 @@ export function createServerParticipant(parts: ServerParticipantParts) {
   }
 
   /** Sends `Debugger.scriptParsed` for a script, once per id and address. */
-  const announce = (scriptId: string, url = parts.scriptUrl): void => {
+  const announce = (
+    scriptId: string,
+    url = parts.scriptUrl,
+    hash?: string,
+  ): void => {
     announced.set(scriptId, url)
     listeners.get('Debugger.scriptParsed')?.({
       scriptId,
       url,
       executionContextId: 1,
+      ...(hash === undefined ? {} : { hash }),
     })
   }
 

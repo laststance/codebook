@@ -49,6 +49,8 @@ export type DevelopmentServerStart = {
   viteLibrary?: ViteLauncherLibraryOptions
   /** A `react-scripts-dev` run that declares `library` (API 1.35): the generated preload the owned `start.js` runs with `node --require`, written into the run's private folder before the server starts. Absent for every other run. */
   reactScriptsLibrary?: { preloadPath: string }
+  /** A `next-dev-webpack` run that declares `library` (API 1.36): the generated preload the owned Next server runs with `node --require`, written into the run's private folder before the server starts. Absent for every other run. */
+  nextLibrary?: { preloadPath: string }
   /** A library run only: builds and packs the checked-out library into the run's private folder and writes the anchor file. The Vite launcher calls it between the facts and the listen, after the blockers were found absent; it throws the build's own `LIBRARY_BUILD_*` error. The optional signal ends when the launcher exits during the build, so the build is cancelled. */
   prepareLibrary?: (signal?: AbortSignal) => Promise<void>
   /** The configured entry path of the run (`/` when none): an `expo-web-dev` run asks Metro's entry page there to find the bundle. */

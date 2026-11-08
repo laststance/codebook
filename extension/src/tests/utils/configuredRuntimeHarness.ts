@@ -559,7 +559,13 @@ export async function configuredRuntimeHarness(
             ? { library: { packageRoot: options.libraryRoute.declared } }
             : {}),
         }
-      : unnestedConfiguration
+      : // A library declared without a nested app is a root app that declares `library`, which the run refuses.
+        options.libraryRoute && unnestedConfiguration.version === 3
+        ? {
+            ...unnestedConfiguration,
+            library: { packageRoot: options.libraryRoute.declared },
+          }
+        : unnestedConfiguration
   ) as typeof unnestedConfiguration
   // Each of these changes makes the frozen intent hash stale.
   if (
@@ -800,6 +806,8 @@ export async function configuredRuntimeHarness(
   const entryChecks: string[] = []
   // How many times the run launched the development server (`launchDevelopmentServer`), so a refusal that comes before the server starts can say none was.
   let developmentServerLaunches = 0
+  // Every argument list the run gave `launchDevelopmentServer`, so a test reads the inspector flag and the library options.
+  const developmentServerLaunchArguments: unknown[][] = []
   // The text of each initial input the run sent to the page, in order.
   const insertedTexts: string[] = []
   // The method of every `Input.*` CDP request the run sent to the page, in order (no parameters, so no typed value is kept).
@@ -2296,6 +2304,7 @@ export async function configuredRuntimeHarness(
       './utils/launchDevelopmentServer': {
         launchDevelopmentServer: (...launchArguments: unknown[]) => {
           launchRequests.push(launchArguments[0])
+          developmentServerLaunchArguments.push(launchArguments)
           developmentServerLaunches += 1
           return fakeApplication
         },
@@ -2623,11 +2632,12 @@ export async function configuredRuntimeHarness(
       })
     },
     /** Announces a script of the owned page, as the debugger does for every module it parses. */
-    announceScript(scriptId: string, url: string): void {
+    announceScript(scriptId: string, url: string, hash?: string): void {
       listeners.get('Debugger.scriptParsed')?.({
         scriptId,
         url,
         executionContextId: 1,
+        ...(hash === undefined ? {} : { hash }),
       })
     },
     /** Reports a pause at a chosen generated place with no DAP stop, as a pause the adapter makes for itself arrives. */
@@ -2682,6 +2692,8 @@ export async function configuredRuntimeHarness(
     entryChecks,
     /** How many times the run launched the development server (the Next adapter calls `launchDevelopmentServer`); 0 for a run refused before its server starts. */
     developmentServerLaunches: (): number => developmentServerLaunches,
+    /** The arguments of each `launchDevelopmentServer` call, in order: the folder, the Node executable, the journal writer, whether the server inspector was requested, the port, and so on. */
+    developmentServerLaunchArguments,
     /** The text of each initial input the run sent to the page (`Input.insertText`), in order. */
     insertedTexts,
     /** The method of every `Input.*` request the run sent to the page (`Input.insertText`, `Input.dispatchMouseEvent`, …), in order; the saved-session lanes assert that a refusal or a facts read sends none. */

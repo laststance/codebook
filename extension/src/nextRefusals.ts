@@ -99,6 +99,27 @@ export function outsidePackageRefusal(
   })
 }
 
+/**
+ * Builds the refusal of a Next app at the repository root that declares `library`, raised before anything is built or started.
+ *
+ * Why it exists: the library route redirects an Example below the repository root, so a root Next app has nothing to redirect. Called by {@link ConfiguredBrowserRun} before the library is planned (decision D13 of Cycle 0098).
+ * @returns The `LIBRARY_BUILD_UNSUPPORTED` error: `details.reason: "library-needs-package-root"` and `sideEffects: "none"`.
+ * @example
+ * nextLibraryNeedsPackageRootRefusal().details?.reason // => 'library-needs-package-root'
+ */
+export function nextLibraryNeedsPackageRootRefusal(): StudyError {
+  const message =
+    "configuration.library needs the Example's nested configuration.packageRoot: the library route redirects an Example below the repository root, and this Next app is the repository root. Nothing was built or started."
+  return new StudyError(
+    'LIBRARY_BUILD_UNSUPPORTED',
+    message,
+    message,
+    undefined,
+    undefined,
+    { reason: 'library-needs-package-root', sideEffects: 'none' },
+  )
+}
+
 /** The static recovery of a `NEXT_STOP_NOT_SEALED` whose `details.reason` is `library-stop-unsupported`: it names fields, never values, because a recovery override reaches MCP unsanitized. */
 const LIBRARY_STOP_UNSUPPORTED_RECOVERY =
   "Declare the stop in a file of the Example's own source (details.file lies in the library, which this version cannot pause on the Next library route), or start the run without library when the question is about the library's own source; never edit the project. Recovery: fix the configuration, then one new start. Nothing was started: no build, no server, no browser and no input (details.sideEffects is none). See codebook://help/repository-browser#NEXT_STOP_NOT_SEALED."
