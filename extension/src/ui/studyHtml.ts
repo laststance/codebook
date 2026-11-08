@@ -107,6 +107,8 @@ export interface StudyViewMessage {
     title: string
     /** A server pause's name in the pieces the pane lays out by priority (task 3a); absent for a browser pause. */
     pauseName?: PauseNameParts
+    /** The sentence a format 19 API server stop saved about the page request it was tied to; absent for every other stop. */
+    apiRequestSentence?: string
     at: string
     elapsedMs?: number
   }[]
@@ -1008,6 +1010,18 @@ function studyClient(
     message.moments.find(
       (moment) => moment.id === message.model.observation?.id,
     )?.pauseName
+  /**
+   * The saved sentence naming the page request the selected API server stop was tied to.
+   * @param message - The Study message.
+   * @returns ` · <sentence>` for a stop with one, else an empty string.
+   * @example selectedApiRequestNote(message) // => " · While the API paused here, …"
+   */
+  const selectedApiRequestNote = (message: StudyViewMessage): string => {
+    const sentence = message.moments.find(
+      (moment) => moment.id === message.model.observation?.id,
+    )?.apiRequestSentence
+    return sentence ? ` · ${sentence}` : ''
+  }
   /**
    * Builds the pieces of a pause name as spans the stylesheet shrinks by priority when the pane is narrow: the state and the attribution never shrink, the name shrinks late, the path first, cut in the middle so the file and line stay.
    * @param name - The pause's name pieces.
@@ -4776,12 +4790,12 @@ function studyClient(
       'observation',
       recording
         ? model.observation
-          ? `${selectedPauseName(message)?.text ? `${selectedPauseName(message)?.text} · ` : ''}Recorded observation · ${seconds(model.observation.elapsedMs)}${recording.pauseConfirmed ? ' · pause verified' : ''}${recording.rendererConfirmed ? ' · original renderer receipt available' : ''}`
+          ? `${selectedPauseName(message)?.text ? `${selectedPauseName(message)?.text} · ` : ''}Recorded observation · ${seconds(model.observation.elapsedMs)}${recording.pauseConfirmed ? ' · pause verified' : ''}${recording.rendererConfirmed ? ' · original renderer receipt available' : ''}${selectedApiRequestNote(message)}`
           : 'No source or values were observed by this recorded position.'
         : !model.observation && !model.currentSourceAvailable
           ? 'Current source unavailable — read a captured observation or retry.'
           : model.observation
-            ? `${model.matching ? 'Observed in this run — current inspected pause' : 'Captured observation — history'} · ${new Date(model.observation.capturedAt).toLocaleString()}`
+            ? `${model.matching ? 'Observed in this run — current inspected pause' : 'Captured observation — history'} · ${new Date(model.observation.capturedAt).toLocaleString()}${selectedApiRequestNote(message)}`
             : message.study?.terminal
               ? 'Not observed before this study ended — source-derived material only'
               : 'Not observed — source-derived material only',

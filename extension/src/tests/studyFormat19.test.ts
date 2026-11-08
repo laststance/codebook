@@ -21,6 +21,10 @@ import { configuredStops } from '../utils/configuredStops'
 import { decodeConfiguredStudy } from '../utils/decodeConfiguredStudy'
 import type * as NewerStudyArchiveModule from '../utils/newerStudyArchive'
 import {
+  projectPauseNames,
+  apiRequestSentenceOf,
+} from '../utils/projectPauseNames'
+import {
   evidenceFormatOfStudy,
   isOperationsStudyFormat,
   studyFormatOfConfiguration,
@@ -470,4 +474,64 @@ test('a custom-token or over-long API method produces a fact that saves and reop
   assert.deepEqual(reopened.observations[2]!.apiRequest, tokenFact)
   assert.equal(longFact.state, 'unattributed')
   assert.equal(refusalOf(apiServerStudy({ apiRequest: longFact })), 'accepted')
+})
+
+/** The label and sentence of the server observation of a study, as the replay builds them. */
+function serverMoment(study: ConfiguredStudy) {
+  const named = projectPauseNames(
+    study.observations,
+    configuredStops(study.configuration),
+  ).find(({ observation }) => observation.participant === 'server')!
+  return {
+    label: named.name?.text,
+    ...apiRequestSentenceOf(named.observation),
+  }
+}
+
+// Value: protects=Outcome 3 AC6 a reopened replay names an attributed API server stop by its request and operation and shows the saved sentence, never calling it a Server action; fails_when=projectPauseNames ignores apiRequest or the sentence is not passed to the Observed moments; no_claim=how the view draws the sentence
+test('a reopened format 19 stop is named After operation 4 · API handler POST /api/orders and carries its attribution sentence', () => {
+  // Arrange
+  const study = apiServerStudy()
+  // Act
+  const moment = serverMoment(study)
+  // Assert
+  assert.deepEqual(moment, {
+    label:
+      'After operation 4 · API handler POST /api/orders · apps/api/src/mode.ts:1',
+    apiRequestSentence:
+      "While the API paused here, the page's POST /api/orders, sent after operation 4, was the only request waiting for it.",
+  })
+})
+
+// Value: protects=Outcome 4 a stop the run could not tie to exactly one request reads plain API handler with its reason sentence; fails_when=an unattributed stop is called a Server action or names a request; no_claim=the wording of the sentence
+test('a reopened format 19 stop with no single request is named API handler and carries the reason sentence', () => {
+  // Arrange
+  const study = apiServerStudy({
+    apiRequest: {
+      state: 'unattributed',
+      reason: 'several',
+      count: 2,
+      sentence: 'Two page requests were waiting, so Codebook named neither.',
+    },
+  })
+  // Act
+  const moment = serverMoment(study)
+  // Assert
+  assert.deepEqual(moment, {
+    label: 'API handler · apps/api/src/mode.ts:1',
+    apiRequestSentence:
+      'Two page requests were waiting, so Codebook named neither.',
+  })
+})
+
+// Value: protects=a study without apiRequest (format 15 Expo, or older) keeps its Server action name and shows no request sentence; fails_when=the API handler name or a sentence leaks to stops with no apiRequest; no_claim=a live run
+test('a server stop without an apiRequest keeps the Server action name and has no request sentence', () => {
+  // Arrange
+  const study = apiServerStudy({ apiRequest: null, version: 15 })
+  // Act
+  const moment = serverMoment(study)
+  // Assert
+  assert.deepEqual(moment, {
+    label: 'Server action · apps/api/src/mode.ts:1',
+  })
 })

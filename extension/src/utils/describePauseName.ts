@@ -18,6 +18,10 @@ export type PauseNameInput = {
   routeHandler?: { method: string; route: string }
   /** The request a Pages API route pause was observed for (format 14): its HTTP method and the route pattern from the file path. */
   apiRoute?: { method: string; route: string }
+  /**
+   * The page request an API server pause was tied to (format 19): present on every pause of the app's own API; `method`, `path` (no query) and `operation` are set only when exactly one request was attributed, an unattributed pause carries an empty object.
+   */
+  apiRequest?: { method?: string; path?: string; operation?: number }
   /** 1-based operation the pause was observed after; absent or 0 for the entry load. */
   operationIndex?: number
   /** Repository path of the paused source file. */
@@ -30,13 +34,15 @@ export type PauseNameInput = {
 export type PauseNameParts = {
   /** `Page load`, `Preparation` or `After operation <k>`; absent for a server action that follows no operation. */
   state?: string
-  /** `Server render` or `Server action`. */
+  /** `Server render`, `Server action` or `API handler <method> <path>`. */
   kind:
     | 'Server render'
     | 'Module evaluation'
     | 'Server action'
     | `Route handler ${string}`
     | `API route ${string}`
+    | 'API handler'
+    | `API handler ${string}`
   path: string
   line: number
   /** `route not confirmed` for an `unconfirmed` attribution; never colour alone. */
@@ -83,6 +89,13 @@ function kindOfPause(
   execution: 'server-render' | 'server-action' | 'route-handler' | 'api-route',
   input: PauseNameInput,
 ): PauseNameParts['kind'] {
+  // An API server pause (format 19) is named by the request it was tied to, or plainly `API handler` when none was: never `Server action`.
+  if (execution === 'server-action' && input.apiRequest) {
+    const request = [input.apiRequest.method, input.apiRequest.path]
+      .filter(Boolean)
+      .join(' ')
+    return request ? `API handler ${request}` : 'API handler'
+  }
   if (execution === 'server-action') return 'Server action'
   // A route handler is named by its request, never as a render: `Route handler POST /api/todos`.
   if (execution === 'route-handler')
@@ -105,6 +118,10 @@ function stateOfPause(
   execution: 'server-render' | 'server-action' | 'route-handler' | 'api-route',
   input: PauseNameInput,
 ): string | undefined {
+  // An attributed API handler pause reads the operation its request was sent after.
+  const apiOperation = input.apiRequest?.operation
+  if (apiOperation !== undefined && apiOperation >= 1)
+    return `After operation ${apiOperation}`
   // `Operation 0` never appears: an entry-load pause (no operation, or 0) reads Page load.
   if (input.operationIndex !== undefined && input.operationIndex >= 1)
     return `After operation ${input.operationIndex}`
@@ -128,6 +145,8 @@ function stateOfPause(
  * // => 'After operation 2 · Route handler POST /api/todos · app/api/todos/route.ts:25'
  * describePauseName({ execution: 'api-route', attribution: 'after-operation', operationIndex: 1, apiRoute: { method: 'GET', route: '/api/data' }, path: 'src/pages/api/data.ts', line: 17 })?.text
  * // => 'After operation 1 · API route GET /api/data · src/pages/api/data.ts:17'
+ * describePauseName({ execution: 'server-action', apiRequest: { method: 'POST', path: '/api/rpc/activities/create', operation: 6 }, path: 'apps/api/src/rpc/activities.ts', line: 156 })?.text
+ * // => 'After operation 6 · API handler POST /api/rpc/activities/create · apps/api/src/rpc/activities.ts:156'
  */
 export function describePauseName(
   input: PauseNameInput,

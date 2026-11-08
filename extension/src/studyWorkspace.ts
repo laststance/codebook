@@ -380,7 +380,10 @@ import {
   type NodeTestSectionInput,
 } from './utils/projectNodeTestSection'
 import { projectPageLoadStatus } from './utils/projectPageLoadStatus'
-import { projectPauseNames } from './utils/projectPauseNames'
+import {
+  apiRequestSentenceOf,
+  projectPauseNames,
+} from './utils/projectPauseNames'
 import { projectPlaybackStudy } from './utils/projectPlaybackStudy'
 import { projectServerReplayViews } from './utils/projectServerReplayViews'
 import { readNodeTestOutputReport } from './utils/readNodeTestOutputReport'
@@ -11310,6 +11313,8 @@ export class StudyWorkspace {
             ?.title ??
           'Captured observation',
         ...(name && { pauseName: name }),
+        // A format 19 API server stop says which page request it was tied to, in the sentence the run saved.
+        ...apiRequestSentenceOf(observation),
         at: observation.capturedAt,
         elapsedMs: observation.elapsedMs,
       })),
