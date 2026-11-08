@@ -4,6 +4,8 @@ import { nextDevArguments } from './nextDevArguments'
 export type NextLaunchOptions = {
   /** The generated preload of a Next library run: Node runs it with `--require` before the Next executable, so the forked server child inherits it and no `NODE_OPTIONS` is set. Absent for every other run. */
   preloadPath?: string
+  /** The identity preload of a run that declares `reverseProxy` (API 1.40) and the secret it answers the proof with: Node runs the preload with `--require` first, and the launch adds the secret to the server's environment. Absent for every other run. */
+  identity?: { preloadPath: string; secret: string }
 }
 
 /**

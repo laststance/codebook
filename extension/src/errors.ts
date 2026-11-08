@@ -9,6 +9,8 @@ import {
   MILLISECONDS_PER_SECOND,
   MIN_NODE_MAJOR_VERSION,
   OPERATION_PRESS_REASONS,
+  REVERSE_PROXY_REFUSAL_REASONS,
+  type ReverseProxyRefusalReason,
   STUDY_ARCHIVE_UNAVAILABLE_MESSAGE,
   WXT_SUPPORTED_MAJOR_MINOR,
 } from './constants'
@@ -66,6 +68,45 @@ const LIBRARY_BUILD_FAILED_RECOVERY: Record<
     'the build changed the file details.path (a tracked file or an untracked one that is not ignored) and Codebook did not restore it: do not retry; tell the learner, who can inspect git diff or git status for that path and decide.',
   'tracked-files-unverified':
     "do not retry: the build's processes may still run, or a file could not be read before or after the build (details.path names it), so the repository's files could not be checked; tell the learner to check git status before any new run.",
+}
+
+/**
+ * The recovery sentence of each `REVERSE_PROXY_REFUSED` reason: a fact about the learner's own proxy setup, stated without a dynamic value (a recovery override reaches MCP unsanitized, so it names fields such as `details.status`, never values). Typed by {@link REVERSE_PROXY_REFUSAL_REASONS}, so a new reason cannot ship without its recovery.
+ */
+export const REVERSE_PROXY_REFUSAL_RECOVERY: Record<
+  ReverseProxyRefusalReason,
+  string
+> = {
+  'not-resolved':
+    "this machine has no address for the origin's host; ask the learner which host name they type and whether their hosts entry or local DNS for it exists, then start once with the corrected origin.",
+  'not-loopback':
+    'the host resolves to an address that is not a loopback address, and Codebook trusts only a proxy on this machine; a proxy on another machine, a tunnel or a deployed site is not supported. Tell the learner; start again only after the learner says they changed the host mapping.',
+  'same-socket':
+    "the origin's address and port are the ones the development server needs, so the proxy and the server cannot share them; ask the learner which port their proxy forwards to (it differs from the port the proxy itself listens on), correct upstreamPort, then start once.",
+  'proof-unreachable':
+    'no request completed at the origin (the proxy may not be running, the host may map to an address nothing listens on, or the connection was reset); ask the learner to start their proxy and confirm the host mapping, then start once.',
+  'proof-wrong-server':
+    "the origin answered (details.status) but not with the identity of the development server Codebook started; the proxy may forward to another port or app, or it may filter or require sign-in for the proof path. Ask the learner for the port in the proxy's own configuration and whether it filters paths; correct upstreamPort only when their configuration shows another port, otherwise tell the learner.",
+  'proof-redirected':
+    'the origin answered with a redirect (details.status) and Codebook follows none; declare the scheme and port the proxy serves directly (a plain http address often redirects to https), then start once.',
+  'proof-timeout':
+    'the origin did not answer within details.timeoutMs; tell the learner and ask whether the proxy or the server behind it is stalled, then start once after they say it responds.',
+  'proof-unclassified':
+    'the proof failed in a way Codebook does not classify; details.logId matches one line in Output > Codebook. Tell the learner that id and start a new run only if the learner asks.',
+  'certificate-untrusted':
+    "the certificate's chain does not lead to an issuer this system trusts (details.tlsCode); ask the learner whether the certificate comes from their own local certificate tool and, if so, to add that tool's issuer to the system trust store (the tool has an install command), then start once. For any other certificate, tell the learner.",
+  'certificate-expired':
+    'the certificate has expired or is not yet valid; the learner renews it; trusting an issuer does not fix this. Start once after they confirm.',
+  'certificate-host-mismatch':
+    "the certificate does not name the origin's host; the learner uses a certificate that names this host; trusting an issuer does not fix this. Start once after they confirm.",
+  'certificate-invalid':
+    'another certificate check failed (details.tlsCode); tell the learner and change no trust setting unless they know the cause.',
+  'browser-certificate-untrusted':
+    'the proof accepted the certificate but the browser did not trust its issuer (some systems keep a separate trust store for the browser; details.browserError); ask the learner to make the browser trust the same issuer, then start once.',
+  'browser-certificate-rejected':
+    'the proof accepted the certificate but the browser rejected it for another reason (details.browserError); tell the learner and change no trust setting unless they know the cause.',
+  'browser-address-mismatch':
+    'the browser reached an address other than the one Codebook checked (details.address is the checked address, details.browserAddress the one the browser used; a system proxy, a PAC file or a VPN may route the host elsewhere); tell the learner to let the browser reach the host directly (a proxy bypass for the host), then start once.',
 }
 
 /** Joins per-reason recovery sentences into one recovery text, `reason: sentence`, in the order of the reason list. */
@@ -302,7 +343,7 @@ export const ERROR_RECOVERY = {
   SECRET_BECAME_VISIBLE:
     'Audience: chat. Tell the learner the control that received a secret stopped being a password control, so Codebook stopped recording and kept no frame of it. Start one new run only if the learner asks. Recovery: new run, at most one. Side effects: the secret was typed. See codebook://help/repository-browser#SECRET_BECAME_VISIBLE.',
   SIGN_IN_REQUIRED:
-    'Audience: learner. The page asked for sign-in: it landed on one of signInPaths on the app\'s own origin, so the run stopped before any further operation. Tell the learner why, using details.reason: no-saved-session (no saved session for this repository, or the run declared session: "fresh"), setup-not-finished (the last setup was closed without Done), redirected-to-sign-in (the saved session may have expired), session-cookie-only (the app keeps its sign-in only while the browser stays open, which a saved session cannot keep) or package-root-fresh-session (the run declared a packageRoot other than ".", so it never used the repository\'s saved session; set up nothing, and follow the recovery that comes with this reason). A run that declares apiServer signs in inside the run (entryPath at the login page, not in signInPaths) and never needs a saved session. When the message says the run declared session: "fresh", ask for no setup: remove session: "fresh" from the configuration, then start one new run. For session-cookie-only, a new setup helps only when the app\'s sign-in page offers to keep the learner signed in (such as Remember me) and the learner chooses it; otherwise tell the learner this flow cannot run with a saved session and start no new run for it. For package-root-fresh-session never ask for a setup (no session can be set up below the root); follow its own recovery. In every other case ask the learner to run Codebook: Set Up Saved Session… (the editor shows the button). Then read codebook_status at most every 10 s for at most 5 minutes, and start one new run only when savedSession.state is saved with a newer setupAt. Never type a password to get past sign-in, and never resume the refused run. Recovery: the learner sets up the saved session, then one new run. See codebook://help/repository-browser#SIGN_IN_REQUIRED.',
+    'Audience: learner. The page asked for sign-in: it landed on one of signInPaths on the app\'s own origin, so the run stopped before any further operation. Tell the learner why, using details.reason: no-saved-session (no saved session for this repository, or the run declared session: "fresh"), setup-not-finished (the last setup was closed without Done), redirected-to-sign-in (the saved session may have expired), session-cookie-only (the app keeps its sign-in only while the browser stays open, which a saved session cannot keep) or package-root-fresh-session (the run declared a packageRoot other than ".", so it never used the repository\'s saved session; set up nothing, and follow the recovery that comes with this reason). A run that declares apiServer signs in inside the run (entryPath at the login page, not in signInPaths) and never needs a saved session. When the message says the run declared session: "fresh", ask for no setup: remove session: "fresh" from the configuration, then start one new run. For session-cookie-only, a new setup helps only when the app\'s sign-in page offers to keep the learner signed in (such as Remember me) and the learner chooses it; otherwise tell the learner this flow cannot run with a saved session and start no new run for it. For package-root-fresh-session never ask for a setup (no session can be set up below the root); follow its own recovery. In every other case ask the learner to run Codebook: Set Up Saved Session… (the editor shows the button). A root run that declared reverseProxy uses and sets up the saved session at the declared origin only: the editor\'s notice names that origin and its Set Up Saved Session… button sets up there after the same proof, while the command palette\'s Set Up Saved Session… always opens localhost, so never send the learner to the palette for such a run; if the notice is gone (dismissed, or the window reloaded), start one new run, which refuses with SIGN_IN_REQUIRED again before any operation and shows the notice again. A saved session holds cookies by host name: one set up at localhost does not apply at the declared host, and one set up for the declared host also applies to that host on another port and to a Domain cookie\'s subdomains, so redirected-to-sign-in right after the origin changed is expected. The package-root-fresh-session sentences above take precedence for a run with a packageRoot below the root. Then read codebook_status at most every 10 s for at most 5 minutes, and start one new run only when savedSession.state is saved with a newer setupAt. Never type a password to get past sign-in, and never resume the refused run. Recovery: the learner sets up the saved session, then one new run. See codebook://help/repository-browser#SIGN_IN_REQUIRED.',
   SIGN_IN_IN_PROGRESS:
     'Audience: learner. A saved-session setup for this repository is open in this or another window, so nothing started. Ask the learner to finish it with Done or close it with Close setup, then start one new run. Recovery: wait for the learner, then one new run. Nothing was started. See codebook://help/repository-browser#SIGN_IN_IN_PROGRESS.',
   SIGN_IN_PROFILE_IN_USE:
@@ -310,7 +351,8 @@ export const ERROR_RECOVERY = {
   SIGN_IN_PROFILE_UNUSABLE:
     'Audience: learner. Codebook cannot use the saved session, for the reason in details.reason: unreadable-record, newer-record (written by a newer Codebook), not-a-session-folder, or chrome-version (this Chrome is older than the one that set it up). Nothing was removed. Ask the learner to run Codebook: Remove Saved Session… and then Codebook: Set Up Saved Session…; for chrome-version, update Chrome or set codebook.chromeExecutable to that Chrome. Recovery: the learner fixes it, then one new run. See codebook://help/repository-browser#SIGN_IN_PROFILE_UNUSABLE.',
   SIGN_IN_ORIGIN_REFUSED:
-    'Audience: chat. The saved session is used only on the loopback origin of the development server Codebook starts (http://localhost:<port>), and this run\'s server reported another origin, so no browser opened. Keep the entry on the origin Codebook starts: its port comes from the project\'s own dev script or Vite config, as the run resource\'s applicationPortSource names (a version 3 configuration has no port field). Or declare session: "fresh" for a run that needs no sign-in. Never use session: "fresh" to get around a sign-in refusal. Recovery: fix the origin, then one new run. Codebook stopped the development server it started; no browser opened and nothing was sent. See codebook://help/repository-browser#SIGN_IN_ORIGIN_REFUSED.',
+    'Audience: chat. No browser opened. origin-not-loopback: the saved session is used only on the loopback origin of the development server Codebook starts (http://localhost:<port>) or, for an app the learner opens through their own reverse proxy, on the origin declared in reverseProxy (API 1.40); keep the entry on that origin, or declare session: "fresh" for a run that needs no sign-in, and never use session: "fresh" to get around a sign-in refusal. origin-not-proven: the declared origin has no proof from this run, which is a Codebook defect and not the learner\'s setup; change neither the configuration nor the session mode, start one new run, and if it repeats tell the learner and stop. Recovery: one new run. Codebook stopped the development server it started; no browser opened and nothing was sent. See codebook://help/repository-browser#SIGN_IN_ORIGIN_REFUSED.',
+  REVERSE_PROXY_REFUSED: `Audience: chat. Codebook refused the reverseProxy this run declared, for the reason in details.reason. Each reason is a fact about the learner's own proxy setup; the chat does not repair it: tell the learner what the message says, with its Fix line. Codebook sent no operation and stopped the development server it started; details.resourcesReleased says whether that stop was confirmed (when it is false, start no run, read the run resource and tell the learner), details.browserOpened whether a browser was opened and closed, and details.sideEffects whether anything reached a server: none, or unknown when the proof's single GET of an unguessable path reached a responder Codebook does not control. Recovery: start again only after the learner answered a question or confirmed a change, or after you corrected origin or upstreamPort from the learner's own answer, with a new key. A reverseProxy has a budget of two starts per learner request in total, whatever the reasons: after the second refusal tell the learner and stop. Never use session: "fresh", another port, another origin or any certificate setting to get around a refusal, and never ask the learner to turn certificate checks off or to trust a certificate you cannot name. ${joinReasonRecovery(REVERSE_PROXY_REFUSAL_REASONS, REVERSE_PROXY_REFUSAL_RECOVERY)} See codebook://help/repository-browser#REVERSE_PROXY_REFUSED.`,
   PLAYBACK_PROFILE_UNSUPPORTED:
     'codebook_playback controls browser recordings only. Do not start, continue or stop a run to open a test replay; ask the learner to open it.',
 } as const

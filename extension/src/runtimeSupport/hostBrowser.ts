@@ -551,6 +551,18 @@ export class HostBrowser {
   }
 
   /**
+   * Pins the declared `reverseProxy` host to the address Codebook checked, for every Chrome this browser launches (API 1.40): the managed arguments carry the rule next to the headless and pipe switches.
+   * Called by {@link ConfiguredBrowserRun} once the gate resolved the host, before {@link launch}. Wave 0 stub: the arguments read it in the browser lane.
+   * @param rule - The whole `--host-resolver-rules=MAP <host> <address>` switch from {@link hostResolverRuleOf}.
+   * @throws When the browser is not a managed one or already launched.
+   * @example browser.pinHost(hostResolverRuleOf('app.example.test', '127.0.0.1'))
+   */
+  pinHost(rule: string): void {
+    void rule
+    throw new Error('not implemented')
+  }
+
+  /**
    * Makes the next launch open the learner's saved-session folder instead of a fresh profile; called by {@link ConfiguredBrowserRun} once, before {@link launch}, for a run admitted with the saved session.
    * The folder is held by the lease: this browser never makes, marks or removes it, adds the disk-cache cap to Chrome's arguments, and journals it only as {@link SAVED_PROFILE_PLACEHOLDER}.
    * @param lease - The run's hold on the folder; `prepareForLaunch` runs right before the launch, and `release` stays with the caller until {@link close} confirmed Chrome's exit.

@@ -94,6 +94,7 @@ export async function startSavedSessionServer(
     return {
       origin: browserOriginOf(origin),
       port: started.port,
+      cookieHost: 'localhost',
       close: closeAll,
     }
   } catch (error) {

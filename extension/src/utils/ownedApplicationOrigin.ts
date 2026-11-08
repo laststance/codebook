@@ -48,6 +48,7 @@ export function browserOriginOf(origin: string): string {
  * @param pageOrigin - The page's `location.origin`.
  * @param ownedOrigin - The origin of the owned application.
  * @param ipv6 - Whether the run owns `[::1]` at the port; `true` by default.
+ * @param declaredOrigin - The normalized `reverseProxy.origin` the run declared (API 1.40); that origin is owned too. Ignored until the run wiring lands.
  * @returns `true` for `localhost`, `127.0.0.1` or (when owned) `[::1]` at the owned port.
  * @example isOwnedApplicationOrigin('http://localhost:3165', 'http://127.0.0.1:3165') // true
  */
@@ -55,7 +56,10 @@ export function isOwnedApplicationOrigin(
   pageOrigin: unknown,
   ownedOrigin: string,
   ipv6 = true,
+  declaredOrigin?: string,
 ): boolean {
+  // Wave 0 signature only: the declared origin joins the owned origins in the run wiring.
+  void declaredOrigin
   return (
     typeof pageOrigin === 'string' &&
     loopbackOriginsOf(ownedOrigin, ipv6).includes(pageOrigin)

@@ -179,6 +179,8 @@ import {
   type RepositoryOperation,
 } from './repositoryConfigSchemas'
 import { RepositorySourceService } from './repositorySource'
+import type { ReverseProxyDeclaration } from './reverseProxyDeclarationSchema'
+import type { ReverseProxyDependencies } from './reverseProxyGate'
 import type {
   ConfiguredRuntimeSnapshot,
   ConfiguredRuntimeView,
@@ -736,7 +738,13 @@ interface ConfiguredBrowserOptions {
   /** The saved-session store bound to this repository; absent runs never touch a saved session. */
   savedSession?: SavedSessionRunPort
   /** Called once per run refused with `SIGN_IN_REQUIRED`, so the editor shows its notice. */
-  onSignInRequired?(notice: { reason: SignInRequiredReason }): void
+  onSignInRequired?(notice: {
+    reason: SignInRequiredReason
+    /** The declaration of a run that opens the app at a reverse-proxy origin (API 1.40), so the editor's notice sets up the saved session there. */
+    reverseProxy?: ReverseProxyDeclaration
+  }): void
+  /** Test seam: stand-ins for the resolver, the system certificates and the proof of a run that declares `reverseProxy` (API 1.40); the product uses the real ones. */
+  reverseProxy?: Partial<ReverseProxyDependencies>
   /** The learner's confirmation and the build seams of a `vite-dev` run that declares `library`; a run with `library` and none of this is refused. */
   viteLibrary?: ViteLibraryRouteDependencies
 }

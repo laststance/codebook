@@ -6,12 +6,18 @@ import { StudyError } from '../errors'
  *
  * Why it exists: the saved folder holds the cookies of the app's own sign-in; a run whose server reports another host (a LAN address, a tunnel) would hand them to a page Codebook does not own. Called by {@link ConfiguredBrowserRun} after the readiness check and before any browser launch of a run admitted with the saved session.
  * @param ownedOrigin - The origin the owned server reported, such as `http://127.0.0.1:3000`.
+ * @param declared - A run that declared `reverseProxy` (API 1.40): the declared origin and whether this run's proof still admits it. Absent for every other run, which keeps the loopback rule only. Ignored until the saved-session wiring lands.
  * @throws {@link StudyError} `SIGN_IN_ORIGIN_REFUSED`, naming only the scheme, host and port, when the host is not `localhost`, `127.0.0.1` or `[::1]`.
  * @example
  * assertSavedSessionOrigin('http://127.0.0.1:3000') // returns
  * assertSavedSessionOrigin('http://192.0.2.10:3000') // throws SIGN_IN_ORIGIN_REFUSED
  */
-export function assertSavedSessionOrigin(ownedOrigin: string): void {
+export function assertSavedSessionOrigin(
+  ownedOrigin: string,
+  declared?: { origin: string; admits: () => boolean },
+): void {
+  // Wave 0 signature only: the declared-origin branch lands with the saved-session wiring.
+  void declared
   let origin: URL | undefined
   try {
     origin = new URL(ownedOrigin)

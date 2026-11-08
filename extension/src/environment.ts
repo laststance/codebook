@@ -27,6 +27,7 @@ import type { NodeScriptHistorySink } from './nodeScriptHistorySink'
 import type { NodeServerConfiguration } from './nodeServerConfigSchemas'
 import type { NodeServerHistorySink } from './nodeServerHistorySink'
 import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
+import type { ReverseProxyDeclaration } from './reverseProxyDeclarationSchema'
 import type {
   ChromeExtensionRunInput,
   NodeTestPreparationControl,
@@ -190,7 +191,10 @@ export async function createEnvironment(
     /** The saved-session store; absent in tests and in editors that never set one up. */
     savedSessions?: SavedSessionStorePort
     /** Shows the notice that a run needs a saved session, with a button for Set Up Saved Session…. */
-    showSignInRequired?: (reason: SignInRequiredReason) => void
+    showSignInRequired?: (
+      reason: SignInRequiredReason,
+      reverseProxy?: ReverseProxyDeclaration,
+    ) => void
   },
   presentation?: StudyPresentation,
 ): Promise<StudyEnvironment & { dispose(): void }> {
@@ -658,7 +662,8 @@ export async function createEnvironment(
         createViewport: presentation?.createViewport,
         // Only a version 3 run reads the store; the run decides, and versions 1 and 2 never call it.
         savedSession: savedSessionPortOf(context.savedSessions, workspace),
-        onSignInRequired: ({ reason }) => context.showSignInRequired?.(reason),
+        onSignInRequired: ({ reason, reverseProxy }) =>
+          context.showSignInRequired?.(reason, reverseProxy),
         viteLibrary: {
           confirm: confirmViteLibraryRun,
           resolveNode: () => resolveExternalNode(prerequisites.nodeExecutable!),
@@ -947,7 +952,9 @@ export async function createEnvironment(
         ),
       }
     },
-    async startSavedSessionServer(adapter, signInPath, signal) {
+    async startSavedSessionServer(adapter, signInPath, signal, reverseProxy) {
+      // Wave 0 signature only: the declared-origin setup server lands in the saved-session lane.
+      void reverseProxy
       const node = await requireNodeRunPrerequisites('the saved session setup')
       return startSavedSessionServer(developmentServerAdapterOf(adapter), {
         workspace,

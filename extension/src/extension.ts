@@ -620,8 +620,8 @@ export function activate(
           extensionPath: context.extensionPath,
           workspaceState: context.workspaceState,
           savedSessions: savedSessionStore,
-          showSignInRequired: (reason) =>
-            savedSessionInstall?.showSignInRequired(reason),
+          showSignInRequired: (reason, reverseProxy) =>
+            savedSessionInstall?.showSignInRequired(reason, reverseProxy),
         },
         workspace().presentation,
       )

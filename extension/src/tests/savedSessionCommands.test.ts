@@ -311,6 +311,7 @@ async function loadWithSetup(options: {
       return {
         origin: 'http://localhost:3165',
         port: 3165,
+        cookieHost: 'localhost',
         close: async (): Promise<void> => {
           calls.push('serverClose')
         },
@@ -534,6 +535,7 @@ test('Close setup on the starting notice of an earlier setup never closes the se
         return Promise.resolve({
           origin: 'http://localhost:3165',
           port: 3165,
+          cookieHost: 'localhost',
           close: async (): Promise<void> => undefined,
         })
       // The first setup's sign-in page compiles until its start is stopped.

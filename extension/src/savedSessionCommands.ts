@@ -14,6 +14,7 @@ import {
   type SignInRequiredReason,
 } from './constants'
 import { signInPathSchema } from './repositoryConfigSchemas'
+import type { ReverseProxyDeclaration } from './reverseProxyDeclarationSchema'
 import type { StudyEnvironment } from './runtime'
 import type {
   SavedSessionEntry,
@@ -106,7 +107,10 @@ export interface SavedSessionCommandOptions {
 export interface InstalledSavedSessions {
   disposables: vscode.Disposable[]
   /** Shows the one notice (DES-3) of a run that needs a saved session and sets the status item's "needed" state, which lasts until the saved session changes after that run (a later run takes it, or a setup or removal changes it). */
-  showSignInRequired(reason: SignInRequiredReason): void
+  showSignInRequired(
+    reason: SignInRequiredReason,
+    reverseProxy?: ReverseProxyDeclaration,
+  ): void
   /** Redraws the status item; the extension calls it when the operations review state changes. */
   refresh(): void
   /** Closes an open setup as the window closes and releases what it holds. */
@@ -301,11 +305,16 @@ export function installSavedSessions(
   const setup = new SavedSessionSetup({
     store,
     ui,
-    startServer: async (adapter, signInPath, signal) => {
+    startServer: async (adapter, signInPath, signal, reverseProxy) => {
       const environment = await options.ensureEnvironment()
       if (!environment.startSavedSessionServer)
         throw new Error('this editor build cannot start the setup server')
-      return environment.startSavedSessionServer(adapter, signInPath, signal)
+      return environment.startSavedSessionServer(
+        adapter,
+        signInPath,
+        signal,
+        reverseProxy,
+      )
     },
     launchBrowser: (launchOptions) => launchSignInBrowser(launchOptions),
     clock: {
@@ -553,7 +562,9 @@ export function installSavedSessions(
   void refresh()
   return {
     disposables,
-    showSignInRequired: (reason): void => {
+    showSignInRequired: (reason, reverseProxy): void => {
+      // Wave 0 signature only: the handed declaration and its notice land in the saved-session lane.
+      void reverseProxy
       const root = safeRoot()
       const name = root ? basename(root) : 'this repository'
       needed = { reason, repositoryName: name, isRunReleased: false }

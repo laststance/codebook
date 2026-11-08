@@ -54,6 +54,7 @@ function window(storage: string, windowSession: string) {
       return {
         origin: 'http://localhost:3165',
         port: 3165,
+        cookieHost: 'localhost',
         close: async (): Promise<void> => {
           calls.push('serverClose')
         },

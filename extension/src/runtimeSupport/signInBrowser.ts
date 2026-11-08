@@ -82,6 +82,8 @@ export interface SignInBrowserOptions {
   signal: AbortSignal
   /** Test seam: opens the browser headless so a CI machine without a display can run the real-Chrome case; the product never sets it. */
   headless?: boolean
+  /** The whole `--host-resolver-rules=…` switch pinning a declared `reverseProxy` host to its checked address (API 1.40), so the setup browser reaches the same server as the run; absent for a setup at localhost. */
+  hostResolverRules?: string
   /** Records the spawned browser so a later window can stop it if this one dies (the store's lease does the write). */
   recordBrowser(marker: {
     executable: string

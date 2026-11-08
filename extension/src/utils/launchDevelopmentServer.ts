@@ -445,7 +445,10 @@ export function launchDevelopmentServer(
       signal: AbortSignal,
       entryPath = '/',
       observer?: ReadinessObserver,
+      declaredOrigin?: string,
     ) {
+      // Wave 0 signature only: the declared origin reaches the redirect rules in the launch lane.
+      void declaredOrigin
       repositoryEntryPathSchema.parse(entryPath)
       const listening = await waitForListener(signal)
       // A selected non-root entry proves readiness itself; an application without a root page is still usable through it.
@@ -491,7 +494,10 @@ export function launchDevelopmentServer(
       entryPath: string,
       signInPaths?: readonly string[],
       observer?: ReadinessObserver,
+      declaredOrigin?: string,
     ): Promise<{ origin: string; entry: NextEntryResponse }> {
+      // Wave 0 signature only: forwarded to describeNextEntryResponse in the launch lane.
+      void declaredOrigin
       repositoryEntryPathSchema.parse(entryPath)
       const listening = await waitForListener(signal),
         requestUrl = `${listening}${entryPath}`

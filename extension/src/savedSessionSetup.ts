@@ -6,6 +6,7 @@ import {
 } from './constants'
 import type { DevelopmentServerAdapterName } from './developmentServerAdapter'
 import { StudyError, type ErrorCode } from './errors'
+import type { ReverseProxyDeclaration } from './reverseProxyDeclarationSchema'
 import type {
   SavedSessionManagerPort,
   SavedSessionSetupLease,
@@ -56,6 +57,8 @@ export interface SavedSessionSetupPorts {
     adapter: DevelopmentServerAdapterName,
     signInPath: string,
     signal: AbortSignal,
+    /** The declaration of a run that needs its saved session at a reverse-proxy origin (API 1.40); absent for a setup at localhost. */
+    reverseProxy?: ReverseProxyDeclaration,
   ): Promise<SavedSessionServer>
   launchBrowser(options: SignInBrowserOptions): Promise<SignInBrowser>
   ui: SavedSessionSetupUi
@@ -77,6 +80,8 @@ export interface SavedSessionSetupInput {
   /** Other sign-in paths known for the repository, kept in the record after the chosen one. */
   knownSignInPaths: readonly string[]
   chromeExecutable: string
+  /** The declaration the setup opens the app at (API 1.40), handed over by the refused run's notice; absent for a setup at localhost. */
+  reverseProxy?: ReverseProxyDeclaration
 }
 
 /** How the first finishing attempt ended a setup, with the cookie kind it read then; a retry after `stuck` finishes the same way, so a Done stays a Done. */
@@ -351,6 +356,7 @@ export class SavedSessionSetup {
         input.adapter,
         input.signInPath,
         signal,
+        input.reverseProxy,
       )
       browser = await this.ports.launchBrowser({
         executable: input.chromeExecutable,

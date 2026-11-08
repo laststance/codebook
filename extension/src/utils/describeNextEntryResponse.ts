@@ -31,6 +31,7 @@ export type NextEntryResponse = {
  * @param requestUrl - The absolute URL that was asked for (`<owned origin><entryPath>`), which a relative `Location` resolves against.
  * @param ownedOrigin - The origin the owned server listens on; `localhost`, `127.0.0.1` and `[::1]` at its port count as the same origin.
  * @param signInPaths - The configuration's `signInPaths`; a same-origin redirect to one of them adds `redirectsToSignIn: <declared path>` (the query is compared away, never kept).
+ * @param declaredOrigin - The normalized `reverseProxy.origin` the run declared (API 1.40); a redirect to it counts as same-origin. Forwarded to {@link isOwnedApplicationOrigin} and {@link matchSignInPath}.
  * @returns
  * - `{ status }` for a status outside 3xx, or a 3xx without `Location`
  * - `{ status, location: { sameOrigin: true, path } }` with the redacted origin-less path for a same-origin target, plus `redirectsToItself: true` when it is the path and query asked for
@@ -47,6 +48,7 @@ export function describeNextEntryResponse(
   requestUrl: string,
   ownedOrigin: string,
   signInPaths?: readonly string[],
+  declaredOrigin?: string,
 ): NextEntryResponse {
   const isRedirect =
     status >= HTTP_REDIRECT_STATUS_MIN && status < HTTP_REDIRECT_STATUS_END
@@ -58,7 +60,9 @@ export function describeNextEntryResponse(
     // A target that is no URL names no path Codebook could show.
     return { status, location: { sameOrigin: false } }
   }
-  if (!isOwnedApplicationOrigin(target.origin, ownedOrigin))
+  if (
+    !isOwnedApplicationOrigin(target.origin, ownedOrigin, true, declaredOrigin)
+  )
     return { status, location: { sameOrigin: false } }
   const requested = new URL(requestUrl)
   const path = redactNextEntryPath(
@@ -67,7 +71,13 @@ export function describeNextEntryResponse(
   // The raw path and query are compared here and dropped; only the verdict leaves.
   const loops =
     target.pathname === requested.pathname && target.search === requested.search
-  const signIn = matchSignInPath(target, ownedOrigin, signInPaths)
+  const signIn = matchSignInPath(
+    target,
+    ownedOrigin,
+    signInPaths,
+    true,
+    declaredOrigin,
+  )
   const described: NextEntryResponse = {
     status,
     location: { sameOrigin: true, path },

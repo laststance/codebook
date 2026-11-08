@@ -36,6 +36,7 @@ import type {
   REPOSITORY_OPERATION_ACTION,
   OperationKind,
   PressRefusalReason,
+  REVERSE_PROXY_STATES,
 } from './constants'
 import type { DevelopmentServerAdapterName } from './developmentServerAdapter'
 import type { ErrorCode, StudyError } from './errors'
@@ -57,6 +58,7 @@ import type {
 } from './operationsConfirmationTypes'
 import type { NodeTestSourceStop } from './ownedNodeTestRun'
 import type { ReplayDebugSnapshot } from './replayDebugSchemas'
+import type { ReverseProxyDeclaration } from './reverseProxyDeclarationSchema'
 import type { Evidence, RecordedEvent } from './runtimeSupport/evidence'
 import type {
   HostConfiguration,
@@ -558,6 +560,14 @@ export type ConfiguredRuntimeView = {
   applicationOrigin?: string
   /** Where the app's port was declared (D67): the `dev` script's own `-p`/`--port`, a `PORT=` that the script assigns (also in a script it delegates to), or Next's default 3000; the text also says when 3000 was taken because the script has a form Codebook does not read. `.env*` files are not read. */
   applicationPortSource?: string
+  /** A `next-dev-webpack` run that declared `reverseProxy` (API 1.40): the declaration, how far its check went, and (once resolved and proved) the address Codebook trusts and the proof's duration. */
+  reverseProxy?: {
+    origin: string
+    upstreamPort: number
+    state: (typeof REVERSE_PROXY_STATES)[number]
+    address?: string
+    proofMs?: number
+  }
   /** The Vite version a `vite-dev` run started, read from the resolved `vite/package.json`. */
   viteVersion?: string
   /** The Expo SDK version an `expo-web-dev` run started, read from the resolved `expo/package.json`. */
@@ -895,11 +905,13 @@ export interface StudyEnvironment {
    * @param adapter - The adapter the repository's app uses.
    * @param signInPath - The path the setup browser opens first.
    * @param signal - Ends the start when the setup is closed.
+   * @param reverseProxy - The declaration of a run that needs its saved session at a reverse-proxy origin (API 1.40); absent for a setup at localhost.
    */
   startSavedSessionServer?(
     adapter: DevelopmentServerAdapterName,
     signInPath: string,
     signal: AbortSignal,
+    reverseProxy?: ReverseProxyDeclaration,
   ): Promise<SavedSessionServer>
   /**
    * Asks the learner in a native modal to confirm the operations of a run that starts with the saved session.

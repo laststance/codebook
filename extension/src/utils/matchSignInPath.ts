@@ -12,6 +12,7 @@ export type SignInPageLocation = string | { origin: string; pathname: string }
  * @param ownedOrigin - The origin of the server Codebook started; `localhost`, `127.0.0.1` and (with `ipv6`) `[::1]` at its port are the same origin.
  * @param signInPaths - The configuration's `signInPaths`; absent means the run detects nothing.
  * @param ipv6 - Whether the run owns `[::1]` at the port; `true` by default.
+ * @param declaredOrigin - The normalized `reverseProxy.origin` the run declared (API 1.40); a page on it is on the run's own application origin. Forwarded to {@link isOwnedApplicationOrigin}.
  * @returns The declared path that matched (as the configuration spells it), or `undefined`.
  * @example
  * matchSignInPath('http://localhost:3000/login/?callbackUrl=%2Fdashboard', 'http://127.0.0.1:3000', ['/login']) // => '/login'
@@ -23,13 +24,19 @@ export function matchSignInPath(
   ownedOrigin: string,
   signInPaths: readonly string[] | undefined,
   ipv6 = true,
+  declaredOrigin?: string,
 ): string | undefined {
   if (!signInPaths?.length) return undefined
   const location = typeof page === 'string' ? absoluteLocationOf(page) : page
   // A page on another origin left the run's app: the navigation rules judge it, never the sign-in paths (E4).
   if (
     !location ||
-    !isOwnedApplicationOrigin(location.origin, ownedOrigin, ipv6) ||
+    !isOwnedApplicationOrigin(
+      location.origin,
+      ownedOrigin,
+      ipv6,
+      declaredOrigin,
+    ) ||
     !location.pathname.startsWith('/')
   )
     return undefined

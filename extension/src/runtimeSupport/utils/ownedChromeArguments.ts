@@ -10,6 +10,8 @@ export type OwnedChromeArgumentOptions = {
   startUrl: string
   /** Caps `--disk-cache-size` when set, so a saved-session folder keeps cookies and storage but little cache. */
   diskCacheBytes?: number
+  /** The whole `--host-resolver-rules=MAP <host> <address>` switch of a run that declares `reverseProxy` (API 1.40), from {@link hostResolverRuleOf}: it pins the declared host to the address Codebook checked. Absent for every other browser. */
+  hostResolverRules?: string
 }
 
 /**

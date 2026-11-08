@@ -36,6 +36,7 @@ import {
 } from './constants'
 import { bookIdSchema } from './identitySchemas'
 import { libraryDeclarationSchema } from './libraryDeclarationSchema'
+import { reverseProxyDeclarationSchema } from './reverseProxyDeclarationSchema'
 import { repositoryHashSchema, repositoryPathSchema } from './sourceSchemas'
 import { declaresPressOperation } from './utils/declaresPressOperation'
 import { isRepositoryPathInFolder } from './utils/isRepositoryPathInFolder'
@@ -399,6 +400,8 @@ const operationsConfigurationShape = z.strictObject({
   library: libraryDeclarationSchema.optional(),
   // expo-web-dev (MCP API 1.37) and vite-dev (1.38): the app's own Node API server; other adapters refuse the key as unknown in validateOperations.
   apiServer: apiServerDeclarationSchema.optional(),
+  // next-dev-webpack (MCP API 1.40): the learner's own local reverse proxy; the adapter, library and origin rules are added by the version 3 refinements.
+  reverseProxy: reverseProxyDeclarationSchema.optional(),
 })
 
 /**

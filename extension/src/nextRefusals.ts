@@ -732,6 +732,10 @@ const NEXT_SETUP_STEP_FACTS: Record<
     browserState: 'the browser was not opened',
     stage: 'before-browser',
   },
+  [NEXT_SETUP_STEPS.provingReverseProxy]: {
+    browserState: 'the browser was not opened',
+    stage: 'before-browser',
+  },
   [NEXT_SETUP_STEPS.waitingForServer]: {
     browserState: 'the browser was not opened',
     stage: 'before-browser',
