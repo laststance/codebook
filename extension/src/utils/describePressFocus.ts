@@ -49,25 +49,32 @@ export function describePressFocus(input: {
     }
     return false
   }
-  /** The first reason the named target cannot take the key, or the target itself. */
-  const resolveTarget = (selector: string): Element | string => {
-    let matches: ArrayLike<Element> = []
+  /** The one element the selector matches, or nothing for an invalid selector or any other count. */
+  const uniqueMatchOf = (selector: string): Element | undefined => {
     try {
-      matches = document.querySelectorAll(selector)
+      const matches = document.querySelectorAll(selector)
+      return matches.length === 1 ? matches[0] : undefined
     } catch {
-      return 'unique-target-required'
+      return undefined
     }
-    const found = matches.length === 1 ? matches[0] : undefined
-    if (!found?.isConnected) return 'unique-target-required'
-    const rect = found.getBoundingClientRect()
-    const style = getComputedStyle(found)
-    const isHidden =
+  }
+  /** Says whether the element takes no visible space: no size, not displayed, not visible or fully transparent. */
+  const isHiddenElement = (element: Element): boolean => {
+    const rect = element.getBoundingClientRect()
+    const style = getComputedStyle(element)
+    return (
       rect.width <= 0 ||
       rect.height <= 0 ||
       style.display === 'none' ||
       style.visibility !== 'visible' ||
       style.opacity === '0'
-    if (isHidden) return 'target-not-visible'
+    )
+  }
+  /** The first reason the named target cannot take the key, or the target itself. */
+  const resolveTarget = (selector: string): Element | string => {
+    const found = uniqueMatchOf(selector)
+    if (!found?.isConnected) return 'unique-target-required'
+    if (isHiddenElement(found)) return 'target-not-visible'
     if (found.matches(':disabled') || found.closest('[inert]'))
       return 'target-disabled'
     return found
@@ -135,21 +142,28 @@ export function describePressFocus(input: {
       isFocused: recipientOf() === subject,
     }
   }
-  if (!input.origins.includes(location.origin))
-    return { ready: false, reason: 'wrong-origin' }
-  if (input.selector === undefined)
-    return describeSubject(
+  /** Describes the recipient of a press without a selector: the focused element, or the body when nothing has focus. */
+  const describeFocusedElement = (): PressFocusDescription =>
+    describeSubject(
       recipientOf() ?? document.body,
       document.activeElement,
       undefined,
     )
-  const resolved = resolveTarget(input.selector)
-  if (typeof resolved === 'string') return { ready: false, reason: resolved }
-  const blocker = focusBlockerOf(resolved)
-  // Classified as the target before the focus is applied; after it, as the recipient when the focus landed, else still as the target (never the element that held focus before).
-  const subject =
-    input.focus && blocker === undefined
-      ? (recipientOf() ?? document.body)
-      : resolved
-  return describeSubject(subject, resolved, blocker)
+  /** Describes the named target of a press, focusing it first when asked. */
+  const describeTarget = (selector: string): PressFocusDescription => {
+    const resolved = resolveTarget(selector)
+    if (typeof resolved === 'string') return { ready: false, reason: resolved }
+    const blocker = focusBlockerOf(resolved)
+    // Classified as the target before the focus is applied; after it, as the recipient when the focus landed, else still as the target (never the element that held focus before).
+    const subject =
+      input.focus && blocker === undefined
+        ? (recipientOf() ?? document.body)
+        : resolved
+    return describeSubject(subject, resolved, blocker)
+  }
+  if (!input.origins.includes(location.origin))
+    return { ready: false, reason: 'wrong-origin' }
+  return input.selector === undefined
+    ? describeFocusedElement()
+    : describeTarget(input.selector)
 }
