@@ -651,6 +651,7 @@ test('refuses at once with the cause when a compiler wrote an error line', async
   assert.ok(refusal instanceof StudyError)
   assert.equal(refusal.details?.cause, 'patch failed')
   assert.deepEqual(refusal.details?.compilers, ['server'])
+  // gstack-timing-ok: the contract is an immediate refusal on an error line; 2 s against the 4 s bound and 50 ms polls
   assert.ok(Date.now() - startedAt < 2000)
 })
 
