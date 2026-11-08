@@ -481,6 +481,11 @@ test('the served Vite help has no uninterpolated placeholder and words the sign-
       'apiServer and library cannot be declared on one vite-dev run',
     ),
   )
+  assert.ok(
+    limits.includes(
+      'apiServer and library cannot be declared on one vite-dev run: the configuration is refused. Run the library flow and the API flow as separate runs.',
+    ),
+  )
   assert.ok(retry.includes('viteApiServer.signInInRun'))
   assert.ok(retry.includes('expoWebQuickStart.apiServer.signInInRun'))
 })

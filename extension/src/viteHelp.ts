@@ -496,7 +496,7 @@ const VITE_API_SERVER_LIMITS = [
   "The app's folder and the API's folder: the API folder may lie inside the app's folder or beside it, never around it or equal to it, and a browser stop must lie outside apiServer.packageRoot while a server stop lies inside it.",
   "Codebook binds Vite to 127.0.0.1; the dev script's --port and the Vite config's server.port must differ from apiServer.port (a clash is refused as api-port-conflict).",
   'The API starts before Vite: a refusal found after the API started ends it and sends no input.',
-  'apiServer and library cannot be declared on one vite-dev run: the configuration is refused.Run the library flow and the API flow as separate runs.',
+  'apiServer and library cannot be declared on one vite-dev run: the configuration is refused. Run the library flow and the API flow as separate runs.',
 ] as const
 
 /**

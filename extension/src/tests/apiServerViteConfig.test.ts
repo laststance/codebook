@@ -291,6 +291,24 @@ const PROXY_PATH_REFUSALS: ReadonlyArray<{
       'apiServer.proxyPaths.0: apiServer.proxyPaths[0] "//" must not end with "/"; declare the API\'s own prefix, for example "/api".',
   },
   {
+    rule: 'an empty segment inside the prefix',
+    proxyPaths: ['/api//x'],
+    expected:
+      'apiServer.proxyPaths.0: apiServer.proxyPaths[0] "/api//x" holds an empty segment ("//"), which URL normalization removes before a request reaches the dev server; write the path as the page sends it.',
+  },
+  {
+    rule: 'a dot segment inside the prefix',
+    proxyPaths: ['/api/./x'],
+    expected:
+      'apiServer.proxyPaths.0: apiServer.proxyPaths[0] "/api/./x" holds the segment ".", which URL normalization removes before a request reaches the dev server; write the path as the page sends it.',
+  },
+  {
+    rule: 'a dot-dot segment inside the prefix',
+    proxyPaths: ['/a/../b'],
+    expected:
+      'apiServer.proxyPaths.0: apiServer.proxyPaths[0] "/a/../b" holds the segment "..", which URL normalization removes before a request reaches the dev server; write the path as the page sends it.',
+  },
+  {
     rule: 'a duplicate names both indexes',
     proxyPaths: ['/api', '/auth', '/api'],
     expected:

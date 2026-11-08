@@ -541,3 +541,32 @@ test('a VITE_SEAL_FAILED api-seal text restores its details while the plain and 
     sideEffects: 'unknown',
   })
 })
+
+const MALFORMED_API_SEAL_VARIANTS = [
+  'api-seal:source-drift',
+  'api-seal:bogus:x',
+  'api-seal:source-drift:',
+  'api-seal:source-drift:%E0%A4%A',
+] as const
+
+// A malformed variant of a Vite seal is not a coded failure of this version (the Vite registry reads only the plain `CODE: ` lead), so it keeps the uncoded handling; an Expo one restores the code alone.
+for (const [code, expectedRestore] of [
+  ['VITE_SEAL_FAILED', 'uncoded'],
+  ['EXPO_WEB_SEAL_FAILED', 'code alone'],
+] as const)
+  for (const variant of MALFORMED_API_SEAL_VARIANTS) {
+    // Value: protects=L4 a malformed api-seal variant never throws and never invents API seal details; fails_when=a malformed variant throws or restores reason, participant or recovery; no_claim=the run raising the seal
+    test(`${code}(${variant}) never throws and restores no API seal details (${expectedRestore})`, () => {
+      // Arrange
+      const text = `${code}(${variant}): The API ran a different version.`
+      // Act
+      const restored = refusalFailureOf(text)
+      // Assert
+      assert.deepEqual(
+        restored,
+        expectedRestore === 'uncoded'
+          ? undefined
+          : { code, message: 'The API ran a different version.' },
+      )
+    })
+  }

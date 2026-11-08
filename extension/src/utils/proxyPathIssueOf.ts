@@ -49,6 +49,21 @@ function withoutTrailingSlashes(value: string): string {
   return value.replace(/\/+$/, '')
 }
 
+/**
+ * Finds the first inner segment that URL normalization would drop: empty (`//`), `.` or `..`.
+ * A trailing slash is left to its own rule, so only segments between slashes count.
+ * @returns The segment (`''` for an empty one), or `undefined` when none is found.
+ * @example dotOrEmptySegmentOf('/api/../b') // => '..'
+ */
+function dotOrEmptySegmentOf(value: string): string | undefined {
+  const segments = withoutTrailingSlashes(value).split('/').slice(1)
+  // A value without a leading slash or made of slashes only has its own rule.
+  if (!value.startsWith('/') || segments.length === 0) return undefined
+  return segments.find(
+    (segment) => segment === '' || segment === '.' || segment === '..',
+  )
+}
+
 /** The entry rules in the order they are checked. */
 const PROXY_PATH_RULES: readonly ProxyPathRule[] = [
   {
@@ -75,6 +90,14 @@ const PROXY_PATH_RULES: readonly ProxyPathRule[] = [
     isBroken: (value) => firstForbiddenPathCharacterOf(value) !== undefined,
     describe: (value) =>
       `holds ${firstForbiddenPathCharacterOf(value)}, which a URL path does not; write the path as the page sends it (percent-encoded, for example "%20" for a space).`,
+  },
+  {
+    // A "." or ".." segment is resolved away and an empty one is collapsed by URL normalization, so no request path can carry it.
+    isBroken: (value) => dotOrEmptySegmentOf(value) !== undefined,
+    describe: (value) => {
+      const segment = dotOrEmptySegmentOf(value)
+      return `holds ${segment === '' ? 'an empty segment ("//")' : `the segment ${JSON.stringify(segment)}`}, which URL normalization removes before a request reaches the dev server; write the path as the page sends it.`
+    },
   },
   {
     isBroken: (value) => !value.startsWith('/'),
