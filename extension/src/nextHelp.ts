@@ -9,6 +9,7 @@ import {
   LIBRARY_PACK_ERROR_STEPS,
   MILLISECONDS_PER_SECOND,
   NEXT_APP_SELECTION_RULE,
+  NEXT_LIBRARY_MINIMUM_API,
   NEXT_MANIFEST_POLL_MS,
   NEXT_PACKAGE_DISCOVERY_APP_LIMIT,
   NEXT_PACKAGE_DISCOVERY_MANIFEST_LIMIT,
@@ -176,9 +177,6 @@ export const NEXT_NESTED_BROWSER_STOP_CONFIGURATION = {
   ],
   inspections: [{ path: 'enabled', mode: 'value', required: true }],
 } as const
-
-/** The API that first accepts `library.packageRoot` in a nested version 3 `next-dev-webpack` configuration. */
-const NEXT_LIBRARY_MINIMUM_API = '1.36'
 
 /**
  * A complete version 3 `next-dev-webpack` configuration for a browser stop in a Next Example below the repository root that runs on the repository's own library: the Example's folder is `packageRoot`, the library package's folder is `library.packageRoot`, and `source.path` is repository-relative and lies in the Example.
