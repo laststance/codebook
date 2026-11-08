@@ -5,6 +5,7 @@ import {
   NODE_SERVER_PORT_MIN,
   REVERSE_PROXY_MINIMUM_API,
 } from './constants'
+import type { ReverseProxyOriginRefusalItem } from './utils/parseReverseProxyOrigin'
 
 /** The message for a missing `origin`. */
 const ORIGIN_MISSING_MESSAGE =
@@ -44,3 +45,24 @@ export const reverseProxyDeclarationSchema = z
 export type ReverseProxyDeclaration = z.infer<
   typeof reverseProxyDeclarationSchema
 >
+
+/**
+ * The stand-alone refusal sentence of each origin rule {@link parseReverseProxyOrigin} can break (D8 items 1 to 6 and 11); none echoes a value that may carry credentials, a query or a path.
+ * Read by the repository configuration schemas, which report it at `reverseProxy.origin` as an `INVALID_CONFIGURATION` issue.
+ */
+export const REVERSE_PROXY_ORIGIN_REFUSAL_MESSAGES = {
+  1: 'reverseProxy.origin is not a URL: declare the address the learner types in the browser, such as https://app.example.test.',
+  2: 'reverseProxy.origin must start with https:// or http://; other schemes are not an app origin.',
+  3: 'reverseProxy.origin must not carry a path: declare only the scheme and host, and put the page in entryPath.',
+  4: 'reverseProxy.origin must not carry a query or a fragment: declare only the scheme and host.',
+  5: 'reverseProxy.origin must not carry a user name or a password; Codebook takes no credentials in a URL.',
+  6: "reverseProxy.origin must name a host, not an IP address: declare the host name the learner types, the one their hosts entry or local DNS maps to a loopback address. An app opened directly at its dev server's http://localhost:<port> address declares no reverseProxy.",
+  11: 'reverseProxy.origin must not name localhost or a *.localhost host: the browser resolves those itself, so Codebook cannot hold it to the address it checked. Declare the host name your hosts entry or local DNS maps to a loopback address.',
+} as const satisfies Record<ReverseProxyOriginRefusalItem, string>
+
+/** D8 item 10: `reverseProxy` on a run that is not a version 3 `next-dev-webpack` run. */
+export const REVERSE_PROXY_ADAPTER_MESSAGE = `reverseProxy is accepted on a version 3 next-dev-webpack run only (API ${REVERSE_PROXY_MINIMUM_API}). A Vite, Create React App or Expo run opens the app at the dev server's own localhost address.`
+
+/** D19 item 12: `reverseProxy` beside `library`. */
+export const REVERSE_PROXY_LIBRARY_MESSAGE =
+  'reverseProxy and library cannot be declared on one run; declare the library run or the reverse proxy run, not both.'
