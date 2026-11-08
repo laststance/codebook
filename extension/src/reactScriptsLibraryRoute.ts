@@ -10,6 +10,7 @@ import {
 const REACT_SCRIPTS_FLAVOR: WebpackLibraryFlavor = {
   dependencyRelation: 'direct-or-installed',
   preloadLabel: 'react-scripts preload',
+  observesServer: false,
   buildPreload: buildReactScriptsLibraryPreloadSource,
   assertRedirect: (reader) => {
     if (reader.errorCause !== undefined || !reader.wrapped)

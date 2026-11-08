@@ -35,6 +35,8 @@ export type WebpackLibraryFlavor = {
   dependencyRelation: LibraryDependencyRelation
   /** Names the bundler in the message of a preload that could not be written (`The <label> could not be written`). */
   preloadLabel: string
+  /** Whether the server's scripts are observed too and the report must show every compiler wrapped (Next); see {@link WebpackReportAttribution.reportFaultCause}. */
+  observesServer: boolean
   /** Builds the text of the generated preload file. */
   buildPreload: (configuration: WebpackLibraryPreloadConfiguration) => string
   /**
@@ -80,10 +82,12 @@ export class WebpackLibraryRoute implements LibraryRunRoute {
     protected readonly input: LibraryRouteInput,
     private readonly flavor: WebpackLibraryFlavor,
   ) {
-    this.attribution = new WebpackReportAttribution(() =>
-      this.privateFolder === undefined
-        ? undefined
-        : join(this.privateFolder, REACT_SCRIPTS_LIBRARY_REPORT_FILE_NAME),
+    this.attribution = new WebpackReportAttribution(
+      () =>
+        this.privateFolder === undefined
+          ? undefined
+          : join(this.privateFolder, REACT_SCRIPTS_LIBRARY_REPORT_FILE_NAME),
+      flavor.observesServer,
     )
     this.core = new LibraryRoute(
       {
@@ -260,7 +264,26 @@ export class WebpackLibraryRoute implements LibraryRunRoute {
     const missingEvidenceCause = this.attribution.missingEvidenceCause()
     if (missingEvidenceCause !== undefined && this.core.view().prepared)
       this.core.markUnreadable(missingEvidenceCause)
-    this.core.finalize(isPageClosed)
+    // Report-wide faults (a compiler never wrapped, an external of the package, an unobserved edge compile) cannot be read as "not loaded" either.
+    const faultCause = this.attribution.reportFaultCause()
+    if (faultCause !== undefined && this.core.view().prepared)
+      this.core.markUnreadable(faultCause)
+    this.core.finalize(this.canComplete(isPageClosed))
+  }
+
+  /**
+   * Tells whether finalization may close the observation as `complete`.
+   * The shell lets the page's close decide; {@link NextLibraryRoute} also demands that the server session was attached.
+   * @param isPageClosed - Whether the owned page closed within the close bound.
+   * @returns The value handed to {@link LibraryRoute.finalize}.
+   */
+  protected canComplete(isPageClosed: boolean): boolean {
+    return isPageClosed
+  }
+
+  /** Tells whether finalization has started; a route that stops counting scripts then (Next, decision D12) asks it. */
+  protected hasStartedFinalizing(): boolean {
+    return this.finalizing !== undefined
   }
 
   /** Removes the private folder; see {@link LibraryRoute.dispose}. @example await route.dispose() */

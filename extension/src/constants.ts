@@ -168,6 +168,19 @@ export const REACT_SCRIPTS_LIBRARY_PRELOAD_FILE_NAME = 'preload.cjs'
 export const REACT_SCRIPTS_LIBRARY_REPORT_FILE_NAME = 'report.jsonl'
 export const REACT_SCRIPTS_LIBRARY_CACHE_FOLDER_NAME = 'cache'
 
+/** The webpack compilers a Next library run must see wrapped by the preload before its first request (Cycle 0098 D20). */
+export const NEXT_LIBRARY_COMPILERS = [
+  'client',
+  'server',
+  'edge-server',
+] as const
+
+/** How long a Next library run waits, after the server started, for the preload's `wrapped` line of every compiler (Cycle 0098 E1 addendum: the lines exist 0.76 s after Ready). */
+export const NEXT_LIBRARY_WRAPPED_WAIT_MS = 5000
+
+/** How often that wait looks at the report again. */
+export const NEXT_LIBRARY_WRAPPED_POLL_MS = 50
+
 /** The most project sources a `STOP_FILE_NOT_LOADED` refusal of a `wxt-build` run lists in `details.contextSources`. */
 export const EXTENSION_CONTEXT_SOURCES_LIMIT = 20
 

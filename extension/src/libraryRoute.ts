@@ -85,9 +85,14 @@ export type PlannedLibrary = {
   privateFolder: string
 }
 
-/** One script the page's debugger announced as parsed. */
+/** Which debugger session announced a script: the owned page (`browser`) or the owned server (`server`). */
+export type LibraryParticipant = 'browser' | 'server'
+
+/** One script a debugger announced as parsed. */
 export type LibraryScript = {
   url: string
+  /** The session that announced the script; absent means `browser`. Script ids repeat across sessions, so an attribution identifies a script by participant and id. */
+  participant?: LibraryParticipant
   /** The debugger's id of the script; an attribution that keeps per-script state counts each id once. */
   scriptId?: string
   /** The `Debugger.scriptParsed` content hash; a bundler that matches a compilation report uses it. */
