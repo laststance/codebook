@@ -1,25 +1,7 @@
+import type { ApiRequestFact } from '../configuredStudySchemas'
 import { ROUTE_HANDLER_REQUEST_LIMIT } from '../constants'
 
 import { describeApiRequestSentence } from './describeApiRequestSentence'
-
-/**
- * The fact a server (API) pause carries about the page request that waited for it. Structurally the same as the `ApiRequestFact` the saved-study schema exports.
- */
-export type ApiRequestFact =
-  | {
-      state: 'attributed'
-      method: string
-      path: string
-      operation: number
-      basis: 'time-window'
-      sentence: string
-    }
-  | {
-      state: 'unattributed'
-      reason: 'none' | 'several'
-      count: number
-      sentence: string
-    }
 
 /** The `Network.requestWillBeSent` fields {@link ApiRequestTracker} reads. */
 export interface ApiRequestWillBeSent {

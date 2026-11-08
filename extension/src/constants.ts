@@ -1665,6 +1665,8 @@ export const NODE_SERVER_REQUEST_WALL_LIMIT_MS = 900_000
 export const NODE_SERVER_STOP_DEADLINE_MS = 10_000
 /** How long an owned API server's exit fact waits, after the leader's exit event, for its output pipes to close so the last output is in the fact's tail; a descendant that holds the pipes open cannot delay the fact past it. */
 export const OWNED_API_SERVER_OUTPUT_SETTLE_MS = 500
+/** How long the run's failure arbiter waits for the API's exit fact after it lost the API's session, inspector channel or transport, before it reports the loss as it saw it: a correlated loss (the API ended and took its connections with it) resolves to the exit, not to the transport error that arrived first. */
+export const OWNED_API_SERVER_LOSS_ARBITER_MS = 2_000
 /** How many hits of the declared stops one request captures; the next hit retires the owned breakpoints and continues uncaptured. */
 export const NODE_SERVER_REQUEST_CAPTURE_LIMIT = 16
 /** How long a reset connection waits for the server's exit before it is read as a request failure instead of the server having exited. */
