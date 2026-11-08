@@ -104,7 +104,14 @@ test('the preload answers a proof request with the keyed digest expectedProofOf 
 
   // Assert
   assert.equal(answer.status, 200)
-  assert.equal(answer.body, expectedProofOf(SECRET, CHALLENGE))
+  assert.equal(
+    answer.body,
+    expectedProofOf(
+      SECRET,
+      CHALLENGE,
+      Number(answer.headers['x-codebook-proof-pid']),
+    ),
+  )
   assert.equal(answer.body.length, 64)
 })
 
@@ -126,14 +133,35 @@ test('the proof answer is uncached, closes the connection and names the answerin
 // Value: protects=a party without the secret being unable to forge the proof; fails_when=the answer does not depend on the secret; why_new=the proof protocol is new; seam=real Node child; no_claim=none
 test('a different secret gives a different answer to the same challenge', async (context) => {
   // Arrange
-  const { ask } = await startApplication(context, { secret: SECRET })
+  const first = await startApplication(context, { secret: SECRET })
+  const second = await startApplication(context, { secret: 'another-secret' })
+
+  // Act
+  const firstAnswer = await first.ask(`${PROOF_PATH}${CHALLENGE}`)
+  const secondAnswer = await second.ask(`${PROOF_PATH}${CHALLENGE}`)
+
+  // Assert
+  assert.notEqual(firstAnswer.body, secondAnswer.body)
+  assert.equal(
+    secondAnswer.body,
+    expectedProofOf('another-secret', CHALLENGE, Number(second.pid)),
+  )
+})
+
+// Value: protects=the digest covering the answering pid; fails_when=the preload digests the challenge alone so a proxy can swap the pid header; no_claim=the process-group check of the gate
+test('the preload digest changes with the pid, so a swapped pid header cannot match', async (context) => {
+  // Arrange
+  const { ask, pid } = await startApplication(context, { secret: SECRET })
 
   // Act
   const answer = await ask(`${PROOF_PATH}${CHALLENGE}`)
 
   // Assert
-  assert.notEqual(answer.body, expectedProofOf('another-secret', CHALLENGE))
-  assert.equal(answer.body, expectedProofOf(SECRET, CHALLENGE))
+  assert.equal(answer.body, expectedProofOf(SECRET, CHALLENGE, Number(pid)))
+  assert.notEqual(
+    answer.body,
+    expectedProofOf(SECRET, CHALLENGE, Number(pid) + 1),
+  )
 })
 
 // Value: protects=a malformed challenge or a query never running the app's not-found code; fails_when=such a request falls through to the application handler or answers 200; why_new=the proof protocol is new; seam=real Node child; no_claim=none

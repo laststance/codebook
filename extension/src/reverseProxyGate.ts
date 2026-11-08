@@ -362,7 +362,8 @@ export class ReverseProxyGate {
         origin: this.parts,
         address,
         challenge,
-        expected: expectedProofOf(this.startFacts!.identity.secret, challenge),
+        expectedOf: (pid) =>
+          expectedProofOf(this.startFacts!.identity.secret, challenge, pid),
         ca: certificates.certificates,
         timeoutMs: REVERSE_PROXY_PROOF_TIMEOUT_MS,
       },

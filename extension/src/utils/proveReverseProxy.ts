@@ -22,8 +22,8 @@ export type ReverseProxyProofInput = {
   address: string
   /** The 32-hex-character challenge of this proof. */
   challenge: string
-  /** `HMAC-SHA256(secret, challenge)` the answer must equal. */
-  expected: string
+  /** Computes the answer the given pid must have given (`HMAC-SHA256(secret, challenge + ':' + pid)`); called with the pid the response reports, so the digest authenticates that pid. */
+  expectedOf: (pid: number) => string
   /** The trust anchors, from {@link readSystemCertificates}. */
   ca: readonly string[]
   /** Bound on the whole request, {@link REVERSE_PROXY_PROOF_TIMEOUT_MS}. */
@@ -148,7 +148,7 @@ function pidOfHeader(
 /**
  * Whether a body equals the expected keyed answer, in constant time.
  * @param body - What the server sent.
- * @param expected - The answer the secret and challenge give.
+ * @param expected - The answer the secret, challenge and reported pid give.
  * @returns True only for equal bytes.
  */
 function isExpectedBody(body: Buffer, expected: string): boolean {
@@ -206,7 +206,12 @@ async function judgeResponse(
   }
   const body = await readBoundedBody(response)
   const serverPid = pidOfHeader(response.headers['x-codebook-proof-pid'])
-  if (!body || !isExpectedBody(body, input.expected) || serverPid === undefined)
+  // The digest covers the pid, so it can only be recomputed once a valid pid is known.
+  if (
+    !body ||
+    serverPid === undefined ||
+    !isExpectedBody(body, input.expectedOf(serverPid))
+  )
     return { ...failure, reason: 'proof-wrong-server' }
   return { ok: true, serverPid }
 }
@@ -255,7 +260,7 @@ function startRequest(
  * @returns `{ ok: true, serverPid }` for status 200, a matching body and a positive integer pid header; otherwise the classified failure.
  * @throws The signal's reason when the run is cancelled (no refusal).
  * @example
- * await proveReverseProxy({ origin, address: '127.0.0.1', challenge, expected, ca, timeoutMs: 10_000 }, signal) // => { ok: true, serverPid: 4242 }
+ * await proveReverseProxy({ origin, address: '127.0.0.1', challenge, expectedOf, ca, timeoutMs: 10_000 }, signal) // => { ok: true, serverPid: 4242 }
  */
 export function proveReverseProxy(
   input: ReverseProxyProofInput,

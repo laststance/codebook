@@ -23,6 +23,7 @@ import { createSelfSignedCertificate } from './utils/selfSignedCertificate'
 
 const CHALLENGE = '0123456789abcdef0123456789abcdef'
 const EXPECTED = 'a'.repeat(64)
+const ANSWERING_PID = 4242
 const DECLARED_HOST = 'app.example.test'
 const neverCancelled = new AbortController().signal
 
@@ -118,7 +119,8 @@ function inputFor(
     },
     address: '127.0.0.1',
     challenge: CHALLENGE,
-    expected: EXPECTED,
+    // The keyed answer is bound to the pid: only the answering pid of the fixture has a matching digest.
+    expectedOf: (pid) => (pid === ANSWERING_PID ? EXPECTED : 'f'.repeat(64)),
     ca: [],
     timeoutMs: 5_000,
     ...overrides,
@@ -155,6 +157,21 @@ test('a keyed 200 answer over http proves the origin and reports the answering p
   const { result } = await proveAgainst(handler)
   // Assert
   assert.deepEqual(result, { ok: true, serverPid: 4242 })
+})
+
+// Value: protects=the digest authenticating the answering pid; fails_when=a valid digest with a substituted pid header is accepted; no_claim=the process-group check of the gate
+test('a valid digest with a substituted pid header is refused as proof-wrong-server', async () => {
+  // Arrange
+  const handler = answerProof({ 'x-codebook-proof-pid': '4343' })
+  // Act
+  const { result } = await proveAgainst(handler)
+  // Assert
+  assert.deepEqual(result, {
+    ok: false,
+    reason: 'proof-wrong-server',
+    requestWritten: true,
+    status: 200,
+  })
 })
 
 // Value: protects=the proof runs over https against a certificate the caller trusts; fails_when=ca, servername or the address connection is wrong; no_claim=the real operating system store
