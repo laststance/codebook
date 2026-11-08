@@ -5,6 +5,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 /**
  * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ * 1.37 is additive: a version 3 `expo-web-dev` configuration may declare `apiServer: { packageRoot, entry, loader?, port }`, the app's own Node API server. Codebook starts it beside Metro (`node` with an inspector and the repository's tsx), attaches the run's server participant to it, and a server stop in the API pauses during the request a page operation sends; every other adapter and version refuses the key as unknown. Such a study is saved as format 19 ({@link EXPO_WEB_API_SERVER_STUDY_VERSION}), whose server observations carry the `apiRequest` fact.
  * 1.36 is additive: a version 3 `next-dev-webpack` configuration with a nested `packageRoot` may declare `library: { packageRoot }` (the same shape as `node-script`'s since 1.33, `vite-dev`'s since 1.34 and `react-scripts-dev`'s since 1.35), for a Next Example below the repository root; such a study is saved as format 18 ({@link NEXT_LIBRARY_STUDY_VERSION}), which may hold the module-evaluation, preparation, route-handler and API-route evidence of formats 12 to 14. A root Next app that declares `library` is refused.
  * 1.35 is additive: a version 3 `react-scripts-dev` configuration may declare `library: { packageRoot }` (the same shape as `node-script`'s since 1.33 and `vite-dev`'s since 1.34), for a Create React App Example below the repository root; such a study is saved as format 17 ({@link REACT_SCRIPTS_LIBRARY_STUDY_VERSION}). The library facts may also carry `reachedThrough` and `reachedThroughCount` when the Example reaches the library through an installed direct dependency instead of listing it.
  * 1.34 is additive: a version 3 `vite-dev` configuration with a nested `packageRoot` may declare `library: { packageRoot }` (the same shape as `node-script`'s since 1.33); Codebook builds and packs the checked-out library with the repository's package manager and the Example's imports of that package are served from the packed copy by an inline Vite plugin, so the Example runs on the checked-out library and not on its installed copy. The run resource's library facts reuse the `node-script` vocabulary (`package`, `packageRoot`, `prepared`, `version`, `revision`, `dirty`, `packageManager`, `buildMs`, `packMs`, `tarballSha256`, `installedVersion`, `observation`, `loaded`, `loadCount`, `publishedCopyLoaded`, `publishedCopyPath`, `cleanup`), where `loaded` means a module of the packed copy was served to the page. `LIBRARY_BUILD_UNSUPPORTED` gains `details.reason` `library-optimize-include`, `library-aliased` and `library-dedupe` (a Vite run only; nothing was built or started), and `INVALID_CONFIGURATION` gains `details.reason` `library-needs-package-root` for a `library` without a nested `packageRoot`. A `vite-dev` run that declares `library` is saved as study format 16 (`.study.v16.json`). An older Codebook refuses `library` under `vite-dev` as an unknown key and lists a format 16 study as saved by a newer Codebook. Live feature: a Vite library run needs a Codebook that serves this API.
@@ -38,10 +39,13 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.9 is additive: a node-server run is saved as a Server replay. `codebook_explain_node_history` accepts a server history's material (steps citing the request, a stop, output, the response or the request failure), the server run resource gains `nodeServer.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing` and `captureMissing`, `nextActions` offers `save-node-learning`, and `codebook://help/node-server` has a save section.
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
-export const API_VERSION = '1.36'
+export const API_VERSION = '1.37'
 
 /** The API that first accepts the `expo-web-dev` adapter in a version 3 configuration (skill 1.0.79). */
 export const EXPO_WEB_MINIMUM_API = '1.30'
+
+/** The API that first accepts `apiServer` in a version 3 `expo-web-dev` configuration. */
+export const EXPO_WEB_API_SERVER_MINIMUM_API = '1.37'
 
 /** The API that first accepts the `wxt-build` adapter in a `chrome-extension` configuration (skill 1.0.81). */
 export const WXT_BUILD_MINIMUM_API = '1.32'
@@ -2059,8 +2063,16 @@ export const VITE_LIBRARY_STUDY_VERSION = 16
 export const REACT_SCRIPTS_LIBRARY_STUDY_VERSION = 17
 /** The format of a study saved from a version 3 `next-dev-webpack` configuration with a nested `packageRoot` that declares `library: { packageRoot }` (API 1.36): format 8 rules for its evidence (derived from the configuration), which may hold the module-evaluation, preparation, route-handler and API-route fields of formats 12 to 14 at once, plus the run's library facts with the same state rules as formats 16 and 17. A `next-dev-webpack` run without `library` keeps its format 7, 8, 9, 12, 13 or 14; the suffix `.study.v18.json` makes Codebook 0.2.99 and older list such a study as saved by a newer Codebook, never as unreadable. */
 export const NEXT_LIBRARY_STUDY_VERSION = 18
+/** The format of a study saved from a version 3 `expo-web-dev` configuration that declares `apiServer` (API 1.37): the format 8 rules for its evidence (server stops, execution order), plus the `apiRequest` fact on every server observation. An `expo-web-dev` run without `apiServer` keeps {@link EXPO_WEB_STUDY_VERSION}; the suffix `.study.v19.json` makes Codebook 0.2.100 and older list such a study as saved by a newer Codebook and keep it. */
+export const EXPO_WEB_API_SERVER_STUDY_VERSION = 19
+/** The longest HTTP method token an `apiRequest` fact may name. */
+export const API_REQUEST_METHOD_LIMIT_CHARS = 16
+/** The longest request path (without query) an `apiRequest` fact may name. */
+export const API_REQUEST_PATH_LIMIT_CHARS = 2_048
+/** The fewest candidate requests an `unattributed` `several` fact may count. */
+export const API_REQUEST_SEVERAL_MIN_COUNT = 2
 /** The highest study format this Codebook reads; a saved study above it is listed as saved by a newer Codebook. */
-export const READABLE_STUDY_VERSION = NEXT_LIBRARY_STUDY_VERSION
+export const READABLE_STUDY_VERSION = EXPO_WEB_API_SERVER_STUDY_VERSION
 /** The replay's operation marks closer than this many pixels stack vertically instead of overlapping. */
 export const OPERATION_MARK_STACK_PX = 24
 /** Below this webview width in pixels the operation marks show their numbers only. */
@@ -2072,6 +2084,12 @@ export const CONFIGURED_STUDY_METADATA_SUFFIX = '.study.meta.v3.json'
 // Highest existing version owns a logical study, including when its bytes are corrupt.
 // A change of the saved study format that an older Codebook cannot read takes the next format number and its own `.study.v<n>.json` suffix in this table; an older Codebook then lists such a study as saved by a newer one and keeps it, instead of failing on its schema.
 export const STUDY_STORAGE_FORMATS = [
+  {
+    version: EXPO_WEB_API_SERVER_STUDY_VERSION,
+    format: 'v19',
+    archiveSuffix: '.study.v19.json',
+    metadataSuffix: '.study.meta.v19.json',
+  },
   {
     version: NEXT_LIBRARY_STUDY_VERSION,
     format: 'v18',

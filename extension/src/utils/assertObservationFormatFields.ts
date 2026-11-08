@@ -1,13 +1,16 @@
 import type { ConfiguredStudy } from '../configuredStudySchemas'
 import {
   API_ROUTE_STUDY_VERSION,
+  EXPO_WEB_API_SERVER_STUDY_VERSION,
   MODULE_EVALUATION_STUDY_VERSION,
   NEXT_LIBRARY_STUDY_VERSION,
+  OPERATIONS_CONFIG_VERSION,
   ROUTE_HANDLER_STUDY_VERSION,
 } from '../constants'
 
 import { afterOperationOf } from './afterOperationOf'
 import type { configuredStops } from './configuredStops'
+import { isRepositoryPathInFolder } from './isRepositoryPathInFolder'
 import {
   isApiRouteObservation,
   isModuleEvaluationObservation,
@@ -162,6 +165,70 @@ function assertAttributionFitsGroup(
 }
 
 /**
+ * Checks the `apiRequest` fact of a format 19 study (and its absence everywhere else): every server observation of a format 19 study carries one, whose operation equals its stop's `afterOperation`, and whose source lies inside `apiServer.packageRoot`; a browser observation, and any observation of another format, carries none.
+ * Called by {@link assertObservationFormatFields} for the studies that follow the format 8 rules.
+ * @param study - The saved study, without its images.
+ * @param stops - The declared stops as {@link configuredStops} gives them.
+ * @throws When `apiRequest` sits where its format or participant does not keep it, is missing, names another operation than its stop's, or the source lies outside the API folder.
+ * @example assertApiRequestFacts(study, configuredStops(study.configuration))
+ */
+function assertApiRequestFacts(
+  study: Omit<ConfiguredStudy, 'captures'>,
+  stops: ReturnType<typeof configuredStops>,
+): void {
+  const keepsApiRequest = study.version === EXPO_WEB_API_SERVER_STUDY_VERSION
+  const apiServer =
+    study.configuration.version === OPERATIONS_CONFIG_VERSION
+      ? study.configuration.apiServer
+      : undefined
+  for (const observation of study.observations) {
+    if (!keepsApiRequest && observation.apiRequest !== undefined)
+      throw new Error('Only a study of format 19 keeps an apiRequest.')
+    if (keepsApiRequest)
+      assertFormat19Observation(observation, stops, apiServer)
+  }
+}
+
+/**
+ * Checks one observation of a format 19 study: a browser observation carries no `apiRequest`; a server observation carries one whose operation is its stop's own, and its stop lies inside `apiServer.packageRoot`.
+ * Called by {@link assertApiRequestFacts}.
+ * @param observation - The observation.
+ * @param stops - The declared stops as {@link configuredStops} gives them.
+ * @param apiServer - The configuration's `apiServer` declaration, if any.
+ * @throws When the fact is missing, misplaced, names another operation than its stop's, or the stop lies outside the API folder.
+ * @example assertFormat19Observation(observation, stops, { packageRoot: 'apps/api', entry: 'src/server.ts', port: 4100 })
+ */
+function assertFormat19Observation(
+  observation: Observation,
+  stops: ReturnType<typeof configuredStops>,
+  apiServer: { packageRoot: string } | undefined,
+): void {
+  const { apiRequest } = observation
+  if (observation.participant === 'browser') {
+    if (apiRequest !== undefined)
+      throw new Error('A browser observation has no apiRequest.')
+    return
+  }
+  const stop = stops[observation.declaredIndex ?? -1]
+  if (apiRequest === undefined || apiServer === undefined)
+    throw new Error('A format 19 server observation needs an apiRequest.')
+  // The fact names the operation whose request reached the API, which is the stop's own.
+  if (
+    apiRequest.state === 'attributed' &&
+    apiRequest.operation !== afterOperationOf(stop ?? {})
+  )
+    throw new Error('Configured apiRequest operation differs from its stop.')
+  // The stop's file is the observation's source: the observation is matched to its stop by declaredIndex.
+  if (
+    stop === undefined ||
+    !isRepositoryPathInFolder(apiServer.packageRoot, stop.source.path)
+  )
+    throw new Error(
+      'A format 19 server observation lies outside apiServer.packageRoot.',
+    )
+}
+
+/**
  * Checks the fields that exist in one study format only: format 8 observations carry `execution`, `declaredIndex` and `executionIndex` (and the study may say `firstExecutionObserved: false`), format 7 and earlier carry none of them, so a format 7 study stays the strict 0.2.72.0 shape.
  * Called by {@link validateConfiguredStudyEvidence} before it matches observations to stops.
  * @param study - The saved study, without its images.
@@ -179,6 +246,7 @@ export function assertObservationFormatFields(
       study.observations.some(
         (observation) =>
           observation.scope !== undefined ||
+          observation.apiRequest !== undefined ||
           observation.routeHandler !== undefined ||
           observation.apiRoute !== undefined ||
           observation.execution !== undefined ||
@@ -192,13 +260,14 @@ export function assertObservationFormatFields(
     return
   }
   assertFormatHoldsItsFields(study)
+  assertApiRequestFacts(study, stops)
   const seenStops = new Set<number>()
   for (const [position, observation] of study.observations.entries())
     assertFormat8Observation(observation, position, stops, seenStops)
 }
 
 /**
- * Pairs a format 12, 13 or 14 study with the fields only it keeps (a format 18 study, which holds all of them, is exempt): format 12 is written only for a study that holds a module-evaluation or preparation observation, format 13 only for one that holds a route-handler observation (and keeps format 12's fields too), format 14 only for one that holds an API-route observation (and keeps the fields of 12 and 13).
+ * Pairs a format 12, 13 or 14 study with the fields only it keeps (a format 18 or 19 study, which may hold any of them, is exempt): format 12 is written only for a study that holds a module-evaluation or preparation observation, format 13 only for one that holds a route-handler observation (and keeps format 12's fields too), format 14 only for one that holds an API-route observation (and keeps the fields of 12 and 13).
  * Called by {@link assertObservationFormatFields}.
  * @param study - The saved study, without its images; it follows the format 8 rules.
  * @throws When a field sits in a format that does not keep it, or a format holds none of its fields.
@@ -213,7 +282,11 @@ function assertFormatHoldsItsFields(
   const holdsRouteHandler = study.observations.some(isRouteHandlerObservation)
   const holdsApiRoute = study.observations.some(isApiRouteObservation)
   // Format 18 (`next-dev-webpack` with `library`) holds the fields of formats 12 to 14 itself and moves to none of them, so it may hold any of them or none.
-  if (study.version === NEXT_LIBRARY_STUDY_VERSION) return
+  if (
+    study.version === NEXT_LIBRARY_STUDY_VERSION ||
+    study.version === EXPO_WEB_API_SERVER_STUDY_VERSION
+  )
+    return
   // The scope and the preparation attribution belong to formats 12 to 14.
   if (
     holdsModuleEvaluation &&

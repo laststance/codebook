@@ -52,6 +52,8 @@ const EXPO_WEB_REFUSAL_REASON_TEXTS = {
       'The web script (else start) is not exactly expo start --web, optionally with --port N or -p N and NAME=value assignments (details.script describes the structure: command words and assignment names, never values). Tell the learner; never edit the scripts. Nothing started.',
     'pre-script':
       "The app declares a preweb or prestart script (details.script), which would run before the Expo CLI, and Codebook runs no project script besides the web start. Tell the learner; never edit the project's scripts. Nothing started.",
+    'api-port-conflict':
+      "apiServer.port is the port the app's web script declares (details.port, details.appPort). Declare the port the API's own code listens on, or tell the learner the API and the app cannot share a port. Nothing started (details.sideEffects: none).",
   },
   EXPO_WEB_LAUNCHER_FAILED: {
     'bundle-failed':
@@ -81,6 +83,10 @@ const EXPO_WEB_REFUSAL_REASON_TEXTS = {
       "The served bundle or its source map cannot be read as Metro serves it (details.problem: an oversized bundle, a missing or foreign sourceMappingURL, a map that is not a flat version 3 JSON map, or a source map reference outside the app's own server), so the stop cannot be sealed. The owned server was stopped and no input was sent; tell the learner this app cannot be observed in this version.",
     'not-in-entry-bundle':
       'The stop file is not in the entry bundle Metro served (details.file): an Expo Router async route, or a file the entry does not import. This version seals only files the entry bundle includes. Put the stop in a file the entry imports, or tell the learner. The owned server was stopped and no input was sent.',
+    'source-drift':
+      'The API ran a different version of the stop file than the stop declares (details.participant: apiServer, details.file): the source its map carries is not the declared file. Declare the stop again from the current file; never edit the project. The API and the app were stopped (details.sideEffects: partial).',
+    'source-unverifiable':
+      "No inline source map with the contents of the stop file ties the API's executed script to the declared source (details.participant: apiServer, details.file): a prebuilt entry, an external map or no map. Declare apiServer.entry as the TypeScript source the package's own dev script runs through tsx; never edit the project. The API and the app were stopped (details.sideEffects: partial).",
   },
 } as const satisfies {
   [Code in (typeof EXPO_WEB_REFUSAL_CODES)[number]]: Record<

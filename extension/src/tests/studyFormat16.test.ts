@@ -103,10 +103,10 @@ test('Codebook 0.2.97 lists a .study.v16.json archive as saved by a newer Codebo
   assert.equal(sidecar, undefined)
 })
 
-// protects=the third storage format row is format 16 with the v16 archive and metadata suffixes, and format 16 is an operations format that passes the readable check; fails_when=that row is missing, moves from index 2 or changes its suffixes, or format 16 stops being an operations or readable format; no_claim=the order against format 17 or the library round trip of a run
-test('storage format row 2 is format 16 with its v16 suffixes and format 16 is readable', () => {
+// protects=the fourth storage format row is format 16 with the v16 archive and metadata suffixes, and format 16 is an operations format that passes the readable check; fails_when=that row is missing, moves from index 3 or changes its suffixes, or format 16 stops being an operations or readable format; no_claim=the order against format 17 or the library round trip of a run
+test('storage format row 3 is format 16 with its v16 suffixes and format 16 is readable', () => {
   // Arrange / Act
-  const row = STUDY_STORAGE_FORMATS[2]
+  const row = STUDY_STORAGE_FORMATS[3]
   // Assert
   assert.deepEqual(row, {
     version: 16,

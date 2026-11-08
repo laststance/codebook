@@ -2,6 +2,9 @@ import { z } from 'zod'
 
 import { citationContextSchema } from './citationSchemas'
 import {
+  API_REQUEST_METHOD_LIMIT_CHARS,
+  API_REQUEST_PATH_LIMIT_CHARS,
+  API_REQUEST_SEVERAL_MIN_COUNT,
   BOOK_MAX_ANCHORS,
   CONFIGURED_CAPTURE_PHASES,
   CROSS_RUNTIME_CAPTURE_PHASES,
@@ -18,6 +21,7 @@ import {
   ROUTE_HANDLER_STUDY_VERSION,
   API_ROUTE_STUDY_VERSION,
   EXPO_VERSION_MAX_CHARS,
+  EXPO_WEB_API_SERVER_STUDY_VERSION,
   EXPO_WEB_STUDY_VERSION,
   NEXT_LIBRARY_STUDY_VERSION,
   REACT_SCRIPTS_LIBRARY_STUDY_VERSION,
@@ -81,6 +85,48 @@ export const configuredDescriptorSchema = z.strictObject({
   citationContext: citationContextSchema,
   sources: z.array(repositorySourceSchema).min(1).max(BOOK_MAX_ANCHORS),
 })
+/**
+ * The request a format 19 server pause was tied to: the one page request the API was serving when it paused (`attributed`, matched by time), or the reason no single request could be named (`unattributed`: none or several candidates).
+ * Why it exists: a server stop in the app's own API pauses during a request the page sent, and the replay must say which request, or say that none could be named, without claiming a request it did not observe.
+ * Read by {@link configuredObservationSchema}; the cross-field rules (operation equals the stop's `afterOperation`, format 19 server observations only) are checked by `assertObservationFormatFields`. Built by the run's request attribution.
+ * @example
+ * apiRequestFactSchema.parse({ state: 'attributed', method: 'POST', path: '/api/orders', operation: 2, basis: 'time-window', sentence: '…' })
+ */
+const apiRequestFactSchema = z.union([
+  z.strictObject({
+    state: z.literal('attributed'),
+    method: z
+      .string()
+      .max(API_REQUEST_METHOD_LIMIT_CHARS)
+      .regex(/^[A-Z][A-Z0-9_-]*$/, 'Use an upper-case HTTP method token.'),
+    path: z
+      .string()
+      .max(API_REQUEST_PATH_LIMIT_CHARS)
+      .regex(
+        /^\/[^?#]*$/,
+        'Use a request path that starts with "/" and has no query or fragment.',
+      ),
+    operation: z.number().int().min(1).max(REPOSITORY_OPERATION_LIMIT),
+    basis: z.literal('time-window'),
+    sentence: z.string().min(1).max(MAX_UI_TEXT_CHARS),
+  }),
+  z
+    .strictObject({
+      state: z.literal('unattributed'),
+      reason: z.enum(['none', 'several']),
+      count: z.number().int().nonnegative(),
+      sentence: z.string().min(1).max(MAX_UI_TEXT_CHARS),
+    })
+    // `none` counts no candidate; `several` counts at least two (one candidate is attributed).
+    .refine(
+      (fact) =>
+        fact.reason === 'none'
+          ? fact.count === 0
+          : fact.count >= API_REQUEST_SEVERAL_MIN_COUNT,
+      'Use count 0 for reason none and a count of at least 2 for reason several.',
+    ),
+])
+export type ApiRequestFact = z.infer<typeof apiRequestFactSchema>
 export const configuredObservationSchema = z.strictObject({
   id: shortText,
   itemId: repositoryItemSchema,
@@ -119,6 +165,8 @@ export const configuredObservationSchema = z.strictObject({
     .enum(['entry-load', 'after-operation', 'unconfirmed', 'preparation'])
     .optional(),
   scope: z.literal('module').optional(),
+  // Format 19 only (checked by assertObservationFormatFields): on every server observation of an `expo-web-dev` run that declared `apiServer`, the page request the API pause was tied to, or why none was.
+  apiRequest: apiRequestFactSchema.optional(),
   operationIndex: z
     .number()
     .int()
@@ -225,6 +273,7 @@ export const configuredStudySchema = z.strictObject({
     z.literal(VITE_LIBRARY_STUDY_VERSION),
     z.literal(REACT_SCRIPTS_LIBRARY_STUDY_VERSION),
     z.literal(NEXT_LIBRARY_STUDY_VERSION),
+    z.literal(EXPO_WEB_API_SERVER_STUDY_VERSION),
   ]),
   workspaceKey: repositoryHashSchema,
   id: studyIdSchema,

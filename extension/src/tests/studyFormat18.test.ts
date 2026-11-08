@@ -429,10 +429,10 @@ test('refuses a format 18 study whose library facts break the state rules or dis
   assert.equal(refusalOf(accepted), 'accepted')
 })
 
-// Value: protects=T5 this Codebook reads format 18, stores it as .study.v18.json first in the table and refuses format 19; fails_when=the row is missing or not first, the readable limit stays 17, or 19 is read; no_claim=a run's round trip
-test('format 18 is a stored and readable format and format 19 is refused as saved by a newer Codebook', () => {
+// Value: protects=T5 this Codebook stores format 18 as .study.v18.json in the table and reads it, and a format above the readable limit is refused as saved by a newer Codebook; fails_when=the v18 row changes or goes missing, or the readable limit is below 18; no_claim=a run's round trip
+test('format 18 is a stored and readable format and a format above the readable limit is refused as saved by a newer Codebook', () => {
   // Arrange / Act
-  const row = STUDY_STORAGE_FORMATS[0]
+  const row = STUDY_STORAGE_FORMATS.find((format) => format.version === 18)
   // Assert
   assert.deepEqual(row, {
     version: 18,
@@ -441,12 +441,12 @@ test('format 18 is a stored and readable format and format 19 is refused as save
     metadataSuffix: '.study.meta.v18.json',
   })
   assert.equal(NEXT_LIBRARY_STUDY_VERSION, 18)
-  assert.equal(READABLE_STUDY_VERSION, 18)
+  assert.equal(READABLE_STUDY_VERSION, 19)
   assert.equal(isOperationsStudyFormat(18), true)
   assert.doesNotThrow(() => assertReadableStudyFormat({ version: 18 }))
   assert.throws(
-    () => assertReadableStudyFormat({ version: 19 }),
-    /saved in format 19 by a newer Codebook; this Codebook reads formats up to 18/,
+    () => assertReadableStudyFormat({ version: 20 }),
+    /saved in format 20 by a newer Codebook; this Codebook reads formats up to 19/,
   )
 })
 

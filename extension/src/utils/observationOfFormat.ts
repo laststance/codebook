@@ -2,6 +2,7 @@ import type {
   ConfiguredObservation,
   ConfiguredStudy,
 } from '../configuredStudySchemas'
+import { EXPO_WEB_API_SERVER_STUDY_VERSION } from '../constants'
 
 import { usesServerRenderEvidence } from './studyFormatOfConfiguration'
 
@@ -17,9 +18,19 @@ export function observationOfFormat(
   observation: ConfiguredObservation,
   study: Pick<ConfiguredStudy, 'version' | 'configuration'>,
 ): ConfiguredObservation {
-  if (usesServerRenderEvidence(study)) return observation
+  if (usesServerRenderEvidence(study)) {
+    // `apiRequest` exists in format 19 only; another format 8 rules study never keeps it.
+    if (
+      study.version === EXPO_WEB_API_SERVER_STUDY_VERSION ||
+      observation.apiRequest === undefined
+    )
+      return observation
+    const { apiRequest: _apiRequest, ...withoutApiRequest } = observation
+    return withoutApiRequest
+  }
   const {
     scope: _scope,
+    apiRequest: _apiRequest,
     routeHandler: _routeHandler,
     apiRoute: _apiRoute,
     execution: _execution,
