@@ -106,7 +106,9 @@ test('a source-drift seal refusal ends with EXPO_WEB_SEAL_FAILED, not SERVER_EXI
   const failure = harness.run.view().failures[0] ?? ''
   assert.deepEqual(
     {
-      sealFailed: failure.startsWith('EXPO_WEB_SEAL_FAILED:'),
+      sealFailed: failure.startsWith(
+        'EXPO_WEB_SEAL_FAILED(api-seal:source-drift:',
+      ),
     },
     { sealFailed: true },
   )
@@ -125,7 +127,9 @@ test('a seal refusal whose kill times out keeps its code and reports cleanup fai
   // Assert
   assert.deepEqual(
     {
-      sealFailed: (view.failures[0] ?? '').startsWith('EXPO_WEB_SEAL_FAILED:'),
+      sealFailed: (view.failures[0] ?? '').startsWith(
+        'EXPO_WEB_SEAL_FAILED(api-seal:source-drift:',
+      ),
       cleanup: view.apiServer?.cleanup,
       pid: view.apiServer?.pid,
     },

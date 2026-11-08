@@ -24,7 +24,12 @@ import {
 async function openOperation(harness: ApiServerRunHarness): Promise<number> {
   await harness.run.prepare()
   await sendOperation(harness, 1)
-  return Date.now()
+  // The run's own record of the dispatch opens the attribution window; a test clock read could precede it under load.
+  await waitUntil(
+    () => harness.run['operationDispatchedAtMs'].get(1) !== undefined,
+    'the dispatch record of operation 1',
+  )
+  return harness.run['operationDispatchedAtMs'].get(1)!
 }
 
 /** Copies the request fact of a published pause into this realm for a strict comparison. @example factOf(snapshot) // { state: 'attributed', … } */
@@ -165,7 +170,7 @@ test('a page request whose start event arrives after the pause but started insid
   sendApiRequest(harness, {
     id: '7',
     path: '/api/rpc/late',
-    startedAtMs: operationSentAtMs + 1,
+    startedAtMs: operationSentAtMs,
   })
   const snapshot = await publishedPause(harness)
   // Assert
