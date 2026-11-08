@@ -3,9 +3,13 @@ import {
   LIBRARY_BUILD_DISCOVERY_TIMEOUT_MS,
   LIBRARY_BUILD_ENTRY_LIMIT_COUNT,
   LIBRARY_BUILD_MAP_LIMIT_COUNT,
+  LIBRARY_BUILD_FAILED_REASONS,
+  LIBRARY_BUILD_TIMEOUT_MS,
   LIBRARY_BUILD_TOTAL_LIMIT_BYTES,
+  LIBRARY_PACK_ERROR_STEPS,
   MILLISECONDS_PER_SECOND,
   NEXT_APP_SELECTION_RULE,
+  NEXT_LIBRARY_MINIMUM_API,
   NEXT_MANIFEST_POLL_MS,
   NEXT_PACKAGE_DISCOVERY_APP_LIMIT,
   NEXT_PACKAGE_DISCOVERY_MANIFEST_LIMIT,
@@ -16,6 +20,7 @@ import {
   NEXT_PAGES_SOURCE_EXTENSIONS,
   NEXT_SETUP_STEPS,
   NEXT_WEBPACK_COMPATIBILITY_SENTENCE,
+  NODE_SCRIPT_LIBRARY_UNSUPPORTED_REASONS,
   EXPO_WEB_APP_SELECTION_RULE,
   REACT_SCRIPTS_APP_SELECTION_RULE,
   REPOSITORY_DISCOVERY_TIMEOUT_MS,
@@ -172,6 +177,109 @@ export const NEXT_NESTED_BROWSER_STOP_CONFIGURATION = {
   ],
   inspections: [{ path: 'enabled', mode: 'value', required: true }],
 } as const
+
+/**
+ * A complete version 3 `next-dev-webpack` configuration for a browser stop in a Next Example below the repository root that runs on the repository's own library: the Example's folder is `packageRoot`, the library package's folder is `library.packageRoot`, and `source.path` is repository-relative and lies in the Example.
+ * Served as `nextQuickStart.library.sample` and parsed by a test with the live configuration schema. Built from {@link NEXT_NESTED_BROWSER_STOP_CONFIGURATION}, so the two samples cannot drift. Every value is a neutral placeholder, not any project's folder or file: replace the folders with the Example and the library package the question is about, the book identity and the hash with the values the earlier steps returned.
+ */
+const NEXT_LIBRARY_CONFIGURATION = {
+  ...NEXT_NESTED_BROWSER_STOP_CONFIGURATION,
+  packageRoot: 'examples/widgets-next',
+  library: { packageRoot: 'packages/widgets' },
+  source: {
+    ...NEXT_NESTED_BROWSER_STOP_CONFIGURATION.source,
+    path: 'examples/widgets-next/src/components/Toggle.tsx',
+  },
+} as const
+
+/**
+ * The refusals of a `next-dev-webpack` library run, keyed by `details.reason`: the ones that are new with API 1.36 and the ones the route shares with the other library routes.
+ * Why it exists: one anchor per reason lets a chat that meets a refusal read its fix without the long sections; {@link nextLibraryHelp} serves the rows in this record's order.
+ */
+const NEXT_LIBRARY_REFUSALS = {
+  'library-needs-package-root': {
+    code: 'LIBRARY_BUILD_UNSUPPORTED',
+    meaning:
+      'library was declared on a Next app at the repository root (packageRoot absent or "."): the library route redirects an Example below the repository root. Nothing started (details.sideEffects none).',
+    fix: "Declare the Example's folder as packageRoot next to library, or drop library to run the root app on its installed copy.",
+  },
+  'not-a-dependency': {
+    code: 'LIBRARY_BUILD_UNSUPPORTED',
+    meaning:
+      "The Example's package.json does not list the library in dependencies, devDependencies, peerDependencies or optionalDependencies, so the Example does not use it directly. Nothing started (details.sideEffects none).",
+    fix: 'Tell the learner the Example does not list that library; drop library, saying the Example then runs its installed copy.',
+  },
+  'library-redirect-not-applied': {
+    code: 'NEXT_UNSUPPORTED_SETTING',
+    meaning:
+      'After the owned server started, the preload did not write its applied marker for every compiler (details.compilers names those missing), or wrote its error line (details.cause): this Next installation did not take the redirect to the packed library. Refused before any request. details.sideEffects is partial: the library was built and packed, the owned server was started and stopped, no request was sent and no browser opened.',
+    fix: 'Tell the learner this Next installation cannot take the library route in this version, then run without library, saying the Example then runs its installed copy. Do not retry with library.',
+  },
+  'library-stop-unsupported': {
+    code: 'NEXT_STOP_NOT_SEALED',
+    meaning:
+      "A stop file lies in the source of the declared library (details.file, details.library): stops in the library's own source are not supported on the Next library route in this version. Refused before anything was built (details.sideEffects none).",
+    fix: "Declare the stop in a file of the Example's own source, or run without library when the question is about the library's own source.",
+  },
+} as const
+
+/**
+ * Builds the `library` key of `nextQuickStart`: when to declare `library.packageRoot` under `next-dev-webpack` (API 1.36), what the build and pack run and write, the confirmation wait, the observation states, the refusals, the limits, the study format and one complete sample.
+ *
+ * Why it exists: a Next Example inside a library repository usually installs the library by a published version, so the Example runs a different release than the source the learner reads; a chat needs the route, its disclosure and its limits before it declares a run. Mirrors the Vite and react-scripts library sections so a chat reads one vocabulary for every bundler. Called by {@link nextHelp}.
+ *
+ * @returns The JSON-serializable section.
+ * @example
+ * nextLibraryHelp().sample.library.packageRoot // => 'packages/widgets'
+ */
+function nextLibraryHelp() {
+  return {
+    anchor: packageRootAnchor('nextLibrary'),
+    minimumApi: NEXT_LIBRARY_MINIMUM_API,
+    requires: `codebook_status reports API ${NEXT_LIBRARY_MINIMUM_API} or later (compare the number after the dot as a whole number). An older Codebook refuses library under next-dev-webpack as an unknown key: tell the learner to update Codebook and do not run the Example by another route.`,
+    whenToUse:
+      "The Next Example lives below the root of a library repository and uses that library: its own package.json lists the library, so its node_modules holds an installed copy, not the checked-out source. Declare library.packageRoot (the library package's folder, relative to the repository root; \".\" when the library is the repository root itself, even though the Example lies below it; never the Example's own folder or a folder inside it) together with the Example's nested packageRoot, and the Example runs on the checked-out library. A Next app at the repository root with library is refused (library-needs-package-root). Without library the Example runs the installed copy: say so to the learner and never call that copy the checked-out library.",
+    whatRuns: [
+      "The learner's editor confirmation comes first and names the build and pack, because the build runs the project's own build scripts. Tell the learner a build will run and to answer the editor's confirmation; a declined confirmation starts nothing.",
+      "The repository's package manager runs the library's own build script in library.packageRoot, then packs the library into the run's private folder with lifecycle scripts off.",
+      "Codebook then starts the Example's own next dev --webpack with a preload that redirects every compiler's imports of the library (client, server and edge) to the packed copy; the Example's files and its node_modules stay as they are, Next writes its own .next dev output as in any run, and the webpack cache goes to the run's private folder.",
+      `The build and pack together are bounded at ${LIBRARY_BUILD_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s. Codebook never installs packages.`,
+    ],
+    phase:
+      'The run reads confirming, then building, then running. codebook_start answers its receipt at once; keep polling the run resource while it reads confirming (the learner is answering the editor dialog) and do not end your turn there.',
+    facts:
+      "The run resource carries library: { package, version, packageRoot, revision, dirty, packageManager, buildMs, packMs, tarballSha256, installedVersion, prepared, observation, loaded, loadCount, publishedCopyLoaded, publishedCopyPath, cleanup }, the same shape as a node-script, vite-dev and react-scripts-dev run. For Next loaded means a module of the packed copy was in a bundle that the page or the server parsed (matched by the parsed script's SHA-256 against the compilation report of its compiler), and publishedCopyLoaded means another copy was in such a bundle, or the server loaded a file of another copy outside webpack (through a dependency webpack left external). The saved replay shows the same correspondence sentence under its title.",
+    observationStates: [
+      'prepared: the library was built and packed. It alone proves nothing about what the page or the server parsed.',
+      'loaded true, publishedCopyLoaded false, observation complete: a module of the packed copy was in a parsed bundle and no other copy was. Say "ran on the checked-out library" only then.',
+      'loaded false with a complete observation: built but not in any bundle the page or the server parsed; the Example never imported the package.',
+      'publishedCopyLoaded true: a parsed bundle also held another copy (publishedCopyPath names the first); say which copy ran and make no correspondence claim.',
+      'pending, incomplete or unreadable observation (a missing report, a parsed script of the Example that matches no emitted asset, or a compilation the server parsed without a report line): say what the run loaded was not fully observed, never "not loaded". Scripts parsed after finalization started are not counted.',
+    ],
+    refusals: {
+      ...Object.fromEntries(
+        Object.entries(NEXT_LIBRARY_REFUSALS).map(([reason, entry]) => [
+          reason,
+          { anchor: packageRootAnchor(reason), ...entry },
+        ]),
+      ),
+      packageManagerUnsupported:
+        'LIBRARY_BUILD_UNSUPPORTED, details.reason package-manager-unsupported: Yarn and Bun repositories are refused before the build; the Example runs its installed copy.',
+      unsupportedNothingStarted: `LIBRARY_BUILD_UNSUPPORTED, details.reason one of ${NODE_SCRIPT_LIBRARY_UNSUPPORTED_REASONS.join(', ')}: nothing was built or started; the reasons shared with node-script are explained at codebook://help/node-script#LIBRARY_BUILD_UNSUPPORTED.`,
+      failedAfterStart: `LIBRARY_BUILD_FAILED, details.reason one of ${LIBRARY_BUILD_FAILED_REASONS.join(', ')}: follow codebook://help/node-script#LIBRARY_BUILD_FAILED. Retry a build-error or timeout once at most; never retry tracked-file-changed or tracked-files-unverified. pack-error details.step is one of ${LIBRARY_PACK_ERROR_STEPS.join(', ')}.`,
+    },
+    limits: [
+      "Stops stay in the Example's own source: a stop in the library's own source is refused before anything is built (library-stop-unsupported).",
+      "Versions can differ from a fresh install: the library's dependencies come from its own install, not from the Example's.",
+      "One library per run; the direct dependency rule only (the Example's own package.json lists the library).",
+      'The preload patches every compiler Next creates, but the edge compiler is not proven in this version; a patch failure in any compiler refuses the whole run (library-redirect-not-applied).',
+      'Next 16 with next dev --webpack only; Turbopack, next build and next start are not supported.',
+    ],
+    studies:
+      'A next-dev-webpack run that declares library is saved as study format 18 (.study.v18.json) with its retained configuration and the library facts; a run without library keeps the format it takes today. An older Codebook lists a format 18 study as saved by a newer Codebook; update Codebook to open it. The replay reads only the saved facts and recorded evidence.',
+    sample: NEXT_LIBRARY_CONFIGURATION,
+  }
+}
 
 /**
  * The help anchor of one section of {@link nextPackageRootHelp}: `codebook://help/repository-browser#<id>`.
@@ -351,7 +459,7 @@ function nextPackageRootHelp() {
       'A nested run is saved as study format 9 (.study.v9.json) with packageRoot in its configuration, so the saved study names the app that ran; recorded sources and book citations stay repository-relative. A run without packageRoot (or with ".") keeps the format it takes today. Codebook 0.2.74.0 lists a format 9 study as saved by a newer Codebook; update Codebook to open it. Format 9 replays from recorded evidence, also after the app\'s folder is removed.',
     limits: [
       NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE,
-      "A server stop, or since API 1.22 a browser stop, in the checked-out source of a workspace library the app reaches through links inside the repository (directly or through other workspace libraries) can pause (see libraryStops); since API 1.23 a browser stop of a nested App Router app may lie in a workspace library, and since API 1.24 a server stop of one may too (it pauses in the server render, and a pause in another copy of the module, or at a line only a browser stop declares, is resumed and not recorded); the native debugger shows the checked-out library file there. A library that Next compiles from source through transpilePackages has no build of its own to match: when no build map names the stop file, the stop is refused as library-build-unmapped (cause no-map); a library stop of an app with both routers or of a root app, and a library outside the repository, stay outside the stop range, and a stop in a file the app does not link to is refused with NEXT_STOP_NOT_SEALED (outside-package). A question whose answer needs such code is outside this version's claim.",
+      "A server stop, or since API 1.22 a browser stop, in the checked-out source of a workspace library the app reaches through links inside the repository (directly or through other workspace libraries) can pause (see libraryStops); since API 1.23 a browser stop of a nested App Router app may lie in a workspace library, and since API 1.24 a server stop of one may too (it pauses in the server render, and a pause in another copy of the module, or at a line only a browser stop declares, is resumed and not recorded); the native debugger shows the checked-out library file there. A library that Next compiles from source through transpilePackages has no build of its own to match: when no build map names the stop file, the stop is refused as library-build-unmapped (cause no-map); a library stop of an app with both routers or of a root app, and a library outside the repository, stay outside the stop range, and a stop in a file the app does not link to is refused with NEXT_STOP_NOT_SEALED (outside-package). A run that declares library (API 1.36) is different: a stop in the declared library's own source is refused before anything is built (library-stop-unsupported). A question whose answer needs such code is outside this version's claim.",
       "Next resolves as Node would from the app's folder: the first node_modules/next found from packageRoot up to the repository root, never above it, whose real path is inside the repository (a pnpm link into the root's node_modules/.pnpm and a hoisted workspace install qualify; Yarn PnP and NODE_PATH count as not installed). A missing Next names the install command of the repository's lockfile as the learner's decision; Codebook never runs it.",
       'One run at a time per window: a root run beside a nested run is refused with BUSY.',
     ],
@@ -364,7 +472,7 @@ function nextPackageRootHelp() {
  */
 const NEXT_REFUSAL_MEANINGS: Record<NextRefusalCode, string> = {
   NEXT_UNSUPPORTED_SETTING:
-    "Next's routes manifest names basePath or i18n routing (the message lists every one found, with the Next version); Codebook's browser run supports neither.",
+    "Next's routes manifest names basePath or i18n routing (the message lists every one found, with the Next version); Codebook's browser run supports neither. A run that declares library can also be refused with this code when the preload did not take the redirect to the packed library (details.reason library-redirect-not-applied): the library section's own entry in nextQuickStart.library.refusals explains it.",
   NEXT_ENTRY_REDIRECTED:
     'The entry page did not stay at entryPath: the server answered a redirect, the loaded page ended at another path, the page router reports another route (a rewrite or middleware), or the path changed before the first input or before the click (also while the before conditions of the page were still awaited). The message names the final path without its origin and with query and fragment values redacted, or says the target is on another origin, which Codebook never fetches.',
   NEXT_ROUTE_NOT_COMPILED: `The development server answered, but the entry route did not appear in Next's route manifests within ${NEXT_MANIFEST_POLL_MS / MILLISECONDS_PER_SECOND} s, or no .next/dev manifests exist at all: Codebook reads the default .next/dev output, so a custom distDir is not supported. It also covers a listed Pages route whose page answered the entry request with a server error (HTTP 5xx): the page failed on the server, to build or to render. The message quotes the development server's output, masked.`,
@@ -374,7 +482,7 @@ const NEXT_REFUSAL_MEANINGS: Record<NextRefusalCode, string> = {
   NEXT_SERVER_ONLY_STOP:
     "The stop cannot be observed where it is declared; every refusal of a stop in a Pages run carries details.router pages. A browser stop (the default participant) in code established to run only on the server: _document, a file under pages/api (a server stop with afterOperation of 1 or more takes its place from API 1.29, apiRouteStops), or a line that maps in the page's server compile and in none of its client chunks (getServerSideProps or getStaticProps, for example); the message tells you to declare a data-function line with participant server in configuration version 3. A server stop (participant server) in _document: _document is not supported in this version, and the refusal comes before the development server starts (details.sideEffects none); a question about the page's data uses a server stop in the page's getServerSideProps or getStaticProps. In a workspace that holds both an app and a pages folder, this refusal comes before the entry route is resolved, so it claims no Pages run: it carries details.sideEffects none without details.router and points at no data function. A server stop in a configuration version 2 Pages run: the page's data functions and the code they call take a server stop only in version 3 (details.requiredVersion 3; serverRenderQuickStart.configurationPagesEntryRender, Codebook 0.2.74.0 and API 1.17 or later).",
   NEXT_STOP_NOT_SEALED:
-    "Codebook could not verify the code of the stop before the browser opened. A browser stop: there is no verified browser mapping for its line (which does not establish that the code is server-only), or its module is loaded later (next/dynamic, for example). A server stop in a Pages run (details.router pages): the line is in the entry page's own module and its client compile maps it (details.reason client-component; declare it with participant browser, see serverRenderErrors), or neither the page's server compile nor the server chunks it loads hold the module, or it is no tracked workspace file (a module under node_modules or Next's own code), or the entry page's browser module could not be sealed to tell a data-function line from a page-component line. None of these establishes that the code never runs in the server.",
+    "Codebook could not verify the code of the stop before the browser opened. A browser stop: there is no verified browser mapping for its line (which does not establish that the code is server-only), or its module is loaded later (next/dynamic, for example). A server stop in a Pages run (details.router pages): the line is in the entry page's own module and its client compile maps it (details.reason client-component; declare it with participant browser, see serverRenderErrors), or neither the page's server compile nor the server chunks it loads hold the module, or it is no tracked workspace file (a module under node_modules or Next's own code), or the entry page's browser module could not be sealed to tell a data-function line from a page-component line. None of these establishes that the code never runs in the server. A run that declares library is refused with this code when a stop file lies in the declared library's own source (details.reason library-stop-unsupported), before anything starts and with no details.router: the library section's own entry in nextQuickStart.library.refusals explains it.",
   NEXT_SETUP_DEADLINE: `A Next run in a workspace with a Pages folder (pages/ or src/pages/) did not get ready within the ${REPOSITORY_SETUP_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s setup budget, ${NEXT_SETUP_DEADLINE_SCOPE}; once its entry path resolved as an App route, as in a workspace without a Pages folder, the deadline carries no Next code (the failure reads Repository setup deadline exceeded). The message names the step it reached and whether a browser was opened. The recovery the run gives fits that step: one retry before the browser or for a router that was late, a corrected entryPath for a page without a Next router, the input selector at the input step, one retry when the deadline came after every input was written and the first stop was being armed, and reading the captured history first when an input may have been written. Once Codebook's readiness request for the entry was sent, which runs the page's server code, the deadline also carries details.sideEffects unknown and details.readinessRequest (closed with outcome timeout when the deadline came before an answer), details.router pages once the entry resolved as a Pages route, and that recovery starts with asking the learner before another start when the page's server code writes or sends.`,
 }
 
@@ -401,6 +509,7 @@ export function nextHelp() {
       ],
       configuration: NEXT_QUICK_START_CONFIGURATION,
       copyFrom: NEXT_QUICK_START_COPY_FROM,
+      library: nextLibraryHelp(),
       callOrder: [
         `codebook_status: read profiles[].prerequisites.adapters["next-dev-webpack"] (ready, rootIsApp, routerKind, preparation, packages) and apply the selection rule; copy instanceId. ${NEXT_APP_SELECTION_RULE}`,
         'codebook://help/repository-browser (this help): read nextSupport for the code a stop can be in and nextRefusals for the codes a start can answer.',
@@ -438,7 +547,7 @@ export function nextHelp() {
         `A custom pageExtensions: page sources are found only as ${PAGES_SOURCE_EXTENSIONS_TEXT} files, so a route without such a file is refused with NEXT_ROUTE_NOT_FOUND.`,
       ],
       afterReadiness:
-        "A refusal of the Pages entry that comes after Codebook's readiness request (NEXT_UNSUPPORTED_SETTING, NEXT_ENTRY_REDIRECTED, NEXT_ROUTE_NOT_COMPILED, which an HTTP 5xx answer of the page also raises, NEXT_ROUTE_CONFLICT or NEXT_ROUTE_NOT_FOUND) carries details.router pages and details.sideEffects unknown: that request ran the entry page's data function once, and the run resource's readinessRequest reads its status. When the data function writes or sends, ask the learner before another start.",
+        "A refusal of the Pages entry that comes after Codebook's readiness request (NEXT_UNSUPPORTED_SETTING, NEXT_ENTRY_REDIRECTED, NEXT_ROUTE_NOT_COMPILED, which an HTTP 5xx answer of the page also raises, NEXT_ROUTE_CONFLICT or NEXT_ROUTE_NOT_FOUND) carries details.router pages and details.sideEffects unknown: that request ran the entry page's data function once, and the run resource's readinessRequest reads its status. When the data function writes or sends, ask the learner before another start. The one exception is a run that declares library: its NEXT_UNSUPPORTED_SETTING (library-redirect-not-applied) comes after the owned server starts and before any request, carries details.sideEffects partial and no details.router, and ran no data function.",
       fastRefresh:
         'Saving a change to a loaded module during a run (Fast Refresh) ends the run with SOURCE_CHANGED; the observations before it stay readable.',
       setupBudget: `Preparation has ${setupSeconds} s in all, with no override: starting Next, the entry page, the route manifests, sealing the stops, the browser and the page router. A Next run in a workspace with a Pages folder (pages/ or src/pages/) past it is refused with NEXT_SETUP_DEADLINE ${NEXT_SETUP_DEADLINE_SCOPE}; any other Next run past it fails with Repository setup deadline exceeded, with no Next code.`,

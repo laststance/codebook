@@ -11,7 +11,6 @@ import { z } from 'zod'
 
 import { REPOSITORY_BROWSER_PROFILE as PROFILE_ID } from '../constants'
 import { StudyError } from '../errors'
-import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { startServer } from '../server'
 
@@ -1735,26 +1734,8 @@ for (const boundary of ['layout read', 'layout application'] as const)
         key: randomUUID(),
       })
       await [...harness.service.records.values()][0]!.preparation
-      const runtime = harness.runtimes[0]!,
-        view = runtime.view.bind(runtime)
-      const png = Buffer.from(
-        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=',
-        'base64',
-      )
-      await writeFile(
-        join(runtime.evidence.directory, 'paused-browser.png'),
-        png,
-      )
-      runtime.view = () => ({
-        ...view(),
-        captures: {
-          'paused-browser': {
-            status: 'captured',
-            file: 'paused-browser.png',
-            renderer: { epoch: 'test', id: 1, hash: sha256(png) },
-          },
-        },
-      })
+      // The harness runtime already confirms real before/paused-browser/after images when it prepares; replacing the paused-browser bytes here rewrote an image a periodic checkpoint may already have saved.
+      const runtime = harness.runtimes[0]!
       await harness.reader.action('click')
       await harness.reader.action('focus-app')
       harness.changeEditorLayout({

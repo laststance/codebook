@@ -455,7 +455,7 @@ test('API 1.26 is served with a note for the additive node-script profile', asyn
       .split('\n')
       .find((line) => line.startsWith(' * 1.26 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.35')
+  assert.equal(API_VERSION, '1.36')
   assert.equal(NODE_SCRIPT_HISTORY_DIRECTORY, 'node-scripts.v1')
   for (const phrase of [
     '`node-script` profile',
@@ -523,7 +523,7 @@ test('the README documents the Node script run, its confirmation, its end and it
     "At stops the chat declares in the package's own source",
     'A nonzero exit is the script failing, not a Codebook error',
     'saved through `codebook_explain_node_history` as a Script replay',
-    'with **MCP API 1.35**',
+    'with **MCP API 1.36**',
     '`SCRIPT_NOT_CONFIRMED`',
     "so Cursor's managed skill updates to **1.0.82**",
   ])

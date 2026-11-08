@@ -230,6 +230,8 @@ export async function configuredRuntimeHarness(
     browserProfileLeft?: ProfileLeft
     /** How the stand-in `[::1]` forwarder starts: its own (default), absent on a host without IPv6 loopback, or refused because another process holds `[::1]`. */
     ipv6Loopback?: 'owned' | 'absent' | 'held'
+    /** Makes the mocked port check refuse as a taken declared port does, so a test can prove what happens before it. */
+    declaredPortTaken?: boolean
     /** Runs the configuration on the Vite adapter: its stand-in starts the stub server, serves the sealed module at its owned address and loads the entry page once. */
     adapter?: 'vite-dev'
     // pregate-literal: API_VERSION=1.34 the Vite library route was added at API 1.34 (its minimum), not the current API
@@ -343,6 +345,10 @@ export async function configuredRuntimeHarness(
     consultSecretFrameGate?: boolean
     /** Makes the stand-in server's readiness check (`ready` and `readyEntry`) reject with this message, as a server that exits before it listens does. */
     launchFailure?: string
+    /** Makes the stand-in server's `listening` wait take this long, as a Next start that listens late after the spawn. */
+    listeningAfterMs?: number
+    /** Makes the stand-in server's `assertRunning` throw this message, as a process that exited early with its output tail. */
+    exitedWith?: string
     /** Makes the stand-in server's structured entry check (`readyEntry`) never answer until the run is cancelled, as a first compile that is still running does. */
     entryHangs?: boolean
     /** Keeps the stand-in server's readiness request (`ready` and `readyEntry`) open after it was sent until a test calls `releaseReadiness`, as a request whose server code is paused at a module's first evaluation. */
@@ -559,7 +565,13 @@ export async function configuredRuntimeHarness(
             ? { library: { packageRoot: options.libraryRoute.declared } }
             : {}),
         }
-      : unnestedConfiguration
+      : // A library declared without a nested app is a root app that declares `library`, which the run refuses.
+        options.libraryRoute && unnestedConfiguration.version === 3
+        ? {
+            ...unnestedConfiguration,
+            library: { packageRoot: options.libraryRoute.declared },
+          }
+        : unnestedConfiguration
   ) as typeof unnestedConfiguration
   // Each of these changes makes the frozen intent hash stale.
   if (
@@ -800,6 +812,8 @@ export async function configuredRuntimeHarness(
   const entryChecks: string[] = []
   // How many times the run launched the development server (`launchDevelopmentServer`), so a refusal that comes before the server starts can say none was.
   let developmentServerLaunches = 0
+  // Every argument list the run gave `launchDevelopmentServer`, so a test reads the inspector flag and the library options.
+  const developmentServerLaunchArguments: unknown[][] = []
   // The text of each initial input the run sent to the page, in order.
   const insertedTexts: string[] = []
   // The method of every `Input.*` CDP request the run sent to the page, in order (no parameters, so no typed value is kept).
@@ -1993,6 +2007,17 @@ export async function configuredRuntimeHarness(
     }
   }
   const fakeApplication = {
+    listening: async (signal: AbortSignal): Promise<string> => {
+      if (options.listeningAfterMs)
+        await new Promise((resolveWait) =>
+          setTimeout(resolveWait, options.listeningAfterMs),
+        )
+      signal.throwIfAborted()
+      return serverOrigin
+    },
+    assertRunning: (): void => {
+      if (options.exitedWith) throw new Error(options.exitedWith)
+    },
     ready: async (
       signal: AbortSignal,
       entryPath?: string,
@@ -2275,7 +2300,13 @@ export async function configuredRuntimeHarness(
         },
       },
       './utils/assertDevelopmentPortFree': {
-        assertDevelopmentPortFree: async () => undefined,
+        assertDevelopmentPortFree: async () => {
+          if (options.declaredPortTaken)
+            throw new StudyError(
+              'PREREQUISITE_MISSING',
+              'Port 4321 is in use on this machine',
+            )
+        },
       },
       './utils/startIpv6LoopbackForwarder': {
         startIpv6LoopbackForwarder: async (port: number) => {
@@ -2296,6 +2327,7 @@ export async function configuredRuntimeHarness(
       './utils/launchDevelopmentServer': {
         launchDevelopmentServer: (...launchArguments: unknown[]) => {
           launchRequests.push(launchArguments[0])
+          developmentServerLaunchArguments.push(launchArguments)
           developmentServerLaunches += 1
           return fakeApplication
         },
@@ -2623,11 +2655,12 @@ export async function configuredRuntimeHarness(
       })
     },
     /** Announces a script of the owned page, as the debugger does for every module it parses. */
-    announceScript(scriptId: string, url: string): void {
+    announceScript(scriptId: string, url: string, hash?: string): void {
       listeners.get('Debugger.scriptParsed')?.({
         scriptId,
         url,
         executionContextId: 1,
+        ...(hash === undefined ? {} : { hash }),
       })
     },
     /** Reports a pause at a chosen generated place with no DAP stop, as a pause the adapter makes for itself arrives. */
@@ -2682,6 +2715,8 @@ export async function configuredRuntimeHarness(
     entryChecks,
     /** How many times the run launched the development server (the Next adapter calls `launchDevelopmentServer`); 0 for a run refused before its server starts. */
     developmentServerLaunches: (): number => developmentServerLaunches,
+    /** The arguments of each `launchDevelopmentServer` call, in order: the folder, the Node executable, the journal writer, whether the server inspector was requested, the port, and so on. */
+    developmentServerLaunchArguments,
     /** The text of each initial input the run sent to the page (`Input.insertText`), in order. */
     insertedTexts,
     /** The method of every `Input.*` request the run sent to the page (`Input.insertText`, `Input.dispatchMouseEvent`, …), in order; the saved-session lanes assert that a refusal or a facts read sends none. */

@@ -4,6 +4,7 @@ import {
   EXPO_WEB_STUDY_VERSION,
   MODULE_EVALUATION_STUDY_VERSION,
   OPERATIONS_CONFIG_VERSION,
+  NEXT_LIBRARY_STUDY_VERSION,
   OPERATIONS_STUDY_VERSION,
   PACKAGE_ROOT_STUDY_VERSION,
   REACT_SCRIPTS_LIBRARY_STUDY_VERSION,
@@ -68,6 +69,7 @@ function derivedEvidenceFormat(
  * Called by {@link captureStudy} when it writes a checkpoint and by {@link validateConfiguredStudyEvidence} when it reads one; {@link legacyStudyFormatOfConfiguration} keeps the mapping of archives saved before format 6.
  * @param configuration - The sealed configuration of the run.
  * @returns
+ * - {@link NEXT_LIBRARY_STUDY_VERSION} (18) for a version 3 `next-dev-webpack` configuration that declares `library`
  * - {@link REACT_SCRIPTS_LIBRARY_STUDY_VERSION} (17) for a version 3 `react-scripts-dev` configuration that declares `library`
  * - {@link REACT_SCRIPTS_STUDY_VERSION} (11) for every other version 3 `react-scripts-dev` configuration, whatever its `packageRoot` (absent, `"."` or nested)
  * - {@link EXPO_WEB_STUDY_VERSION} (15) for every version 3 `expo-web-dev` configuration, whatever its `packageRoot`
@@ -88,6 +90,12 @@ export function studyFormatOfConfiguration(
 ): ConfiguredStudy['version'] {
   if (configuration.version !== OPERATIONS_CONFIG_VERSION)
     return RECORDED_LOCATION_STUDY_VERSION
+  // A next-dev-webpack run that declares `library` takes format 18: an older Codebook refuses the key, so it must list the study as saved by a newer Codebook (an explicit `library: undefined` declares nothing). Format 18 never moves to 12 to 14: it holds those fields itself.
+  if (
+    configuration.adapter === 'next-dev-webpack' &&
+    configuration.library !== undefined
+  )
+    return NEXT_LIBRARY_STUDY_VERSION
   // A react-scripts-dev run that declares `library` takes format 17: an older Codebook refuses the key, so it must list the study as saved by a newer Codebook (an explicit `library: undefined` declares nothing).
   if (
     configuration.adapter === 'react-scripts-dev' &&
@@ -243,6 +251,8 @@ export function evidenceFormatOfStudy(study: StudyFormatSubject): number {
       study.version !== VITE_LIBRARY_STUDY_VERSION &&
       // Format 17 (`react-scripts-dev` with `library`) follows the format 7 rules derived from its configuration, like format 11.
       study.version !== REACT_SCRIPTS_LIBRARY_STUDY_VERSION &&
+      // Format 18 (`next-dev-webpack` with `library`) follows the format 7 or 8 rules derived from its configuration, like format 9.
+      study.version !== NEXT_LIBRARY_STUDY_VERSION &&
       // Format 15 (`expo-web-dev`) follows the format 7 rules derived from its configuration, like format 11.
       study.version !== EXPO_WEB_STUDY_VERSION) ||
     study.configuration.version !== OPERATIONS_CONFIG_VERSION
@@ -263,7 +273,7 @@ export function usesServerRenderEvidence(study: StudyFormatSubject): boolean {
 }
 
 /**
- * Says whether a saved format number is written only from a version 3 configuration (formats 7 to 17), which no study of version 1 or 2 may carry.
+ * Says whether a saved format number is written only from a version 3 configuration (formats 7 to 18), which no study of version 1 or 2 may carry.
  * Called by {@link validateConfiguredStudyEvidence} for the version 1 and 2 configurations.
  * @param version - The study's saved format.
  * @returns `true` for the formats written only from a version 3 configuration.
@@ -271,8 +281,7 @@ export function usesServerRenderEvidence(study: StudyFormatSubject): boolean {
  */
 export function isOperationsStudyFormat(version: number): boolean {
   return (
-    version >= OPERATIONS_STUDY_VERSION &&
-    version <= REACT_SCRIPTS_LIBRARY_STUDY_VERSION
+    version >= OPERATIONS_STUDY_VERSION && version <= NEXT_LIBRARY_STUDY_VERSION
   )
 }
 
@@ -295,9 +304,10 @@ export function isReadableStudyFormatOfConfiguration(
   if (configuration.adapter === 'react-scripts-dev') return false
   // An expo-web-dev configuration is readable as format 15 only.
   if (configuration.adapter === 'expo-web-dev') return false
-  // A configuration that declares `library` is readable as format 16 or 17 only (the equality above), never through the older fallbacks.
+  // A configuration that declares `library` is readable as format 16, 17 or 18 only (the equality above), never through the older fallbacks (formats 12 to 14 included).
   if (
-    configuration.adapter === 'vite-dev' &&
+    (configuration.adapter === 'vite-dev' ||
+      configuration.adapter === 'next-dev-webpack') &&
     configuration.library !== undefined
   )
     return false

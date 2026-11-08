@@ -85,9 +85,14 @@ export type PlannedLibrary = {
   privateFolder: string
 }
 
-/** One script the page's debugger announced as parsed. */
+/** Which debugger session announced a script: the owned page (`browser`) or the owned server (`server`). */
+export type LibraryParticipant = 'browser' | 'server'
+
+/** One script a debugger announced as parsed. */
 export type LibraryScript = {
   url: string
+  /** The session that announced the script; absent means `browser`. Script ids repeat across sessions, so an attribution identifies a script by participant and id. */
+  participant?: LibraryParticipant
   /** The debugger's id of the script; an attribution that keeps per-script state counts each id once. */
   scriptId?: string
   /** The `Debugger.scriptParsed` content hash; a bundler that matches a compilation report uses it. */
@@ -124,6 +129,8 @@ export type LibraryAttributionScope = {
   privateFolder: string
   /** The library's package name. */
   packageName: string
+  /** The library's real checked-out folder, once planned; lets an attribution skip paths that cannot be another copy before resolving them. */
+  libraryRoot?: string
   /** Tells whether a real file belongs to a copy of the library other than the packed one. */
   isOtherCopyFile(realFile: string): boolean
 }
@@ -520,6 +527,7 @@ export class LibraryRoute {
         packedRoot,
         privateFolder,
         packageName,
+        libraryRoot: this.libraryRoot,
         isOtherCopyFile: (realFile) => this.isOtherCopyFile(realFile),
       })
     if (pageObserved) this.pageObserved = true

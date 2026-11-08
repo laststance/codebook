@@ -27,6 +27,7 @@ import type {
 } from './constants'
 import {
   ACTIVE_TIMEOUT_MS,
+  NEXT_LIBRARY_WRAPPED_WAIT_MS,
   NEXT_ROUTER_POLL_INTERVAL_MS,
   NEXT_SETUP_STEPS,
   ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION,
@@ -108,11 +109,14 @@ import {
   expoWebSetupDeadlineText,
 } from './expoWebRefusals'
 import type { LibraryRunRoute, LibraryScript } from './libraryRoute'
+import { NextLibraryRoute } from './nextLibraryRoute'
 import {
   NEXT_PAGES_FAILURE_VARIANT,
   libraryBuildChangedFailure,
   libraryFailureText,
   libraryPlaceAmbiguousRefusal,
+  nextLibraryNeedsPackageRootRefusal,
+  nextLibraryStopUnsupportedRefusal,
   nextRefusal,
   outsidePackageRefusal,
   routeHandlerStopRefusal,
@@ -362,6 +366,7 @@ import {
   type DevelopmentServerLayer,
 } from './utils/readDevelopmentBundle'
 import { ReadinessEntryRecord } from './utils/readinessEntryRecord'
+import { readLibraryPackageName } from './utils/readLibraryPackageName'
 import {
   readNextPagesState,
   type NextPagesState,
@@ -548,6 +553,9 @@ const NEXT_DEV_WEBPACK_ADAPTER: DevelopmentServerAdapter = {
       undefined,
       request.outputMask,
       request.nextPackage?.nextExecutable,
+      request.nextLibrary
+        ? { preloadPath: request.nextLibrary.preloadPath }
+        : {},
     )
     request.onApp(app)
     return { app, port: declaredPort.port }
@@ -1322,6 +1330,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private libraryRoute?: LibraryRunRoute
   /** The react-scripts library route, kept beside {@link libraryRoute} for the readiness check only it has. */
   private reactScriptsLibraryRoute?: ReactScriptsLibraryRoute
+  /** The Next library route, kept beside {@link libraryRoute} for the seams only it has: the per-compiler redirect check, the server attach and the server's scripts. */
+  private nextLibraryRoute?: NextLibraryRoute
   /** Whether the browser participant's debug session has ended; js-debug ends it once the page target is closed. */
   private hasBrowserSessionEnded = false
   /** Settles the library finalization's wait for the browser participant's session to end, while it waits. */
@@ -1603,6 +1613,19 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         !this.isWrittenInsideDeclaredApp(stop.source.path) &&
         this.isReactScriptsLibraryStopPath(stop.source.path),
     )
+  }
+
+  /**
+   * The declared library folder of a version 3 `next-dev-webpack` run that declares `library`.
+   * @returns The repository-relative folder (`"."` for the repository root); `undefined` for every other run.
+   * @example this.nextLibraryFolder() // => '.'
+   */
+  private nextLibraryFolder(): string | undefined {
+    const { configuration } = this.definition
+    return configuration.version === OPERATIONS_CONFIG_VERSION &&
+      configuration.adapter === 'next-dev-webpack'
+      ? configuration.library?.packageRoot
+      : undefined
   }
 
   /**
@@ -2084,10 +2107,32 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       { suggest: () => suggestNextPackageRoots(this.options.workspace) },
     )
     if (nextPackage.isRoot) return nextPackage
+    const libraryFolder = this.nextLibraryFolder()
     // A server or browser stop of a nested version 3 Pages run in a workspace library is frozen against the library's build; anything else outside stays refused.
-    const outside = await this.stopFilesOutside(nextPackage, (stop) =>
-      this.freezeLibraryStop(stop, nextPackage),
+    // A run that declares `library` freezes nothing (decision D19): its page runs the packed copy, so a build frozen from the checked-out library would seal another file than the one that runs.
+    const outside = await this.stopFilesOutside(
+      nextPackage,
+      libraryFolder === undefined
+        ? (stop) => this.freezeLibraryStop(stop, nextPackage)
+        : undefined,
     )
+    if (libraryFolder !== undefined) {
+      const libraryStop = outside.find((file) =>
+        isAtOrInsideFolder(
+          join(this.options.workspace, libraryFolder),
+          join(this.options.workspace, file),
+        ),
+      )
+      // Library-source stops are not supported on the Next library route (decision D13); the refusal comes before any process starts.
+      if (libraryStop !== undefined)
+        throw nextLibraryStopUnsupportedRefusal(
+          (await readLibraryPackageName(
+            this.options.workspace,
+            libraryFolder,
+          )) ?? libraryFolder,
+          libraryStop,
+        )
+    }
     if (outside.length)
       throw outsidePackageRefusal(nextPackage.packageRootRelative, outside)
     return nextPackage
@@ -2188,6 +2233,59 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * The adapter, the declared library folder and the resolved app of a version 3 run that declares `library`.
+   * Called by {@link planLibrary} to choose the route.
+   * @returns The facts of the declaration; `undefined` for a run that declares no `library` or whose adapter has no library route.
+   * @example this.libraryTarget() // => { kind: 'next-dev-webpack', declared: '.', appPackage: … }
+   */
+  private libraryTarget():
+    | {
+        kind: 'next-dev-webpack' | 'react-scripts-dev' | 'vite-dev'
+        declared: string
+        appPackage: ResolvedPackage | undefined
+      }
+    | undefined {
+    const { configuration } = this.definition
+    if (configuration.version !== OPERATIONS_CONFIG_VERSION) return undefined
+    const { adapter } = configuration
+    if (
+      adapter !== 'next-dev-webpack' &&
+      adapter !== 'react-scripts-dev' &&
+      adapter !== 'vite-dev'
+    )
+      return undefined
+    const declared = configuration.library?.packageRoot
+    if (declared === undefined) return undefined
+    return {
+      kind: adapter,
+      declared,
+      appPackage: this.resolvedPackage,
+    }
+  }
+
+  /**
+   * Refuses a library run whose app is the repository root, with the adapter's own refusal.
+   * Called by {@link planLibrary}; nothing was built or started.
+   * @param kind - The run's adapter.
+   * @throws `LIBRARY_BUILD_UNSUPPORTED` or, for Vite, `INVALID_CONFIGURATION`, each with `details.reason: "library-needs-package-root"`.
+   * @example this.refuseRootLibraryApp('next-dev-webpack')
+   */
+  private refuseRootLibraryApp(
+    kind: 'next-dev-webpack' | 'react-scripts-dev' | 'vite-dev',
+  ): never {
+    if (kind === 'next-dev-webpack') throw nextLibraryNeedsPackageRootRefusal()
+    if (kind === 'react-scripts-dev')
+      throw reactScriptsLibraryNeedsPackageRootRefusal()
+    assertViteLibraryNeedsPackageRoot({
+      version: 3,
+      adapter: 'vite-dev',
+      library: {},
+    })
+    // The Vite assertion always throws for this configuration.
+    throw new Error('The Vite library refusal did not throw.')
+  }
+
+  /**
    * Seam 1 of the library route: creates the route for a nested `vite-dev` or `react-scripts-dev` run that declares `library`, checks it, asks the learner and fixes the private folder.
    * For react-scripts the library is also built, packed and given its preload here (there is no resolved-config blocker to read first), so the start receives the preload path.
    * Called by {@link prepareOwned} before the server starts; the setup budget does not run while the learner decides or the build runs.
@@ -2198,30 +2296,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private async planLibrary(): Promise<{
     viteLibrary?: ViteLauncherLibraryOptions
     reactScriptsLibrary?: { preloadPath: string }
+    nextLibrary?: { preloadPath: string }
   }> {
-    const { configuration } = this.definition
-    const isReactScripts =
-      configuration.version === OPERATIONS_CONFIG_VERSION &&
-      configuration.adapter === 'react-scripts-dev'
-    const declared =
-      configuration.version === OPERATIONS_CONFIG_VERSION &&
-      (configuration.adapter === 'vite-dev' || isReactScripts)
-        ? configuration.library?.packageRoot
-        : undefined
-    if (declared === undefined) return {}
+    const target = this.libraryTarget()
+    if (target === undefined) return {}
+    const { declared, kind, appPackage } = target
     const dependencies = this.options.viteLibrary
-    const appPackage = isReactScripts
-      ? this.reactScriptsPackage
-      : this.vitePackage
     // A packageRoot that resolves to the repository root is a configuration error, not a missing editor feature.
-    if (appPackage?.isRoot) {
-      if (isReactScripts) throw reactScriptsLibraryNeedsPackageRootRefusal()
-      assertViteLibraryNeedsPackageRoot({
-        version: 3,
-        adapter: 'vite-dev',
-        library: {},
-      })
-    }
+    if (appPackage?.isRoot) this.refuseRootLibraryApp(kind)
     if (!dependencies || !appPackage)
       throw new StudyError(
         'PREREQUISITE_MISSING',
@@ -2241,7 +2323,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         this.evidence.record(type, detail),
       dependencies,
     }
-    if (isReactScripts) return this.planReactScriptsLibrary(input)
+    if (kind === 'next-dev-webpack') return this.planNextLibrary(input)
+    if (kind === 'react-scripts-dev') return this.planReactScriptsLibrary(input)
     const route = new ViteLibraryRoute(input)
     this.libraryRoute = route
     const options = await this.withSetupBudgetPaused(() =>
@@ -2282,6 +2365,30 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     await this.withSetupBudgetPaused(() => route.plan(this.abort.signal))
     await this.withSetupBudgetPaused(() => route.prepare(this.abort.signal))
     return { reactScriptsLibrary: { preloadPath: route.preloadPath() } }
+  }
+
+  /**
+   * Plans, builds and packs the Next library route and gives the start its preload.
+   * Called by {@link planLibrary}; neither the confirmation nor the build counts against the setup budget.
+   * @param input - What the route is built from.
+   * @returns `{ nextLibrary: { preloadPath } }`.
+   * @throws The port refusal of {@link assertDevelopmentPortFree} (`sideEffects: "none"`) before the confirmation and the build; the route's refusals after.
+   * @example const { nextLibrary } = await this.planNextLibrary(input)
+   */
+  private async planNextLibrary(
+    input: ConstructorParameters<typeof NextLibraryRoute>[0],
+  ): Promise<{ nextLibrary: { preloadPath: string } }> {
+    // A busy declared port refuses before the learner's confirmation and the build, so the refusal's `sideEffects: none` is true; the adapter's start checks it again.
+    await assertDevelopmentPortFree(
+      await readDeclaredDevelopmentPort(this.packageRoot),
+      { signal: this.abort.signal },
+    )
+    const route = new NextLibraryRoute(input)
+    this.libraryRoute = route
+    this.nextLibraryRoute = route
+    await this.withSetupBudgetPaused(() => route.plan(this.abort.signal))
+    await this.withSetupBudgetPaused(() => route.prepare(this.abort.signal))
+    return { nextLibrary: { preloadPath: route.preloadPath() } }
   }
 
   /**
@@ -2335,9 +2442,20 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @example this.observeLibraryScript({ scriptId: '7', url: 'http://localhost:4321/src/main.tsx' })
    */
   private observeLibraryScript(
-    event: Pick<LibraryScript, 'scriptId' | 'url' | 'hash'>,
+    event: Pick<LibraryScript, 'scriptId' | 'url' | 'hash'> & {
+      participant: Participant
+    },
   ): void {
-    if (!this.libraryRoute || !this.origin) return
+    // The server session announces file URLs that need no origin (decision D21): the Next route counts them even before the readiness request set the origin; no other route observes the server.
+    if (event.participant === 'server') {
+      this.nextLibraryRoute?.observeParsedScript({
+        ...event,
+        isOwnedOrigin: () => false,
+      })
+      return
+    }
+    if (!this.libraryRoute) return
+    if (!this.origin) return
     const owned = loopbackOriginsOf(this.origin, this.ownsIpv6Loopback)
     this.libraryRoute.observeParsedScript({
       ...event,
@@ -2426,6 +2544,24 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     return { library: route.view(), ...(phase ? { libraryPhase: phase } : {}) }
   }
 
+  /**
+   * Waits until the Next preload wrapped every compiler, counting the bound from the moment Next listens and failing with the process's own exit when it ends first.
+   * Called by {@link prepareOwned} after the owned server started; does nothing for a run without a Next library route.
+   * @throws The exit failure of the owned server, or the `library-redirect-not-applied` refusal.
+   * @example await this.awaitNextLibraryRedirect()
+   */
+  private async awaitNextLibraryRedirect(): Promise<void> {
+    const app = this.app
+    if (!this.nextLibraryRoute || !app) return
+    // The lines appear after Next listens, so the bound counts from the listener, not from the spawn.
+    await app.listening(this.abort.signal)
+    await this.nextLibraryRoute.awaitRedirectApplied(
+      this.abort.signal,
+      NEXT_LIBRARY_WRAPPED_WAIT_MS,
+      () => app.assertRunning(),
+    )
+  }
+
   /** Retains one preparation barrier for service cancellation and final cleanup. @example await run.prepare() */
   prepare(): Promise<void> {
     return (this.preparation ??= this.prepareOwned())
@@ -2506,7 +2642,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (hasPagesFolder) await this.refuseLexicalPagesServerStops()
     this.nextSetupStep = NEXT_SETUP_STEPS.startingNext
     // Seam 1 of the Vite library route: checks, learner confirmation and the private folder, before any server exists.
-    const { viteLibrary, reactScriptsLibrary } = await this.planLibrary()
+    const { viteLibrary, reactScriptsLibrary, nextLibrary } =
+      await this.planLibrary()
     // The app runs on the port the project declares (its auth origin points there); a busy port refuses the start instead of moving the app.
     const started = await adapter.start({
       ...(viteLibrary
@@ -2517,13 +2654,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           }
         : {}),
       ...(reactScriptsLibrary ? { reactScriptsLibrary } : {}),
+      ...(nextLibrary ? { nextLibrary } : {}),
       ...(hasPagesFolder ? { outputMask: maskNextServerOutput } : {}),
       workspace: this.packageRoot,
       ...this.resolvedPackageFields(),
       entryPath: this.definition.configuration.entryPath ?? '/',
       node: this.options.node,
       record: (type, detail) => this.evidence.record(type, detail),
-      inspectServer: needsServer,
+      // A Next library run observes the server's scripts whatever its stops are (decision D21).
+      inspectServer: needsServer || nextLibrary !== undefined,
       signal: this.abort.signal,
       alive: () => this.alive(),
       assertPortFree: (declared, refuse) =>
@@ -2549,8 +2688,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     // The server binds 127.0.0.1; the browser opens `localhost` at its port, the name the project's own origin settings use (D65).
     this.setupStep = VITE_SETUP_STEPS.waitingForServer
     this.nextSetupStep = NEXT_SETUP_STEPS.waitingForServer
+    // A Next library run is refused here when the preload did not wrap a compiler's configuration (decision D20): the readiness request would run the installed copy.
+    await this.awaitNextLibraryRedirect()
+    this.alive()
     // A module-scope server stop runs when Next first evaluates its module, during Codebook's own request: its provisional breakpoints are in place before that request.
     await this.openPreparationWindow(adapter, hasPagesFolder)
+    await this.attachNextLibraryServer()
     const ownedOrigin = await this.proveServerReady(
       adapter,
       hasPagesFolder,
@@ -3109,6 +3252,23 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     this.entryBehindSignIn = true
     this.evidence.record('application.entry-behind-sign-in')
+  }
+
+  /**
+   * Attaches the server debugger before the readiness request for a Next library run that no preparation window attached it for, then tells the route.
+   * Why it exists: the server parses the page's modules during Codebook's own readiness request and a late subscription gets no replay (decision D21, E1 addendum); the observation needs those scripts. Called by {@link prepareOwned} right after {@link openPreparationWindow}; it does nothing for a run without a Next library route.
+   * @example await this.attachNextLibraryServer() // journal: script.observed for each server chunk the readiness request loads
+   */
+  private async attachNextLibraryServer(): Promise<void> {
+    const route = this.nextLibraryRoute
+    if (!route) return
+    // The window attaches with its own source-map pause; every other run attaches here without one.
+    if (!this.serverSelectedEarly) {
+      await this.selectServer()
+      this.serverSelectedEarly = true
+    }
+    this.alive()
+    route.serverAttached()
   }
 
   /**
@@ -10779,13 +10939,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       if (event.url === SECRET_FRAME_SOURCE_URL) return
       // The journal lists only the first scripts; a pause in a later one still needs its URL.
       participant.scriptUrls.set(event.scriptId, event.url)
-      // Seam 3 of the Vite library route: only what the page parsed counts as served.
-      if (name === 'browser')
-        this.observeLibraryScript({
-          scriptId: event.scriptId,
-          url: event.url,
-          hash: event.hash,
-        })
+      // Seam 3 of the library routes: the page's scripts count for every route, the server's only for the Next route.
+      this.observeLibraryScript({
+        participant: name,
+        scriptId: event.scriptId,
+        url: event.url,
+        hash: event.hash,
+      })
       // The Pages renderer's text is read when it is announced (again), so the first hit finds it cached.
       if (
         name === 'server' &&

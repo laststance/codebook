@@ -209,6 +209,10 @@ export function reactScriptsCompileFailedRefusal(
   )
 }
 
+/** The static recovery of a `LIBRARY_BUILD_UNSUPPORTED` whose `details.reason` is `library-needs-package-root`: it names fields, never values, because a recovery override reaches MCP unsanitized. */
+const REACT_SCRIPTS_LIBRARY_NEEDS_PACKAGE_ROOT_RECOVERY =
+  "Declare the Example's folder as configuration.packageRoot beside library, or drop library to run the root app on its installed copy of the library, saying so to the learner; never edit the project. Recovery: fix the configuration, then one new start. Nothing was built or started (details.sideEffects is none). See codebook://help/repository-browser#library-needs-package-root."
+
 /**
  * Builds the `LIBRARY_BUILD_UNSUPPORTED` refusal of a `react-scripts-dev` app at the repository root that declares `library`.
  *
@@ -224,7 +228,7 @@ export function reactScriptsLibraryNeedsPackageRootRefusal(): StudyError {
     'LIBRARY_BUILD_UNSUPPORTED',
     message,
     message,
-    undefined,
+    REACT_SCRIPTS_LIBRARY_NEEDS_PACKAGE_ROOT_RECOVERY,
     undefined,
     { reason: 'library-needs-package-root', sideEffects: 'none' },
   )

@@ -25,7 +25,10 @@ import {
 import { buildDevelopmentServerEnvironment } from './developmentServerEnvironment'
 import { isProcessGroupGone } from './isProcessGroupGone'
 import { keepUtf8Tail } from './keepUtf8Tail'
-import { nextDevArguments } from './nextDevArguments'
+import {
+  nextLaunchArguments,
+  type NextLaunchOptions,
+} from './nextLaunchArguments'
 import {
   beginReleaseOfOwnedDevelopmentPort,
   claimOwnedDevelopmentPort,
@@ -109,7 +112,7 @@ async function observedReadinessRequest(
   }
 }
 
-/** Acquires one owned process group synchronously for {@link ConfiguredBrowserRun}, exposing cancellable readiness and bounded shutdown. @param inspectServer - Whether to open the native server inspector. @param port - The project's own port ({@link readDeclaredDevelopmentPort}); required, so no caller can skip the lookup and the app is never started on another port. @param nextExecutable - The verified `dist/bin/next` the launch runs ({@link ResolvedNextPackage.nextExecutable}); defaults to the one under `target`'s own `node_modules`, today's launch. @param outputMask - For the Next server only (no `spec`): masks values the shared redactor leaves in the output it journals and quotes, such as cookie and query values ({@link maskNextServerOutput}); a Next run passes it for a workspace with a Pages folder. @example const app = launchDevelopmentServer(target, node, record, false, 3165); await app.ready(signal) */
+/** Acquires one owned process group synchronously for {@link ConfiguredBrowserRun}, exposing cancellable readiness and bounded shutdown. @param inspectServer - Whether to open the native server inspector. @param port - The project's own port ({@link readDeclaredDevelopmentPort}); required, so no caller can skip the lookup and the app is never started on another port. @param nextExecutable - The verified `dist/bin/next` the launch runs ({@link ResolvedNextPackage.nextExecutable}); defaults to the one under `target`'s own `node_modules`, today's launch. @param outputMask - For the Next server only (no `spec`): masks values the shared redactor leaves in the output it journals and quotes, such as cookie and query values ({@link maskNextServerOutput}); a Next run passes it for a workspace with a Pages folder. @param nextOptions - For the Next server only: {@link NextLaunchOptions}, such as the library run's `--require` preload. @example const app = launchDevelopmentServer(target, node, record, false, 3165); await app.ready(signal) */
 export function launchDevelopmentServer(
   target: string,
   node: string,
@@ -119,12 +122,11 @@ export function launchDevelopmentServer(
   spec?: DevelopmentLaunchSpec,
   outputMask?: (text: string) => string,
   nextExecutable: string = join(target, 'node_modules/next/dist/bin/next'),
+  nextOptions: NextLaunchOptions = {},
 ) {
   const environment = spec?.environment ?? buildDevelopmentServerEnvironment()
-  const arguments_ = spec?.arguments ?? [
-    nextExecutable,
-    ...nextDevArguments(port),
-  ]
+  const arguments_ =
+    spec?.arguments ?? nextLaunchArguments(nextExecutable, port, nextOptions)
   // A launcher's own mask wins; the Next server takes the caller's output mask.
   const mask = spec?.mask ?? outputMask
   if (inspectServer && !spec) arguments_.push('--inspect', '127.0.0.1:0')
@@ -233,6 +235,25 @@ export function launchDevelopmentServer(
   let declaredPort: number | undefined = spec?.ipc ? undefined : port
   let claim = spec?.ipc ? undefined : claimOwnedDevelopmentPort(port)
   /**
+   * Throws the launcher error, or the process's own exit (by code or by signal, e.g. an OOM kill) with its output tail; returns while it runs.
+   *
+   * Called by {@link waitForListener} on each poll and by the app's `assertRunning`, so a signal-killed child (`exitCode` null, `signalCode` set) is reported at once.
+   * @throws The launcher error, `Application exited: <code>: <tail>` or `Application exited: signal <name>: <tail>`.
+   * @example throwWhenExited() // returns while the process runs
+   */
+  const throwWhenExited = (): void => {
+    if (error) throw error
+    // A signal kill leaves exitCode null, so the signal is the exit evidence
+    if (child.exitCode !== null)
+      throw new Error(
+        `Application exited: ${child.exitCode}: ${publishedTail()}`,
+      )
+    if (child.signalCode !== null)
+      throw new Error(
+        `Application exited: signal ${child.signalCode}: ${publishedTail()}`,
+      )
+  }
+  /**
    * Waits for the owned listener on the declared port and keeps its origin; the first step of every readiness check (`ready`, `readyEntry`).
    * @param signal - Ends the wait when the run is cancelled.
    * @returns The origin `http://127.0.0.1:<port>`.
@@ -243,13 +264,7 @@ export function launchDevelopmentServer(
       throw new Error('The launcher declared no port')
     const listening = await waitUntil(
       () => {
-        if (error || child.exitCode !== null)
-          throw (
-            error ??
-            new Error(
-              `Application exited: ${child.exitCode}: ${publishedTail()}`,
-            )
-          )
+        throwWhenExited()
         // A launcher with an IPC channel reports its verified listening port before `ready` is called, so its origin never depends on printed URLs (a project's logLevel can silence them).
         if (spec?.ipc) return `http://127.0.0.1:${declaredPort}`
         // A launcher that knows its own listening evidence says so; the origin is still the declared port.
@@ -403,6 +418,27 @@ export function launchDevelopmentServer(
         REPOSITORY_SETUP_TIMEOUT_MS,
         signal,
       )
+    },
+    /**
+     * Waits for the owned listener on the declared port without sending any request; the same idempotent wait `ready` starts with.
+     *
+     * Called by {@link ConfiguredBrowserRun} for a Next library run, so that the wait for the preload's `wrapped` lines starts once Next listens and not at spawn.
+     * @param signal - Ends the wait when the run is cancelled.
+     * @returns The origin `http://127.0.0.1:<port>`.
+     * @throws `Application exited: <code>: <tail>` when the process exits first, or the wait times out.
+     * @example await app.listening(signal) // => 'http://127.0.0.1:3000'
+     */
+    listening: (signal: AbortSignal): Promise<string> =>
+      waitForListener(signal),
+    /**
+     * Throws the process's own failure when it already exited, and returns when it still runs.
+     *
+     * Called by the Next library route on each poll of its wrapped-line wait, so that an early exit is reported with its output tail instead of as a missing redirect.
+     * @throws The launcher error, or `Application exited: <code>: <tail>`.
+     * @example app.assertRunning() // returns while the process runs
+     */
+    assertRunning(): void {
+      throwWhenExited()
     },
     /** Waits for the listener on the declared port, then proves readiness through the configured entry page (the root page only when entryPath is "/"); called during preparation. @param entryPath - Configured first page; a non-root entry must answer 200 without a redirect. @param observer - A Next run's record of its readiness request: told at the send and at the end ({@link ReadinessObserver}); absent for a Vite run. @example await app.ready(signal, '/login') */
     async ready(

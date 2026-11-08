@@ -105,10 +105,10 @@ test('Codebook 0.2.98 lists a .study.v17.json archive as saved by a newer Codebo
   assert.equal(sidecar, undefined)
 })
 
-// protects=this Codebook reads format 17, stores it as .study.v17.json first in the table and refuses format 18; fails_when=the row is missing or not first, the readable limit stays 16, or 18 is read; no_claim=a run's round trip
-test('format 17 is a stored and readable format and format 18 is refused as saved by a newer Codebook', () => {
+// protects=this Codebook reads format 17, stores it as .study.v17.json second in the table (after format 18) and still reads it; fails_when=the row is missing or moves, or the readable limit drops below 17; no_claim=a run's round trip
+test('format 17 is a stored and readable format', () => {
   // Arrange / Act
-  const row = STUDY_STORAGE_FORMATS[0]
+  const row = STUDY_STORAGE_FORMATS[1]
   // Assert
   assert.deepEqual(row, {
     version: 17,
@@ -116,13 +116,9 @@ test('format 17 is a stored and readable format and format 18 is refused as save
     archiveSuffix: '.study.v17.json',
     metadataSuffix: '.study.meta.v17.json',
   })
-  assert.equal(READABLE_STUDY_VERSION, 17)
+  assert.equal(READABLE_STUDY_VERSION, 18)
   assert.equal(isOperationsStudyFormat(17), true)
   assert.doesNotThrow(() => assertReadableStudyFormat({ version: 17 }))
-  assert.throws(
-    () => assertReadableStudyFormat({ version: 18 }),
-    /saved in format 18 by a newer Codebook; this Codebook reads formats up to 17/,
-  )
 })
 
 // protects=a react-scripts-dev run that declares library takes format 17, one without keeps 11 and an explicit undefined library declares nothing; fails_when=a library run falls back to 11, or an undefined library moves to 17; no_claim=a live run

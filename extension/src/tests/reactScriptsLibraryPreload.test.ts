@@ -18,7 +18,7 @@ import { promisify } from 'node:util'
 
 import { REACT_SCRIPTS_LIBRARY_REPORT_LINE_LIMIT_BYTES } from '../constants'
 import { buildReactScriptsLibraryPreloadSource } from '../utils/reactScriptsLibraryPreload'
-import { ReactScriptsReportReader } from '../utils/reactScriptsLibraryReport'
+import { WebpackLibraryReportReader } from '../utils/webpackLibraryReport'
 
 const run = promisify(execFile)
 /** The longest a child that compiles with webpack may run. */
@@ -372,7 +372,7 @@ test('report starts with the wrapped line and then names the emitted script by i
   assert.ok(asset?.resources.includes(join(fixture.packedRoot, 'index.js')))
   assert.ok(asset?.resources.includes(join(fixture.packedRoot, 'sub.js')))
   // The reader agrees with the generator about the line format.
-  const reader = new ReactScriptsReportReader()
+  const reader = new WebpackLibraryReportReader()
   reader.refresh(fixture.reportPath, true)
   assert.equal(reader.wrapped, true)
   assert.equal(reader.unreadableCause, undefined)
@@ -607,4 +607,32 @@ test('Example import of lib with a query string is served from the packed copy',
     ),
     false,
   )
+})
+
+test('the react-scripts preload text is byte-identical to the text written before the shared body was split', () => {
+  // Value: protects=the shared-body split leaves the react-scripts preload file unchanged; fails_when=a piece shared with the Next tail changes any byte of the react-scripts file; no_claim=that the react-scripts text itself is correct (the compile tests above cover that)
+  // Arrange
+  const expected = readFileSync(
+    join(
+      __dirname,
+      '../../src/tests/fixtures/webpack-library-preload/react-scripts-preload.expected.txt',
+    ),
+    'utf8',
+  )
+
+  // Act
+  const actual = buildReactScriptsLibraryPreloadSource({
+    packageName: 'lib',
+    packedRoot: '/p/node_modules/lib',
+    privateFolder: '/p',
+    exampleRoot: '/r/ex',
+    libraryRoot: '/r/lib',
+    peers: ['react'],
+    reportPath: '/p/report.jsonl',
+    cacheFolder: '/p/cache',
+    lineLimitBytes: 1048576,
+  })
+
+  // Assert
+  assert.equal(actual, expected)
 })
