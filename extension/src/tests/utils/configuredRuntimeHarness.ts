@@ -1,6 +1,7 @@
 import { mkdir, realpath, symlink, writeFile } from 'node:fs/promises'
 import { dirname, join, posix, resolve } from 'node:path'
 import type { TestContext } from 'node:test'
+import { pathToFileURL } from 'node:url'
 import { runInNewContext } from 'node:vm'
 
 import type { DebugSession, DebugSessionOptions } from 'vscode'
@@ -95,6 +96,7 @@ import { repositoryHarness } from './repositoryHarness'
 import { createServerParticipant } from './serverRenderParticipant'
 import { sourceBreakpointRequest } from './sourceBreakpointRequest'
 import { startViteLibraryServer } from './viteLibraryServer'
+import { withExpoStandIns } from './withExpoStandIns'
 
 /** What the owned page reports for a condition that does not hold; `textDifference` is left open so a test can send a value the run must refuse. */
 interface BeforeFailure {
@@ -233,7 +235,22 @@ export async function configuredRuntimeHarness(
     /** Makes the mocked port check refuse as a taken declared port does, so a test can prove what happens before it. */
     declaredPortTaken?: boolean
     /** Runs the configuration on the Vite adapter: its stand-in starts the stub server, serves the sealed module at its owned address and loads the entry page once. */
-    adapter?: 'vite-dev'
+    adapter?: 'vite-dev' | 'expo-web-dev'
+    /**
+     * A version 3 `expo-web-dev` run that declares `apiServer` (Cycle 0099): the declaration retained in the configuration and the stand-in of the `ownedApiServer` module the run loads, so no API process starts ({@link apiServerRunHarness}). Only with `adapter: "expo-web-dev"` and `packageRoot`.
+     */
+    apiServer?: {
+      declaration: { packageRoot: string; entry: string; port: number }
+      module: unknown
+    }
+    /** Called with the scripted participant right after the run started the server debug session and before it selected it, so a test sends the API's entry pause at that moment. */
+    onServerDebuggingStarted?: (
+      participant: ReturnType<typeof createServerParticipant>,
+    ) => void
+    /** Called when the stand-in adapter starts the app, so a test orders the app's start against the API's. */
+    onApplicationStart?: () => void
+    /** Makes the stand-in adapter's start fail with this message, as an app that cannot start does. */
+    applicationStartFails?: string
     // pregate-literal: API_VERSION=1.34 the Vite library route was added at API 1.34 (its minimum), not the current API
     /** A nested Vite run that declares `library` (API 1.34): the declared folder and the route's seams (confirmation, checks, build, private folder), which a test fakes. The stand-in start then runs the build between the facts and the listen, as the real launcher start does. */
     libraryRoute?: {
@@ -445,7 +462,9 @@ export async function configuredRuntimeHarness(
       fixture ? (fixture.source ?? FIXTURE_SOURCE) : undefined,
       fixture?.citationEndLine,
     )
-  if (options.adapter) reference.configuration.adapter = options.adapter
+  // A version 1 configuration names two adapters only; the version 3 shape built below takes the Expo one from the same field.
+  if (options.adapter)
+    Object.assign(reference.configuration, { adapter: options.adapter })
   if (additionalStops.length)
     reference.configuration.additionalStops = additionalStops
   if (options.inspections)
@@ -573,8 +592,12 @@ export async function configuredRuntimeHarness(
           }
         : unnestedConfiguration
   ) as typeof unnestedConfiguration
+  // The app's own API declaration is the schema's last key, so appending it keeps the parsed key order the intent hash reads.
+  if (options.apiServer)
+    Object.assign(configuration, { apiServer: options.apiServer.declaration })
   // Each of these changes makes the frozen intent hash stale.
   if (
+    options.apiServer ||
     packageFolder ||
     additionalStops.length ||
     options.before ||
@@ -637,7 +660,13 @@ export async function configuredRuntimeHarness(
           : options.nextPages,
       )
     : undefined
-  if (packageFolder && options.adapter === 'vite-dev')
+  if (packageFolder && options.adapter === 'expo-web-dev') {
+    await mkdir(packageDirectory, { recursive: true })
+    await writeFile(
+      join(packageDirectory, 'package.json'),
+      JSON.stringify({ name: 'app', dependencies: { expo: '57.0.0' } }),
+    )
+  } else if (packageFolder && options.adapter === 'vite-dev')
     await writeNestedVitePackage({
       repositoryDirectory: repository.directory,
       packageDirectory,
@@ -1784,13 +1813,16 @@ export async function configuredRuntimeHarness(
     options.serverRuntime &&
     options.serverSeal !== 'api-node',
   )
-  const serverScriptUrl = isPagesServer
-    ? library
-      ? `webpack-internal:///(pages-dir-node)/${library.runtimePath}`
-      : `webpack-internal:///(pages-dir-node)/./${packageSourcePath}`
-    : library?.appRouterServer
-      ? library.appRouterServer.rscAddress
-      : `webpack-internal:///(${serverLayerOf(options.serverSeal)})/./${packageSourcePath}`
+  const serverScriptUrl = options.apiServer
+    ? // The API's modules are plain files the Node process loads: the debugger announces their file URL.
+      pathToFileURL(sourcePath).href
+    : isPagesServer
+      ? library
+        ? `webpack-internal:///(pages-dir-node)/${library.runtimePath}`
+        : `webpack-internal:///(pages-dir-node)/./${packageSourcePath}`
+      : library?.appRouterServer
+        ? library.appRouterServer.rscAddress
+        : `webpack-internal:///(${serverLayerOf(options.serverSeal)})/./${packageSourcePath}`
   const serverParticipant = options.serverRuntime
     ? createServerParticipant({
         run: () => run,
@@ -1854,6 +1886,7 @@ export async function configuredRuntimeHarness(
         // js-debug announces its silent root first; the server's target session is its child.
         run.addSession(serverParticipant.rootSession)
         run.addSession(serverParticipant.session)
+        options.onServerDebuggingStarted?.(serverParticipant)
         return true
       },
       removeBreakpoints(removed: TestBreakpoint[]): void {
@@ -2098,7 +2131,7 @@ export async function configuredRuntimeHarness(
   >(resolve(__dirname, '../../ownedRepositoryBreakpoint.js'), { vscode })
   const runtimeModule = await loadModule<typeof ConfiguredBrowserRunModule>(
     resolve(__dirname, '../../configuredBrowserRun.js'),
-    {
+    withExpoStandIns(options, {
       vscode,
       ...(options.runtimeConstants
         ? await loadConstantsWith(options.runtimeConstants)
@@ -2370,6 +2403,9 @@ export async function configuredRuntimeHarness(
             request.onStep('starting Vite')
             setupSteps.push('starting Vite')
             request.onApp(fakeApplication)
+            options.onApplicationStart?.()
+            if (options.applicationStartFails)
+              throw new Error(options.applicationStartFails)
             return {
               app: fakeApplication,
               port: 4321,
@@ -2503,7 +2539,7 @@ export async function configuredRuntimeHarness(
           return waitUntil(read, description, timeoutMs, signal)
         },
       },
-    },
+    }),
     { setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout },
   )
   run = owned = new runtimeModule.ConfiguredBrowserRun({
@@ -2555,6 +2591,12 @@ export async function configuredRuntimeHarness(
     viteRequests,
     /** The configuration of each server debug session the run started, in order. */
     serverLaunches,
+    /** The scripted server's inspector channel, whose `subscribe` a test may replace to act while the run subscribes. */
+    serverProxy: serverParticipant?.proxy,
+    /** Delivers a CDP event of the owned page to the run's listener, as the browser's own channel does (`Network.requestWillBeSent`, `Network.loadingFinished`). @example harness.emitPageEvent('Network.loadingFinished', { requestId: '9', timestamp: 12 }) */
+    emitPageEvent(event: string, parameters: unknown): void {
+      listeners.get(event)?.(parameters)
+    },
     /** Changes what `document.readyState` answers from now on, so a test lets the entry page finish loading once its server stops were continued. @example harness.setDocumentReadyState('complete') */
     setDocumentReadyState(state: 'loading' | 'complete'): void {
       documentReadyState = state

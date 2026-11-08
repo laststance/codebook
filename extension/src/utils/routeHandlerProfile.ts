@@ -41,10 +41,7 @@ export type WebpackRouteHandlerProfile = RouteHandlerProfile & {
  * @example
  * ROUTE_HANDLER_PROFILES['pages-api'].layer // => 'api-node'
  */
-export const ROUTE_HANDLER_PROFILES: Record<
-  RouteHandlerKind,
-  RouteHandlerProfile
-> = {
+const ROUTE_HANDLER_PROFILES: Record<RouteHandlerKind, RouteHandlerProfile> = {
   'app-route': {
     layer: 'rsc',
     caller: APP_ROUTE_CALLER,

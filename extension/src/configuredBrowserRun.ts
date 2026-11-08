@@ -1892,10 +1892,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @example this.expoWebPackage = await this.resolveExpoWebPackageOfRun()
    */
   private resolveExpoWebPackageOfRun(): Promise<ResolvedPackage> {
-    return this.resolveAppPackageOfRun(resolveExpoWebPackage, {
-      outside: expoWebOutsidePackageRefusal,
-      nodeModules: expoWebNodeModulesRefusal,
-    })
+    return this.resolveAppPackageOfRun(
+      resolveExpoWebPackage,
+      {
+        outside: expoWebOutsidePackageRefusal,
+        nodeModules: expoWebNodeModulesRefusal,
+      },
+      // With `apiServer` a server stop lies in the API's folder, outside the app by design; the schema keeps it inside `apiServer.packageRoot`.
+      async (stop) =>
+        stop.participant === 'server' &&
+        this.apiServerDeclaration() !== undefined,
+    )
   }
 
   /**
@@ -4054,6 +4061,26 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Gives a sealed route-handler, API-route or API server pause its place among the run's stops.
+   * Called by the publish of each kind, from the seal's `adopt` step, before the pause is announced to the stop machinery.
+   * @param entry - The route-handler stop that paused.
+   * @param prepared - The stop sealed from the paused script.
+   * @example this.adoptRouteHandlerPause(entry, prepared)
+   */
+  private adoptRouteHandlerPause(
+    entry: RouteHandlerStop,
+    prepared: PreparedStop,
+  ): void {
+    entry.prepared = prepared
+    // The hit now has its place in the order; the replay of its own `stopped` is judged against it.
+    this.judgingRouteHandler = false
+    // Every stop before this one was continued: it takes the place of the first stop still ahead.
+    this.stops.splice(this.stopIndex, 0, prepared)
+    // A run whose only stops are route handlers freezes its manifest at the first of their pauses.
+    if (!this.sealedManifest) this.freezeSealedStops()
+  }
+
+  /**
    * Tells whether a paused script is the module of a route-handler stop: Next's webpack address for a route handler or a Pages API route, the `file://` URL of the real file together with the stop's own acknowledged breakpoint for an API server stop (D19).
    * Called by {@link armedRouteHandlerOf} for each armed stop.
    * @param session - The server session.
@@ -4135,13 +4162,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         }
         if (profile.field === 'apiRoute') prepared.apiRoute = request
         else prepared.routeHandler = request
-        entry.prepared = prepared
-        // The hit now has its place in the order; the replay of its own `stopped` is judged against it.
-        this.judgingRouteHandler = false
-        // Every stop before this one was continued: it takes the place of the first stop still ahead.
-        this.stops.splice(this.stopIndex, 0, prepared)
-        // A run whose only stops are route handlers freezes its manifest at the first of their pauses.
-        if (!this.sealedManifest) this.freezeSealedStops()
+        this.adoptRouteHandlerPause(entry, prepared)
       },
     })
     // A run that failed meanwhile published nothing.
@@ -11861,11 +11882,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         ),
       adopt: (prepared) => {
         prepared.apiRequest = apiRequest
-        entry.prepared = prepared
-        // The hit now has its place in the order; the replay of its own `stopped` is judged against it.
-        this.judgingRouteHandler = false
-        this.stops.splice(this.stopIndex, 0, prepared)
-        if (!this.sealedManifest) this.freezeSealedStops()
+        this.adoptRouteHandlerPause(entry, prepared)
       },
     })
     // A run that failed meanwhile published nothing.
@@ -12704,17 +12721,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
             if (!this.isActiveServerSession(session)) continue
             let candidate: Cdp | undefined
             try {
-              const proxy: { host: string; port: number; path: string } =
-                await awaitResponse(
-                  session.customRequest('requestCDPProxy'),
-                  'owned server proxy',
-                  this.abort.signal,
-                )
-              candidate = await this.acquire(
-                Cdp.connect(
-                  `ws://${proxy.host}:${proxy.port}${proxy.path}`,
-                  (type, detail) => this.evidence.record(type, detail),
-                ),
+              candidate = await this.connectDebugProxy(
+                session,
+                'owned server proxy',
               )
               this.alive()
               const identity = await target.verify(candidate, this.abort.signal)
@@ -12737,6 +12746,33 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.abort.signal,
     )
     await this.observeParticipant('server')
+  }
+
+  /**
+   * Connects to the inspector proxy js-debug offers for one session, for the discoveries of {@link selectServer} and {@link selectPage}.
+   * The connection is kept as an acquisition, so a cancelled run still closes it; the caller checks the run is alive after assigning the result, so a failure there still closes it.
+   * @param session - The debug session whose proxy is asked for.
+   * @param description - What the proxy is called in a timeout sentence.
+   * @returns The connected channel.
+   * @throws When the session offers no proxy or the connection fails.
+   * @example candidate = await this.connectDebugProxy(session, 'owned server proxy')
+   */
+  private async connectDebugProxy(
+    session: vscode.DebugSession,
+    description: string,
+  ): Promise<Cdp> {
+    const proxy: { host: string; port: number; path: string } =
+      await awaitResponse(
+        session.customRequest('requestCDPProxy'),
+        description,
+        this.abort.signal,
+      )
+    return this.acquire(
+      Cdp.connect(
+        `ws://${proxy.host}:${proxy.port}${proxy.path}`,
+        (type, detail) => this.evidence.record(type, detail),
+      ),
+    )
   }
 
   /**
@@ -12916,18 +12952,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
             if (!this.isActivePageSession(session)) continue
             let candidate: Cdp | undefined
             try {
-              const proxy: { host: string; port: number; path: string } =
-                await awaitResponse(
-                  session.customRequest('requestCDPProxy'),
-                  'owned proxy',
-                  this.abort.signal,
-                )
-              candidate = await this.acquire(
-                Cdp.connect(
-                  `ws://${proxy.host}:${proxy.port}${proxy.path}`,
-                  (type, detail) => this.evidence.record(type, detail),
-                ),
-              )
+              candidate = await this.connectDebugProxy(session, 'owned proxy')
               this.alive()
               const result = await awaitResponse(
                 candidate.request('Runtime.evaluate', {
