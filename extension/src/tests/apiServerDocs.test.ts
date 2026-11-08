@@ -336,7 +336,12 @@ test('the skill and the README describe the Expo apiServer run, its gate and its
     assert.ok(section.includes(phrase), phrase)
   assert.ok(
     readme.includes(
-      'with **MCP API 1.38** (`codebook_status` reports the installed build). API 1.38 is additive:',
+      'with **MCP API 1.39** (`codebook_status` reports the installed build). API 1.39 is additive:',
+    ),
+  )
+  assert.ok(
+    readme.includes(
+      'API 1.38 is additive: it adds the optional `apiServer` and `proxyPaths`',
     ),
   )
   assert.ok(readme.includes('format 19 (`.study.v19.json`)'))

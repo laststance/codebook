@@ -1,17 +1,20 @@
 import {
   ASK_LEARNER_SECRET,
   MILLISECONDS_PER_SECOND,
+  OPERATION_PRESS_REASONS,
   OPERATION_SETTLE_BOUND_MS,
   OPERATION_SETTLE_QUIET_MS,
   REPLAY_DEBUG_ENGINE_INTERNAL_NAMES,
   REPLAY_DEBUG_INTERNALS_NOT_RECORDED,
   REPOSITORY_OPERATION_ACTION,
   REPOSITORY_OPERATION_LIMIT,
+  PRESS_MINIMUM_API,
   REPOSITORY_PAUSE_HOLD_TIMEOUT_MS,
   SECONDS_PER_MINUTE,
   SECRET_FRAME_VALUE_COPY_MIN_CHARS,
   SERVER_STOP_IMAGE_UNAVAILABLE_TEXT,
   STOP_IMAGE_UNAVAILABLE_TEXT,
+  type PressRefusalReason,
 } from './constants'
 import { ERROR_RECOVERY, type ErrorCode } from './errors'
 
@@ -132,6 +135,54 @@ const CONFIRMATION_WAIT_MINUTES =
   MILLISECONDS_PER_SECOND /
   SECONDS_PER_MINUTE
 
+/**
+ * A neutral `press` operation for the help: a key the app's own handler tests, and an `after` condition only the opened UI satisfies.
+ * Every selector and title is a placeholder the agent replaces with values read from the app's source; a test parses it inside a configuration with the live schema, so it cannot drift from the schema.
+ */
+const OPERATIONS_PRESS_EXAMPLE = {
+  kind: 'press',
+  title: 'Close the open panel',
+  key: 'Escape',
+  after: [{ kind: 'visible', selector: '#closed-notice' }],
+} as const
+
+/** What each refusal of a press says and how to fix it, keyed by the closed list {@link OPERATION_PRESS_REASONS}; the `Record` type makes a reason added there fail to compile until it has a row. */
+const PRESS_REFUSAL_ROWS: Record<
+  PressRefusalReason,
+  { when: string; path: string; fix: string }
+> = {
+  'press-focus-in-text-entry': {
+    when: 'The key would go to the focused text-entry control (a text, search or number input, a textarea, a select or a contenteditable element), where it would be typed.',
+    path: 'operations[i]',
+    fix: 'Declare operations[i].selector as that control if the key is meant for it; otherwise add an earlier click on a non-text element to move focus away.',
+  },
+  'press-secret-control': {
+    when: 'The key would go to a control that reads as a secret.',
+    path: 'operations[i]',
+    fix: `A key never goes to a secret control: click the submit control, or use secret: "${ASK_LEARNER_SECRET}" on a text operation.`,
+  },
+  'press-target-not-focusable': {
+    when: 'The declared selector names an element that cannot take focus.',
+    path: 'operations[i].selector',
+    fix: 'Omit selector to send the key to the page, or name a focusable element.',
+  },
+  'press-focus-changed': {
+    when: 'Focus moved between the check and the send, so nothing was sent.',
+    path: 'operations[i]',
+    fix: 'Start one new run, and ask the learner first when earlier operations ran.',
+  },
+  'press-focus-in-frame': {
+    when: 'The focus or the declared target is a frame (iframe, frame, object or embed) whose content Codebook cannot read.',
+    path: 'operations[i]',
+    fix: 'Click an element of the top document to move focus out of the frame, or name a top-document element with operations[i].selector.',
+  },
+  'press-after-already-holds': {
+    when: "The press's own after conditions already hold before the key, so they could not prove it worked.",
+    path: 'operations[i].after',
+    fix: 'Declare an after condition that only the opened UI satisfies.',
+  },
+}
+
 /** The settle bound in whole seconds, as the help words it. */
 const SETTLE_BOUND_SECONDS = OPERATION_SETTLE_BOUND_MS / MILLISECONDS_PER_SECOND
 
@@ -150,7 +201,7 @@ function operationsAudienceOf(code: OperationsErrorCode): string {
  *
  * Why it exists: an agent that must drive several steps of a web flow (type, choose an option, click) needs the whole route, the limits and the secret rules before it reads the long single-click sections. Called by the resource reader for the repository-browser help, which spreads these keys after {@link nextHelp}.
  *
- * @returns Keys to spread into the help object: `operationsQuickStart`, `operationsDeclare`, `operationsSecrets` and `operationsErrorCodes`, the last derived from {@link OPERATIONS_ERROR_CODES} with each code's audience and recovery taken from {@link ERROR_RECOVERY}.
+ * @returns Keys to spread into the help object: `operationsQuickStart`, `operationsDeclare`, `operationsPress`, `operationsSecrets` and `operationsErrorCodes`, the last derived from {@link OPERATIONS_ERROR_CODES} with each code's audience and recovery taken from {@link ERROR_RECOVERY}.
  * @example
  * const help = { ...viteHelp(), ...nextHelp(), ...operationsHelp() }
  * help.operationsErrorCodes.codes.OPTION_NOT_AVAILABLE.anchor // => 'codebook://help/repository-browser#OPTION_NOT_AVAILABLE'
@@ -168,6 +219,10 @@ export function operationsHelp() {
         {
           need: 'several operations in order (text, choose, click), or stops after different operations',
           use: `version 3: operations, sent with ${REPOSITORY_OPERATION_ACTION}, one call per operation`,
+        },
+        {
+          need: 'a screen or menu that only a keyboard shortcut opens',
+          use: `version 3 with a press operation (API ${PRESS_MINIMUM_API} or later): read the app's own shortcut handler for the key, then see codebook://help/repository-browser#press`,
         },
         {
           need: 'a password, a one-time code or another secret typed into the page',
@@ -244,6 +299,71 @@ export function operationsHelp() {
         noEditor:
           'An editor that cannot show the dialog answers PREREQUISITE_MISSING and sends nothing.',
       },
+    },
+    operationsPress: {
+      anchor: 'codebook://help/repository-browser#press',
+      summary: `A press operation sends one keyboard key (optionally with Control, Alt, Shift or Meta) to the page, for a screen or menu that only a key opens. It needs codebook_status to report API ${PRESS_MINIMUM_API} or later: compare the number after the dot as a whole number (1.40 is later than ${PRESS_MINIMUM_API}); on an older API say press is not available, then use version 2 or tell the learner to update Codebook.`,
+      choosing: [
+        'Prefer entryPath for a screen that has its own URL (and is not a sign-in path).',
+        'Then a click operation on a visible link or button.',
+        'Use press only for UI that only a key opens.',
+      ],
+      findingTheKey: [
+        "Read the app's own source; never guess a key. Look for key listeners: keydown, keyup, keypress, onKeyDown, hotkey helpers and accelerator tables.",
+        'Read which event property the handler tests (key, code, keyCode, or modifier flags such as ctrlKey and metaKey), its guards (for example it ignores keys while an input has focus), and its target (document, window or one element).',
+        'If you find no handler, tell the learner so and do not press a guessed key.',
+      ],
+      declaration: {
+        shape:
+          '{ kind: "press", title, key, selector?, after } inside operations; the title is distinct like every operation title.',
+        example: OPERATIONS_PRESS_EXAMPLE,
+        exampleNote:
+          'The example is neutral: replace the title, the key and the after selector with what you read in the app. It is not part of the quick-start configuration.',
+        key: 'key is the keyboard key and has nothing to do with the idempotency key argument of codebook_start and codebook_action.',
+      },
+      keyGrammar: [
+        'Modifiers are Control, Alt, Shift and Meta, each at most once and in any order, each followed by +; then exactly one key. Codebook sends them in the order Control, Alt, Shift, Meta and shows that canonical spelling everywhere.',
+        'The key is one ASCII character from ! to ~ except +, or a name: Enter, Escape, Tab, Backspace, Delete, Space, Plus, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Home, End, PageUp, PageDown, F1 to F12. A trailing + after a modifier is the plus key (Control++ is Control+Plus); a bare + is refused, write Plus.',
+        'Aliases are refused, not accepted: the INVALID_CONFIGURATION cause names the canonical spelling (Ctrl, Cmd, Command, Option, Esc, Return, Del, Up, Down, Left, Right and a literal space).',
+        'Codebook sends what a US-layout keyboard sends. A lowercase letter or a digit sends key as written. An uppercase letter alone and a shifted symbol alone (for example ? or !) are sent with Shift, key as written and code of the unshifted US key. An uppercase letter together with Control, Alt or Meta is refused: write the lowercase letter, or add Shift.',
+        'Platform shortcuts: an app may accept Control on one system and Meta on macOS (ctrlKey || metaKey, or a mod helper); declare the modifier the handler accepts on this machine.',
+      ],
+      pageSees:
+        'The page sees key, code, keyCode and which of a US layout and the four modifier flags, as one keydown and one keyup. Read which of them the handler tests.',
+      focus: [
+        'Omit selector to send the key to the page: it goes to the element that has focus, and the page-level listeners see it.',
+        'Name selector to send it to that control: Codebook focuses it first. It must match one visible enabled focusable element in the top document.',
+        'A key never goes to a secret control, and without a selector it never goes to a text-entry control, where it would be typed (see the refusals table).',
+      ],
+      afterRequired:
+        "A press that is not the last operation must declare its own after: a condition only the opened UI satisfies, derived from the app's own source. Omitting it is INVALID_CONFIGURATION at start, naming operations[i].after. For the last press the run-level after applies. A condition that already holds before the key proves nothing, and the press is refused with press-after-already-holds.",
+      ignoredKey:
+        "OPERATION_AFTER_NOT_MET on a press means the page did not show the effect (wrong key, focus elsewhere, a handler that tests another property, a handler guard): re-read the handler and fix the press, not the operation after it. A pause that begins between Codebook's check and the key can lose the key; after is the proof that the key worked.",
+      refusals: {
+        anchor: 'codebook://help/repository-browser#press-refusals',
+        code: 'INPUT_NOT_ACCEPTED',
+        sent: 'not-sent',
+        meaning:
+          'Each refusal is an INPUT_NOT_ACCEPTED error with sent "not-sent". operationFailure.reason is one of the reasons below and operationFailure.path is the field to fix. The message names the element by tag, type, id and name only, never a value or text.',
+        reasons: Object.fromEntries(
+          OPERATION_PRESS_REASONS.map((reason) => [
+            reason,
+            PRESS_REFUSAL_ROWS[reason],
+          ]),
+        ),
+        pausedPage:
+          'A press sent while the page is paused fails with RUN_FAILED_UNEXPECTEDLY, sent "not-sent", and a message that names the page as paused at the press.',
+      },
+      recovery:
+        'An invalid declaration (rejected at start, nothing sent) is repaired with one corrected codebook_start. After a refusal or a failure once earlier operations were sent, sideEffects reads unknown: tell the learner what ran and the exact fix, and run the flow again only when the learner asks.',
+      limits: [
+        `One key per press operation, within the ${REPOSITORY_OPERATION_LIMIT}-operation limit.`,
+        'Page only: not an operating-system, browser or editor shortcut, and not a browser-native popup such as an open select list (use choose or click).',
+        'A text field that receives the key types it.',
+        'A login form whose only submit is Enter inside the password field cannot be driven, because a key never goes to a secret control.',
+        "A stop inside the target's own focus handler is not attributed to the press.",
+      ],
+      olderCodebook: `Before API ${PRESS_MINIMUM_API}, a configuration with kind "press" fails with INVALID_CONFIGURATION naming operations[i].kind, so check the API version first. A run that declares a press is saved as study format 21 whatever else it declares, and an older Codebook lists it as saved by a newer Codebook and keeps it.`,
     },
     operationsSecrets: {
       anchor: 'codebook://help/repository-browser#secrets-and-masking',
