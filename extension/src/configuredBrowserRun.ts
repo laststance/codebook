@@ -749,7 +749,8 @@ interface ConfiguredBrowserOptions {
   directory: string
   workspace: string
   node: string
-  host: HostConfiguration
+  /** The editor host with its Chrome: the environment refuses a configured run before it is built when Chrome is missing, so the type states that a run always has one. */
+  host: HostConfiguration & Required<Pick<HostConfiguration, 'chrome'>>
   definition: ConfiguredDefinition
   assertWorkspace(): void
   createViewport?: BrowserViewportFactory
@@ -2726,7 +2727,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const declaration = this.operationsConfiguration?.reverseProxy
     if (declaration === undefined) return undefined
     this.reverseProxyGateCache ??= new ReverseProxyGate({
-      chromeBinary: this.options.host.chrome?.binary ?? '',
+      chromeBinary: this.options.host.chrome.binary,
       declaration,
       nodeExecutable: this.options.node,
       dependencies: {
@@ -2873,10 +2874,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         ? await this.resolveReverseProxy(gate)
         : await this.proveReverseProxy(gate)
     this.alive()
-    if (failure) throw await this.reverseProxyRefusalOf(failure)
+    if (failure) throw await this.reverseProxyRefusalOf(failure, stage)
   }
 
-  /** The resolve stage: the host and the rules on it, then the identity preload the start request needs. */
+  /**
+   * The resolve stage: the host and the rules on it, then the identity preload the start request needs.
+   * Called by {@link reverseProxyStage} first in {@link prepareOwned}, before anything starts.
+   * @param gate - The run's gate.
+   * @returns `undefined` when the host is trusted and the preload is written, else the gate's failure.
+   * @example const failure = await this.resolveReverseProxy(gate) // => undefined
+   */
   private async resolveReverseProxy(
     gate: ReverseProxyGate,
   ): Promise<ReverseProxyFailure | undefined> {
@@ -2886,7 +2893,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     return undefined
   }
 
-  /** The prove stage: the proof and the browser check, then the pin the run's browser launches with. */
+  /**
+   * The prove stage: the proof and the browser check, then the pin the run's browser launches with.
+   * Called by {@link reverseProxyStage} after the owned server started and before any run browser opens.
+   * @param gate - The run's gate.
+   * @returns `undefined` when the proof and the browser check passed and the pin is given, else the gate's failure.
+   * @example const failure = await this.proveReverseProxy(gate) // => undefined
+   */
   private async proveReverseProxy(
     gate: ReverseProxyGate,
   ): Promise<ReverseProxyFailure | undefined> {
@@ -2903,17 +2916,23 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Builds the refusal of a failed check: stops what the run started, confirms it, writes the start line and words the error.
    * Called by {@link reverseProxyStage}.
    * @param failure - What the gate returned.
+   * @param stage - The stage that failed; a `resolve` failure happened before anything started, so its Output line says nothing was started.
    * @returns The `REVERSE_PROXY_REFUSED` error; `resourcesReleased` is the run's confirmed cleanup, never a constant.
-   * @example throw await this.reverseProxyRefusalOf({ reason: 'proof-timeout', facts })
+   * @example throw await this.reverseProxyRefusalOf({ reason: 'proof-timeout', facts }, 'prove')
    */
   private async reverseProxyRefusalOf(
     failure: ReverseProxyFailure,
+    stage: 'resolve' | 'prove',
   ): Promise<StudyError> {
     const resourcesReleased = await this.releaseForReverseProxyRefusal()
     const logId = `${this.options.control?.runId ?? this.id}#start`
     this.logStartRefusal(
       'REVERSE_PROXY_REFUSED',
-      `(${failure.reason}) before any run browser opened; Codebook stops the development server it started`,
+      `(${failure.reason}) before any run browser opened; ${
+        stage === 'resolve'
+          ? 'nothing was started'
+          : 'Codebook stops the development server it started'
+      }`,
     )
     return reverseProxyRefusal(failure.reason, {
       ...failure.facts,
@@ -3354,7 +3373,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       .acquire(
         runId,
         configuration.session === 'fresh' ? 'fresh' : 'saved-if-available',
-        this.options.host.chrome?.version ?? '',
+        this.options.host.chrome.version,
         this.abort.signal,
       )
       .catch((error: unknown) => {
@@ -18188,7 +18207,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
     // The private folder goes last, after the server that used it stopped; a failed stop keeps it for the retried Stop.
     await this.libraryRoute?.dispose({ serverStopped: didServerStop })
-    await this.disposeReverseProxy()
+    // A failing preload-folder removal is collected like every other step, so the record and the final persist still happen.
+    failures.push(
+      ...(await settleCleanup([
+        {
+          description: 'reverse proxy preload folder removal',
+          release: (): Promise<void> => this.disposeReverseProxy(),
+        },
+      ])),
+    )
     failures.push(...libraryFailures)
     this.failures.push(...failures)
     this.resourcesReleased = this.isCleanupComplete(failures)

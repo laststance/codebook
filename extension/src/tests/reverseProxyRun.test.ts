@@ -3,6 +3,7 @@ import { test, type TestContext } from 'node:test'
 
 import type { StudyError } from '../errors'
 import type { RepositoryOperation } from '../repositoryConfigSchemas'
+import { readResource } from '../resources'
 import type { RuntimeControl } from '../runtime'
 
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
@@ -606,4 +607,141 @@ test('the identity secret appears in neither the run view nor the evidence journ
     ),
     false,
   )
+})
+
+// Value: protects=O1-3 the Output line names what was really done: a refusal decided before anything starts says nothing was started, a later one says the started server is stopped; fails_when=a resolve-stage refusal claims a stop of a server that never started, or a later one drops the claim; no_claim=the wording of the refusal error (reverseProxyRefusals.test)
+test('the start Output line of a refusal says nothing was started before the server starts and that it stops the server after', async (context) => {
+  // Arrange
+  const beforeStartLines: string[] = []
+  const afterStartLines: string[] = []
+  const beforeStart = await proxyHarness(
+    context,
+    {
+      reverseProxy: {
+        declaration: DECLARATION,
+        dependencies: {
+          lookup: async () => [{ address: '10.0.0.5', family: 4 }],
+        },
+      },
+    },
+    controlOf(context, undefined, beforeStartLines),
+  )
+  const afterStart = await proxyHarness(
+    context,
+    {
+      reverseProxy: {
+        declaration: DECLARATION,
+        dependencies: { prove: async () => WRONG_SERVER },
+      },
+    },
+    controlOf(context, undefined, afterStartLines),
+  )
+
+  // Act
+  await refusalOf(beforeStart)
+  await refusalOf(afterStart)
+
+  // Assert
+  const beforeStartLine = beforeStartLines.find((line) =>
+    line.includes('(not-loopback)'),
+  )
+  const afterStartLine = afterStartLines.find((line) =>
+    line.includes('(proof-wrong-server)'),
+  )
+  assert.ok(beforeStartLine?.includes('nothing was started'))
+  assert.equal(
+    beforeStartLine?.includes('stops the development server it started'),
+    false,
+  )
+  assert.ok(
+    afterStartLine?.includes(
+      'Codebook stops the development server it started',
+    ),
+  )
+  await beforeStart.run.stop()
+  await afterStart.run.stop()
+})
+
+// Value: protects=C3-3 a preload folder that cannot be removed does not abort the cleanup: the failure is reported by Stop while the cleanup record and the final persist still happen; fails_when=the rejection escapes before cleanup.completed is recorded; no_claim=the real folder removal (reverseProxyGate.test)
+test('a failing preload folder removal is reported by Stop after the cleanup record is written', async (context) => {
+  // Arrange
+  const harness = await proxyHarness(context)
+  await harness.run.prepare()
+  const gate = (
+    harness.run as unknown as {
+      reverseProxyGateCache: { dispose(): Promise<void> }
+    }
+  ).reverseProxyGateCache
+  const realDispose = gate.dispose.bind(gate)
+  // Only the first removal fails; the retried Stop of the harness's own cleanup removes the folder for real.
+  let removalAttempts = 0
+  gate.dispose = (): Promise<void> =>
+    removalAttempts++ === 0
+      ? Promise.reject(new Error('preload folder is busy'))
+      : realDispose()
+
+  // Act
+  const stopOutcome = await harness.run.stop().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.match(
+    String(stopOutcome),
+    /reverse proxy preload folder removal: Error: preload folder is busy/,
+  )
+  assert.match(
+    await readEvidenceText(harness.run.view().artifactDirectory),
+    /cleanup\.completed/,
+  )
+})
+
+// Value: protects=O1-1 the run resource tells the agent to read it again only while the run still prepares: a run that failed while its check was proving keeps the last state and carries no checking message; fails_when=the sentence stays on a failed run, or is missing on a preparing one; no_claim=the gate's own states (the run view test above)
+test('the run resource carries the checking message only while the run prepares', async (context) => {
+  // Arrange
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'proxy-message',
+    configuration,
+  })
+  await service.record(receipt).preparation
+  const runtime = runtimes[0]
+  assert.ok(runtime)
+  const baseView = runtime.view.bind(runtime)
+  runtime.view = () => ({
+    ...baseView(),
+    reverseProxy: {
+      origin: DECLARED_ORIGIN,
+      upstreamPort: UPSTREAM_PORT,
+      state: 'proving' as const,
+    },
+  })
+  const stateOf = async () => {
+    const resource = await readResource(service, receipt.runUri)
+    assert.ok('text' in resource)
+    return JSON.parse(resource.text) as {
+      message?: string
+      reverseProxy?: { state: string }
+    }
+  }
+  // The run is made to read as still preparing, the way it does before its preparation ends.
+  service.record(receipt).prepared = false
+  const whilePreparing = await stateOf()
+
+  // Act
+  runtime.status = 'failed'
+  runtime.failures.push('The development server exited before it listened.')
+  const afterFailure = await stateOf()
+
+  // Assert
+  assert.equal(
+    whilePreparing.message,
+    'Codebook is checking that the declared origin reaches the development server it started; read this run resource again in a few seconds and start no other run.',
+  )
+  assert.equal(afterFailure.message, undefined)
+  assert.equal(afterFailure.reverseProxy?.state, 'proving')
 })

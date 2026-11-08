@@ -560,7 +560,7 @@ export type ConfiguredRuntimeView = {
   applicationOrigin?: string
   /** Where the app's port was declared (D67): the `dev` script's own `-p`/`--port`, a `PORT=` that the script assigns (also in a script it delegates to), or Next's default 3000; the text also says when 3000 was taken because the script has a form Codebook does not read. `.env*` files are not read. */
   applicationPortSource?: string
-  /** A `next-dev-webpack` run that declared `reverseProxy` (API 1.40): the declaration, how far its check went, and (once resolved and proved) the address Codebook trusts and the proof's duration. */
+  /** A `next-dev-webpack` run that declared `reverseProxy` (API 1.40): the declaration, how far its check went (`state` stays the last state the check reached when the run ended for another reason, so a `resolving` or `proving` block on a failed run means the check did not finish), and (once resolved and proved) the address Codebook trusts and the proof's duration. */
   reverseProxy?: {
     origin: string
     upstreamPort: number

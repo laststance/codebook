@@ -2799,6 +2799,7 @@ export async function configuredRuntimeHarness(
       productVersion: 'test',
       apiVersion: 'test',
       commit: 'test',
+      chrome: { binary: '/stand-in/chrome', version: '' },
     },
     definition,
     control,

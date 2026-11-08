@@ -1155,6 +1155,7 @@ export async function nativeParticipantsHarness(
       productVersion: 'test',
       apiVersion: 'test',
       commit: 'test',
+      chrome: { binary: '/stand-in/chrome', version: '' },
     },
     assertWorkspace() {},
     revealSource: async () => {},

@@ -767,13 +767,15 @@ const REVERSE_PROXY_CHECKING_MESSAGE =
  *
  * Called by the run resource builder of {@link StudyService}; a run without `reverseProxy` adds nothing.
  * @param runtime - The run's view, when it has one.
- * @returns `{ reverseProxy }` for a declaring run, plus `message` while its state is `resolving` or `proving`; an empty object otherwise.
+ * @param isPreparing - Whether the run resource still reads `preparing`; a run that ended for any other reason while its check was `resolving` or `proving` keeps that last state but carries no message.
+ * @returns `{ reverseProxy }` for a declaring run, plus `message` while its state is `resolving` or `proving` and the run is still preparing; an empty object otherwise.
  * @example
- * reverseProxyFieldsOf(undefined) // => {}
- * reverseProxyFieldsOf({ reverseProxy: { origin: 'https://app.example.test', upstreamPort: 4310, state: 'proved' } }) // => { reverseProxy: { … } }
+ * reverseProxyFieldsOf(undefined, true) // => {}
+ * reverseProxyFieldsOf({ reverseProxy: { origin: 'https://app.example.test', upstreamPort: 4310, state: 'proving' } }, false) // => { reverseProxy: { … } } (no message: the run ended)
  */
 function reverseProxyFieldsOf(
   runtime: { reverseProxy?: ConfiguredRuntimeView['reverseProxy'] } | undefined,
+  isPreparing: boolean,
 ): {
   reverseProxy?: ConfiguredRuntimeView['reverseProxy']
   message?: string
@@ -782,7 +784,8 @@ function reverseProxyFieldsOf(
   if (!reverseProxy) return {}
   // Only the two checking states hold the message; a proved or refused origin needs none.
   const isChecking =
-    reverseProxy.state === 'resolving' || reverseProxy.state === 'proving'
+    isPreparing &&
+    (reverseProxy.state === 'resolving' || reverseProxy.state === 'proving')
   return isChecking
     ? { reverseProxy, message: REVERSE_PROXY_CHECKING_MESSAGE }
     : { reverseProxy }
@@ -4235,6 +4238,16 @@ export class StudyService {
       projectPageLoadStatus(runtime),
     )
     const confirmation = this.operationsConfirmationOf(record)
+    const runState = record.stopped
+      ? 'stopped'
+      : record.stopping
+        ? 'stopping'
+        : terminalReason
+          ? 'failed'
+          : // An entry-render pause is published before preparation ends (X14): the learner continues it, then the run reads ready.
+            !record.prepared && runtime?.status !== 'paused-server'
+            ? 'preparing'
+            : (runtime?.status ?? record.nodePhase ?? 'preparing')
     // The words of an entry render under way, for the chat (task 3a).
     const material = {
       instanceId: this.instanceId,
@@ -4242,16 +4255,7 @@ export class StudyService {
       studyId: `${this.instanceId}_${record.id}`,
       runtimeRunId: runtime?.runId ?? record.nodeRun?.id,
       profile: record.profile,
-      state: record.stopped
-        ? 'stopped'
-        : record.stopping
-          ? 'stopping'
-          : terminalReason
-            ? 'failed'
-            : // An entry-render pause is published before preparation ends (X14): the learner continues it, then the run reads ready.
-              !record.prepared && runtime?.status !== 'paused-server'
-              ? 'preparing'
-              : (runtime?.status ?? record.nodePhase ?? 'preparing'),
+      state: runState,
       runtimeState: runtime?.status ?? record.nodePhase,
       createdAt: new Date(record.createdAt).toISOString(),
       deadlineAt: new Date(record.deadlineAt).toISOString(),
@@ -4357,7 +4361,7 @@ export class StudyService {
           : undefined,
       applicationOrigin: runtime?.applicationOrigin,
       applicationPortSource: runtime?.applicationPortSource,
-      ...reverseProxyFieldsOf(runtime),
+      ...reverseProxyFieldsOf(runtime, runState === 'preparing'),
       viteVersion: runtime?.viteVersion,
       expoVersion: runtime?.expoVersion,
       // A Vite library run states the library facts (API 1.34) and, while it waits or builds, its phase.
