@@ -6,6 +6,7 @@ import {
   OPERATION_SETTLE_BOUND_MS,
   OPERATION_SETTLE_POLL_MS,
   OPERATION_SETTLE_QUIET_MS,
+  PRESS_RELEASE_TIMEOUT_MS,
   REPOSITORY_RUN_TIMEOUT_MS,
   type PressRefusalReason,
   type SignInRequiredReason,
@@ -17,7 +18,13 @@ import {
   classifySecretControl,
   type SecretControlAttributes,
 } from './utils/classifySecretControl'
+import { describePressFocus } from './utils/describePressFocus'
+import {
+  describePressRefusal,
+  type PressElementIdentity,
+} from './utils/describePressRefusal'
 import { writeTextInput } from './utils/prepareRepositoryInputs'
+import { parsePressKey, type PressKeyEvent } from './utils/pressKey'
 import { thrownMessage } from './utils/thrownMessage'
 
 /** The codes an operation can refuse or fail with; each has an `ERROR_RECOVERY` entry naming its audience. */
@@ -70,6 +77,12 @@ export class OperationRefusal extends Error {
       where.sideEffects ?? (this.sent === 'sent' ? 'unknown' : 'none')
   }
 }
+
+/** The operations that drive a resolved form control: `text` and `choose`. */
+type ControlOperation = Extract<
+  RepositoryOperation,
+  { kind: 'text' | 'choose' }
+>
 
 /** What the run lets the engine do, so the engine holds no run state of its own. */
 export interface OperationPort {
@@ -552,6 +565,7 @@ export async function waitForSettledPage(
  * - `text` into a text-like control: the browser's own text insertion, then a value check ({@link writeTextInput}).
  * - `text` into a number input and `choose` into a native single select: the element's native value setter and the `input` and `change` events (React-controlled controls see them), then a value check; a number input also needs `validity.valid`.
  * - `click`: the unique, visible, enabled target's centre, pressed and released once.
+ * - `press`: one key sent to the focused element (or to the focused `selector`) once the recipient is no secret control, text entry or frame ({@link preparePressOperation}).
  * @param port - What the run lets the engine use.
  * @param input - The operation, its 1-based index among `total`, and the secret the learner typed for a `secret: "ask-learner"` operation.
  * @returns The prepared operation.
@@ -591,6 +605,8 @@ export async function prepareOperation(
       discard: async (): Promise<void> => {},
     }
   }
+  if (operation.kind === 'press')
+    return preparePressOperation(port, { index, operation })
   const cdp = await port.pageCdp()
   const selected = await cdp.request('Runtime.evaluate', {
     expression: `(${selectControl.toString()})(${JSON.stringify(operation.selector)},${JSON.stringify(port.origins())})`,
@@ -661,7 +677,7 @@ type ControlOperationContext = {
   objectId: string
   description: ControlDescription
   index: number
-  operation: Exclude<RepositoryOperation, { kind: 'click' }>
+  operation: ControlOperation
   learnerSecret: string | undefined
   configPath: (field: string) => string
 }
@@ -897,7 +913,7 @@ function sendNativeValue(
     objectId: string
     description: ControlDescription
     index: number
-    operation: Exclude<RepositoryOperation, { kind: 'click' }>
+    operation: ControlOperation
     configPath: (field: string) => string
     kind: 'number' | 'select'
     value: string
@@ -973,7 +989,7 @@ function refusalOfUnapplied(
   label: string,
   context: {
     index: number
-    operation: Exclude<RepositoryOperation, { kind: 'click' }>
+    operation: ControlOperation
     configPath: (field: string) => string
   },
 ): OperationRefusal {
@@ -1016,7 +1032,7 @@ async function sendTextLike(
     objectId: string
     description: ControlDescription
     index: number
-    operation: Exclude<RepositoryOperation, { kind: 'click' }>
+    operation: ControlOperation
     configPath: (field: string) => string
     learnerSecret: string | undefined
   },
@@ -1138,6 +1154,271 @@ async function sendClick(
       REPOSITORY_RUN_TIMEOUT_MS,
     )
     port.assertCurrent()
+  }
+  hooks.acknowledged()
+}
+
+const pressFocusSchema = descriptionSchema
+  .pick({
+    ready: true,
+    reason: true,
+    tagName: true,
+    type: true,
+    name: true,
+    id: true,
+    autocomplete: true,
+    isFocused: true,
+  })
+  .extend({
+    hostTagName: z.string().optional(),
+    isTextEntry: z.boolean().optional(),
+    isInFrame: z.boolean().optional(),
+  })
+/** What the owned page reports of the element a press would reach: attributes only. */
+type PressFocusReading = z.infer<typeof pressFocusSchema>
+
+/** The page reasons that make the named target unusable before any classification; they refuse as a click's target does, with no `reason`. */
+const PRESS_TARGET_REASONS: ReadonlySet<string> = new Set([
+  'wrong-origin',
+  'unique-target-required',
+  'target-not-visible',
+  'target-disabled',
+])
+
+/** The operation a press send and its refusals are about. */
+type PressContext = {
+  index: number
+  operation: Extract<RepositoryOperation, { kind: 'press' }>
+  event: PressKeyEvent
+}
+
+/**
+ * Reads the element a press would reach from the owned page, optionally applying the focus to the declared target first.
+ * Called by {@link preparePressOperation} (`focus: false`) and by {@link sendPress} (`focus: true`).
+ * @param port - What the run lets the engine use.
+ * @param selector - The declared target, or `undefined` for the page's focused element.
+ * @param focus - Whether the page focuses the target before it reads.
+ * @returns The page's attribute-only reading.
+ * @throws When the page read fails or the run is no longer alive.
+ * @example const reading = await readPressFocus(port, '#menu', false)
+ */
+async function readPressFocus(
+  port: OperationPort,
+  selector: string | undefined,
+  focus: boolean,
+): Promise<PressFocusReading> {
+  const cdp = await port.pageCdp()
+  const result = await cdp.request('Runtime.evaluate', {
+    expression: `(${describePressFocus.toString()})(${JSON.stringify({ selector, origins: port.origins(), focus })})`,
+    returnByValue: true,
+  })
+  port.assertCurrent()
+  return pressFocusSchema.parse(result.result.value)
+}
+
+/**
+ * Names an element from a page reading by tag, type, id and name only.
+ * @param reading - The page's reading.
+ * @returns The identity {@link describePressRefusal} words and the focus recheck compares.
+ * @example identityOfPressReading({ ready: true, tagName: 'button', id: 'go' }) // => { tagName: 'button', type: '', id: 'go', name: '' }
+ */
+function identityOfPressReading(
+  reading: PressFocusReading,
+): Required<PressElementIdentity> {
+  return {
+    tagName: reading.tagName ?? '',
+    type: reading.type ?? '',
+    id: reading.id ?? '',
+    name: reading.name ?? '',
+  }
+}
+
+/**
+ * Decides, in the fixed order of the refusals, why a press must not be sent to what a reading describes.
+ * Order: unusable target, frame, secret control, non-focusable target (selector declared), text entry (no selector). A declared selector on a text-entry control is allowed; on a secret control never.
+ * @param reading - The page's reading.
+ * @param hasSelector - Whether the operation declares a `selector`.
+ * @returns `'target'` for an unusable target, a closed reason, or `undefined` when the press may be sent.
+ * @example refusalReasonOfPressReading({ ready: true, tagName: 'input', type: 'password' }, false) // => 'press-secret-control'
+ */
+function refusalReasonOfPressReading(
+  reading: PressFocusReading,
+  hasSelector: boolean,
+): 'target' | PressRefusalReason | undefined {
+  if (reading.reason !== undefined && PRESS_TARGET_REASONS.has(reading.reason))
+    return 'target'
+  if (reading.isInFrame) return 'press-focus-in-frame'
+  if (classifySecretControl(fingerprintOf(reading)))
+    return 'press-secret-control'
+  if (hasSelector && reading.reason === 'target-not-focusable')
+    return 'press-target-not-focusable'
+  if (!hasSelector && reading.isTextEntry) return 'press-focus-in-text-entry'
+  return undefined
+}
+
+/**
+ * Builds the refusal of a press (nothing was sent) for a reason of {@link refusalReasonOfPressReading}.
+ * @param context - The press operation and its 1-based index.
+ * @param refusal - `'target'` or a closed reason.
+ * @param reading - The page's reading the reason is about.
+ * @param focusBefore - For `press-focus-changed`, the identity read at preparation.
+ * @returns The `INPUT_NOT_ACCEPTED` refusal; element values never appear in its message.
+ * @example throw pressRefusalOf(context, 'press-secret-control', reading)
+ */
+function pressRefusalOf(
+  context: PressContext,
+  refusal: 'target' | PressRefusalReason,
+  reading: PressFocusReading,
+  focusBefore?: PressElementIdentity,
+): OperationRefusal {
+  const { index, operation } = context
+  if (refusal === 'target')
+    return new OperationRefusal(
+      'INPUT_NOT_ACCEPTED',
+      `Operation ${index} (${operation.title}) was not sent: ${operation.selector} is not a unique visible enabled target on the page (${reading.reason ?? 'unavailable'}).`,
+      { operationIndex: index, path: `operations[${index - 1}].selector` },
+    )
+  const identity = identityOfPressReading(reading)
+  const { message, path } = describePressRefusal(refusal, {
+    index,
+    title: operation.title,
+    selector: operation.selector,
+    element: identity,
+    classification: classifySecretControl(fingerprintOf(reading)),
+    focusBefore,
+    focusAfter: identity,
+  })
+  return new OperationRefusal('INPUT_NOT_ACCEPTED', message, {
+    operationIndex: index,
+    path,
+    reason: refusal,
+  })
+}
+
+/**
+ * Prepares a `press` operation: parses the key and classifies the element the key would reach, refusing before anything is sent.
+ * Called by {@link prepareOperation}. With a declared selector it classifies the named target; without one, the page's focused element. The send reads the page again with the focus applied.
+ * @param port - What the run lets the engine use.
+ * @param input - The operation and its 1-based index.
+ * @returns The prepared operation; a press never holds a secret and has nothing to release.
+ * @throws {@link OperationRefusal} `INPUT_NOT_ACCEPTED` (with a `reason` for a recipient refusal); nothing was sent.
+ * @example const prepared = await preparePressOperation(port, { index: 2, operation: { kind: 'press', title: 'Open palette', key: 'Control+k' } })
+ */
+async function preparePressOperation(
+  port: OperationPort,
+  input: { index: number; operation: PressContext['operation'] },
+): Promise<PreparedOperation> {
+  const { index, operation } = input
+  const parsed = parsePressKey(operation.key)
+  if (!parsed.ok)
+    throw new OperationRefusal(
+      'INPUT_NOT_ACCEPTED',
+      `Operation ${index} (${operation.title}) was not sent: ${parsed.message}`,
+      { operationIndex: index, path: `operations[${index - 1}].key` },
+    )
+  const context: PressContext = { index, operation, event: parsed.event }
+  const reading = await readPressFocus(port, operation.selector, false)
+  const refusal = refusalReasonOfPressReading(
+    reading,
+    operation.selector !== undefined,
+  )
+  if (refusal !== undefined) throw pressRefusalOf(context, refusal, reading)
+  return {
+    isSecret: false,
+    send: (hooks): Promise<void> =>
+      sendPress(port, context, identityOfPressReading(reading), hooks),
+    discard: async (): Promise<void> => {},
+  }
+}
+
+/**
+ * Waits until the page runs, then issues the release in the same synchronous turn as the last pause read.
+ * Called by {@link sendPress} between `keyDown` and `keyUp`: a key sent while the page is paused is acknowledged and lost, and a stop inside the key handler holds the page until it is continued.
+ * @param port - What the run lets the engine use.
+ * @param sendKeyUp - Issues the one `keyUp` request.
+ * @throws When the page stays paused for {@link REPOSITORY_RUN_TIMEOUT_MS} (no release is sent), when the run ends, or when the release fails.
+ * @example await releaseWhenPageRuns(port, () => cdp.request('Input.dispatchKeyEvent', keyUp))
+ */
+async function releaseWhenPageRuns(
+  port: OperationPort,
+  sendKeyUp: () => Promise<unknown>,
+): Promise<void> {
+  let waitedMs = 0
+  // Poll the run's own pause state; a cancelled run ends the wait through `sleep`.
+  while (port.isPagePaused()) {
+    if (waitedMs >= REPOSITORY_RUN_TIMEOUT_MS)
+      throw new Error('The page stayed paused before the key was released.')
+    await port.sleep(OPERATION_SETTLE_POLL_MS)
+    waitedMs += OPERATION_SETTLE_POLL_MS
+  }
+  // No await between the last pause read and the request.
+  await sendKeyUp()
+}
+
+/**
+ * Sends a press: focus and classify the recipient, guard against a paused page, `keyDown`, wait for the page to run, `keyUp`, acknowledge.
+ * Called by the prepared press operation's `send`. `keyUp` is issued at most once; after a failure past `beforeInput` it is tried once as a best-effort release only when none was issued and the page runs. A failed release is never repeated.
+ * @param port - What the run lets the engine use.
+ * @param context - The press operation, its index and the key event.
+ * @param preparedFocus - The identity of the recipient at preparation, compared when no selector is declared.
+ * @param hooks - The run's moments of the input.
+ * @throws {@link OperationRefusal} `INPUT_NOT_ACCEPTED` before anything is sent (recipient refusals, `press-focus-changed`), `RUN_FAILED_UNEXPECTEDLY` with `sent: 'not-sent'` for a paused page; the original error after a failure past `beforeInput`.
+ * @example await sendPress(port, context, { tagName: 'body', type: '', id: '', name: '' }, hooks)
+ */
+async function sendPress(
+  port: OperationPort,
+  context: PressContext,
+  preparedFocus: Required<PressElementIdentity>,
+  hooks: OperationSendHooks,
+): Promise<void> {
+  const { index, operation, event } = context
+  const cdp = await port.pageCdp()
+  port.assertCurrent()
+  const reading = await readPressFocus(port, operation.selector, true)
+  const hasSelector = operation.selector !== undefined
+  const refusal = refusalReasonOfPressReading(reading, hasSelector)
+  if (refusal !== undefined) throw pressRefusalOf(context, refusal, reading)
+  const identity = identityOfPressReading(reading)
+  // Without a selector the key goes to whatever holds the focus, so it must still be what the preparation classified.
+  if (
+    !hasSelector &&
+    JSON.stringify(identity) !== JSON.stringify(preparedFocus)
+  )
+    throw pressRefusalOf(context, 'press-focus-changed', reading, preparedFocus)
+  const { text: _text, unmodifiedText: _unmodifiedText, ...keyUpFields } = event
+  let isKeyUpIssued = false
+  const sendEvent = (
+    type: 'keyDown' | 'keyUp',
+    timeoutMs: number,
+  ): Promise<unknown> => {
+    if (type === 'keyUp') isKeyUpIssued = true
+    return cdp.request(
+      'Input.dispatchKeyEvent',
+      { ...(type === 'keyDown' ? event : keyUpFields), type },
+      timeoutMs,
+    )
+  }
+  // The pause read, the run's moment and the request share one synchronous turn.
+  if (port.isPagePaused())
+    throw new OperationRefusal(
+      'RUN_FAILED_UNEXPECTEDLY',
+      `Operation ${index} (${operation.title}) was not sent: the page was paused at the press.`,
+      { operationIndex: index, sent: 'not-sent' },
+    )
+  hooks.beforeInput()
+  try {
+    await sendEvent('keyDown', REPOSITORY_RUN_TIMEOUT_MS)
+    port.assertCurrent()
+    await releaseWhenPageRuns(port, () =>
+      sendEvent('keyUp', REPOSITORY_RUN_TIMEOUT_MS),
+    )
+    port.assertCurrent()
+  } catch (error) {
+    // A cancelled run does not release: its browser is being closed.
+    port.assertCurrent()
+    if (!isKeyUpIssued && !port.isPagePaused())
+      await sendEvent('keyUp', PRESS_RELEASE_TIMEOUT_MS).catch(() => {})
+    throw error
   }
   hooks.acknowledged()
 }

@@ -104,6 +104,38 @@ test('a not-sent failure with unknown side effects is not told to be rerun', () 
   assert.equal(details.retry, 'Never retry automatically; ask the learner.')
 })
 
+// Value: protects=an agent reads the closed press reason from the error details and the recovery sentence names every reason; fails_when=reason is dropped from INPUT_NOT_ACCEPTED details, leaks onto another code, or a reason is missing from the recovery; no_claim=the run resource field (run tests)
+test('a press refusal carries its reason in the error details and the recovery names every reason', () => {
+  // Arrange
+  const failure = {
+    code: 'INPUT_NOT_ACCEPTED',
+    operationIndex: 2,
+    path: 'operations[1]',
+    sent: 'not-sent',
+    sideEffects: 'none',
+    logId: 'run-1#2',
+    reason: 'press-focus-in-text-entry',
+  } as const
+  // Act
+  const details = describeOperationFailureDetails(failure)
+  const otherCode = describeOperationFailureDetails({
+    ...failure,
+    code: 'OPTION_NOT_AVAILABLE',
+  })
+  // Assert
+  assert.equal(details.reason, 'press-focus-in-text-entry')
+  assert.equal('reason' in otherCode, false)
+  for (const reason of [
+    'press-target-not-focusable',
+    'press-secret-control',
+    'press-focus-in-text-entry',
+    'press-focus-changed',
+    'press-focus-in-frame',
+    'press-after-already-holds',
+  ])
+    assert.ok(ERROR_RECOVERY.INPUT_NOT_ACCEPTED.includes(reason), reason)
+})
+
 // protects=the describe() of a StudyError shows its details beside the code and leaves an error without details as before; fails_when=details are dropped or appear on every error; no_claim=none beyond protects
 test('a StudyError shows its details only when it has some', () => {
   // Arrange

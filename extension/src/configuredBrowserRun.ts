@@ -13767,7 +13767,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       }
       const hooks = this.operationHooks(index, operation)
       // Every image path is gated from before the secret is typed (ENG-5); a control that is no safe password control gets no input.
-      if (prepared.isSecret)
+      if (prepared.isSecret && operation.kind !== 'press')
         await this.armSecretGate(index, operation.selector, learnerSecret)
       await prepared.send({
         ...hooks,
