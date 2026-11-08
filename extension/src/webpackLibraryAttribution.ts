@@ -71,9 +71,8 @@ export class WebpackReportAttribution implements LibraryAttribution {
       return 'redirect-not-applied'
     if (reader.reportErrorCause !== undefined)
       return `report-error: ${reader.reportErrorCause}`
-    const { serverOutputUnknownCause } = reader
-    if (serverOutputUnknownCause !== undefined)
-      return `server-output-unknown: ${serverOutputUnknownCause}`
+    if (reader.serverOutputUnknownCause !== undefined)
+      return `server-output-unknown: ${reader.serverOutputUnknownCause}`
     const [external] = reader.externalsOf()
     if (external !== undefined) return `library-externalized: ${external}`
     return reader.edgeLibraryAssets().length > 0 ? 'edge-unobserved' : undefined
