@@ -48,8 +48,12 @@ export class ApiEntryGate {
     signal: AbortSignal,
   ): Promise<void> {
     if (this.released || this.cancelled) return
-    const threadId = await waitUntil(
-      () => this.stops.get(sessionId),
+    // Presence, not truthiness: js-debug's Node thread id is 0, which `waitUntil` would take for "not yet".
+    const { threadId } = await waitUntil(
+      () =>
+        this.stops.has(sessionId)
+          ? { threadId: this.stops.get(sessionId)! }
+          : undefined,
       'the entry pause of the API server',
       NODE_TEST_ATTACH_TIMEOUT_MS,
       signal,

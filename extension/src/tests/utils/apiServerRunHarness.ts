@@ -312,7 +312,8 @@ function sendEntryStop(harness: {
       seq: 1,
       event: 'stopped',
       body: {
-        threadId: 1,
+        // E1's journal: js-debug's Node thread is 0.
+        threadId: 0,
         reason: 'pause',
         description: 'Paused on debugger statement',
       },
