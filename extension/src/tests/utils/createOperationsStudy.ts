@@ -11,16 +11,18 @@ export const OPERATION_TIMES_MS = [1000, 1500, 3500, 3800] as const
  * Supplies inert saved history of a version 3 run of four ordered operations (choose, text, click, click) with a browser stop after operation 2 and a server and a browser stop after operation 4, never an application or native verification.
  * @param how - `complete` for a demonstrated run (four operations done); `failed-at-3` for a run that stopped: operation 1 and 2 done, 3 failed, 4 not run, with only the stop after operation 2 reached.
  * @param options - `press: true` replaces operation 3 (the Pending click) by a `press` of `Control+k` that waits for `#palette` and saves the study as format 21; the rest of the study keeps the format 8 rules.
- * @returns A decodable format 8 study (format 21 with `press`): its configuration has a server stop, so its observations carry `execution`, `declaredIndex` and `executionIndex`.
+ * `reverseProxy: true` declares `reverseProxy: { origin: 'https://app.example.test', upstreamPort: 4310 }` on the configuration and saves the study as format 22 (format 22 wins over 21 when `press` is also set).
+ * @returns A decodable format 8 study (format 21 with `press`, format 22 with `reverseProxy`): its configuration has a server stop, so its observations carry `execution`, `declaredIndex` and `executionIndex`.
  * @example
  * createOperationsStudy().operations?.map((record) => record.state) // => ['done', 'done', 'done', 'done']
  * createOperationsStudy('failed-at-3').operations?.map((record) => record.state) // => ['done', 'done', 'failed', 'not-run']
  */
 export function createOperationsStudy(
   how: 'complete' | 'failed-at-3' = 'complete',
-  options: { press?: boolean } = {},
+  options: { press?: boolean; reverseProxy?: boolean } = {},
 ): ConfiguredStudy {
   const hasPress = options.press === true
+  const hasReverseProxy = options.reverseProxy === true
   const crossRuntime = createCrossRuntimeStudy()
   const [browser, server, finalBrowser] = crossRuntime.observations
   const [serverStop, browserStop] =
@@ -51,6 +53,14 @@ export function createOperationsStudy(
       { kind: 'click', title: 'Create Invoice', selector: '#create' },
     ],
     inspections: crossRuntime.configuration.inspections,
+    ...(hasReverseProxy
+      ? {
+          reverseProxy: {
+            origin: 'https://app.example.test',
+            upstreamPort: 4310,
+          },
+        }
+      : {}),
     additionalStops: [
       { ...serverStop, afterOperation: 4 },
       { ...browserStop, afterOperation: 4 },
@@ -133,7 +143,8 @@ export function createOperationsStudy(
   const lastPause = reached.at(-1)!.pause
   return {
     ...crossRuntime,
-    version: hasPress ? 21 : 8,
+    // Format 22 (a reverse proxy) wins over 21 (a press), as studyFormatOfConfiguration decides.
+    version: hasReverseProxy ? 22 : hasPress ? 21 : 8,
     configuration,
     configurationHash: sha256(JSON.stringify(configuration)),
     finalOutcome: isComplete ? 'demonstrated' : 'not-demonstrated',

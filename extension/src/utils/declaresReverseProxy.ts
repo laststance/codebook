@@ -11,6 +11,6 @@
 export function declaresReverseProxy(configuration: {
   reverseProxy?: unknown
 }): boolean {
-  void configuration
-  throw new Error('not implemented')
+  // An explicit `reverseProxy: undefined` is the same as no key: it declares nothing.
+  return configuration.reverseProxy !== undefined
 }

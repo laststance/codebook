@@ -12,6 +12,7 @@ import {
   REACT_SCRIPTS_LIBRARY_STUDY_VERSION,
   REACT_SCRIPTS_STUDY_VERSION,
   RECORDED_LOCATION_STUDY_VERSION,
+  REVERSE_PROXY_STUDY_VERSION,
   ROUTE_HANDLER_STUDY_VERSION,
   SERVER_RENDER_STUDY_VERSION,
   VITE_API_SERVER_STUDY_VERSION,
@@ -29,6 +30,7 @@ type OperationsConfiguration = Extract<
 import { afterOperationOf } from './afterOperationOf'
 import { configuredStops } from './configuredStops'
 import { declaresPressOperation } from './declaresPressOperation'
+import { declaresReverseProxy } from './declaresReverseProxy'
 
 /** What the helpers here read of a saved study: its format number and its sealed configuration. */
 type StudyFormatSubject = Pick<ConfiguredStudy, 'version' | 'configuration'>
@@ -111,8 +113,8 @@ function derivedEvidenceFormat(
 }
 
 /**
- * Gives the study format a sealed configuration takes when it declares no `press` operation: the format of its other features.
- * Why it exists: format 21 ({@link PRESS_STUDY_VERSION}) keeps every fact this format keeps, so {@link studyRulesVersionOf} and {@link isReadableStudyFormatOfConfiguration} ask for it. Called by {@link studyFormatOfConfiguration} and those two; {@link legacyStudyFormatOfConfiguration} keeps the mapping of archives saved before format 6.
+ * Gives the study format a sealed configuration takes when it declares neither a `press` operation nor `reverseProxy`: the format of its other features.
+ * Why it exists: formats 21 ({@link PRESS_STUDY_VERSION}) and 22 ({@link REVERSE_PROXY_STUDY_VERSION}) keep every fact this format keeps (both keys are orthogonal to the underlying format), so {@link studyRulesVersionOf} and {@link isReadableStudyFormatOfConfiguration} ask for it. Called by {@link studyFormatOfConfiguration} and those two; {@link legacyStudyFormatOfConfiguration} keeps the mapping of archives saved before format 6.
  * @param configuration - The sealed configuration of the run.
  * @returns
  * - {@link VITE_API_SERVER_STUDY_VERSION} (20) for a version 3 `vite-dev` configuration that declares `apiServer`
@@ -175,35 +177,54 @@ function studyFormatWithoutPress(
 }
 
 /**
+ * Gives the format a configuration takes only because of a key an older Codebook refuses: 22 for `reverseProxy`, else 21 for a `press` operation.
+ * Why it exists: both formats keep every fact of the underlying run, so the format decision and the readable-format rule ask this one question; `reverseProxy` wins over a press, as the newer format.
+ * Called by {@link studyFormatOfConfiguration} and {@link isReadableStudyFormatOfConfiguration}.
+ * @param configuration - The sealed configuration of the run.
+ * @returns {@link REVERSE_PROXY_STUDY_VERSION} (22), {@link PRESS_STUDY_VERSION} (21), or `undefined` for a configuration that declares neither (or is not version 3).
+ * @example
+ * keyOnlyFormatOf({ version: 3, reverseProxy: { origin: 'https://app.example.test', upstreamPort: 4310 } }) // => 22
+ * keyOnlyFormatOf({ version: 3 }) // => undefined
+ */
+function keyOnlyFormatOf(
+  configuration: ConfiguredStudy['configuration'],
+): typeof PRESS_STUDY_VERSION | typeof REVERSE_PROXY_STUDY_VERSION | undefined {
+  if (configuration.version !== OPERATIONS_CONFIG_VERSION) return undefined
+  if (declaresReverseProxy(configuration)) return REVERSE_PROXY_STUDY_VERSION
+  return declaresPressOperation(configuration) ? PRESS_STUDY_VERSION : undefined
+}
+
+/**
  * Gives the study format a new save of a sealed configuration takes: a pure function of the configuration, so the format is fixed before the first checkpoint and never changes within a run.
  * Called by {@link captureStudy} when it writes a checkpoint and by {@link validateConfiguredStudyEvidence} when it reads one.
  * @param configuration - The sealed configuration of the run.
- * @returns {@link PRESS_STUDY_VERSION} (21) for a version 3 configuration that declares a `press` operation, whatever else it declares; otherwise the format {@link studyFormatWithoutPress} gives (6 to 20).
+ * @returns {@link REVERSE_PROXY_STUDY_VERSION} (22) for a version 3 configuration that declares `reverseProxy`, whatever else it declares (a press included); {@link PRESS_STUDY_VERSION} (21) for one that declares a `press` operation; otherwise the format {@link studyFormatWithoutPress} gives (6 to 20).
  * @example
  * studyFormatOfConfiguration({ version: 3, participant: 'browser', afterOperation: 1, operations: [clickOperation] }) // => 7
  * studyFormatOfConfiguration({ version: 3, participant: 'browser', afterOperation: 1, operations: [pressOperation] }) // => 21
+ * studyFormatOfConfiguration({ version: 3, adapter: 'next-dev-webpack', reverseProxy: { origin: 'https://app.example.test', upstreamPort: 4310 } }) // => 22
  */
 export function studyFormatOfConfiguration(
   configuration: ConfiguredStudy['configuration'],
 ): ConfiguredStudy['version'] {
-  // A press makes an older Codebook list the study as saved by a newer one; the facts of the underlying run stay those of studyFormatWithoutPress.
-  return configuration.version === OPERATIONS_CONFIG_VERSION &&
-    declaresPressOperation(configuration)
-    ? PRESS_STUDY_VERSION
-    : studyFormatWithoutPress(configuration)
+  // A press or a reverse proxy makes an older Codebook list the study as saved by a newer one; the facts of the underlying run stay those of studyFormatWithoutPress.
+  return (
+    keyOnlyFormatOf(configuration) ?? studyFormatWithoutPress(configuration)
+  )
 }
 
 /**
- * Gives the format whose configuration-derived rules a saved study follows: its own version, except that a format 21 study follows the rules of the format its configuration takes without the press.
- * Why it exists: format 21 keeps every fact the underlying run's format keeps (`apiRequest`, library facts, evidence rules); the sites that compare a study version with a specific format for such a rule ask here instead of reading `study.version`. Called by {@link evidenceFormatOfStudy}, {@link assertObservationFormatFields}, {@link observationOfFormat}, {@link captureStudy} and {@link validateConfiguredStudyEvidence}.
+ * Gives the format whose configuration-derived rules a saved study follows: its own version, except that a format 21 or 22 study follows the rules of the format its configuration takes without the press.
+ * Why it exists: formats 21 and 22 keep every fact the underlying run's format keeps (`apiRequest`, library facts, evidence rules); the sites that compare a study version with a specific format for such a rule ask here instead of reading `study.version`. Called by {@link evidenceFormatOfStudy}, {@link assertObservationFormatFields}, {@link observationOfFormat}, {@link captureStudy} and {@link validateConfiguredStudyEvidence}.
  * @param study - The saved study, or anything with its `version` and `configuration`.
- * @returns `study.version`, or for format 21 the format {@link studyFormatWithoutPress} gives its configuration.
+ * @returns `study.version`, or for format 21 and 22 the format {@link studyFormatWithoutPress} gives its configuration.
  * @example
  * studyRulesVersionOf({ version: 21, configuration: viteApiServerPressConfiguration }) // => 20
  * studyRulesVersionOf({ version: 8, configuration }) // => 8
  */
 export function studyRulesVersionOf(study: StudyFormatSubject): number {
-  return study.version === PRESS_STUDY_VERSION
+  return study.version === PRESS_STUDY_VERSION ||
+    study.version === REVERSE_PROXY_STUDY_VERSION
     ? studyFormatWithoutPress(study.configuration)
     : study.version
 }
@@ -366,14 +387,17 @@ export function usesServerRenderEvidence(study: StudyFormatSubject): boolean {
 }
 
 /**
- * Says whether a saved format number is written only from a version 3 configuration (formats 7 to 21), which no study of version 1 or 2 may carry.
+ * Says whether a saved format number is written only from a version 3 configuration (formats 7 to 22), which no study of version 1 or 2 may carry.
  * Called by {@link validateConfiguredStudyEvidence} for the version 1 and 2 configurations.
  * @param version - The study's saved format.
  * @returns `true` for the formats written only from a version 3 configuration.
  * @example isOperationsStudyFormat(8) // => true
  */
 export function isOperationsStudyFormat(version: number): boolean {
-  return version >= OPERATIONS_STUDY_VERSION && version <= PRESS_STUDY_VERSION
+  return (
+    version >= OPERATIONS_STUDY_VERSION &&
+    version <= REVERSE_PROXY_STUDY_VERSION
+  )
 }
 
 /**
@@ -411,10 +435,14 @@ export function isReadableStudyFormatOfConfiguration(
 ): boolean {
   if (configuration.version !== OPERATIONS_CONFIG_VERSION)
     return version === studyFormatWithoutPress(configuration)
-  // A configuration that declares a press is readable as format 21 only, and format 21 holds a configuration that declares one only.
-  if (declaresPressOperation(configuration))
-    return version === PRESS_STUDY_VERSION
-  if (version === PRESS_STUDY_VERSION) return false
+  // A configuration that declares `reverseProxy` is readable as format 22 only and one that declares a press as format 21 only; each format holds only such a configuration.
+  const keyOnlyFormat = keyOnlyFormatOf(configuration)
+  if (keyOnlyFormat !== undefined) return version === keyOnlyFormat
+  if (
+    version === PRESS_STUDY_VERSION ||
+    version === REVERSE_PROXY_STUDY_VERSION
+  )
+    return false
   if (version === studyFormatWithoutPress(configuration)) return true
   // A react-scripts-dev configuration is readable as format 11 (or 17 with `library`, the equality above) only, also without a packageRoot, so the format 7 fallback below never accepts it (DX-10).
   if (configuration.adapter === 'react-scripts-dev') return false
