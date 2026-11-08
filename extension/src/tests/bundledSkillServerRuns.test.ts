@@ -45,6 +45,8 @@ test('the bundled skill routes a screen-to-own-API question to the app run that 
     '`expoWebQuickStart.apiServer` for an Expo app from API 1.37',
     'the server stop pauses during the request the page sends',
     'asked on its own, with no screen',
+    "a Next app's own server code (route handlers, server actions, API routes) pauses in its own browser run",
+    'and never declares `apiServer`',
   ])
     assert.ok(paragraph.includes(phrase), phrase)
 })

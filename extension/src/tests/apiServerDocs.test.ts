@@ -157,6 +157,13 @@ test('the repository-browser startHere and the node-server entry both route a sc
       'the `node-server` profile is for a server request asked on its own, with no screen',
     ),
   )
+  // The Next clause scopes the rule: a Next app never declares apiServer.
+  for (const text of [repositoryBrowser.startHere, nodeServer.entry])
+    assert.ok(
+      text.includes(
+        "a Next app's own server code (route handlers, server actions, API routes) pauses in its own browser run (see its help) and never declares `apiServer`",
+      ),
+    )
 })
 
 // Value: protects=the chat relays the attribution sentence and never names a request for an unattributed pause; the pause publication delay is stated; fails_when=the relay rule, the never-name rule or the one-second delay disappears; why_new=API 1.37 adds apiRequest; seam=none; no_claim=how a chat words the sentence
