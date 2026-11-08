@@ -318,3 +318,41 @@ test('the help, skill and README contain no value of the validation project', as
   // Assert
   assert.deepEqual(hits, [])
 })
+
+// Value: protects=a chat asked about a signed-in screen of an Expo app below the repository root learns it can sign in within the run instead of concluding Codebook cannot record it; fails_when=the signInInRun steps, the limit sentences that point to them, the skill sentence or the README sentence disappear; why_new=Cycle 0099 native check found the chat refusing this question; seam=none; no_claim=that a real sign-in run succeeds
+test('the Expo help, skill and README say a signed-in screen is reached by signing in within the run', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const resource = await readResource(
+    harness.service,
+    'codebook://help/repository-browser',
+  )
+  const help = JSON.parse('text' in resource ? resource.text : '{}') as {
+    expoWebQuickStart: {
+      limits: string[]
+      apiServer: { signInInRun: string[] }
+    }
+  }
+  const steps = help.expoWebQuickStart.apiServer.signInInRun.join('\n')
+  const limits = help.expoWebQuickStart.limits.join('\n')
+  const skill = await readPackaged('skills/codebook/SKILL.md')
+  const readme = await readPackaged('README.md')
+  // Act
+  const hasEveryStep = [
+    "Set entryPath to the app's sign-in page",
+    'do not declare that page in signInPaths',
+    'secret: "ask-learner"',
+    'afterOperation is the index of that last click',
+    'NAVIGATION_BEFORE_LAST_OPERATION',
+  ].every((phrase) => steps.includes(phrase))
+  // Assert
+  assert.equal(hasEveryStep, true)
+  assert.match(limits, /see apiServer\.signInInRun/)
+  assert.match(limits, /sign in within the run \(apiServer\.signInInRun\)/)
+  assert.match(skill, /sign in through the app's own form within the run/)
+  assert.match(
+    readme,
+    /reached by signing in through the app's own form within the run, with no saved session/,
+  )
+})
