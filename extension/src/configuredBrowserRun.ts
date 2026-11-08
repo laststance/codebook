@@ -2247,16 +2247,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     | undefined {
     const { configuration } = this.definition
     if (configuration.version !== OPERATIONS_CONFIG_VERSION) return undefined
-    const declared =
-      configuration.adapter === 'next-dev-webpack' ||
-      configuration.adapter === 'react-scripts-dev' ||
-      configuration.adapter === 'vite-dev'
-        ? configuration.library?.packageRoot
-        : undefined
+    const { adapter } = configuration
+    if (
+      adapter !== 'next-dev-webpack' &&
+      adapter !== 'react-scripts-dev' &&
+      adapter !== 'vite-dev'
+    )
+      return undefined
+    const declared = configuration.library?.packageRoot
     if (declared === undefined) return undefined
     return {
-      kind: configuration.adapter as
-        'next-dev-webpack' | 'react-scripts-dev' | 'vite-dev',
+      kind: adapter,
       declared,
       appPackage: this.resolvedPackage,
     }
@@ -2445,7 +2446,6 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       participant: Participant
     },
   ): void {
-    if (!this.libraryRoute) return
     // The server session announces file URLs that need no origin (decision D21): the Next route counts them even before the readiness request set the origin; no other route observes the server.
     if (event.participant === 'server') {
       this.nextLibraryRoute?.observeParsedScript({
@@ -2454,6 +2454,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       })
       return
     }
+    if (!this.libraryRoute) return
     if (!this.origin) return
     const owned = loopbackOriginsOf(this.origin, this.ownsIpv6Loopback)
     this.libraryRoute.observeParsedScript({
@@ -2541,6 +2542,24 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (!route) return {}
     const phase = route.currentPhase()
     return { library: route.view(), ...(phase ? { libraryPhase: phase } : {}) }
+  }
+
+  /**
+   * Waits until the Next preload wrapped every compiler, counting the bound from the moment Next listens and failing with the process's own exit when it ends first.
+   * Called by {@link prepareOwned} after the owned server started; does nothing for a run without a Next library route.
+   * @throws The exit failure of the owned server, or the `library-redirect-not-applied` refusal.
+   * @example await this.awaitNextLibraryRedirect()
+   */
+  private async awaitNextLibraryRedirect(): Promise<void> {
+    const app = this.app
+    if (!this.nextLibraryRoute || !app) return
+    // The lines appear after Next listens, so the bound counts from the listener, not from the spawn.
+    await app.listening(this.abort.signal)
+    await this.nextLibraryRoute.awaitRedirectApplied(
+      this.abort.signal,
+      NEXT_LIBRARY_WRAPPED_WAIT_MS,
+      () => app.assertRunning(),
+    )
   }
 
   /** Retains one preparation barrier for service cancellation and final cleanup. @example await run.prepare() */
@@ -2670,10 +2689,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.setupStep = VITE_SETUP_STEPS.waitingForServer
     this.nextSetupStep = NEXT_SETUP_STEPS.waitingForServer
     // A Next library run is refused here when the preload did not wrap a compiler's configuration (decision D20): the readiness request would run the installed copy.
-    await this.nextLibraryRoute?.awaitRedirectApplied(
-      this.abort.signal,
-      NEXT_LIBRARY_WRAPPED_WAIT_MS,
-    )
+    await this.awaitNextLibraryRedirect()
     this.alive()
     // A module-scope server stop runs when Next first evaluates its module, during Codebook's own request: its provisional breakpoints are in place before that request.
     await this.openPreparationWindow(adapter, hasPagesFolder)

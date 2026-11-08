@@ -124,7 +124,16 @@ type Library = Awaited<ReturnType<typeof libraryDependencies>>
 async function nextLibraryHarness(
   context: TestContext,
   library: Library,
-  extra: { applicationCloseFailsOnce?: boolean; holdReadiness?: boolean } = {},
+  extra: Partial<
+    Pick<
+      NonNullable<Parameters<typeof configuredRuntimeHarness>[3]>,
+      | 'applicationCloseFailsOnce'
+      | 'holdReadiness'
+      | 'listeningAfterMs'
+      | 'exitedWith'
+      | 'runtimeConstants'
+    >
+  > = {},
 ) {
   return configuredRuntimeHarness(context, undefined, [], {
     holdReadiness: true,
@@ -316,6 +325,75 @@ test('an unwrapped compiler refuses the Next library run before the first reques
   assert.equal(harness.developmentServerLaunches(), 1)
   assert.ok(harness.releases.includes('application'))
   assert.equal(harness.run.view().library?.cleanup, 'removed')
+})
+
+// Value: protects=a Next start that listens later than the wrapped-line bound after the spawn still runs, because the bound counts from the listener; fails_when=the run refuses library-redirect-not-applied although Next only started slowly; why_new=the bound used to count from the spawn; seam=none; no_claim=real Next timing
+test('a Next library run whose server listens later than the wrapped-line bound is not refused', async (context) => {
+  // Arrange
+  const library = await libraryDependencies(context)
+  const harness = await nextLibraryHarness(context, library, {
+    holdReadiness: false,
+    listeningAfterMs: 400,
+    runtimeConstants: { NEXT_LIBRARY_WRAPPED_WAIT_MS: 200 },
+  })
+  const folders = await compilerFolders(harness)
+  // The preload writes its lines 50 ms after the listener appeared, 450 ms after the spawn.
+  const writing = new Promise<void>((resolve, reject) =>
+    setTimeout(() => writeReport(library, folders).then(resolve, reject), 450),
+  )
+  // Act
+  const failure = await harness.run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  await writing
+  await harness.run.stop()
+  // Assert
+  assert.equal(failure, undefined)
+  assert.equal(harness.readyEntryPaths.length, 1)
+})
+
+// Value: protects=a Next process that exits before writing its wrapped lines ends the run with its own exit failure and output tail; fails_when=the exit is reported as library-redirect-not-applied; why_new=the wrapped wait never looked at the process; seam=none; no_claim=a real process exit
+test('a Next process that exits before its wrapped lines ends the run with the exit failure', async (context) => {
+  // Arrange
+  const library = await libraryDependencies(context)
+  const harness = await nextLibraryHarness(context, library, {
+    holdReadiness: false,
+    exitedWith: 'Application exited: 1: EADDRINUSE',
+    runtimeConstants: { NEXT_LIBRARY_WRAPPED_WAIT_MS: 200 },
+  })
+  await compilerFolders(harness)
+  // Act
+  const failure = await harness.run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(Reflect.get(Object(failure), 'code'), undefined)
+  assert.match(
+    String(Reflect.get(Object(failure), 'message')),
+    /Application exited: 1: EADDRINUSE/,
+  )
+})
+
+// Value: protects=the Stop the service schedules after a failed preparation (it calls stopRecord on any preparation error) stops the owned server and removes the private folder after a process exit, as after a missing wrapped line; fails_when=the exit failure leaves the server released late or the folder behind; why_new=the exit failure is new; seam=none; no_claim=that the service schedules that Stop (a run-level harness has no service) and a real server process
+test('a Next library run that exited before its wrapped lines stops the server and removes the private folder on Stop', async (context) => {
+  // Arrange
+  const library = await libraryDependencies(context)
+  const harness = await nextLibraryHarness(context, library, {
+    holdReadiness: false,
+    exitedWith: 'Application exited: 1: boom',
+    runtimeConstants: { NEXT_LIBRARY_WRAPPED_WAIT_MS: 200 },
+  })
+  await compilerFolders(harness)
+  await harness.run.prepare().catch(() => undefined)
+  // Act
+  await harness.run.stop()
+  // Assert
+  assert.ok(harness.releases.includes('application'))
+  assert.deepEqual(library.calls, ['confirm', 'prepare', 'dispose'])
+  await assert.rejects(access(library.privateFolder))
 })
 
 // Value: protects=a Next library run closes the owned page and settles the observation before it stops the server and its debugger, then removes the private folder; fails_when=the server is released before the page, or the folder is removed before the server stopped; why_new=the shell was only run with a page participant; seam=none; no_claim=a real browser or server close

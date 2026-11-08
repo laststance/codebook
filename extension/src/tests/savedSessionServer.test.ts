@@ -70,6 +70,12 @@ function setupServerStandIns(scenario: StandInScenario = {}) {
     inspectorEndpoint: async () => {
       throw unusedBySetup('inspectorEndpoint')
     },
+    listening: async () => {
+      throw unusedBySetup('listening')
+    },
+    assertRunning: () => {
+      throw unusedBySetup('assertRunning')
+    },
     ready: async () => {
       throw unusedBySetup('ready')
     },

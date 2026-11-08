@@ -343,6 +343,10 @@ export async function configuredRuntimeHarness(
     consultSecretFrameGate?: boolean
     /** Makes the stand-in server's readiness check (`ready` and `readyEntry`) reject with this message, as a server that exits before it listens does. */
     launchFailure?: string
+    /** Makes the stand-in server's `listening` wait take this long, as a Next start that listens late after the spawn. */
+    listeningAfterMs?: number
+    /** Makes the stand-in server's `assertRunning` throw this message, as a process that exited early with its output tail. */
+    exitedWith?: string
     /** Makes the stand-in server's structured entry check (`readyEntry`) never answer until the run is cancelled, as a first compile that is still running does. */
     entryHangs?: boolean
     /** Keeps the stand-in server's readiness request (`ready` and `readyEntry`) open after it was sent until a test calls `releaseReadiness`, as a request whose server code is paused at a module's first evaluation. */
@@ -2001,6 +2005,17 @@ export async function configuredRuntimeHarness(
     }
   }
   const fakeApplication = {
+    listening: async (signal: AbortSignal): Promise<string> => {
+      if (options.listeningAfterMs)
+        await new Promise((resolveWait) =>
+          setTimeout(resolveWait, options.listeningAfterMs),
+        )
+      signal.throwIfAborted()
+      return serverOrigin
+    },
+    assertRunning: (): void => {
+      if (options.exitedWith) throw new Error(options.exitedWith)
+    },
     ready: async (
       signal: AbortSignal,
       entryPath?: string,

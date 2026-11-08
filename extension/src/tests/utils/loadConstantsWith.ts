@@ -14,7 +14,10 @@ export type RuntimeConstantOverrides = Partial<
     >,
     number
   >
->
+> & {
+  /** Replaces the Next library run's wait for the preload's `wrapped` lines in the loaded module's `./constants` only. */
+  NEXT_LIBRARY_WRAPPED_WAIT_MS?: number
+}
 
 /**
  * Evaluates the product's `constants` module again over replaced runtime bounds, for a harness that loads a module with {@link loadModule}.
@@ -28,13 +31,18 @@ export type RuntimeConstantOverrides = Partial<
 export async function loadConstantsWith(
   overrides: RuntimeConstantOverrides,
 ): Promise<Record<string, unknown>> {
-  const replacedRuntimeConstants = { ...runtimeConstants, ...overrides }
+  const { NEXT_LIBRARY_WRAPPED_WAIT_MS, ...runtimeOverrides } = overrides
+  const replacedRuntimeConstants = { ...runtimeConstants, ...runtimeOverrides }
   const constants = await loadModule<typeof Constants>(
     resolve(__dirname, '../../constants.js'),
     { './runtimeSupport/constants': replacedRuntimeConstants },
   )
   return {
-    './constants': constants,
+    // A replaced wrapped-line bound is set on a copy of the evaluated exports.
+    './constants':
+      NEXT_LIBRARY_WRAPPED_WAIT_MS === undefined
+        ? constants
+        : { ...constants, NEXT_LIBRARY_WRAPPED_WAIT_MS },
     './runtimeSupport/constants': replacedRuntimeConstants,
   }
 }

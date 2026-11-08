@@ -72,16 +72,20 @@ export class NextLibraryRoute extends WebpackLibraryRoute {
    * Called by the run after the server started and before the readiness request, so that no request runs unpatched code (decision D20; the lines appear about 0.76 s after Next is ready).
    * @param signal - The run's stop; an abort ends the wait with the stop's error.
    * @param deadlineMs - How long to wait; defaults to {@link NEXT_LIBRARY_WRAPPED_WAIT_MS}.
-   * @throws `NEXT_UNSUPPORTED_SETTING` `library-redirect-not-applied` (`sideEffects: "partial"`) naming the compilers still unwrapped; the stop's error when `signal` aborted.
+   * @param assertRunning - Called on every poll; throws the owned process's own failure once it exited, so an early exit is not reported as a missing redirect.
+   * @throws The `assertRunning` failure when the process exited; `NEXT_UNSUPPORTED_SETTING` `library-redirect-not-applied` (`sideEffects: "partial"`) naming the compilers still unwrapped; the stop's error when `signal` aborted.
    * @example await route.awaitRedirectApplied(signal, 5000)
    */
   async awaitRedirectApplied(
     signal: AbortSignal,
     deadlineMs: number = NEXT_LIBRARY_WRAPPED_WAIT_MS,
+    assertRunning: () => void = () => undefined,
   ): Promise<void> {
     const endsAt = Date.now() + deadlineMs
     for (;;) {
       signal.throwIfAborted()
+      // A process that exited is the real failure; its wrapped lines will never come.
+      assertRunning()
       try {
         this.assertRedirectApplied()
         return

@@ -406,6 +406,31 @@ export function launchDevelopmentServer(
         signal,
       )
     },
+    /**
+     * Waits for the owned listener on the declared port without sending any request; the same idempotent wait `ready` starts with.
+     *
+     * Called by {@link ConfiguredBrowserRun} for a Next library run, so that the wait for the preload's `wrapped` lines starts once Next listens and not at spawn.
+     * @param signal - Ends the wait when the run is cancelled.
+     * @returns The origin `http://127.0.0.1:<port>`.
+     * @throws `Application exited: <code>: <tail>` when the process exits first, or the wait times out.
+     * @example await app.listening(signal) // => 'http://127.0.0.1:3000'
+     */
+    listening: (signal: AbortSignal): Promise<string> =>
+      waitForListener(signal),
+    /**
+     * Throws the process's own failure when it already exited, and returns when it still runs.
+     *
+     * Called by the Next library route on each poll of its wrapped-line wait, so that an early exit is reported with its output tail instead of as a missing redirect.
+     * @throws The launcher error, or `Application exited: <code>: <tail>`.
+     * @example app.assertRunning() // returns while the process runs
+     */
+    assertRunning(): void {
+      if (error || child.exitCode !== null)
+        throw (
+          error ??
+          new Error(`Application exited: ${child.exitCode}: ${publishedTail()}`)
+        )
+    },
     /** Waits for the listener on the declared port, then proves readiness through the configured entry page (the root page only when entryPath is "/"); called during preparation. @param entryPath - Configured first page; a non-root entry must answer 200 without a redirect. @param observer - A Next run's record of its readiness request: told at the send and at the end ({@link ReadinessObserver}); absent for a Vite run. @example await app.ready(signal, '/login') */
     async ready(
       signal: AbortSignal,
