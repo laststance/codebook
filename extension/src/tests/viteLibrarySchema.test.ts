@@ -27,7 +27,7 @@ test('accepts library on a nested version 3 vite-dev configuration', () => {
 })
 
 // protects=versions 1 and 2 and every other adapter keep refusing library exactly as an unknown key; fails_when=library is accepted outside a version 3 vite-dev configuration or refused with another message; no_claim=none beyond protects
-test('refuses library as an unknown key on versions 1 and 2 and on other adapters', () => {
+test('refuses library as an unknown key on versions 1 and 2 and on expo-web-dev', () => {
   // Arrange
   const versionOne = {
     version: 1,
@@ -48,16 +48,15 @@ test('refuses library as an unknown key on versions 1 and 2 and on other adapter
     inspections: [{ path: 'value', mode: 'value', required: true }],
     library: { packageRoot: 'packages/widgets' },
   }
-  const nextAdapter = { ...sample(), adapter: 'next-dev-webpack' }
   const expoWeb = { ...sample(), adapter: 'expo-web-dev' }
   // Act
-  const results = [versionOne, nextAdapter, expoWeb].map((candidate) =>
+  const results = [versionOne, expoWeb].map((candidate) =>
     liveRepositoryConfigSchema.safeParse(candidate),
   )
   // Assert
   assert.deepEqual(
     results.map((result) => result.success),
-    [false, false, false],
+    [false, false],
   )
   for (const result of results.slice(1))
     assert.match(

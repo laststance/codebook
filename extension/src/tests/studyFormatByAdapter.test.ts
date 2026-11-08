@@ -173,7 +173,7 @@ test('a study of format 6 is saved as .study.v6.json and an earlier Codebook tha
   assert.equal(await savedVersion(archive), 6)
   assert.equal(reopened.version, 6)
   assert.equal((await savedVersion(archive)) > previousReadableVersion, true)
-  assert.equal(newerStudyArchive(`${study.id}.study.v18.json`)?.version, 18)
+  assert.equal(newerStudyArchive(`${study.id}.study.v19.json`)?.version, 19)
   assert.equal(newerStudyArchive(`${study.id}.study.v6.json`), undefined)
 })
 

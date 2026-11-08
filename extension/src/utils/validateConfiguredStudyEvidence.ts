@@ -3,6 +3,7 @@ import {
   ENTRY_LOAD_OPERATION_KEY,
   OPERATIONS_CONFIG_VERSION,
   RECORDED_LOCATION_STUDY_VERSION,
+  NEXT_LIBRARY_STUDY_VERSION,
   REPOSITORY_CAPTURED_TYPES,
   REACT_SCRIPTS_LIBRARY_STUDY_VERSION,
   VITE_LIBRARY_STUDY_VERSION,
@@ -42,10 +43,11 @@ export function validateConfiguredStudyEvidence(
           study.version !== legacyStudyFormatOfConfiguration(configuration))
   )
     throw new Error('Configured archive and intent versions disagree.')
-  // Library facts exist exactly in a format 16 or 17 study, whose configuration declares the library they describe.
+  // Library facts exist exactly in a format 16, 17 or 18 study, whose configuration declares the library they describe.
   if (
     (study.version === VITE_LIBRARY_STUDY_VERSION ||
-      study.version === REACT_SCRIPTS_LIBRARY_STUDY_VERSION) !==
+      study.version === REACT_SCRIPTS_LIBRARY_STUDY_VERSION ||
+      study.version === NEXT_LIBRARY_STUDY_VERSION) !==
     (study.library !== undefined)
   )
     throw new Error('Configured library facts and study format disagree.')

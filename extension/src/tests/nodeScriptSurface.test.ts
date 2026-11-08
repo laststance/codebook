@@ -455,7 +455,7 @@ test('API 1.26 is served with a note for the additive node-script profile', asyn
       .split('\n')
       .find((line) => line.startsWith(' * 1.26 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.35')
+  assert.equal(API_VERSION, '1.36')
   assert.equal(NODE_SCRIPT_HISTORY_DIRECTORY, 'node-scripts.v1')
   for (const phrase of [
     '`node-script` profile',

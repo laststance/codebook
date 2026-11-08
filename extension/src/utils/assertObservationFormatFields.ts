@@ -2,6 +2,7 @@ import type { ConfiguredStudy } from '../configuredStudySchemas'
 import {
   API_ROUTE_STUDY_VERSION,
   MODULE_EVALUATION_STUDY_VERSION,
+  NEXT_LIBRARY_STUDY_VERSION,
   ROUTE_HANDLER_STUDY_VERSION,
 } from '../constants'
 
@@ -197,7 +198,7 @@ export function assertObservationFormatFields(
 }
 
 /**
- * Pairs a format 12, 13 or 14 study with the fields only it keeps: format 12 is written only for a study that holds a module-evaluation or preparation observation, format 13 only for one that holds a route-handler observation (and keeps format 12's fields too), format 14 only for one that holds an API-route observation (and keeps the fields of 12 and 13).
+ * Pairs a format 12, 13 or 14 study with the fields only it keeps (a format 18 study, which holds all of them, is exempt): format 12 is written only for a study that holds a module-evaluation or preparation observation, format 13 only for one that holds a route-handler observation (and keeps format 12's fields too), format 14 only for one that holds an API-route observation (and keeps the fields of 12 and 13).
  * Called by {@link assertObservationFormatFields}.
  * @param study - The saved study, without its images; it follows the format 8 rules.
  * @throws When a field sits in a format that does not keep it, or a format holds none of its fields.
@@ -211,6 +212,8 @@ function assertFormatHoldsItsFields(
   )
   const holdsRouteHandler = study.observations.some(isRouteHandlerObservation)
   const holdsApiRoute = study.observations.some(isApiRouteObservation)
+  // Format 18 (`next-dev-webpack` with `library`) holds the fields of formats 12 to 14 itself and moves to none of them, so it may hold any of them or none.
+  if (study.version === NEXT_LIBRARY_STUDY_VERSION) return
   // The scope and the preparation attribution belong to formats 12 to 14.
   if (
     holdsModuleEvaluation &&

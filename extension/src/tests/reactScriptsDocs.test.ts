@@ -118,7 +118,7 @@ test('the MCP instructions name react-scripts-dev, its selection rule and the AP
       .split('\n')
       .find((line) => line.startsWith(' * 1.25 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.35')
+  assert.equal(API_VERSION, '1.36')
   assert.ok(protocol.includes('${REACT_SCRIPTS_APP_SELECTION_RULE}'))
   assert.ok(
     protocol.includes(

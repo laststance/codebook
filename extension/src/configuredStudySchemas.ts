@@ -19,6 +19,7 @@ import {
   API_ROUTE_STUDY_VERSION,
   EXPO_VERSION_MAX_CHARS,
   EXPO_WEB_STUDY_VERSION,
+  NEXT_LIBRARY_STUDY_VERSION,
   REACT_SCRIPTS_LIBRARY_STUDY_VERSION,
   REACT_SCRIPTS_STUDY_VERSION,
   VITE_LIBRARY_STUDY_VERSION,
@@ -223,6 +224,7 @@ export const configuredStudySchema = z.strictObject({
     z.literal(EXPO_WEB_STUDY_VERSION),
     z.literal(VITE_LIBRARY_STUDY_VERSION),
     z.literal(REACT_SCRIPTS_LIBRARY_STUDY_VERSION),
+    z.literal(NEXT_LIBRARY_STUDY_VERSION),
   ]),
   workspaceKey: repositoryHashSchema,
   id: studyIdSchema,
@@ -249,7 +251,7 @@ export const configuredStudySchema = z.strictObject({
   viteVersion: z.string().min(1).max(64).optional(),
   // The Expo SDK version an `expo-web-dev` run started on (read from the resolved `expo/package.json`, format 15 only); other studies have none.
   expoVersion: z.string().min(1).max(EXPO_VERSION_MAX_CHARS).optional(),
-  // The library facts of a `vite-dev` or `react-scripts-dev` run that declared `library` (formats 16 and 17 only, checked by validateConfiguredStudyEvidence); every other study has none.
+  // The library facts of a `vite-dev`, `react-scripts-dev` or `next-dev-webpack` run that declared `library` (formats 16, 17 and 18 only, checked by validateConfiguredStudyEvidence); every other study has none.
   library: libraryRunFactsSchema.optional(),
   operation: z
     .strictObject({
