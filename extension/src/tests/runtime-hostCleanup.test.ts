@@ -1770,6 +1770,80 @@ test('the managed Chrome launch leaves localhost resolution to the system', asyn
   ])
 })
 
+// Value: protects=the declared reverseProxy host is pinned to the checked address in the real managed launch, only for that host; fails_when=pinHost stores nothing, the rule is not appended to runtimeArgs, or it maps localhost; why_new=Step 7 gap 1 (the real HostBrowser was only reached through a harness fake); seam=none; no_claim=Chrome honoring the rule (checked natively)
+test('the managed Chrome launch carries the host pin only after pinHost and only for the declared host', async (context) => {
+  // Arrange
+  let runtimeArgs: string[] | undefined
+  const managed = await managedBrowser(context, {
+    startDebugging: async (_folder, configuration) => {
+      runtimeArgs = configuration.runtimeArgs
+      return true
+    },
+  })
+  managed.browser.pinHost(
+    '--host-resolver-rules=MAP app.example.test 127.0.0.1',
+  )
+
+  // Act
+  await managed.browser.launch(
+    { type: 'editor-browser', name: 'owned', request: 'launch' },
+    new AbortController().signal,
+  )
+  await managed.browser.close()
+
+  // Assert
+  assert.deepEqual(Array.from(runtimeArgs ?? []), [
+    '--headless=new',
+    '--remote-debugging-pipe',
+    '--host-resolver-rules=MAP app.example.test 127.0.0.1',
+  ])
+})
+
+// Value: protects=a host pin is refused once the managed Chrome is launched, so no rule is silently dropped; fails_when=pinHost accepts a pin after launch; why_new=Step 7 gap 1; seam=none; no_claim=the gate's order of calls
+test('pinHost refuses a pin after the managed Chrome launched', async (context) => {
+  // Arrange
+  const managed = await managedBrowser(context)
+  await managed.browser.launch(
+    { type: 'editor-browser', name: 'owned', request: 'launch' },
+    new AbortController().signal,
+  )
+  context.after(() => managed.browser.close())
+
+  // Act / Assert
+  assert.throws(
+    () =>
+      managed.browser.pinHost(
+        '--host-resolver-rules=MAP app.example.test 127.0.0.1',
+      ),
+    { message: 'A host pin needs a managed browser before launch' },
+  )
+})
+
+// Value: protects=a host pin is refused for a browser that is not a managed Chrome (the editor's own browser cannot take a resolver rule); fails_when=pinHost accepts a pin on a non-managed browser; why_new=Step 7 gap 1; seam=none; no_claim=the gate's order of calls
+test('pinHost refuses a pin for a browser that is not managed', async () => {
+  // Arrange
+  const HostBrowser = await loadHostBrowser({})
+  const browser = new HostBrowser(
+    {
+      id: 'cursor',
+      productVersion: 'test',
+      apiVersion: 'test',
+      commit: 'test',
+    },
+    'owned-run',
+    'http://127.0.0.1/owned',
+    () => undefined,
+    'normal',
+  )
+
+  // Act / Assert
+  assert.throws(
+    () =>
+      browser.pinHost('--host-resolver-rules=MAP app.example.test 127.0.0.1'),
+    { message: 'A host pin needs a managed browser before launch' },
+  )
+})
+
 /**
  * Makes the learner's saved-session folder of a test, outside the managed profile root and with a space in its path (as "Application Support" has), holding the files a session lives in, and a lease stand-in that notes its calls in the given list.
  * @param context - The test, which removes the folder when it ends.

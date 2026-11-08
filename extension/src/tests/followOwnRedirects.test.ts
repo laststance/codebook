@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -42,6 +43,17 @@ test('a redirect to the declared origin ends the walk as an answer without askin
   assert.equal(response.status, 200)
   assert.deepEqual(asked, [`${OWN}/`])
 })
+
+/** Asks the system for a free loopback port, then frees it for the stand-in server to take. @example await freePort() // => 51234 */
+async function freePort(): Promise<number> {
+  const probe = createServer()
+  await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve))
+  const address = probe.address()
+  await new Promise((resolve) => probe.close(resolve))
+  if (address === null || typeof address === 'string')
+    throw new Error('No free port')
+  return address.port
+}
 
 // Value: protects=a root that redirects inside the dev server still being read to its end; fails_when=same-origin redirects are not followed; why_new=redirects are followed by hand now; seam=stand-in send; no_claim=none
 test('redirects on the dev server own origin are followed to the final answer', async () => {
@@ -90,6 +102,7 @@ test('a redirect loop on the dev server origin stops after five hops with the re
 // Value: protects=a root that redirects to the public host being ready instead of failing or being resolved outside the pin; fails_when=ready follows the redirect with the global fetch or reads the 3xx as a failed root; why_new=D24 rootAnswer follows redirects by hand for a declared origin; seam=launchDevelopmentServer with a stand-in executable; no_claim=a real Next; the declared origin in readyEntry's redirect rules is covered by lane F's entry-response cases
 test('ready accepts a root that redirects to the declared origin as an answer', async (context) => {
   // Arrange
+  const port = await freePort()
   const folder = await mkdtemp(join(tmpdir(), 'codebook-declared-root-'))
   context.after(() => removeTestFolder(folder))
   const executable = join(folder, 'bin', 'next.js')
@@ -100,7 +113,7 @@ test('ready accepts a root that redirects to the declared origin as an answer', 
 http.createServer((request, response) => {
   response.writeHead(308, { location: 'https://app.example.test/' })
   response.end()
-}).listen(4312, '127.0.0.1', () => console.log('http://127.0.0.1:4312'))
+}).listen(${port}, '127.0.0.1', () => console.log('http://127.0.0.1:${port}'))
 `,
   )
   const app = launchDevelopmentServer(
@@ -108,7 +121,7 @@ http.createServer((request, response) => {
     process.execPath,
     () => undefined,
     false,
-    4312,
+    port,
     undefined,
     undefined,
     executable,
@@ -126,5 +139,5 @@ http.createServer((request, response) => {
   await app.close()
 
   // Assert
-  assert.equal(origin, 'http://127.0.0.1:4312')
+  assert.equal(origin, `http://127.0.0.1:${port}`)
 })

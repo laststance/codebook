@@ -209,6 +209,12 @@ test('SIGN_IN_REQUIRED shows one notice with the reason text, and its button sta
   for (let turn = 0; turn < 500 && !calls.includes('startServer'); turn += 1)
     await settle()
   // Assert
+  // Exactly one notice names the expired session; the setup it started raises its own, different notices.
+  assert.equal(
+    notices.filter((notice) => notice.message.includes('may have expired'))
+      .length,
+    1,
+  )
   assert.deepEqual(notices[0], {
     severity: 'information',
     message: 'The saved session for shop may have expired. Set it up again.',
