@@ -206,21 +206,40 @@ test('a replay reopened after a window reload keeps the stops in order with thei
   )
 })
 
-// Value: protects=D28 a reverseProxy configuration is held by format 22 only: every older format, 7 to 21, refuses it, one table row per format; fails_when=an older format accepts a reverseProxy configuration, or format 22 refuses one; no_claim=the wording of the refusal beyond the version sentence
-test('only format 22 holds a reverseProxy configuration: formats 7 to 21 each refuse it and format 22 accepts it', () => {
+// Value: protects=D28 a reverseProxy declaration is the reason every older format (7 to 21, 12 to 14 included) refuses the configuration, and format 22 accepts it; fails_when=an older format reads a configuration that declares reverseProxy, or the same study without the declaration stops being accepted at its own format 8; no_claim=the wording of the refusal beyond the version sentence
+test('only format 22 holds a reverseProxy configuration: formats 7 to 21 each refuse the declaration and the same study without it is accepted at format 8', () => {
   // Arrange
-  const study = createOperationsStudy('complete', { reverseProxy: true })
-  const olderFormats = [7, 8, 9, 10, 11, 15, 16, 17, 18, 19, 20, 21]
+  const declaring = createOperationsStudy('complete', { reverseProxy: true })
+  const plain = createOperationsStudy('complete')
+  const olderFormats = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
   // Act
+  const readableDeclaring = olderFormats.map((version) =>
+    isReadableStudyFormatOfConfiguration(version, declaring.configuration),
+  )
   const refusals = olderFormats.map((version) =>
-    refusalOf({ ...study, version } as ConfiguredStudy),
+    refusalOf({ ...declaring, version } as ConfiguredStudy),
   )
   // Assert
+  assert.deepEqual(
+    readableDeclaring,
+    olderFormats.map(() => false),
+  )
   assert.deepEqual(
     refusals.map((refusal) => refusal === 'accepted'),
     olderFormats.map(() => false),
   )
-  assert.equal(refusalOf(study), 'accepted')
+  assert.equal(
+    isReadableStudyFormatOfConfiguration(22, declaring.configuration),
+    true,
+  )
+  assert.equal(refusalOf(declaring), 'accepted')
+  // The same study without the declaration is readable at format 8 (its own format), so the declaration alone causes the refusals above.
+  assert.equal(plain.version, 8)
+  assert.equal(
+    isReadableStudyFormatOfConfiguration(8, plain.configuration),
+    true,
+  )
+  assert.equal(refusalOf(plain), 'accepted')
 })
 
 // Value: protects=D28 format 22 holds a configuration that declares reverseProxy only; fails_when=a format 22 study without the declaration decodes; no_claim=the schema member of the declaration
