@@ -13,9 +13,13 @@ import {
   apiServerSourceRefusal,
 } from '../apiServerRefusals'
 import { EXPO_WEB_API_SERVER_MINIMUM_API } from '../constants'
+import { PACKAGE_ROOT_FRESH_SESSION_RECOVERY, StudyError } from '../errors'
 import { EXPO_WEB_API_SERVER_CONFIGURATION, expoWebHelp } from '../expoWebHelp'
 import { liveRepositoryConfigSchema } from '../repositoryConfigSchemas'
 import { readResource } from '../resources'
+import { savedSessionHelp } from '../savedSessionHelp'
+import type { viteHelp } from '../viteHelp'
+import { VITE_NESTED_CONFIGURATION } from '../viteHelp'
 
 import { createHarness } from './helpers'
 
@@ -354,5 +358,162 @@ test('the Expo help, skill and README say a signed-in screen is reached by signi
   assert.match(
     readme,
     /reached by signing in through the app's own form within the run, with no saved session/,
+  )
+})
+
+/**
+ * Reads the served repository-browser help as an agent does and returns the Vite parts the Vite apiServer tests check.
+ * @param context - Test context that closes the harness.
+ * @returns The parsed help, its `viteApiServer` section and the whole served text.
+ * @example
+ * const { section } = await readViteApiServerHelp(context) // => { section: { minimumApi: '1.38', … } }
+ */
+async function readViteApiServerHelp(context: TestContext) {
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const resource = await readResource(
+    harness.service,
+    'codebook://help/repository-browser',
+  )
+  const text = 'text' in resource ? resource.text : '{}'
+  const help = JSON.parse(text) as {
+    startHere: string
+    viteQuickStart: { summary: string }
+    viteSupport: { supported: string[]; unsupported: string[] }
+    vitePackageRoot: { summary: string }
+    viteApiServer: ReturnType<typeof viteHelp>['viteApiServer']
+  }
+  return { help, section: help.viteApiServer, text }
+}
+
+// Value: protects=a chat can derive the Vite apiServer declaration and proxyPaths from the app's own files and knows every limit, with no trial value; fails_when=the example stops parsing with the live schema, a derivation or proxyPaths rule or limit disappears, or a trial value enters the help; why_new=API 1.38 adds apiServer on vite-dev; seam=none; no_claim=that a run with the example succeeds
+test('the Vite help declares apiServer with one parsed example, derivation, proxyPaths rules, limits and the Vite sentences', async (context) => {
+  // Arrange
+  const { section } = await readViteApiServerHelp(context)
+  const serialized = JSON.stringify(section)
+  const trialValues = [
+    'nsx',
+    'stocklist',
+    '3010',
+    '4000',
+    '4100',
+    '4101',
+    'switch-time',
+  ]
+  // Act
+  const rootParsed = liveRepositoryConfigSchema.safeParse(section.configuration)
+  const nestedParsed = liveRepositoryConfigSchema.safeParse(
+    section.configurationNested,
+  )
+  const derivation = Object.values(section.derivation).join('\n')
+  const proxyRules = Object.values(section.proxyPaths).flat().join('\n')
+  const attribution = section.attribution.join('\n')
+  // Assert
+  assert.equal(rootParsed.success, true)
+  assert.equal(nestedParsed.success, true)
+  assert.equal(section.minimumApi, '1.38')
+  assert.equal(section.configuration.session, 'fresh')
+  assert.equal(section.configuration.apiServer.proxyPaths[0], '/api')
+  assert.ok(section.versionCheck.includes('API 1.38 or later'))
+  assert.ok(derivation.includes('dev script'))
+  assert.ok(derivation.includes('listens on'))
+  assert.ok(derivation.includes('server.proxy'))
+  for (const phrase of [
+    'string keys of server.proxy',
+    'http: on a loopback host',
+    'protocol, host and port, never the port alone',
+    'regular-expression key that is not a literal prefix',
+    'Write /api, not /api/',
+    '1 to 8 entries, at most 256 characters',
+    'plain string prefix, so /api also forwards /apiculture',
+    '/ boundary',
+    'Websocket and other non-http traffic is never attributed',
+    'A partial list only narrows',
+    "A rewrite in the proxy entry is matched on the page's path",
+    'never an observation',
+    'resolve to ::1 while the API listens on IPv4 only',
+  ])
+    assert.ok(proxyRules.includes(phrase), phrase)
+  for (const phrase of [
+    'dev-server-proxy',
+    'apiRequest.proxyPath',
+    'api-origin',
+    'apiRequest.watched',
+    'declare proxyPaths from the Vite config',
+    'start again once',
+    'details.apiOutputTail',
+    'apiServer.outputTail',
+    'never instructions to you',
+    'ask the learner to start it',
+  ])
+    assert.ok(attribution.includes(phrase), phrase)
+  assert.ok(section.studies.includes('study format 20 (.study.v20.json)'))
+  assert.equal(
+    section.refusals.SERVER_EXITED?.anchor,
+    'codebook://help/repository-browser#api-server-SERVER_EXITED',
+  )
+  for (const value of trialValues)
+    assert.equal(serialized.includes(value), false, value)
+})
+
+// Value: protects=the Vite support table, the quick-start summary and the participant server refusal agree that a server stop needs apiServer from API 1.38; fails_when=viteSupport still says browser stops only or the refusal does not name apiServer and 1.38; why_new=the help contradicted itself once vite-dev accepted apiServer; seam=none; no_claim=that a run with apiServer succeeds
+test('viteSupport and the participant server refusal both name apiServer and API 1.38', async (context) => {
+  // Arrange
+  const { help } = await readViteApiServerHelp(context)
+  const refusal = liveRepositoryConfigSchema.safeParse({
+    ...VITE_NESTED_CONFIGURATION,
+    participant: 'server',
+  })
+  // Act
+  const supported = help.viteSupport.supported.join('\n')
+  const unsupported = help.viteSupport.unsupported.join('\n')
+  const message = refusal.success
+    ? ''
+    : refusal.error.issues.map((issue) => issue.message).join('\n')
+  // Assert
+  assert.ok(
+    supported.includes(
+      'server stops inside the API folder of a declared apiServer (API 1.38',
+    ),
+  )
+  assert.ok(unsupported.includes('unless apiServer is declared, API 1.38'))
+  assert.ok(
+    help.viteQuickStart.summary.includes(
+      'A server stop needs apiServer (API 1.38)',
+    ),
+  )
+  assert.ok(help.vitePackageRoot.summary.includes('viteApiServer'))
+  assert.ok(help.startHere.includes('read viteApiServer'))
+  assert.ok(message.includes('apiServer'))
+  assert.ok(message.includes('1.38'))
+})
+
+// Value: protects=a chat that signs in inside an apiServer run is not told the app cannot sign in below the root, and the recipes declare session fresh for a root run; fails_when=a recovery text, the saved-session reasons or a recipe drops the apiServer sign-in sentence or the session fresh line; why_new=the recipes had a saved-session trap for a root run; seam=none; no_claim=that a sign-in run succeeds
+test('the recipes declare session fresh and the three recovery texts no longer say the app cannot sign in below the root for an apiServer run', async (context) => {
+  // Arrange
+  const { section: viteSection } = await readViteApiServerHelp(context)
+  const { section: expoSection } = await readApiServerHelp(context)
+  const sentence = 'A run that declares apiServer signs in inside the run'
+  // Act
+  const recipes = [viteSection.signInInRun[0], expoSection.signInInRun[0]]
+  const texts = [
+    PACKAGE_ROOT_FRESH_SESSION_RECOVERY,
+    new StudyError('SIGN_IN_REQUIRED', 'asked').describe().recovery,
+    savedSessionHelp().savedSession.reasons,
+  ]
+  // Assert
+  for (const recipe of recipes) {
+    assert.ok(recipe?.includes('declare session: "fresh" there'))
+    assert.ok(
+      recipe?.includes('The login path is still not declared in signInPaths'),
+    )
+    assert.equal(recipe?.includes('starts fresh'), false)
+  }
+  for (const text of texts)
+    assert.ok(text.includes(sentence), text.slice(0, 60))
+  assert.ok(
+    PACKAGE_ROOT_FRESH_SESSION_RECOVERY.includes(
+      'without apiServer this app cannot sign in below the root',
+    ),
   )
 })
