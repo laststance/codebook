@@ -259,6 +259,8 @@ export async function configuredRuntimeHarness(
     ) => void
     /** Called when the stand-in adapter starts the app, so a test orders the app's start against the API's. */
     onApplicationStart?: () => void
+    /** Called when the Vite stand-in asserts the workspace, after the run read the stop sources and before the `apiServer` checks, so a test changes the repository at the one point a symbolic link can appear between the two (Cycle 0100). */
+    onWorkspaceAsserted?: () => void | Promise<void>
     /** Makes the stand-in adapter's start fail with this message, as an app that cannot start does. */
     applicationStartFails?: string
     // pregate-literal: API_VERSION=1.34 the Vite library route was added at API 1.34 (its minimum), not the current API
@@ -2389,6 +2391,7 @@ export async function configuredRuntimeHarness(
               workspace,
               packageRoot: vitePackage?.packageRoot,
             })
+            await options.onWorkspaceAsserted?.()
           },
           start: async (request: {
             workspace: string
