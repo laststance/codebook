@@ -38,9 +38,20 @@ function endSessionOnKill(
   harness.fake.events = events
 }
 
-/** Lets the loss arbiter settle: it reads the exit fact within a few ticks. @example await settleArbiter() */
-async function settleArbiter(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 100))
+/**
+ * Lets the loss arbiter settle: waits until the run killed the API group (the observable that ends its debug session and settles its exit fact), then yields whole event-loop turns, in which the arbiter's microtask chain (session hook, exit-fact race, failure) completes.
+ * Why it exists: the tests assert that a failure did not appear, which holds vacuously if the check runs before the arbiter did; the wait is on the kill, not on a duration, so load cannot shorten it.
+ * @param harness - The run's harness, whose stand-in API logs the kill.
+ * @example await settleArbiter(harness)
+ */
+async function settleArbiter(harness: ApiServerRunHarness): Promise<void> {
+  await waitUntil(
+    () => harness.fake.events.includes('kill-first'),
+    'the run killing the API group',
+  )
+  // The arbiter's work is microtask-bound once the exit fact settled; several turns leave margin without a timer.
+  for (let turn = 0; turn < 10; turn += 1)
+    await new Promise((resolve) => setImmediate(resolve))
 }
 
 /**
@@ -61,7 +72,7 @@ async function hitDriftedScript(harness: ApiServerRunHarness): Promise<void> {
     () => harness.run.view().status === 'failed',
     'the seal refusal',
   )
-  await settleArbiter()
+  await settleArbiter(harness)
 }
 
 // Value: protects=R1: an API that listens on another port than the declared one is refused as SERVER_NOT_LISTENING naming the declared port, even though killing it ends its debug session; fails_when=the session loss the kill causes turns the failure into SERVER_EXITED; no_claim=a real port scan (ownedApiServer.test.ts)
@@ -81,7 +92,7 @@ test('an API on another port ends with SERVER_NOT_LISTENING, not SERVER_EXITED',
     () => undefined,
     (thrown: unknown) => thrown as StudyError,
   )
-  await settleArbiter()
+  await settleArbiter(harness)
   // Assert
   assert.deepEqual(
     {

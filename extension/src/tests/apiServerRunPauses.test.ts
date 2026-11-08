@@ -123,6 +123,7 @@ test('a page request whose end event arrives after the pause but ended before it
     startedAtMs: operationSentAtMs,
     timestamp: 100,
   })
+  // gstack-timing-ok: only a minimum gap is needed so the request's start is clearly before the pause; a longer wait under load changes nothing
   await new Promise((resolve) => setTimeout(resolve, 250))
   // Act
   await apiServerHit(harness)
