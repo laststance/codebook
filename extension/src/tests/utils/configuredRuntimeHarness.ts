@@ -52,6 +52,7 @@ import {
   describeNextEntryResponse,
   type NextEntryResponse,
 } from '../../utils/describeNextEntryResponse'
+import type { PressFocusDescription } from '../../utils/describePressFocus'
 import { maskEnvValues, maskKnownValues } from '../../utils/maskKnownValues'
 import {
   readinessOutcomeOfError,
@@ -165,6 +166,18 @@ async function stageViteLibrary(input: {
 }
 
 /** The source of a fixture that gives none: one statement on line 1 and an empty line 2, declared with `var` so that the stop on line 1, which requires value:nextTheme, stays on its declared line. */
+/** What the stand-in page reports of a key's recipient unless a test says otherwise: the focused body, which is no text entry. */
+const DEFAULT_PRESS_FOCUS: PressFocusDescription = {
+  ready: true,
+  tagName: 'body',
+  type: '',
+  name: '',
+  id: '',
+  autocomplete: '',
+  isTextEntry: false,
+  isInFrame: false,
+  isFocused: true,
+}
 const FIXTURE_SOURCE = 'var nextTheme = "dark";\n'
 
 /**
@@ -453,6 +466,18 @@ export async function configuredRuntimeHarness(
       unappliedNativeValue?: string[]
       /** Makes the page's answer to resolving a control throw an error with this message, as a transport failure that quotes text does. */
       selectControlFailsWith?: string
+      /**
+       * How the stand-in page treats the keys of the version 3 `press` operations.
+       * `holdOn` (default `keyUp`) keeps the answer of that key event open until the stop that follows was continued; `effectOn` is the event after which the press's own `after` conditions hold (default `keyup`, as the app listens); `dropKeys` makes the page ignore every key, so the `after` never holds; `focus` is what the page reports of the key's recipient (default: the body).
+       */
+      press?: {
+        holdOn?: 'keyDown' | 'keyUp'
+        effectOn?: 'keydown' | 'keyup'
+        dropKeys?: boolean
+        /** Makes the press's own `after` hold from the start, as a result that is already on the page. */
+        afterHoldsFromStart?: boolean
+        focus?: PressFocusDescription
+      }
       /** The configuration's `signInPaths`. */
       signInPaths?: string[]
       /** The configuration's `session: "fresh"`. */
@@ -803,6 +828,7 @@ export async function configuredRuntimeHarness(
   } = { assertedWorkspace: [], started: [], sealed: [] }
   const releases: string[] = [],
     mouse: { type?: string; timeout?: number }[] = [],
+    keys: { type?: string; key?: string }[] = [],
     commands: string[] = [],
     listeners = new Map<string, (event: unknown) => void>()
   const clock = createManualClock()
@@ -1256,6 +1282,40 @@ export async function configuredRuntimeHarness(
   // The version 3 operations the stand-in page received an input for, and the stops it reported.
   let inputsSeen = 0
   const operationsOption = options.operations
+  // The operations (1-based) whose key events the page acted on, by event.
+  const pressEffects = { keydown: new Set<number>(), keyup: new Set<number>() }
+  /** The own `after` read expression of each press operation, with its 1-based index. */
+  const pressAfterExpressions = new Map<string, number>(
+    (operationsOption?.operations ?? []).flatMap((operation, position) =>
+      operation.kind === 'press' && operation.after
+        ? [[configuredDomExpression(operation.after), position + 1] as const]
+        : [],
+    ),
+  )
+  /** Answers a press operation's own `after` read: not ready until the page saw the declared event, never when keys are dropped; `undefined` for any other expression. */
+  const pressAfterAnswer = (expression: string | undefined): unknown => {
+    const operationIndex = pressAfterExpressions.get(expression ?? '')
+    if (operationIndex === undefined) return undefined
+    const press = operationsOption?.press
+    const seen = pressEffects[press?.effectOn ?? 'keyup'].has(operationIndex)
+    return press?.afterHoldsFromStart || (!press?.dropKeys && seen)
+      ? { ready: true }
+      : { ready: false, failure: { conditionIndex: 0, reason: 'not-visible' } }
+  }
+  /** Answers one key event of a press: a keyDown counts as the operation's input; the event named by `holdOn` pauses inside the page's handler when a stop follows. */
+  const answerKeyEvent = async (type: string): Promise<unknown> => {
+    if (type === 'keyDown') inputsSeen++
+    const held =
+      (operationsOption?.press?.holdOn ?? 'keyUp') === type &&
+      stopPausesLatestInput()
+    if (held) {
+      emitFirstStopOfLatestInput()
+      await holdInputUntilContinued()
+    }
+    // The page's handlers ran once the event was answered.
+    pressEffects[type === 'keyDown' ? 'keydown' : 'keyup'].add(inputsSeen)
+    return {}
+  }
   /** Tells whether the result of the action is visible: the single input was sent, or the last operation of a version 3 run was acknowledged. */
   const isResultVisible = (): boolean => {
     // A run with no operation shows its result once the entry page loaded: there is no input to wait for.
@@ -1365,6 +1425,10 @@ export async function configuredRuntimeHarness(
     if (expression === 'location.origin') return pageOrigin
     if (expression === scrollExpression)
       return { scrolled: clickTargetScrolled }
+    if (expression?.includes('describePressFocus'))
+      return operationsOption?.press?.focus ?? DEFAULT_PRESS_FOCUS
+    const pressAnswer = pressAfterAnswer(expression)
+    if (pressAnswer) return pressAnswer
     // An operation's own after conditions that a test chose never to hold.
     const operationAfterAnswer = operationAfterFailures.get(expression ?? '')
     if (operationAfterAnswer)
@@ -1439,6 +1503,7 @@ export async function configuredRuntimeHarness(
         expression?: string
         url?: string
         type?: string
+        key?: string
         start?: ScriptPlace
         end?: ScriptPlace
         text?: string
@@ -1737,6 +1802,10 @@ export async function configuredRuntimeHarness(
         if (options.timedOutScreenshots?.includes(screenshotCount))
           throw new CdpRequestTimeoutError(method)
         return { data: screenshot }
+      }
+      if (method === 'Input.dispatchKeyEvent') {
+        keys.push({ type: parameters?.type, key: parameters?.key })
+        return answerKeyEvent(String(parameters?.type))
       }
       if (method === 'Input.dispatchMouseEvent') {
         mouse.push({ type: parameters?.type, timeout })
@@ -2613,6 +2682,8 @@ export async function configuredRuntimeHarness(
     breakpoints,
     userBreakpoint,
     mouse,
+    /** The `Input.dispatchKeyEvent` requests the run sent, in order, as `{ type, key }`. */
+    keys,
     commands,
     /** Every expression the run evaluated in the owned page, in order. */
     evaluatedExpressions,

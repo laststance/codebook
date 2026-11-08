@@ -302,6 +302,7 @@ import { declaresEdgeApiRuntime } from './utils/declaresEdgeApiRuntime'
 import { describeCdpPause } from './utils/describeCdpPause'
 import type { NextEntryResponse } from './utils/describeNextEntryResponse'
 import { describeNextLaunchFailure } from './utils/describeNextLaunchFailure'
+import { describePressRefusal } from './utils/describePressRefusal'
 import {
   describeRenderRunMessage,
   type RenderRunMessageInput,
@@ -13757,6 +13758,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       // A page that settled on a sign-in path ends the run before this operation is resolved or sent.
       await this.refuseSignInPageNow()
       await this.assertOperationConditions(index, total)
+      await this.assertPressEffectNotYetPresent(index, operation)
       const prepare = (): Promise<PreparedOperation> =>
         prepareOperation(port, { index, total, operation, learnerSecret })
       let prepared = await prepare()
@@ -13767,7 +13769,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       }
       const hooks = this.operationHooks(index, operation)
       // Every image path is gated from before the secret is typed (ENG-5); a control that is no safe password control gets no input.
-      if (prepared.isSecret && operation.kind !== 'press')
+      if (prepared.isSecret && operation.kind === 'text')
         await this.armSecretGate(index, operation.selector, learnerSecret)
       await prepared.send({
         ...hooks,
@@ -13928,6 +13930,39 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           { operationIndex: index, path: 'after' },
         )
     }
+  }
+
+  /**
+   * Refuses a press whose own `after` conditions already hold on the page: a result that is true before the key cannot prove the key caused it.
+   * Called by {@link dispatchOperation} right after {@link assertOperationConditions}; it only reads.
+   * @param index - The operation about to be sent (1-based).
+   * @param operation - Its declaration; anything but a press that declares `after` passes.
+   * @throws {@link OperationRefusal} `INPUT_NOT_ACCEPTED` with reason `press-after-already-holds` and `sent: 'not-sent'` when the conditions hold.
+   * @example await this.assertPressEffectNotYetPresent(2, operation)
+   */
+  private async assertPressEffectNotYetPresent(
+    index: number,
+    operation: RepositoryOperation,
+  ): Promise<void> {
+    // Click, text and choose keep their checks unchanged.
+    if (operation.kind !== 'press' || !operation.after) return
+    const prior = await this.readConditions(operation.after)
+    this.alive()
+    if (!prior.ready) return
+    const { message, path } = describePressRefusal(
+      'press-after-already-holds',
+      {
+        index,
+        title: operation.title,
+        element: { tagName: 'body' },
+      },
+    )
+    throw new OperationRefusal('INPUT_NOT_ACCEPTED', message, {
+      operationIndex: index,
+      path,
+      reason: 'press-after-already-holds',
+      sent: 'not-sent',
+    })
   }
 
   /**
