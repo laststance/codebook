@@ -157,7 +157,11 @@ test('a page request whose start event arrives after the pause but started insid
   const operationSentAtMs = await openOperation(harness)
   // Act
   await apiServerHit(harness)
-  await new Promise((resolve) => setTimeout(resolve, 100))
+  // The start event is sent right after the run stamped the pause's receipt, so the whole fixed wait remains for it under load.
+  await waitUntil(
+    () => harness.run['apiPauseReceivedAtMs'] !== undefined,
+    'the API pause receipt',
+  )
   sendApiRequest(harness, {
     id: '7',
     path: '/api/rpc/late',
